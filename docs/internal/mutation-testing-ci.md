@@ -87,8 +87,9 @@ merge** — so that every individual job stays under its cap:
   bounded, documented fidelity cost that applies only to files too large to
   measure in one shard.
 
-  `MAX_SHARD_JOBS` (60) caps the matrix; over it the planner widens the line
-  budget (and says so in the log) rather than dropping coverage.
+  `MAX_SHARD_JOBS` (80) is the matrix ceiling — **not** the plan, which is 60
+  jobs today. Over the ceiling the planner widens the line budget (and says so
+  in the log) rather than dropping coverage.
 
 - **`mutate`** runs one job per shard from that matrix —
   `stryker run --mutate <shard scopes>` at the matrix's `concurrency`. **The job
@@ -152,10 +153,25 @@ nothing else. Projected over per-shard rates measured on real campaigns:
 Setup overhead is 2.3 h at 161 shards versus 0.8 h at 60. Against that, GitHub
 allows 360 min per job, and this is a **Free personal account with a 20
 concurrent job limit** — so 161 jobs is 8+ waves that starve PR CI for hours,
-while 60 jobs is 3 waves. Hence 2400, a 240-minute job cap, and a
-`MAX_SHARD_JOBS` of 60 that expresses "3 waves of 20 slots" rather than
-"somewhere under GitHub's 256-job matrix limit" (which is no longer the binding
-constraint).
+while 60 jobs is 3 waves. Hence 2400 lines per shard and a 240-minute job cap.
+
+**`MAX_SHARD_JOBS` (80) is a ceiling, not a target, and it deliberately sits
+above the plan.** It is the point at which the planner starts widening the line
+budget, and widening lengthens the shard tail toward the step cap — the exact
+margin the coarse budget exists to create. Setting the ceiling at the current
+60-job plan would bind on the very next core file added, and `core` grew 53% in
+five weeks (see Calibration inputs below), so the widening would begin almost
+immediately. 80 preserves the 2400-line budget through several months of that
+growth, at the cost of a 4th wave of the account's 20 concurrent slots. That is
+the right trade now the producer is dispatch-only: a 4th wave costs wall-clock
+on a manual run nobody is waiting on, whereas a longer tail costs headroom on
+the thing that has never once completed. GitHub's 256-job matrix limit is no
+longer the binding constraint on either number.
+
+When the plan reaches the ceiling, re-derive the budget from the table above
+rather than raising the ceiling again — a test
+(`scripts/__tests__/mutation-sharding.test.mjs`) fails when the default plan is
+no longer strictly inside it.
 
 ### Calibration inputs
 

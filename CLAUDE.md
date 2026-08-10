@@ -667,10 +667,12 @@ All package scripts live in `package.json` — run `pnpm run` to list them
     apart, because wall time follows `findRelatedTests` fan-out. Budget for the
     slow end.
   - **Total campaign work is flat in the shard budget** — sharding trades setup
-    overhead for a shorter tail. The producer is sized at 2400 lines/shard → 60
-    jobs → ~66 machine-hours, a 240-minute job cap, and 3 waves of this
-    account's 20 concurrent job slots. Finer sharding buys nothing but waves
-    that starve PR CI.
+    overhead for a shorter tail. The producer is sized at 2400 lines/shard,
+    which plans **60 jobs** today → ~66 machine-hours, a 240-minute job cap, 3
+    waves of this account's 20 concurrent job slots. Finer sharding buys nothing
+    but waves that starve PR CI. `MAX_SHARD_JOBS` (80) is the **ceiling** at
+    which the planner widens the budget, deliberately above the plan so core's
+    growth does not immediately lengthen the tail.
 
 - `pnpm run plugin:dev -- --no-build` (skip rebuild) /
   `pnpm run plugin:dev -- -- --debug hooks,plugins` (forward flags to `claude`).

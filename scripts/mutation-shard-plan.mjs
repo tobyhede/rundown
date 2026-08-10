@@ -30,7 +30,8 @@
 //   INPUT_PACKAGE    - dispatch package filter ('all'|'parser'|'core'|'cli'|'plugin')
 //   BASE_REF         - pull_request base ref (e.g. 'origin/main'); PR mode only
 //   MAX_SHARD_LINES  - target max source lines per shard (default 2400)
-//   MAX_SHARD_JOBS   - cap on producer matrix entries (default 60)
+//   MAX_SHARD_JOBS   - ceiling on producer matrix entries, above which the line
+//                      budget is widened (default 80; the default budget plans 60)
 //   MAX_PR_SHARDS    - cap on pull_request shards (default 16)
 //   GITHUB_OUTPUT    - file to append `matrix=` / `empty=` outputs (optional; else stdout)
 //
@@ -64,14 +65,19 @@ const eventName = process.env.EVENT_NAME ?? 'workflow_dispatch';
 const inputPackage = process.env.INPUT_PACKAGE ?? 'all';
 const baseRef = process.env.BASE_REF ?? '';
 const maxShardLines = Number.parseInt(process.env.MAX_SHARD_LINES ?? '', 10) || 2400;
-// The campaign's TOTAL work is flat in this budget — sharding only trades
-// per-job setup overhead for a shorter tail — so the cap is about how many
-// concurrent waves the producer occupies, not about GitHub's 256-job matrix hard
-// limit (which is no longer the binding constraint). 60 is 3 waves of a Free
-// account's 20 concurrent job slots. When a plan would cross it the planner
-// widens the line budget rather than dropping coverage, so package growth costs
-// a longer tail instead of more waves.
-const maxShardJobs = Number.parseInt(process.env.MAX_SHARD_JOBS ?? '', 10) || 60;
+// A CEILING on the matrix, not a target: the default line budget plans 60 jobs,
+// and this is where the planner starts widening that budget rather than dropping
+// coverage. The campaign's TOTAL work is flat in the budget — sharding only
+// trades per-job setup overhead for a shorter tail — so what this bounds is how
+// many waves of a Free account's 20 concurrent job slots the producer occupies,
+// not GitHub's 256-job matrix hard limit (no longer the binding constraint).
+//
+// 80 rather than the current plan size, because a cap set at the plan binds on
+// the next file added: core grew 53% in five weeks, and widening the budget
+// lengthens the tail toward the shard step cap. Trading a 4th wave for months of
+// headroom is the right side of that: the wave costs wall-clock on a manual run,
+// the tail costs the margin the whole sizing exercise exists to create.
+const maxShardJobs = Number.parseInt(process.env.MAX_SHARD_JOBS ?? '', 10) || 80;
 const maxPrShards = Number.parseInt(process.env.MAX_PR_SHARDS ?? '', 10) || 16;
 const testScope = process.env.TEST_SCOPE ?? 'dedicated';
 const summaryPath = process.env.SUMMARY_PATH ?? '';

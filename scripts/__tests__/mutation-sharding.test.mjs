@@ -170,18 +170,29 @@ test('plan: the producer has no differential mode — a non-PR event plans the f
   );
 });
 
-// The budget is deliberately COARSE. Total campaign work (~40k mutants, ~70
-// machine-hours) is FLAT in the shard budget — sharding only trades per-job setup
-// overhead for a shorter tail — and this repository runs on an account with 20
-// concurrent job slots, so a fine budget buys nothing but extra waves that starve
-// PR CI. The defaults must therefore stay inside a handful of waves without any
-// env override.
-test('plan: the default budget fans the producer out over few concurrency waves', () => {
+// The budget is deliberately COARSE, and the job ceiling deliberately sits ABOVE
+// the plan it produces. Total campaign work (~40k mutants, ~70 machine-hours) is
+// FLAT in the shard budget — sharding only trades per-job setup overhead for a
+// shorter tail — and this repository runs on an account with 20 concurrent job
+// slots, so a fine budget buys nothing but extra waves that starve PR CI.
+//
+// The STRICT inequality is the headroom assertion, and it is the point of the
+// test. MAX_SHARD_JOBS is the ceiling at which the planner starts WIDENING the
+// line budget, so a default plan sitting at it means every file added from then
+// on lengthens the shard tail toward the step cap — the exact margin the 2400-line
+// budget exists to create. Core grew 53% in five weeks, so this margin is
+// consumed over time, not static. When this fails, re-derive the budget from the
+// projection table in docs/internal/mutation-testing-ci.md; do not just raise the
+// ceiling again.
+const DEFAULT_MAX_SHARD_JOBS = 80; // mirrors scripts/mutation-shard-plan.mjs
+test('plan: the default budget plans well inside the job ceiling', () => {
   const { include } = plan({ EVENT_NAME: 'workflow_dispatch', INPUT_PACKAGE: 'all' });
   assert.ok(include.length > 0, 'the default plan must plan shards');
   assert.ok(
-    include.length <= 60,
-    `the default plan is ${include.length} jobs; over 3 waves of 20 concurrent slots`,
+    include.length < DEFAULT_MAX_SHARD_JOBS,
+    `the default plan is ${include.length} jobs against a ${DEFAULT_MAX_SHARD_JOBS}-job ceiling: ` +
+      'the planner is already widening the line budget, so the shard tail is longer than the ' +
+      'sizing assumed',
   );
   const all = include.flatMap((e) => e.mutate.split(','));
   assert.equal(new Set(all).size, all.length, 'default shards must mutate disjoint scopes');

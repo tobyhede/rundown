@@ -90,12 +90,21 @@ jobs:
           # is 8+ waves that starve PR CI for hours. 2400 lands the tail at ~179
           # min inside the 240-min job cap below, in 3 waves.
           MAX_SHARD_LINES: '2400'
-          # 3 waves of the account's 20 concurrent job slots. The planner WIDENS
-          # the line budget (and says so in the log) rather than dropping coverage
-          # when a plan would cross this, so package growth costs a longer tail
-          # rather than more waves. Well under GitHub's 256-job matrix hard limit,
-          # which is no longer the binding constraint.
-          MAX_SHARD_JOBS: '60'
+          # A CEILING, not the plan. The 2400-line budget above plans 60 jobs
+          # today; this is the point at which the planner starts WIDENING that
+          # budget (and says so in the log) rather than dropping coverage.
+          #
+          # Deliberately 80, not 60. Setting the cap at the current plan size
+          # would bind on the very next core file added, and core grew 53% in five
+          # weeks (16,885 -> 22,702 mutants, 2026-06-29 to 2026-08-03) — so the
+          # widening loop would trip almost immediately and push the core tail
+          # from ~179 min toward the 225-min step cap, eroding the exact headroom
+          # this sizing exists to create. 80 preserves the 2400-line budget
+          # through several months of that growth at the cost of a 4th wave of the
+          # account's 20 concurrent job slots, and a 4th wave costs wall-clock on a
+          # manual run nobody is waiting on. Still far under GitHub's 256-job
+          # matrix hard limit, which is no longer the binding constraint.
+          MAX_SHARD_JOBS: '80'
         run: node scripts/mutation-shard-plan.mjs
 
   # One job per shard. Shards never hold the dashboard key, so they cannot upload
