@@ -34,7 +34,11 @@ describe('errors barrel', () => {
     // `check:types` here rather than at some distant consumer. The runtime
     // expectations exist so the bindings are load-bearing and cannot be
     // stripped as unused.
-    const defect: InvalidRunStateDefect = { runId: 'rd_x', reason: 'invalid_schema_version' };
+    const defect: InvalidRunStateDefect = {
+      runId: 'rd_x',
+      reason: 'invalid_schema_version',
+      schemaVersion: 2,
+    };
     const reason: InvalidRunStateReason = defect.reason;
     const context: ErrorContext = { message: 'why' };
     const key: ErrorCodeKey = 'FILE_NOT_FOUND';

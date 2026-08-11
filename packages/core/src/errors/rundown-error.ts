@@ -70,22 +70,46 @@ export type InvalidRunStateReason =
  * These fields are lifted from the throw site and ride in
  * {@link RundownError.context}, so nothing has to be parsed back out of the
  * message.
+ *
+ * Discriminated on `reason` rather than flat with an optional `schemaVersion`,
+ * because the version is meaningful for exactly one refusal. Optional permitted
+ * both mistakes this shape exists to prevent: an `invalid_schema_version`
+ * defect omitting the found version — the one fact that refusal carries and its
+ * message never states — and any other reason claiming a version it never read.
+ * `rundown-error.test.ts` pins both rejections at the type level.
  */
-export interface InvalidRunStateDefect {
-  /** The run whose persisted state was refused. */
-  readonly runId: string;
-  /** Which refusal fired. */
-  readonly reason: InvalidRunStateReason;
-  /**
-   * The schema version the row claims, exactly as persisted.
-   *
-   * Deliberately `unknown` rather than `number`: the value comes from
-   * untrusted persisted JSON, and refusing to narrow it is the point — a row
-   * claiming `"2"` or `null` is exactly the case worth reporting. Present only
-   * for `invalid_schema_version`.
-   */
-  readonly schemaVersion?: unknown;
-}
+export type InvalidRunStateDefect =
+  | {
+      /** The run whose persisted state was refused. */
+      readonly runId: string;
+      /** Which refusal fired. */
+      readonly reason: 'invalid_schema_version';
+      /**
+       * The schema version the row claims, exactly as persisted.
+       *
+       * Deliberately `unknown` rather than `number`: the value comes from
+       * untrusted persisted JSON, and refusing to narrow it is the point — a
+       * row claiming `"2"` or `null` is exactly the case worth reporting.
+       * Required here, so the refusal that turns on the version can never drop
+       * it.
+       */
+      readonly schemaVersion: unknown;
+    }
+  | {
+      /** The run whose persisted state was refused. */
+      readonly runId: string;
+      /** Which refusal fired. */
+      readonly reason: Exclude<InvalidRunStateReason, 'invalid_schema_version'>;
+      /**
+       * Never present: these refusals never read a schema version.
+       *
+       * Declared as absent-by-type rather than simply omitted so the key stays
+       * readable on the union without narrowing — the RD-309 factory tests
+       * `schemaVersion === undefined` to decide whether to emit it — while any
+       * value assigned to it is still a type error.
+       */
+      readonly schemaVersion?: never;
+    };
 
 /**
  * Base error class for all Rundown errors with trackable codes.

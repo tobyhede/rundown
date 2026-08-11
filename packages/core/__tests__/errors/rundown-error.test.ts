@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { RundownError, Errors, ErrorCodes, ErrorCategory } from '../../src/errors.js';
+import type { InvalidRunStateDefect } from '../../src/errors.js';
 
 describe('RundownError', () => {
   describe('construction', () => {
@@ -316,5 +317,46 @@ describe('retry idempotency error codes', () => {
       // Still prose-visible: the structured key is an addition, not a move.
       expect(error.message).toContain(reason);
     }
+  });
+});
+
+/**
+ * TYPE-LEVEL PIN. `schemaVersion` is meaningful for exactly one reason.
+ *
+ * As an optional field on a flat interface the type permitted both mistakes it
+ * exists to prevent: an `invalid_schema_version` defect that omits the found
+ * version — the one fact that refusal carries and the message never states —
+ * and any other reason claiming one, which would put a version into the RD-309
+ * envelope for a refusal that never read one. Every assertion below is checked
+ * by `check:types`; the `@ts-expect-error` directives fail the build if the
+ * union stops rejecting these shapes.
+ */
+describe('InvalidRunStateDefect', () => {
+  it('requires schemaVersion for invalid_schema_version and rejects it elsewhere', () => {
+    // `unknown`, so an untrusted row claiming a string is representable — that
+    // is exactly the case worth reporting, not one to narrow away.
+    const versioned: InvalidRunStateDefect = {
+      runId: 'rd_a',
+      reason: 'invalid_schema_version',
+      schemaVersion: '2',
+    };
+    const unversioned: InvalidRunStateDefect = { runId: 'rd_b', reason: 'missing_template_vars' };
+
+    // @ts-expect-error - invalid_schema_version without the version it found
+    const missing: InvalidRunStateDefect = { runId: 'rd_c', reason: 'invalid_schema_version' };
+    // @ts-expect-error - no other reason reads a schema version
+    const extraneous: InvalidRunStateDefect = {
+      runId: 'rd_d',
+      reason: 'unparseable_json',
+      schemaVersion: 1,
+    };
+
+    // Runtime expectations keep the bindings load-bearing so they cannot be
+    // stripped as unused, and pin the values the annotations accepted.
+    expect([versioned.schemaVersion, unversioned.schemaVersion]).toEqual(['2', undefined]);
+    expect([missing.reason, extraneous.reason]).toEqual([
+      'invalid_schema_version',
+      'unparseable_json',
+    ]);
   });
 });
