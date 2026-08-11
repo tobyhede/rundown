@@ -31,11 +31,18 @@ type StashRefusalCode = StaleClaimRefusalCode | 'ALREADY_STASHED';
  * not covered by the grouped cases, so it fails to compile here rather than
  * being absorbed by the shared mapper.
  *
+ * Exported for direct coverage: the `default` arm is a COMPILE-time guard, so
+ * it cannot catch a case label that still type-checks after being edited to the
+ * wrong status. Only a test that maps every arm can, and four of the six shared
+ * arms are unreachable or expensive to stage end-to-end (`missing-child` is
+ * ruled out entirely by the FK cascade). Not part of the command's public
+ * surface — nothing outside its own test imports it.
+ *
  * @param claimId - Bearer the caller presented; only its redacted key is shown
  * @param result - The refusal arm returned by `stashForClaimId`
  * @returns Message and symbolic code for `OutputEmitter.error`
  */
-function claimStashRefusal(
+export function claimStashRefusal(
   claimId: ClaimId,
   result: Exclude<StashForClaimIdResult, { status: 'stashed' }>,
 ): { readonly message: string; readonly code: StashRefusalCode } {

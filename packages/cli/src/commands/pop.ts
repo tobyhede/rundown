@@ -31,11 +31,15 @@ import { claimUnavailable, sharedClaimRefusal } from '../helpers/claim-refusal.j
  * covered by the grouped cases, so it fails to compile here rather than being
  * absorbed by the shared mapper.
  *
+ * Exported for direct coverage, for the reason given on `claimStashRefusal`:
+ * the `default` arm guards at compile time and cannot catch a mis-edited case
+ * label that still type-checks. Not part of the command's public surface.
+ *
  * @param claimId - Bearer the caller presented; only its redacted key is shown
  * @param result - The refusal arm returned by `unstashForClaimId`
  * @returns Message and symbolic code for `OutputEmitter.error`
  */
-function claimPopRefusal(
+export function claimPopRefusal(
   claimId: ClaimId,
   result: Exclude<UnstashForClaimIdResult, { status: 'restored' }>,
 ): { readonly message: string; readonly code: StaleClaimRefusalCode } {

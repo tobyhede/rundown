@@ -28,8 +28,9 @@ import { Command } from 'commander';
 // the commands only via the dynamic `import('../cli.js')` seam in
 // runCliInProcess). This file is the per-command home for stash AND pop, so it
 // statically imports both register functions. See collect.test.ts.
-import { registerStashCommand } from '../../src/commands/stash.js';
-import { registerPopCommand } from '../../src/commands/pop.js';
+import { registerStashCommand, claimStashRefusal } from '../../src/commands/stash.js';
+import { registerPopCommand, claimPopRefusal } from '../../src/commands/pop.js';
+import { sharedClaimRefusal } from '../../src/helpers/claim-refusal.js';
 import {
   assertClaimId,
   assertDelegationTokenHash,
@@ -39,7 +40,11 @@ import {
   createDelegatedChildGrants,
   hashClaimSecret,
   parseClaimBearer,
+  redactClaimId,
   SessionService,
+  type StashForClaimIdResult,
+  type UnstashForClaimIdResult,
+  type VerifiedClaim,
 } from '@rundown-org/core';
 
 const VALID_OTHER_CLAIM_ID = assertClaimId(
@@ -1246,5 +1251,129 @@ rd echo "hello"
     expect(session.stashed).toBeNull();
     const ownerStatus = await runCliInProcess(`status --claim-id ${MANUAL_CLAIM_ID}`, workspace);
     expect(JSON.parse(ownerStatus.stdout).runId).toBe(runbookId);
+  });
+});
+
+// Refusal ROUTING, as distinct from refusal WORDING. `claim-refusal.test.ts`
+// pins what `sharedClaimRefusal` says for each of the six shared arms character
+// for character; what neither it nor the behavioural tests above pin is that
+// each command's own switch hands the right status to it. That gap is not
+// theoretical: the `default: never` arm guards at COMPILE time, so it catches an
+// arm core adds, but not a case label edited to a status that still type-checks
+// — and every stryker config sets `checkers: []`, so nothing type-checks a
+// mutant either. Staging all six end-to-end is not an option: `missing-child`
+// is ruled out by the claims/runs FK cascade and cannot be produced through any
+// supported write. Mapping the arms directly is the only total check.
+describe('claim refusal routing', () => {
+  const REFUSAL_RUN_ID = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  const SLOT_RUN_ID = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+  const refusalClaim: VerifiedClaim = {
+    claimKey: redactClaimId(MANUAL_CLAIM_ID),
+    controlledRunId: REFUSAL_RUN_ID,
+    grants: [],
+  };
+
+  // The six arms both commands delegate. Kept as one list so a divergence
+  // between the two switches shows up as a type error in one of the two maps
+  // below rather than as a silently untested arm.
+  const SHARED_STATUSES = [
+    'missing-claim',
+    'missing-child',
+    'terminal-child',
+    'child-linkage-mismatch',
+    'parent-missing',
+    'superseded',
+  ] as const;
+
+  // Mapped over the union's own discriminants, so an arm added to
+  // `StashForClaimIdResult` / `UnstashForClaimIdResult` in core is a missing
+  // property here — a compile error, not a quietly skipped case.
+  type StashRefusal = Exclude<StashForClaimIdResult, { status: 'stashed' }>;
+  type PopRefusal = Exclude<UnstashForClaimIdResult, { status: 'restored' }>;
+
+  const STASH_REFUSALS: {
+    readonly [S in StashRefusal['status']]: Extract<StashRefusal, { status: S }>;
+  } = {
+    'missing-claim': { status: 'missing-claim', claimId: MANUAL_CLAIM_ID },
+    'missing-child': { status: 'missing-child', childRunId: REFUSAL_RUN_ID },
+    'terminal-child': { status: 'terminal-child', claim: refusalClaim, lifecycle: 'completed' },
+    'child-linkage-mismatch': { status: 'child-linkage-mismatch', claim: refusalClaim },
+    'parent-missing': { status: 'parent-missing', claim: refusalClaim },
+    superseded: { status: 'superseded', claimId: MANUAL_CLAIM_ID, reason: 'cursor-advanced' },
+    'already-stashed': { status: 'already-stashed', claim: refusalClaim },
+    'slot-occupied': {
+      status: 'slot-occupied',
+      claim: refusalClaim,
+      stashedRunbookId: SLOT_RUN_ID,
+    },
+  };
+
+  const POP_REFUSALS: {
+    readonly [S in PopRefusal['status']]: Extract<PopRefusal, { status: S }>;
+  } = {
+    'missing-claim': { status: 'missing-claim', claimId: MANUAL_CLAIM_ID },
+    'missing-child': { status: 'missing-child', childRunId: REFUSAL_RUN_ID },
+    'terminal-child': { status: 'terminal-child', claim: refusalClaim, lifecycle: 'stopped' },
+    'child-linkage-mismatch': { status: 'child-linkage-mismatch', claim: refusalClaim },
+    'parent-missing': { status: 'parent-missing', claim: refusalClaim },
+    superseded: { status: 'superseded', claimId: MANUAL_CLAIM_ID, reason: 'parent-ended' },
+    'not-stashed': { status: 'not-stashed', claim: refusalClaim },
+  };
+
+  describe('claimStashRefusal', () => {
+    it.each(SHARED_STATUSES)('delegates %s to the shared mapping', (status) => {
+      const result = STASH_REFUSALS[status];
+
+      expect(claimStashRefusal(MANUAL_CLAIM_ID, result)).toEqual(
+        sharedClaimRefusal(MANUAL_CLAIM_ID, result),
+      );
+    });
+
+    it('answers a caller re-stashing its own parked run with the pop instruction', () => {
+      expect(claimStashRefusal(MANUAL_CLAIM_ID, STASH_REFUSALS['already-stashed'])).toEqual({
+        message: `Claim id ${redactClaimId(MANUAL_CLAIM_ID)} is currently stashed. Run \`rundown pop\` with its claim id to resume.`,
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+      });
+    });
+
+    it('answers a slot held by a different run with ALREADY_STASHED', () => {
+      // The split the bearer-blind predecessor could not make: this arm is a
+      // conflict the caller resolves by popping, `already-stashed` is a no-op.
+      expect(claimStashRefusal(MANUAL_CLAIM_ID, STASH_REFUSALS['slot-occupied'])).toEqual({
+        message: 'A runbook is already stashed. Pop it first.',
+        code: 'ALREADY_STASHED',
+      });
+    });
+  });
+
+  describe('claimPopRefusal', () => {
+    it.each(SHARED_STATUSES)('delegates %s to the shared mapping', (status) => {
+      const result = POP_REFUSALS[status];
+
+      expect(claimPopRefusal(MANUAL_CLAIM_ID, result)).toEqual(
+        sharedClaimRefusal(MANUAL_CLAIM_ID, result),
+      );
+    });
+
+    it('answers a claim that is not in the slot by naming its redacted key', () => {
+      expect(claimPopRefusal(MANUAL_CLAIM_ID, POP_REFUSALS['not-stashed'])).toEqual({
+        message: `Claim id ${redactClaimId(MANUAL_CLAIM_ID)} is not currently stashed.`,
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+      });
+    });
+  });
+
+  it('never echoes the presented bearer secret in any refusal from either command', () => {
+    // Total over both maps, so an arm added later inherits this without being
+    // remembered. Every arm identifies the claim by its redacted lookup key;
+    // the secret segment of the bearer must never reach CLI output.
+    const { secret } = parseClaimBearer(MANUAL_CLAIM_ID);
+
+    for (const result of Object.values(STASH_REFUSALS)) {
+      expect(claimStashRefusal(MANUAL_CLAIM_ID, result).message).not.toContain(secret);
+    }
+    for (const result of Object.values(POP_REFUSALS)) {
+      expect(claimPopRefusal(MANUAL_CLAIM_ID, result).message).not.toContain(secret);
+    }
   });
 });

@@ -121,6 +121,29 @@ describe('SessionService', () => {
     raw.close();
   }
 
+  /**
+   * Drop the ownership columns `holdExecutionLease` wrote, leaving the
+   * execution_attempts row behind.
+   *
+   * Releasing ownership is NOT an authoritative parent write, so it does not
+   * run the parent-side latch: a claim the latch skipped while its child was
+   * execution-owned stays `active` afterwards. That is the only way to reach
+   * the in-transaction liveness refusal, which fires on a claim still present
+   * in `session.claims` — every other route tombstones the claim first and
+   * lands on `ctx.claim`'s tombstone arm instead.
+   *
+   * @param runId - Run to release ownership of.
+   */
+  function releaseExecutionLease(runId: RunId): void {
+    const raw = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'));
+    raw
+      .prepare(
+        'UPDATE runs SET exec_token = NULL, exec_epoch = NULL, exec_pid = NULL WHERE id = :runId',
+      )
+      .run({ runId });
+    raw.close();
+  }
+
   let sessionService: SessionService;
   const mockSteps: ResolvedStep[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
   const mockRunbook: Runbook = {
@@ -1898,6 +1921,79 @@ describe('SessionService', () => {
           claimId: claimed.claimId,
           reason: 'cursor-advanced',
         });
+        expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+      });
+
+      it('refuses a closed delegation the parent-side latch has not yet tombstoned', async () => {
+        // The sibling test above enters `superseded` by the tombstone arm: the
+        // latch retired the claim, so the bearer is absent from `session.claims`
+        // and `ctx.claim` reports it. This one enters by the OTHER arm — the
+        // in-transaction `classifyDelegationLiveness` call — which is reachable
+        // only while the claim is still active. `invalidateClosedDelegatedClaims`
+        // skips an execution-owned child (superseding it would RAISE from
+        // `claims_guard_update` and roll back the parent's unrelated commit), so
+        // owning the child across the parent's cursor advance is what defers the
+        // tombstone; releasing ownership afterwards writes nothing to the parent
+        // and therefore never re-runs the latch.
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'e');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const claimed = assertClaimed(
+          await claimLiveDelegation(sessionService, manager, child.id, linkage),
+        );
+        holdExecutionLease(child.id);
+        await manager.update(parent.id, { step: '2' });
+        releaseExecutionLease(child.id);
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimed.claimId));
+
+        expect(result).toEqual({
+          status: 'superseded',
+          claimId: claimed.claimId,
+          reason: 'cursor-advanced',
+        });
+        const session = await manager.loadSession();
+        // The discriminator against the tombstone test: `session.claims` holds
+        // active claims only, so the bearer still being there proves this
+        // refusal came from the liveness classification rather than a lookup of
+        // a retired claim. Without it both tests would pass on either arm.
+        expect(Object.keys(session.claims)).toContain(claimed.claim.claimKey);
+        expect(session.stashedRunbookId).toBeUndefined();
+      });
+
+      it('refuses a claim whose parent state is unreadable without touching the slot', async () => {
+        // `claims.parent_run_id` is ON DELETE SET NULL, not CASCADE, so deleting
+        // the parent leaves the claim active with its persisted delegation still
+        // naming the vanished run — the same fixture `getActiveForClaimId`
+        // reports as unlinked/parent-missing. `classifyDelegationLiveness` calls
+        // that `parent-unreadable` and the taxonomy keeps it separate from
+        // `closed`: a delegated claim naming an unreadable parent is a database
+        // integrity signal, never a routine end-of-delegation.
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'f');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const claimed = assertClaimed(
+          await claimLiveDelegation(sessionService, manager, child.id, linkage),
+        );
+
+        await manager.delete(parent.id);
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimed.claimId));
+
+        expect(result.status).toBe('parent-missing');
+        if (result.status === 'parent-missing') {
+          expect(result.claim.claimKey).toBe(claimed.claim.claimKey);
+        }
         expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
       });
 
