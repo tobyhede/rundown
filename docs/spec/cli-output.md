@@ -1297,8 +1297,10 @@ Code: EXECUTION_IN_PROGRESS
 
 The command needed to change session targeting for a run whose last execution
 attempt ended without recording an outcome, so whether its effect ran is
-unknown. Distinct from `EXECUTION_IN_PROGRESS`: no process holds the run —
-waiting will not clear it. The interrupted attempt must be recovered first.
+unknown. Distinct from `EXECUTION_IN_PROGRESS`: no live process is advancing the
+run, so waiting will not clear it. That is not the same as the run being free —
+it stays execution-owned, because the interrupted attempt is abandoned without
+releasing ownership. The interrupted attempt must be recovered first.
 
 **There is no `rundown recover` command**, and never has been. But do not read
 that as "recovery happens by itself here" — `RECOVERY_REQUIRED` is emitted from
