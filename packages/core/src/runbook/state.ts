@@ -26,7 +26,7 @@ import {
 import type { ClaimLookupKey, ClaimRecord } from './claim-id.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
-import { getErrorMessage, isError, isNodeError, type InvalidRunStateDefect } from '../errors.js';
+import { getErrorMessage, isError, isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
 import {
   brandInitialTemplateVars,
