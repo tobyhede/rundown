@@ -1356,7 +1356,10 @@ describe('runExecutionLoop', () => {
           kind: 'recovery_required' as const,
           runId: runbookId,
           epoch: 4 as RecoveryRefusal['epoch'],
-          message: `Run ${runbookId} ended execution with an unknown outcome at epoch 4; run recovery before continuing.`,
+          message:
+            `Run ${runbookId} ended execution with an unknown outcome at epoch 4; its recovery ` +
+            `has not completed. Nothing was written and no recovery was started here, so ` +
+            `retrying this command will not clear it.`,
         },
         code: 'RECOVERY_REQUIRED',
       },

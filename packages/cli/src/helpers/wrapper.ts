@@ -19,7 +19,7 @@ import { RunbookSyntaxError } from '@rundown-org/parser';
  * Options for error handling behavior.
  */
 interface ErrorHandlingOptions {
-  /** Show verbose error output including description and docs link */
+  /** Show verbose error output, appending the code's registered description */
   verbose?: boolean;
   /** Output error as human-readable text instead of JSON (JSON is the default) */
   text?: boolean;
@@ -125,8 +125,13 @@ function toRundownError(error: unknown): RundownError {
   // database (`PRAGMA user_version`) and RD-309 is one row inside it. The
   // classes are disjoint so order is not load-bearing for correctness, but the
   // narrower diagnosis must never be able to shadow the broader one.
+  //
+  // The `defect` both classes carry is forwarded so RD-309's envelope names the
+  // run in FIELDS, not only in prose. Every production throw site supplies one;
+  // the parameter is optional, so a site that does not degrades to the
+  // prose-only envelope rather than losing the error.
   if (error instanceof InvalidRunbookStateError || error instanceof LegacySnapshotError) {
-    return Errors.invalidPersistedRunState(error.message);
+    return Errors.invalidPersistedRunState(error.message, error.defect);
   }
 
   // Generic error - wrap it
@@ -159,8 +164,8 @@ export async function withErrorHandling(
       // § Key Conventions): { kind: "error", error, code, command?, details? }.
       // This matches the shape OutputEmitter.error / JSONRenderer produce so
       // consumers see one consistent error JSON across all paths. The
-      // RundownError-specific fields (category, title, context, docsUrl) ride
-      // in `details` so no information is lost.
+      // RundownError-specific fields (category, title, context) ride in
+      // `details` so no information is lost.
       const envelope: Record<string, unknown> = {
         kind: 'error',
         error: rundownError.message,
@@ -176,7 +181,6 @@ export async function withErrorHandling(
         category: rundownError.errorCode.category,
         title: rundownError.errorCode.title,
         context: rundownError.context,
-        docsUrl: rundownError.docsUrl,
       };
       getWriter().writeJson(envelope);
     }

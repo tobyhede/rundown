@@ -4,12 +4,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
 import {
+  applyRunbookStateUpdate,
   type ConcurrentStateModificationError,
   generateRunId,
+  InvalidRunbookStateError,
   isConcurrentStateModificationError,
   LegacySnapshotError,
   RunbookStateManager,
 } from '../../src/runbook/state.js';
+import type { InvalidRunStateDefect } from '../../src/errors.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { partitionVariables } from '../../src/runbook/variable-preparation.js';
 import { SessionService } from '../../src/runbook/session-service.js';
@@ -1596,6 +1599,134 @@ describe('RunbookStateManager', () => {
       );
       // Nothing was written: the losing cycle must not have persisted its patch.
       expect((await manager.load(state.id))?.stepName).not.toBe('never');
+    });
+  });
+
+  // RD-309 is the only 3xx STATE error scoped to a single run, and its JSON
+  // envelope used to carry `"context": {}` — a consumer wanting to know WHICH
+  // run had to parse English out of `error`. The refusal message names the run
+  // only inside prose and does not carry the found schema version at all, so
+  // every throw site now lifts the facts into a typed `defect` instead.
+  describe('structured defect on refused persisted state', () => {
+    /** Overwrite a run's persisted `state_json` with raw, possibly invalid, text. */
+    async function writeRawStateText(runId: string, text: string): Promise<void> {
+      const store = await getRunbookStore(testDir);
+      await store.transaction((txn) => {
+        txn.tx
+          .prepare('UPDATE runs SET state_json = :json WHERE id = :id')
+          .run({ json: text, id: runId });
+      });
+    }
+
+    /** Load a run expected to be refused, returning the refusal's structured defect. */
+    async function refusedDefect(runId: string): Promise<InvalidRunStateDefect | undefined> {
+      try {
+        await manager.load(runId);
+      } catch (error) {
+        if (error instanceof InvalidRunbookStateError || error instanceof LegacySnapshotError) {
+          return error.defect;
+        }
+        throw error;
+      }
+      throw new Error('load resolved; expected a refusal');
+    }
+
+    /** Seed a valid run, then plant a raw persisted shape over it. */
+    async function seedThenPlant(
+      raw: (state: Record<string, unknown>) => unknown,
+    ): Promise<string> {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      await writeRawStateJson(state.id, raw(state as unknown as Record<string, unknown>));
+      return state.id;
+    }
+
+    // Neither name is the discriminant — consumers classify by class — but both
+    // are what a stack trace and any structured log label the failure with, so
+    // they are pinned like `ConcurrentStateModificationError.name` above rather
+    // than left free to drift.
+    // Constructed inside the test body, not in the table: an `it.each` row is
+    // evaluated during collection, so an error built there is built before the
+    // test runs and its constructor never executes under the assertion.
+    it.each([
+      { label: 'InvalidRunbookStateError', build: () => new InvalidRunbookStateError('x') },
+      { label: 'LegacySnapshotError', build: () => new LegacySnapshotError('x') },
+    ])('labels $label with its own name', ({ label, build }) => {
+      expect(build().name).toBe(label);
+    });
+
+    it('names the run when the persisted JSON does not parse', async () => {
+      const id = await seedThenPlant((state) => state);
+      await writeRawStateText(id, '{ not valid json');
+
+      expect(await refusedDefect(id)).toEqual({ runId: id, reason: 'unparseable_json' });
+    });
+
+    it.each([
+      { label: 'GOTO_NEXT lastAction', plant: { lastAction: { type: 'GOTO_NEXT' } } },
+      { label: 'instance field', plant: { instance: 2 } },
+    ])('names the run on the legacy dynamic-step shape ($label)', async ({ plant }) => {
+      const id = await seedThenPlant((state) => ({ ...state, ...plant }));
+
+      expect(await refusedDefect(id)).toEqual({
+        runId: id,
+        reason: 'legacy_dynamic_step_snapshot',
+      });
+    });
+
+    // The found version is reported exactly as persisted and is NOT narrowed to
+    // `number`: a row claiming `"v2"` is precisely the case worth reporting, and
+    // it appears nowhere in the message prose.
+    it.each([
+      { label: 'a future numeric version', found: 2 },
+      { label: 'a non-numeric version', found: 'v2' },
+    ])('names the run and $label it claims', async ({ found }) => {
+      const id = await seedThenPlant((state) => ({ ...state, schemaVersion: found }));
+
+      expect(await refusedDefect(id)).toEqual({
+        runId: id,
+        reason: 'invalid_schema_version',
+        schemaVersion: found,
+      });
+    });
+
+    it('names the run when templateVars is missing', async () => {
+      const id = await seedThenPlant((state) => {
+        const { templateVars: _omit, ...rest } = state;
+        return rest;
+      });
+
+      expect(await refusedDefect(id)).toEqual({ runId: id, reason: 'missing_template_vars' });
+    });
+
+    it('names the run when the schema parse fails', async () => {
+      // `artifactVars` is a removed field the schema refuses explicitly, so this
+      // reaches the schema-parse arm rather than one of the named checks above.
+      const id = await seedThenPlant((state) => ({ ...state, artifactVars: {} }));
+
+      expect(await refusedDefect(id)).toEqual({ runId: id, reason: 'schema_validation_failed' });
+    });
+
+    it('names the run and its stale version when a derivation is refused', async () => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      const stale = { ...state, schemaVersion: 99 };
+
+      let defect: InvalidRunStateDefect | undefined;
+      try {
+        applyRunbookStateUpdate(stale, { stepName: 'x' }, '2026-04-19T00:00:01Z');
+      } catch (error) {
+        if (!(error instanceof InvalidRunbookStateError)) throw error;
+        defect = error.defect;
+      }
+
+      expect(defect).toEqual({
+        runId: state.id,
+        reason: 'invalid_schema_version',
+        schemaVersion: 99,
+      });
     });
   });
 });

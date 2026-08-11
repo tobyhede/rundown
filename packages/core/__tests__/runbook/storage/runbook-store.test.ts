@@ -2247,6 +2247,107 @@ describe('commitRecovery', () => {
   });
 });
 
+describe('mutateSessionGuarded recovery refusal', () => {
+  /** Read a run's execution-attempt phase and whether the run is still owned. */
+  function attemptState(
+    runId: RunId,
+  ): Promise<{ readonly phase: string; readonly owned: boolean }> {
+    return store.read((txn) => {
+      const attempt = txn.tx
+        .prepare('SELECT phase FROM execution_attempts WHERE run_id = :runId')
+        .get<{ readonly phase: string }>({ runId });
+      const run = txn.tx
+        .prepare('SELECT exec_token FROM runs WHERE id = :runId')
+        .get<{ readonly exec_token: string | null }>({ runId });
+      return { phase: attempt?.phase ?? 'none', owned: (run?.exec_token ?? null) !== null };
+    });
+  }
+
+  /**
+   * THE BEHAVIOURAL PIN. `mutateSessionGuarded` is **detection only**.
+   *
+   * Its refusal is reached exclusively from `SessionService.mutateGuarded` —
+   * `rundown stash`, `pop`, `prune`, `delegate`, `abort`, and the run/terminal
+   * release paths. None of them constructs an `ExecutionRecoveryService`; the
+   * only two in the codebase are in `EffectfulActorMutationRunner`, fed by
+   * `CoreEffectfulMutationExecutor`, which never reaches this method.
+   *
+   * So the interrupted attempt is still `recovery_pending` when this returns,
+   * and the run is still owned. Any message this path emits must be consistent
+   * with that: it may not promise recovery, and it may not imply that retrying
+   * makes progress. This test fails if either the behaviour or the promise
+   * changes, which is the point — the message defect it guards against was
+   * shipped once already.
+   */
+  it('is detection only: refuses, writes nothing, and leaves the attempt pending', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    await store.transaction((txn) => {
+      takeOwnership(txn.tx, state.id, { epoch: 4, phase: 'recovery_pending' });
+    });
+    expect(await attemptState(state.id)).toEqual({ phase: 'recovery_pending', owned: true });
+
+    // The refusal is decided in the preflight loop, ahead of `work`. Tracking
+    // the callback directly pins that: an empty stack only proves nothing was
+    // COMMITTED, which a rolled-back transaction would also satisfy — this
+    // proves the caller's mutation never ran at all, so a callback with an
+    // external side effect cannot fire behind a refusal.
+    let workRan = false;
+    const result = await store.mutateSessionGuarded([state.id], (ctx) => {
+      workRan = true;
+      ctx.session.defaultStack.push(state.id);
+      return null;
+    });
+
+    expect(result.kind).toBe('recovery_required');
+    expect(workRan).toBe(false);
+    // Nothing written: the refusal is decided before the session write lands.
+    expect(await store.read((txn) => txn.stack())).toEqual([]);
+    // Nothing recovered and nothing reclaimed. A later identical call sees the
+    // same state, so retrying genuinely cannot make progress.
+    expect(await attemptState(state.id)).toEqual({ phase: 'recovery_pending', owned: true });
+
+    const retried = await store.mutateSessionGuarded([state.id], (ctx) => {
+      workRan = true;
+      ctx.session.defaultStack.push(state.id);
+      return null;
+    });
+    expect(retried).toEqual(result);
+    expect(workRan).toBe(false);
+  });
+
+  it('states the facts without promising recovery or a recovery command', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    await store.transaction((txn) => {
+      takeOwnership(txn.tx, state.id, { epoch: 4, phase: 'recovery_pending' });
+    });
+
+    const result = await store.mutateSessionGuarded([state.id], (ctx) => {
+      ctx.session.defaultStack.push(state.id);
+      return null;
+    });
+
+    expect(result).toEqual({
+      kind: 'recovery_required',
+      runId: state.id,
+      epoch: 4,
+      message:
+        `Run ${state.id} ended execution with an unknown outcome at epoch 4; its recovery has ` +
+        `not completed. Nothing was written and no recovery was started here, so retrying this ` +
+        `command will not clear it.`,
+    });
+    if (result.kind !== 'recovery_required') throw new Error('unreachable');
+    // Three false promises this message must never make again:
+    //   1. a `rundown recover` command to run — none has ever existed;
+    //   2. that recovery happens automatically — it does not on this path;
+    //   3. that retrying helps — the pin above proves it cannot.
+    expect(result.message).not.toMatch(/run recovery/i);
+    expect(result.message).not.toMatch(/rundown recover/i);
+    expect(result.message).not.toMatch(/automatic/i);
+  });
+});
+
 describe('assertExecutionPhase', () => {
   it.each(['claimed', 'effect_started', 'recovery_pending', 'committed', 'released'])(
     'returns the recognized phase %s unchanged',

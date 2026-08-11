@@ -1297,15 +1297,34 @@ Code: EXECUTION_IN_PROGRESS
 
 The command needed to change session targeting for a run whose last execution
 attempt ended without recording an outcome, so whether its effect ran is
-unknown. Distinct from `EXECUTION_IN_PROGRESS`: no process holds the run —
-waiting will not clear it. Recovery must resolve the interrupted attempt first.
+unknown. Distinct from `EXECUTION_IN_PROGRESS`: no live process is advancing the
+run, so waiting will not clear it. That is not the same as the run being free —
+it stays execution-owned, because the interrupted attempt is abandoned without
+releasing ownership. The interrupted attempt must be recovered first.
+
+**There is no `rundown recover` command**, and never has been. But do not read
+that as "recovery happens by itself here" — `RECOVERY_REQUIRED` is emitted from
+two different places, and only one of them recovers anything:
+
+| Origin                                                                                                         | Message                                                       | Recovers?                                                                                                                                               |
+| -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Execution fence** — the effect-boundary refusal on a run you are executing                                   | `Run … needs recovery: …`                                     | **Yes.** `EffectfulActorMutationRunner` recovers the exact epoch inline, in the same call, then still reports the refusal so the command is not retried |
+| **Session-targeting write** — `stash`, `pop`, `prune`, `delegate`, `abort`, and the run/terminal release paths | `Run … ended execution with an unknown outcome at epoch N; …` | **No.** Detection only. Nothing is written and no recovery is started, so the attempt is still pending afterwards                                       |
+
+The envelope below is the **session-targeting** one, and its message says so:
+retrying the same command cannot make progress, because nothing about the run
+changed. It is not telling you to run something else either — the interrupted
+attempt leaves the run execution-owned, so a later execution-owning command
+refuses `EXECUTION_IN_PROGRESS` rather than recovering it. A run that reaches
+this state persistently is the SIGKILL case described in
+[docs/internal/architecture.md § PID-identity recovery](../internal/architecture.md#pid-identity-recovery-and-its-two-known-weaknesses).
 
 The message names the run and the recovery epoch of the unresolved attempt.
 
 **Text:**
 
 ```text
-Error: Run rd_9e725b142d81dabcefb9e04919568fcd ended execution with an unknown outcome at epoch 7; run recovery before continuing.
+Error: Run rd_9e725b142d81dabcefb9e04919568fcd ended execution with an unknown outcome at epoch 7; its recovery has not completed. Nothing was written and no recovery was started here, so retrying this command will not clear it.
 Code: RECOVERY_REQUIRED
 ```
 
@@ -1314,7 +1333,7 @@ Code: RECOVERY_REQUIRED
 ```json
 {
   "kind": "error",
-  "error": "Run rd_9e725b142d81dabcefb9e04919568fcd ended execution with an unknown outcome at epoch 7; run recovery before continuing.",
+  "error": "Run rd_9e725b142d81dabcefb9e04919568fcd ended execution with an unknown outcome at epoch 7; its recovery has not completed. Nothing was written and no recovery was started here, so retrying this command will not clear it.",
   "code": "RECOVERY_REQUIRED",
   "command": "pass"
 }
@@ -1643,18 +1662,24 @@ they reach output through the top-level error wrapper rather than through
 
 - **Text** is `Error <code>: <message>` on one line — not the `Error: …` /
   `Code: …` pair the symbolic codes render. `--verbose` appends the registered
-  description and a documentation link.
-- **JSON** carries an extra `details` object holding `category`, `title`, the
-  error's structured `context`, and `docsUrl`. The documented envelope fields
-  (`kind`, `error`, `code`, `command`) are unchanged.
+  description, and nothing else.
+- **JSON** carries an extra `details` object holding `category`, `title`, and
+  the error's structured `context`. The documented envelope fields (`kind`,
+  `error`, `code`, `command`) are unchanged.
 
 The registered `description` reaches an operator **only** under
 `--text --verbose`, and never appears in the default JSON envelope, so each of
 these codes deliberately spells its diagnosis and its recovery into `error`
 itself.
 
-> The `docsUrl` these envelopes carry points at a host that does not currently
-> resolve. It is documented as emitted, not as reachable.
+**No documentation URL is emitted, by any code.** Errors carry no `docsUrl`
+field and `--verbose` prints no link. The per-code `docSlug` still exists in the
+registry as the durable identifier a future `/docs/errors/` route would key on,
+but no such route has ever been served, so nothing renders it.
+
+Every one of these four contexts also carries a `message` key holding the same
+diagnosis already rendered into `error`. It is **elided from the fences below**
+for readability; expect it on the wire.
 
 Two are open-time faults on the database as a whole, two concern one run.
 
@@ -1697,8 +1722,7 @@ Error RD-306: Runbook database is not in WAL journal mode - effective mode: dele
   "details": {
     "category": "STATE",
     "title": "Runbook database is not in WAL journal mode",
-    "context": { "effectiveMode": "delete" },
-    "docsUrl": "https://rundown.dev/docs/errors/wal-journal-mode-unavailable"
+    "context": { "effectiveMode": "delete" }
   }
 }
 ```
@@ -1732,8 +1756,7 @@ Error RD-307: Runbook database unavailable - Native SQLite (node:sqlite) is unav
   "details": {
     "category": "STATE",
     "title": "Runbook database unavailable",
-    "context": { "driverCode": "SQLITE_READONLY" },
-    "docsUrl": "https://rundown.dev/docs/errors/state-store-unavailable"
+    "context": { "driverCode": "SQLITE_READONLY" }
   }
 }
 ```
@@ -1772,8 +1795,7 @@ Error RD-308: Runbook state lost to a concurrent writer - Run rd_9e725b142d81dab
   "details": {
     "category": "STATE",
     "title": "Runbook state lost to a concurrent writer",
-    "context": { "runId": "rd_9e725b142d81dabcefb9e04919568fcd" },
-    "docsUrl": "https://rundown.dev/docs/errors/concurrent-state-modification"
+    "context": { "runId": "rd_9e725b142d81dabcefb9e04919568fcd" }
   }
 }
 ```
@@ -1797,10 +1819,20 @@ stopped runs out of `RunbookStateManager.list`, which skips every row that fails
 validation, so it exits `0` having pruned nothing at all. `--inactive` (or
 `--all`) reaches the run through prune's invalid-id path.
 
+Being scoped to one run is also why `context` names it. `runId` is the affected
+run, `reason` is a closed set naming which refusal fired (`unparseable_json`,
+`invalid_schema_version`, `missing_template_vars`, `schema_validation_failed`,
+`legacy_dynamic_step_snapshot`, `malformed_delegate_frontier`,
+`unrecognized_recovery_reason`), and `schemaVersion` — present only for
+`invalid_schema_version` — is the version the row claims, reported exactly as
+persisted and deliberately not narrowed to a number. That last field appears
+**nowhere** in the message prose, so structured context is the only way to read
+it.
+
 **Text:**
 
 ```text
-Error RD-309: Invalid persisted run state - Run rd_9e725b142d81dabcefb9e04919568fcd has invalid schemaVersion 2. Rundown never migrates persisted state, so this run cannot be resumed: finish it with "rundown complete", stop it with "rundown stop", or discard it with "rundown prune --inactive", then re-run the runbook from source.
+Error RD-309: Invalid persisted run state - Invalid runbook state for "rd_9e725b142d81dabcefb9e04919568fcd": invalid schemaVersion; expected schema version 1. Rundown never migrates persisted state, so this run cannot be resumed: finish it with "rundown complete", stop it with "rundown stop", or discard it with "rundown prune --inactive", then re-run the runbook from source.
 ```
 
 **JSON:**
@@ -1808,14 +1840,17 @@ Error RD-309: Invalid persisted run state - Run rd_9e725b142d81dabcefb9e04919568
 ```json
 {
   "kind": "error",
-  "error": "Invalid persisted run state - Run rd_9e725b142d81dabcefb9e04919568fcd has invalid schemaVersion 2. Rundown never migrates persisted state, so this run cannot be resumed: finish it with \"rundown complete\", stop it with \"rundown stop\", or discard it with \"rundown prune --inactive\", then re-run the runbook from source.",
+  "error": "Invalid persisted run state - Invalid runbook state for \"rd_9e725b142d81dabcefb9e04919568fcd\": invalid schemaVersion; expected schema version 1. Rundown never migrates persisted state, so this run cannot be resumed: finish it with \"rundown complete\", stop it with \"rundown stop\", or discard it with \"rundown prune --inactive\", then re-run the runbook from source.",
   "code": "RD-309",
   "command": "pass",
   "details": {
     "category": "STATE",
     "title": "Invalid persisted run state",
-    "context": {},
-    "docsUrl": "https://rundown.dev/docs/errors/invalid-persisted-run-state"
+    "context": {
+      "runId": "rd_9e725b142d81dabcefb9e04919568fcd",
+      "reason": "invalid_schema_version",
+      "schemaVersion": 2
+    }
   }
 }
 ```
@@ -1898,9 +1933,9 @@ cursor is the idempotent `already-aggregated` no-op (`COLLECT_ALREADY_APPLIED`),
 and it cannot retry the transition that was refused. Recover the streamed `code`
 on its own terms (its row in
 [docs/reference/cli.md](../reference/cli.md#common-errors-and-resolutions)
-carries the remedy: wait out the owning process, run recovery, or re-resolve a
-bearer that is no longer authority), then drive the delegating run forward from
-where it now stands.
+carries the remedy: wait out the owning process, let the automatic inline
+recovery finish, or re-resolve a bearer that is no longer authority), then drive
+the delegating run forward from where it now stands.
 
 ```jsonl
 {"type":"error_occurred","message":"Run rd_0123456789abcdef0123456789abcdef claim generation advanced since it was captured.","code":"STALE_CLAIM","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/parent.runbook.md"},"seq":3}

@@ -24,7 +24,23 @@ export interface ErrorCodeDefinition {
   readonly title: string;
   /** Detailed description with resolution guidance */
   readonly description: string;
-  /** Documentation URL fragment (e.g., 'file-not-found') */
+  /**
+   * Stable documentation slug for this code (e.g., `'file-not-found'`).
+   *
+   * **Deliberately has no runtime consumer today, and that is not an
+   * oversight — do not "clean it up".** `RundownError` used to render it as
+   * `https://rundown.dev/docs/errors/<docSlug>` in `--verbose` text and in the
+   * JSON error envelope's `details`. That link was dead for every one of the
+   * codes below: `rundown.dev` does not resolve at all, the real site is
+   * `rundown.cool` (`site/astro.config.mjs`), and neither host has ever served
+   * a `/docs/errors/` route. A URL that has never resolved for any code is
+   * worse than no URL, so the field that emitted it was removed.
+   *
+   * The slug itself survives because it is the durable identifier a future
+   * `/docs/errors/` route would key on. Deleting it would be a large mechanical
+   * diff with no behavioural benefit, and re-deriving the slugs later would be
+   * guesswork. Keep one on every new code, and keep it stable.
+   */
   readonly docSlug: string;
 }
 

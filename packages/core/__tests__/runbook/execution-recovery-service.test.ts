@@ -291,6 +291,29 @@ describe('ExecutionRecoveryService', () => {
     await expect(service.recover(runId)).resolves.toEqual({ kind: 'not_pending', runId });
   });
 
+  // The recovery event is pure, so an actor that accepts it without landing in
+  // the machine's recovery state means the persisted snapshot does not match
+  // the compiled machine. That is invalid persisted state, and the attempt must
+  // be left pending rather than committed from a snapshot nobody recovered.
+  it('refuses and leaves the attempt pending when the actor never enters the recovery state', async () => {
+    const runId = await intoRecoveryPending();
+    const service = new ExecutionRecoveryService(store, (state) => ({
+      ...makeActor(state),
+      isInRecoveryState: () => false,
+    }));
+    const pending = await store.readPendingRecovery(runId);
+
+    const outcome = await service.recover(runId);
+
+    expect(outcome).toEqual({
+      kind: 'recovery_required',
+      runId,
+      epoch: pending?.epoch,
+      message: `Run ${runId} needs recovery: Recovery for run ${runId} did not enter the machine recovery state.`,
+    });
+    await expect(store.readPendingRecovery(runId)).resolves.toEqual(pending);
+  });
+
   it('clears ownership and never leaks an execution token into persisted state', async () => {
     const runId = await intoRecoveryPending();
     const service = new ExecutionRecoveryService(store, makeActor);
@@ -420,19 +443,41 @@ describe('ExecutionRecoveryService', () => {
 });
 
 describe('validateReason', () => {
+  const REASON_RUN_ID = 'rd_11111111111111111111111111111111' as RunId;
+
   it('falls back to the default reason only for a null persisted value', () => {
-    expect(validateReason(null)).toBe('owner_dead');
+    expect(validateReason(null, REASON_RUN_ID)).toBe('owner_dead');
   });
 
   it('returns every recognized persisted reason unchanged', () => {
-    expect(validateReason('effect_boundary_crossed')).toBe('effect_boundary_crossed');
-    expect(validateReason('stale_commit')).toBe('stale_commit');
-    expect(validateReason('owner_dead')).toBe('owner_dead');
+    expect(validateReason('effect_boundary_crossed', REASON_RUN_ID)).toBe(
+      'effect_boundary_crossed',
+    );
+    expect(validateReason('stale_commit', REASON_RUN_ID)).toBe('stale_commit');
+    expect(validateReason('owner_dead', REASON_RUN_ID)).toBe('owner_dead');
   });
 
   it('rejects an unknown non-null persisted reason instead of coercing it', () => {
-    expect(() => validateReason('totally_bogus')).toThrow(InvalidRunbookStateError);
-    expect(() => validateReason('totally_bogus')).toThrow(/totally_bogus/);
-    expect(() => validateReason('totally_bogus')).toThrow(/stop, prune, or restart/);
+    expect(() => validateReason('totally_bogus', REASON_RUN_ID)).toThrow(InvalidRunbookStateError);
+    expect(() => validateReason('totally_bogus', REASON_RUN_ID)).toThrow(/totally_bogus/);
+    expect(() => validateReason('totally_bogus', REASON_RUN_ID)).toThrow(/stop, prune, or restart/);
+  });
+
+  // The run id is the reason this takes a `runId` at all: the refusal reaches
+  // an operator as RD-309, whose envelope must name the run in a field rather
+  // than only inside the message prose.
+  it('carries the run and reason in the refusal defect', () => {
+    let defect: unknown;
+    try {
+      validateReason('totally_bogus', REASON_RUN_ID);
+    } catch (error) {
+      if (!(error instanceof InvalidRunbookStateError)) throw error;
+      defect = error.defect;
+    }
+
+    expect(defect).toEqual({
+      runId: REASON_RUN_ID,
+      reason: 'unrecognized_recovery_reason',
+    });
   });
 });

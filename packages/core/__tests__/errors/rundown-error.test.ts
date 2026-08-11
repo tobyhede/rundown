@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { RundownError, Errors, ErrorCodes, ErrorCategory } from '../../src/errors.js';
+import type { InvalidRunStateDefect } from '../../src/errors.js';
 
 describe('RundownError', () => {
   describe('construction', () => {
@@ -76,10 +77,31 @@ describe('RundownError', () => {
     });
   });
 
-  describe('docsUrl', () => {
-    it('returns documentation URL', () => {
+  // A documentation URL is deliberately absent from every error surface. No
+  // `/docs/errors/` route has ever existed on either the `rundown.dev` host the
+  // field named (which does not resolve at all) or the real `rundown.cool`
+  // site, so all 62 registered codes emitted a dead link. These assertions are
+  // the regression guard: the field must not silently reappear on the instance,
+  // in the JSON payload, or in `--verbose` text.
+  describe('documentation URL', () => {
+    it('exposes no docsUrl on the instance', () => {
       const error = new RundownError('FILE_NOT_FOUND', { file: 'test.md' });
-      expect(error.docsUrl).toBe('https://rundown.dev/docs/errors/file-not-found');
+
+      // `in` walks the whole prototype chain, so a re-added getter is caught.
+      expect('docsUrl' in error).toBe(false);
+    });
+
+    it('emits no documentation host in any rendered surface', () => {
+      const error = new RundownError('FILE_NOT_FOUND', { file: 'test.md' });
+      const rendered = [
+        error.message,
+        error.toCliString(),
+        error.toCliString(true),
+        JSON.stringify(error.toJSON()),
+      ].join('\n');
+
+      expect(rendered).not.toContain('rundown.dev');
+      expect(rendered).not.toContain('/docs/errors/');
     });
   });
 
@@ -91,13 +113,16 @@ describe('RundownError', () => {
       expect(output).toBe('Error RD-101: Runbook file not found: test.md');
     });
 
-    it('includes description and docs URL when verbose', () => {
+    it('includes the description but no docs link when verbose', () => {
       const error = new RundownError('FILE_NOT_FOUND', { file: 'test.md' });
       const output = error.toCliString(true);
 
-      expect(output).toContain('Error RD-101:');
-      expect(output).toContain('does not exist or cannot be accessed');
-      expect(output).toContain('Documentation:');
+      expect(output).toBe(
+        'Error RD-101: Runbook file not found: test.md\n' +
+          '\n' +
+          'The specified runbook file does not exist or cannot be accessed.',
+      );
+      expect(output).not.toContain('Documentation:');
     });
   });
 
@@ -112,8 +137,8 @@ describe('RundownError', () => {
         title: 'Runbook file not found',
         message: 'Runbook file not found: test.md',
         context: { file: 'test.md' },
-        docsUrl: 'https://rundown.dev/docs/errors/file-not-found',
       });
+      expect(json).not.toHaveProperty('docsUrl');
     });
   });
 });
@@ -292,5 +317,46 @@ describe('retry idempotency error codes', () => {
       // Still prose-visible: the structured key is an addition, not a move.
       expect(error.message).toContain(reason);
     }
+  });
+});
+
+/**
+ * TYPE-LEVEL PIN. `schemaVersion` is meaningful for exactly one reason.
+ *
+ * As an optional field on a flat interface the type permitted both mistakes it
+ * exists to prevent: an `invalid_schema_version` defect that omits the found
+ * version — the one fact that refusal carries and the message never states —
+ * and any other reason claiming one, which would put a version into the RD-309
+ * envelope for a refusal that never read one. Every assertion below is checked
+ * by `check:types`; the `@ts-expect-error` directives fail the build if the
+ * union stops rejecting these shapes.
+ */
+describe('InvalidRunStateDefect', () => {
+  it('requires schemaVersion for invalid_schema_version and rejects it elsewhere', () => {
+    // `unknown`, so an untrusted row claiming a string is representable — that
+    // is exactly the case worth reporting, not one to narrow away.
+    const versioned: InvalidRunStateDefect = {
+      runId: 'rd_a',
+      reason: 'invalid_schema_version',
+      schemaVersion: '2',
+    };
+    const unversioned: InvalidRunStateDefect = { runId: 'rd_b', reason: 'missing_template_vars' };
+
+    // @ts-expect-error - invalid_schema_version without the version it found
+    const missing: InvalidRunStateDefect = { runId: 'rd_c', reason: 'invalid_schema_version' };
+    // @ts-expect-error - no other reason reads a schema version
+    const extraneous: InvalidRunStateDefect = {
+      runId: 'rd_d',
+      reason: 'unparseable_json',
+      schemaVersion: 1,
+    };
+
+    // Runtime expectations keep the bindings load-bearing so they cannot be
+    // stripped as unused, and pin the values the annotations accepted.
+    expect([versioned.schemaVersion, unversioned.schemaVersion]).toEqual(['2', undefined]);
+    expect([missing.reason, extraneous.reason]).toEqual([
+      'invalid_schema_version',
+      'unparseable_json',
+    ]);
   });
 });
