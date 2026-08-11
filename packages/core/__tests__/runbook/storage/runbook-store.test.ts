@@ -2287,12 +2287,20 @@ describe('mutateSessionGuarded recovery refusal', () => {
     });
     expect(await attemptState(state.id)).toEqual({ phase: 'recovery_pending', owned: true });
 
+    // The refusal is decided in the preflight loop, ahead of `work`. Tracking
+    // the callback directly pins that: an empty stack only proves nothing was
+    // COMMITTED, which a rolled-back transaction would also satisfy — this
+    // proves the caller's mutation never ran at all, so a callback with an
+    // external side effect cannot fire behind a refusal.
+    let workRan = false;
     const result = await store.mutateSessionGuarded([state.id], (ctx) => {
+      workRan = true;
       ctx.session.defaultStack.push(state.id);
       return null;
     });
 
     expect(result.kind).toBe('recovery_required');
+    expect(workRan).toBe(false);
     // Nothing written: the refusal is decided before the session write lands.
     expect(await store.read((txn) => txn.stack())).toEqual([]);
     // Nothing recovered and nothing reclaimed. A later identical call sees the
@@ -2300,10 +2308,12 @@ describe('mutateSessionGuarded recovery refusal', () => {
     expect(await attemptState(state.id)).toEqual({ phase: 'recovery_pending', owned: true });
 
     const retried = await store.mutateSessionGuarded([state.id], (ctx) => {
+      workRan = true;
       ctx.session.defaultStack.push(state.id);
       return null;
     });
     expect(retried).toEqual(result);
+    expect(workRan).toBe(false);
   });
 
   it('states the facts without promising recovery or a recovery command', async () => {
