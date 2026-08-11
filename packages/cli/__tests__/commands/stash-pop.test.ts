@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -6,14 +6,17 @@ import {
   createRunbook,
   runCliInProcess,
   findActionOutput,
+  parseConcatenatedJson,
   readSession,
   readRunbookState,
   getActiveState,
+  seedExecutionOwnership,
   writeSession,
   requireFrontierToken,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import {
+  issueRunControlClaimFor,
   patchPersistedRunState,
   seedRawRunState,
 } from '@rundown-org/core/testing/session-fixtures';
@@ -25,8 +28,9 @@ import { Command } from 'commander';
 // the commands only via the dynamic `import('../cli.js')` seam in
 // runCliInProcess). This file is the per-command home for stash AND pop, so it
 // statically imports both register functions. See collect.test.ts.
-import { registerStashCommand } from '../../src/commands/stash.js';
-import { registerPopCommand } from '../../src/commands/pop.js';
+import { registerStashCommand, claimStashRefusal } from '../../src/commands/stash.js';
+import { registerPopCommand, claimPopRefusal } from '../../src/commands/pop.js';
+import { sharedClaimRefusal } from '../../src/helpers/claim-refusal.js';
 import {
   assertClaimId,
   assertDelegationTokenHash,
@@ -36,6 +40,11 @@ import {
   createDelegatedChildGrants,
   hashClaimSecret,
   parseClaimBearer,
+  redactClaimId,
+  SessionService,
+  type StashForClaimIdResult,
+  type UnstashForClaimIdResult,
+  type VerifiedClaim,
 } from '@rundown-org/core';
 
 const VALID_OTHER_CLAIM_ID = assertClaimId(
@@ -83,12 +92,47 @@ describe('stash command', () => {
   });
 
   afterEach(async () => {
+    // Unconditional, because `restoreAllMocks()` as the last statement of a test
+    // body only runs when every assertion above it passed. The one test here that
+    // spies does so on `SessionService.prototype` — shared by every case in this
+    // file — so a single failing assertion would leak live spies into the ~30
+    // tests that follow, and it is the test most likely to fail that would leak
+    // them. Verified: with the spy test forced to fail, a probe asserting
+    // `jest.isMockFunction(SessionService.prototype.stash) === false` passes with
+    // this line and fails without it.
+    jest.restoreAllMocks();
     await workspace.cleanup();
   });
 
   function getAutoIssuedToken(stdout: string): string {
     return requireFrontierToken(stdout, '1.1');
   }
+
+  it('resolves and parks the active run in one core call, never getActive + a separate stash write', async () => {
+    // Structural guard on the bare path's half of #666, and the only kind of
+    // test that can hold it: every behavioural test here is sequential, so
+    // restoring the `getActive()` -> separate-stash-write pair would leave all of
+    // them green while reopening the window where a concurrent push means the
+    // run that gets parked is not the one the command resolved. Atomicity is
+    // "the CLI asks core exactly once", so that is what is asserted.
+    //
+    // The bearer-blind half of the pair is no longer countable, and does not need
+    // to be: `SessionService` has no run-id-authorized stash left to call. That
+    // shape survives only as `stashRunbookUnverified` in core's testing surface,
+    // which the CLI does not depend on.
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const stash = jest.spyOn(SessionService.prototype, 'stash');
+    const getActive = jest.spyOn(SessionService.prototype, 'getActive');
+
+    const result = await runCliInProcess('stash', workspace);
+
+    expect(result.exitCode).toBe(0);
+    // One named object so the failure diff says which call moved.
+    expect({
+      atomicStash: stash.mock.calls.length,
+      unlockedActiveReads: getActive.mock.calls.length,
+    }).toEqual({ atomicStash: 1, unlockedActiveReads: 0 });
+  });
 
   it('moves active runbook to stashed', async () => {
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
@@ -155,6 +199,70 @@ describe('stash command', () => {
       }),
     );
   });
+
+  it('refuses to park a run whose persisted schema version is not current', async () => {
+    // The atomicity fix above replaced this path's `getActive()` pre-read — and
+    // with it `RunbookStateManager.load`'s schema-version gate, which the
+    // in-transaction `ctx.readState` did not have. Restoring the pre-read would
+    // reopen the check-then-act race, so the gate moved into
+    // `RunbookStore.readRun`; this pins the caller-visible behaviour it restores.
+    // Persisted state is never migrated: an unreadable version must be reported,
+    // not parsed (CLAUDE.md, State Persistence).
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const state = await getActiveState(workspace);
+    expect(state).not.toBeNull();
+    await patchPersistedRunState(workspace.cwd, state!.id, { schemaVersion: 2 });
+
+    const result = await runCliInProcess('stash', workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'RD-309',
+        error: expect.stringContaining(
+          `Invalid runbook state for "${state!.id}": invalid schemaVersion; expected schema version 1.`,
+        ),
+      }),
+    );
+    // The decisive assertion: the refusal wrote nothing. A gate that reports and
+    // still parks the run would leave the slot holding unreadable state.
+    expect((await readSession(workspace)).stashed).toBeNull();
+  });
+
+  // The other two shapes `RunbookStateManager.load` has always refused. Mirroring
+  // only the schema-version gate into the store left these reporting a raw
+  // `ZodError` schema dump ("No matching discriminator" / unrecognized_keys) —
+  // no restart instruction, and a class the CLI's recovery taxonomy does not
+  // recognize. Both are pinned here because a user with a pre-existing legacy
+  // run is the only person who ever sees this path.
+  it.each([
+    ['a GOTO_NEXT last action', { lastAction: { type: 'GOTO_NEXT' } }, 'GOTO_NEXT'],
+    ['an instance field', { instance: 2 }, 'instance field'],
+  ])(
+    'refuses to park a run persisted as a legacy snapshot with %s',
+    async (_label, legacyShape, shapeName) => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const state = await getActiveState(workspace);
+      expect(state).not.toBeNull();
+      await patchPersistedRunState(workspace.cwd, state!.id, legacyShape);
+
+      const result = await runCliInProcess('stash', workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'RD-309',
+          error: expect.stringContaining(
+            `This runbook used dynamic-step snapshots (${shapeName}), which are no longer supported. ` +
+              'Please restart execution from the runbook entrypoint.',
+          ),
+        }),
+      );
+      expect((await readSession(workspace)).stashed).toBeNull();
+    },
+  );
 
   it('keeps claimed delegated children out of plain pop', async () => {
     const parent = createRunbook({
@@ -429,6 +537,366 @@ describe('stash command', () => {
     expect(session.stashed).toBe(childRunId);
     expect(session.active).not.toBe(childRunId);
   });
+
+  // This pins the refusal envelope and the untouched stash slot — not the
+  // #666 race itself. Rotating the bearer before invoking `stash` is already
+  // caught by the pre-existing resolver staleness check: the OLD CLI path
+  // (`resolveCommandTarget`) read the claim in a separate step before
+  // mutating, and that pre-read already sees a rotation that happened first.
+  // `stashForClaimId` has no separate feeding read at all — that is the
+  // whole point of this change: verification happens inside the same
+  // transaction that writes the slot. The actual #666 race — rotation
+  // landing inside one command's own resolve-to-commit window — cannot be
+  // observed from a sequential, in-process CLI test; the regression evidence
+  // for that lives at the core layer in
+  // `'refuses a bearer rotated after resolution and leaves the stash slot
+  // untouched'` (packages/core/__tests__/runbook/session-service.test.ts).
+  it('refuses a rotated run-control bearer with the documented JSON envelope', async () => {
+    const runbookPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, runbookPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const started = await runCliInProcess(['run', runbookPath], workspace);
+    expect(started.exitCode).toBe(0);
+    const startedEvent = parseConcatenatedJson(started.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    const oldBearer = startedEvent?.claim_id;
+    if (typeof oldBearer !== 'string') {
+      throw new Error('Expected runbook_started to carry a claim_id');
+    }
+    const runId = (await readSession(workspace)).active;
+    if (runId === null) throw new Error('Expected an active run');
+
+    // Rotate: mint a replacement run-control claim for the same run. The old
+    // bearer is now dead authority.
+    await issueRunControlClaimFor(workspace.cwd, assertRunId(runId));
+
+    const result = await runCliInProcess(['stash', '--claim-id', oldBearer], workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        command: 'stash',
+        // A rotated bearer must render `superseded`'s wording, never the
+        // generic `missing-claim` message — both share the same code, so a
+        // core regression that swapped one status for the other would still
+        // pass a code-only assertion here.
+        error: expect.stringContaining('was released or replaced and is no longer authority'),
+      }),
+    );
+    // The refusal must identify the claim by its non-secret lookup key.
+    expect(result.stdout).toContain(claimKeyFromBearer(assertClaimId(oldBearer)));
+    // The decisive assertion: the slot did not move.
+    expect((await readSession(workspace)).stashed).toBeNull();
+    // The bearer secret must never reach the transcript. `split('_')` is not a
+    // safe extraction — the base64url secret segment can itself contain `_`,
+    // so use the same parsed-secret helper the rest of this file relies on.
+    expect(result.stdout).not.toContain(parseClaimBearer(assertClaimId(oldBearer)).secret);
+  });
+
+  it('stashes with a valid run-control bearer', async () => {
+    const runbookPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, runbookPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const started = await runCliInProcess(['run', runbookPath], workspace);
+    const startedEvent = parseConcatenatedJson(started.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    const bearer = startedEvent?.claim_id;
+    if (typeof bearer !== 'string') {
+      throw new Error('Expected runbook_started to carry a claim_id');
+    }
+    const runId = (await readSession(workspace)).active;
+
+    const result = await runCliInProcess(['stash', '--claim-id', bearer], workspace);
+
+    expect(result.exitCode).toBe(0);
+    const session = await readSession(workspace);
+    expect(session.stashed).toBe(runId);
+    expect(session.active).toBeNull();
+  });
+
+  // Pins the two-envelope split `claimStashRefusal` introduces:
+  // `already-stashed` (this claim's own run is already parked) must render
+  // CLAIMED_RUNBOOK_UNAVAILABLE, distinct from `slot-occupied` (a different
+  // run holds the slot) below, which renders ALREADY_STASHED. Nothing else
+  // in this file distinguishes the two codes at the CLI boundary — swapping
+  // the two `claimStashRefusal` return bodies would leave every other test
+  // green.
+  it('refuses re-stashing an already-stashed claim with CLAIMED_RUNBOOK_UNAVAILABLE', async () => {
+    const runbookPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, runbookPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const started = await runCliInProcess(['run', runbookPath], workspace);
+    expect(started.exitCode).toBe(0);
+    const startedEvent = parseConcatenatedJson(started.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    const bearer = startedEvent?.claim_id;
+    if (typeof bearer !== 'string') {
+      throw new Error('Expected runbook_started to carry a claim_id');
+    }
+    const runId = (await readSession(workspace)).active;
+    if (runId === null) throw new Error('Expected an active run');
+
+    const first = await runCliInProcess(['stash', '--claim-id', bearer], workspace);
+    expect(first.exitCode).toBe(0);
+
+    const second = await runCliInProcess(['stash', '--claim-id', bearer], workspace);
+
+    expect(second.exitCode).toBe(1);
+    const claimKey = claimKeyFromBearer(assertClaimId(bearer));
+    expect(JSON.parse(second.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        command: 'stash',
+        error: `Claim id ${claimKey} is currently stashed. Run \`rundown pop\` with its claim id to resume.`,
+      }),
+    );
+    const session = await readSession(workspace);
+    expect(session.stashed).toBe(runId);
+  });
+
+  it('refuses a claimed stash when the slot already holds a different run, with ALREADY_STASHED', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const otherRunId = (await readSession(workspace)).active;
+    if (otherRunId === null) throw new Error('Expected an active run');
+
+    const bareStash = await runCliInProcess('stash --text', workspace);
+    expect(bareStash.exitCode).toBe(0);
+    expect((await readSession(workspace)).stashed).toBe(otherRunId);
+
+    const childPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, childPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const childStarted = await runCliInProcess(['run', childPath], workspace);
+    expect(childStarted.exitCode).toBe(0);
+    const childStartedEvent = parseConcatenatedJson(childStarted.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    const childBearer = childStartedEvent?.claim_id;
+    if (typeof childBearer !== 'string') {
+      throw new Error('Expected runbook_started to carry a claim_id');
+    }
+
+    const result = await runCliInProcess(['stash', '--claim-id', childBearer], workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'ALREADY_STASHED',
+        command: 'stash',
+        error: 'A runbook is already stashed. Pop it first.',
+      }),
+    );
+    const session = await readSession(workspace);
+    expect(session.stashed).toBe(otherRunId);
+  });
+
+  // Pins the `stashResult.kind !== 'committed'` guards on both the bare and
+  // `--claim-id` paths: a session mutation that core refuses because the run
+  // is execution-owned must be rendered as EXECUTION_IN_PROGRESS and must
+  // leave the stash slot untouched. `seedExecutionOwnership` writes the same
+  // `runs.exec_token` state a real in-flight `rd pass`/`rd fail` execution
+  // lease would hold — no raw SQL hand-rolled here.
+  it('refuses bare stash with EXECUTION_IN_PROGRESS while the active run is execution-owned', async () => {
+    const runbookPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, runbookPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const started = await runCliInProcess(['run', runbookPath], workspace);
+    expect(started.exitCode).toBe(0);
+    const runId = (await readSession(workspace)).active;
+    if (runId === null) throw new Error('Expected an active run');
+
+    seedExecutionOwnership(workspace, assertRunId(runId));
+
+    const result = await runCliInProcess(['stash'], workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'EXECUTION_IN_PROGRESS',
+        command: 'stash',
+        error: `Run ${runId} has an execution in progress.`,
+      }),
+    );
+    expect((await readSession(workspace)).stashed).toBeNull();
+  });
+
+  it('refuses stash --claim-id with EXECUTION_IN_PROGRESS while the claimed run is execution-owned', async () => {
+    const runbookPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, runbookPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const started = await runCliInProcess(['run', runbookPath], workspace);
+    expect(started.exitCode).toBe(0);
+    const startedEvent = parseConcatenatedJson(started.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    const bearer = startedEvent?.claim_id;
+    if (typeof bearer !== 'string') {
+      throw new Error('Expected runbook_started to carry a claim_id');
+    }
+    const runId = (await readSession(workspace)).active;
+    if (runId === null) throw new Error('Expected an active run');
+
+    seedExecutionOwnership(workspace, assertRunId(runId));
+
+    const result = await runCliInProcess(['stash', '--claim-id', bearer], workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'EXECUTION_IN_PROGRESS',
+        command: 'stash',
+        error: `Run ${runId} has an execution in progress.`,
+      }),
+    );
+    expect((await readSession(workspace)).stashed).toBeNull();
+  });
+
+  // Pins the promise docs/reference/cli.md makes for `stash --claim-id`
+  // (§"rundown stash", and the RD-825 list under Delegation semantics): once
+  // the parent has moved past the delegation, `stash` reports
+  // DELEGATION_SUPERSEDED *with the no-retry instruction*, not a generic
+  // unavailable envelope. The rotation test above covers `claim-rotated` →
+  // CLAIMED_RUNBOOK_UNAVAILABLE, which is a different arm and carries no
+  // no-retry signal, so nothing else at the CLI boundary pins this one.
+  it('refuses stash --claim-id with DELEGATION_SUPERSEDED once the parent has moved on', async () => {
+    const parent = createRunbook({
+      title: 'Parent',
+      steps: [
+        {
+          title: 'Review',
+          pass: 'CONTINUE',
+          substeps: [
+            {
+              title: 'Code review',
+              delegate: true,
+              content: 'Do code review.',
+              runbooks: ['child.runbook.md'],
+            },
+          ],
+        },
+      ],
+    });
+    const child = createRunbook({
+      title: 'Child',
+      steps: [{ title: 'Execute', pass: 'COMPLETE', fail: 'STOP', content: 'Run child.' }],
+    });
+    await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
+    await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
+
+    // JSON, not `--text`: the auto-issued delegation token is only machine
+    // readable on the default output path, and that token is what this test
+    // claims the child with.
+    let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+    expect(result.exitCode).toBe(0);
+    const parentState = await getActiveState(workspace);
+    expect(parentState).not.toBeNull();
+
+    const token = getAutoIssuedToken(result.stdout);
+    result = await runCliInProcess(`claim ${token}`, workspace);
+    expect(result.exitCode).toBe(0);
+    const output = findActionOutput(result.stdout);
+    const claimId = String(output?.claim_id);
+    expect(claimId).toEqual(expect.stringMatching(/^rdclm_/));
+
+    // The parent ends, closing the delegation. The child is never stashed, so
+    // the slot is empty and any write by the refused command would be visible.
+    await patchPersistedRunState(workspace.cwd, parentState!.id, { lifecycle: 'completed' });
+
+    result = await runCliInProcess(['stash', '--claim-id', claimId], workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'DELEGATION_SUPERSEDED',
+        command: 'stash',
+        error: expect.stringContaining(
+          'moved past this delegation (parent-ended). Do not retry the token; report the superseded delegation to the orchestrator.',
+        ),
+      }),
+    );
+    expect(result.stdout).toContain(claimKeyFromBearer(assertClaimId(claimId)));
+    expect(result.stdout).not.toContain(parseClaimBearer(assertClaimId(claimId)).secret);
+    // The decisive assertion: the refusal wrote nothing.
+    expect((await readSession(workspace)).stashed).toBeNull();
+  });
+
+  // The claim-targeted sibling. It resolves its target through the same
+  // `ctx.readState`, so it inherits the same gate — pinned separately because
+  // `stashForClaimId` reaches that read down an entirely different branch
+  // (bearer verification, delegation liveness) than the bare path above.
+  it('refuses a claimed stash of a run persisted as a legacy snapshot', async () => {
+    const runbookPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, runbookPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const started = await runCliInProcess(['run', runbookPath], workspace);
+    expect(started.exitCode).toBe(0);
+    const startedEvent = parseConcatenatedJson(started.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    const bearer = startedEvent?.claim_id;
+    if (typeof bearer !== 'string') {
+      throw new Error('Expected runbook_started to carry a claim_id');
+    }
+    const runId = (await readSession(workspace)).active;
+    if (runId === null) throw new Error('Expected an active run');
+    await patchPersistedRunState(workspace.cwd, runId, { lastAction: { type: 'GOTO_NEXT' } });
+
+    const result = await runCliInProcess(['stash', '--claim-id', bearer], workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'RD-309',
+        error: expect.stringContaining(
+          'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported.',
+        ),
+      }),
+    );
+    expect((await readSession(workspace)).stashed).toBeNull();
+  });
 });
 
 describe('pop command', () => {
@@ -467,6 +935,109 @@ describe('pop command', () => {
     const afterSession = await readSession(workspace);
     expect(afterSession.stashed).toBeNull();
     expect(afterSession.active).toBe(runbookId);
+  });
+
+  it('refuses to restore a run whose persisted schema version is not current', async () => {
+    // The sibling of the stash case above. `pop` never had the gate — it has
+    // always read through `ctx.readState` — so this is a pre-existing hole the
+    // same `RunbookStore.readRun` check closes, not a regression on this branch.
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    const state = await getActiveState(workspace);
+    expect(state).not.toBeNull();
+    await runCliInProcess('stash', workspace);
+    await patchPersistedRunState(workspace.cwd, state!.id, { schemaVersion: 2 });
+
+    const result = await runCliInProcess('pop', workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'RD-309',
+        error: expect.stringContaining(
+          `Invalid runbook state for "${state!.id}": invalid schemaVersion; expected schema version 1.`,
+        ),
+      }),
+    );
+    // The run stays parked. Recovery is explicit — prune or restart — never an
+    // unstash that makes unreadable state active again.
+    expect((await readSession(workspace)).stashed).toBe(state!.id);
+  });
+
+  // The legacy-snapshot siblings, which the store's gate did not cover until the
+  // three checks became one shared function. Before that, `pop` on a pre-v1 run
+  // reported a bare `ZodError` instead of the loader's restart instruction.
+  it.each([
+    ['a GOTO_NEXT last action', { lastAction: { type: 'GOTO_NEXT' } }, 'GOTO_NEXT'],
+    ['an instance field', { instance: 2 }, 'instance field'],
+  ])(
+    'refuses to restore a run persisted as a legacy snapshot with %s',
+    async (_label, legacyShape, shapeName) => {
+      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const state = await getActiveState(workspace);
+      expect(state).not.toBeNull();
+      // Stash first, THEN corrupt: corrupting first makes the stash itself
+      // refuse, and pop then reports "nothing stashed" — a different path that
+      // looks like this one and proves nothing about it.
+      await runCliInProcess('stash', workspace);
+      await patchPersistedRunState(workspace.cwd, state!.id, legacyShape);
+
+      const result = await runCliInProcess('pop', workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'RD-309',
+          error: expect.stringContaining(
+            `This runbook used dynamic-step snapshots (${shapeName}), which are no longer supported. ` +
+              'Please restart execution from the runbook entrypoint.',
+          ),
+        }),
+      );
+      expect((await readSession(workspace)).stashed).toBe(state!.id);
+    },
+  );
+
+  it('refuses a claimed restore of a run persisted as a legacy snapshot', async () => {
+    const runbookPath = 'solo.runbook.md';
+    await writeFile(
+      join(workspace.cwd, runbookPath),
+      createRunbook({ title: 'Solo', steps: [{ title: 'First step' }] }),
+    );
+    const started = await runCliInProcess(['run', runbookPath], workspace);
+    expect(started.exitCode).toBe(0);
+    const startedEvent = parseConcatenatedJson(started.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'runbook_started',
+    );
+    const bearer = startedEvent?.claim_id;
+    if (typeof bearer !== 'string') {
+      throw new Error('Expected runbook_started to carry a claim_id');
+    }
+    const runId = (await readSession(workspace)).active;
+    if (runId === null) throw new Error('Expected an active run');
+
+    const stashed = await runCliInProcess(['stash', '--claim-id', bearer], workspace);
+    expect(stashed.exitCode).toBe(0);
+    await patchPersistedRunState(workspace.cwd, runId, { instance: 2 });
+
+    const result = await runCliInProcess(['pop', '--claim-id', bearer], workspace);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'RD-309',
+        error: expect.stringContaining(
+          'This runbook used dynamic-step snapshots (instance field), which are no longer supported.',
+        ),
+      }),
+    );
+    // The slot is retained: an unreadable run must not become active again.
+    expect((await readSession(workspace)).stashed).toBe(runId);
   });
 
   it('emits INVALID_CLAIM_ID for invalid claim id', async () => {
@@ -680,5 +1251,129 @@ rd echo "hello"
     expect(session.stashed).toBeNull();
     const ownerStatus = await runCliInProcess(`status --claim-id ${MANUAL_CLAIM_ID}`, workspace);
     expect(JSON.parse(ownerStatus.stdout).runId).toBe(runbookId);
+  });
+});
+
+// Refusal ROUTING, as distinct from refusal WORDING. `claim-refusal.test.ts`
+// pins what `sharedClaimRefusal` says for each of the six shared arms character
+// for character; what neither it nor the behavioural tests above pin is that
+// each command's own switch hands the right status to it. That gap is not
+// theoretical: the `default: never` arm guards at COMPILE time, so it catches an
+// arm core adds, but not a case label edited to a status that still type-checks
+// — and every stryker config sets `checkers: []`, so nothing type-checks a
+// mutant either. Staging all six end-to-end is not an option: `missing-child`
+// is ruled out by the claims/runs FK cascade and cannot be produced through any
+// supported write. Mapping the arms directly is the only total check.
+describe('claim refusal routing', () => {
+  const REFUSAL_RUN_ID = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+  const SLOT_RUN_ID = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+  const refusalClaim: VerifiedClaim = {
+    claimKey: redactClaimId(MANUAL_CLAIM_ID),
+    controlledRunId: REFUSAL_RUN_ID,
+    grants: [],
+  };
+
+  // The six arms both commands delegate. Kept as one list so a divergence
+  // between the two switches shows up as a type error in one of the two maps
+  // below rather than as a silently untested arm.
+  const SHARED_STATUSES = [
+    'missing-claim',
+    'missing-child',
+    'terminal-child',
+    'child-linkage-mismatch',
+    'parent-missing',
+    'superseded',
+  ] as const;
+
+  // Mapped over the union's own discriminants, so an arm added to
+  // `StashForClaimIdResult` / `UnstashForClaimIdResult` in core is a missing
+  // property here — a compile error, not a quietly skipped case.
+  type StashRefusal = Exclude<StashForClaimIdResult, { status: 'stashed' }>;
+  type PopRefusal = Exclude<UnstashForClaimIdResult, { status: 'restored' }>;
+
+  const STASH_REFUSALS: {
+    readonly [S in StashRefusal['status']]: Extract<StashRefusal, { status: S }>;
+  } = {
+    'missing-claim': { status: 'missing-claim', claimId: MANUAL_CLAIM_ID },
+    'missing-child': { status: 'missing-child', childRunId: REFUSAL_RUN_ID },
+    'terminal-child': { status: 'terminal-child', claim: refusalClaim, lifecycle: 'completed' },
+    'child-linkage-mismatch': { status: 'child-linkage-mismatch', claim: refusalClaim },
+    'parent-missing': { status: 'parent-missing', claim: refusalClaim },
+    superseded: { status: 'superseded', claimId: MANUAL_CLAIM_ID, reason: 'cursor-advanced' },
+    'already-stashed': { status: 'already-stashed', claim: refusalClaim },
+    'slot-occupied': {
+      status: 'slot-occupied',
+      claim: refusalClaim,
+      stashedRunbookId: SLOT_RUN_ID,
+    },
+  };
+
+  const POP_REFUSALS: {
+    readonly [S in PopRefusal['status']]: Extract<PopRefusal, { status: S }>;
+  } = {
+    'missing-claim': { status: 'missing-claim', claimId: MANUAL_CLAIM_ID },
+    'missing-child': { status: 'missing-child', childRunId: REFUSAL_RUN_ID },
+    'terminal-child': { status: 'terminal-child', claim: refusalClaim, lifecycle: 'stopped' },
+    'child-linkage-mismatch': { status: 'child-linkage-mismatch', claim: refusalClaim },
+    'parent-missing': { status: 'parent-missing', claim: refusalClaim },
+    superseded: { status: 'superseded', claimId: MANUAL_CLAIM_ID, reason: 'parent-ended' },
+    'not-stashed': { status: 'not-stashed', claim: refusalClaim },
+  };
+
+  describe('claimStashRefusal', () => {
+    it.each(SHARED_STATUSES)('delegates %s to the shared mapping', (status) => {
+      const result = STASH_REFUSALS[status];
+
+      expect(claimStashRefusal(MANUAL_CLAIM_ID, result)).toEqual(
+        sharedClaimRefusal(MANUAL_CLAIM_ID, result),
+      );
+    });
+
+    it('answers a caller re-stashing its own parked run with the pop instruction', () => {
+      expect(claimStashRefusal(MANUAL_CLAIM_ID, STASH_REFUSALS['already-stashed'])).toEqual({
+        message: `Claim id ${redactClaimId(MANUAL_CLAIM_ID)} is currently stashed. Run \`rundown pop\` with its claim id to resume.`,
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+      });
+    });
+
+    it('answers a slot held by a different run with ALREADY_STASHED', () => {
+      // The split the bearer-blind predecessor could not make: this arm is a
+      // conflict the caller resolves by popping, `already-stashed` is a no-op.
+      expect(claimStashRefusal(MANUAL_CLAIM_ID, STASH_REFUSALS['slot-occupied'])).toEqual({
+        message: 'A runbook is already stashed. Pop it first.',
+        code: 'ALREADY_STASHED',
+      });
+    });
+  });
+
+  describe('claimPopRefusal', () => {
+    it.each(SHARED_STATUSES)('delegates %s to the shared mapping', (status) => {
+      const result = POP_REFUSALS[status];
+
+      expect(claimPopRefusal(MANUAL_CLAIM_ID, result)).toEqual(
+        sharedClaimRefusal(MANUAL_CLAIM_ID, result),
+      );
+    });
+
+    it('answers a claim that is not in the slot by naming its redacted key', () => {
+      expect(claimPopRefusal(MANUAL_CLAIM_ID, POP_REFUSALS['not-stashed'])).toEqual({
+        message: `Claim id ${redactClaimId(MANUAL_CLAIM_ID)} is not currently stashed.`,
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+      });
+    });
+  });
+
+  it('never echoes the presented bearer secret in any refusal from either command', () => {
+    // Total over both maps, so an arm added later inherits this without being
+    // remembered. Every arm identifies the claim by its redacted lookup key;
+    // the secret segment of the bearer must never reach CLI output.
+    const { secret } = parseClaimBearer(MANUAL_CLAIM_ID);
+
+    for (const result of Object.values(STASH_REFUSALS)) {
+      expect(claimStashRefusal(MANUAL_CLAIM_ID, result).message).not.toContain(secret);
+    }
+    for (const result of Object.values(POP_REFUSALS)) {
+      expect(claimPopRefusal(MANUAL_CLAIM_ID, result).message).not.toContain(secret);
+    }
   });
 });

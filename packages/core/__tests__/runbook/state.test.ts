@@ -1222,6 +1222,48 @@ describe('RunbookStateManager', () => {
         }
       }
     });
+
+    // The two readers of persisted state must refuse a legacy run identically.
+    // They did not: `RunbookStore.readRun` mirrored only the schema-version gate,
+    // so a user with a pre-existing legacy run who typed `rundown stash`/`pop`
+    // (which read through `ctx.readState`, never `load`) got a raw `ZodError`
+    // schema dump — no restart instruction, and a class outside the CLI's
+    // recovery taxonomy. Measured before the shared gate landed:
+    //   GOTO_NEXT  load => LegacySnapshotError | instance   load => LegacySnapshotError
+    //   GOTO_NEXT  store => ZodError "No matching discriminator"
+    //   instance   store => ZodError unrecognized_keys ["instance"]
+    it.each([
+      ['a GOTO_NEXT last action', { lastAction: { type: 'GOTO_NEXT' } }],
+      ['an instance field', { instance: 2 }],
+    ])('refuses %s identically through the loader and the store', async (_label, legacyShape) => {
+      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        runbookPath: 'test.md',
+      });
+      await writeRawStateJson(state.id, { ...state, ...legacyShape });
+      const store = await getRunbookStore(testDir);
+      const runId = assertRunId(state.id);
+
+      const seams = await Promise.all([
+        manager.load(state.id).catch((e: unknown) => e),
+        store.loadRun(runId).catch((e: unknown) => e),
+        store.mutateSession((ctx) => ctx.readState(runId)).catch((e: unknown) => e),
+      ]);
+
+      // Same class and same wording from every seam — asserted as one object so
+      // a failure names which seam diverged rather than just "not equal".
+      const [viaLoad] = seams;
+      expect(isError(viaLoad)).toBe(true);
+      const shapes = seams.map((e) => ({
+        name: isError(e) ? e.name : `NOT AN ERROR: ${JSON.stringify(e)}`,
+        message: isError(e) ? e.message : '',
+        legacy: e instanceof LegacySnapshotError,
+      }));
+      expect(shapes).toEqual([
+        { name: 'LegacySnapshotError', message: (viaLoad as Error).message, legacy: true },
+        { name: 'LegacySnapshotError', message: (viaLoad as Error).message, legacy: true },
+        { name: 'LegacySnapshotError', message: (viaLoad as Error).message, legacy: true },
+      ]);
+    });
   });
 
   describe('templateVars persistence (unified model)', () => {

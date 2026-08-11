@@ -1,13 +1,75 @@
 // packages/cli/src/commands/stash.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService, resolveCommandTarget } from '@rundown-org/core';
+import {
+  RunbookStateManager,
+  SessionService,
+  redactClaimId,
+  type ClaimId,
+  type RunbookState,
+  type StaleClaimRefusalCode,
+  type StashForClaimIdResult,
+} from '@rundown-org/core';
 import { getCwd, getStepTotal } from '../helpers/context.js';
 import { buildMetadata } from '../services/execution.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
+import { claimUnavailable, sharedClaimRefusal } from '../helpers/claim-refusal.js';
+
+/** Symbolic codes `stash --claim-id` can refuse with. */
+type StashRefusalCode = StaleClaimRefusalCode | 'ALREADY_STASHED';
+
+/**
+ * Map a non-success `stashForClaimId` result to its user-facing envelope.
+ *
+ * Only the two stash-specific arms are mapped here. The six arms `pop
+ * --claim-id` refuses with identically are delegated to `sharedClaimRefusal`,
+ * which is the single place that taxonomy is spelled. The `default` arm is what
+ * keeps that delegation honest: an arm core adds to `StashForClaimIdResult` is
+ * not covered by the grouped cases, so it fails to compile here rather than
+ * being absorbed by the shared mapper.
+ *
+ * Exported for direct coverage: the `default` arm is a COMPILE-time guard, so
+ * it cannot catch a case label that still type-checks after being edited to the
+ * wrong status. Only a test that maps every arm can, and four of the six shared
+ * arms are unreachable or expensive to stage end-to-end (`missing-child` is
+ * ruled out entirely by the FK cascade). Not part of the command's public
+ * surface — nothing outside its own test imports it.
+ *
+ * @param claimId - Bearer the caller presented; only its redacted key is shown
+ * @param result - The refusal arm returned by `stashForClaimId`
+ * @returns Message and symbolic code for `OutputEmitter.error`
+ */
+export function claimStashRefusal(
+  claimId: ClaimId,
+  result: Exclude<StashForClaimIdResult, { status: 'stashed' }>,
+): { readonly message: string; readonly code: StashRefusalCode } {
+  switch (result.status) {
+    case 'already-stashed':
+      // Same wording the target resolver used before this path became atomic,
+      // so a caller re-stashing its own parked run sees no change. Identifies
+      // the claim by its non-secret lookup key, never the bearer `claimId`
+      // (which carries the live secret segment).
+      return claimUnavailable(
+        `Claim id ${redactClaimId(claimId)} is currently stashed. Run \`rundown pop\` with its claim id to resume.`,
+      );
+    case 'slot-occupied':
+      return { message: 'A runbook is already stashed. Pop it first.', code: 'ALREADY_STASHED' };
+    case 'missing-claim':
+    case 'missing-child':
+    case 'terminal-child':
+    case 'child-linkage-mismatch':
+    case 'parent-missing':
+    case 'superseded':
+      return sharedClaimRefusal(claimId, result);
+    default: {
+      const _exhaustive: never = result;
+      return _exhaustive;
+    }
+  }
+}
 
 /**
  * Registers the 'stash' command for pausing runbook enforcement.
@@ -28,60 +90,65 @@ export function registerStashCommand(program: Command): void {
           const sessionService = new SessionService(manager);
           const claimTarget = parseClaimIdOption(options.claimId, output);
           if (!claimTarget.ok) return;
-          const active = await resolveCommandTarget(sessionService, {
-            claimId: claimTarget.claimId,
-          });
 
-          switch (active.kind) {
-            case 'claim':
-            case 'default':
-            // `run` carries state like `default`; stash never passes a runId,
-            // so this arm is unreachable today (compile-level exhaustiveness).
-            case 'run':
-              break;
-            case 'none':
-              output.noActiveRunbook();
-              output.flush();
-              return;
-            case 'stale_claim':
-              output.error(active.message, active.code);
+          let state: RunbookState;
+          if (claimTarget.claimId !== undefined) {
+            // Bearer as mutation authority: core verifies it inside the same
+            // transaction that writes the stash slot. Deliberately NOT
+            // `resolveCommandTarget` — that resolves in a separate, unlocked
+            // read, which is the #666 defect.
+            const stashResult = await sessionService.stashForClaimId(claimTarget.claimId);
+            if (stashResult.kind !== 'committed') {
+              renderSessionMutationRefusal(output, stashResult);
               output.flush();
               process.exitCode = 1;
               return;
-            case 'terminal_claim':
-              output.error(active.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
+            }
+            const stashed = stashResult.value;
+            if (stashed.status !== 'stashed') {
+              const refusal = claimStashRefusal(claimTarget.claimId, stashed);
+              output.error(refusal.message, refusal.code);
               output.flush();
               process.exitCode = 1;
               return;
-            case 'unknown_run':
-              output.error(active.message, 'RUN_TARGET_UNAVAILABLE');
+            }
+            state = stashed.state;
+          } else {
+            // One transaction, for the same reason the claim path uses one:
+            // `getActive()` followed by a separate stash write resolves the
+            // target in an unlocked read, so a concurrent push parks a run the
+            // caller never resolved. Core returns the state to render with.
+            const stashResult = await sessionService.stash();
+            if (stashResult.kind !== 'committed') {
+              renderSessionMutationRefusal(output, stashResult);
               output.flush();
               process.exitCode = 1;
               return;
-            default: {
-              const _exhaustive: never = active;
-              return _exhaustive;
+            }
+            const stashed = stashResult.value;
+            switch (stashed.status) {
+              case 'stashed':
+                state = stashed.state;
+                break;
+              case 'no-active-runbook':
+                // A warning, not an error: exit 0, matching what the separate
+                // `getActive()` read produced.
+                output.noActiveRunbook();
+                output.flush();
+                return;
+              case 'slot-occupied':
+                output.error('A runbook is already stashed. Pop it first.', 'ALREADY_STASHED');
+                output.flush();
+                process.exitCode = 1;
+                return;
+              default: {
+                const _exhaustive: never = stashed;
+                return _exhaustive;
+              }
             }
           }
-          const state = active.state;
 
           const totalSteps = await getStepTotal(cwd, state.runbook);
-
-          // Stash the runbook
-          const stashResult = await sessionService.stashRunbook(state.id);
-          if (stashResult.kind !== 'committed') {
-            renderSessionMutationRefusal(output, stashResult);
-            output.flush();
-            process.exitCode = 1;
-            return;
-          }
-          const stashedId = stashResult.value;
-          if (!stashedId) {
-            output.error('A runbook is already stashed. Pop it first.', 'ALREADY_STASHED');
-            output.flush();
-            process.exitCode = 1;
-            return;
-          }
 
           // Emit structured output - TextRenderer handles stash action specially
           output.metadata(buildMetadata(state));
@@ -90,7 +157,7 @@ export function registerStashCommand(program: Command): void {
               current: state.step,
               total: totalSteps,
             },
-            stashedId,
+            stashedId: state.id,
           });
           output.flush();
         },

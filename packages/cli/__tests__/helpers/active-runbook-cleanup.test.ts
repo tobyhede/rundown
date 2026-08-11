@@ -172,6 +172,30 @@ describe('cleanupOrphanedActiveStack', () => {
     expect(session.defaultStack).toContain(run.id);
   });
 
+  it('classifies the refusal thrown by the store seam, not only the loader (#666)', async () => {
+    // Two things at once, and both are load-bearing.
+    //
+    // Taxonomy: `SessionService.stash()` resolves its target through the store's
+    // in-transaction `ctx.readState`, not through `manager.load`. That seam threw
+    // a bare `ZodError` for a legacy run until the three pre-parse gates became
+    // one shared function, which put the refusal outside all three arms below.
+    //
+    // Identity: the class is defined in core's leaf guard module and re-exported
+    // twice before the CLI imports it from `@rundown-org/core`. A second
+    // definition anywhere on that chain leaves every `instanceof` silently false
+    // — a failure no message assertion can see.
+    const run = await createRun();
+    await patchPersistedRunState(tmpCwd, run.id, { lastAction: { type: 'GOTO_NEXT' } });
+
+    const thrown: unknown = await sessionService.stash().then(
+      (value) => value,
+      (error: unknown) => error,
+    );
+
+    expect(thrown).toBeInstanceOf(LegacySnapshotError);
+    expect(isRecoverableActiveStackError(thrown as Error)).toBe(true);
+  });
+
   it('refuses to delete a healthy top when a deeper entry is corrupt (#518)', async () => {
     const parent = await createRun(); // bottom (will be corrupted)
     const child = await createRun(); // top (valid, running)

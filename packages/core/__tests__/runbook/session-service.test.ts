@@ -30,7 +30,10 @@ import {
   findSubstepState,
 } from '../../src/runbook/targeting.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
-import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
+import {
+  stashRunbookUnverified,
+  unwrapSessionMutation,
+} from '../../src/testing/session-fixtures.js';
 import {
   linkageFor,
   assertClaimed,
@@ -115,6 +118,29 @@ describe('SessionService', () => {
         'UPDATE runs SET exec_token = :token, exec_epoch = 1, exec_pid = :pid WHERE id = :runId',
       )
       .run({ runId, token: tokenHash, pid: process.pid });
+    raw.close();
+  }
+
+  /**
+   * Drop the ownership columns `holdExecutionLease` wrote, leaving the
+   * execution_attempts row behind.
+   *
+   * Releasing ownership is NOT an authoritative parent write, so it does not
+   * run the parent-side latch: a claim the latch skipped while its child was
+   * execution-owned stays `active` afterwards. That is the only way to reach
+   * the in-transaction liveness refusal, which fires on a claim still present
+   * in `session.claims` — every other route tombstones the claim first and
+   * lands on `ctx.claim`'s tombstone arm instead.
+   *
+   * @param runId - Run to release ownership of.
+   */
+  function releaseExecutionLease(runId: RunId): void {
+    const raw = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'));
+    raw
+      .prepare(
+        'UPDATE runs SET exec_token = NULL, exec_epoch = NULL, exec_pid = NULL WHERE id = :runId',
+      )
+      .run({ runId });
     raw.close();
   }
 
@@ -232,9 +258,11 @@ describe('SessionService', () => {
       });
       await sessionService.pushRunbook(state.id);
 
-      const stashedId = unwrapSessionMutation(await sessionService.stash());
+      const stashed = unwrapSessionMutation(await sessionService.stash());
 
-      expect(stashedId).toBe(state.id);
+      expect(stashed.status).toBe('stashed');
+      if (stashed.status !== 'stashed') return;
+      expect(stashed.state.id).toBe(state.id);
       expect(await sessionService.getActive()).toBeNull();
       expect(await sessionService.getStashedRunbookId()).toBe(state.id);
     });
@@ -253,7 +281,15 @@ describe('SessionService', () => {
       expect(await sessionService.getStashedRunbookId()).toBeNull();
     });
 
-    it('unstash returns null and clears stash when persisted state is missing', async () => {
+    it('unstash reports an idle session when the stashed run is deleted', async () => {
+      // Renamed from "…clears stash when persisted state is missing", which
+      // described a branch this case never reaches. `stash_slot.run_id` is a
+      // `ON DELETE CASCADE` foreign key onto `runs`, so `manager.delete` takes
+      // the slot row with it and `unstash` returns from its `!stashedId` guard
+      // — the same shape as the `session_stack` cascade one test above.
+      // Verified by making the missing-state branch throw: this case still
+      // passed. The clearing branch is genuinely reachable, but only from the
+      // corrupted state the next test stages, and that is where it is pinned.
       const state = await manager.create({ source: 'project', path: 'temp.md' }, mockRunbook, {
         runbookPath: 'temp.md',
       });
@@ -266,6 +302,41 @@ describe('SessionService', () => {
       expect(restored).toBeNull();
       expect(await sessionService.getStashedRunbookId()).toBeNull();
       expect(await sessionService.getActive()).toBeNull();
+    });
+
+    it('unstash clears a stash slot whose run row was removed out of band', async () => {
+      // The missing-state branch, and the reason it is NOT the dead sibling of
+      // the arm removed from `stash()` in the same wave. That arm could not be
+      // constructed at all: `applySession` rewrites the stack unconditionally
+      // via `setStack`, so committing over a dangling `session_stack` row fails
+      // the foreign key before any arm can be returned. The stash slot is
+      // written by `setStash`, whose clearing form is a bare `DELETE` with no
+      // reference to write — so `unstash` can both reach this branch and commit
+      // its repair. The branch is self-healing, not defensive dead code.
+      const state = await manager.create({ source: 'project', path: 'dangling.md' }, mockRunbook, {
+        runbookPath: 'dangling.md',
+      });
+      await sessionService.pushRunbook(state.id);
+      unwrapSessionMutation(await sessionService.stash());
+
+      // Out of band, with the cascade disabled: the only way to leave a stash
+      // slot pointing at a run whose state can no longer be read.
+      const raw = new DatabaseSync(join(testDir, '.rundown', 'rundown.db'));
+      raw.exec('PRAGMA foreign_keys = OFF');
+      raw.prepare('DELETE FROM runs WHERE id = :id').run({ id: state.id });
+      const slotBefore = raw
+        .prepare('SELECT run_id AS runId FROM stash_slot')
+        .all()
+        .map((row) => row.runId);
+      raw.close();
+      // The staging worked — otherwise the assertion below would pass through
+      // the `!stashedId` guard and pin nothing.
+      expect(slotBefore).toEqual([state.id]);
+
+      const restored = unwrapSessionMutation(await sessionService.unstash());
+
+      expect(restored).toBeNull();
+      expect(await sessionService.getStashedRunbookId()).toBeNull();
     });
 
     it('stash refuses to overwrite existing stash', async () => {
@@ -282,10 +353,92 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(s2.id);
       const second = unwrapSessionMutation(await sessionService.stash());
 
-      expect(first).toBe(s1.id);
-      expect(second).toBeNull();
+      expect(first.status).toBe('stashed');
+      expect(second).toEqual({ status: 'slot-occupied', stashedRunbookId: s1.id });
       expect(await sessionService.getStashedRunbookId()).toBe(s1.id);
       expect((await sessionService.getActive())?.id).toBe(s2.id);
+    });
+
+    it('stash reports no-active-runbook on an empty stack without touching the slot', async () => {
+      const result = unwrapSessionMutation(await sessionService.stash());
+
+      expect(result).toEqual({ status: 'no-active-runbook' });
+      expect(await sessionService.getStashedRunbookId()).toBeNull();
+    });
+
+    it('stash reports no-active-runbook before slot-occupied when the stack is empty', async () => {
+      // Ordering, not redundancy: the two-step caller resolved the active run
+      // first and returned its warning before ever reaching the slot write, so
+      // an empty stack must still out-rank an occupied slot now that both
+      // questions are answered in one transaction.
+      const parked = await manager.create({ source: 'project', path: 'parked.md' }, mockRunbook, {
+        runbookPath: 'parked.md',
+      });
+      await sessionService.pushRunbook(parked.id);
+      unwrapSessionMutation(await sessionService.stash());
+
+      const result = unwrapSessionMutation(await sessionService.stash());
+
+      expect(result).toEqual({ status: 'no-active-runbook' });
+      expect(await sessionService.getStashedRunbookId()).toBe(parked.id);
+    });
+
+    it('stash reports an idle session for a stack top whose run row is gone', async () => {
+      // The other half of what `getActive` collapsed into `null`. Not a typed
+      // corruption arm, because `session_stack.run_id` cascades on delete:
+      // removing the run removes the stack entry, so the stack top is gone too
+      // and the outcome is the plain idle one. This pins that the cascade —
+      // not a branch in `stash` — is what makes the case indistinguishable.
+      const state = await manager.create({ source: 'project', path: 'gone.md' }, mockRunbook, {
+        runbookPath: 'gone.md',
+      });
+      await sessionService.pushRunbook(state.id);
+      await manager.delete(state.id);
+
+      const result = unwrapSessionMutation(await sessionService.stash());
+
+      expect(result).toEqual({ status: 'no-active-runbook' });
+      expect(await manager.loadSession()).toMatchObject({ defaultStack: [] });
+      expect(await sessionService.getStashedRunbookId()).toBeNull();
+    });
+
+    it('stash resolves the active run and writes the slot in exactly one transaction', async () => {
+      // Structural guard, not a behavioural one. Every other test here is
+      // sequential, so reintroducing an unlocked `getActive()` pre-read before
+      // the guarded write would leave them all green while restoring the #666
+      // check-then-act window. `getActive` reads through `loadSession`, so
+      // "zero session reads outside the transaction" is what pins atomicity.
+      // `mutateSession` is spied for the same reason even though it is not a
+      // read: a pre-read routed through it is unlocked in the sense that
+      // matters — it commits in a SEPARATE `BEGIN IMMEDIATE`, so the target it
+      // resolves can still change before the guarded write lands. Only the
+      // guarded transaction may run, and only once.
+      const state = await manager.create({ source: 'project', path: 'atomic.md' }, mockRunbook, {
+        runbookPath: 'atomic.md',
+      });
+      await sessionService.pushRunbook(state.id);
+      const loadSession = jest.spyOn(manager, 'loadSession');
+      const load = jest.spyOn(manager, 'load');
+      const mutateSession = jest.spyOn(manager, 'mutateSession');
+      const mutateSessionGuarded = jest.spyOn(manager, 'mutateSessionGuarded');
+
+      const result = unwrapSessionMutation(await sessionService.stash());
+
+      expect(result.status).toBe('stashed');
+      // Asserted as one named object so the failure diff says which property
+      // moved: a non-zero unlocked read is a resolve-then-commit split, and a
+      // second transaction of either kind is the same defect wearing a lock.
+      expect({
+        guardedTransactions: mutateSessionGuarded.mock.calls.length,
+        separateTransactions: mutateSession.mock.calls.length,
+        unlockedSessionReads: loadSession.mock.calls.length,
+        unlockedStateReads: load.mock.calls.length,
+      }).toEqual({
+        guardedTransactions: 1,
+        separateTransactions: 0,
+        unlockedSessionReads: 0,
+        unlockedStateReads: 0,
+      });
     });
   });
 
@@ -846,7 +999,7 @@ describe('SessionService', () => {
       const claimed = assertClaimed(
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
-      unwrapSessionMutation(await sessionService.stashRunbook(child.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
       // Hold a lease so the parent-side latch defers the tombstone: the claim row
       // stays active, so this exercises the resolution-time classification rather
       // than the tombstone lookup.
@@ -889,7 +1042,7 @@ describe('SessionService', () => {
         const claimed = assertClaimed(
           await claimLiveDelegation(sessionService, manager, child.id, linkage),
         );
-        unwrapSessionMutation(await sessionService.stashRunbook(child.id));
+        unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
         await manager.update(child.id, { lifecycle: childLifecycle });
         // Parent moves on: the delegation now reads closed, and the latch retains the
         // claim because its controlled child is terminal, so the row stays active.
@@ -914,7 +1067,7 @@ describe('SessionService', () => {
       });
       await sessionService.pushRunbook(run.id);
       const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(run.id));
-      unwrapSessionMutation(await sessionService.stashRunbook(run.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, run.id));
 
       const resolved = await sessionService.getActiveForClaimId(claimId);
 
@@ -969,7 +1122,7 @@ describe('SessionService', () => {
       const claimed = assertClaimed(
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
-      unwrapSessionMutation(await sessionService.stashRunbook(child.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
 
       const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
       expect(resolved.status).toBe('unlinked');
@@ -994,7 +1147,7 @@ describe('SessionService', () => {
       const claimed = assertClaimed(
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
-      unwrapSessionMutation(await sessionService.stashRunbook(child.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
       await manager.update(child.id, { lifecycle: 'completed' });
       // The parent advances past the delegation. No lease needed: the parent-side
       // latch already retains a claim whose controlled child is terminal, so the
@@ -1602,6 +1755,438 @@ describe('SessionService', () => {
       }
     });
 
+    describe('stashForClaimId', () => {
+      it('refuses a bearer rotated after resolution and leaves the stash slot untouched', async () => {
+        // The #666 interleave: resolve with the old bearer, mint a replacement
+        // for the same run, then stash with the old bearer. Before this method
+        // existed the stash committed, because the bearer-blind session write it
+        // replaced (now `stashRunbookUnverified`, test-only) authorized on the run
+        // id alone and `mintRunControlClaim` keeps the run claim-targeted.
+        const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+          runbookPath: 'solo.md',
+        });
+        const { claimId: oldBearer } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(run.id),
+        );
+
+        expect((await sessionService.getActiveForClaimId(oldBearer)).status).toBe('claimed');
+
+        unwrapSessionMutation(await sessionService.issueRunControlClaim(run.id));
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(oldBearer));
+
+        expect(result).toEqual({
+          status: 'superseded',
+          claimId: oldBearer,
+          reason: 'claim-rotated',
+        });
+        const session = await manager.loadSession();
+        expect(session.stashedRunbookId).toBeUndefined();
+        expect(session.defaultStack).toEqual([run.id]);
+      });
+
+      it('verifies the bearer and writes the slot in exactly one transaction', async () => {
+        // Structural guard on the #666 fix, because no behavioural test can
+        // reach it: every test in this file is sequential, so a reintroduced
+        // `getActiveForClaimId(...)` pre-read before `mutateSessionGuarded`
+        // would keep them all green while restoring the window where a bearer
+        // rotated between resolve and commit still stashes. That pre-read must
+        // call `loadSession`, so "zero unlocked reads, one guarded
+        // transaction" is the property that makes the verification atomic.
+        // `mutateSession` is spied alongside them because a pre-read routed
+        // through it would slip past a read-only spy set while still being
+        // check-then-act: it commits in its own `BEGIN IMMEDIATE`, so the
+        // bearer it verifies can still rotate before the guarded write lands.
+        const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+          runbookPath: 'solo.md',
+        });
+        const { claimId } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(run.id),
+        );
+        const loadSession = jest.spyOn(manager, 'loadSession');
+        const load = jest.spyOn(manager, 'load');
+        const mutateSession = jest.spyOn(manager, 'mutateSession');
+        const mutateSessionGuarded = jest.spyOn(manager, 'mutateSessionGuarded');
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimId));
+
+        expect(result.status).toBe('stashed');
+        // One named object so the failure diff says which property moved: a
+        // non-zero unlocked read is a resolve-then-commit split, and a second
+        // transaction of either kind is the same defect wearing a lock.
+        expect({
+          guardedTransactions: mutateSessionGuarded.mock.calls.length,
+          separateTransactions: mutateSession.mock.calls.length,
+          unlockedSessionReads: loadSession.mock.calls.length,
+          unlockedStateReads: load.mock.calls.length,
+        }).toEqual({
+          guardedTransactions: 1,
+          separateTransactions: 0,
+          unlockedSessionReads: 0,
+          unlockedStateReads: 0,
+        });
+      });
+
+      it('stashes a run-control claim and takes its run off the default stack', async () => {
+        const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+          runbookPath: 'solo.md',
+        });
+        const { claimId } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(run.id),
+        );
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimId));
+
+        expect(result.status).toBe('stashed');
+        if (result.status === 'stashed') {
+          expect(result.state.id).toBe(run.id);
+          expect(result.claim.controlledRunId).toBe(run.id);
+        }
+        const session = await manager.loadSession();
+        expect(session.stashedRunbookId).toBe(run.id);
+        expect(session.defaultStack).toEqual([]);
+      });
+
+      it('stashes a delegated child and preserves its claim record unchanged', async () => {
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'a');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const claimed = assertClaimed(
+          await claimLiveDelegation(sessionService, manager, child.id, linkage),
+        );
+        const before = (await manager.loadSession()).claims[claimed.claim.claimKey];
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimed.claimId));
+
+        expect(result.status).toBe('stashed');
+        const session = await manager.loadSession();
+        expect(session.stashedRunbookId).toBe(child.id);
+        // `stash --claim-id` preserves the claim record (#519 non-recording).
+        expect(session.claims[claimed.claim.claimKey]).toEqual(before);
+      });
+
+      it('refuses a delegated child whose persisted linkage no longer matches its claim record', async () => {
+        // `claimRunbook` requires the incoming linkage to match the child's
+        // persisted linkage at claim time, so the only way to produce a
+        // divergence is a later mutation of the child's `parentLinkage` — the
+        // same fixture shape as the `getActiveForClaimId` unlinked/linkage-
+        // mismatch case (`session-service.test.ts:827-852`), here reusing
+        // `linkageFor`'s varying `fill` to build the diverged linkage.
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'c');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const claimed = assertClaimed(
+          await claimLiveDelegation(sessionService, manager, child.id, linkage),
+        );
+
+        await manager.update(child.id, { parentLinkage: linkageFor(parent.id, 'd') });
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimed.claimId));
+
+        expect(result.status).toBe('child-linkage-mismatch');
+        expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+      });
+
+      it('refuses a delegated child whose parent moved past the delegation', async () => {
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'b');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const claimed = assertClaimed(
+          await claimLiveDelegation(sessionService, manager, child.id, linkage),
+        );
+        // The child is not execution-owned, so the parent-side latch tombstones
+        // the claim as the parent's cursor advances. The bearer then lands on the
+        // tombstone arm and must be named superseded, not unknown.
+        await manager.update(parent.id, { step: '2' });
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimed.claimId));
+
+        expect(result).toEqual({
+          status: 'superseded',
+          claimId: claimed.claimId,
+          reason: 'cursor-advanced',
+        });
+        expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+      });
+
+      it('refuses a closed delegation the parent-side latch has not yet tombstoned', async () => {
+        // The sibling test above enters `superseded` by the tombstone arm: the
+        // latch retired the claim, so the bearer is absent from `session.claims`
+        // and `ctx.claim` reports it. This one enters by the OTHER arm — the
+        // in-transaction `classifyDelegationLiveness` call — which is reachable
+        // only while the claim is still active. `invalidateClosedDelegatedClaims`
+        // skips an execution-owned child (superseding it would RAISE from
+        // `claims_guard_update` and roll back the parent's unrelated commit), so
+        // owning the child across the parent's cursor advance is what defers the
+        // tombstone; releasing ownership afterwards writes nothing to the parent
+        // and therefore never re-runs the latch.
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'e');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const claimed = assertClaimed(
+          await claimLiveDelegation(sessionService, manager, child.id, linkage),
+        );
+        holdExecutionLease(child.id);
+        await manager.update(parent.id, { step: '2' });
+        releaseExecutionLease(child.id);
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimed.claimId));
+
+        expect(result).toEqual({
+          status: 'superseded',
+          claimId: claimed.claimId,
+          reason: 'cursor-advanced',
+        });
+        const session = await manager.loadSession();
+        // The discriminator against the tombstone test: `session.claims` holds
+        // active claims only, so the bearer still being there proves this
+        // refusal came from the liveness classification rather than a lookup of
+        // a retired claim. Without it both tests would pass on either arm.
+        expect(Object.keys(session.claims)).toContain(claimed.claim.claimKey);
+        expect(session.stashedRunbookId).toBeUndefined();
+      });
+
+      it('refuses a claim whose parent state is unreadable without touching the slot', async () => {
+        // `claims.parent_run_id` is ON DELETE SET NULL, not CASCADE, so deleting
+        // the parent leaves the claim active with its persisted delegation still
+        // naming the vanished run — the same fixture `getActiveForClaimId`
+        // reports as unlinked/parent-missing. `classifyDelegationLiveness` calls
+        // that `parent-unreadable` and the taxonomy keeps it separate from
+        // `closed`: a delegated claim naming an unreadable parent is a database
+        // integrity signal, never a routine end-of-delegation.
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'f');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const claimed = assertClaimed(
+          await claimLiveDelegation(sessionService, manager, child.id, linkage),
+        );
+
+        await manager.delete(parent.id);
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimed.claimId));
+
+        expect(result.status).toBe('parent-missing');
+        if (result.status === 'parent-missing') {
+          expect(result.claim.claimKey).toBe(claimed.claim.claimKey);
+        }
+        expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+      });
+
+      it('refuses an execution-owned run before deciding anything about the bearer', async () => {
+        const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+          runbookPath: 'solo.md',
+        });
+        const { claimId } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(run.id),
+        );
+        holdExecutionLease(run.id);
+
+        const outcome = await sessionService.stashForClaimId(claimId);
+
+        expect(outcome.kind).toBe('execution_in_progress');
+        expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+      });
+
+      it('reports an unknown bearer as missing-claim without touching the slot', async () => {
+        const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+          runbookPath: 'solo.md',
+        });
+        unwrapSessionMutation(await sessionService.pushRunbookWithRunControlClaim(run.id));
+
+        const unknown = assertClaimId(`rdclm_${'0'.repeat(32)}_${'A'.repeat(43)}` satisfies string);
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(unknown));
+
+        expect(result).toEqual({ status: 'missing-claim', claimId: unknown });
+        expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+      });
+
+      it('refuses a tampered secret on an otherwise active claim without touching the slot', async () => {
+        // Distinct from the unknown-bearer case above: the claim key IS active
+        // in the session, but the presented secret does not verify against it —
+        // the in-transaction check that makes this method safer on the common
+        // path than the bearer-blind session write it replaced (#666).
+        const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+          runbookPath: 'solo.md',
+        });
+        const { claimId } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(run.id),
+        );
+        const tampered = assertClaimId(claimId.replace(/.$/, claimId.endsWith('A') ? 'B' : 'A'));
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(tampered));
+
+        expect(result).toEqual({ status: 'missing-claim', claimId: tampered });
+        expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+      });
+
+      it('separates re-stashing the same claim from a slot held by another run', async () => {
+        const first = await manager.create({ source: 'project', path: 'a.md' }, mockRunbook, {
+          runbookPath: 'a.md',
+        });
+        const second = await manager.create({ source: 'project', path: 'b.md' }, mockRunbook, {
+          runbookPath: 'b.md',
+        });
+        const { claimId: firstClaim } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(first.id),
+        );
+        const { claimId: secondClaim } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(second.id),
+        );
+
+        unwrapSessionMutation(await sessionService.stashForClaimId(firstClaim));
+
+        const again = unwrapSessionMutation(await sessionService.stashForClaimId(firstClaim));
+        expect(again.status).toBe('already-stashed');
+
+        const blocked = unwrapSessionMutation(await sessionService.stashForClaimId(secondClaim));
+        expect(blocked.status).toBe('slot-occupied');
+        if (blocked.status === 'slot-occupied') {
+          expect(blocked.stashedRunbookId).toBe(first.id);
+        }
+        expect((await manager.loadSession()).stashedRunbookId).toBe(first.id);
+      });
+
+      it.each(['completed', 'stopped'] as const)(
+        'refuses a %s terminal child',
+        async (lifecycle) => {
+          const run = await manager.create({ source: 'project', path: 'solo.md' }, mockRunbook, {
+            runbookPath: 'solo.md',
+          });
+          const { claimId } = unwrapSessionMutation(
+            await sessionService.pushRunbookWithRunControlClaim(run.id),
+          );
+          await manager.update(run.id, { lifecycle });
+
+          const result = unwrapSessionMutation(await sessionService.stashForClaimId(claimId));
+
+          expect(result.status).toBe('terminal-child');
+          if (result.status === 'terminal-child') {
+            expect(result.lifecycle).toBe(lifecycle);
+          }
+          expect((await manager.loadSession()).stashedRunbookId).toBeUndefined();
+        },
+      );
+
+      it('reports a terminal controlled run ahead of a slot held by another run', async () => {
+        // Precedence, not coverage: both refusals are simultaneously true here,
+        // and `terminal-child` is the one that ends the caller's work while
+        // `slot-occupied` invites a pop-and-retry that can only fail again. The
+        // same ordering `getActiveForClaimId` states for its parked-runbook gate.
+        const occupant = await manager.create({ source: 'project', path: 'a.md' }, mockRunbook, {
+          runbookPath: 'a.md',
+        });
+        const terminal = await manager.create({ source: 'project', path: 'b.md' }, mockRunbook, {
+          runbookPath: 'b.md',
+        });
+        const { claimId: occupantClaim } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(occupant.id),
+        );
+        const { claimId: terminalClaim } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(terminal.id),
+        );
+        unwrapSessionMutation(await sessionService.stashForClaimId(occupantClaim));
+        await manager.update(terminal.id, { lifecycle: 'completed' });
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(terminalClaim));
+
+        expect(result.status).toBe('terminal-child');
+        if (result.status === 'terminal-child') {
+          expect(result.lifecycle).toBe('completed');
+          expect(result.claim.controlledRunId).toBe(terminal.id);
+        }
+        expect((await manager.loadSession()).stashedRunbookId).toBe(occupant.id);
+      });
+
+      it('leaves other claimed runs on the default stack when one is stashed', async () => {
+        // A single-element stack can't distinguish "remove the matching id" from
+        // "clear the whole stack" — both leave `defaultStack` at `[]`. A second,
+        // untouched run on the stack is what actually pins the `.filter` call at
+        // `session-service.ts:1578` against a mutant that clears it outright.
+        const stashed = await manager.create({ source: 'project', path: 'a.md' }, mockRunbook, {
+          runbookPath: 'a.md',
+        });
+        const other = await manager.create({ source: 'project', path: 'b.md' }, mockRunbook, {
+          runbookPath: 'b.md',
+        });
+        const { claimId: stashedClaim } = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(stashed.id),
+        );
+        unwrapSessionMutation(await sessionService.pushRunbookWithRunControlClaim(other.id));
+
+        const result = unwrapSessionMutation(await sessionService.stashForClaimId(stashedClaim));
+
+        expect(result.status).toBe('stashed');
+        const session = await manager.loadSession();
+        expect(session.stashedRunbookId).toBe(stashed.id);
+        expect(session.defaultStack).toEqual([other.id]);
+      });
+
+      // Both claim-targeted stash methods hand the CLI a `VerifiedClaim`, never
+      // the persisted `ClaimRecord`. The record carries `secretHash` — the
+      // bearer proof — so an arm returning it is one careless
+      // `output.detail(result.claim)` away from printing it. Asserted as the
+      // exact key set rather than "no secretHash" so a field added to
+      // `ClaimRecord` later cannot widen the seam without failing here, and
+      // asserted on both methods in one object so a fix applied to only one of
+      // the two mirrored unions is named in the diff.
+      it('returns a verified claim, not the persisted record, from both stash and pop', async () => {
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'a');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const claimed = assertClaimed(
+          await claimLiveDelegation(sessionService, manager, child.id, linkage),
+        );
+
+        const stashResult = unwrapSessionMutation(
+          await sessionService.stashForClaimId(claimed.claimId),
+        );
+        const popResult = unwrapSessionMutation(
+          await sessionService.unstashForClaimId(claimed.claimId),
+        );
+
+        expect({ stash: stashResult.status, pop: popResult.status }).toEqual({
+          stash: 'stashed',
+          pop: 'restored',
+        });
+        if (stashResult.status !== 'stashed' || popResult.status !== 'restored') return;
+        const verifiedShape = ['claimKey', 'controlledRunId', 'delegation', 'grants'];
+        expect({
+          stashClaimKeys: Object.keys(stashResult.claim).sort(),
+          popClaimKeys: Object.keys(popResult.claim).sort(),
+        }).toEqual({ stashClaimKeys: verifiedShape, popClaimKeys: verifiedShape });
+      });
+    });
+
     it('stash preserves a claim record and unstashForClaimId restores only the matching child', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
@@ -1615,7 +2200,7 @@ describe('SessionService', () => {
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
 
-      unwrapSessionMutation(await sessionService.stashRunbook(child.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
       expect(await sessionService.getStashedRunbookId()).toBe(child.id);
 
       const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
@@ -1679,7 +2264,7 @@ describe('SessionService', () => {
       });
       await sessionService.pushRunbook(run.id);
       const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(run.id));
-      unwrapSessionMutation(await sessionService.stashRunbook(run.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, run.id));
       unwrapSessionMutation(await sessionService.releaseRunbook(run.id));
 
       const result = unwrapSessionMutation(await sessionService.unstashForClaimId(claimId));
@@ -1706,7 +2291,7 @@ describe('SessionService', () => {
       const terminalClaimed = assertClaimed(
         await claimLiveDelegation(sessionService, manager, terminalChild.id, terminalLinkage),
       );
-      unwrapSessionMutation(await sessionService.stashRunbook(terminalChild.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, terminalChild.id));
       await manager.update(terminalChild.id, { lifecycle: 'completed' });
 
       const terminal = unwrapSessionMutation(
@@ -1734,7 +2319,7 @@ describe('SessionService', () => {
       );
       await manager.update(endedParent.id, { lifecycle: 'stopped' });
       unwrapSessionMutation(await sessionService.releaseRunbook(terminalChild.id));
-      unwrapSessionMutation(await sessionService.stashRunbook(child.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
 
       // R2: ending the parent superseded the delegated claim. `rd pop` must say
       // so — a superseded bearer reported as `missing-claim` renders "does not
@@ -1762,7 +2347,7 @@ describe('SessionService', () => {
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
 
-      unwrapSessionMutation(await sessionService.stashRunbook(child.id));
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
 
       // Default (write) gate refuses.
       const gated = await sessionService.getActiveForClaimId(claimed.claimId);

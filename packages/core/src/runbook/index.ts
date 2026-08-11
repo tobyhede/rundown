@@ -150,6 +150,8 @@ export {
   type ReleaseRunbooksResult,
   type RunningStackMemberResolution,
   type SessionMutationRefusalOutcome,
+  type StashActiveResult,
+  type StashForClaimIdResult,
   type UnstashForClaimIdResult,
 } from './session-service.js';
 export {

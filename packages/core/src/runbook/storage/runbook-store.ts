@@ -35,6 +35,7 @@ import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } fro
 import { getErrorMessage } from '../../errors.js';
 import { logger } from '../../logger.js';
 import type { SessionData } from '../state.js';
+import { assertLoadablePersistedRun } from '../persisted-state-guards.js';
 import type { SqlDriver, SqlTransaction, SqlReadTransaction, SyncWork } from './sql-driver.js';
 import {
   type CapturedAuthority,
@@ -810,6 +811,11 @@ export interface RunbookStoreTxn extends RunbookStoreReadTxn {
    * terminal-child refusals, stash gating) must read that state under the same
    * transaction that writes the session; a read outside it could observe a run
    * that another writer terminalizes before the session write lands.
+   *
+   * Validating, so `null` means "absent", never "present but unreadable": a row
+   * the loader refuses throws `LegacySnapshotError` or `InvalidRunbookStateError`
+   * from inside the open transaction, aborting the mutation. A caller that
+   * treats absent and unreadable alike must catch rather than null-check.
    */
   readState(runId: RunId): RunbookState | null;
   /**
@@ -892,8 +898,17 @@ export class RunbookStore {
   /**
    * Load a run by id, or null when absent.
    *
+   * Validating: `null` means "absent", never "present but unreadable". See
+   * {@link RunbookStore.readRun} for the gates a persisted row must clear.
+   *
    * @param runId - Run to load.
    * @returns The validated run state, or null.
+   * @throws {LegacySnapshotError} When the row carries a deprecated dynamic-step
+   *   snapshot shape (`GOTO_NEXT` last action, or an `instance` field).
+   * @throws {InvalidRunbookStateError} When the row carries a schema version
+   *   other than `CURRENT_SCHEMA_VERSION`.
+   * @throws {z.ZodError} When the row clears those gates but fails run-state
+   *   schema validation.
    */
   loadRun(runId: RunId): Promise<RunbookState | null> {
     return this.driver.read((tx) => this.readRun(tx, runId));
@@ -1507,7 +1522,17 @@ export class RunbookStore {
   /**
    * Load every persisted run.
    *
+   * All-or-nothing: one unreadable row rejects the whole listing rather than
+   * being skipped, because silently omitting it would hide exactly the state a
+   * caller needs to prune. See {@link RunbookStore.readRun} for the gates.
+   *
    * @returns All run states in ascending id order.
+   * @throws {LegacySnapshotError} When any row carries a deprecated dynamic-step
+   *   snapshot shape (`GOTO_NEXT` last action, or an `instance` field).
+   * @throws {InvalidRunbookStateError} When any row carries a schema version
+   *   other than `CURRENT_SCHEMA_VERSION`.
+   * @throws {z.ZodError} When any row clears those gates but fails run-state
+   *   schema validation.
    */
   listRuns(): Promise<readonly RunbookState[]> {
     return this.driver.read((tx) => {
@@ -1529,9 +1554,19 @@ export class RunbookStore {
   /**
    * Read a run together with its current `state_version`.
    *
+   * Validating, via {@link RunbookStore.readRun}: the read-modify-write paths
+   * built on this refuse to derive a new state from a row the loader would not
+   * load, rather than committing an adapted version of it.
+   *
    * @param tx - Open transaction.
    * @param runId - Run to read.
    * @returns The state and its version, or null when absent.
+   * @throws {LegacySnapshotError} When the row carries a deprecated dynamic-step
+   *   snapshot shape (`GOTO_NEXT` last action, or an `instance` field).
+   * @throws {InvalidRunbookStateError} When the row carries a schema version
+   *   other than `CURRENT_SCHEMA_VERSION`.
+   * @throws {z.ZodError} When the row clears those gates but fails run-state
+   *   schema validation.
    */
   private readRunWithVersion(
     tx: SqlReadTransaction,
@@ -2039,6 +2074,9 @@ export class RunbookStore {
    * @param parentRunId - The advancing parent run.
    * @returns Claim records for non-terminal children still linked to this parent
    *   whose delegated substep remains unresolved.
+   * @throws {LegacySnapshotError | InvalidRunbookStateError} When the parent, or
+   *   any delegated child of it, is persisted in a shape the loader refuses —
+   *   see the note at the child read below.
    */
   private openDelegatedChildrenFor(tx: SqlTransaction, parentRunId: RunId): ClaimRecord[] {
     const parent = this.readRun(tx, parentRunId);
@@ -2053,6 +2091,18 @@ export class RunbookStore {
       if (!claim.delegation) {
         continue;
       }
+      // A validating read of someone else's run: this is the *child*, not the
+      // run this transaction is about to write. So a child the loader refuses —
+      // legacy snapshot, foreign schema version, or a row failing schema
+      // validation — aborts a perfectly valid parent's pass/fail, and the
+      // parent's operator is told to prune a run they did not name. Deliberate
+      // rather than accidental: a guard that skipped unreadable children would
+      // report "no open children" and let the parent advance past a delegation
+      // it cannot evaluate. It widens a pre-existing failure mode rather than
+      // creating one — an unparseable child already threw `ZodError` on this
+      // line before `readRun` gained its gates — but this guard is live in
+      // production (`actor-service.ts`, the parent-advance path), so the
+      // coupling is real and is recorded here rather than left to be rediscovered.
       const child = this.readRun(tx, claim.controlledRunId);
       if (!child || child.lifecycle === 'completed' || child.lifecycle === 'stopped') {
         continue;
@@ -2249,13 +2299,32 @@ export class RunbookStore {
   /**
    * Read and validate a run from an open transaction.
    *
+   * `assertLoadablePersistedRun` runs BEFORE `stateSchema.parse`, and is the same
+   * function `RunbookStateManager.load` runs before its own parse, so both
+   * readers of persisted state refuse the same shapes with the same message.
+   * Without it the in-transaction readers — `ctx.readState`, and so
+   * `rundown stash` / `pop` on both their bare and `--claim-id` paths — would
+   * mutate a foreign-version run the loader refuses to load (the schema leaves
+   * `schemaVersion` optional, so the parse accepts every version), and would
+   * report a legacy dynamic-step snapshot as a bare `ZodError` — outside the
+   * three-shape taxonomy `isRecoverableActiveStackError` classifies on, and
+   * without the actionable "restart from the entrypoint" the loader gives.
+   *
    * @param tx - Open transaction.
    * @param runId - Run to read.
    * @returns The validated run state, or null.
+   * @throws {LegacySnapshotError} When the row carries a deprecated dynamic-step
+   *   snapshot shape (`GOTO_NEXT` last action, or an `instance` field).
+   * @throws {InvalidRunbookStateError} When the row carries a schema version
+   *   other than `CURRENT_SCHEMA_VERSION`.
    */
   private readRun(tx: SqlReadTransaction, runId: RunId): RunbookState | null {
     const raw = this.readRunRaw(tx, runId);
-    return raw === null ? null : (this.stateSchema.parse(raw) as RunbookState);
+    if (raw === null) {
+      return null;
+    }
+    assertLoadablePersistedRun(raw, runId);
+    return this.stateSchema.parse(raw) as RunbookState;
   }
 
   /**

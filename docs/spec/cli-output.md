@@ -782,8 +782,21 @@ Runbook:  STASHED
 
 ### `rundown stash --claim-id <claim_id>`
 
-Same output shape as `rundown stash`, but stashes the delegated child identified
-by `claim_id`.
+Same output shape as `rundown stash`, but stashes the runbook identified by
+`claim_id`. The bearer is verified inside the transaction that writes the stash
+slot, so a rotated, released, or superseded bearer refuses and the slot is left
+unchanged.
+
+**JSON (rotated or released bearer):**
+
+```json
+{
+  "kind": "error",
+  "error": "Claim id rdclk_3668bda31850ba84c2c1bb9a991a2d33 was released or replaced and is no longer authority. Claim the parent's current delegation instead of reusing this id.",
+  "code": "CLAIMED_RUNBOOK_UNAVAILABLE",
+  "command": "stash"
+}
+```
 
 ---
 

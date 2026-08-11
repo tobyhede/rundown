@@ -26,7 +26,11 @@ import {
   type CapturedAuthority,
   type ExecutionTokenHash,
 } from '../../../src/runbook/storage/mutation-result.js';
-import { RunbookStateManager } from '../../../src/runbook/state.js';
+import {
+  InvalidRunbookStateError,
+  LegacySnapshotError,
+  RunbookStateManager,
+} from '../../../src/runbook/state.js';
 import { logger } from '../../../src/logger.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
 import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
@@ -205,6 +209,101 @@ describe('RunbookStore round-trip', () => {
     });
     expect(await store.listRunIds()).toEqual([b.id]);
     expect(await store.loadRun(a.id)).toBeNull();
+  });
+
+  // `readRun` is the store's only validating read, and every in-transaction
+  // reader goes through it — `ctx.readState`, and so `rundown stash`/`pop` on
+  // both their bare and `--claim-id` paths. `RunbookStateObjectSchema` leaves
+  // `schemaVersion` optional (so `RunbookStateManager.load` can parse an invalid
+  // file far enough to report it usefully), which means the Zod parse alone
+  // accepts EVERY version. Without the gate below those commands mutate state
+  // the loader refuses to load — silently adapting persisted data the
+  // no-migration rule says must be refused.
+  it.each([
+    ['a foreign schema version', { schemaVersion: 2 }],
+    ['an absent schema version', { schemaVersion: undefined }],
+  ])('refuses to read a run carrying %s, on every read seam', async (_label, overrides) => {
+    const state = await newState(overrides);
+    await store.createRun(state);
+
+    const expected = `Invalid runbook state for "${state.id}": invalid schemaVersion; expected schema version 1.`;
+    // Both seams, because pinning only `loadRun` would leave the transactional
+    // read — the one the stash/pop regression came in through — unguarded.
+    await expect(store.loadRun(state.id)).rejects.toThrow(expected);
+    await expect(store.mutateSession((ctx) => ctx.readState(state.id))).rejects.toThrow(expected);
+    // Named by type, not only by message: the CLI's cleanup paths branch on
+    // `instanceof InvalidRunbookStateError`.
+    await expect(store.loadRun(state.id)).rejects.toBeInstanceOf(InvalidRunbookStateError);
+  });
+
+  // The sibling gates. `RunbookStateManager.load` refuses three shapes before it
+  // parses; mirroring only the schema-version one left a user with a pre-v1 run
+  // getting a raw `ZodError` schema dump from `stash`/`pop` instead of the
+  // actionable restart message — measured before this gate landed:
+  //   GOTO_NEXT  store.loadRun / ctx.readState => ZodError, "No matching discriminator"
+  //   instance   store.loadRun / ctx.readState => ZodError, unrecognized_keys ["instance"]
+  // The parse rejecting them is not enough: `ZodError` is neither of the classes
+  // `isRecoverableActiveStackError` accepts, so the refusal fell outside the
+  // CLI's recovery taxonomy entirely.
+  it.each([
+    ['a GOTO_NEXT last action', { lastAction: { type: 'GOTO_NEXT' } }, 'GOTO_NEXT'],
+    ['an instance field', { instance: 2 }, 'instance field'],
+  ])(
+    'refuses to read a run carrying %s, on every read seam',
+    async (_label, legacyShape, shapeName) => {
+      const state = await newState();
+      await store.createRun(state);
+      // Planted after the insert: `createRun` takes a typed `RunbookState`, and
+      // the legacy fields are exactly the ones the current type does not have.
+      await store.transaction((txn) => {
+        const row = txn.tx
+          .prepare('SELECT state_json FROM runs WHERE id = :id')
+          .get<{ readonly state_json: string }>({ id: state.id });
+        const raw = JSON.parse(row!.state_json) as Record<string, unknown>;
+        txn.tx
+          .prepare('UPDATE runs SET state_json = :json WHERE id = :id')
+          .run({ id: state.id, json: JSON.stringify({ ...raw, ...legacyShape }) });
+      });
+
+      const expected =
+        `This runbook used dynamic-step snapshots (${shapeName}), which are no longer supported. ` +
+        'Please restart execution from the runbook entrypoint.';
+      // Both seams, whole message. The transactional one is what
+      // `rundown stash`/`pop` read through on all four of their paths, and the
+      // wording is the loader's verbatim — parity is pinned end to end in
+      // `state.test.ts`'s "Legacy snapshot rejection" block.
+      await expect(store.loadRun(state.id)).rejects.toThrow(expected);
+      await expect(store.mutateSession((ctx) => ctx.readState(state.id))).rejects.toThrow(expected);
+      // By type as well as message: `LegacySnapshotError` is a distinct arm of
+      // the CLI's recovery taxonomy, and a `ZodError` here would land outside it.
+      await expect(store.loadRun(state.id)).rejects.toBeInstanceOf(LegacySnapshotError);
+    },
+  );
+
+  it('reports a legacy snapshot as legacy even when its schema version is also stale', async () => {
+    // Gate order is load-bearing. A pre-v1 run fails BOTH the legacy check and
+    // the version check; only the legacy message tells the user what to do about
+    // it ("restart execution from the runbook entrypoint"), so the legacy gates
+    // must run first. Reversing them downgrades the message for precisely the
+    // population that needs it — real legacy state, which is stale in both ways.
+    const state = await newState({ schemaVersion: 0 });
+    await store.createRun(state);
+    await store.transaction((txn) => {
+      const row = txn.tx
+        .prepare('SELECT state_json FROM runs WHERE id = :id')
+        .get<{ readonly state_json: string }>({ id: state.id });
+      const raw = JSON.parse(row!.state_json) as Record<string, unknown>;
+      txn.tx.prepare('UPDATE runs SET state_json = :json WHERE id = :id').run({
+        id: state.id,
+        json: JSON.stringify({ ...raw, instance: 2, lastAction: { type: 'GOTO_NEXT' } }),
+      });
+    });
+
+    await expect(store.loadRun(state.id)).rejects.toBeInstanceOf(LegacySnapshotError);
+    await expect(store.loadRun(state.id)).rejects.toThrow('(GOTO_NEXT)');
+    await expect(store.mutateSession((ctx) => ctx.readState(state.id))).rejects.toThrow(
+      '(GOTO_NEXT)',
+    );
   });
 
   it('refuses to delete a run with active execution ownership', async () => {

@@ -323,19 +323,28 @@ export type ClaimSeenRecordResult =
       readonly error: unknown;
     };
 
-/** Result of restoring a stashed delegated child by claim id. */
+/**
+ * Result of restoring a stashed delegated child by claim id.
+ *
+ * `claim` is a {@link VerifiedClaim}, not the persisted {@link ClaimRecord}:
+ * every arm that carries one is returned only after the presented bearer was
+ * proved against `secretHash` in the same transaction, and the narrower type is
+ * what makes it structurally impossible for a caller to re-emit that hash (or
+ * the record's bookkeeping timestamps) into CLI output. Same reason
+ * {@link SessionService.verifyClaimId} returns one.
+ */
 export type UnstashForClaimIdResult =
-  | { readonly status: 'restored'; readonly claim: ClaimRecord; readonly state: RunbookState }
+  | { readonly status: 'restored'; readonly claim: VerifiedClaim; readonly state: RunbookState }
   | { readonly status: 'missing-claim'; readonly claimId: ClaimId }
   | { readonly status: 'missing-child'; readonly childRunId: RunId }
-  | { readonly status: 'not-stashed'; readonly claim: ClaimRecord }
+  | { readonly status: 'not-stashed'; readonly claim: VerifiedClaim }
   | {
       readonly status: 'terminal-child';
-      readonly claim: ClaimRecord;
+      readonly claim: VerifiedClaim;
       readonly lifecycle: 'completed' | 'stopped';
     }
-  | { readonly status: 'child-linkage-mismatch'; readonly claim: ClaimRecord }
-  | { readonly status: 'parent-missing'; readonly claim: ClaimRecord }
+  | { readonly status: 'child-linkage-mismatch'; readonly claim: VerifiedClaim }
+  | { readonly status: 'parent-missing'; readonly claim: VerifiedClaim }
   | {
       /**
        * The claim is no longer authority: either a tombstone the parent-side
@@ -347,6 +356,80 @@ export type UnstashForClaimIdResult =
       readonly status: 'superseded';
       readonly claimId: ClaimId;
       readonly reason: ClaimSupersededReason;
+    };
+
+/**
+ * Result of stashing a claimed runbook by explicit claim id.
+ *
+ * Mirrors {@link UnstashForClaimIdResult}, with two stash-specific refusals in
+ * place of `not-stashed`: `already-stashed` (the slot already holds this
+ * claim's own run) and `slot-occupied` (it holds a different run). `claim` is a
+ * {@link VerifiedClaim} for the same reason it is there, and the two must stay
+ * in step — a sibling that still handed back the raw record would be the leak
+ * the narrowing exists to prevent.
+ */
+export type StashForClaimIdResult =
+  | { readonly status: 'stashed'; readonly claim: VerifiedClaim; readonly state: RunbookState }
+  | { readonly status: 'missing-claim'; readonly claimId: ClaimId }
+  | { readonly status: 'already-stashed'; readonly claim: VerifiedClaim }
+  | {
+      readonly status: 'slot-occupied';
+      readonly claim: VerifiedClaim;
+      readonly stashedRunbookId: RunId;
+    }
+  | { readonly status: 'missing-child'; readonly childRunId: RunId }
+  | {
+      readonly status: 'terminal-child';
+      readonly claim: VerifiedClaim;
+      readonly lifecycle: 'completed' | 'stopped';
+    }
+  | { readonly status: 'child-linkage-mismatch'; readonly claim: VerifiedClaim }
+  | { readonly status: 'parent-missing'; readonly claim: VerifiedClaim }
+  | {
+      readonly status: 'superseded';
+      readonly claimId: ClaimId;
+      readonly reason: ClaimSupersededReason;
+    };
+
+/**
+ * Result of stashing whatever runbook is currently active.
+ *
+ * The bare (unclaimed) counterpart of {@link StashForClaimIdResult}, and
+ * discriminated for the same reason: collapsing every outcome into
+ * `RunId | null` forced the caller to read the session *before* the mutation to
+ * tell "nothing is active" (a warning) from "the slot is taken" (an error) —
+ * the check-then-act window #666 closed on the claim path.
+ *
+ * The arms are returned in the order the caller's questions were previously
+ * asked (active first, slot second), so the outcome for a given session is
+ * unchanged by the move into one transaction.
+ */
+export type StashActiveResult =
+  | {
+      /** The active run moved into the stash slot. */
+      readonly status: 'stashed';
+      /** State of the run that was stashed, read under the same transaction. */
+      readonly state: RunbookState;
+    }
+  | {
+      /**
+       * Nothing is active: the session stack is empty.
+       *
+       * Reproduces every `null` {@link SessionService.getActive} returns, which
+       * is what the two-step caller branched on. There is deliberately no
+       * separate "stack top with no readable state" arm: `session_stack.run_id`
+       * is a `ON DELETE CASCADE` foreign key onto `runs`, enforced by both
+       * drivers, so a stack top whose run row is gone is not a state the
+       * database can hold. Deleting the run takes the stack entry with it, and
+       * the arm would be unreachable — and untestable — rather than defensive.
+       */
+      readonly status: 'no-active-runbook';
+    }
+  | {
+      /** The single stash slot already holds a run; the caller must pop first. */
+      readonly status: 'slot-occupied';
+      /** Run currently occupying the slot. */
+      readonly stashedRunbookId: RunId;
     };
 
 /**
@@ -1718,56 +1801,177 @@ export class SessionService {
   /**
    * Stash the currently active runbook to allow temporarily switching contexts.
    *
-   * Removes the active runbook from the stack and stores its ID
-   * in the session's stashed slot. Only one runbook can be stashed at a time.
+   * Resolves the active run and writes the stash slot in one guarded
+   * transaction. The caller must not pre-read the active run: an unlocked
+   * `getActive` followed by a separate stash write is the #666 check-then-act
+   * shape, where a concurrent push means the run that gets parked is no longer
+   * the one the caller resolved. Everything the caller needs to render the
+   * outcome — including the stashed run's state — comes back on the result.
    *
-   * @returns The stashed runbook ID, or null if no runbook was active or a stash already exists
+   * The active run is resolved before the slot is inspected, matching the order
+   * the two-step caller asked its questions in: it resolved the active run
+   * first and returned `no-active-runbook` without ever reaching the slot.
+   *
+   * @returns Discriminated stash result describing success or the refusal reason.
    *   Refused `execution_in_progress` or `recovery_required` instead when the
    *   run is execution-owned or awaiting recovery; the value is absent then.
    */
-  async stash(): Promise<SessionMutationResult<RunId | null>> {
-    return this.mutateGuarded(topOfStack, (ctx) => {
+  async stash(): Promise<SessionMutationResult<StashActiveResult>> {
+    return this.mutateGuarded(topOfStack, (ctx): StashActiveResult => {
       const { session } = ctx;
-
-      // Refuse to overwrite an existing stash — caller must unstash first
-      if (session.stashedRunbookId) return null;
-
       const stack = session.defaultStack;
-      if (stack.length === 0) return null;
-      const activeId = stack.pop();
+      if (stack.length === 0) return { status: 'no-active-runbook' };
+      const activeId = stack[stack.length - 1];
 
-      if (!activeId) return null;
+      // Read through the transaction, never `manager.load`: the state returned
+      // to the caller must be the one the slot write lands on. A null here is
+      // the state the `session_stack` foreign key forbids (see
+      // StashActiveResult), and reports as the same idle outcome `getActive`
+      // gave it rather than inventing an unreachable arm.
+      const state = ctx.readState(activeId);
+      if (state === null) return { status: 'no-active-runbook' };
 
+      // Refuse to overwrite an existing stash — caller must unstash first.
+      if (session.stashedRunbookId !== undefined) {
+        return { status: 'slot-occupied', stashedRunbookId: session.stashedRunbookId };
+      }
+
+      stack.pop();
       session.stashedRunbookId = activeId;
-      return activeId;
+      return { status: 'stashed', state };
     });
   }
 
   /**
-   * Stash a specific runbook id from any session targeting structure.
+   * Stash a claimed runbook by explicit claim id, atomically.
    *
-   * @param runbookId - Runbook id to move into the single session stash slot
-   * @returns The stashed runbook id, or null if no slot is available or the runbook was not targeted
+   * The presented bearer is verified inside the same transaction that writes the
+   * stash slot. The session write this replaced authorized on the run id alone —
+   * it asked only whether *some* claim controlled the run — so a bearer rotated
+   * between an unlocked resolve and the commit still succeeded (#666). Resolving
+   * and committing in one `mutateSessionGuarded` cycle removes that window by
+   * construction; there is no captured generation to re-check because there is
+   * no gap for a rotation to land in. No bearer-blind stash remains on this
+   * class: the shape survives only as `stashRunbookUnverified` in
+   * `testing/session-fixtures.ts`, where product code cannot reach it.
+   *
+   * Unlike {@link unstashForClaimId}, the linkage and delegation-liveness checks
+   * are guarded on `claim.delegation`: `stash --claim-id` accepts a run-control
+   * bearer as well as a delegated one, and `linkageMatchesClaim` reports `false`
+   * for a claim with no delegation.
+   *
+   * The claim record is deliberately left untouched — stash preserves it, and
+   * the command is classified non-recording (#519).
+   *
+   * @param claimId - Bearer claim id for the runbook to stash
+   * @returns Discriminated stash result describing success or the refusal reason.
    *   Refused `execution_in_progress` or `recovery_required` instead when the
    *   run is execution-owned or awaiting recovery; the value is absent then.
    */
-  async stashRunbook(runbookId: RunId): Promise<SessionMutationResult<RunId | null>> {
-    return this.mutateGuarded([runbookId], (ctx) => {
+  async stashForClaimId(claimId: ClaimId): Promise<SessionMutationResult<StashForClaimIdResult>> {
+    // Hoisted out of the callback so the affected-run selector reads the same
+    // parsed bearer the mutation does; the slot write is guarded against the
+    // claim's controlled run.
+    const parsed = parseClaimBearer(claimId);
+    const affectedRun = (session: SessionData): readonly RunId[] => {
+      if (!Object.hasOwn(session.claims, parsed.claimKey)) return [];
+      const claim = session.claims[parsed.claimKey];
+      return verifyClaimSecret(parsed.secret, claim.secretHash) ? [claim.controlledRunId] : [];
+    };
+    return this.mutateGuarded(affectedRun, (ctx): StashForClaimIdResult => {
       const { session } = ctx;
-      if (session.stashedRunbookId) return null;
+      if (!Object.hasOwn(session.claims, parsed.claimKey)) {
+        // Same split as `unstashForClaimId`: a bearer the parent-side latch
+        // tombstoned is superseded, not unknown. `ctx.claim` reads through the
+        // open transaction, so the tombstone is read under the same snapshot.
+        const presented = ctx.claim(parsed.claimKey);
+        if (
+          presented === null ||
+          presented.status === 'active' ||
+          !verifyClaimSecret(parsed.secret, presented.record.secretHash)
+        ) {
+          return { status: 'missing-claim', claimId };
+        }
+        const parentRunId = presented.record.delegation?.parentRunId;
+        return {
+          status: 'superseded',
+          claimId,
+          reason: this.describeSupersession(
+            presented.record,
+            parentRunId === undefined ? null : ctx.readState(parentRunId),
+          ).reason,
+        };
+      }
+      const claim = session.claims[parsed.claimKey];
+      if (!verifyClaimSecret(parsed.secret, claim.secretHash)) {
+        return { status: 'missing-claim', claimId };
+      }
+      // Narrowed the moment the bearer is proved, and it is `verified` — never
+      // `claim` — that leaves this method: the persisted record carries
+      // `secretHash`, and nothing outside the transaction has any use for it.
+      const verified = verifiedClaimFromRecord(claim);
+      const state = ctx.readState(claim.controlledRunId);
+      if (!state) {
+        // The claim's controlled run state cannot be read. The FK cascade deletes
+        // a claim with its run, so this is not reachable through a supported
+        // delete — but the caller-visible refusal taxonomy returns a typed
+        // `missing-child` rather than throwing, so a corrupted database degrades
+        // gracefully.
+        return { status: 'missing-child', childRunId: claim.controlledRunId };
+      }
+      if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
+        return { status: 'terminal-child', claim: verified, lifecycle: state.lifecycle };
+      }
+      if (claim.delegation) {
+        if (!linkageMatchesClaim(state.parentLinkage, claim)) {
+          return { status: 'child-linkage-mismatch', claim: verified };
+        }
+        // Classified, not lifecycle-checked, for the reason given in
+        // `getActiveForClaimId`: an active row whose delegation has closed must
+        // still refuse, including the `cursor-advanced` case a lifecycle check
+        // cannot see.
+        const parent = ctx.readState(claim.delegation.parentRunId);
+        const liveness = classifyDelegationLiveness(parent, claim.delegation);
+        if (liveness.kind === 'parent-unreadable') {
+          return { status: 'parent-missing', claim: verified };
+        }
+        if (liveness.kind === 'closed') {
+          return { status: 'superseded', claimId, reason: liveness.reason };
+        }
+      }
 
-      const originalDefaultStackLength = session.defaultStack.length;
-      session.defaultStack = session.defaultStack.filter((id) => id !== runbookId);
-      const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
+      // Split, where the bearer-blind predecessor collapsed both into `null`.
+      // `already-stashed` is the caller's own controlled run already in the slot;
+      // `slot-occupied` is a *different* run holding it. Re-parking what you
+      // already parked is a different mistake from colliding with someone else's
+      // parked run, and the caller needs to be told which one happened.
+      //
+      // Both sit last, for the reason `getActiveForClaimId` gives its own
+      // parked-runbook gate: between two simultaneously true refusals, the one
+      // that ends the caller's work beats the one that invites more of it. A
+      // terminal controlled run or a closed delegation is the real answer even
+      // when the slot also happens to be busy — reporting the slot first would
+      // send the caller to pop and retry only to meet the refusal that was true
+      // all along, and would hide a closed delegation's no-retry signal behind it.
+      if (session.stashedRunbookId === claim.controlledRunId) {
+        return { status: 'already-stashed', claim: verified };
+      }
+      if (session.stashedRunbookId !== undefined) {
+        return {
+          status: 'slot-occupied',
+          claim: verified,
+          stashedRunbookId: session.stashedRunbookId,
+        };
+      }
 
-      const targetedByClaim = Object.values(session.claims).some(
-        (claim) => claim.controlledRunId === runbookId,
-      );
-
-      if (!removedFromDefaultStack && !targetedByClaim) return null;
-
-      session.stashedRunbookId = runbookId;
-      return runbookId;
+      // The predecessor's `targetedByClaim` arm — does *some* claim control this
+      // run — is not reproduced: the verified bearer's claim controls it, so the
+      // question is satisfied by construction. Its stack filter is reproduced —
+      // a run-control-claimed run is stack resident and must leave the stack
+      // when it is parked.
+      session.defaultStack = session.defaultStack.filter((id) => id !== claim.controlledRunId);
+      session.stashedRunbookId = claim.controlledRunId;
+      return { status: 'stashed', claim: verified, state };
     });
   }
 
@@ -1819,8 +2023,12 @@ export class SessionService {
       if (!verifyClaimSecret(parsed.secret, claim.secretHash)) {
         return { status: 'missing-claim', claimId };
       }
+      // Narrowed the moment the bearer is proved, and it is `verified` — never
+      // `claim` — that leaves this method: the persisted record carries
+      // `secretHash`, and nothing outside the transaction has any use for it.
+      const verified = verifiedClaimFromRecord(claim);
       if (session.stashedRunbookId !== claim.controlledRunId) {
-        return { status: 'not-stashed', claim };
+        return { status: 'not-stashed', claim: verified };
       }
 
       const state = ctx.readState(claim.controlledRunId);
@@ -1833,13 +2041,13 @@ export class SessionService {
         return { status: 'missing-child', childRunId: claim.controlledRunId };
       }
       if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
-        return { status: 'terminal-child', claim, lifecycle: state.lifecycle };
+        return { status: 'terminal-child', claim: verified, lifecycle: state.lifecycle };
       }
       if (!linkageMatchesClaim(state.parentLinkage, claim)) {
-        return { status: 'child-linkage-mismatch', claim };
+        return { status: 'child-linkage-mismatch', claim: verified };
       }
       if (!claim.delegation) {
-        return { status: 'child-linkage-mismatch', claim };
+        return { status: 'child-linkage-mismatch', claim: verified };
       }
       // Classified, not lifecycle-checked, for the reason given in
       // `getActiveForClaimId`: an active row whose delegation has closed must
@@ -1848,7 +2056,7 @@ export class SessionService {
       const parent = ctx.readState(claim.delegation.parentRunId);
       const liveness = classifyDelegationLiveness(parent, claim.delegation);
       if (liveness.kind === 'parent-unreadable') {
-        return { status: 'parent-missing', claim };
+        return { status: 'parent-missing', claim: verified };
       }
       if (liveness.kind === 'closed') {
         return { status: 'superseded', claimId, reason: liveness.reason };
@@ -1863,7 +2071,15 @@ export class SessionService {
       const now = this.now();
       ctx.touchClaimUpdatedAt(parsed.claimKey, now);
       session.claims[parsed.claimKey] = refreshedClaimRecord(claim, now);
-      return { status: 'restored', claim: session.claims[parsed.claimKey], state };
+      // `refreshedClaimRecord` moves `updatedAt` only, which `VerifiedClaim`
+      // does not carry, so the pre-refresh narrowing is the same value — but it
+      // is derived from the committed record so the two cannot drift if that
+      // refresh ever touches a field the verified shape does keep.
+      return {
+        status: 'restored',
+        claim: verifiedClaimFromRecord(session.claims[parsed.claimKey]),
+        state,
+      };
     });
   }
 
@@ -1895,6 +2111,18 @@ export class SessionService {
 
         const state = ctx.readState(stashedId);
         if (!state) {
+          // Live, despite looking like the sibling of the `missing-active-state`
+          // arm removed from `stash()` — and the difference is which session
+          // structure `applySession` has to rewrite. That arm left a dangling id
+          // in `defaultStack`, and `setStack` writes the stack unconditionally,
+          // so the commit failed the `session_stack` foreign key before the arm
+          // could be returned. Here the slot is written by `setStash`, whose
+          // clearing form is a bare `DELETE FROM stash_slot` with no reference
+          // to insert, so this repair commits. Reaching it still needs an
+          // out-of-band delete with the cascade disabled — pinned by "unstash
+          // clears a stash slot whose run row was removed out of band". Do not
+          // fold this into the `!stashedId` guard: that would leave the corrupt
+          // row in place and every later `unstash` returning null forever.
           session.stashedRunbookId = undefined;
           return null;
         }

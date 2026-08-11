@@ -218,11 +218,71 @@ export function unwrapSessionMutation<T>(result: SessionMutationResult<T>): T {
 }
 
 /**
+ * Move a run into the session's single stash slot WITHOUT verifying a bearer.
+ *
+ * **Test-only, and it must never become the basis of a product code path.** It
+ * authorizes on the run id alone: it asks only whether *some* claim controls the
+ * run or whether the run is stack resident, and never whether the caller holds
+ * the bearer for it. That is the shape of the #666 defect — `stash --claim-id`
+ * used to resolve a target through an unlocked read and commit through a
+ * bearer-blind session write, so a bearer rotated in between still parked the
+ * run. Living here rather than on `SessionService` is what makes the defect
+ * unreachable from product code: both production paths park a run through
+ * `SessionService.stash`, which resolves the active run and writes the slot in
+ * one transaction, or `SessionService.stashForClaimId`, which verifies the
+ * presented bearer inside that same transaction.
+ *
+ * It exists because it is the sole way to park a **delegated child that is not
+ * on the default stack** without also asserting that the child's bearer is live:
+ * `stash()` cannot name an off-stack run, and `stashForClaimId` refuses a closed
+ * delegation. Several fixtures need exactly that dead-authority combination —
+ * notably `unstashForClaimId distinguishes terminal child and ended parent`,
+ * which parks a child whose parent has already stopped, and
+ * {@link seedStashedRun} below. Migrating them onto `stashForClaimId` would
+ * silently reroute the assertion onto a different branch.
+ *
+ * @param manager - State manager whose store holds the run and the session; take
+ *   the caller's own instance so the fixture shares one store with the test.
+ * @param runbookId - Runbook id to move into the single session stash slot.
+ * @returns The stashed runbook id, or null if no slot is available or the
+ *   runbook was not targeted. Refused `execution_in_progress` or
+ *   `recovery_required` instead when the run is execution-owned or awaiting
+ *   recovery; the value is absent then.
+ */
+export async function stashRunbookUnverified(
+  manager: RunbookStateManager,
+  runbookId: RunId,
+): Promise<SessionMutationResult<RunId | null>> {
+  return manager.mutateSessionGuarded([runbookId], (ctx) => {
+    const { session } = ctx;
+    if (session.stashedRunbookId) return null;
+
+    const originalDefaultStackLength = session.defaultStack.length;
+    session.defaultStack = session.defaultStack.filter((id) => id !== runbookId);
+    const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
+
+    const targetedByClaim = Object.values(session.claims).some(
+      (claim) => claim.controlledRunId === runbookId,
+    );
+
+    if (!removedFromDefaultStack && !targetedByClaim) return null;
+
+    session.stashedRunbookId = runbookId;
+    return runbookId;
+  });
+}
+
+/**
  * Persist a run and move it straight into the session's single stash slot.
  *
- * The run is pushed (and claimed, unless disabled) before being stashed, because
- * `stashRunbook` refuses a run nothing targets — the same refusal production
- * relies on.
+ * The run is pushed onto the default stack (and claimed, unless disabled) before
+ * being stashed, because {@link stashRunbookUnverified} refuses a run nothing
+ * targets. It is the stack push alone that satisfies that refusal here.
+ *
+ * The stash is committed through {@link stashRunbookUnverified} rather than
+ * either production path, because a fixture must be able to park a run whose
+ * authority is dead — see that helper's TSDoc before reaching for it anywhere
+ * else.
  *
  * @param cwd - Project root whose store receives the run.
  * @param options - Run identity, content, and claim minting.
@@ -235,8 +295,9 @@ export async function seedStashedRun(
   options: SeedActiveRunOptions = {},
 ): Promise<SeededRun> {
   const seeded = await seedActiveRun(cwd, options);
-  const sessions = new SessionService(new RunbookStateManager(cwd));
-  const stashed = unwrapSessionMutation(await sessions.stashRunbook(seeded.runId));
+  const stashed = unwrapSessionMutation(
+    await stashRunbookUnverified(new RunbookStateManager(cwd), seeded.runId),
+  );
   if (stashed === null) {
     throw new Error(`seedStashedRun: stash slot unavailable for ${seeded.runId}`);
   }

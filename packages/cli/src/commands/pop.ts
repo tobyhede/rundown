@@ -5,7 +5,6 @@ import {
   RunbookStateManager,
   SessionService,
   countNumberedSteps,
-  describeSupersededClaim,
   redactClaimId,
   type ActionBlockData,
   type ClaimId,
@@ -20,36 +19,42 @@ import { OutputEmitter } from '../services/output-emitter.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { parseClaimIdOption } from '../helpers/claim-id-option.js';
 import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
+import { claimUnavailable, sharedClaimRefusal } from '../helpers/claim-refusal.js';
 
-function claimPopRefusal(
+/**
+ * Map a non-success `unstashForClaimId` result to its user-facing envelope.
+ *
+ * Only the one pop-specific arm is mapped here. The six arms `stash --claim-id`
+ * refuses with identically are delegated to `sharedClaimRefusal`, which is the
+ * single place that taxonomy is spelled. The `default` arm is what keeps that
+ * delegation honest: an arm core adds to `UnstashForClaimIdResult` is not
+ * covered by the grouped cases, so it fails to compile here rather than being
+ * absorbed by the shared mapper.
+ *
+ * Exported for direct coverage, for the reason given on `claimStashRefusal`:
+ * the `default` arm guards at compile time and cannot catch a mis-edited case
+ * label that still type-checks. Not part of the command's public surface.
+ *
+ * @param claimId - Bearer the caller presented; only its redacted key is shown
+ * @param result - The refusal arm returned by `unstashForClaimId`
+ * @returns Message and symbolic code for `OutputEmitter.error`
+ */
+export function claimPopRefusal(
   claimId: ClaimId,
   result: Exclude<UnstashForClaimIdResult, { status: 'restored' }>,
 ): { readonly message: string; readonly code: StaleClaimRefusalCode } {
-  // User- and log-facing refusal: identify the claim by its non-secret lookup
-  // key, never the bearer `claimId` (which carries the live secret segment).
-  const claimKey = redactClaimId(claimId);
-  const unavailable = (message: string) =>
-    ({ message, code: 'CLAIMED_RUNBOOK_UNAVAILABLE' }) as const;
   switch (result.status) {
-    case 'missing-claim':
-      return unavailable(`Claim id ${claimKey} does not exist.`);
-    case 'missing-child':
-      return unavailable(
-        `Claim id ${claimKey} no longer has readable child runbook state. Recover with \`rundown prune\` and restart from source.`,
-      );
     case 'not-stashed':
-      return unavailable(`Claim id ${claimKey} is not currently stashed.`);
+      // Identifies the claim by its non-secret lookup key, never the bearer
+      // `claimId` (which carries the live secret segment).
+      return claimUnavailable(`Claim id ${redactClaimId(claimId)} is not currently stashed.`);
+    case 'missing-claim':
+    case 'missing-child':
     case 'terminal-child':
-      return unavailable(`Claim id ${claimKey} points at a ${result.lifecycle} child runbook.`);
     case 'child-linkage-mismatch':
-      return unavailable(`Claim id ${claimKey} is no longer linked to its child runbook.`);
     case 'parent-missing':
-      return unavailable(`Claim id ${claimKey} parent runbook is missing.`);
     case 'superseded':
-      // Core owns this wording and code, shared with the pass/fail/goto seam:
-      // `rd pop` refusing a superseded bearer must carry the same RD-825
-      // no-retry signal, not a generic unavailable envelope.
-      return describeSupersededClaim(claimKey, result.reason);
+      return sharedClaimRefusal(claimId, result);
     default: {
       const _exhaustive: never = result;
       return _exhaustive;
