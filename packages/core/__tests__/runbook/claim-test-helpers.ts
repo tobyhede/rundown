@@ -189,12 +189,24 @@ export function raceChildClaimDuringActorPrepare(
  * is what lets a cascade test prove the key landed on the bearer's own run and
  * nowhere else.
  *
+ * The release is UNWRAPPED, not discarded. `releaseRunbook` is guarded, so it
+ * can refuse (`execution_in_progress` when the run is execution-owned,
+ * `recovery_required` when it awaits recovery) and commit nothing. A discarded
+ * refusal reads to every caller as a fence that held — the capture list fills,
+ * the run never advances, and the assertion that fails is `claim_superseded`,
+ * which says nothing about the retirement never landing. Throwing keeps the
+ * failure here, at the precondition that did not hold. The once-only flag is
+ * still set before the release so a re-entered seam cannot retire twice; the
+ * throw beats the capture being recorded either way.
+ *
  * Restored by the caller's `jest.restoreAllMocks()`.
  *
  * @param store - Store whose keyed capture seam is spied.
  * @param retiring - Independent session service standing in for the retiring holder.
  * @param retiredRunId - Run whose controlling claim is released mid-capture.
  * @returns Getter for the run ids captured through the keyed seam, in call order.
+ * @throws {Error} When the mid-capture release is refused, since a fixture whose
+ *   retirement never committed makes the race it exists to open unreachable.
  */
 export function retireDuringCapture(
   store: RunbookStore,
@@ -208,7 +220,7 @@ export function retireDuringCapture(
     const captured = await realCapture(...args);
     if (!retired) {
       retired = true;
-      await retiring.releaseRunbook(retiredRunId);
+      unwrapSessionMutation(await retiring.releaseRunbook(retiredRunId));
     }
     capturedRunIds.push(args[0]);
     return captured;
