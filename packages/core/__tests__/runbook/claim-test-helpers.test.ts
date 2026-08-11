@@ -66,10 +66,13 @@ describe('retireDuringCapture', () => {
     );
 
     // The refusal must surface AS a refusal, naming the run and the reason —
-    // not as a capture that silently proceeded without retiring anything.
-    await expect(
-      store.captureAuthorityState(seeded.runId, claimKeyFromBearer(claimId)),
-    ).rejects.toThrow(/execution_in_progress/);
+    // not as a capture that silently proceeded without retiring anything. Both
+    // halves are asserted against the SAME rejection: the reason alone leaves a
+    // cascade reader guessing which of several captured runs failed to retire,
+    // and the run id alone does not say why it did not.
+    const refused = store.captureAuthorityState(seeded.runId, claimKeyFromBearer(claimId));
+    await expect(refused).rejects.toThrow(/execution_in_progress/);
+    await expect(refused).rejects.toThrow(seeded.runId);
     // Nothing recorded: a fixture whose precondition never landed must not leave
     // a capture list a witness could read as success.
     expect(capturedRunIds()).toEqual([]);
