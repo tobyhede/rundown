@@ -73,6 +73,7 @@ import {
   linkageFor,
   claimLiveDelegation,
   raceChildClaimDuringActorPrepare,
+  retireDuringCapture,
   seedLiveDelegation,
 } from './claim-test-helpers.js';
 import { patchPersistedClaim, unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
@@ -5546,9 +5547,9 @@ describe('RunbookLifecycleCommandService', () => {
       // went stale between authorization and capture would be silently upgraded
       // to whatever authority replaced it.
       //
-      // Spying `captureAuthorityState` is what makes the difference observable:
-      // that method is reached ONLY on the keyed path, so retiring the claim
-      // from inside it both opens the race and witnesses that the key was used.
+      // `retireDuringCapture` is what makes the difference observable: the seam
+      // it spies is reached ONLY on the keyed path, so retiring the claim from
+      // inside it both opens the race and witnesses that the key was used.
       // Modelled on the goto seam's witness, at the same fence point.
       const steps: ResolvedStep[] = [
         { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
@@ -5566,18 +5567,11 @@ describe('RunbookLifecycleCommandService', () => {
       );
       const evidence: CallerEvidence = { kind: 'claim_bearer', claimId: claimed.claimId };
 
-      const store = await getRunbookStore(tmp);
-      const retiring = new SessionService(new RunbookStateManager(tmp));
-      const realCapture = store.captureAuthorityState.bind(store);
-      let keyedCaptureRan = false;
-      jest.spyOn(store, 'captureAuthorityState').mockImplementation(async (...args) => {
-        const captured = await realCapture(...args);
-        if (!keyedCaptureRan) {
-          keyedCaptureRan = true;
-          await retiring.releaseRunbook(childRunId);
-        }
-        return captured;
-      });
+      const capturedRunIds = retireDuringCapture(
+        await getRunbookStore(tmp),
+        new SessionService(new RunbookStateManager(tmp)),
+        childRunId,
+      );
 
       const outcome = await seam.runTransition({
         command: 'pass',
@@ -5588,7 +5582,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       // The keyed capture is the arm under test: if the spread is dropped this
       // never runs, the retirement never lands, and the transition commits.
-      expect(keyedCaptureRan).toBe(true);
+      expect(capturedRunIds()).toEqual([childRunId]);
       expect(outcome.kind).toBe('claim_superseded');
       // Write-free: the run never left step 1.
       expect((await manager.load(childRunId))?.step).toBe('1');
@@ -6100,18 +6094,11 @@ describe('RunbookLifecycleCommandService', () => {
       );
       const evidence: CallerEvidence = { kind: 'claim_bearer', claimId: claimed.claimId };
 
-      const store = await getRunbookStore(tmp);
-      const retiring = new SessionService(new RunbookStateManager(tmp));
-      const realCapture = store.captureAuthorityState.bind(store);
-      let keyedCaptureRan = false;
-      jest.spyOn(store, 'captureAuthorityState').mockImplementation(async (...args) => {
-        const captured = await realCapture(...args);
-        if (!keyedCaptureRan) {
-          keyedCaptureRan = true;
-          await retiring.releaseRunbook(childRunId);
-        }
-        return captured;
-      });
+      const capturedRunIds = retireDuringCapture(
+        await getRunbookStore(tmp),
+        new SessionService(new RunbookStateManager(tmp)),
+        childRunId,
+      );
 
       const outcome = await seam.runTransition({
         command: 'pass',
@@ -6120,7 +6107,7 @@ describe('RunbookLifecycleCommandService', () => {
         terminalPolicy: RELEASE_POLICY,
       });
 
-      expect(keyedCaptureRan).toBe(true);
+      expect(capturedRunIds()).toEqual([childRunId]);
       expect(outcome.kind).toBe('claim_superseded');
       expect((await manager.load(childRunId))?.substep).toBe('1');
     });
@@ -7117,6 +7104,13 @@ describe('RunbookLifecycleCommandService', () => {
         // purpose, so an authorized policy refusal or a no-op still records the
         // holder — nothing downstream of the force can be the thing that proves
         // this ran.
+        //
+        // ORDER IS THE ASSERTION, not invocation. A bare `toHaveBeenCalledWith`
+        // is satisfied by a recorder moved to AFTER the aggregate, which is
+        // precisely the arrangement this behaviour rules out: the force can
+        // refuse or fail to commit, and the holder must be observed anyway.
+        // `runAll` is the dispatch witness — the single seam every claim-path
+        // force passes through — so the two call orders are directly comparable.
         const claimId = await setupClaim('running');
         loadStepsImpl = () => [
           {
@@ -7127,6 +7121,7 @@ describe('RunbookLifecycleCommandService', () => {
           },
         ];
         const seen = jest.spyOn(sessionService, 'recordClaimSeen');
+        const dispatch = jest.spyOn(actorMutationRunner, 'runAll');
 
         await seam.runTerminal({
           command: 'complete',
@@ -7134,7 +7129,11 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'claim', claimId },
         });
 
+        // Both calls must have happened for the order comparison to mean
+        // anything — a never-dispatched force would otherwise read as "early".
         expect(seen).toHaveBeenCalledWith(claimId);
+        expect(dispatch).toHaveBeenCalled();
+        expect(seen.mock.invocationCallOrder[0]).toBeLessThan(dispatch.mock.invocationCallOrder[0]);
       });
 
       it('routes a delegated child to the report path even when it also holds a collect-for-run grant', async () => {
@@ -7540,16 +7539,11 @@ describe('RunbookLifecycleCommandService', () => {
         ];
         installResolvedPlan(root, [root]);
 
-        const store = await getRunbookStore(tmp);
-        const retiring = new SessionService(new RunbookStateManager(tmp));
-        const realCapture = store.captureAuthorityState.bind(store);
-        const keyedRunIds: RunId[] = [];
-        jest.spyOn(store, 'captureAuthorityState').mockImplementation(async (...args) => {
-          const captured = await realCapture(...args);
-          if (keyedRunIds.length === 0) await retiring.releaseRunbook(ROOT);
-          keyedRunIds.push(assertRunId(args[0]));
-          return captured;
-        });
+        const capturedRunIds = retireDuringCapture(
+          await getRunbookStore(tmp),
+          new SessionService(new RunbookStateManager(tmp)),
+          ROOT,
+        );
 
         const out = await seam.runTerminal({
           command: 'complete',
@@ -7558,7 +7552,7 @@ describe('RunbookLifecycleCommandService', () => {
         });
 
         // The key landed on the bearer's own run, and only there.
-        expect(keyedRunIds).toEqual([ROOT]);
+        expect(capturedRunIds()).toEqual([ROOT]);
         expect(out.kind).toBe('claim_superseded');
         expect((await manager.load(ROOT))?.lifecycle).toBe('running');
       });

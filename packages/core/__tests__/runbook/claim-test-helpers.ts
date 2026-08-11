@@ -4,6 +4,7 @@ import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js
 import type { RunbookActorService } from '../../src/runbook/actor-service.js';
 import type { SessionService } from '../../src/runbook/session-service.js';
 import type { RunbookStateManager } from '../../src/runbook/state.js';
+import type { RunbookStore } from '../../src/runbook/storage/runbook-store.js';
 import type { ClaimRunbookResult } from '../../src/runbook/claim-id.js';
 import type { DelegationLinkage, RunId, SubstepState } from '../../src/runbook/types.js';
 import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
@@ -170,6 +171,49 @@ export function raceChildClaimDuringActorPrepare(
   return interleaveOnceDuringActorPrepare(actorService, () =>
     claimant.claimRunbook(childRunId, linkage),
   );
+}
+
+/**
+ * Retire the run's controlling claim from inside the keyed authority capture.
+ *
+ * `captureAuthorityState` is reached ONLY when the fenced mutation carries the
+ * presented bearer's capture key — without it the runner falls back to
+ * `captureRunAuthorityState`, which resolves whatever claim CURRENTLY controls
+ * the run and would silently upgrade a stale bearer. Releasing from inside the
+ * keyed capture therefore does two jobs at once: it opens the stale-bearer race
+ * the fence must lose, and it witnesses that the keyed arm ran at all. Drop the
+ * key and the returned list stays empty.
+ *
+ * The retirement lands on the FIRST capture only, so a multi-member cascade
+ * retires once; every capture's run id is still collected in call order, which
+ * is what lets a cascade test prove the key landed on the bearer's own run and
+ * nowhere else.
+ *
+ * Restored by the caller's `jest.restoreAllMocks()`.
+ *
+ * @param store - Store whose keyed capture seam is spied.
+ * @param retiring - Independent session service standing in for the retiring holder.
+ * @param retiredRunId - Run whose controlling claim is released mid-capture.
+ * @returns Getter for the run ids captured through the keyed seam, in call order.
+ */
+export function retireDuringCapture(
+  store: RunbookStore,
+  retiring: SessionService,
+  retiredRunId: RunId,
+): () => readonly RunId[] {
+  const realCapture = store.captureAuthorityState.bind(store);
+  const capturedRunIds: RunId[] = [];
+  let retired = false;
+  jest.spyOn(store, 'captureAuthorityState').mockImplementation(async (...args) => {
+    const captured = await realCapture(...args);
+    if (!retired) {
+      retired = true;
+      await retiring.releaseRunbook(retiredRunId);
+    }
+    capturedRunIds.push(args[0]);
+    return captured;
+  });
+  return () => capturedRunIds;
 }
 
 const isClaimed = <T extends { status: string }>(
