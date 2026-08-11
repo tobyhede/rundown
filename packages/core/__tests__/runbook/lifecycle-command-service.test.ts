@@ -123,6 +123,37 @@ import { patchPersistedClaim, unwrapSessionMutation } from '../../src/testing/se
 // the claim fail session-schema validation, which is the system stating the
 // state is unrepresentable. The reachable arm IS pinned, by the `recorded` /
 // `not-applicable` pair on `reported` below.
+//
+// Five further survivors are accepted as EQUIVALENT (#727) — each by a proof in
+// the code, not by inspection, so the verdict can be rechecked rather than
+// trusted:
+//
+//   :2973 `if (input.callerEvidence.kind === 'claim_bearer')` -> `if (true)`.
+//     `#driveTerminalClaim` is dispatched only for a claim-shaped selector, and
+//     `reconcileClaimTarget` in the same file refuses `claim_bearer_mismatch`
+//     unless the evidence is a bearer carrying that exact claim id. Non-bearer
+//     evidence never reaches the line.
+//
+//   :2978 `state.parentLinkage?.parentRunId` -> `state.parentLinkage.parentRunId`.
+//     Evaluated only when `shouldReport` holds, and
+//     `claimCanReportDelegationResult` (claim-id.ts) returns false outright for
+//     `linkage?.kind !== 'delegation'`. The optional chain is dead in the only
+//     branch that evaluates it.
+//
+//   :3234 `member.id === controlledRunId && claimKey !== undefined` -> `&& true`.
+//     Both operands derive from the same presented bearer, so `claimKey` is
+//     undefined only when `controlledRunId` is, and a `RunId` never equals
+//     `undefined` — the first conjunct is already false wherever the second
+//     would have mattered.
+//
+//   The guard spread `...(guard === undefined ? {} : { guard })` keeps its
+//   `false ?` mutant on BOTH fenced drives (`#driveSubstepFenced` and
+//   `#driveTopLevel`, 1 each). It turns `{}` into `{ guard: undefined }`, and
+//   `EffectfulActorMutationRunner.run` forwards `input.guard` BY VALUE into
+//   `RunbookStoreActorCommitter` — key presence is never tested. Same argument
+//   as the `delegationRuntime` annotation in the source. The spread's other
+//   three arms all drop the guard from the GUARDED call, and are killed by the
+//   racing child-claim witness on each drive.
 
 const RELEASE_POLICY: LifecycleTerminalReleasePolicy = {
   onComplete: { releaseRunbook: true },
@@ -5167,6 +5198,32 @@ describe('RunbookLifecycleCommandService', () => {
       expect(after?.frameEntryCounts).toEqual({ '1|': beforeEntry + 1 });
     });
 
+    it('captures bare authority for a navigation presented without a bearer', async () => {
+      // `claimKeyFromBearer(input.callerEvidence.claimId)` reads a field only
+      // the bearer variant carries, so forcing the keyed arm for non-bearer
+      // evidence parses `undefined` as a claim id. Every other test on this
+      // seam presents a bearer, which left the guard on that arm unobserved.
+      // The counterpart of the `claim_superseded` witness below: that one pins
+      // the key is threaded when there IS one, this one that it is not
+      // fabricated when there is not.
+      loadStepsImpl = () => twoSteps;
+      await activate(baseState({ id: runId }));
+      const store = await getRunbookStore(tmp);
+      const keyedCapture = jest.spyOn(store, 'captureAuthorityState');
+
+      const outcome = await seam.runNavigationMutation({
+        runId,
+        callerEvidence: DIRECT_CLI,
+        steps: twoSteps,
+        target: { step: '2' },
+        terminalReleaseMode: 'stack-pop',
+      });
+
+      expect(outcome.kind).toBe('applied');
+      expect(keyedCapture).not.toHaveBeenCalled();
+      expect((await manager.load(runId))?.step).toBe('2');
+    });
+
     it('allows bare navigation on a standalone run (stack-pop release)', async () => {
       loadStepsImpl = () => twoSteps;
       await activate(baseState());
@@ -6123,6 +6180,114 @@ describe('RunbookLifecycleCommandService', () => {
       expect(keyedCaptureRan).toBe(true);
       expect(outcome.kind).toBe('claim_superseded');
       expect((await manager.load(childRunId))?.substep).toBe('1');
+    });
+
+    it('captures bare authority for a substep drive presented without a bearer', async () => {
+      // The other direction of the same spread, and the one the witness above
+      // cannot reach: `claimKeyFromBearer(input.callerEvidence.claimId)` reads a
+      // field only the bearer variant of CallerEvidence carries, so forcing the
+      // keyed arm for non-bearer evidence parses `undefined` as a claim id.
+      // Every other test on this seam presents a bearer, which left the arm
+      // unobserved — a bare drive must resolve the run's own controlling claim
+      // through `captureRunAuthorityState` and never touch the keyed capture.
+      const steps: ResolvedStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Substeps',
+          aggregation: { strategy: 'ALL' },
+          substeps: [{ id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') }],
+          transitions: tx('CONTINUE', 'STOP'),
+        },
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => steps;
+      await activate(
+        baseState({
+          step: '1',
+          stepName: 'Substeps',
+          substep: '1',
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+        }),
+      );
+      const store = await getRunbookStore(tmp);
+      const keyedCapture = jest.spyOn(store, 'captureAuthorityState');
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: DIRECT_CLI,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      expect(keyedCapture).not.toHaveBeenCalled();
+      expect((await manager.load(runId))?.step).toBe('2');
+    });
+
+    it('refuses a racing child claim through the substep fence in-transaction guard', async () => {
+      // The substep fence builds its own `actorMutationRunner.run` description
+      // with its own copy of the guard spread, so a guard dropped HERE is
+      // invisible to every witness in `claim-targeted open-children guard` —
+      // all of them drive the top-level arm. Same fence point and same race:
+      // the claim commits inside `prepareActorMutation`, past every pre-check,
+      // so only the in-transaction guard can catch it.
+      const steps: ResolvedStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Substeps',
+          aggregation: { strategy: 'ALL' },
+          substeps: [
+            { id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') },
+            { id: '2', description: 'B', transitions: tx('CONTINUE', 'STOP') },
+          ],
+          transitions: tx('CONTINUE', 'STOP'),
+        },
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => steps;
+      const childRunId = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeee33');
+      // The delegation occupies substep '2' so `seedLiveDelegation`'s substep
+      // upsert leaves the active substep '1' — the one being completed — alone.
+      const linkage = linkageFor(runId, 'a', '2');
+      await activate(
+        baseState({
+          step: '1',
+          stepName: 'Substeps',
+          substep: '1',
+          substepStates: [
+            { id: '1', frameKey: buildFrameKey('1'), status: 'running' },
+            { id: '2', frameKey: buildFrameKey('1'), status: 'running' },
+          ],
+        }),
+      );
+      await manager.save(
+        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+      );
+      await seedLiveDelegation(manager, linkage);
+
+      const racingClaim = raceChildClaimDuringActorPrepare(
+        actorService,
+        new SessionService(new RunbookStateManager(tmp)),
+        childRunId,
+        linkage,
+      );
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(racingClaim()?.kind).toBe('committed');
+      expect(outcome.kind).toBe('open_delegated_children');
+      // Write-free, as on the top-level arm: the guard aborts the commit before
+      // its first UPDATE, so no completion row landed and the cursor never moved.
+      const persisted = await manager.load(runId);
+      expect(persisted?.substep).toBe('1');
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
     });
 
     it('treats an explicit cursor for an already-advanced sibling substep as an idempotent duplicate (no orphan row)', async () => {
@@ -7268,6 +7433,10 @@ describe('RunbookLifecycleCommandService', () => {
     describe('bare path', () => {
       const ROOT = assertRunId('rd_77777777777777777777777777777777');
       const CHILD = assertRunId('rd_88888888888888888888888888888888');
+      // A delegating parent OUTSIDE the inline force order. The bare cascade
+      // owns the inline chain; a run that delegated the chain's root is not a
+      // member of it, and appending it opportunistically is the arm below.
+      const EXTERNAL_PARENT = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeee99');
 
       // A root state carrying a reported-but-uncollected delegation outcome, i.e.
       // collection pending (mirrors command-policy.test.ts stateWithReportedOutcome).
@@ -7561,6 +7730,121 @@ describe('RunbookLifecycleCommandService', () => {
         expect(keyedRunIds).toEqual([ROOT]);
         expect(out.kind).toBe('claim_superseded');
         expect((await manager.load(ROOT))?.lifecycle).toBe('running');
+      });
+
+      it('reports the forced root to a delegating parent outside the force order', async () => {
+        // The bare cascade's own opportunistic-parent arm, twin to the claim
+        // path's — and the one nothing drove: no existing bare test gives the
+        // resolved root a delegation linkage at all, so `externalParentRunId`
+        // was always undefined and the whole spread was dead code under test.
+        // Read off `reported`, never off the parent's `resolvedCompletions`:
+        // `seedLiveDelegation` writes a substep on the parent, so a count-based
+        // assertion is satisfied by setup and stays green while the report
+        // never happens.
+        const linkage = linkageFor(EXTERNAL_PARENT, 'a');
+        await manager.save(baseState({ id: EXTERNAL_PARENT, runbookPath: 'parent.md' }));
+        await issueRunControlClaimFor(EXTERNAL_PARENT);
+        await seedLiveDelegation(manager, linkage);
+        const root = baseState({ id: ROOT, parentLinkage: linkage });
+        await manager.save(root);
+        await issueRunControlClaimFor(ROOT);
+        loadStepsImpl = () => [
+          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+        ];
+        installResolvedPlan(root, [root]);
+
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: runControlEvidence(ROOT),
+          targetSelector: { kind: 'default' },
+        });
+
+        expect(out).toMatchObject({
+          kind: 'applied_bare',
+          rootRunId: ROOT,
+          reported: 'recorded',
+        });
+      });
+
+      it('drops a delegating parent it cannot capture instead of vetoing the root close', async () => {
+        // Why that target is `optional`. A delegating parent holding no
+        // controlling claim of its own is ordinary — its run-control bearer may
+        // have been released or pruned while the delegation is still live — and
+        // `captureRunAuthorityState` refuses `claim_superseded` for exactly that
+        // run. Made hard, the whole aggregate takes that refusal and the root it
+        // was forcing never closes. Twin of the claim path's "still closes a
+        // claimed child when the delegating parent holds no controlling claim".
+        const linkage = linkageFor(EXTERNAL_PARENT, 'a');
+        // Saved with a live delegation but never claimed: a run row with no
+        // active controlling claim is what the bare capture refuses.
+        await manager.save(baseState({ id: EXTERNAL_PARENT, runbookPath: 'parent.md' }));
+        await seedLiveDelegation(manager, linkage);
+        const root = baseState({ id: ROOT, parentLinkage: linkage });
+        await manager.save(root);
+        await issueRunControlClaimFor(ROOT);
+        loadStepsImpl = () => [
+          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+        ];
+        installResolvedPlan(root, [root]);
+
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: runControlEvidence(ROOT),
+          targetSelector: { kind: 'default' },
+        });
+
+        expect(out).toMatchObject({ kind: 'applied_bare', rootRunId: ROOT, status: 'completed' });
+        // Dropped from the aggregate, not captured and failed — so no report was
+        // attempted, and `reported` is the field that says which of the two
+        // happened. Paired with the `recorded` case above this pins the spread.
+        expect(out).toMatchObject({ reported: 'not-applicable' });
+        expect((await manager.load(ROOT))?.lifecycle).toBe('completed');
+      });
+
+      it('does not repeat an aggregate target when the delegating parent is already forced', async () => {
+        // The dedup arm, and it is crash-avoidance rather than a tidy-up:
+        // `runAll` rejects a repeated target outright, because an aggregate that
+        // claims to own one run twice cannot be committed. The topology needs a
+        // delegation edge running back into the forcing run's own inline chain,
+        // which the plan resolver's cycle check does not cover (it walks inline
+        // linkage only) — the synthetic plan is what makes it constructible.
+        const childState = baseState({
+          id: CHILD,
+          parentLinkage: {
+            kind: 'inline',
+            parentRunId: ROOT,
+            parentStep: '1',
+            parentStepId: '1',
+            parentFrameKey: buildFrameKey('1'),
+            parentEntry: 1,
+          },
+        });
+        const rootState = baseState({ id: ROOT, parentLinkage: linkageFor(CHILD, 'a') });
+        await manager.save(childState);
+        await manager.save(rootState);
+        await issueRunControlClaimFor(CHILD);
+        await issueRunControlClaimFor(ROOT);
+        loadStepsImpl = () => [
+          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+        ];
+        installResolvedPlan(rootState, [childState, rootState]);
+
+        const aggregateTargets: RunId[][] = [];
+        const realRunAll = actorMutationRunner.runAll.bind(actorMutationRunner);
+        jest.spyOn(actorMutationRunner, 'runAll').mockImplementation(async (input) => {
+          aggregateTargets.push(input.targets.map(({ runId: id }) => id));
+          return await realRunAll(input);
+        });
+
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: runControlEvidence(ROOT),
+          targetSelector: { kind: 'default' },
+        });
+
+        expect(out).toMatchObject({ kind: 'applied_bare', rootRunId: ROOT });
+        // The force order exactly, with no second entry for CHILD appended.
+        expect(aggregateTargets).toEqual([[CHILD, ROOT]]);
       });
 
       it('bare stop maps a non-running resolved root to already_terminal', async () => {
