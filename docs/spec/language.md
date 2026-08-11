@@ -870,10 +870,33 @@ Step-level runbook lists are represented as sequential implicit substeps (`N.1`,
 `N.2`, ...).
 
 Rundown implementations MUST NOT migrate persisted runbook state between
-versions. This applies to all data under `.rundown/runs/`, including structured
-state fields and opaque snapshots. When persisted state is stale or structurally
-incompatible, implementations SHOULD require the user to complete, stop, or
-prune the run and restart from the source document. See
+versions. The rule binds the state itself, wherever an implementation stores it
+— it is not scoped to any one path. In this implementation that means the
+runbook state database, `.rundown/rundown.db`: every run row's structured state
+fields and its opaque snapshot blob, together with the session, stash, and
+delegation/claim rows the same database holds. It equally binds any other
+location an implementation persists run state to. `.rundown/runs/` holds
+captured filesystem outputs, not run state, and is therefore not what this rule
+protects.
+
+Two version checks enforce it and MUST NOT be conflated. They fail at different
+scopes, so they have different recovery actions:
+
+| Check                        | Scope                                         | Recovery when it fails                                                                                                           |
+| ---------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `RunbookState.schemaVersion` | One run's own state; MUST be `1`              | Complete, stop, or prune **that run**, then re-run it from the source document. The store and every other run in it stay intact. |
+| Database schema version      | The whole store, including session and claims | Discard **the store**: delete `.rundown/rundown.db` and restart the runbooks from source. Every run it held is unrecoverable.    |
+
+The two do not substitute for each other. Pruning a run cannot repair a store
+whose schema this build refuses — the store is what failed, and every run in it
+is equally unreadable. Discarding the store does remove one bad run, but it
+destroys every other run along with it, so it is a far larger action than a
+single invalid run calls for.
+
+When one run's persisted state is stale or structurally incompatible,
+implementations SHOULD require the user to complete, stop, or prune that run and
+restart it from the source document. When the store's schema is incompatible,
+implementations SHOULD require the user to discard the store. See
 [runtime recovery](../reference/runtime.md#invalid-persisted-state--no-migration)
 for operational details.
 

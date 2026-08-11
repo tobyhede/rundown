@@ -118,10 +118,11 @@ describe('withErrorHandling', () => {
     expect(parsed.code).toBe(Errors.fileNotFound('x').code);
   });
 
-  // Both of these fire while OPENING the store, so they reach every command,
-  // read-only ones included. Without a typed arm each falls through to
-  // Errors.unknown and reports RD-999 / "Unknown error" — a condition with a
-  // specific cause rendered as though the CLI had no idea what happened.
+  // Both of these fire while OPENING the store, so they reach every command that
+  // accesses persisted run state, including read-only state commands. Without a
+  // typed arm each falls through to Errors.unknown and reports RD-999 / "Unknown
+  // error" — a condition with a specific cause rendered as though the CLI had no
+  // idea what happened.
   it('converts a WAL journal-mode refusal to RD-306, carrying the effective mode', async () => {
     await withErrorHandling(async () => {
       throw new WalJournalModeUnavailableError('delete');
@@ -131,8 +132,11 @@ describe('withErrorHandling', () => {
     const parsed = parseStdoutJson();
     expect(parsed.code).toBe(Errors.walJournalModeUnavailable('delete').code);
     expect(parsed.code).not.toBe(Errors.unknown('x').code);
-    // The observed mode is what tells an operator which fallback happened.
-    expect(parsed.error).toMatch(/delete/);
+    // The complete programmatic message is specified in cli-output.md. Keep the
+    // wrapper, factory, and documented example on one byte-for-byte contract.
+    expect(parsed.error).toBe(
+      "Runbook database is not in WAL journal mode - effective mode: delete. WAL mode is required for supported multi-process operation. SQLite still serializes cross-process writers using file locks in rollback-journal mode, but rollback-journal mode does not provide WAL's reader/writer concurrency and is not a validated Rundown deployment mode. SQLite returned the non-WAL mode it kept instead of failing. This narrows the cause to one of: a filesystem whose VFS provides no shared memory (a network mount such as NFS or SMB is the common one), a temporary database opened with no filename, or a connection already inside a write transaction. A read-only database file or directory is NOT among them — that fails the pragma outright and surfaces as RD-307",
+    );
   });
 
   // The store-open arms below are what an operator actually hits: a read-only
@@ -155,9 +159,13 @@ describe('withErrorHandling', () => {
     const parsed = parseStdoutJson();
     expect(parsed.code).toBe(Errors.stateStoreUnavailable('x').code);
     expect(parsed.code).not.toBe(Errors.unknown('x').code);
-    // The driver's own wording is the only thing that separates a read-only
-    // file from a locked database, so it must survive into the envelope.
-    expect(parsed.error).toMatch(/attempt to write a readonly database/);
+    // The wrapper's complete message is the programmatic contract. The native
+    // adapter prefix survives, while the underlying driver's code remains
+    // structured context instead of being invented as a message prefix.
+    expect(parsed.error).toBe(
+      'Runbook database unavailable - Native SQLite (node:sqlite) is unavailable on this multi-process host: attempt to write a readonly database. Rundown does not downgrade to the single-writer sql.js adapter outside WebContainer.',
+    );
+    expect(parsed.error).not.toContain('SQLITE_READONLY:');
     expect(parsed.details).toMatchObject({ context: { driverCode: 'SQLITE_READONLY' } });
     expect(ErrorResponseSchema.safeParse(parsed).success).toBe(true);
   });

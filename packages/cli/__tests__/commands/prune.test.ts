@@ -7,6 +7,7 @@ import {
   buildFrameKey,
   claimKeyFromBearer,
   createDelegatedChildGrants,
+  Errors,
   hashClaimSecret,
   parseClaimBearer,
   RunbookStateManager,
@@ -759,6 +760,69 @@ Do the thing.
       const session = await readSession(workspace);
       expect(session.defaultStack).not.toContain(invalidId);
       expect(await readRunbookState(workspace, invalidId)).toBeNull();
+    });
+
+    // The RD-309 message is executable documentation — it names the command an
+    // operator or agent runs next — so these tests execute the command it names
+    // against a real invalid row rather than trusting the prose.
+    //
+    // Presence is asserted through `listRunIds()`, not `readRunbookState`: the
+    // latter returns null for a row that fails `isRunbookState`, which is every
+    // invalid row, so it cannot tell "still persisted" from "deleted". Raw ids
+    // are also what `prune.ts` itself reads for exactly this reason.
+    describe('RD-309 recovery: the prune mode the error message names', () => {
+      /**
+       * The prune invocation quoted in the RD-309 message (e.g. `prune --inactive`),
+       * with the binary name stripped so it can be handed to the in-process CLI.
+       */
+      function pruneCommandFromRd309Message(): string {
+        const { message } = Errors.invalidPersistedRunState('Invalid runbook state for "rd_x".');
+        const quoted = /discard it with "rundown ([^"]+)"/.exec(message)?.[1];
+        if (quoted === undefined) {
+          // Not an assertion: the extraction failing means the message stopped
+          // naming a prune command at all, which is a different regression from
+          // naming the wrong one, and the message itself is the evidence.
+          throw new Error(`RD-309 message names no prune command: ${message}`);
+        }
+        return quoted;
+      }
+
+      /** A stacked run whose persisted state this build refuses — the RD-309 subject. */
+      async function seedStackedInvalidRun(): Promise<RunId> {
+        const manager = new RunbookStateManager(workspace.cwd);
+        const sessionService = new SessionService(manager);
+        const invalidId = await createStateFile(manager, { lifecycle: 'running' });
+        await sessionService.pushRunbook(invalidId);
+        await patchPersistedRunState(workspace.cwd, invalidId, { schemaVersion: 99 });
+        return invalidId;
+      }
+
+      it('leaves the invalid run in place under a bare prune', async () => {
+        const invalidId = await seedStackedInvalidRun();
+
+        const result = await runCliInProcess('prune', workspace);
+
+        // Exits 0 having deleted nothing. That silent no-op is what makes a
+        // bare `rundown prune` unusable as RD-309 recovery, and why the message
+        // must name a mode: `list()` skips the invalid row, so the default
+        // completed + stopped selection can never reach it.
+        expect(result.exitCode).toBe(0);
+        expect(await new RunbookStateManager(workspace.cwd).listRunIds()).toContain(invalidId);
+        expect((await readSession(workspace)).defaultStack).toContain(invalidId);
+      });
+
+      it('clears the invalid run and its stack entry under the mode the message names', async () => {
+        const invalidId = await seedStackedInvalidRun();
+
+        const result = await runCliInProcess(pruneCommandFromRd309Message(), workspace);
+
+        expect(result.exitCode).toBe(0);
+        expect(await new RunbookStateManager(workspace.cwd).listRunIds()).not.toContain(invalidId);
+        // Releasing the stack entry is what makes this a complete recovery when
+        // the invalid run is the active one — the common RD-309 case, since the
+        // error surfaces on resuming it.
+        expect((await readSession(workspace)).defaultStack).not.toContain(invalidId);
+      });
     });
 
     it('refuses EXECUTION_IN_PROGRESS and prunes nothing while a run is owned (#608)', async () => {

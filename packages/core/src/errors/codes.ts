@@ -129,7 +129,7 @@ export const ErrorCodes = {
     category: ErrorCategory.STATE,
     title: 'Runbook database is not in WAL journal mode',
     description:
-      'The runbook database fell back to a rollback journal, and only WAL serializes writes across processes, so concurrent commands are no longer serialized. SQLite answered with the mode it kept instead of failing, which narrows the cause to one of: a filesystem whose VFS provides no shared memory (a network mount such as NFS or SMB is the common one), a temporary database opened with no filename, or a connection already inside a write transaction. A read-only database file or directory is NOT among them — that fails the pragma outright and surfaces as RD-307. Establish which applies before moving the project directory.',
+      "The runbook database did not enter WAL journal mode. SQLite still serializes cross-process writers through file locking in rollback-journal mode, but that mode does not provide WAL's reader/writer concurrency and is not a validated Rundown deployment mode. SQLite returned a non-WAL mode or no readable mode, which narrows the cause to one of: a filesystem whose VFS provides no shared memory (a network mount such as NFS or SMB is the common one), a temporary database opened with no filename, or a connection already inside a write transaction. A read-only database file or directory is NOT among them — that fails the pragma outright and surfaces as RD-307. Establish which applies before moving the project directory.",
     docSlug: 'wal-journal-mode-unavailable',
   },
   STATE_STORE_UNAVAILABLE: {
@@ -137,7 +137,7 @@ export const ErrorCodes = {
     category: ErrorCategory.STATE,
     title: 'Runbook database unavailable',
     description:
-      'The runbook database at .rundown/rundown.db could not be opened, so no command can read or write run state. The driver reports the underlying cause verbatim: a read-only database file or directory, a file that is not a database, a database another process holds locked, or a host whose SQLite adapter cannot be initialized. Rundown never downgrades to the single-writer sql.js adapter outside WebContainer, so the recovery path is repairing the host or the file — not retrying the command.',
+      'The runbook database at .rundown/rundown.db could not be opened, so commands that access persisted run state cannot continue; commands that do not open the store, such as rundown check, remain available. The driver reports the underlying cause verbatim: a read-only database file or directory, a file that is not a database, lock contention that outlasted the bounded timeout and retries, or a host whose SQLite adapter cannot be initialized. Retry after transient lock contention; repair the host or file for persistent failures. Rundown never downgrades to the single-writer sql.js adapter outside WebContainer.',
     docSlug: 'state-store-unavailable',
   },
   // The THROWN face of the same condition the CLI renders as the symbolic
@@ -174,7 +174,7 @@ export const ErrorCodes = {
     category: ErrorCategory.STATE,
     title: 'Invalid persisted run state',
     description:
-      'A run in the runbook database does not match the state contract this build reads: unparseable persisted state, a schema version other than 1, a missing required field such as templateVars, or a deprecated dynamic-step snapshot. Rundown never migrates persisted state, so the run cannot be resumed and is never silently repaired. Only that run is affected — the database and every other run in it are intact. Recover by finishing the run ("rundown complete"), stopping it ("rundown stop"), or discarding it ("rundown prune"), then re-run the runbook from source.',
+      'A run in the runbook database does not match the state contract this build reads: unparseable persisted state, a schema version other than 1, a missing required field such as templateVars, or a deprecated dynamic-step snapshot. Rundown never migrates persisted state, so the run cannot be resumed and is never silently repaired. Only that run is affected — the database and every other run in it are intact. Recover by finishing the run ("rundown complete"), stopping it ("rundown stop"), or discarding it ("rundown prune --inactive", which a bare "rundown prune" cannot do because its default completed/stopped selection never sees an invalid row), then re-run the runbook from source.',
     docSlug: 'invalid-persisted-run-state',
   },
 

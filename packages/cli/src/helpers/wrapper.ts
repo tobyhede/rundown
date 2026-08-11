@@ -71,8 +71,9 @@ function toRundownError(error: unknown): RundownError {
   // A database that would not open at all — RD-307. `openRunbookDriver` raises
   // four disjoint classes (none extends another): the schema and WAL ones
   // handled above, and these two, which are the RESIDUAL arm — everything the
-  // driver factory could not diagnose more specifically is wrapped here. That
-  // makes this the arm real failures actually take. A read-only database file
+  // driver factory could not diagnose more specifically is wrapped here. It is
+  // reachable by commands that open the store, not store-independent commands
+  // such as `rundown check`. A read-only database file
   // and a read-only directory both fail on the write that establishes WAL, so
   // neither ever RETURNS a fallback journal mode and neither can reach
   // WalJournalModeUnavailableError; both arrive as NativeSqliteUnavailableError,

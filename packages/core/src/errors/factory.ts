@@ -62,26 +62,35 @@ export const Errors = {
   // (errcode 8 `SQLITE_READONLY`, errcode 1544 `SQLITE_READONLY_DIRECTORY`), so
   // they surface as RD-307, whose description lists them. Naming them here sent
   // an operator to `chmod` for a fault that cannot produce this error.
-  walJournalModeUnavailable: (effectiveMode: string | undefined): RundownError =>
-    new RundownError('WAL_JOURNAL_MODE_UNAVAILABLE', {
+  walJournalModeUnavailable: (effectiveMode: string | undefined): RundownError => {
+    const modeOutcome =
+      effectiveMode === undefined
+        ? 'The pragma returned no readable journal mode.'
+        : 'SQLite returned the non-WAL mode it kept instead of failing.';
+    return new RundownError('WAL_JOURNAL_MODE_UNAVAILABLE', {
       effectiveMode,
       message:
-        `effective mode: ${effectiveMode ?? 'unknown'}. Cross-process write ` +
-        `serialization is not in force on this database. SQLite answered with the ` +
-        `mode it kept instead of failing, which narrows the cause to one of: a ` +
+        `effective mode: ${effectiveMode ?? 'unknown'}. WAL mode is required for ` +
+        `supported multi-process operation. SQLite still serializes cross-process ` +
+        `writers using file locks in rollback-journal mode, but rollback-journal ` +
+        `mode does not provide WAL's reader/writer concurrency and is not a ` +
+        `validated Rundown deployment mode. ${modeOutcome} This narrows the cause ` +
+        `to one of: a ` +
         `filesystem whose VFS provides no shared memory (a network mount such as ` +
         `NFS or SMB is the common one), a temporary database opened with no ` +
         `filename, or a connection already inside a write transaction. A read-only ` +
         `database file or directory is NOT among them — that fails the pragma ` +
         `outright and surfaces as RD-307`,
-    }),
+    });
+  },
 
-  // The store-open refusals reach EVERY command, read-only ones included, because
-  // opening the database precedes all of them. The driver's own message is the
-  // only thing that distinguishes a read-only file from a locked database from a
-  // missing `node:sqlite`, so it rides in `message` where the default JSON
-  // envelope carries it; the code's `description` reaches an operator only under
-  // `--text --verbose`.
+  // The store-open refusals reach every command that accesses persisted run
+  // state, including read-only state commands. Commands such as `rundown check`
+  // do not open the store and cannot reach this factory arm. The driver's own
+  // message is the only thing that distinguishes a read-only file from a locked
+  // database from a missing `node:sqlite`, so it rides in `message` where the
+  // default JSON envelope carries it; the code's `description` reaches an
+  // operator only under `--text --verbose`.
   stateStoreUnavailable: (detail: string, driverCode?: string, cause?: Error): RundownError =>
     new RundownError('STATE_STORE_UNAVAILABLE', { message: detail, driverCode }, cause),
 
@@ -100,6 +109,14 @@ export const Errors = {
   // templateVars", "schema validation failed", the legacy-snapshot wording) and
   // is preserved verbatim ahead of the recovery — it is what identifies WHICH
   // run and WHY, and the recovery alone cannot be acted on without it.
+  //
+  // The prune form names `--inactive` because the bare command cannot clear the
+  // run this error is about: an unfiltered `rundown prune` selects completed and
+  // stopped runs out of `RunbookStateManager.list`, which swallows the
+  // validation failure and skips every invalid row, so the run reaches
+  // `prune.ts` only through the invalid-id path gated on `--inactive` / `--all`.
+  // The bare form therefore exits 0 having pruned nothing. `--inactive` also
+  // discards other orphaned runs — see docs/reference/cli.md's RD-309 row.
   invalidPersistedRunState: (detail: string): RundownError => {
     const cause = detail.trim();
     const terminated = cause.endsWith('.') ? cause : `${cause}.`;
@@ -107,8 +124,8 @@ export const Errors = {
       message:
         `${terminated} Rundown never migrates persisted state, so this run ` +
         `cannot be resumed: finish it with "rundown complete", stop it with ` +
-        `"rundown stop", or discard it with "rundown prune", then re-run the ` +
-        `runbook from source.`,
+        `"rundown stop", or discard it with "rundown prune --inactive", then ` +
+        `re-run the runbook from source.`,
     });
   },
 

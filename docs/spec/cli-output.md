@@ -1634,6 +1634,192 @@ Code: CLAIM_GRANT_REQUIRED
 }
 ```
 
+### Runbook database and persisted state (`RD-306`…`RD-309`)
+
+Four `STATE`-category errors describe the state store itself rather than any one
+command's authority. They are **thrown**, not returned as command outcomes, so
+they reach output through the top-level error wrapper rather than through
+`OutputEmitter`. That gives them two shapes distinct from every envelope above:
+
+- **Text** is `Error <code>: <message>` on one line — not the `Error: …` /
+  `Code: …` pair the symbolic codes render. `--verbose` appends the registered
+  description and a documentation link.
+- **JSON** carries an extra `details` object holding `category`, `title`, the
+  error's structured `context`, and `docsUrl`. The documented envelope fields
+  (`kind`, `error`, `code`, `command`) are unchanged.
+
+The registered `description` reaches an operator **only** under
+`--text --verbose`, and never appears in the default JSON envelope, so each of
+these codes deliberately spells its diagnosis and its recovery into `error`
+itself.
+
+> The `docsUrl` these envelopes carry points at a host that does not currently
+> resolve. It is documented as emitted, not as reachable.
+
+Two are open-time faults on the database as a whole, two concern one run.
+
+| Code     | Symbolic name                   | Scope    | Nature                    |
+| -------- | ------------------------------- | -------- | ------------------------- |
+| `RD-306` | `WAL_JOURNAL_MODE_UNAVAILABLE`  | Database | Refusal — establish WAL   |
+| `RD-307` | `STATE_STORE_UNAVAILABLE`       | Database | Retry lock; else repair   |
+| `RD-308` | `CONCURRENT_STATE_MODIFICATION` | One run  | **Transient — re-run it** |
+| `RD-309` | `INVALID_PERSISTED_RUN_STATE`   | One run  | Refusal — finish or prune |
+
+`RD-305` (`INCOMPATIBLE_STATE_SCHEMA`) is the fifth member of this family and
+governs the database's own schema version; it is not repeated here.
+
+#### `RD-306` — database is not in WAL journal mode
+
+WAL is Rundown's required and validated journal mode. SQLite also serializes
+cross-process writers in rollback-journal modes through file locking, but those
+modes do not provide WAL's reader/writer concurrency. SQLite either returned a
+non-WAL effective mode or no readable mode. The candidate causes are enumerated
+in the message because a temporary database and an in-transaction connection
+reach the same refusal — naming a network filesystem as _the_ cause would send
+an operator on local disk looking in the wrong place. A read-only file or
+directory is explicitly **not** among them: that fails the pragma outright and
+surfaces as `RD-307`.
+
+**Text:**
+
+```text
+Error RD-306: Runbook database is not in WAL journal mode - effective mode: delete. WAL mode is required for supported multi-process operation. SQLite still serializes cross-process writers using file locks in rollback-journal mode, but rollback-journal mode does not provide WAL's reader/writer concurrency and is not a validated Rundown deployment mode. SQLite returned the non-WAL mode it kept instead of failing. This narrows the cause to one of: a filesystem whose VFS provides no shared memory (a network mount such as NFS or SMB is the common one), a temporary database opened with no filename, or a connection already inside a write transaction. A read-only database file or directory is NOT among them — that fails the pragma outright and surfaces as RD-307
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "Runbook database is not in WAL journal mode - effective mode: delete. WAL mode is required for supported multi-process operation. SQLite still serializes cross-process writers using file locks in rollback-journal mode, but rollback-journal mode does not provide WAL's reader/writer concurrency and is not a validated Rundown deployment mode. SQLite returned the non-WAL mode it kept instead of failing. This narrows the cause to one of: a filesystem whose VFS provides no shared memory (a network mount such as NFS or SMB is the common one), a temporary database opened with no filename, or a connection already inside a write transaction. A read-only database file or directory is NOT among them — that fails the pragma outright and surfaces as RD-307",
+  "code": "RD-306",
+  "command": "run",
+  "details": {
+    "category": "STATE",
+    "title": "Runbook database is not in WAL journal mode",
+    "context": { "effectiveMode": "delete" },
+    "docsUrl": "https://rundown.dev/docs/errors/wal-journal-mode-unavailable"
+  }
+}
+```
+
+#### `RD-307` — database unavailable
+
+`.rundown/rundown.db` could not be opened, so commands that access persisted run
+state cannot continue. This includes read-only state commands, but not commands
+that never open the store, such as `rundown check`. The driver's own message
+rides in `error` because it is the only thing that distinguishes a read-only
+file from a file that is not a database from lock contention that outlasted the
+driver's bounded timeout and retries from a host with no working SQLite adapter.
+Rundown never downgrades to the single-writer sql.js adapter outside
+WebContainer. Retry after transient lock contention; repair the host or file for
+persistent failures.
+
+**Text:**
+
+```text
+Error RD-307: Runbook database unavailable - Native SQLite (node:sqlite) is unavailable on this multi-process host: attempt to write a readonly database. Rundown does not downgrade to the single-writer sql.js adapter outside WebContainer.
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "Runbook database unavailable - Native SQLite (node:sqlite) is unavailable on this multi-process host: attempt to write a readonly database. Rundown does not downgrade to the single-writer sql.js adapter outside WebContainer.",
+  "code": "RD-307",
+  "command": "status",
+  "details": {
+    "category": "STATE",
+    "title": "Runbook database unavailable",
+    "context": { "driverCode": "SQLITE_READONLY" },
+    "docsUrl": "https://rundown.dev/docs/errors/state-store-unavailable"
+  }
+}
+```
+
+#### `RD-308` — run state lost to a concurrent writer
+
+A run-state read-modify-write spent its optimistic compare-and-swap budget
+because another process committed to the same run first. Nothing was written and
+the persisted state is intact.
+
+This is the **thrown face** of the same condition the symbolic
+`CONCURRENT_MODIFICATION` code renders when a command returns it as an outcome.
+The two are not duplicates and must not be merged: the symbolic code is a
+command result, while `RD-308` is what escapes the throwing state-manager seam
+to the top-level wrapper, which speaks only `RD-NNN`. Before this code that
+escape surfaced as `RD-999` "Unknown error" — the one place the condition was
+undiagnosable.
+
+Alone among the `3xx` state errors this is **transient, not a refusal**: re-run
+the command.
+
+**Text:**
+
+```text
+Error RD-308: Runbook state lost to a concurrent writer - Run rd_9e725b142d81dabcefb9e04919568fcd was modified concurrently by another writer.
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "Runbook state lost to a concurrent writer - Run rd_9e725b142d81dabcefb9e04919568fcd was modified concurrently by another writer.",
+  "code": "RD-308",
+  "command": "pass",
+  "details": {
+    "category": "STATE",
+    "title": "Runbook state lost to a concurrent writer",
+    "context": { "runId": "rd_9e725b142d81dabcefb9e04919568fcd" },
+    "docsUrl": "https://rundown.dev/docs/errors/concurrent-state-modification"
+  }
+}
+```
+
+#### `RD-309` — invalid persisted run state
+
+A run in the database does not match the state contract this build reads:
+unparseable persisted state, a `RunbookState.schemaVersion` other than `1`, a
+missing required field such as `templateVars`, or a deprecated dynamic-step
+snapshot. Rundown never migrates persisted state, so the run cannot be resumed
+and is never silently repaired.
+
+Scope is deliberately narrow and is the reason this is not `RD-305`: **only that
+run is affected**, and the database and every other run in it are intact. The
+store's own diagnosis is preserved verbatim ahead of the recovery, because it is
+what identifies which run and why.
+
+The recovery names `rundown prune --inactive`, not the bare command, and the
+mode is load-bearing: an unfiltered `rundown prune` selects completed and
+stopped runs out of `RunbookStateManager.list`, which skips every row that fails
+validation, so it exits `0` having pruned nothing at all. `--inactive` (or
+`--all`) reaches the run through prune's invalid-id path.
+
+**Text:**
+
+```text
+Error RD-309: Invalid persisted run state - Run rd_9e725b142d81dabcefb9e04919568fcd has invalid schemaVersion 2. Rundown never migrates persisted state, so this run cannot be resumed: finish it with "rundown complete", stop it with "rundown stop", or discard it with "rundown prune --inactive", then re-run the runbook from source.
+```
+
+**JSON:**
+
+```json
+{
+  "kind": "error",
+  "error": "Invalid persisted run state - Run rd_9e725b142d81dabcefb9e04919568fcd has invalid schemaVersion 2. Rundown never migrates persisted state, so this run cannot be resumed: finish it with \"rundown complete\", stop it with \"rundown stop\", or discard it with \"rundown prune --inactive\", then re-run the runbook from source.",
+  "code": "RD-309",
+  "command": "pass",
+  "details": {
+    "category": "STATE",
+    "title": "Invalid persisted run state",
+    "context": {},
+    "docsUrl": "https://rundown.dev/docs/errors/invalid-persisted-run-state"
+  }
+}
+```
+
 ### Transactional refusals under `rundown collect`
 
 `rundown collect` shares the transactional refusal vocabulary documented above.
