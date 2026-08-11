@@ -2334,6 +2334,165 @@ describe('SessionService', () => {
       }
     });
 
+    it('unstashForClaimId refuses a stashed child whose linkage no longer matches its claim', async () => {
+      // The pop-side partner of `stashForClaimId > refuses a delegated child
+      // whose persisted linkage no longer matches its claim record`. Mutation
+      // testing found this arm unreached on the pop path — the refusal's whole
+      // block was NoCoverage, because every other pop test presents a claim
+      // whose linkage still agrees. Same fixture shape as the stash test:
+      // `claimRunbook` pins the incoming linkage against the child's persisted
+      // one at claim time, so the only way to produce a divergence is to mutate
+      // `parentLinkage` afterwards, which `linkageFor`'s varying fill does.
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, '3');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
+
+      await manager.update(child.id, { parentLinkage: linkageFor(parent.id, '4') });
+
+      const result = unwrapSessionMutation(await sessionService.unstashForClaimId(claimed.claimId));
+
+      expect(result.status).toBe('child-linkage-mismatch');
+      if (result.status === 'child-linkage-mismatch') {
+        expect(result.claim.claimKey).toBe(claimed.claim.claimKey);
+      }
+      // The refusal must leave the run parked. Emptying the slot on a refusal
+      // would strand the run: pop is the only way out of the stash, and the
+      // bearer that just failed to name it is the only one that ever could.
+      // This is also what separates the refusal from a mutant that drops the
+      // branch entirely and restores the run anyway.
+      expect(await sessionService.getStashedRunbookId()).toBe(child.id);
+    });
+
+    it('unstashForClaimId refuses a stashed child whose parent state is unreadable', async () => {
+      // The pop-side partner of `stashForClaimId > refuses a claim whose parent
+      // state is unreadable without touching the slot`. `claims.parent_run_id`
+      // is ON DELETE SET NULL rather than CASCADE, so deleting the parent
+      // leaves the claim active with its persisted delegation still naming the
+      // vanished run — which is what `classifyDelegationLiveness` reports as
+      // `parent-unreadable`. Mutation testing found the arm NoCoverage: the two
+      // pop tests that reach the classification at all both land on `closed`.
+      //
+      // The order matters. Parking the child first is what puts the pop past
+      // the not-stashed guard, and the linkage check that precedes the parent
+      // read still passes, because deleting the parent alters neither the
+      // child's `parentLinkage` nor the claim's `delegation` — both go on
+      // naming a run that is no longer there.
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, '5');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
+
+      await manager.delete(parent.id);
+
+      const result = unwrapSessionMutation(await sessionService.unstashForClaimId(claimed.claimId));
+
+      // Kept distinct from `superseded`: an unreadable parent is a database
+      // integrity signal, never a routine end-of-delegation, and the two send
+      // the holder to different places.
+      expect(result.status).toBe('parent-missing');
+      if (result.status === 'parent-missing') {
+        expect(result.claim.claimKey).toBe(claimed.claim.claimKey);
+      }
+      expect(await sessionService.getStashedRunbookId()).toBe(child.id);
+    });
+
+    it('unstashForClaimId refuses a closed delegation the latch has not yet tombstoned', async () => {
+      // `distinguishes terminal child and ended parent` already asserts pop
+      // returns superseded — but it reaches that status by the TOMBSTONE arm:
+      // ending the parent retires the claim, so the bearer is gone from
+      // `session.claims` and the refusal is decided before the linkage and
+      // liveness checks ever run. Mutation testing exposed the difference by
+      // surviving `liveness.kind === 'closed'` → `false` with that test in the
+      // suite. This is the pop-side partner of the stash test `refuses a closed
+      // delegation the parent-side latch has not yet tombstoned`, and it enters
+      // by the other arm: `invalidateClosedDelegatedClaims` skips an
+      // execution-owned child, so owning the child across the parent's cursor
+      // advance defers the tombstone and leaves the claim active over a
+      // delegation that has already closed.
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, '6');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
+      // Park first: the stash write is guarded on the same run, so an
+      // execution-owned child would refuse `execution_in_progress` instead.
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
+      holdExecutionLease(child.id);
+      await manager.update(parent.id, { step: '2' });
+      releaseExecutionLease(child.id);
+
+      const result = unwrapSessionMutation(await sessionService.unstashForClaimId(claimed.claimId));
+
+      expect(result).toEqual({
+        status: 'superseded',
+        claimId: claimed.claimId,
+        reason: 'cursor-advanced',
+      });
+      const session = await manager.loadSession();
+      // The discriminator against the tombstone test: `session.claims` holds
+      // active claims only, so the bearer still being present proves the
+      // refusal came from the liveness classification rather than a lookup of a
+      // retired claim. Without it this test would pass on either arm.
+      expect(Object.keys(session.claims)).toContain(claimed.claim.claimKey);
+      expect(session.stashedRunbookId).toBe(child.id);
+    });
+
+    it('unstashForClaimId refuses a stopped child, not only a completed one', async () => {
+      // The terminal check is a disjunction over both terminal lifecycles, and
+      // the sibling test above only ever presents `completed` — so mutation
+      // testing found the `stopped` half could be deleted with the suite still
+      // green. The two are distinct outcomes a runbook reaches by distinct
+      // routes (`rundown complete` versus `rundown stop`), and pop must refuse
+      // a run parked in either.
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, '7');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
+      unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
+      await manager.update(child.id, { lifecycle: 'stopped' });
+
+      const result = unwrapSessionMutation(await sessionService.unstashForClaimId(claimed.claimId));
+
+      expect(result.status).toBe('terminal-child');
+      if (result.status === 'terminal-child') {
+        // The lifecycle rides on the refusal, so the holder is told which of
+        // the two ended the run; asserting only the status would leave the
+        // field free to report `completed` for a stopped child.
+        expect(result.lifecycle).toBe('stopped');
+      }
+      expect(await sessionService.getStashedRunbookId()).toBe(child.id);
+    });
+
     it('exposes a stashed claimed child read-only via includeStashed', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
