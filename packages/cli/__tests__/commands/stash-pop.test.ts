@@ -214,7 +214,7 @@ describe('stash command', () => {
     expect(JSON.parse(result.stdout)).toEqual(
       expect.objectContaining({
         kind: 'error',
-        code: 'RD-999',
+        code: 'RD-309',
         error: expect.stringContaining(
           `Invalid runbook state for "${state!.id}": invalid schemaVersion; expected schema version 1.`,
         ),
@@ -248,7 +248,7 @@ describe('stash command', () => {
       expect(JSON.parse(result.stdout)).toEqual(
         expect.objectContaining({
           kind: 'error',
-          code: 'RD-999',
+          code: 'RD-309',
           error: expect.stringContaining(
             `This runbook used dynamic-step snapshots (${shapeName}), which are no longer supported. ` +
               'Please restart execution from the runbook entrypoint.',
@@ -814,12 +814,15 @@ describe('stash command', () => {
     await writeFile(join(workspace.cwd, 'parent.runbook.md'), parent);
     await writeFile(join(workspace.cwd, 'child.runbook.md'), child);
 
-    let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+    // JSON, not `--text`: the auto-issued delegation token is only machine
+    // readable on the default output path, and that token is what this test
+    // claims the child with.
+    let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
     expect(result.exitCode).toBe(0);
     const parentState = await getActiveState(workspace);
     expect(parentState).not.toBeNull();
 
-    const token = await getAutoIssuedToken();
+    const token = getAutoIssuedToken(result.stdout);
     result = await runCliInProcess(`claim ${token}`, workspace);
     expect(result.exitCode).toBe(0);
     const output = findActionOutput(result.stdout);
@@ -881,7 +884,7 @@ describe('stash command', () => {
     expect(JSON.parse(result.stdout)).toEqual(
       expect.objectContaining({
         kind: 'error',
-        code: 'RD-999',
+        code: 'RD-309',
         error: expect.stringContaining(
           'This runbook used dynamic-step snapshots (GOTO_NEXT), which are no longer supported.',
         ),
@@ -945,7 +948,7 @@ describe('pop command', () => {
     expect(JSON.parse(result.stdout)).toEqual(
       expect.objectContaining({
         kind: 'error',
-        code: 'RD-999',
+        code: 'RD-309',
         error: expect.stringContaining(
           `Invalid runbook state for "${state!.id}": invalid schemaVersion; expected schema version 1.`,
         ),
@@ -980,7 +983,7 @@ describe('pop command', () => {
       expect(JSON.parse(result.stdout)).toEqual(
         expect.objectContaining({
           kind: 'error',
-          code: 'RD-999',
+          code: 'RD-309',
           error: expect.stringContaining(
             `This runbook used dynamic-step snapshots (${shapeName}), which are no longer supported. ` +
               'Please restart execution from the runbook entrypoint.',
@@ -1022,7 +1025,7 @@ describe('pop command', () => {
     expect(JSON.parse(result.stdout)).toEqual(
       expect.objectContaining({
         kind: 'error',
-        code: 'RD-999',
+        code: 'RD-309',
         error: expect.stringContaining(
           'This runbook used dynamic-step snapshots (instance field), which are no longer supported.',
         ),
