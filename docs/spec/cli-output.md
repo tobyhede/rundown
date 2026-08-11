@@ -1791,10 +1791,16 @@ run is affected**, and the database and every other run in it are intact. The
 store's own diagnosis is preserved verbatim ahead of the recovery, because it is
 what identifies which run and why.
 
+The recovery names `rundown prune --inactive`, not the bare command, and the
+mode is load-bearing: an unfiltered `rundown prune` selects completed and
+stopped runs out of `RunbookStateManager.list`, which skips every row that fails
+validation, so it exits `0` having pruned nothing at all. `--inactive` (or
+`--all`) reaches the run through prune's invalid-id path.
+
 **Text:**
 
 ```text
-Error RD-309: Invalid persisted run state - Run rd_9e725b142d81dabcefb9e04919568fcd has invalid schemaVersion 2. Rundown never migrates persisted state, so this run cannot be resumed: finish it with "rundown complete", stop it with "rundown stop", or discard it with "rundown prune", then re-run the runbook from source.
+Error RD-309: Invalid persisted run state - Run rd_9e725b142d81dabcefb9e04919568fcd has invalid schemaVersion 2. Rundown never migrates persisted state, so this run cannot be resumed: finish it with "rundown complete", stop it with "rundown stop", or discard it with "rundown prune --inactive", then re-run the runbook from source.
 ```
 
 **JSON:**
@@ -1802,7 +1808,7 @@ Error RD-309: Invalid persisted run state - Run rd_9e725b142d81dabcefb9e04919568
 ```json
 {
   "kind": "error",
-  "error": "Invalid persisted run state - Run rd_9e725b142d81dabcefb9e04919568fcd has invalid schemaVersion 2. Rundown never migrates persisted state, so this run cannot be resumed: finish it with \"rundown complete\", stop it with \"rundown stop\", or discard it with \"rundown prune\", then re-run the runbook from source.",
+  "error": "Invalid persisted run state - Run rd_9e725b142d81dabcefb9e04919568fcd has invalid schemaVersion 2. Rundown never migrates persisted state, so this run cannot be resumed: finish it with \"rundown complete\", stop it with \"rundown stop\", or discard it with \"rundown prune --inactive\", then re-run the runbook from source.",
   "code": "RD-309",
   "command": "pass",
   "details": {

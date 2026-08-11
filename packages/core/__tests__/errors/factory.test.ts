@@ -168,6 +168,24 @@ describe('Errors factory - exhaustive coverage', () => {
         expect(error.message).toContain('rundown prune');
       });
 
+      // The recovery has to name a prune MODE, not the bare command. An
+      // unfiltered `rundown prune` defaults to completed + stopped runs, and an
+      // invalid run is in neither list — `RunbookStateManager.list` swallows the
+      // validation error and skips the row (`runbook/state.ts`), so `prune.ts`
+      // reaches it only through the invalid-id path gated on `--inactive` /
+      // `--all`. Naming the bare form sent the operator to a command that cannot
+      // clear the run this very error is diagnosing, which is worse than
+      // silence: it reports success having pruned nothing.
+      //
+      // The CLI half — running the command this message names against a real
+      // invalid row — is `prune.test.ts` › "RD-309 recovery: the prune mode the
+      // error message names".
+      it('names a prune mode that can actually select the invalid run', () => {
+        const error = Errors.invalidPersistedRunState('Invalid runbook state for "rd_abc".');
+
+        expect(error.message).toContain('rundown prune --inactive');
+      });
+
       it('does not double-punctuate a diagnosis that already ends in a period', () => {
         const error = Errors.invalidPersistedRunState('Something is wrong.');
         expect(error.message).toContain('Something is wrong. Rundown never migrates');

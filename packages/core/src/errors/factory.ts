@@ -109,6 +109,14 @@ export const Errors = {
   // templateVars", "schema validation failed", the legacy-snapshot wording) and
   // is preserved verbatim ahead of the recovery — it is what identifies WHICH
   // run and WHY, and the recovery alone cannot be acted on without it.
+  //
+  // The prune form names `--inactive` because the bare command cannot clear the
+  // run this error is about: an unfiltered `rundown prune` selects completed and
+  // stopped runs out of `RunbookStateManager.list`, which swallows the
+  // validation failure and skips every invalid row, so the run reaches
+  // `prune.ts` only through the invalid-id path gated on `--inactive` / `--all`.
+  // The bare form therefore exits 0 having pruned nothing. `--inactive` also
+  // discards other orphaned runs — see docs/reference/cli.md's RD-309 row.
   invalidPersistedRunState: (detail: string): RundownError => {
     const cause = detail.trim();
     const terminated = cause.endsWith('.') ? cause : `${cause}.`;
@@ -116,8 +124,8 @@ export const Errors = {
       message:
         `${terminated} Rundown never migrates persisted state, so this run ` +
         `cannot be resumed: finish it with "rundown complete", stop it with ` +
-        `"rundown stop", or discard it with "rundown prune", then re-run the ` +
-        `runbook from source.`,
+        `"rundown stop", or discard it with "rundown prune --inactive", then ` +
+        `re-run the runbook from source.`,
     });
   },
 

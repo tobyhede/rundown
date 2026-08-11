@@ -174,7 +174,7 @@ export const ErrorCodes = {
     category: ErrorCategory.STATE,
     title: 'Invalid persisted run state',
     description:
-      'A run in the runbook database does not match the state contract this build reads: unparseable persisted state, a schema version other than 1, a missing required field such as templateVars, or a deprecated dynamic-step snapshot. Rundown never migrates persisted state, so the run cannot be resumed and is never silently repaired. Only that run is affected — the database and every other run in it are intact. Recover by finishing the run ("rundown complete"), stopping it ("rundown stop"), or discarding it ("rundown prune"), then re-run the runbook from source.',
+      'A run in the runbook database does not match the state contract this build reads: unparseable persisted state, a schema version other than 1, a missing required field such as templateVars, or a deprecated dynamic-step snapshot. Rundown never migrates persisted state, so the run cannot be resumed and is never silently repaired. Only that run is affected — the database and every other run in it are intact. Recover by finishing the run ("rundown complete"), stopping it ("rundown stop"), or discarding it ("rundown prune --inactive", which a bare "rundown prune" cannot do because its default completed/stopped selection never sees an invalid row), then re-run the runbook from source.',
     docSlug: 'invalid-persisted-run-state',
   },
 
