@@ -1215,43 +1215,70 @@ of them is known:
 command re-runs an effect that may already have taken place, which is exactly
 the at-most-once guarantee being thrown away by hand.
 
-### PID-identity recovery, and its two known weaknesses
+### Owner-identity recovery
 
-`recoverDeadOwner` decides whether an owning process is still alive by
-evaluating `isProcessAlive(owner.execPid)` **outside** SQLite and then
-protecting the decision with an exact-tuple CAS on
-`(run_id, exec_pid, exec_token, exec_epoch)`. A dead owner still in `claimed`
-has its lease reclaimed and its attempt closed as `released`; a dead owner past
-`effect_started` is moved to `recovery_pending`. If the CAS matches nothing the
+`recoverDeadOwner` decides whether an owning process is still alive **outside**
+SQLite (never in a SQL predicate) and then protects the decision with an
+exact-tuple CAS. A dead owner still in `claimed` has its lease reclaimed on
+`(run_id, exec_pid, exec_token, exec_epoch)` and its attempt closed as
+`released`; a dead owner past `effect_started` is moved to `recovery_pending` on
+`(run_id, exec_epoch, exec_token, phase)` — the pid is absent there because the
+attempt row, not the run row, is what changes. If the CAS matches nothing the
 result is `alive` (pre-effect) or `unresolved` — never a steal, on the principle
 that another process may have reissued the lease between the read and the CAS.
 
-Two weaknesses are worth stating plainly, because both are latent rather than
-theoretical:
+**Owner identity is `(pid, host start id)`, not a bare pid.** The kernel
+recycles pids, so a pid alone cannot separate "the owner is still running" from
+"an unrelated process inherited its number". `runbook/process-identity` reads
+the one fact every capable OS exposes — when the process holding the pid started
+(`/proc/<pid>/stat` field 22 on Linux, `ps -o lstart=` on macOS/BSD) — and
+`acquireInTx` records it in `runs.exec_start_id` and
+`execution_attempts.owner_start_id`. That read happens **before** the
+acquisition transaction opens: on a BSD host it spawns `ps`, and no write lock
+may be held across a spawn. This process's own start id is memoized, so the
+spawn is paid at most once per process.
 
-1. **Owner identity is PID-only in practice.** `runs.exec_start_id` and
-   `execution_attempts.owner_start_id` are declared and `CHECK`-constrained, but
-   every production write sets them NULL — the acquisition `UPDATE` does not
-   list them at all. The process-start-id disambiguator the schema reserves is
-   therefore inert, so a **reused PID is indistinguishable from the original
-   owner**. `isProcessAlive` compounds it by design: only `ESRCH` proves death,
-   and every other error (including `EPERM`) returns "alive", so the bias is
-   safe against theft and unsafe against stranding. The failure mode is a
-   permanent stall, not a lost mutation.
-2. **The dead-owner path has no production caller today.** `recoverDeadOwner` is
-   reached only from `withWait`, which returns before it unless a
-   `LeaseWaitPolicy` was supplied — and nothing in `packages/*/src` constructs
-   one. The in-process paths (`releaseClaimed`, `releaseEffectStarted`,
-   `abandonToRecovery`) cover every failure the executor itself observes, so it
-   is only the SIGKILL case that is uncovered — but that case has no in-product
-   exit. A hard-killed owner leaves `runs.exec_token` set; every subsequent
-   mutation refuses `EXECUTION_IN_PROGRESS`, and `deleteRun` guards on
-   `exec_token IS NULL`, so `rundown prune` refuses the run as well. The only
-   exit is deleting `.rundown/rundown.db`, and that is an **emergency-only**
-   measure: the database is per-project, so deleting it destroys the
-   authoritative state of **every** run in the project — plus the session stack,
-   stash, and claims — not just the stranded one. Back up `.rundown/rundown.db`
-   first.
+**Both sides must derive the id the same way, or the comparison is unsound.**
+The writer and the reader are different processes, and the value is opaque and
+per-platform — so a mismatch caused by _how_ it was read is indistinguishable
+from one caused by a recycled pid, and a mismatch is proof of death. Two rules
+follow, and neither is optional. Every caller goes through `ProcessIdentity.of`,
+never a second derivation. And the BSD reader pins `TZ=UTC LC_ALL=C`
+(`PS_CANONICAL_ENV`), because `ps -o lstart=` renders the date in the _caller's_
+timezone: a `TZ=UTC` acquisition and a `TZ=Australia/Sydney` recovery read the
+same live process ten hours apart and the reader would reclaim a lease its owner
+is still executing under.
+
+Two things can prove death, and they are consulted in that order. First, absence
+of the pid: `isProcessAlive` proves it only on `ESRCH`, never on `EPERM` or any
+other error. Failing that, the pid IS held by something, and a start id present
+on **both** sides that differs proves the holder is not the owner that recorded
+it. Everything else answers "alive": a host with no start id records NULL — the
+`runs` CHECK deliberately leaves the column optional in the owned disjunct — and
+a pid whose identity cannot be read now falls back to the pid-only decision,
+which is also why the start-id comparison never runs for an absent pid. The bias
+is one-directional and deliberate: a false "dead" hands a second owner a run
+someone else is executing, breaking at-most-once, whereas a false "alive" only
+stalls a run the next acquisition re-examines.
+
+**Every refusal probes before it refuses.** `withWait` calls `recoverDeadOwner`
+on the first `execution_in_progress` whether or not a `LeaseWaitPolicy` was
+supplied — and nothing in `packages/*/src` supplies one, so the default path is
+the only path. Without that probe a SIGKILLed owner had **no in-product exit at
+all**: it leaves `runs.exec_token` set, every later mutation refuses
+`EXECUTION_IN_PROGRESS`, and `deleteRun` guards on the same column, so
+`rundown prune` refused the run too and the only remedy was deleting
+`.rundown/rundown.db` — a per-project file, so that destroyed every run's
+authoritative state plus the session stack, stash, and claims.
+
+The probe is charged: in the default mode it runs at most once per call, so an
+unwinnable run costs two acquisition attempts and one probe, never a loop. A
+dead pre-effect owner is reclaimed and the acquisition retried immediately; a
+dead post-boundary owner surfaces as `recovery_required`, which
+`ProjectEffectfulActorMutationRunner.run` resolves inline through the
+machine-owned recovery path — the ambiguous effect is never re-run. A live owner
+leaves the probe's CAS matching nothing and the original contention is reported
+unchanged. Only a wait policy adds sleeping on top.
 
 ### Optimistic CAS: `mutateState` is not a lock
 

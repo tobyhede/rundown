@@ -11,6 +11,7 @@ import {
   type LeaseWaitProgress,
 } from '../../../src/runbook/storage/execution-lease.js';
 import { assertClaimGeneration } from '../../../src/runbook/storage/mutation-result.js';
+import { readProcessStartId } from '../../../src/runbook/process-identity.js';
 import { RunbookStateManager } from '../../../src/runbook/state.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
 import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
@@ -118,9 +119,14 @@ describe('finite wait budget', () => {
           const owned = await lease.acquire(cap.authority, process.pid);
           if (owned.kind !== 'committed') throw new Error('acquire failed');
           // pid 1 is EPERM for a non-root caller → permanently "alive", so every
-          // attempt is refused and the loop always runs to one of its exits.
+          // attempt is refused and the loop always runs to one of its exits. Its
+          // start id moves with it: leaving this process's id attached to pid 1
+          // is the recycled-pid signature, and recovery would reclaim the run.
+          const startId = readProcessStartId(1);
           await store.transaction((txn) => {
-            txn.tx.prepare('UPDATE runs SET exec_pid = 1 WHERE id = :id').run({ id: runId });
+            txn.tx
+              .prepare('UPDATE runs SET exec_pid = 1, exec_start_id = :startId WHERE id = :id')
+              .run({ startId, id: runId });
           });
           const recap = await store.captureAuthority(runId, assertClaimLookupKey(claimKey));
           if (recap.kind !== 'captured') throw new Error('recapture failed');
