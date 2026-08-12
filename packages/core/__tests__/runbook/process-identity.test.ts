@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import * as fsSync from 'node:fs';
 import {
   createProcessIdentity,
   isAddressablePid,
@@ -10,6 +11,7 @@ import {
   selectStartIdReader,
   sharedProcessIdentity,
   type ProcessIdentity,
+  type StartIdReader,
 } from '../../src/runbook/process-identity.js';
 
 // ACCEPTED MUTATION SURVIVORS in process-identity.ts (#722).
@@ -17,26 +19,43 @@ import {
 //   stryker run --mutate src/runbook/process-identity.ts \
 //     --testFiles __tests__/runbook/process-identity.test.ts --force
 //
-// What remains is platform-conditional or equivalent. Recorded so the next run
-// reads the residue instead of re-deriving it:
+// 13 of 98 alive on a macOS run (86.73%), none of them NoCoverage. Which
+// mutants those are is host-dependent, so the LIST is what to trust, not the
+// count: `selectStartIdReader` hands back a platform's reader on any host, so
+// both readers are CALLED here, but only the one this host can answer with can
+// be asked to tell a good read from a failed one.
 //
-//  - The WHOLE of the reader for the platform the run is NOT on (8 NoCoverage on
-//    macOS: `readLinuxStartId`; the same for `readBsdStartId` on CI's Linux).
-//    `selectStartIdReader` dispatches on the real `process.platform`, so exactly
-//    one reader is dead code per host. The dispatch itself is pinned for both.
-//  - `parseProcStatStartTime`'s `commEnd < 0` boundary. A line whose only `)` is
-//    at index 0 has no field 22 either way, so `<` and `<=` agree.
-//  - Its `startTime === undefined` disjunct. Dropping it falls through to the
-//    regex, which rejects the string `"undefined"` — same result.
-//  - `readBsdStartId`'s `ps` arguments, options object, empty-output guard,
-//    catch block, and its `isAddressablePid` call. Every mutation of them makes
-//    `ps` fail, hang, or return something unusable, and all of those already
-//    answer `null`; the arguments that produce a DIFFERENT valid answer are not
-//    reachable from a test that cannot control which processes exist. The guard
-//    itself is pinned directly instead, for the reason its own docs give.
-//  - `readProcessStartId`'s `?.` on the selected reader. It is never null on a
-//    host this suite runs on — that arm is the unsupported platform, which
-//    `selectStartIdReader` pins directly instead.
+// In the reader this host CAN answer with (`readBsdStartId` here; both on CI,
+// whose `/bin/ps` understands `-o lstart=`):
+//
+//  - Its `isAddressablePid` call, in the "skip the guard" direction only. Every
+//    pid the guard rejects is ALSO rejected by `/proc` and by `ps`, so both
+//    paths answer `null`. Inverting or forcing the guard IS killed — those
+//    change a live pid's answer. The guard is pinned directly instead, for the
+//    reason its own docs give.
+//  - `readBsdStartId`'s `stdio` array, its stderr entry, and its `env`. An
+//    emptied array still pipes (Node fills the missing entries), an emptied
+//    stderr spec is not read either way, and an emptied `env` only stops `ps`
+//    inheriting an ambient `TZ`/locale that {@link PS_CANONICAL_ENV} overrides
+//    anyway — so every one still yields the same id. The stdin and stdout
+//    entries ARE killed; they are what makes the output readable at all.
+//  - Its `out === ''` guard, in the two directions that still return `out`.
+//    `ps` emits a row or fails; empty output is a shape it has never produced,
+//    so that guard is defence against a host that does, not a live branch.
+//
+// In the reader this host CANNOT answer with, everything a successful read
+// would be needed to distinguish: here `readLinuxStartId`'s `/proc` path
+// strings and all three directions of its guard, since a reader that always
+// fails answers `null` to every input. Four of those five are Killed on CI's
+// Linux; the fifth is the skip-the-guard equivalent above, which is all that
+// guard ever leaves behind in a reader that can answer. Mirror image, same
+// trade. See {@link ANSWERING_PLATFORMS}.
+//
+// Host-independent:
+//
+//  - `parseProcStatStartTime`'s `startTime === undefined` disjunct. Dropping it
+//    falls through to the regex, which rejects the string `"undefined"` — same
+//    result.
 //  - `BSD_PS`'s literal. A module-constant initializer runs at import, so
 //    Stryker cannot re-evaluate it per test (a "static" mutant).
 
@@ -52,6 +71,38 @@ const DEAD_PID = 999999999;
 
 /** Whether this host is one of the two platforms that can supply a start id. */
 const HOST_SUPPORTED = process.platform === 'linux' || process.platform === 'darwin';
+
+/** The reader for a platform `selectStartIdReader` is known to supply one for. */
+function readerFor(platform: 'linux' | 'darwin'): StartIdReader {
+  const read = selectStartIdReader(platform);
+  if (read === null) throw new Error(`no start-id reader for ${platform}`);
+  return read;
+}
+
+/**
+ * The platforms whose reader can actually ANSWER on this host.
+ *
+ * Either reader can be CALLED anywhere — `selectStartIdReader` dispatches on the
+ * platform it is handed, not on the one it is running on. Whether the call can
+ * succeed is a separate question: `/proc` is Linux-only, and only a host with a
+ * BSD-compatible `ps` understands `-o lstart=`. That distinction is the whole
+ * shape of this file's residue, because a reader that can only ever fail here
+ * answers `null` to every input, and no assertion can separate its arguments
+ * from any other arguments that also fail.
+ *
+ * Both halves are probed with plain Node against this process — which is
+ * certainly alive — rather than by calling the reader. A probe that ran the
+ * code under test would be MUTATED along with it, and any mutant that broke a
+ * reader would delete the very test that catches it, reporting itself as
+ * survived. The duplicated knowledge is the price of a probe that holds still.
+ */
+const ANSWERING_PLATFORMS: readonly ('linux' | 'darwin')[] = [
+  ...(fsSync.existsSync(`/proc/${String(process.pid)}/stat`) ? (['linux'] as const) : []),
+  ...(spawnSync('/bin/ps', ['-o', 'lstart=', '-p', String(process.pid)], { encoding: 'utf8' })
+    .status === 0
+    ? (['darwin'] as const)
+    : []),
+];
 
 /** Build one `/proc/<pid>/stat` line with the given comm and starttime. */
 function procStat(comm: string, starttime: string): string {
@@ -100,6 +151,15 @@ describe('parseProcStatStartTime', () => {
     expect(
       parseProcStatStartTime('4242 node S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 4 0 55'),
     ).toBeNull();
+  });
+
+  it('reads field 22 from a line whose only parenthesis is its first character', () => {
+    // The guard rejects a line carrying NO `)`, not one whose `)` sits at index
+    // 0: an empty comm leaves every field exactly where it belongs. Reading the
+    // boundary as `<= 0` would throw that line away as unparseable.
+    const line = procStat('', '918273').replace('4242 (', '');
+    expect(line.startsWith(')')).toBe(true);
+    expect(parseProcStatStartTime(line)).toBe('918273');
   });
 
   it('rejects a truncated line that never reaches field 22', () => {
@@ -157,6 +217,37 @@ describe('selectStartIdReader', () => {
   it('supplies no reader on a platform with neither /proc nor BSD ps', () => {
     expect(selectStartIdReader('win32')).toBeNull();
   });
+});
+
+describe('the platform readers, called directly rather than through the dispatch', () => {
+  it.each([['linux'], ['darwin']] as const)(
+    'the %s reader answers null — never undefined — for a pid nothing can hold',
+    (platform) => {
+      // Both readers are callable on any host: `/proc/<pid>/stat` is simply
+      // absent off Linux, and `ps` exits non-zero (or is missing entirely) for a
+      // pid no process holds. Every one of those is the same answer, "unknown".
+      //
+      // `readProcessStartId`'s `?? null` launders an `undefined` into a `null`,
+      // so a reader that lost its `return null` would still look correct through
+      // the dispatch. Only a direct call pins the reader's half of the contract.
+      expect(readerFor(platform)(DEAD_PID)).toBeNull();
+    },
+  );
+
+  for (const platform of ANSWERING_PLATFORMS) {
+    it(`the ${platform} reader reads one trimmed, non-empty id for a live process`, () => {
+      const id = readerFor(platform)(process.pid);
+
+      expect(id).toMatch(/\S/);
+      // `ps` pads and newline-terminates; an untrimmed id still compares equal
+      // to another untrimmed one, so only a direct assertion catches a lost trim.
+      expect(id).toBe(id?.trim());
+      // ONE process's id, not a listing. An argument vector that stopped
+      // selecting this pid — or stopped selecting a pid at all — would still
+      // return something matching /\S/.
+      expect(id).not.toContain('\n');
+    });
+  }
 });
 
 describe('readProcessStartId', () => {
@@ -245,6 +336,22 @@ describe('readProcessStartId', () => {
 
   it('pins the canonical ps environment', () => {
     expect(PS_CANONICAL_ENV).toEqual({ TZ: 'UTC', LC_ALL: 'C' });
+  });
+
+  it('answers null on a host with no reader at all, rather than throwing', () => {
+    // The optional call on the selected reader is the whole of what stands
+    // between a Windows host and a TypeError raised inside lease acquisition —
+    // where "this host has no start id" must degrade to the pid-only decision,
+    // not to a crash. No host this suite runs on selects `null`, so the platform
+    // is stood in for.
+    const original = Object.getOwnPropertyDescriptor(process, 'platform');
+    if (original === undefined) throw new Error('process.platform has no own descriptor');
+    Object.defineProperty(process, 'platform', { ...original, value: 'win32' });
+    try {
+      expect(readProcessStartId(process.pid)).toBeNull();
+    } finally {
+      Object.defineProperty(process, 'platform', original);
+    }
   });
 });
 
