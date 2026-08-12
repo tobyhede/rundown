@@ -859,6 +859,60 @@ describe('all-or-none multi-run acquisition', () => {
       new Set([a.state.id, b.state.id]),
     );
   });
+
+  it('reclaims every member an aggregate owner stranded, in one call', async () => {
+    // One killed process owned BOTH runs, which is the normal shape of a dead
+    // aggregate: `acquireAll` acquires the set together, so it dies holding the
+    // set. Clearing one member per invocation would make the operator repeat the
+    // command once per run to escape a single crash.
+    const a = await preparedRun();
+    const b = await preparedRun();
+    const ownedA = await lease.acquire(a.captured, process.pid);
+    const ownedB = await lease.acquire(b.captured, process.pid);
+    if (ownedA.kind !== 'committed' || ownedB.kind !== 'committed') {
+      throw new Error('setup acquire failed');
+    }
+    const dead = deadPid();
+    await setOwnerPid(a.state.id, dead);
+    await setOwnerPid(b.state.id, dead);
+    const recapA = await store.captureAuthority(a.state.id, a.captured.claimKey);
+    const recapB = await store.captureAuthority(b.state.id, b.captured.claimKey);
+    if (recapA.kind !== 'captured' || recapB.kind !== 'captured') {
+      throw new Error('recapture failed');
+    }
+
+    // No wait policy: the bare default path, the only one production takes.
+    const result = await lease.acquireAll([recapA.authority, recapB.authority], process.pid);
+
+    expect(result.kind).toBe('committed');
+    if (result.kind !== 'committed') return;
+    expect(new Set(result.value.map((attempt) => attempt.runId))).toEqual(
+      new Set([a.state.id, b.state.id]),
+    );
+  });
+
+  it('probes each contended run at most once when the aggregate cannot be won', async () => {
+    // The per-run budget must still terminate: an obstruction the probe cannot
+    // clear has to stop the loop rather than be re-probed forever.
+    const capA = await contendedRun();
+    const capB = await contendedRun();
+    const { lease: waiting, clock } = instrumentedLease();
+    const probed: RunId[] = [];
+    jest.spyOn(waiting, 'recoverDeadOwner').mockImplementation(async (runId) => {
+      probed.push(runId);
+      // Claim the obstruction is gone — licensing a free retry — while leaving
+      // it in place, so only the per-run guard can end the loop.
+      return { kind: 'missing', runId };
+    });
+
+    const result = await waiting.acquireAll([capA, capB], process.pid);
+
+    expect(result.kind).toBe('execution_in_progress');
+    // A is never actually cleared, so every retry refuses on A again and B is
+    // never reached. The second visit finds A already probed and stops.
+    expect(probed).toEqual([capA.runId]);
+    expect(clock.sleeps).toEqual([]);
+  });
 });
 
 describe('default contention policy and finite wait', () => {

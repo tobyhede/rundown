@@ -1271,14 +1271,22 @@ all**: it leaves `runs.exec_token` set, every later mutation refuses
 `.rundown/rundown.db` — a per-project file, so that destroyed every run's
 authoritative state plus the session stack, stash, and claims.
 
-The probe is charged: in the default mode it runs at most once per call, so an
-unwinnable run costs two acquisition attempts and one probe, never a loop. A
-dead pre-effect owner is reclaimed and the acquisition retried immediately; a
-dead post-boundary owner surfaces as `recovery_required`, which
-`ProjectEffectfulActorMutationRunner.run` resolves inline through the
-machine-owned recovery path — the ambiguous effect is never re-run. A live owner
-leaves the probe's CAS matching nothing and the original contention is reported
-unchanged. Only a wait policy adds sleeping on top.
+The debt is owed **per run, not per call**, and `withWait` tracks it in a
+`probedRuns` set. `acquireAll` acquires a set together, so a killed owner dies
+holding the set; probing only the first refusal would clear one member and then
+refuse on the next dead one with a per-call debt already spent, leaving the
+operator to repeat the command once per stranded run to escape a single crash.
+
+The probe is charged to its run, which is what bounds the loop: probes cannot
+exceed the number of distinct runs in the call, a set `acquireAll` deduplicates
+and `acquire` fixes at one. In the default mode an unwinnable single run costs
+two acquisition attempts and one probe, never a loop. A dead pre-effect owner is
+reclaimed and the acquisition retried immediately; a dead post-boundary owner
+surfaces as `recovery_required`, which `ProjectEffectfulActorMutationRunner.run`
+resolves inline through the machine-owned recovery path — the ambiguous effect
+is never re-run. A live owner leaves the probe's CAS matching nothing and the
+original contention is reported unchanged. Only a wait policy adds sleeping on
+top.
 
 ### Optimistic CAS: `mutateState` is not a lock
 

@@ -765,16 +765,25 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
    * retried, and a dead post-boundary owner surfaces as `recovery_required`,
    * which the runner resolves inline through the machine-owned recovery path.
    *
-   * The FIRST probe is ungated — not by the wait budget, not by the abort
+   * The debt is owed PER RUN, not per call. `acquireAll` acquires a set
+   * together, so a killed owner dies holding the set: probing only the first
+   * refusal would clear one member, and the retry would then refuse on the next
+   * dead member with the debt already spent — leaving the operator to repeat the
+   * command once per stranded run to escape a single crash. `probedRuns` records
+   * which obstruction was examined, so each distinct one is owed its own probe.
+   *
+   * A run's FIRST probe is ungated — not by the wait budget, not by the abort
    * signal. It is a correctness step, not a waiting step, and gating it on a
    * budget would make `{ budgetMs: 0 }` strictly worse than supplying no policy
    * at all: the caller who asked to wait least would be the only one left with
-   * no exit from a stranded run. Every LATER probe is a retry, and the budget
-   * governs those.
+   * no exit from a stranded run. Every LATER probe of the SAME run is a retry,
+   * and the budget governs those.
    *
-   * The probe is charged, so the loop always terminates: in the default
-   * (no-policy) mode an unwinnable run costs two acquisition attempts and one
-   * probe, never a loop. Only a wait policy sleeps.
+   * Each probe is charged to its run, so the loop always terminates: probes are
+   * bounded by the number of distinct runs in the call, which `acquireAll`
+   * deduplicates and `acquire` fixes at one. In the default (no-policy) mode an
+   * unwinnable single run costs two acquisition attempts and one probe. Only a
+   * wait policy sleeps.
    *
    * @template T - Attempt payload type.
    * @param wait - Optional wait policy.
@@ -787,18 +796,21 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
   ): Promise<GuardedMutationResult<T>> {
     const deadline = this.clock.now() + (wait?.budgetMs ?? 0);
     let attempts = 0;
-    let probed = false;
+    const probedRuns = new Set<RunId>();
     for (;;) {
       const result = await once();
       if (result.kind !== 'execution_in_progress') {
         return result;
       }
-      if (probed && (wait === undefined || wait.signal?.aborted || this.clock.now() >= deadline)) {
+      const runId = result.runId;
+      if (
+        probedRuns.has(runId) &&
+        (wait === undefined || wait.signal?.aborted || this.clock.now() >= deadline)
+      ) {
         return result;
       }
-      const runId = result.runId;
       const recovery = await this.recoverDeadOwner(runId);
-      probed = true;
+      probedRuns.add(runId);
       if (recovery.kind === 'recovery_pending') {
         return {
           kind: 'recovery_required',
