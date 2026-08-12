@@ -360,6 +360,31 @@ describe('createEffectfulActorMutationRunner', () => {
       );
     });
 
+    it('surfaces recovery failure for a member stranded during aggregate acquisition', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const stranded = await seedRun('invalid-stranded.runbook.md');
+      const sibling = await seedRun('invalid-sibling.runbook.md');
+      await strandBehindDeadEffectStartedOwner(stranded.id);
+
+      const result = await runner.runAll<never>({
+        targets: [{ runId: stranded.id }, { runId: sibling.id }],
+        compute: () => {
+          throw new Error('the aggregate effect must not run behind a refused acquisition');
+        },
+        makeRecoveryActor: () => {
+          throw new InvalidRunbookStateError('aggregate snapshot incompatible');
+        },
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          kind: 'recovery_required',
+          runId: stranded.id,
+          message: expect.stringContaining('aggregate snapshot incompatible'),
+        }),
+      );
+    });
+
     it('reports a member that vanished before its acquisition-time recovery completed', async () => {
       const runner = createEffectfulActorMutationRunner(dir);
       const stranded = await seedRun('pruned-stranded.runbook.md');

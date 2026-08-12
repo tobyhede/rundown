@@ -534,10 +534,10 @@ const { setHelperRegistry, resetHelperRegistry } = await import(
  * startRunbook/claim tests that just need the lock to succeed stay in lock-step
  * with the lock's API.
  */
-function installHappyDelegationLockMock(): void {
+function installHappyDelegationLockMock(): jest.Mock<(...args: unknown[]) => Promise<void>> {
+  const release = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
   jest.mocked(core.DelegationLock).mockImplementation(() => {
     const acquire = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
-    const release = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
     const held = (runId?: string): ScopedLock => {
       let released = false;
       const run = async (): Promise<void> => {
@@ -553,6 +553,7 @@ function installHappyDelegationLockMock(): void {
     };
     return { acquire, release, held, scope } as unknown as jest.MockedObject<DelegationLock>;
   });
+  return release;
 }
 
 function makeState(id: RunId, overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -3454,7 +3455,7 @@ describe('claimAndLaunch', () => {
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
-    installHappyDelegationLockMock();
+    const releaseLock = installHappyDelegationLockMock();
 
     jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
 
@@ -3488,6 +3489,10 @@ describe('claimAndLaunch', () => {
       expect(result.childRunId).toBe('new-child-id');
       expect(result.loopResult).toBe('waiting');
     }
+    expect(releaseLock).toHaveBeenCalledTimes(1);
+    expect(releaseLock.mock.invocationCallOrder[0]).toBeLessThan(
+      jest.mocked(runExecutionLoop).mock.invocationCallOrder[0],
+    );
     expect(mockCreate).toHaveBeenCalledWith(
       { source: 'project', path: 'child.md' },
       expect.anything(),

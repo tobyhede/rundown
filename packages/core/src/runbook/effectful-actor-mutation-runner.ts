@@ -260,14 +260,6 @@ async function recoverNamedRun(
         runId: refusal.runId,
         message: `Run ${refusal.runId} disappeared before execution recovery completed.`,
       };
-    // Unreachable by construction, and the reason a mutation run reports the
-    // `recovery_required` case label as a survivor: `_exhaustive` IS `recovered`
-    // at runtime, so relabelling that case lands here and returns the same
-    // object. The mutant is equivalent, not an untested arm.
-    default: {
-      const _exhaustive: never = recovered;
-      return _exhaustive;
-    }
   }
 }
 
