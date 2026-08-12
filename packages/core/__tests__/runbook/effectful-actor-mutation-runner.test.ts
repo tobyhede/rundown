@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { spawnSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -13,6 +14,7 @@ import {
   openRunbookStore,
 } from '../../src/runbook/storage/store-registry.js';
 import { SqliteExecutionLeaseService } from '../../src/runbook/storage/execution-lease.js';
+import { readProcessStartId } from '../../src/runbook/process-identity.js';
 import { assertExecutionEpoch } from '../../src/runbook/storage/mutation-result.js';
 import { CoreEffectfulMutationExecutor } from '../../src/runbook/effectful-mutation-executor.js';
 import type { ResolvedStep, RunbookState } from '../../src/runbook/types.js';
@@ -63,6 +65,38 @@ async function seedRun(runbookPath: string): Promise<RunbookState> {
   const stored = await manager.load(state.id);
   if (stored === null) throw new Error('seed failed');
   return stored;
+}
+
+/** A pid that is guaranteed dead: `spawnSync` runs to completion and reaps it. */
+function deadPid(): number {
+  return spawnSync(process.execPath, ['-e', '0']).pid;
+}
+
+/**
+ * Leave `runId` owned by a hard-killed owner that had already crossed the effect
+ * boundary — exactly what a SIGKILLed `rundown` process leaves behind.
+ *
+ * Written as the dead owner itself would have: pid AND the host start id for
+ * that pid, so recovery reads the fixture as one dead process rather than as
+ * this process's start id attached to a foreign pid.
+ *
+ * @param runId - Run to strand.
+ */
+async function strandBehindDeadEffectStartedOwner(runId: RunId): Promise<void> {
+  const { driver, store } = await openRunbookStore(dir);
+  const captured = await store.captureRunAuthorityState(runId);
+  if (captured.kind !== 'captured') throw new Error('capture failed');
+  const lease = new SqliteExecutionLeaseService(driver);
+  const acquired = await lease.acquire(captured.authority, process.pid);
+  if (acquired.kind !== 'committed') throw new Error('acquire failed');
+  const marked = await lease.markEffectStarted(acquired.value);
+  if (marked.kind !== 'committed') throw new Error('effect boundary failed');
+  const pid = deadPid();
+  await store.transaction((txn) => {
+    txn.tx
+      .prepare('UPDATE runs SET exec_pid = :pid, exec_start_id = :startId WHERE id = :id')
+      .run({ pid, startId: readProcessStartId(pid), id: runId });
+  });
 }
 
 describe('createEffectfulActorMutationRunner', () => {
@@ -249,6 +283,156 @@ describe('createEffectfulActorMutationRunner', () => {
       expect(warn).toHaveBeenCalledWith(
         'aggregate member disappeared before recovery completed',
         expect.objectContaining({ runId: vanished.id }),
+      );
+    });
+
+    it('recovers a member stranded by a hard-killed owner before the aggregate acquired', async () => {
+      // Acquisition-time recovery is a DIFFERENT outcome from the post-effect
+      // one above: the lease's own dead-owner probe parks the dead attempt and
+      // answers with the single-run `recovery_required` variant, which names one
+      // member rather than the set. Returning it unhandled leaves that member
+      // `recovery_pending` forever — every retry re-probes an already-parked
+      // attempt and gets the same answer back, so the aggregate operation can
+      // never unblock the run. The run-level path has always driven recovery for
+      // this variant; the set-level path must too.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const stranded = await seedRun('stranded.runbook.md');
+      const sibling = await seedRun('sibling.runbook.md');
+      await strandBehindDeadEffectStartedOwner(stranded.id);
+      const recoveryActorsFor: RunId[] = [];
+
+      const result = await runner.runAll<never>({
+        targets: [{ runId: stranded.id }, { runId: sibling.id }],
+        compute: () => {
+          throw new Error('the aggregate effect must not run behind a refused acquisition');
+        },
+        makeRecoveryActor: (runId: RunId, state: RunbookState) => {
+          recoveryActorsFor.push(runId);
+          return actorService.createRecoveryActor(state, steps);
+        },
+      });
+
+      // The command still refuses without retrying — the run needed recovery,
+      // and that outcome is what the run-level path preserves too.
+      expect(result).toEqual(
+        expect.objectContaining({ kind: 'recovery_required', runId: stranded.id }),
+      );
+      // …but the run is left recoverED, so the next attempt is not refused for
+      // the same reason.
+      expect(recoveryActorsFor).toEqual([stranded.id]);
+      expect(await (await getRunbookStore(dir)).readPendingRecovery(stranded.id)).toBeNull();
+    });
+
+    it('preserves the refusal when a newer attempt was parked before recovery ran', async () => {
+      // `superseded` is the one resolved outcome that recovers NOTHING here:
+      // another actor parked a newer attempt for the same run between the probe
+      // and this call, and owns resolving it. The caller must still be told what
+      // this call did — refuse — rather than handed the recovery service's own
+      // bookkeeping, which names an epoch it never asked about.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const stranded = await seedRun('superseded-stranded.runbook.md');
+      const sibling = await seedRun('superseded-sibling.runbook.md');
+      await strandBehindDeadEffectStartedOwner(stranded.id);
+      // Captured deliberately so the prototype spy can delegate with its runtime instance.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const realReadPending = RunbookStore.prototype.readPendingRecovery;
+      jest.spyOn(RunbookStore.prototype, 'readPendingRecovery').mockImplementation(async function (
+        this: RunbookStore,
+        runId: RunId,
+      ) {
+        const pending = await realReadPending.call(this, runId);
+        return pending === null
+          ? null
+          : { ...pending, epoch: assertExecutionEpoch(pending.epoch + 1) };
+      });
+
+      const result = await runner.runAll<never>({
+        targets: [{ runId: stranded.id }, { runId: sibling.id }],
+        compute: () => {
+          throw new Error('the aggregate effect must not run behind a refused acquisition');
+        },
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({ kind: 'recovery_required', runId: stranded.id }),
+      );
+    });
+
+    it('surfaces recovery failure for a member stranded during aggregate acquisition', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const stranded = await seedRun('invalid-stranded.runbook.md');
+      const sibling = await seedRun('invalid-sibling.runbook.md');
+      await strandBehindDeadEffectStartedOwner(stranded.id);
+
+      const result = await runner.runAll<never>({
+        targets: [{ runId: stranded.id }, { runId: sibling.id }],
+        compute: () => {
+          throw new Error('the aggregate effect must not run behind a refused acquisition');
+        },
+        makeRecoveryActor: () => {
+          throw new InvalidRunbookStateError('aggregate snapshot incompatible');
+        },
+      });
+
+      expect(result).toEqual(
+        expect.objectContaining({
+          kind: 'recovery_required',
+          runId: stranded.id,
+          message: expect.stringContaining('aggregate snapshot incompatible'),
+        }),
+      );
+    });
+
+    it('reports a member that vanished before its acquisition-time recovery completed', async () => {
+      const runner = createEffectfulActorMutationRunner(dir);
+      const stranded = await seedRun('pruned-stranded.runbook.md');
+      const sibling = await seedRun('pruned-sibling.runbook.md');
+      await strandBehindDeadEffectStartedOwner(stranded.id);
+      // Gated on the probe so capture and acquisition still see the real row:
+      // the prune being modelled lands in the window recovery reads.
+      let parked = false;
+      // Captured deliberately so the prototype spy can delegate with its runtime instance.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const realLoadRun = RunbookStore.prototype.loadRun;
+      jest.spyOn(RunbookStore.prototype, 'loadRun').mockImplementation(function (
+        this: RunbookStore,
+        runId: RunId,
+      ) {
+        return parked && runId === stranded.id
+          ? Promise.resolve(null)
+          : realLoadRun.call(this, runId);
+      });
+      // Captured deliberately so the prototype spy can delegate with its runtime instance.
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const realRecover = SqliteExecutionLeaseService.prototype.recoverDeadOwner;
+      jest
+        .spyOn(SqliteExecutionLeaseService.prototype, 'recoverDeadOwner')
+        .mockImplementation(async function (this: SqliteExecutionLeaseService, runId: RunId) {
+          const outcome = await realRecover.call(this, runId);
+          parked = true;
+          return outcome;
+        });
+
+      const result = await runner.runAll<never>({
+        targets: [{ runId: stranded.id }, { runId: sibling.id }],
+        compute: () => {
+          throw new Error('the aggregate effect must not run behind a refused acquisition');
+        },
+        makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+          actorService.createRecoveryActor(state, steps),
+      });
+
+      // Unlike the post-effect loop, this arm owns a single named member and no
+      // set outcome to preserve, so `missing` is the honest answer — the same
+      // one the run-level path gives.
+      expect(result).toEqual(
+        expect.objectContaining({
+          kind: 'missing',
+          runId: stranded.id,
+          message: expect.stringContaining('disappeared before execution recovery completed'),
+        }),
       );
     });
   });

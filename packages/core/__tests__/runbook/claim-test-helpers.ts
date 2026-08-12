@@ -146,12 +146,22 @@ export function interleaveOnceDuringActorPrepare<T>(
  * that driver — see the header of `session-service.process.test.ts`, which is
  * why every genuine contention race there runs in real child processes. What
  * this fixture proves is that the arm reaches `runGuardedParentAdvance` at all
- * and that the guard's in-transaction read sees a claim the pre-checks missed;
- * that seam's behaviour under true multi-connection contention is pinned
- * cross-process by `session-service.process.test.ts`'s "refuses after a claim
- * commits between the fast check and guarded parent write". A test built here
- * would still pass if SQLite offered no isolation whatsoever, so do not read it
- * as evidence of the transactional property.
+ * and that the guard's in-transaction read sees a claim the pre-checks missed.
+ * A test built here would still pass if SQLite offered no isolation whatsoever,
+ * so do not read it as evidence of the transactional property.
+ *
+ * ISOLATION IS PINNED CROSS-PROCESS, in two tests that divide the property
+ * between them; cite the one that matches what an arm here is standing in for,
+ * because neither subsumes the other:
+ *   - `session-service.process.test.ts`'s "refuses after a claim commits
+ *     between the fast check and guarded parent write" drives
+ *     `runGuardedParentAdvance` directly, so it pins the SEAM under two real
+ *     SQLite connections and nothing above it.
+ *   - the same file's "refuses a claim-targeted transition when a child claim
+ *     commits after its fast checks" enters through
+ *     `RunbookLifecycleCommandService.runTransition` on the run-control claim
+ *     arm, so it pins the COMPOSITION (#707): nothing between the seam and the
+ *     store reopens the window the guard closed.
  *
  * Restored by the caller's `jest.restoreAllMocks()`; the claim fires at most
  * once however many times the seam is entered.

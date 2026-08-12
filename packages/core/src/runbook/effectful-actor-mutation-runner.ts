@@ -21,7 +21,11 @@ import type { RunbookState } from './types.js';
 import { SqliteExecutionLeaseService, type LeaseWaitPolicy } from './storage/execution-lease.js';
 import type { GuardedMutationResult } from './storage/mutation-result.js';
 import type { CapturedAuthority } from './storage/mutation-result.js';
-import type { CapturedRunStateResult, ParentAdvanceGuard } from './storage/runbook-store.js';
+import type {
+  CapturedRunStateResult,
+  ParentAdvanceGuard,
+  RunbookStore,
+} from './storage/runbook-store.js';
 import type { AbandonedAttemptSetOutcome } from './storage/execution-lease.js';
 import { openRunbookStore } from './storage/store-registry.js';
 import { projectRunbookRelease } from './session-service.js';
@@ -196,6 +200,69 @@ export type EffectfulActorMutationSetRunnerResult<TResult> =
   | GuardedMutationResult<TResult>
   | AbandonedAttemptSetOutcome;
 
+/** A refusal naming exactly one run whose execution outcome is unknown. */
+type SingleRunRecoveryRefusal = Extract<
+  GuardedMutationResult<never>,
+  { readonly kind: 'recovery_required' }
+>;
+
+/** What driving recovery for one named run can answer. */
+type NamedRunRecoveryOutcome = Extract<
+  GuardedMutationResult<never>,
+  { readonly kind: 'recovery_required' | 'missing' }
+>;
+
+/**
+ * Drive machine-owned recovery for the one run a `recovery_required` names.
+ *
+ * Shared by the run-level and set-level paths because the variant means the same
+ * thing on both: one run's execution outcome is unknown and its attempt sits
+ * `recovery_pending`. It reaches either path from two places — the lease's
+ * dead-owner probe during acquisition, and a commit that found its attempt no
+ * longer `effect_started` — and the answer is the same for both, so neither
+ * origin is inspected. Recovery is idempotent by construction: an attempt that
+ * is not pending answers `not_pending` and nothing is written.
+ *
+ * The refusal is preserved on every resolved outcome. Recovery unblocks the run
+ * for a LATER call; it does not retroactively perform the mutation this call
+ * refused, so reporting anything else would claim work that never happened.
+ *
+ * @param store - Store the recovery commits through.
+ * @param refusal - The refusal naming the run and its interrupted epoch.
+ * @param makeRecoveryActor - Builds the inert recovery actor for that run.
+ * @returns The original refusal once the run is recoverable again, `missing`
+ *   when the run vanished first, or recovery's own `recovery_required` when it
+ *   could not complete.
+ * @throws {Error} When recovery itself fails — a run-level fault the caller sees
+ *   rather than a per-member one the aggregate loop degrades to a log.
+ */
+async function recoverNamedRun(
+  store: RunbookStore,
+  refusal: SingleRunRecoveryRefusal,
+  makeRecoveryActor: RecoveryActorFactory,
+): Promise<NamedRunRecoveryOutcome> {
+  const recovered = await new ExecutionRecoveryService(store, makeRecoveryActor).recover(
+    refusal.runId,
+    refusal.epoch,
+  );
+  switch (recovered.kind) {
+    case 'recovered':
+    case 'not_pending':
+    case 'superseded':
+      // Recovery either committed here or another exact recovery already won.
+      // Preserve the no-retry command outcome in every case.
+      return refusal;
+    case 'recovery_required':
+      return recovered;
+    case 'missing':
+      return {
+        kind: 'missing',
+        runId: refusal.runId,
+        message: `Run ${refusal.runId} disappeared before execution recovery completed.`,
+      };
+  }
+}
+
 /** One aggregate outcome weighed against the conditional-optionality policy. */
 interface SupersededDropDecision<TResult> {
   /** The executor's aggregate outcome. */
@@ -299,30 +366,7 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
     });
     if (result.kind !== 'recovery_required') return result;
 
-    const recovered = await new ExecutionRecoveryService(store, input.makeRecoveryActor).recover(
-      input.runId,
-      result.epoch,
-    );
-    switch (recovered.kind) {
-      case 'recovered':
-      case 'not_pending':
-      case 'superseded':
-        // Recovery either committed here or another exact recovery already won.
-        // Preserve the no-retry command outcome in every case.
-        return result;
-      case 'recovery_required':
-        return recovered;
-      case 'missing':
-        return {
-          kind: 'missing',
-          runId: input.runId,
-          message: `Run ${input.runId} disappeared before execution recovery completed.`,
-        };
-      default: {
-        const _exhaustive: never = recovered;
-        return _exhaustive;
-      }
-    }
+    return recoverNamedRun(store, result, input.makeRecoveryActor);
   }
 
   async runAll<TResult>(
@@ -524,6 +568,19 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
       });
       droppedRunIds.add(drop);
       acquiring = acquiring.filter(({ runId }) => runId !== drop);
+    }
+    if (result.kind === 'recovery_required') {
+      // Acquisition refused because a member's owner died AFTER the effect
+      // boundary: the lease's dead-owner probe parked that attempt and named it
+      // with the single-run variant, which the aggregate loop below cannot see —
+      // it iterates `attempts`, and this outcome carries none. Left unhandled,
+      // the attempt stays `recovery_pending` forever and every retry re-probes
+      // it to the same refusal, so the set could never acquire. Recovery is not
+      // optional here the way a post-effect member's is: no set outcome names
+      // the other runs, so there is nothing a swallowed failure would protect.
+      return recoverNamedRun(store, result, (state) =>
+        input.makeRecoveryActor(result.runId, state),
+      );
     }
     if (result.kind !== 'aggregate_recovery_required') return result;
 

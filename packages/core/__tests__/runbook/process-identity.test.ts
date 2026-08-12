@@ -161,17 +161,21 @@ describe('selectStartIdReader', () => {
 
 describe('readProcessStartId', () => {
   const maybe = HOST_SUPPORTED ? it : it.skip;
+  /**
+   * The pid-1 comparison additionally needs this process NOT to be pid 1, which
+   * a container without an init shim makes false — jest itself would be pid 1
+   * and the two reads would name one process. Comparing against a spawned child
+   * instead is not the safer swap it looks like: BSD `lstart` has one-second
+   * resolution, so a child spawned in the same second as its parent legitimately
+   * matches. Boot time versus now is the comparison that cannot tie.
+   */
+  const maybeDistinct = HOST_SUPPORTED && process.pid !== 1 ? it : it.skip;
 
   maybe('reads a start id for this live process', () => {
     expect(readProcessStartId(process.pid)).toMatch(/\S/);
   });
 
-  // Skipped when the runner IS pid 1 — a container without an init reaps node
-  // straight onto it, and then both reads name the same process, so the premise
-  // ("two processes that started at different times") does not hold.
-  const onDistinctPid = maybe === it && process.pid !== 1 ? it : it.skip;
-
-  onDistinctPid(
+  maybeDistinct(
     'reports a different start id for a process that started at a different time',
     () => {
       // pid 1 (init/launchd) started at boot; this process did not.
