@@ -840,6 +840,24 @@ is **prospective** and belongs under `docs/superpowers/` — never in
 `docs/internal/`. Put the current design in `docs/internal/`; put the plan for
 changing it in `docs/superpowers/plans/`.
 
+## Agent skills
+
+### Issue tracker
+
+Issues live in GitHub Issues on `tobyhede/rundown`, driven via the `gh` CLI. See
+`docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage roles use their default label strings. See
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Multi-context: a root `CONTEXT-MAP.md` over per-package `CONTEXT.md` files, with
+ADRs at the root for system-wide decisions and under each package for local
+ones. See `docs/agents/domain.md`.
+
 ## Conceptual Model
 
 Three distinct concepts govern step execution. Never conflate them:
