@@ -60,6 +60,6 @@ gap (note it for `/domain-modeling`).
 ## Flag ADR conflicts
 
 If your output contradicts an existing ADR, surface it explicitly rather than
-silently overriding:
+silently overriding. Illustrative shape only — substitute the real ADR:
 
-> _Contradicts ADR-0007 (event-sourced orders) — but worth reopening because…_
+> _Contradicts `<ADR-ID>` (`<decision>`) — but worth reopening because…_
