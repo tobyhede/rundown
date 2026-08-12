@@ -39,9 +39,11 @@ import {
 // The scoped run
 //   stryker run --mutate src/runbook/storage/execution-lease.ts \
 //     --testFiles __tests__/runbook/storage/execution-lease{,.properties}.test.ts
-// left 19 mutants alive. Every one is equivalent or unreachable — a test that
-// "killed" any of them would be asserting something the system cannot do. They
-// are recorded here so the next run reads the residue instead of re-deriving it.
+// left 19 mutants alive, of which 4 have since been resolved (see the end of
+// this list) and 15 remain. Every remaining one is equivalent or unreachable —
+// a test that "killed" any of them would be asserting something the system
+// cannot do. They are recorded here so the next run reads the residue instead
+// of re-deriving it.
 //
 // The COUNT predates the owner-identity change (#722), which added code to this
 // file; the entries below are unaffected by it and each still holds. Re-measure
@@ -55,9 +57,15 @@ import {
 //    safety outranks coverage.
 //  - The `owner.execPid ?? -1` fallbacks in `reclaimPreEffect` /
 //    `markRecoveryPending` (2). Dead code behind that same guard.
-//  - `readOwner`'s absent-row literal and `recoverDeadOwner`'s `!owner.present`
-//    branch (4). Both arms produce `missing` — an absent row falls through to the
-//    null guard and lands on the same outcome.
+//
+// One former entry is RESOLVED rather than accepted: `readOwner`'s absent-row
+// literal and `recoverDeadOwner`'s `!owner.present` branch (4) were equivalent
+// because both arms produced `missing` — an absent row fell through to the null
+// guard and landed on the same outcome. `present` carried information no caller
+// could act on, so it is gone, and with it three of those mutants. The fourth,
+// emptying the absent-row literal, is now KILLED by 'returns missing for an
+// absent run': an all-undefined row no longer satisfies the null guard, so it
+// reaches `isOwnerAlive` and reports the absent run alive.
 //  - `acquireAll`'s `deduped.length === 0` fast path (2). Removing it runs the
 //    acquisition loop over zero rows and returns the same empty array.
 //  - `nextEpoch`'s `row?.next` optional chain (1). `SELECT COALESCE(MAX(…))`
