@@ -132,12 +132,18 @@ Domain locks expose `scope()` / `held()` built on them.
   bare `finally` — that is the RD-102 masking defect.
 
 **Examples:** The artifact-manifest and sql.js durable-replacement locks use
-these primitives. `CompletionLock` and `DelegationLock` also survive, now over
-**three** production call sites, all in the CLI: inline-launch
+these primitives. **Three production lock acquisitions survive, and all three
+are `DelegationLock`, all in the CLI:** inline-launch
 (`packages/cli/src/services/execution.ts`), run-start `afterInit`
 (`packages/cli/src/commands/run.ts`), and claim-and-launch
 (`packages/cli/src/helpers/runbook-pipeline.ts`). **Core takes neither lock any
 more.**
+
+`CompletionLock` is a different case and must not be lumped in with those three:
+it has **zero** production call sites anywhere. It survives only as an exported
+class with no consumer outside tests — and the tests that name it assert it is
+_not_ acquired. It is unreferenced surface awaiting the phase that deletes the
+lock modules themselves, not a lock anything still takes.
 
 Their survival is a **tracked deviation from the single-store plan**, which
 called for deleting all four core domain locks once the delegate/collect/abort

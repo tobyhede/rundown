@@ -969,8 +969,8 @@ elsewhere, and neither is an authority mechanism: the sql.js driver takes an
 advisory lock around its durable-replacement cycle, an implementation detail of
 that single-writer WebContainer adapter (see
 [§ Drivers](#drivers-two-implementations-one-atomicity-bar)), and
-`CompletionLock` / `DelegationLock` remain around three CLI launch/claim paths
-as tracked debt (see
+`DelegationLock` remains around three CLI launch/claim paths as tracked debt,
+and `CompletionLock` survives only as unreferenced exported surface (see
 [§ Two domain locks survive](#two-domain-locks-survive-as-tracked-debt)). The
 one piece of run-adjacent state outside the database is **captured filesystem
 output**, which stays under `.rundown/runs/<run-id>/outputs/`
@@ -1336,14 +1336,26 @@ By contrast, transaction contention on `mutateSession` and every other
 
 The single-store plan called for deleting all four core domain locks.
 `SessionLock` and `RunStateLock` are gone; **`CompletionLock` and
-`DelegationLock` are not**. #690 is retiring them site by site; three production
-acquisitions remain, all in the CLI — **core takes neither lock any more**:
+`DelegationLock` are not**. #690 is retiring them site by site. **Three
+production acquisitions remain, and every one of them is `DelegationLock`, all
+in the CLI** — **core takes neither lock any more**:
 
 | Lock             | Site                                                              |
 | ---------------- | ----------------------------------------------------------------- |
 | `DelegationLock` | `packages/cli/src/commands/run.ts` — run-start `afterInit`        |
 | `DelegationLock` | `packages/cli/src/services/execution.ts` — inline launch          |
 | `DelegationLock` | `packages/cli/src/helpers/runbook-pipeline.ts` — claim-and-launch |
+
+Read that table as exhaustive for both locks: **`CompletionLock` has no row
+because it has no production call site at all.** It survives purely as an
+exported class — the module, its re-export from `runbook/index.ts`, and tests,
+several of which exist specifically to assert it is _not_ acquired. So the two
+locks are at different stages, and conflating them understates the progress and
+misdirects the remaining work: retiring `DelegationLock` means removing call
+sites, whereas `CompletionLock` is already down to unreferenced surface awaiting
+the phase that deletes the lock modules. Neither is closed by this work; #690
+still owns both, along with the `DELEGATION_LOCK_TIMEOUT` / RD-810 error
+surface.
 
 The two core recorders — `recordManualCompletion` and `recordChildCompletion` —
 were the first to go, and how they went is the pattern for the rest.
