@@ -2046,6 +2046,16 @@ export class SessionService {
       if (!linkageMatchesClaim(state.parentLinkage, claim)) {
         return { status: 'child-linkage-mismatch', claim: verified };
       }
+      // Unreachable at runtime, and kept only to narrow `claim.delegation` for
+      // the read below: `linkageMatchesClaim` returns `false` outright for a
+      // claim with no delegation, so the check above has already refused every
+      // input that could reach this one — with the identical status, which is
+      // why the redundancy is invisible in behaviour. Do not write a test for
+      // it (mutation testing reports the branch as unkillable, correctly), and
+      // do not delete it: `claim.delegation` is optional, so dropping it moves
+      // the failure to a compile error on the next line. `stashForClaimId`
+      // guards the whole delegated block on `if (claim.delegation)` instead,
+      // because stash accepts a run-control bearer where pop does not.
       if (!claim.delegation) {
         return { status: 'child-linkage-mismatch', claim: verified };
       }
