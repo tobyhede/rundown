@@ -5,9 +5,10 @@ import type { ResolvedCompletion } from '../../src/runbook/types.js';
 /**
  * Seed a resolved-completion record directly into persisted state for tests.
  *
- * Production writes resolved completions only through
- * `RunbookCompletionService.recordManualCompletion`, which records the
- * completion atomically alongside its mirrored substep state. The read-side
+ * Production writes resolved completions only as part of a larger prepared
+ * state — `RunbookCompletionService.prepareManualCompletion` carries the
+ * completion alongside its mirrored substep state, and the owning fenced commit
+ * persists them together. The read-side
  * lifecycle API (`getResolvedCompletion` / `consumeResolvedCompletion` /
  * `listResolvedCompletions`) therefore needs a fixture seam to establish the
  * precondition without dragging in substep state. This helper performs the

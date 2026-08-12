@@ -36,8 +36,6 @@ import {
   makeDelegationCredentialDescriptor,
   makeDelegationCredentialIssuer,
 } from '../../src/testing/delegation-fixtures.js';
-import { seedResolvedCompletion } from '../helpers/resolved-completion-seed.js';
-import { parentAdvanceGuard } from '../../src/runbook/storage/runbook-store.js';
 
 describe('RunbookCompletionService', () => {
   const runbookId = brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
@@ -197,13 +195,10 @@ describe('RunbookCompletionService', () => {
     });
   });
 
-  it('records non-active manual completions with sentinel entry and exact/sentinel duplicate detection', async () => {
-    const current = state();
-    await manager.save(current);
-
-    const first = await service.recordManualCompletion({
+  it('prepares non-active manual completions with sentinel entry and exact/sentinel duplicate detection', () => {
+    const first = service.prepareManualCompletion({
       runbookId,
-      currentState: current,
+      currentState: state(),
       targetStep: '1',
       targetSubstep: '2',
       targetFrame: inactiveFrame(buildFrameKey('1', 2)),
@@ -212,9 +207,9 @@ describe('RunbookCompletionService', () => {
       agentId: 'manual',
       completedAt: '2026-01-01T00:00:00.000Z',
     });
-    const second = await service.recordManualCompletion({
+    const second = service.prepareManualCompletion({
       runbookId,
-      currentState: current,
+      currentState: first.nextState,
       targetStep: '1',
       targetSubstep: '2',
       targetFrame: inactiveFrame(buildFrameKey('1', 2)),
@@ -225,10 +220,11 @@ describe('RunbookCompletionService', () => {
     });
 
     const key = buildCompletionKey(inactiveFrame(buildFrameKey('1', 2)), '2');
-    const persisted = await lifecycleService.getResolvedCompletion(runbookId, key);
-    expect(first).toEqual({ status: 'recorded', key });
-    expect(second).toEqual({ status: 'duplicate', key });
-    expect(persisted).toEqual(expect.objectContaining({ result: 'pass', targetEntry: 0 }));
+    expect(first).toEqual(expect.objectContaining({ status: 'recorded', key }));
+    expect(second).toEqual(expect.objectContaining({ status: 'duplicate', key }));
+    expect(second.nextState.resolvedCompletions?.[key]).toEqual(
+      expect.objectContaining({ result: 'pass', targetEntry: 0 }),
+    );
   });
 
   it('returns target_mismatch without dispatching or consuming when completion is not for current substep', async () => {
@@ -307,42 +303,6 @@ describe('RunbookCompletionService', () => {
     await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
   });
 
-  it('forwards a parent-advance guard from the drain into the applied completion write', async () => {
-    // The drain is the decisive parent-advancing write whenever the preceding
-    // record short-circuited as a duplicate, so the guard must reach sendAndSync's
-    // store write. Without this forwarding the guard is accepted and dropped.
-    const current = state();
-    const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-    await manager.save({
-      ...current,
-      resolvedCompletions: {
-        [key]: buildResolvedCompletion({
-          agentId: 'manual',
-          result: 'pass',
-          targetStep: '1',
-          targetSubstep: '1',
-          targetFrame: activeFrame(buildFrameKey('1'), 1),
-          completedAt: '2026-01-01T00:00:00.000Z',
-        }),
-      },
-    });
-    const sendAndSync = jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
-      state: state({ substep: '2' }),
-      snapshot: {},
-      effects: [],
-    });
-
-    const guard = parentAdvanceGuard(runbookId);
-    await service.drainResolvedCompletions({ runbookId, steps, currentState: current, guard });
-
-    expect(sendAndSync).toHaveBeenCalledWith(
-      runbookId,
-      steps,
-      expect.objectContaining({ type: 'APPLY_CURRENT_RESOLVED_COMPLETION' }),
-      { guard },
-    );
-  });
-
   it('forwards verified claim authority through the completion transition runtime', async () => {
     const current = state();
     const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
@@ -381,14 +341,10 @@ describe('RunbookCompletionService', () => {
     );
   });
 
-  it('guards only the first apply when one drain call applies several completions', async () => {
-    // The guard belongs to the DECISIVE write — the first apply, the one that
-    // advances the parent past the point where a live delegated child matters.
-    // Each apply is its own transaction, so reusing the guard on the follow-on
-    // applies lets a child that claims mid-drain abort them, stranding the
-    // already-committed first apply behind a bare `open_delegated_children`
-    // refusal that reports no events. `maxApplied` is deliberately omitted:
-    // nothing in the type stops a guarded caller from leaving it unbounded.
+  it('applies every queued completion when one drain call is left unbounded', async () => {
+    // `maxApplied` is deliberately omitted: an unbounded drain keeps applying
+    // until the active frame has no applicable row left, and each apply must
+    // advance the cursor so the next iteration selects a different row.
     const current = state();
     const firstKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
     const secondKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '2');
@@ -427,12 +383,13 @@ describe('RunbookCompletionService', () => {
         return { state: state({ substep: '2' }), snapshot: {}, effects: [] };
       });
 
-    const guard = parentAdvanceGuard(runbookId);
-    await service.drainResolvedCompletions({ runbookId, steps, currentState: current, guard });
+    await service.drainResolvedCompletions({ runbookId, steps, currentState: current });
 
     expect(sendAndSync).toHaveBeenCalledTimes(2);
-    expect(sendAndSync.mock.calls[0]?.[3]).toEqual({ guard });
-    expect(sendAndSync.mock.calls[1]?.[3]).toEqual({});
+    expect(sendAndSync.mock.calls.map((call) => call[2])).toEqual([
+      expect.objectContaining({ completionKey: firstKey }),
+      expect.objectContaining({ completionKey: secondKey }),
+    ]);
   });
 
   it('does not delete a resolved completion when actor sync fails before applying it', async () => {
@@ -1125,14 +1082,13 @@ describe('RunbookCompletionService', () => {
     });
   });
 
-  describe('manual recording', () => {
-    it('recordManualCompletion writes the resolved row and mirrored substep state', async () => {
+  describe('manual preparation', () => {
+    it('prepares the resolved row and mirrored substep state', () => {
       const current = state({
         substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
       });
-      await manager.save(current);
 
-      const result = await service.recordManualCompletion({
+      const prepared = service.prepareManualCompletion({
         runbookId,
         currentState: current,
         targetStep: '1',
@@ -1144,33 +1100,32 @@ describe('RunbookCompletionService', () => {
       });
 
       const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      expect(result).toEqual({ status: 'recorded', key });
-      await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toEqual(
+      expect(prepared.status).toBe('recorded');
+      expect(prepared.key).toBe(key);
+      expect(prepared.nextState.resolvedCompletions?.[key]).toEqual(
         expect.objectContaining({ result: 'pass', targetEntry: 1 }),
       );
-      await expect(manager.load(runbookId)).resolves.toEqual(
-        expect.objectContaining({
-          substepStates: [expect.objectContaining({ id: '1', status: 'done', result: 'pass' })],
-        }),
-      );
+      expect(prepared.nextState.substepStates).toEqual([
+        expect.objectContaining({ id: '1', status: 'done', result: 'pass' }),
+      ]);
     });
 
-    it('writes the resolved row and substep state in a single atomic update', async () => {
+    it('carries the resolved row and its substep state in one prepared state, writing nothing', async () => {
       const current = state({
         substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
       });
       await manager.save(current);
 
-      // recordManualCompletion must persist both the resolved completion row and
-      // the mirrored substep state in ONE guarded read-modify-write, never as two
-      // separate writes, so a concurrent reader can never observe a resolved row
-      // without its 'done' substep state and vice versa. The decision rides in
-      // the same cycle, which is what replaced the CompletionLock.
+      // Preparation is pure: the resolved completion row and the mirrored substep
+      // state arrive together on ONE prepared state, and no store write happens
+      // here at all. The owning fenced commit persists them in a single
+      // transaction, so a concurrent reader can never observe a resolved row
+      // without its 'done' substep state or vice versa.
       const updateSpy = jest.spyOn(manager, 'update');
       const updateWithStateSpy = jest.spyOn(manager, 'updateWithState');
       const updateWithStateReturningSpy = jest.spyOn(manager, 'updateWithStateReturning');
 
-      await service.recordManualCompletion({
+      const prepared = service.prepareManualCompletion({
         runbookId,
         currentState: current,
         targetStep: '1',
@@ -1181,46 +1136,47 @@ describe('RunbookCompletionService', () => {
         completedAt: '2026-01-01T00:00:00.000Z',
       });
 
-      expect(updateWithStateReturningSpy).toHaveBeenCalledTimes(1);
+      expect(updateWithStateReturningSpy).not.toHaveBeenCalled();
       expect(updateWithStateSpy).not.toHaveBeenCalled();
       expect(updateSpy).not.toHaveBeenCalled();
 
       const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      const persisted = await manager.load(runbookId);
-      expect(persisted?.resolvedCompletions?.[key]).toEqual(
+      expect(prepared.nextState.resolvedCompletions?.[key]).toEqual(
         expect.objectContaining({ result: 'pass', targetEntry: 1 }),
       );
-      expect(persisted?.substepStates).toEqual([
+      expect(prepared.nextState.substepStates).toEqual([
         expect.objectContaining({ id: '1', status: 'done', result: 'pass' }),
       ]);
+      // The persisted state is untouched: preparation committed nothing.
+      await expect(manager.load(runbookId)).resolves.toEqual(
+        expect.objectContaining({
+          resolvedCompletions: {},
+          substepStates: [expect.objectContaining({ id: '1', status: 'running' })],
+        }),
+      );
 
       updateSpy.mockRestore();
       updateWithStateSpy.mockRestore();
       updateWithStateReturningSpy.mockRestore();
     });
 
-    it('duplicate manual completion returns before changing substep state', async () => {
+    it('duplicate manual completion returns the captured state unchanged', () => {
+      const firstKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       const current = state({
         substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' }],
+        resolvedCompletions: {
+          [firstKey]: buildResolvedCompletion({
+            agentId: 'manual',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
       });
-      await manager.save(current);
 
-      const firstKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      await seedResolvedCompletion(
-        manager,
-        runbookId,
-        firstKey,
-        buildResolvedCompletion({
-          agentId: 'manual',
-          result: 'pass',
-          targetStep: '1',
-          targetSubstep: '1',
-          targetFrame: activeFrame(buildFrameKey('1'), 1),
-          completedAt: '2026-01-01T00:00:00.000Z',
-        }),
-      );
-
-      const result = await service.recordManualCompletion({
+      const prepared = service.prepareManualCompletion({
         runbookId,
         currentState: current,
         targetStep: '1',
@@ -1231,15 +1187,12 @@ describe('RunbookCompletionService', () => {
         completedAt: '2026-01-01T00:00:01.000Z',
       });
 
-      expect(result).toEqual({ status: 'duplicate', key: firstKey });
-      await expect(manager.load(runbookId)).resolves.toEqual(
-        expect.objectContaining({
-          substepStates: [expect.objectContaining({ id: '1', status: 'done', result: 'pass' })],
-        }),
-      );
+      expect(prepared.status).toBe('duplicate');
+      expect(prepared.key).toBe(firstKey);
+      expect(prepared.nextState).toBe(current);
     });
 
-    it('treats a done substep the cursor has moved past as a duplicate (no resolved row left)', async () => {
+    it('treats a done substep the cursor has moved past as a duplicate (no resolved row left)', () => {
       // Cursor has advanced to substep '2'; substep '1' is already done with no
       // resolved-completion row remaining (the actor consumed it on sync). A
       // caller re-resolving the passed-over substep '1' is a genuine duplicate.
@@ -1250,9 +1203,8 @@ describe('RunbookCompletionService', () => {
           { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
         ],
       });
-      await manager.save(current);
 
-      const result = await service.recordManualCompletion({
+      const prepared = service.prepareManualCompletion({
         runbookId,
         currentState: current,
         targetStep: '1',
@@ -1264,10 +1216,11 @@ describe('RunbookCompletionService', () => {
       });
 
       const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      expect(result).toEqual({ status: 'duplicate', key });
+      expect(prepared.status).toBe('duplicate');
+      expect(prepared.key).toBe(key);
     });
 
-    it('records a re-completion when a retry re-opens the active cursor onto a done substep', async () => {
+    it('prepares a re-completion when a retry re-opens the active cursor onto a done substep', () => {
       // A RETRY re-opened substep '1' (cursor is back on it) but left its prior
       // `done` status from the failed attempt in place. Resolving the now-active
       // cursor is a legitimate re-completion, not a duplicate.
@@ -1279,9 +1232,8 @@ describe('RunbookCompletionService', () => {
           { id: '2', frameKey: buildFrameKey('1'), status: 'done', result: 'fail' },
         ],
       });
-      await manager.save(current);
 
-      const result = await service.recordManualCompletion({
+      const prepared = service.prepareManualCompletion({
         runbookId,
         currentState: current,
         targetStep: '1',
@@ -1293,29 +1245,27 @@ describe('RunbookCompletionService', () => {
       });
 
       const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      expect(result).toEqual({ status: 'recorded', key });
+      expect(prepared.status).toBe('recorded');
+      expect(prepared.key).toBe(key);
     });
 
-    it('inactive manual completion detects an existing exact row for the same frame and substep', async () => {
-      const current = state({ activeFrameKey: buildFrameKey('1', 2) });
-      await manager.save(current);
-
+    it('inactive manual completion detects an existing exact row for the same frame and substep', () => {
       const exactKey = buildCompletionKey(exactFrame(buildFrameKey('1'), 4), '1');
-      await seedResolvedCompletion(
-        manager,
-        runbookId,
-        exactKey,
-        buildResolvedCompletion({
-          agentId: 'delegation',
-          result: 'pass',
-          targetStep: '1',
-          targetSubstep: '1',
-          targetFrame: exactFrame(buildFrameKey('1'), 4),
-          completedAt: '2026-01-01T00:00:00.000Z',
-        }),
-      );
+      const current = state({
+        activeFrameKey: buildFrameKey('1', 2),
+        resolvedCompletions: {
+          [exactKey]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: exactFrame(buildFrameKey('1'), 4),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      });
 
-      const result = await service.recordManualCompletion({
+      const prepared = service.prepareManualCompletion({
         runbookId,
         currentState: current,
         targetStep: '1',
@@ -1326,16 +1276,14 @@ describe('RunbookCompletionService', () => {
         completedAt: '2026-01-01T00:00:01.000Z',
       });
 
-      expect(result).toEqual({ status: 'duplicate', key: exactKey });
+      expect(prepared.status).toBe('duplicate');
+      expect(prepared.key).toBe(exactKey);
     });
 
-    it('returns duplicate for an existing active completion', async () => {
-      const current = state();
-      await manager.save(current);
-
-      const first = await service.recordManualCompletion({
+    it('returns duplicate when the captured state already carries the active completion', () => {
+      const first = service.prepareManualCompletion({
         runbookId,
-        currentState: current,
+        currentState: state(),
         targetStep: '1',
         targetSubstep: '1',
         targetFrame: activeFrame(buildFrameKey('1'), 1),
@@ -1343,9 +1291,12 @@ describe('RunbookCompletionService', () => {
         agentId: 'manual-a',
         completedAt: '2026-01-01T00:00:00.000Z',
       });
-      const second = await service.recordManualCompletion({
+      // Chaining the prepared state is what the fenced caller's loop does, and it
+      // is the in-memory equivalent of the second writer re-reading the committed
+      // row: the duplicate must be seen without any store round trip.
+      const second = service.prepareManualCompletion({
         runbookId,
-        currentState: current,
+        currentState: first.nextState,
         targetStep: '1',
         targetSubstep: '1',
         targetFrame: activeFrame(buildFrameKey('1'), 1),
@@ -1354,34 +1305,18 @@ describe('RunbookCompletionService', () => {
         completedAt: '2026-01-01T00:00:01.000Z',
       });
 
-      const results = [first, second];
-      expect(results.map((recorded) => recorded.status).sort()).toEqual(['duplicate', 'recorded']);
-
       const exactKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      const persisted = await lifecycleService.getResolvedCompletion(runbookId, exactKey);
-      const recorded = results.find((result) => result.status === 'recorded');
-      expect(recorded).toEqual({ status: 'recorded', key: exactKey });
-      expect(persisted).not.toBeNull();
-      expect(
-        [
-          { result: 'pass', agentId: 'manual-a', completedAt: '2026-01-01T00:00:00.000Z' },
-          { result: 'fail', agentId: 'manual-b', completedAt: '2026-01-01T00:00:01.000Z' },
-        ].some(
-          (expected) =>
-            persisted?.result === expected.result &&
-            persisted.agentId === expected.agentId &&
-            persisted.completedAt === expected.completedAt,
-        ),
-      ).toBe(true);
+      expect(first).toEqual(expect.objectContaining({ status: 'recorded', key: exactKey }));
+      expect(second).toEqual(expect.objectContaining({ status: 'duplicate', key: exactKey }));
+      expect(second.nextState.resolvedCompletions?.[exactKey]).toEqual(
+        expect.objectContaining({ result: 'pass', agentId: 'manual-a' }),
+      );
     });
 
-    it('writes exact key when target frame matches the active frame', async () => {
-      const current = state();
-      await manager.save(current);
-
-      const result = await service.recordManualCompletion({
+    it('uses the exact key when the target frame matches the active frame', () => {
+      const prepared = service.prepareManualCompletion({
         runbookId,
-        currentState: current,
+        currentState: state(),
         targetStep: '1',
         targetSubstep: '1',
         targetFrame: activeFrame(buildFrameKey('1'), 1),
@@ -1393,24 +1328,19 @@ describe('RunbookCompletionService', () => {
       // Active frame → exact key (entry=1), NOT sentinel
       const exactKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       const sentinelKey = buildCompletionKey(inactiveFrame(buildFrameKey('1')), '1');
-      expect(result).toEqual({ status: 'recorded', key: exactKey });
-      await expect(lifecycleService.getResolvedCompletion(runbookId, exactKey)).resolves.toEqual(
+      expect(prepared.status).toBe('recorded');
+      expect(prepared.key).toBe(exactKey);
+      expect(prepared.nextState.resolvedCompletions?.[exactKey]).toEqual(
         expect.objectContaining({ result: 'pass', targetEntry: 1 }),
       );
-      await expect(
-        lifecycleService.getResolvedCompletion(runbookId, sentinelKey),
-      ).resolves.toBeNull();
+      expect(prepared.nextState.resolvedCompletions?.[sentinelKey]).toBeUndefined();
     });
 
-    it('exact existing blocks sentinel write (exact first, then sentinel attempt → duplicate at exact)', async () => {
-      // Use a different step/substep id so it's part of the active frame.
-      const current = state();
-      await manager.save(current);
-
-      // First write: exact key (target is active frame)
-      const first = await service.recordManualCompletion({
+    it('exact existing blocks sentinel write (exact first, then sentinel attempt → duplicate at exact)', () => {
+      // First: exact key (target is the active frame)
+      const first = service.prepareManualCompletion({
         runbookId,
-        currentState: current,
+        currentState: state(),
         targetStep: '1',
         targetSubstep: '1',
         targetFrame: activeFrame(buildFrameKey('1'), 1),
@@ -1419,17 +1349,17 @@ describe('RunbookCompletionService', () => {
         completedAt: '2026-01-01T00:00:00.000Z',
       });
       const exactKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      expect(first).toEqual({ status: 'recorded', key: exactKey });
+      expect(first).toEqual(expect.objectContaining({ status: 'recorded', key: exactKey }));
 
-      // Second write: same substep but pretend target frame is non-active so
-      // sentinel would normally be chosen — but pass a synthetic currentState
-      // whose active frame is different.
+      // Second: same substep, but a captured state whose active frame differs, so
+      // sentinel would normally be chosen.
       const otherCurrent = state({
         step: '2',
         substep: undefined,
         activeFrameKey: buildFrameKey('2'),
+        resolvedCompletions: first.nextState.resolvedCompletions ?? {},
       });
-      const second = await service.recordManualCompletion({
+      const second = service.prepareManualCompletion({
         runbookId,
         currentState: otherCurrent,
         targetStep: '1',
@@ -1441,39 +1371,33 @@ describe('RunbookCompletionService', () => {
         completedAt: '2026-01-01T00:00:01.000Z',
       });
 
-      expect(second).toEqual({ status: 'duplicate', key: exactKey });
+      expect(second).toEqual(expect.objectContaining({ status: 'duplicate', key: exactKey }));
       // Payload preserved: pass, not fail
-      await expect(lifecycleService.getResolvedCompletion(runbookId, exactKey)).resolves.toEqual(
+      expect(second.nextState.resolvedCompletions?.[exactKey]).toEqual(
         expect.objectContaining({ result: 'pass' }),
       );
     });
 
-    it('exact existing blocks sentinel-target write when caller supplies sentinel entry', async () => {
-      const current = state();
-      await manager.save(current);
-
+    it('exact existing blocks sentinel-target write when caller supplies sentinel entry', () => {
       const exactKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      await seedResolvedCompletion(
-        manager,
-        runbookId,
-        exactKey,
-        buildResolvedCompletion({
-          agentId: 'manual',
-          result: 'pass',
-          targetStep: '1',
-          targetSubstep: '1',
-          targetFrame: activeFrame(buildFrameKey('1'), 1),
-          completedAt: '2026-01-01T00:00:00.000Z',
-        }),
-      );
-
       const otherCurrent = state({
         step: '2',
         substep: undefined,
         activeFrameKey: buildFrameKey('2'),
         activeEntry: 1,
+        resolvedCompletions: {
+          [exactKey]: buildResolvedCompletion({
+            agentId: 'manual',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
       });
-      const second = await service.recordManualCompletion({
+
+      const prepared = service.prepareManualCompletion({
         runbookId,
         currentState: otherCurrent,
         targetStep: '1',
@@ -1485,30 +1409,25 @@ describe('RunbookCompletionService', () => {
       });
 
       const sentinelKey = buildCompletionKey(inactiveFrame(buildFrameKey('1')), '1');
-      expect(second).toEqual({ status: 'duplicate', key: exactKey });
-      await expect(lifecycleService.getResolvedCompletion(runbookId, exactKey)).resolves.toEqual(
+      expect(prepared).toEqual(expect.objectContaining({ status: 'duplicate', key: exactKey }));
+      expect(prepared.nextState.resolvedCompletions?.[exactKey]).toEqual(
         expect.objectContaining({
           result: 'pass',
           targetEntry: 1,
           completedAt: '2026-01-01T00:00:00.000Z',
         }),
       );
-      await expect(
-        lifecycleService.getResolvedCompletion(runbookId, sentinelKey),
-      ).resolves.toBeNull();
+      expect(prepared.nextState.resolvedCompletions?.[sentinelKey]).toBeUndefined();
     });
 
-    it('sentinel existing blocks exact write (sentinel first, then exact attempt → duplicate at sentinel)', async () => {
-      const current = state();
-      await manager.save(current);
-
+    it('sentinel existing blocks exact write (sentinel first, then exact attempt → duplicate at sentinel)', () => {
       // First: write sentinel by targeting a non-active frame
       const otherCurrent = state({
         step: '2',
         substep: undefined,
         activeFrameKey: buildFrameKey('2'),
       });
-      const first = await service.recordManualCompletion({
+      const first = service.prepareManualCompletion({
         runbookId,
         currentState: otherCurrent,
         targetStep: '1',
@@ -1519,13 +1438,13 @@ describe('RunbookCompletionService', () => {
         completedAt: '2026-01-01T00:00:00.000Z',
       });
       const sentinelKey = buildCompletionKey(inactiveFrame(buildFrameKey('1')), '1');
-      expect(first).toEqual({ status: 'recorded', key: sentinelKey });
+      expect(first).toEqual(expect.objectContaining({ status: 'recorded', key: sentinelKey }));
 
-      // Second: now write with target frame = active frame, so the exact key
-      // would normally be chosen — but the sentinel already covers this target.
-      const second = await service.recordManualCompletion({
+      // Second: target frame = active frame, so the exact key would normally be
+      // chosen — but the sentinel already covers this target.
+      const second = service.prepareManualCompletion({
         runbookId,
-        currentState: current,
+        currentState: state({ resolvedCompletions: first.nextState.resolvedCompletions ?? {} }),
         targetStep: '1',
         targetSubstep: '1',
         targetFrame: activeFrame(buildFrameKey('1'), 1),
@@ -1534,21 +1453,17 @@ describe('RunbookCompletionService', () => {
         completedAt: '2026-01-01T00:00:01.000Z',
       });
 
-      expect(second).toEqual({ status: 'duplicate', key: sentinelKey });
+      expect(second).toEqual(expect.objectContaining({ status: 'duplicate', key: sentinelKey }));
       // Payload preserved
-      await expect(lifecycleService.getResolvedCompletion(runbookId, sentinelKey)).resolves.toEqual(
+      expect(second.nextState.resolvedCompletions?.[sentinelKey]).toEqual(
         expect.objectContaining({ result: 'pass' }),
       );
     });
 
-    it('duplicate result preserves the original completion payload', async () => {
-      const current = state();
-      await manager.save(current);
-
-      // First write — pass
-      const first = await service.recordManualCompletion({
+    it('duplicate result preserves the original completion payload', () => {
+      const first = service.prepareManualCompletion({
         runbookId,
-        currentState: current,
+        currentState: state(),
         targetStep: '1',
         targetSubstep: '1',
         targetFrame: activeFrame(buildFrameKey('1'), 1),
@@ -1556,10 +1471,9 @@ describe('RunbookCompletionService', () => {
         agentId: 'manual',
         completedAt: '2026-01-01T00:00:00.000Z',
       });
-      // Second write — attempt to overwrite with fail
-      const second = await service.recordManualCompletion({
+      const second = service.prepareManualCompletion({
         runbookId,
-        currentState: current,
+        currentState: first.nextState,
         targetStep: '1',
         targetSubstep: '1',
         targetFrame: activeFrame(buildFrameKey('1'), 1),
@@ -1570,63 +1484,13 @@ describe('RunbookCompletionService', () => {
 
       expect(first.status).toBe('recorded');
       expect(second.status).toBe('duplicate');
-      // The persisted row remains `pass`, original timestamp
-      await expect(lifecycleService.getResolvedCompletion(runbookId, first.key)).resolves.toEqual(
+      // The prepared row remains `pass`, original timestamp
+      expect(second.nextState.resolvedCompletions?.[first.key]).toEqual(
         expect.objectContaining({
           result: 'pass',
           completedAt: '2026-01-01T00:00:00.000Z',
         }),
       );
-    });
-
-    it('fails closed when the parent run does not exist', async () => {
-      // Nothing saved: the guarded cycle never runs the callback, so there is no
-      // decision to report. Recording against a run that is gone must throw
-      // rather than report a status the caller would read as success.
-      await expect(
-        service.recordManualCompletion({
-          runbookId,
-          currentState: state(),
-          targetStep: '1',
-          targetSubstep: '1',
-          targetFrame: activeFrame(buildFrameKey('1'), 1),
-          result: 'pass',
-          agentId: 'manual',
-          completedAt: '2026-01-01T00:00:00.000Z',
-        }),
-      ).rejects.toThrow(`Runbook ${runbookId} not found`);
-    });
-
-    it('records exactly once when concurrent writers race the same target', async () => {
-      const current = state();
-      await manager.save(current);
-
-      // The property the CompletionLock used to provide by exclusion, and that
-      // the compare-and-swap must now provide by construction: the duplicate
-      // decision is derived from the same version the write commits onto, so a
-      // writer that loses the race re-derives against the committed row and
-      // reports duplicate instead of overwriting it.
-      const results = await Promise.all(
-        Array.from({ length: 8 }, (_unused, index) =>
-          service.recordManualCompletion({
-            runbookId,
-            currentState: current,
-            targetStep: '1',
-            targetSubstep: '1',
-            targetFrame: activeFrame(buildFrameKey('1'), 1),
-            result: 'pass',
-            agentId: `manual-${String(index)}`,
-            completedAt: '2026-01-01T00:00:00.000Z',
-          }),
-        ),
-      );
-
-      expect(results.filter((result) => result.status === 'recorded')).toHaveLength(1);
-      expect(results.filter((result) => result.status === 'duplicate')).toHaveLength(7);
-      // Every writer names the same key, and exactly one row exists under it.
-      expect(new Set(results.map((result) => result.key)).size).toBe(1);
-      const persisted = await manager.load(runbookId);
-      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toHaveLength(1);
     });
   });
 
@@ -2843,14 +2707,12 @@ describe('RunbookCompletionService', () => {
       expect(releaseSpy).not.toHaveBeenCalled();
     });
 
-    it('recordManualCompletion records without touching the CompletionLock', async () => {
+    it('prepareManualCompletion prepares without touching the CompletionLock', () => {
       const acquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
-      const current = state();
-      await manager.save(current);
 
-      const result = await service.recordManualCompletion({
+      const prepared = service.prepareManualCompletion({
         runbookId,
-        currentState: current,
+        currentState: state(),
         targetStep: '1',
         targetSubstep: '1',
         targetFrame: activeFrame(buildFrameKey('1'), 1),
@@ -2859,7 +2721,7 @@ describe('RunbookCompletionService', () => {
         completedAt: '2026-01-01T00:00:00.000Z',
       });
 
-      expect(result.status).toBe('recorded');
+      expect(prepared.status).toBe('recorded');
       expect(acquireSpy).not.toHaveBeenCalled();
     });
 
@@ -2928,7 +2790,7 @@ describe('RunbookCompletionService', () => {
         expected: 'recorded',
       },
     ])(
-      'prepareManualCompletion agrees with recordManualCompletion for $label',
+      'prepareManualCompletion classifies $label',
       ({
         seed,
         expected,
@@ -2938,15 +2800,16 @@ describe('RunbookCompletionService', () => {
         expected: RecordCompletionResult['status'];
         targetFrame?: Frame;
       }) => {
-        // The fenced seam prepares a manual completion purely, while the
-        // recorder commits it. They are two renderings of ONE decision, so they
-        // must never disagree about duplicate-vs-recorded or about the
-        // completion key — a divergence would let the same substep be resolved
-        // twice through different commands.
-        it('reaches the same status and key', async () => {
+        // `prepareManualCompletion` is the only rendering of this decision left:
+        // the fenced seam prepares purely and its owning runner commits. The
+        // table pins the duplicate-vs-recorded classification, because getting it
+        // wrong lets the same substep be resolved twice through different
+        // commands. Which key each case selects is pinned separately by the
+        // exact/sentinel cases in `manual preparation`.
+        it('reaches the expected status', () => {
           const seeded = seed(state({ substep: '1' }));
-          await manager.save(seeded);
-          const args = {
+
+          const prepared = service.prepareManualCompletion({
             runbookId,
             currentState: seeded,
             targetStep: '1',
@@ -2955,14 +2818,9 @@ describe('RunbookCompletionService', () => {
             result: 'pass' as const,
             agentId: 'manual',
             completedAt: '2026-01-01T00:00:00.000Z',
-          };
-
-          const prepared = service.prepareManualCompletion(args);
-          const recorded = await service.recordManualCompletion(args);
+          });
 
           expect(prepared.status).toBe(expected);
-          expect(recorded.status).toBe(expected);
-          expect(prepared.key).toBe(recorded.key);
         });
       },
     );

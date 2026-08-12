@@ -10,7 +10,6 @@ import {
   type RunbookStateManager,
   type RunbookStateUpdate,
 } from './state.js';
-import { guardOptions, type ParentAdvanceGuard } from './storage/runbook-store.js';
 import {
   SENTINEL_ENTRY,
   activeFrame,
@@ -303,14 +302,6 @@ export interface DrainResolvedCompletionsArgs {
    * applicable completions.
    */
   readonly maxApplied?: number;
-  /**
-   * Optional parent-advance guard threaded into each applied completion's store
-   * write. Supplied only when the drain IS the decisive parent-advancing write —
-   * that is, when the preceding record short-circuited as a duplicate and so
-   * evaluated no guard of its own. When present, a live delegated child aborts
-   * the write inside its transaction.
-   */
-  readonly guard?: ParentAdvanceGuard;
   /** Verified runtime-only issuer for a completion transition that enters delegation. */
   readonly issueDelegationCredential?: DelegationCredentialIssuer;
 }
@@ -1132,58 +1123,6 @@ export class RunbookCompletionService {
   }
 
   /**
-   * Record a manual completion for a parent substep.
-   *
-   * The duplicate decision and the write are one compare-and-swap cycle: the
-   * classification runs inside the store's `build` callback against the exact
-   * state the write commits onto, so a concurrent writer cannot resolve the
-   * target between the two. This is what replaced the run `CompletionLock` —
-   * the lock's only job here was closing that gap, and the CAS closes it by
-   * construction rather than by exclusion.
-   *
-   * The callback is re-invoked per attempt and is free of external side
-   * effects, as the store requires.
-   *
-   * @param args - Manual completion target and result
-   * @param options - Optional write options.
-   * @param options.guard - Parent-advance guard forwarded to the completion write; when present it refuses if the run has a live delegated child.
-   * @returns Whether a completion was recorded or already existed
-   * @throws {Error} When the parent run does not exist — recording a completion
-   *   against a run that is gone must fail closed rather than report success.
-   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a live delegated child blocks the advance.
-   */
-  async recordManualCompletion(
-    args: RecordManualCompletionArgs,
-    options: { readonly guard?: ParentAdvanceGuard } = {},
-  ): Promise<RecordCompletionResult> {
-    const { value } = await this.manager.updateWithStateReturning<RecordCompletionResult>(
-      args.runbookId,
-      (freshParent) => {
-        const decision = classifyManualCompletionTarget(
-          args,
-          manualCompletionEvidence(args, freshParent),
-        );
-        if (decision.status === 'duplicate') {
-          return { updates: null, value: { status: 'duplicate', key: decision.key } };
-        }
-        return {
-          updates: manualCompletionUpdates(args, freshParent.substepStates ?? [], decision),
-          value: { status: 'recorded', key: decision.key },
-        };
-      },
-      guardOptions(options.guard),
-    );
-    // `value` is null exactly when the callback never ran, which happens only
-    // for a missing run — the callback itself always reports a decision. The
-    // companion `state` is null on the same condition, so testing it too would
-    // be a second read of one fact.
-    if (value === null) {
-      throw new Error(`Runbook ${args.runbookId} not found`);
-    }
-    return value;
-  }
-
-  /**
    * Report a delegated child's terminal outcome to its delegating run.
    *
    * This is the REPORT half of the report-then-collect split (Plan 5): it
@@ -1513,20 +1452,9 @@ export class RunbookCompletionService {
           completionKey: current.key,
           completion: validated,
         },
-        // Only the DECISIVE write carries the guard, and that is the first apply:
-        // it is the one that advances the parent past the point where a live
-        // delegated child matters. Every apply here is its own transaction, so
-        // re-arming the guard on a follow-on apply would let an unrelated child
-        // claiming mid-drain abort it and strand the already-committed first apply
-        // behind a bare refusal. This mirrors the recorded path, where the drain
-        // that follows a committed decisive write runs unguarded for the same
-        // reason (see LifecycleCommandService#driveSubstep).
-        {
-          ...guardOptions(applied.length === 0 ? args.guard : undefined),
-          ...(args.issueDelegationCredential === undefined
-            ? {}
-            : { runtime: { issueDelegationCredential: args.issueDelegationCredential } }),
-        },
+        args.issueDelegationCredential === undefined
+          ? {}
+          : { runtime: { issueDelegationCredential: args.issueDelegationCredential } },
       );
       if (!result) {
         return { status: 'continue', state, unresolved, applied };
