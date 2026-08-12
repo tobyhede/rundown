@@ -1259,10 +1259,22 @@ theoretical:
 per-run file lock, and **it does not behave like one**. It reads
 `state_version`, runs the caller's `build` outside any transaction, and commits
 only if the version is unchanged and the run is unowned. On a moved version it
-replays the whole cycle — at most **8 attempts, with NO backoff**, so all eight
-can land within a few milliseconds. A few-way concurrent writer then exhausts
-the budget and the call returns `concurrent_modification`, which surfaces to the
-user as a command failure (`CONCURRENT_MODIFICATION`, or `RD-308` when it
+pauses and replays the whole cycle, at most **8 attempts**.
+
+The pause is jittered and scaled by attempt number — `25–50ms × (attempt + 1)`,
+bounded at roughly 1.4s across the default budget, and skipped entirely after
+the final attempt. Both halves earn their place. **Jitter** decorrelates
+co-contending writers; without it every loser re-reads at the same instant and
+they replay in lockstep, so the writer at the back of an N-way queue burns one
+attempt per predecessor and the budget becomes a cap on _concurrent writers_
+rather than on _retry depth_. **Attempt scaling** widens the spread as
+contention proves itself, following the native driver's
+`busyRetryBaseMs * (attempt + 1)`. Twelve concurrent writers on one run now all
+commit; before the backoff, four of them failed.
+
+That makes the CAS wait, but it still does not block. Sustained contention
+spends the budget and the call returns `concurrent_modification`, which surfaces
+to the user as a command failure (`CONCURRENT_MODIFICATION`, or `RD-308` when it
 escapes through the throwing seam) where the deleted lock would have blocked and
 won.
 

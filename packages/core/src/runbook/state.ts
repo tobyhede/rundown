@@ -129,8 +129,10 @@ function assertTrustedResolvedCompletions(
  *
  * This is the throwing face of {@link StateMutationResult}'s
  * `concurrent_modification` arm. The CAS that replaced the per-run file lock
- * replays at most 8 times with no backoff, so a few-way concurrent writer can
- * exhaust the budget where the lock would have waited and won — CLAUDE.md
+ * replays at most 8 times, pausing between attempts for a jittered interval
+ * that keeps co-contending writers from replaying in lockstep. That widens the
+ * contention it absorbs but does not make it a lock: sustained contention still
+ * exhausts the budget where the lock would have waited and won — CLAUDE.md
  * therefore requires callers to handle or retry it, which is only implementable
  * against a type. A bare `Error` forced message matching and reached the CLI as
  * RD-999 "Unknown error".

@@ -89,11 +89,15 @@ succeeds. Of the two mechanisms that replaced it, only one behaves that way:
   write) blocks like the lock did — `PRAGMA busy_timeout = 5000` inside SQLite
   plus 10 application-level retries at 25ms × attempt in the native driver.
 - **The optimistic CAS** behind `RunbookStore.mutateState` — the per-run
-  read-modify-write that replaced the run-state lock — does not. It replays the
-  whole cycle at most **8 times with NO backoff**, so all 8 attempts can land
-  within a few milliseconds; a few-way concurrent writer then exhausts the
-  budget and the call returns `concurrent_modification`, which surfaces as a
-  command failure where the lock would have waited and won.
+  read-modify-write that replaced the run-state lock — waits, but does not
+  block. It replays the whole cycle at most **8 times**, pausing between
+  attempts for a jittered interval scaled by attempt number (25–50ms × attempt,
+  so at most ~1.4s across the default budget). The jitter is what lets more
+  concurrent writers than the attempt budget all commit: without it the losers
+  re-read in lockstep and the writer at the back of the queue exhausts the
+  budget before its turn. Sustained contention still spends the budget, and the
+  call then returns `concurrent_modification` — a command failure where the lock
+  would have waited and won.
 
 Treat `concurrent_modification` as a reachable arm on any path that can be
 driven concurrently — handle it or retry it, and never document it as
