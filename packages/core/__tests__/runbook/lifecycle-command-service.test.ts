@@ -112,23 +112,16 @@ import { patchPersistedClaim, unwrapSessionMutation } from '../../src/testing/se
 // both. A test that "killed" this would have to observe a distinction the
 // projection cannot express.
 //
-// The claim path's opportunistic parent target
-// (`...(parentRunId === undefined ? [] : [{ runId: parentRunId, optional: true }])`)
-// likewise keeps 2 mutants: the `false ?` conditional and the empty-array arm.
-// Both are UNTESTED, not unreachable — this comment claimed the latter and was
-// wrong (#738). `#driveTerminalClaim` is entered only for a delegated child
-// claim, and schemas.ts does refine delegated claims with "delegated claims
-// must carry a matching report-delegation-result grant". But that refinement
-// pins the grant against the claim's OWN `delegation` descriptor, whereas
-// `claimCanReportDelegationResult` compares it against the CHILD ROW's
-// `parentLinkage` — a different object, and nothing equates the two on
-// `parentStep`, `parentFrameKey`, or `parentEntry`. Every gate on the claim
-// path (`linkageMatchesLinkage`, `linkageMatchesClaim`) checks only
-// `parentRunId`, `parentStepId`, and `tokenHash`, and the descriptor is built
-// from the parent's cursor at CLAIM time while the child row was stamped at
-// DELEGATION time. A re-claim after a frame re-entry diverges `parentEntry`, so
-// `parentRunId` IS undefined here and the arm runs. The other arm IS pinned, by
-// the `recorded` / `not-applicable` pair on `reported` below.
+// NOT in this list, and recorded here only because two earlier passes put it
+// there: the claim path's opportunistic parent target
+// (`...(parentRunId === undefined ? [] : [{ runId: parentRunId, optional: true }])`).
+// Its 2 mutants — the `false ?` conditional and the empty-array arm — were
+// accepted as UNREACHABLE (#726), then corrected to untested (#738). They are
+// now KILLED, by 'never targets the parent when the claim was minted from a
+// drifted coordinate'. Reaching them needs a claim whose report grant disagrees
+// with the CHILD ROW's `parentLinkage`, which the mint permits because
+// `linkageMatchesLinkage` compares three fields where `grantAllows` compares
+// seven. Do not re-accept them: the arm has a fixture.
 //
 // Five further survivors are accepted as EQUIVALENT (#727) — each by a proof in
 // the code, not by inspection, so the verdict can be rechecked rather than
@@ -7035,24 +7028,46 @@ describe('RunbookLifecycleCommandService', () => {
       // Stand up a running parent + claimed child, then optionally overwrite the
       // child to a terminal tombstone lifecycle (claimRunbook refuses claiming a
       // terminal child, so the claim must land while the child is still running).
-      async function setupClaim(childLifecycle: RunbookState['lifecycle']) {
-        await manager.save(baseState({ id: claimParentRunId }));
+      //
+      // `reEntry` models a parent whose delegating frame was re-entered before
+      // the claim was minted: the frame's entry counter has advanced, so the
+      // coordinate a re-claim derives from LIVE parent state carries the new
+      // entry while the child row keeps the one stamped at delegation time. The
+      // mint gate (`linkageMatchesLinkage`) compares only `parentRunId`,
+      // `parentStepId` and `tokenHash`, so that claim is minted without
+      // complaint (#738). Omitted, both sides share one coordinate — the
+      // fresh-launch case, where the same object reaches `create` and the claim.
+      async function setupClaim(
+        childLifecycle: RunbookState['lifecycle'],
+        reEntry?: { readonly parentFrameEntry: number },
+      ) {
+        const stampedLinkage = linkageFor(claimParentRunId, 'a');
+        const claimLinkage =
+          reEntry === undefined
+            ? stampedLinkage
+            : { ...stampedLinkage, parentEntry: reEntry.parentFrameEntry };
+        await manager.save(
+          baseState({
+            id: claimParentRunId,
+            ...(reEntry === undefined
+              ? {}
+              : {
+                  frameEntryCounts: { [stampedLinkage.parentFrameKey]: reEntry.parentFrameEntry },
+                  activeEntry: reEntry.parentFrameEntry,
+                }),
+          }),
+        );
         await sessionService.pushRunbook(claimParentRunId);
         await issueRunControlClaimFor(claimParentRunId);
         const childBase = {
           id: claimChildRunId,
           runbook: { source: 'project', path: 'claim-child.md' } as const,
           runbookPath: 'claim-child.md',
-          parentLinkage: linkageFor(claimParentRunId, 'a'),
+          parentLinkage: stampedLinkage,
         };
         await manager.save(baseState(childBase));
         const claimed = assertClaimed(
-          await claimLiveDelegation(
-            sessionService,
-            manager,
-            claimChildRunId,
-            linkageFor(claimParentRunId, 'a'),
-          ),
+          await claimLiveDelegation(sessionService, manager, claimChildRunId, claimLinkage),
         );
         if (childLifecycle !== 'running') {
           await manager.save(baseState({ ...childBase, lifecycle: childLifecycle }));
@@ -7411,6 +7426,61 @@ describe('RunbookLifecycleCommandService', () => {
         });
 
         expect(out).toMatchObject({ kind: 'applied_claim', reported: 'recorded' });
+      });
+
+      it('never targets the parent when the claim was minted from a drifted coordinate', async () => {
+        // The third state of the opportunistic spread, and the one nothing
+        // reached: `shouldReport` is FALSE, so `parentRunId` is undefined and the
+        // EMPTY arm runs. Both tests above have a defined `parentRunId` and differ
+        // only in whether capture keeps the parent, so neither can tell the two
+        // arms of the spread apart — which is why this arm was recorded as
+        // unreachable rather than untested (#726, corrected by #738).
+        //
+        // Reachable because two predicates over one link disagree about what
+        // identifies it. schemas.ts pins the report grant against the claim's OWN
+        // `delegation` descriptor; `claimCanReportDelegationResult` compares that
+        // grant against the CHILD ROW's `parentLinkage`, on seven fields. Nothing
+        // in between compares more than three, so the claim below is minted
+        // without complaint and then rejected at the point of use.
+        //
+        // The fixture is the mint hole itself: the child row keeps the entry
+        // stamped at delegation time while the claim is minted from a re-derived
+        // one, exactly as orphan adoption after a parent frame re-entry produces
+        // (#738 traces the full reproduction through GOTO).
+        //
+        // CHARACTERIZATION, NOT ENDORSEMENT. The child closes and the parent is
+        // never told, so its delegation stays in flight forever — the defect #738
+        // tracks. Pinned so the arm cannot be called unreachable again, and so
+        // fixing it has to change this test deliberately rather than silently.
+        const claimId = await setupClaim('running', { parentFrameEntry: 2 });
+        loadStepsImpl = () => [
+          {
+            kind: 'base',
+            name: '1',
+            description: 'child one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
+        ];
+        const aggregate = jest.spyOn(actorMutationRunner, 'runAll');
+
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: presentedBy(claimId),
+          targetSelector: { kind: 'claim', claimId },
+        });
+
+        // The parent is not a target AT ALL, as opposed to a target that capture
+        // dropped. `reported` cannot see that difference — it reads
+        // `captured.at(1)`, which is empty either way — so the target list is the
+        // only thing that pins this arm. Invert the spread and a second entry
+        // appears here.
+        expect(aggregate.mock.calls[0][0].targets).toEqual([
+          { runId: claimChildRunId, claimKey: claimKeyFromBearer(claimId) },
+        ]);
+        expect(out).toMatchObject({ kind: 'applied_claim', reported: 'not-applicable' });
+        // The damage, stated plainly: the child is closed, and the parent still
+        // believes the delegation it is waiting on is running.
+        expect((await manager.load(claimChildRunId))?.lifecycle).toBe('completed');
       });
 
       it('claim complete returns claim_grant_required when the claim lacks mutate-run grant', async () => {
