@@ -3,7 +3,11 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { RunbookStateSchema } from '../../src/schemas.js';
-import { InvalidRunbookStateError, RunbookStateManager } from '../../src/runbook/index.js';
+import {
+  InvalidRunbookStateError,
+  LegacySnapshotError,
+  RunbookStateManager,
+} from '../../src/runbook/index.js';
 import { CURRENT_SCHEMA_VERSION, applyRunbookStateUpdate } from '../../src/runbook/state.js';
 import type { RunbookState } from '../../src/runbook/types.js';
 import {
@@ -328,6 +332,101 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     await seedRawRunState(tmpDir, { ...VALID_V1_STATE, id, schemaVersion: 'v2' });
     await expect(manager.load(id)).rejects.toThrow(/Invalid runbook state/);
     await expect(manager.load(id)).rejects.not.toThrow(/prune|clear invalid state/i);
+  });
+
+  it('rejects a GOTO_NEXT lastAction as a legacy snapshot', async () => {
+    // The gate's headline behaviour, and until now exercised only through the
+    // other caller (`RunbookStore.readRun`, in runbook-store.test.ts) — so the
+    // module's own tests never pinned it, and mutation testing could delete the
+    // whole branch with this file still green. `LegacySnapshotError` is a
+    // distinct class, not a flavour of InvalidRunbookStateError: the CLI's
+    // recoverable-state taxonomy routes the two to different advice.
+    const id = `rd_${'b'.repeat(32)}`;
+    await seedRawRunState(tmpDir, {
+      ...VALID_V1_STATE,
+      id,
+      lastAction: { type: 'GOTO_NEXT', target: '2' },
+    });
+
+    const load = manager.load(id);
+
+    await expect(load).rejects.toBeInstanceOf(LegacySnapshotError);
+    await expect(load).rejects.toThrow(/GOTO_NEXT/);
+    await expect(load).rejects.toThrow(/restart execution from the runbook entrypoint/i);
+    // The RD-309 half. It exists so a consumer reads the run id and the reason
+    // as fields instead of pattern-matching the prose above, which makes it the
+    // half no message assertion can stand in for — and mutation testing found
+    // the whole literal could be emptied with the message tests still green.
+    await expect(load).rejects.toMatchObject({
+      defect: { runId: id, reason: 'legacy_dynamic_step_snapshot' },
+    });
+  });
+
+  it('rejects a top-level instance field as a legacy snapshot', async () => {
+    // The second dynamic-step shape. Kept separate from the GOTO_NEXT test
+    // rather than merged into a table: they are independent gates over
+    // independent fields, and one test covering both would let either gate be
+    // deleted while the other kept the assertion passing.
+    const id = `rd_${'c'.repeat(32)}`;
+    await seedRawRunState(tmpDir, { ...VALID_V1_STATE, id, instance: { stepId: '1' } });
+
+    const load = manager.load(id);
+
+    await expect(load).rejects.toBeInstanceOf(LegacySnapshotError);
+    await expect(load).rejects.toThrow(/instance field/);
+    // Both halves of the message, and the defect, for the reason above: this
+    // gate carries its own copy of each, so an assertion on the sibling gate
+    // proves nothing about this one.
+    await expect(load).rejects.toThrow(/restart execution from the runbook entrypoint/i);
+    await expect(load).rejects.toMatchObject({
+      defect: { runId: id, reason: 'legacy_dynamic_step_snapshot' },
+    });
+  });
+
+  it('reports a legacy snapshot ahead of the foreign schema version it also carries', async () => {
+    // Gate order is contract, not accident, and this is the only case that can
+    // tell: a pre-v1 row fails the version check too, so whichever gate runs
+    // first decides what the user is told. The legacy message is the actionable
+    // one — "restart from the entrypoint" — where the version message only
+    // names the run. Reversing the gates would silently downgrade that, and no
+    // single-defect row would notice.
+    const id = `rd_${'d'.repeat(32)}`;
+    await seedRawRunState(tmpDir, {
+      ...VALID_V1_STATE,
+      id,
+      schemaVersion: 0,
+      lastAction: { type: 'GOTO_NEXT', target: '2' },
+    });
+
+    const load = manager.load(id);
+
+    await expect(load).rejects.toBeInstanceOf(LegacySnapshotError);
+    await expect(load).rejects.not.toThrow(/schema version/);
+  });
+
+  it('rejects a persisted null lastAction as invalid state, not a bare TypeError', async () => {
+    // The legacy-snapshot gate reads `lastAction.type` before any schema parse,
+    // and `typeof null === 'object'` — so the `lastAction !== null` conjunct is
+    // the only thing standing between a null here and a TypeError thrown from
+    // inside the gate. That matters because of what the gate exists to
+    // guarantee: `load` wraps only a SyntaxError out of `readRunJson`, so an
+    // unguarded dereference escapes untyped, surfaces as RD-999 / "Unknown
+    // error", and misses the InvalidRunbookStateError arm the CLI's
+    // recoverable-state taxonomy classifies on. Persisted null is reachable
+    // precisely because it is not schema-legal — `lastAction` is `.optional()`,
+    // never `.nullable()`, so nothing this codebase writes produces it and only
+    // a corrupted row does. Mutation testing found the conjunct survived
+    // `→ true`: every other test seeds `lastAction` absent or well-formed.
+    const id = `rd_${'a'.repeat(32)}`;
+    await seedRawRunState(tmpDir, { ...VALID_V1_STATE, id, lastAction: null });
+
+    // One load, both assertions: the class is what proves the gate did not
+    // throw raw, the message is what proves it fell through to the schema parse
+    // rather than being caught by a legacy arm that never inspected the value.
+    const load = manager.load(id);
+
+    await expect(load).rejects.toBeInstanceOf(InvalidRunbookStateError);
+    await expect(load).rejects.toThrow(/schema validation failed/);
   });
 
   it('rejects unparseable persisted state_json as invalid state, not a bare SyntaxError', async () => {
