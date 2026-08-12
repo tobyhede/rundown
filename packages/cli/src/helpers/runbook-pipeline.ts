@@ -48,6 +48,7 @@ import {
   inferFrameEntryFromState,
   type PreparedTemplateVariables as CorePreparedTemplateVariables,
   type RunnableTemplateVariables as CoreRunnableTemplateVariables,
+  type ScopedLock,
 } from '@rundown-org/core';
 export { buildContextVars, buildTemplateVars } from '@rundown-org/core';
 import {
@@ -1548,10 +1549,11 @@ export async function claimAndLaunch(
   const { parentState, stepId, substepId, delegation: _delegation } = scanResult;
   const lock = new DelegationLock(cwd);
 
-  // 3. Acquire delegation lock. The timeout is mapped to a typed result, so
-  //    acquire stays an explicit try/catch; the held lock is then scoped with
-  //    `await using` so a best-effort release can never mask the committed
-  //    claim result (the RD-102 defect this method originally exhibited).
+  // 3. Acquire delegation lock. This site releases before the child execution
+  //    loop and has many earlier returns. Async disposal provides the
+  //    best-effort safety net for those exits, while the ScopedLock's idempotent
+  //    release closure lets afterStarted end the protected precheck-to-claim
+  //    window precisely without risking a masking release failure (RD-102).
   try {
     await lock.acquire(parentState.id);
   } catch (err) {
@@ -1566,9 +1568,13 @@ export async function claimAndLaunch(
     }
     throw err;
   }
-  await using _lockGuard = lock.held(parentState.id);
 
   {
+    await using guard: ScopedLock = lock.held(parentState.id);
+    const releaseLock = async (): Promise<void> => {
+      await guard.release();
+    };
+
     // 4a. Re-load parent state (freshness check)
     const freshParent = await manager.load(parentState.id);
     if (!freshParent) {
@@ -1857,6 +1863,7 @@ export async function claimAndLaunch(
         capturedClaim = { claimId: claimResult.claimId, childRunId: claimResult.childRunId };
         initialLinkCommitted = true;
       },
+      afterStarted: releaseLock,
       afterInitRollback: async (childStateId) => {
         if (!initialLinkCommitted) return;
         capturedClaim = undefined;
@@ -1980,5 +1987,4 @@ export async function claimAndLaunch(
       loopResult: launchResult.loopResult,
     });
   }
-  // Lock released by `_lockGuard`'s disposer on scope exit (best-effort).
 }
