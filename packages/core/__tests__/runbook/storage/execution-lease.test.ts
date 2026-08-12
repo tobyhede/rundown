@@ -66,6 +66,14 @@ import {
 //    by type inside `acquireAllOnce`; neither string ever reaches a caller.
 //  - `abandonToRecovery`'s two outcome messages (2). Both arms are pinned by
 //    `kind`, which is what callers dispatch on; the prose is diagnostic only.
+//
+// Not in this list, and worth stating because it reads like it belongs: the
+// `wait === undefined || wait.signal?.aborted` disjunct of `withWait`'s
+// top-of-loop exit. The `wait === undefined` half IS equivalent — without a
+// policy the deadline is `now + 0`, so the sibling `this.clock.now() >= deadline`
+// is already true — but the mutant spans BOTH halves, and the aborted half
+// decides whenever an abort lands with budget left. 'stops at the loop top on
+// abort, with the budget still unspent' kills it.
 
 const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
 const mockRunbook: Runbook = { title: 'Test', description: 'A test', steps: mockSteps };
@@ -1149,6 +1157,38 @@ describe('default contention policy and finite wait', () => {
     expect(probes).toBe(1);
     expect(progress).toEqual([]);
     expect(clock.sleeps).toEqual([]);
+  });
+
+  it('stops at the loop top on abort, with the budget still unspent', async () => {
+    const authority = await contendedRun();
+    const controller = new AbortController();
+    const { lease: waiting, clock, progress, recorder } = instrumentedLease();
+    // `missing` licenses a free retry, so the loop returns to the top with the
+    // probe spent and the clock untouched. The deadline is 10s away and no
+    // backoff has run, so the abort is the ONLY thing that can end this — the
+    // post-backoff check at the bottom of the loop is never reached.
+    let probes = 0;
+    jest.spyOn(waiting, 'recoverDeadOwner').mockImplementation(async (runId) => {
+      probes += 1;
+      controller.abort();
+      // Only the first probe licenses a free retry; a second would have to find
+      // the obstruction unchanged, which is the charged path.
+      return probes === 1 ? { kind: 'missing', runId } : { kind: 'alive', runId, ownerPid: 1 };
+    });
+
+    const result = await waiting.acquire(authority, process.pid, {
+      budgetMs: 10_000,
+      backoff: () => 10,
+      signal: controller.signal,
+    });
+
+    expect(result.kind).toBe('execution_in_progress');
+    // Two acquisitions, one probe, no sleep, no charged attempt.
+    expect(probes).toBe(1);
+    expect(recorder.calls).toEqual(['immediate', 'immediate']);
+    expect(progress).toEqual([]);
+    expect(clock.sleeps).toEqual([]);
+    expect(clock.elapsed()).toBe(0);
   });
 
   it('stops on abort rather than waiting out the remaining budget', async () => {

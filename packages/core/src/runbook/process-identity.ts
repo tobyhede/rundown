@@ -24,7 +24,7 @@
  * @module runbook/process-identity
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from 'node:child_process';
 import * as fsSync from 'node:fs';
 import { isProcessAlive } from './file-lock.js';
 
@@ -55,6 +55,30 @@ export const PS_CANONICAL_ENV = { TZ: 'UTC', LC_ALL: 'C' } as const;
 
 /** Reads the start identity of an arbitrary pid, or `null` when unavailable. */
 export type StartIdReader = (pid: number) => string | null;
+
+/**
+ * The `readFileSync` shape {@link readLinuxStartId} depends on.
+ *
+ * This is a test seam, and it exists because the two readers below are selected
+ * by platform: on any one host exactly one of them is dead code, so neither can
+ * be covered by running it. Injecting the host call — rather than injecting a
+ * whole replacement reader — keeps the `/proc` path, the encoding, and the
+ * failure handling inside the function under test.
+ */
+export type StatFileReader = (path: string, encoding: 'utf8') => string;
+
+/**
+ * The `execFileSync` shape {@link readBsdStartId} depends on.
+ *
+ * The seam is the spawn itself, so the executable path, the argument vector and
+ * {@link PS_CANONICAL_ENV} stay inside the function under test. See
+ * {@link StatFileReader} for why the injection point is here.
+ */
+export type PsRunner = (
+  file: string,
+  args: readonly string[],
+  options: ExecFileSyncOptionsWithStringEncoding,
+) => string;
 
 /** Start-identity source for the execution-ownership protocol. */
 export interface ProcessIdentity {
@@ -127,13 +151,20 @@ export function isAddressablePid(pid: number): boolean {
  * owner as alive — the conservative direction, and the pre-existing pid-only
  * behaviour.
  *
+ * Exported, and parameterised by its host call, so it can be exercised on a host
+ * that has no `/proc` — see {@link StatFileReader}.
+ *
  * @param pid - Process to identify.
+ * @param readStatFile - Reads `/proc/<pid>/stat`; defaults to the real host read.
  * @returns The start time token, or `null` when the process or field is absent.
  */
-function readLinuxStartId(pid: number): string | null {
+export function readLinuxStartId(
+  pid: number,
+  readStatFile: StatFileReader = fsSync.readFileSync,
+): string | null {
   if (!isAddressablePid(pid)) return null;
   try {
-    return parseProcStatStartTime(fsSync.readFileSync(`/proc/${String(pid)}/stat`, 'utf8'));
+    return parseProcStatStartTime(readStatFile(`/proc/${String(pid)}/stat`, 'utf8'));
   } catch {
     // ENOENT (process gone), EACCES, or a /proc-less host. All are "unknown".
     return null;
@@ -156,13 +187,17 @@ function readLinuxStartId(pid: number): string | null {
  * alive — again the conservative direction. macOS pids increment and wrap at
  * 99999, so a same-second recycle of the same pid is not a practical concern.
  *
+ * Exported, and parameterised by its host call, so it can be exercised on a host
+ * that has no BSD `ps` — see {@link PsRunner}.
+ *
  * @param pid - Process to identify.
+ * @param runPs - Spawns `ps`; defaults to the real host spawn.
  * @returns The `lstart` string, or `null` when the process is gone or `ps` failed.
  */
-function readBsdStartId(pid: number): string | null {
+export function readBsdStartId(pid: number, runPs: PsRunner = execFileSync): string | null {
   if (!isAddressablePid(pid)) return null;
   try {
-    const out = execFileSync(BSD_PS, ['-o', 'lstart=', '-p', String(pid)], {
+    const out = runPs(BSD_PS, ['-o', 'lstart=', '-p', String(pid)], {
       encoding: 'utf8',
       timeout: PS_TIMEOUT_MS,
       stdio: ['ignore', 'pipe', 'ignore'],

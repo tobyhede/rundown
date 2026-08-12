@@ -556,6 +556,40 @@ function installHappyDelegationLockMock(): jest.Mock<(...args: unknown[]) => Pro
   return release;
 }
 
+/**
+ * A DelegationLock mock that records each release, in order.
+ *
+ * {@link installHappyDelegationLockMock} swallows the release, which is enough
+ * for the cases that only need the lock out of the way. This variant exposes it
+ * so a case can assert WHEN the lock came off — the whole of the claim-and-launch
+ * fix is that it comes off before the child runs, not at scope exit.
+ *
+ * @returns The run ids released, in call order.
+ */
+function installRecordingDelegationLockMock(): { readonly releases: (string | undefined)[] } {
+  const releases: (string | undefined)[] = [];
+  jest.mocked(core.DelegationLock).mockImplementation(() => {
+    const acquire = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
+    const release = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
+    const held = (runId?: string): ScopedLock => {
+      let released = false;
+      const run = async (): Promise<void> => {
+        if (released) return;
+        released = true;
+        releases.push(runId);
+        await release(runId);
+      };
+      return { release: run, [Symbol.asyncDispose]: run };
+    };
+    const scope = async (runId?: string): Promise<ScopedLock> => {
+      await acquire(runId);
+      return held(runId);
+    };
+    return { acquire, release, held, scope } as unknown as jest.MockedObject<DelegationLock>;
+  });
+  return { releases };
+}
+
 function makeState(id: RunId, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     id,
@@ -3928,6 +3962,97 @@ describe('claimAndLaunch', () => {
         prompted: true,
       }),
     );
+  });
+
+  it('releases the parent delegation lock before the child execution loop runs', async () => {
+    const delegation = {
+      tokenHash: MOCK_TOKEN_HASH,
+      childRunbookPath: 'child.md',
+      childRunbookRef: { source: 'project', path: 'child.md' },
+      contextSnapshot: { vars: {}, ancestors: [] },
+      childRunId: null,
+      createdAt: new Date().toISOString(),
+      cancelledAt: null,
+    };
+    const parentState = makeState(PARENT_RUN_ID, {
+      substepStates: [{ id: '1', status: 'pending', delegation }],
+    });
+
+    const mockScanner = {
+      findByToken: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation,
+      }),
+      findOrphanedChild: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(null),
+    };
+    jest
+      .mocked(core.DelegationScanService)
+      .mockImplementation(() => mockScanner as unknown as jest.MockedObject<DelegationScanService>);
+
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/test/child.md',
+      source: 'project',
+      sourceRoot: '/test',
+    });
+    jest.mocked(parser.parseRunbookDocument).mockReturnValue(mockParseResult());
+    jest.mocked(core.reconstituteContextVars).mockReturnValue({});
+
+    const childState = makeState(MOCK_RUN_ID);
+    const mockManager = {
+      load: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(parentState),
+      create: mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(childState),
+      update: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+      initializeSubsteps:
+        mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+      captureRunAuthorityState: mockCaptureRunAuthorityState(
+        parentState as unknown as RunbookState,
+      ),
+    };
+    jest
+      .mocked(core.RunbookStateManager)
+      .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
+
+    const claimSpy = mockClaimRunbookSuccess();
+    const lock = installRecordingDelegationLockMock();
+    let releasedBeforeLoop: boolean | undefined;
+    jest.mocked(runExecutionLoop).mockImplementation(async () => {
+      releasedBeforeLoop = lock.releases.length > 0;
+      return 'done';
+    });
+
+    const ctx = {
+      output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
+      manager: mockManager as unknown as RunbookStateManager,
+      actorService: {
+        initializeState:
+          mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue(childState),
+        prepareDelegationChildLink: mockPrepareDelegationChildLink(),
+      } as unknown as RunbookActorService,
+      sessionService: {
+        pushRunbook: mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined),
+        claimRunbook: claimSpy,
+        claimAndInitialLink: adaptClaimMockToInitialLink(claimSpy),
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
+      } as unknown as SessionService,
+      lifecycleService: makeLifecycle() as unknown as ExecutionLifecycleService,
+      cwd: '/test',
+    } satisfies RunPipelineContext;
+
+    const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(true);
+    // #732: the lock covers the precheck-to-claim window and nothing more. Held
+    // across the child, a grandchild's own claim cannot acquire it and deadlocks
+    // until the delegation-lock timeout. `await using` alone releases at scope
+    // exit — i.e. AFTER this loop — which is exactly the bug.
+    expect(releasedBeforeLoop).toBe(true);
+    // Released once, not twice: the disposer on the way out must be a no-op.
+    expect(lock.releases).toEqual([PARENT_RUN_ID]);
   });
 });
 

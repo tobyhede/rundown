@@ -23,6 +23,23 @@ import { createRunbook } from './fixtures.js';
 import { logger } from '../../src/logger.js';
 import { RunbookStore } from '../../src/runbook/storage/runbook-store.js';
 
+// MUTATION RESIDUE — do not "fix" these by writing a test.
+//
+// The changed-scope mutation gate reports three undetected mutants against
+// `recoverNamedRun`'s switch. All three are equivalent or unreachable, and a
+// test that killed any of them would assert something the system cannot do.
+// They are recorded here so the next run reads the residue instead of
+// re-deriving it. (`checkers: []` in stryker.config.mjs means Stryker does not
+// type-check a mutant, so the first entry surfaces as Survived rather than as a
+// compile error, which is what it would be.)
+//
+//  - The `case 'recovery_required'` label (1, Survived). Relabelling it drops
+//    that arm through to `default:`, where `_exhaustive` IS `recovered` at
+//    runtime — so the mutant returns the same object the arm returned.
+//  - The `default:` exhaustiveness arm itself (2, NoCoverage). Every member of
+//    the union is handled above it, so it is unreachable by construction. It is
+//    a type-level assertion, and type safety outranks coverage.
+
 const RUNBOOK = `## 1. First
 - PASS CONTINUE
 - FAIL STOP
