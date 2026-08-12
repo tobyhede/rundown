@@ -864,9 +864,10 @@ describe('targeting helpers', () => {
       });
     });
 
-    it('stays live when a frame with no recorded entry matches the issuance entry', () => {
+    it('closes as cursor-advanced on a frame with no recorded entry to compare', () => {
       // `frameEntryCounts` has nothing to compare, so the issuance entry is the
-      // only witness left — and it still has to agree with the claim.
+      // only witness left — and it still has to agree with the claim. The
+      // pre-#738 rule had no witness at all here and returned live.
       const state = parent({ activeFrameKey: buildFrameKey('other'), activeEntry: undefined });
       expect(classifyDelegationLiveness(state, { ...linkage, parentEntry: 2 })).toEqual({
         kind: 'closed',
