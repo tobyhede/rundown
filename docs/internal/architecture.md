@@ -1402,11 +1402,23 @@ read their survival as licence to put new run or session state behind a file
 lock. The remaining legitimate uses of `file-lock.ts` are the artifact manifest
 and the sql.js driver's own durable-replacement critical section.
 
-Where a lock is still held, its release is scoped with `await using` and is
+Where a lock is still held, its release goes through a `ScopedLock` and is
 best-effort and non-propagating (RD-102): a failed unlink leaks only a
 self-healing lock, reclaimed by the next acquirer via PID-aware stale detection,
 and must never replace the committed outcome of the work it protected. Releasing
 a domain lock from a bare `finally` is the RD-102 masking defect.
+
+Only the run-start site holds its lock to scope exit, as a plain `await using`
+guard. **Both launch sites deliberately release before the child execution
+loop**, so neither is a plain scope-exit release: inline launch (`execution.ts`)
+releases from several branches under a safety-net `finally`, and
+claim-and-launch (`runbook-pipeline.ts`) releases from `afterStarted`, once
+`RUNBOOK_STARTED` is emitted, ending the protected precheck-to-claim window
+before the child runs (#732). Both drive the guard's `release()` rather than
+unlinking directly, and keep async disposal as the safety net for their earlier
+returns. That is sound because `ScopedLock.release()` runs at most once and
+never throws: the explicit call and the disposer that backs it up are both
+non-masking.
 
 ---
 
