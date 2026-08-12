@@ -84,6 +84,9 @@ export async function seedLiveDelegation(
  * @param manager - State manager owning the parent run.
  * @param childRunId - Child run being claimed.
  * @param linkage - Delegation linkage to seed and claim.
+ * @param options - Fixture controls for replay/corruption cases whose parent is already seeded.
+ * @param options.seedParent - Whether to write the live parent delegation before claiming;
+ *   pass `false` only when that setup write would repair or supersede the staged claim corruption.
  * @returns The claim result.
  */
 export async function claimLiveDelegation(
@@ -91,8 +94,11 @@ export async function claimLiveDelegation(
   manager: RunbookStateManager,
   childRunId: RunId,
   linkage: DelegationLinkage,
+  options: { readonly seedParent?: boolean } = {},
 ): Promise<ClaimRunbookResult> {
-  await seedLiveDelegation(manager, linkage);
+  if (options.seedParent !== false) {
+    await seedLiveDelegation(manager, linkage);
+  }
   return unwrapSessionMutation(await sessionService.claimRunbook(childRunId, linkage));
 }
 

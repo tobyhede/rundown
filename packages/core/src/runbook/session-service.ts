@@ -54,7 +54,12 @@ import {
   delegationRuntimeCapabilities,
   type DelegationRuntimeCapabilities,
 } from './delegation-credential.js';
-import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } from './targeting.js';
+import {
+  classifyDelegationLiveness,
+  delegationAuthorityCoordinatesMatch,
+  findSubstepState,
+  linkageMatchesClaim,
+} from './targeting.js';
 import {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
@@ -444,26 +449,26 @@ export type StashActiveResult =
 export type SessionMutationRefusalOutcome = SessionMutationRefusal;
 
 /**
- * True when persisted child linkage matches an incoming delegation linkage on the
- * three identifying fields (`parentRunId`, `parentStepId`, `tokenHash`).
+ * True when persisted child linkage matches an incoming delegation linkage on
+ * every stored authority coordinate.
  *
  * Used by {@link SessionService.claimRunbook} to refuse a claim when the child's
  * persisted linkage disagrees with the freshly token-validated linkage the caller
- * is presenting — a fail-closed signal for state corruption.
+ * is presenting — a fail-closed signal for state corruption. All six shared
+ * fields are required because the incoming linkage becomes the claim descriptor
+ * and report grant; accepting a recomputed step, frame, or entry would mint
+ * authority that the write-once child linkage cannot exercise.
  *
  * @param persisted - Parent linkage stored on the child runbook state
  * @param incoming - Freshly built delegation linkage offered by the caller
- * @returns `true` only when both are delegation-shaped and all identifying fields agree
+ * @returns `true` only when both are delegation-shaped and every shared field agrees
  */
 function linkageMatchesLinkage(
   persisted: RunbookState['parentLinkage'],
   incoming: DelegationLinkage,
 ): boolean {
   return (
-    persisted?.kind === 'delegation' &&
-    persisted.parentRunId === incoming.parentRunId &&
-    persisted.parentStepId === incoming.parentStepId &&
-    persisted.tokenHash === incoming.tokenHash
+    persisted?.kind === 'delegation' && delegationAuthorityCoordinatesMatch(persisted, incoming)
   );
 }
 
@@ -1089,7 +1094,7 @@ export class SessionService {
    *
    * Validates write-side invariants before recording the claim: the child run
    * must exist on disk, and its persisted `parentLinkage` must match the
-   * incoming `linkage` on the three identifying fields. A mismatch indicates
+   * incoming `linkage` on every stored authority coordinate. A mismatch indicates
    * state corruption (manual edits, stale persisted linkage from a prior
    * delegation, cross-host state merge) and is refused rather than silently
    * propagated into the claim record.
@@ -1284,6 +1289,15 @@ export class SessionService {
           childRunId: existingLiveClaim.claim.controlledRunId,
           incoming: linkage,
           persisted: existingLiveClaim.state.parentLinkage,
+        };
+      }
+      const existingClaimLinkage = claimRecordToDelegationLinkage(existingLiveClaim.claim);
+      if (!linkageMatchesLinkage(existingClaimLinkage, linkage)) {
+        return {
+          status: 'linkage-mismatch',
+          childRunId: existingLiveClaim.claim.controlledRunId,
+          incoming: linkage,
+          persisted: existingClaimLinkage,
         };
       }
       return {

@@ -19,6 +19,8 @@ import {
   frameKeyForCursor,
   getActiveForContext,
   inactiveFrame,
+  delegationAuthorityCoordinatesMatch,
+  linkageMatchesClaim,
   parseCompletionKey,
   upsertSubstepState,
   classifyDelegationLiveness,
@@ -27,6 +29,7 @@ import {
 } from '../../src/runbook/targeting.js';
 import type {
   ForContext,
+  DelegationLinkage,
   ResolvedStep,
   ResolvedStepHavingSubsteps,
   RunbookState,
@@ -37,8 +40,69 @@ import { compileRunbookToMachine, type RunbookContext } from '../../src/runbook/
 import { runRetryHook } from '../../src/runbook/retry-hook.js';
 import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
 import { makeStepDelegation } from '../helpers/step-factories.js';
+import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 
 describe('targeting helpers', () => {
+  describe('linkageMatchesClaim', () => {
+    const parentRunId = brandRunIdForTest(`rd_${'1'.repeat(32)}`);
+    const childRunId = brandRunIdForTest(`rd_${'2'.repeat(32)}`);
+    const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+    const linkage: DelegationLinkage = {
+      kind: 'delegation',
+      parentRunId,
+      parentStepId: '1.1',
+      parentStep: '1',
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
+      tokenHash,
+    };
+    const claim = makeClaimRecord({
+      controlledRunId: childRunId,
+      delegation: {
+        childRunId,
+        parentRunId,
+        parentStepId: linkage.parentStepId,
+        parentStep: linkage.parentStep,
+        parentFrameKey: linkage.parentFrameKey,
+        parentEntry: linkage.parentEntry,
+        tokenHash,
+      },
+    });
+
+    it('accepts the claim the child linkage was minted from', () => {
+      // The positive control the drift cases below cannot supply: without it a
+      // predicate that answered `false` to everything satisfies every remaining
+      // assertion here, and only an integration test would notice that every
+      // delegated claim had stopped resolving.
+      expect(linkageMatchesClaim(linkage, claim)).toBe(true);
+    });
+
+    it('refuses a claim when the child has no parent linkage', () => {
+      expect(linkageMatchesClaim(undefined, claim)).toBe(false);
+    });
+
+    it.each([
+      ['parent run', { ...linkage, parentRunId: childRunId }],
+      ['parent step id', { ...linkage, parentStepId: '2.1' }],
+      ['parent step', { ...linkage, parentStep: '2' }],
+      ['parent frame', { ...linkage, parentFrameKey: buildFrameKey('1', 2) }],
+      ['parent entry', { ...linkage, parentEntry: 2 }],
+      [
+        'token hash',
+        { ...linkage, tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`) },
+      ],
+    ] as const)('refuses a claim whose %s differs from the child linkage', (_field, drifted) => {
+      expect(linkageMatchesClaim(drifted, claim)).toBe(false);
+    });
+
+    it('uses the same coordinate predicate for linkage-to-linkage comparisons', () => {
+      expect(delegationAuthorityCoordinatesMatch(linkage, linkage)).toBe(true);
+      expect(delegationAuthorityCoordinatesMatch(linkage, { ...linkage, parentEntry: 2 })).toBe(
+        false,
+      );
+    });
+  });
+
   describe('deriveExecutionAt', () => {
     it('derives step-only location for non-loop steps', () => {
       expect(deriveExecutionAt('1')).toBe('1');

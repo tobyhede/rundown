@@ -1098,6 +1098,96 @@ describe('claimAndLaunch', () => {
     expect(managerMocks.update).not.toHaveBeenCalled();
   });
 
+  it('refuses orphan adoption after the parent frame is re-entered', async () => {
+    const frameKey = brandFrameKeyForTest('1');
+    const parentState = {
+      id: RUN_ID,
+      step: '1',
+      variables: {},
+      activeFrameKey: frameKey,
+      activeEntry: 2,
+      frameEntryCounts: { [frameKey]: 2 },
+      substepStates: [
+        {
+          id: '1',
+          frameKey,
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    } as unknown as RunbookState;
+    const originalLinkage: DelegationLinkage = {
+      kind: 'delegation',
+      parentRunId: RUN_ID,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: frameKey,
+      parentEntry: 1,
+      tokenHash: MOCK_TOKEN_HASH,
+    };
+    const orphanState = {
+      id: ORPHAN_RUN_ID,
+      parentLinkage: originalLinkage,
+    } as unknown as RunbookState;
+    const claimAndInitialLink = mockFn<SessionService['claimAndInitialLink']>().mockImplementation(
+      async ({ childRunId, linkage }) =>
+        committed(
+          linkage.parentEntry === originalLinkage.parentEntry
+            ? claimedRunbookResult(childRunId)
+            : {
+                status: 'linkage-mismatch',
+                childRunId,
+                incoming: linkage,
+                persisted: originalLinkage,
+              },
+        ),
+    );
+    const ctx = makeCtx({
+      manager: {
+        load: mockFn<RunbookStateManager['load']>().mockResolvedValue(parentState),
+      },
+      sessionService: { claimAndInitialLink },
+    });
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        frameKey,
+        delegation: parentState.substepStates?.[0]?.delegation,
+      }),
+      orphanState,
+    );
+    mockHappyDelegationLock();
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'linkage-mismatch',
+      parentRunId: RUN_ID,
+      stepId: '1',
+      childRunId: ORPHAN_RUN_ID,
+    });
+    expect(claimAndInitialLink).toHaveBeenCalledWith(
+      expect.objectContaining({
+        childRunId: ORPHAN_RUN_ID,
+        linkage: expect.objectContaining({ parentEntry: 2 }),
+      }),
+    );
+    const managerMocks = ctx.manager as unknown as { readonly create: jest.Mock };
+    expect(managerMocks.create).not.toHaveBeenCalled();
+  });
+
   it('returns existing session claim when delegation has no linked child', async () => {
     const parentState = {
       id: RUN_ID,

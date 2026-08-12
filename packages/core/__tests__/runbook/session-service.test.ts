@@ -16,6 +16,7 @@ import type {
   Runbook,
   RunId,
   RunbookState,
+  DelegationLinkage,
   ParentLinkage,
   ResolvedStep,
 } from '../../src/runbook/types.js';
@@ -31,6 +32,7 @@ import {
 } from '../../src/runbook/targeting.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import {
+  patchPersistedClaim,
   stashRunbookUnverified,
   unwrapSessionMutation,
 } from '../../src/testing/session-fixtures.js';
@@ -901,6 +903,48 @@ describe('SessionService', () => {
       });
     });
 
+    it.each([
+      ['parent step', { parentStep: '2' }],
+      ['parent frame', { parentFrameKey: buildFrameKey('1', 2) }],
+      ['parent entry', { parentEntry: 2 }],
+    ] as const)(
+      'refuses replay when the existing claim descriptor drifted on %s',
+      async (_field, drift) => {
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'b');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const first = assertClaimed(
+          await claimLiveDelegation(sessionService, manager, child.id, linkage),
+        );
+        expect(first.claim.delegation).toBeDefined();
+        if (!first.claim.delegation) return;
+        const driftedDescriptor = { ...first.claim.delegation, ...drift };
+        await patchPersistedClaim(testDir, first.claim.claimKey, {
+          delegation: driftedDescriptor,
+          grants: [
+            { action: 'mutate-run', runId: child.id },
+            { action: 'report-delegation-result', ...driftedDescriptor },
+          ],
+        });
+
+        const result = await claimLiveDelegation(sessionService, manager, child.id, linkage, {
+          seedParent: false,
+        });
+
+        expect(result).toEqual({
+          status: 'linkage-mismatch',
+          childRunId: child.id,
+          incoming: linkage,
+          persisted: { ...linkage, ...drift },
+        });
+      },
+    );
+
     it('refuses delegation token replay before treating a new child id as claimable', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
@@ -1254,6 +1298,49 @@ describe('SessionService', () => {
       }
     });
 
+    it.each([
+      [
+        'parent entry',
+        (linkage: DelegationLinkage) => ({
+          ...linkage,
+          parentEntry: linkage.parentEntry + 1,
+        }),
+      ],
+      [
+        'parent frame',
+        (linkage: DelegationLinkage) => ({
+          ...linkage,
+          parentFrameKey: buildFrameKey('1', 2),
+        }),
+      ],
+      ['parent step', (linkage: DelegationLinkage) => ({ ...linkage, parentStep: '2' })],
+    ] as const)(
+      'returns unlinked when the child %s drifts from its claim grant',
+      async (_field, driftLinkage) => {
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, 'e');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const claimed = assertClaimed(
+          await claimLiveDelegation(sessionService, manager, child.id, linkage),
+        );
+        await manager.update(child.id, {
+          parentLinkage: driftLinkage(linkage),
+        });
+
+        const resolved = await sessionService.getActiveForClaimId(claimed.claimId);
+
+        expect(resolved.status).toBe('unlinked');
+        if (resolved.status === 'unlinked') {
+          expect(resolved.reason).toBe('child-linkage-mismatch');
+        }
+      },
+    );
+
     it('supersedes the delegated claim once the parent ends (R2 latch)', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
@@ -1488,6 +1575,45 @@ describe('SessionService', () => {
         expect(result.persisted).toEqual(linkage);
       }
     });
+
+    it.each([
+      [
+        'parent frame',
+        (linkage: DelegationLinkage) => ({
+          ...linkage,
+          parentFrameKey: buildFrameKey('1', 2),
+        }),
+      ],
+      ['parent step', (linkage: DelegationLinkage) => ({ ...linkage, parentStep: '2' })],
+    ] as const)(
+      'claimRunbook refuses when the incoming %s differs from the child linkage',
+      async (_field, driftLinkage) => {
+        const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+          runbookPath: 'parent.md',
+        });
+        const linkage = linkageFor(parent.id, '2');
+        const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        });
+        const drifted = driftLinkage(linkage);
+        await manager.update(parent.id, {
+          step: drifted.parentStep,
+          activeFrameKey: drifted.parentFrameKey,
+          activeEntry: drifted.parentEntry,
+          frameEntryCounts: replace({ [drifted.parentFrameKey]: drifted.parentEntry }),
+        });
+
+        const result = await claimLiveDelegation(sessionService, manager, child.id, drifted);
+
+        expect(result).toEqual({
+          status: 'linkage-mismatch',
+          childRunId: child.id,
+          incoming: drifted,
+          persisted: linkage,
+        });
+      },
+    );
 
     it('refuses a reissued-token claim against an existing child delegation as superseded', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
@@ -2860,6 +2986,67 @@ describe('SessionService', () => {
         expect.objectContaining({ controlledRunId: child.id }),
       );
       expect(claimGeneration(child.id)).toBe(beforeGeneration + 1);
+    });
+
+    it('refuses orphan adoption after the parent frame is re-entered', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const originalLinkage = linkageFor(parent.id, 'a');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: originalLinkage,
+      });
+      const reenteredLinkage = { ...originalLinkage, parentEntry: 2 };
+      await seedLiveDelegation(manager, reenteredLinkage);
+      const reenteredParent = await manager.update(parent.id, {
+        activeFrameKey: reenteredLinkage.parentFrameKey,
+        activeEntry: reenteredLinkage.parentEntry,
+        frameEntryCounts: replace({
+          [reenteredLinkage.parentFrameKey]: reenteredLinkage.parentEntry,
+        }),
+      });
+      const issued = await sessionService.issueRunControlClaim(parent.id);
+      expect(issued.kind).toBe('committed');
+      const captured = await manager.captureRunAuthorityState(parent.id);
+      if (captured.kind !== 'captured') {
+        throw new Error(`Expected captured parent authority, got ${captured.kind}`);
+      }
+      const actorService = new RunbookActorService(manager);
+      const prepared = await actorService.prepareDelegationChildLink(
+        reenteredParent,
+        mockSteps,
+        child.id,
+        reenteredLinkage,
+      );
+      if (prepared.kind !== 'prepared') {
+        throw new Error(`Expected prepared parent link, got ${prepared.kind}`);
+      }
+
+      const result = await sessionService.claimAndInitialLink({
+        childRunId: child.id,
+        linkage: reenteredLinkage,
+        capturedParent: captured.authority,
+        preparedParent: prepared.prepared,
+      });
+
+      expect(result).toEqual({
+        kind: 'committed',
+        value: {
+          status: 'linkage-mismatch',
+          childRunId: child.id,
+          incoming: reenteredLinkage,
+          persisted: originalLinkage,
+        },
+      });
+      expect(await sessionService.findClaimForDelegation(reenteredLinkage)).toBeNull();
+      expect(
+        findSubstepState(
+          (await manager.load(parent.id))?.substepStates ?? [],
+          reenteredLinkage.parentStepId,
+          reenteredLinkage.parentFrameKey,
+        )?.delegation?.childRunId,
+      ).toBeNull();
     });
 
     it('throws before mutation when initial-link parent coordinates disagree', async () => {
