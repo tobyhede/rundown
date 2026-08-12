@@ -8,15 +8,21 @@ import { openRunbookDriver } from '../../../src/runbook/storage/driver-factory.j
 import type { SqlDriver } from '../../../src/runbook/storage/sql-driver.js';
 import { RunbookStore } from '../../../src/runbook/storage/runbook-store.js';
 import { SqliteExecutionLeaseService } from '../../../src/runbook/storage/execution-lease.js';
-import { assertClaimGeneration } from '../../../src/runbook/storage/mutation-result.js';
+import {
+  assertClaimGeneration,
+  type CapturedAuthority,
+} from '../../../src/runbook/storage/mutation-result.js';
+import { readProcessStartId } from '../../../src/runbook/process-identity.js';
 import { RunbookStateManager } from '../../../src/runbook/state.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
-import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
+import { assertClaimLookupKey, type ClaimLookupKey } from '../../../src/runbook/claim-id.js';
 import type { RunId } from '../../../src/runbook/run-id.js';
 import type { Runbook, Step } from '../../../src/runbook/types.js';
 import { makeBaseStep } from '../../helpers/step-factories.js';
 
 const CHILD = fileURLToPath(new URL('./fixtures/lease-owner-child.mjs', import.meta.url));
+/** Whether this host can supply a process start id at all. */
+const HOST_HAS_START_IDS = readProcessStartId(process.pid) !== null;
 const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
 const mockRunbook: Runbook = { title: 'Test', description: 'A test', steps: mockSteps };
 
@@ -37,6 +43,7 @@ beforeEach(async () => {
   lease = new SqliteExecutionLeaseService(driver);
   manager = new RunbookStateManager(dir);
   children = [];
+  claimKeys = new Map();
 });
 
 afterEach(async () => {
@@ -46,6 +53,8 @@ afterEach(async () => {
   await driver[Symbol.asyncDispose]();
   await fs.rm(dir, { recursive: true, force: true });
 });
+
+let claimKeys = new Map<RunId, ClaimLookupKey>();
 
 async function newRun(): Promise<RunId> {
   const state = await manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
@@ -60,7 +69,17 @@ async function newRun(): Promise<RunId> {
       assertClaimGeneration(0),
     );
   });
+  claimKeys.set(state.id, claimKey);
   return state.id;
+}
+
+/** Capture the run's controlling authority for a fresh acquisition attempt. */
+async function capture(runId: RunId): Promise<CapturedAuthority> {
+  const claimKey = claimKeys.get(runId);
+  if (claimKey === undefined) throw new Error('unknown run');
+  const captured = await store.captureAuthority(runId, claimKey);
+  if (captured.kind !== 'captured') throw new Error(`capture failed: ${captured.kind}`);
+  return captured.authority;
 }
 
 function wait(ms: number): Promise<void> {
@@ -138,5 +157,50 @@ describe('real cross-process crash-boundary recovery', () => {
     await spawnOwner(runId, 'claimed'); // left alive
     const recovered = await lease.recoverDeadOwner(runId);
     expect(recovered.kind).toBe('alive');
+  }, 20000);
+
+  it('records a real foreign owner start id this host reads back identically', async () => {
+    const runId = await newRun();
+    const pid = await spawnOwner(runId, 'claimed'); // left alive
+
+    const recorded = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT exec_start_id FROM runs WHERE id = :id')
+          .get<{ readonly exec_start_id: string | null }>({ id: runId })?.exec_start_id,
+    );
+
+    // Pins the loader-free child fixture's inline reader against the production
+    // one. Two derivations that disagree would make every foreign owner look
+    // recycled — the one mismatch that costs at-most-once execution.
+    expect(recorded).toBe(readProcessStartId(pid));
+    // Both sides returning null would satisfy that equality vacuously, so on a
+    // host that HAS start ids, insist one was actually recorded. Conditional
+    // rather than absolute: a host without them is a supported configuration
+    // (the pid-only fallback), not a failure.
+    if (HOST_HAS_START_IDS) expect(recorded).not.toBeNull();
+  }, 20000);
+
+  it('lets an ordinary acquisition reclaim a SIGKILLed pre-effect owner, with no wait policy', async () => {
+    const runId = await newRun();
+    const pid = await spawnOwner(runId, 'claimed');
+    await killAndReap(pid);
+
+    // No LeaseWaitPolicy: this is the plain default path every production
+    // mutation takes. Before the probe became unconditional, this refused
+    // forever and the run could not even be pruned.
+    const acquired = await lease.acquire(await capture(runId), process.pid);
+
+    expect(acquired.kind).toBe('committed');
+  }, 20000);
+
+  it('routes a SIGKILLed mid-effect owner to recovery rather than re-running it', async () => {
+    const runId = await newRun();
+    const pid = await spawnOwner(runId, 'effect_started');
+    await killAndReap(pid);
+
+    const acquired = await lease.acquire(await capture(runId), process.pid);
+
+    expect(acquired.kind).toBe('recovery_required');
   }, 20000);
 });

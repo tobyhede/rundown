@@ -3,21 +3,25 @@
  *
  * Acquisition installs a fresh {@link ExecutionToken} and a strictly increasing
  * {@link ExecutionEpoch} on a run under the captured claim/state CAS, with the
- * attempt phase `claimed`. The effect boundary moves the exact owned attempt to
- * `effect_started`. Dead-owner recovery evaluates liveness OUTSIDE SQLite (never
- * in a SQL predicate) and then changes only the exact observed
- * `(pid, token, epoch, phase)` tuple: a dead pre-effect owner is reclaimed
- * automatically; a dead effect-started owner becomes `recovery_pending` and is
- * never auto-re-executed.
+ * attempt phase `claimed`. The owner's identity is `(pid, host start id)`, not a
+ * bare pid — see `runbook/process-identity` for why a pid alone cannot say
+ * whether the recorded owner is the process running under it now. The effect
+ * boundary moves the exact owned attempt to `effect_started`. Dead-owner
+ * recovery evaluates liveness OUTSIDE SQLite (never in a SQL predicate) and then
+ * changes only the exact observed `(pid, token, epoch, phase)` tuple: a dead
+ * pre-effect owner is reclaimed automatically; a dead effect-started owner
+ * becomes `recovery_pending` and is never auto-re-executed.
  *
- * The default contention policy is immediate refusal (`execution_in_progress`).
- * An optional {@link LeaseWaitPolicy} retries the WHOLE short transaction outside
- * SQLite within a finite budget; no transaction or trigger ever waits.
+ * The default contention policy is immediate refusal (`execution_in_progress`),
+ * but never before one dead-owner probe: a hard-killed owner has no other exit
+ * (see {@link SqliteExecutionLeaseService.withWait}). An optional
+ * {@link LeaseWaitPolicy} adds a finite retry budget on top, retrying the WHOLE
+ * short transaction outside SQLite; no transaction or trigger ever waits.
  *
  * @module runbook/storage/execution-lease
  */
 
-import { isProcessAlive } from '../file-lock.js';
+import { isOwnerAlive, sharedProcessIdentity, type ProcessIdentity } from '../process-identity.js';
 import type { RunId } from '../run-id.js';
 import type { ExecutionRecoveryReason } from '../types.js';
 import type { ClaimLookupKey } from '../claim-id.js';
@@ -191,8 +195,8 @@ export type DeadOwnerRecovery =
 /** Execution ownership operations. */
 export interface ExecutionLeaseService {
   /**
-   * Acquire execution ownership. `wait` omitted → immediate refusal (the
-   * default); provided → finite retry outside SQLite.
+   * Acquire execution ownership. `wait` omitted → refusal after one dead-owner
+   * probe (the default); provided → finite retry outside SQLite.
    *
    * @param captured - Authority captured before the effect.
    * @param ownerPid - Acquiring process id.
@@ -274,6 +278,11 @@ export interface ExecutionLeaseService {
    * Recover a run whose owner may be dead, using out-of-SQLite liveness and
    * exact-tuple CAS.
    *
+   * Liveness compares the recorded `(exec_pid, exec_start_id)` against the host's
+   * view of that pid now, so a pid the kernel has since recycled reads as dead
+   * rather than as the original owner. A lease carrying no start id — written on
+   * a host that cannot supply one — falls back to the pid-only decision.
+   *
    * @param runId - Run to inspect.
    * @returns The recovery outcome.
    */
@@ -293,12 +302,21 @@ export interface ExecutionLeaseService {
   ): Promise<GuardedMutationResult<readonly ExecutionAttempt[]>>;
 }
 
-/** Owner identity read for liveness evaluation. */
+/**
+ * Owner identity read for liveness evaluation.
+ *
+ * An absent run and a run that names no owner are deliberately the same shape:
+ * the only question this read answers is "is there an owner to evaluate", and
+ * the all-null row is that answer for both. A `present` flag distinguishing them
+ * would be information no caller can act on — its sole consumer collapsed both
+ * arms onto the same `missing` outcome, which is why it is gone.
+ */
 interface OwnerRow {
-  readonly present: boolean;
   readonly execPid: number | null;
   readonly execTokenHash: string | null;
   readonly execEpoch: number | null;
+  /** Host start id recorded with the pid; `null` on a host that has none. */
+  readonly execStartId: string | null;
   readonly phase: ExecutionPhase | null;
 }
 
@@ -320,11 +338,16 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
    * @param driver - Capability-selected SQL driver.
    * @param onWaitProgress - Optional progress callback for contended waits.
    * @param clock - Time source for the contended-wait loop; defaults to real time.
+   * @param identity - Process start-identity source used to disambiguate a
+   *   reused owner pid. Defaults to the process-wide identity, NOT a fresh one:
+   *   this class is constructed per mutation, and a per-instance memo would pay
+   *   the BSD `ps` spawn on every acquisition.
    */
   constructor(
     private readonly driver: SqlDriver,
     private readonly onWaitProgress?: (progress: LeaseWaitProgress) => void,
     private readonly clock: LeaseWaitClock = createDefaultLeaseWaitClock(),
+    private readonly identity: ProcessIdentity = sharedProcessIdentity(),
   ) {}
 
   async acquire(
@@ -566,15 +589,15 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
 
   async recoverDeadOwner(runId: RunId): Promise<DeadOwnerRecovery> {
     const owner = await this.driver.read((tx) => readOwner(tx, runId));
-    if (!owner.present) {
-      return { kind: 'missing', runId };
-    }
     if (owner.execPid === null || owner.execTokenHash === null || owner.execEpoch === null) {
-      // No active owner to recover.
+      // No active owner to recover — the run is absent, or it names none.
       return { kind: 'missing', runId };
     }
     // Liveness is evaluated OUTSIDE SQLite, then protected by exact-tuple CAS.
-    if (isProcessAlive(owner.execPid)) {
+    // The recorded start id is what separates "the owner is still running" from
+    // "an unrelated process inherited its pid"; absent one, this is the pid-only
+    // decision, which errs towards alive.
+    if (isOwnerAlive(this.identity, owner.execPid, owner.execStartId)) {
       return { kind: 'alive', runId, ownerPid: owner.execPid };
     }
     const epoch = assertExecutionEpoch(owner.execEpoch);
@@ -607,11 +630,14 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
     captured: readonly CapturedAuthority[],
     ownerPid: number,
   ): Promise<GuardedMutationResult<readonly ExecutionAttempt[]>> {
+    // Read the owner start id BEFORE opening the transaction: on a BSD host it
+    // costs a `ps` spawn, and no write lock may be held across one.
+    const startId = this.identity.of(ownerPid);
     try {
       const attempts = await this.driver.immediate((tx) => {
         const acquired: ExecutionAttempt[] = [];
         for (const cap of captured) {
-          const result = acquireInTx(tx, cap, ownerPid);
+          const result = acquireInTx(tx, cap, ownerPid, startId);
           if (result.kind !== 'committed') {
             throw new AllOrNoneRefusal(result);
           }
@@ -639,7 +665,9 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
     captured: CapturedAuthority,
     ownerPid: number,
   ): Promise<GuardedMutationResult<ExecutionAttempt>> {
-    return this.driver.immediate((tx) => acquireInTx(tx, captured, ownerPid));
+    // Outside the transaction: see acquireAllOnce.
+    const startId = this.identity.of(ownerPid);
+    return this.driver.immediate((tx) => acquireInTx(tx, captured, ownerPid, startId));
   }
 
   /**
@@ -730,11 +758,36 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
   }
 
   /**
-   * Run an acquisition thunk with the finite wait policy.
+   * Run an acquisition thunk, probing for a dead owner before any refusal.
    *
-   * On `execution_in_progress` with a wait policy, attempts dead-owner recovery
-   * (self-healing a crashed pre-effect owner) and retries within the budget; a
-   * run needing recovery surfaces as `recovery_required`.
+   * Every `execution_in_progress` is owed exactly one dead-owner probe, wait
+   * policy or not. Without it, a SIGKILLed owner leaves `runs.exec_token` set
+   * forever: every later mutation refuses, and `deleteRun` guards on the same
+   * column, so even `rundown prune` cannot clear the run and the only exit is
+   * deleting the project database. The probe is what gives that case an
+   * in-product exit — a dead pre-effect owner is reclaimed and the acquisition
+   * retried, and a dead post-boundary owner surfaces as `recovery_required`,
+   * which the runner resolves inline through the machine-owned recovery path.
+   *
+   * The debt is owed PER RUN, not per call. `acquireAll` acquires a set
+   * together, so a killed owner dies holding the set: probing only the first
+   * refusal would clear one member, and the retry would then refuse on the next
+   * dead member with the debt already spent — leaving the operator to repeat the
+   * command once per stranded run to escape a single crash. `probedRuns` records
+   * which obstruction was examined, so each distinct one is owed its own probe.
+   *
+   * A run's FIRST probe is ungated — not by the wait budget, not by the abort
+   * signal. It is a correctness step, not a waiting step, and gating it on a
+   * budget would make `{ budgetMs: 0 }` strictly worse than supplying no policy
+   * at all: the caller who asked to wait least would be the only one left with
+   * no exit from a stranded run. Every LATER probe of the SAME run is a retry,
+   * and the budget governs those.
+   *
+   * Each probe is charged to its run, so the loop always terminates: probes are
+   * bounded by the number of distinct runs in the call, which `acquireAll`
+   * deduplicates and `acquire` fixes at one. In the default (no-policy) mode an
+   * unwinnable single run costs two acquisition attempts and one probe. Only a
+   * wait policy sleeps.
    *
    * @template T - Attempt payload type.
    * @param wait - Optional wait policy.
@@ -747,16 +800,21 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
   ): Promise<GuardedMutationResult<T>> {
     const deadline = this.clock.now() + (wait?.budgetMs ?? 0);
     let attempts = 0;
+    const probedRuns = new Set<RunId>();
     for (;;) {
       const result = await once();
-      if (result.kind !== 'execution_in_progress' || wait === undefined) {
-        return result;
-      }
-      if (wait.signal?.aborted || this.clock.now() >= deadline) {
+      if (result.kind !== 'execution_in_progress') {
         return result;
       }
       const runId = result.runId;
+      if (
+        probedRuns.has(runId) &&
+        (wait === undefined || wait.signal?.aborted || this.clock.now() >= deadline)
+      ) {
+        return result;
+      }
       const recovery = await this.recoverDeadOwner(runId);
+      probedRuns.add(runId);
       if (recovery.kind === 'recovery_pending') {
         return {
           kind: 'recovery_required',
@@ -775,6 +833,12 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
       }
       if (recovery.kind === 'missing') {
         continue; // No owner tuple at all; the next attempt cannot refuse for it.
+      }
+      if (wait === undefined) {
+        // The obstruction is a live owner (or one this call did not change). The
+        // probe has done its job; without a wait policy there is nothing left to
+        // do but report the contention that was there all along.
+        return result;
       }
       attempts += 1;
       const remainingMs = Math.max(0, deadline - this.clock.now());
@@ -797,12 +861,15 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
  * @param tx - Open writing transaction.
  * @param captured - Captured authority.
  * @param ownerPid - Acquiring process id.
+ * @param ownerStartId - Host start id observed for `ownerPid` before this
+ *   transaction opened, or `null` on a host that has none.
  * @returns The attempt, or a typed refusal.
  */
 function acquireInTx(
   tx: SqlTransaction,
   captured: CapturedAuthority,
   ownerPid: number,
+  ownerStartId: string | null,
 ): GuardedMutationResult<ExecutionAttempt> {
   const row = selectCommitRow(tx, captured.runId, captured.claimKey);
   const classification = classifyCommitRow(row, captured);
@@ -815,13 +882,13 @@ function acquireInTx(
   const now = new Date().toISOString();
   tx.prepare(
     `INSERT INTO execution_attempts
-       (run_id, exec_epoch, exec_token, phase, owner_pid, started_at)
-     VALUES (:runId, :epoch, :hash, 'claimed', :pid, :now)`,
-  ).run({ runId: captured.runId, epoch, hash, pid: ownerPid, now });
+       (run_id, exec_epoch, exec_token, phase, owner_pid, owner_start_id, started_at)
+     VALUES (:runId, :epoch, :hash, 'claimed', :pid, :startId, :now)`,
+  ).run({ runId: captured.runId, epoch, hash, pid: ownerPid, startId: ownerStartId, now });
   const changes = tx
     .prepare(
       `UPDATE runs
-          SET exec_pid = :pid, exec_token = :hash, exec_epoch = :epoch
+          SET exec_pid = :pid, exec_token = :hash, exec_epoch = :epoch, exec_start_id = :startId
         WHERE id = :runId
           AND state_version = :stateVersion
           AND claim_generation = :claimGeneration
@@ -831,6 +898,7 @@ function acquireInTx(
       pid: ownerPid,
       hash,
       epoch,
+      startId: ownerStartId,
       runId: captured.runId,
       stateVersion: captured.stateVersion,
       claimGeneration: captured.claimGeneration,
@@ -863,13 +931,13 @@ function nextEpoch(tx: SqlTransaction, runId: RunId): ExecutionEpoch {
  *
  * @param tx - Open transaction.
  * @param runId - Run to read.
- * @returns The owner row.
+ * @returns The owner row; all-null when the run is absent or names no owner.
  */
 function readOwner(tx: SqlReadTransaction, runId: RunId): OwnerRow {
   const row = tx
     .prepare(
       `SELECT r.exec_pid AS exec_pid, r.exec_token AS exec_token, r.exec_epoch AS exec_epoch,
-              a.phase AS phase
+              r.exec_start_id AS exec_start_id, a.phase AS phase
          FROM runs r
          LEFT JOIN execution_attempts a ON a.run_id = r.id AND a.exec_epoch = r.exec_epoch
         WHERE r.id = :runId`,
@@ -878,16 +946,17 @@ function readOwner(tx: SqlReadTransaction, runId: RunId): OwnerRow {
       readonly exec_pid: number | null;
       readonly exec_token: string | null;
       readonly exec_epoch: number | null;
+      readonly exec_start_id: string | null;
       readonly phase: string | null;
     }>({ runId });
   if (row === undefined) {
-    return { present: false, execPid: null, execTokenHash: null, execEpoch: null, phase: null };
+    return { execPid: null, execTokenHash: null, execEpoch: null, execStartId: null, phase: null };
   }
   return {
-    present: true,
     execPid: row.exec_pid,
     execTokenHash: row.exec_token,
     execEpoch: row.exec_epoch,
+    execStartId: row.exec_start_id,
     // Validated at this edge like every other raw row, so the narrowed union
     // names a domain the read establishes rather than one it merely asserts.
     phase: row.phase === null ? null : assertExecutionPhase(row.phase),

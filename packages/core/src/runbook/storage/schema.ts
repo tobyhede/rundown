@@ -100,6 +100,9 @@ CREATE TABLE runs (
   state_json        TEXT    NOT NULL,
   -- Active execution identity. All NULL when no attempt owns the run. exec_token
   -- is the HASHED bearer secret; exec_epoch references the active attempt row.
+  -- exec_start_id is the host's process start id for exec_pid, written by
+  -- acquireInTx and compared at recovery: a pid alone cannot tell the owner from
+  -- a process that inherited its number (see runbook/process-identity).
   exec_pid          INTEGER,
   exec_token        TEXT,
   exec_epoch        INTEGER,
@@ -197,6 +200,9 @@ CREATE TABLE execution_attempts (
   phase             TEXT    NOT NULL
                             CHECK (phase IN ('claimed', 'effect_started', 'recovery_pending', 'committed', 'released')),
   owner_pid         INTEGER NOT NULL,
+  -- Per-attempt record of the owner's process start id, alongside owner_pid.
+  -- NULL where the host cannot supply one. The live liveness decision reads
+  -- runs.exec_start_id; this is the attempt's own history of the same fact.
   owner_start_id    TEXT,
   -- Closed recovery-reason union member, NULL until recovery.
   reason            TEXT,

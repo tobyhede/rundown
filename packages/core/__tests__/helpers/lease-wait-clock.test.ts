@@ -33,6 +33,9 @@ describe('makeFakeWaitClock', () => {
     expect(clock.sleeps).toEqual([]);
     expect(clock.elapsed()).toBe(0);
     expect(applied).toEqual([]);
+    // The call still happened, though — which is the whole reason a caller
+    // cannot read "never backed off" out of an empty `sleeps`.
+    expect(clock.sleepCalls()).toBe(1);
   });
 
   it('still trips the runaway guard when every sleep is already aborted', async () => {

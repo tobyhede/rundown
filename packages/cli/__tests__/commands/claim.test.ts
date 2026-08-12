@@ -17,14 +17,14 @@ import {
   type TestWorkspace,
   withRunTarget,
 } from '../helpers/test-utils.js';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, writeFile } from 'node:fs/promises';
 import {
   deletePersistedRunState,
   patchPersistedRunState,
 } from '@rundown-org/core/testing/session-fixtures';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
-import { ErrorResponseSchema, SessionService } from '@rundown-org/core';
+import { delegationLockPath, ErrorResponseSchema, SessionService } from '@rundown-org/core';
 import { Command } from 'commander';
 import { validateCommandOutput } from '../helpers/schema-validator.js';
 // Stryker static-import linkage (mutation testing): links this test file into
@@ -35,6 +35,19 @@ import { registerClaimCommand } from '../../src/commands/claim.js';
 import { inferEntryFromState } from '../../src/helpers/runbook-pipeline.js';
 
 const CLAIM_ID_PATTERN = /^rdclm_[a-f0-9]{32}_[A-Za-z0-9_-]{43}$/;
+
+async function waitForFile(path: string, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      await access(path);
+      return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+  }
+  throw new Error(`Timed out waiting for ${path}`);
+}
 
 describe('claim command wiring', () => {
   it('registers the claim command with its documented flags, descriptions, and defaults', () => {
@@ -290,6 +303,41 @@ describe('claim command', () => {
       expect(claimOutput.token).not.toMatch(/^rdtk_[A-Za-z0-9_-]{32}$/);
       // Emitted output must conform to the published claim schema.
       expect(validateCommandOutput('claim', claimOutput)).toEqual({ valid: true, errors: [] });
+    });
+
+    it('keeps the parent delegation lock held through the atomic claim commit', async () => {
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      const started = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(started.exitCode).toBe(0);
+      const parent = (await getActiveState(workspace))!;
+      const token = await getAutoIssuedToken();
+      let observedLockAtCommit = false;
+      const claimAndInitialLink = jest.spyOn(SessionService.prototype, 'claimAndInitialLink');
+      const originalClaimAndInitialLink = claimAndInitialLink.getMockImplementation();
+      if (!originalClaimAndInitialLink) {
+        throw new Error('Expected claimAndInitialLink to have an implementation.');
+      }
+      claimAndInitialLink.mockImplementation(async function (this: SessionService, input) {
+        try {
+          await access(delegationLockPath(workspace.cwd, parent.id));
+          observedLockAtCommit = true;
+        } catch {
+          observedLockAtCommit = false;
+        }
+        return originalClaimAndInitialLink.call(this, input);
+      });
+
+      try {
+        const result = await runCliInProcess(`claim ${token}`, workspace);
+
+        expect(result.exitCode).toBe(0);
+        expect(claimAndInitialLink).toHaveBeenCalledTimes(1);
+        expect(observedLockAtCommit).toBe(true);
+      } finally {
+        claimAndInitialLink.mockRestore();
+      }
     });
 
     it('renders a concurrent atomic claim modification as a retryable error envelope', async () => {
@@ -850,6 +898,72 @@ rd echo --result fail
   });
 
   describe('successive claims', () => {
+    it('allows concurrent sibling claims while the first child executes its automatic prefix', async () => {
+      await writeFile(
+        join(workspace.cwd, 'parent.runbook.md'),
+        createRunbook({
+          title: 'Parent',
+          steps: [
+            {
+              title: 'Review',
+              pass: 'CONTINUE',
+              substeps: [
+                {
+                  title: 'Slow review',
+                  delegate: true,
+                  content: 'Run the slow review.',
+                  runbooks: ['slow-child.runbook.md'],
+                },
+                {
+                  title: 'Fast review',
+                  delegate: true,
+                  content: 'Run the fast review.',
+                  runbooks: ['child.runbook.md'],
+                },
+              ],
+            },
+          ],
+        }),
+      );
+      await writeFile(
+        join(workspace.cwd, 'slow-child.runbook.md'),
+        `# Slow child
+
+## 1. Execute
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`bash
+touch first-claim-started
+while [ ! -f release-first-claim ]; do sleep 0.05; done
+\`\`\`
+`,
+      );
+      await writeChildRunbook();
+
+      const started = await runCliInProcess('run parent.runbook.md', workspace);
+      expect(started.exitCode).toBe(0);
+      const slowToken = await getAutoIssuedToken('1');
+      const fastToken = await getAutoIssuedToken('2');
+
+      const slowClaim = runCliSubprocess(['--allow-all', 'claim', slowToken]);
+      let slowResult!: Awaited<ReturnType<typeof runCliSubprocess>>;
+      let fastResult!: Awaited<ReturnType<typeof runCliSubprocess>>;
+      try {
+        await waitForFile(join(workspace.cwd, 'first-claim-started'));
+        fastResult = await runCliSubprocess(['claim', fastToken]);
+      } finally {
+        await writeFile(join(workspace.cwd, 'release-first-claim'), 'release\n');
+        slowResult = await slowClaim;
+      }
+
+      expect(slowResult.exitCode).toBe(0);
+      expect(fastResult.exitCode).toBe(0);
+      for (const result of [slowResult, fastResult]) {
+        expect(`${result.stdout}${result.stderr}`).not.toContain('DELEGATION_LOCK_TIMEOUT');
+      }
+    }, 20_000);
+
     it('allows only one concurrent claim of the same token', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
