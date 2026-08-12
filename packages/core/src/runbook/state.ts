@@ -751,8 +751,11 @@ export class RunbookStateManager {
    * @template R - Type of the value the callback reports.
    * @param id - The runbook state ID to update.
    * @param buildResult - Callback deriving `{ updates, value }` from current state.
+   * @param options - Optional write options.
+   * @param options.guard - Parent-advance guard; when present the write refuses if the run has a live delegated child.
    * @returns The updated state (or `null` when missing) and the reported value
    *   (or `null` when the runbook does not exist).
+   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a live delegated child blocks the advance.
    */
   async updateWithStateReturning<R>(
     id: string,
@@ -761,6 +764,7 @@ export class RunbookStateManager {
     ) =>
       | { updates: RunbookStateUpdate | null; value: R }
       | Promise<{ updates: RunbookStateUpdate | null; value: R }>,
+    options: { readonly guard?: ParentAdvanceGuard } = {},
   ): Promise<{ state: RunbookState | null; value: R | null }> {
     const runId = this.toRunId(id);
     if (runId === null) {
@@ -768,15 +772,19 @@ export class RunbookStateManager {
     }
     const store = await this.store();
     let captured: R | null = null;
-    const result = await store.mutateState(runId, async (current) => {
-      const { updates, value } = await buildResult(current);
-      // Captured on every attempt, so a retry against fresh state reports the
-      // value derived from the state that actually committed.
-      captured = value;
-      return updates === null
-        ? null
-        : applyRunbookStateUpdate(current, updates, new Date().toISOString());
-    });
+    const result = await store.mutateState(
+      runId,
+      async (current) => {
+        const { updates, value } = await buildResult(current);
+        // Captured on every attempt, so a retry against fresh state reports the
+        // value derived from the state that actually committed.
+        captured = value;
+        return updates === null
+          ? null
+          : applyRunbookStateUpdate(current, updates, new Date().toISOString());
+      },
+      guardOptions(options.guard),
+    );
     if (result.kind === 'missing') {
       return { state: null, value: null };
     }

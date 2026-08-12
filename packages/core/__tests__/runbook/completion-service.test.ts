@@ -14,12 +14,14 @@ import {
   type RecordCompletionResult,
 } from '../../src/runbook/index.js';
 import { CompletionLock } from '../../src/runbook/completion-lock.js';
+import { DelegationLock } from '../../src/runbook/delegation-lock.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import {
   activeFrame,
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
+  deriveActiveFrame,
   exactFrame,
   inactiveFrame,
   type Frame,
@@ -1160,12 +1162,13 @@ describe('RunbookCompletionService', () => {
       await manager.save(current);
 
       // recordManualCompletion must persist both the resolved completion row and
-      // the mirrored substep state under one lock acquisition (a single
-      // updateWithState), never as two separate writes, so a concurrent reader
-      // can never observe a resolved row without its 'done' substep state and
-      // vice versa.
+      // the mirrored substep state in ONE guarded read-modify-write, never as two
+      // separate writes, so a concurrent reader can never observe a resolved row
+      // without its 'done' substep state and vice versa. The decision rides in
+      // the same cycle, which is what replaced the CompletionLock.
       const updateSpy = jest.spyOn(manager, 'update');
       const updateWithStateSpy = jest.spyOn(manager, 'updateWithState');
+      const updateWithStateReturningSpy = jest.spyOn(manager, 'updateWithStateReturning');
 
       await service.recordManualCompletion({
         runbookId,
@@ -1178,7 +1181,8 @@ describe('RunbookCompletionService', () => {
         completedAt: '2026-01-01T00:00:00.000Z',
       });
 
-      expect(updateWithStateSpy).toHaveBeenCalledTimes(1);
+      expect(updateWithStateReturningSpy).toHaveBeenCalledTimes(1);
+      expect(updateWithStateSpy).not.toHaveBeenCalled();
       expect(updateSpy).not.toHaveBeenCalled();
 
       const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
@@ -1192,6 +1196,7 @@ describe('RunbookCompletionService', () => {
 
       updateSpy.mockRestore();
       updateWithStateSpy.mockRestore();
+      updateWithStateReturningSpy.mockRestore();
     });
 
     it('duplicate manual completion returns before changing substep state', async () => {
@@ -1573,6 +1578,56 @@ describe('RunbookCompletionService', () => {
         }),
       );
     });
+
+    it('fails closed when the parent run does not exist', async () => {
+      // Nothing saved: the guarded cycle never runs the callback, so there is no
+      // decision to report. Recording against a run that is gone must throw
+      // rather than report a status the caller would read as success.
+      await expect(
+        service.recordManualCompletion({
+          runbookId,
+          currentState: state(),
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(buildFrameKey('1'), 1),
+          result: 'pass',
+          agentId: 'manual',
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      ).rejects.toThrow(`Runbook ${runbookId} not found`);
+    });
+
+    it('records exactly once when concurrent writers race the same target', async () => {
+      const current = state();
+      await manager.save(current);
+
+      // The property the CompletionLock used to provide by exclusion, and that
+      // the compare-and-swap must now provide by construction: the duplicate
+      // decision is derived from the same version the write commits onto, so a
+      // writer that loses the race re-derives against the committed row and
+      // reports duplicate instead of overwriting it.
+      const results = await Promise.all(
+        Array.from({ length: 8 }, (_unused, index) =>
+          service.recordManualCompletion({
+            runbookId,
+            currentState: current,
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            result: 'pass',
+            agentId: `manual-${String(index)}`,
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        ),
+      );
+
+      expect(results.filter((result) => result.status === 'recorded')).toHaveLength(1);
+      expect(results.filter((result) => result.status === 'duplicate')).toHaveLength(7);
+      // Every writer names the same key, and exactly one row exists under it.
+      expect(new Set(results.map((result) => result.key)).size).toBe(1);
+      const persisted = await manager.load(runbookId);
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toHaveLength(1);
+    });
   });
 
   describe('child recording', () => {
@@ -1614,6 +1669,68 @@ describe('RunbookCompletionService', () => {
         },
       });
     }
+
+    it('records the whole report in one guarded cycle, taking no domain lock', async () => {
+      // The DelegationLock's job here was making the read-derive-write span
+      // atomic; the store's compare-and-swap does that now. The CompletionLock
+      // assertion is the other half: this path no longer records through
+      // recordManualCompletion, so the DelegationLock -> CompletionLock ordering
+      // edge has no remaining site to occur at.
+      const delegationAcquire = jest.spyOn(DelegationLock.prototype, 'acquire');
+      const completionAcquire = jest.spyOn(CompletionLock.prototype, 'acquire');
+      // Prototype spies survive earlier tests in this file, so a fresh spyOn
+      // inherits their call history. Only this test's calls may count.
+      delegationAcquire.mockClear();
+      completionAcquire.mockClear();
+      const updateWithStateReturningSpy = jest.spyOn(manager, 'updateWithStateReturning');
+      await manager.save(makeParentWithDelegation());
+      const child = makeChildWithDelegationLinkage();
+
+      await expect(
+        service.recordChildCompletion({ childState: child, result: 'pass' }),
+      ).resolves.toBe('recorded');
+
+      expect(delegationAcquire).not.toHaveBeenCalled();
+      expect(completionAcquire).not.toHaveBeenCalled();
+      expect(updateWithStateReturningSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('is not-applicable when the parent run does not exist', async () => {
+      // Parent deliberately not saved. Unlike the manual recorder, a child
+      // reporting to a run that is gone is a no-op, not a failure — the child
+      // cannot know its parent was pruned.
+      await expect(
+        service.recordChildCompletion({
+          childState: makeChildWithDelegationLinkage(),
+          result: 'pass',
+        }),
+      ).resolves.toBe('not-applicable');
+    });
+
+    it('reports exactly once when concurrent child reports race the same parent', async () => {
+      await manager.save(makeParentWithDelegation());
+      const child = makeChildWithDelegationLinkage();
+
+      // The DelegationLock's exclusion guarantee, restated as a CAS guarantee.
+      // The token fence, cancellation check, duplicate check and write all read
+      // one captured parent version, so a loser re-derives against the committed
+      // outcome and reports duplicate rather than writing a second row.
+      const results = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          service.recordChildCompletion({ childState: child, result: 'pass' }),
+        ),
+      );
+
+      expect(results.filter((result) => result === 'recorded')).toHaveLength(1);
+      expect(results.filter((result) => result === 'duplicate')).toHaveLength(7);
+      const persisted = await manager.load(runbookId);
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toHaveLength(1);
+      // Committed before observation: the caller that saw 'recorded' cannot have
+      // seen it before BOTH halves of the patch were durable.
+      expect(persisted?.substepStates).toEqual([
+        expect.objectContaining({ id: '1', status: 'done', result: 'pass' }),
+      ]);
+    });
 
     it('delegated child fail propagates as result: fail on the recorded completion', async () => {
       const parent = makeParentWithDelegation();
@@ -1701,42 +1818,6 @@ describe('RunbookCompletionService', () => {
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toEqual(
         expect.objectContaining({ result: 'fail', agentId: 'delegation' }),
       );
-    });
-
-    it('supersedes a pending delegation outcome for one substep without touching siblings', async () => {
-      const current = state();
-      const frameKey = buildFrameKey('1');
-      const key1 = buildCompletionKey(activeFrame(frameKey, 1), '1');
-      const key2 = buildCompletionKey(activeFrame(frameKey, 1), '2');
-      await manager.save({
-        ...current,
-        resolvedCompletions: {
-          [key1]: buildResolvedCompletion({
-            agentId: 'delegation',
-            result: 'fail',
-            targetStep: '1',
-            targetSubstep: '1',
-            targetFrame: activeFrame(frameKey, 1),
-          }),
-          [key2]: buildResolvedCompletion({
-            agentId: 'delegation',
-            result: 'pass',
-            targetStep: '1',
-            targetSubstep: '2',
-            targetFrame: activeFrame(frameKey, 1),
-          }),
-        },
-      });
-
-      const removed = await service.supersedeDelegationOutcomeUnlocked({
-        runbookId,
-        frameKey,
-        substepId: '1',
-      });
-
-      expect(removed).toBe(1);
-      await expect(lifecycleService.getResolvedCompletion(runbookId, key1)).resolves.toBeNull();
-      await expect(lifecycleService.getResolvedCompletion(runbookId, key2)).resolves.not.toBeNull();
     });
 
     it('inline child completion records agentId as inline', async () => {
@@ -1899,7 +1980,7 @@ describe('RunbookCompletionService', () => {
         service.prepareChildCompletion({ childState: child, result: 'pass' }, consumed),
       ).toEqual({ kind: 'duplicate' });
       await expect(
-        service.recordChildCompletionUnlocked({ childState: child, result: 'pass' }),
+        service.recordChildCompletion({ childState: child, result: 'pass' }),
       ).resolves.toBe('duplicate');
       await expect(manager.load(runbookId)).resolves.toEqual(before);
     });
@@ -1924,7 +2005,7 @@ describe('RunbookCompletionService', () => {
         service.prepareChildCompletion({ childState: child, result: 'pass' }, reentered),
       ).toEqual({ kind: 'duplicate' });
       await expect(
-        service.recordChildCompletionUnlocked({ childState: child, result: 'pass' }),
+        service.recordChildCompletion({ childState: child, result: 'pass' }),
       ).resolves.toBe('duplicate');
       await expect(manager.load(runbookId)).resolves.toEqual(before);
     });
@@ -2016,6 +2097,209 @@ describe('RunbookCompletionService', () => {
           service.prepareChildCompletion(
             { childState: child, result: 'pass', ignoreCancellation: true },
             cancelled,
+          ).kind,
+        ).toBe('recorded');
+      });
+
+      function makeInlineChild(): RunbookState {
+        return state({
+          id: childRunId,
+          parentLinkage: {
+            kind: 'inline',
+            parentRunId: runbookId,
+            parentStepId: '1',
+            parentStep: '1',
+            parentFrameKey: buildFrameKey('1'),
+            parentEntry: 1,
+          },
+        });
+      }
+
+      // The token fence and the cancellation check are both gated on
+      // `linkage.kind === 'delegation'`. An inline child carries no credential —
+      // `InlineLinkage` structurally has no token slot — so neither gate may fire
+      // for it, however the parent substep's own delegation record looks. Without
+      // these two, the gates read as unconditional.
+      it('ignores a divergent parent token when the child linkage is inline', () => {
+        const reissued = makeParentWithDelegation();
+
+        expect(
+          service.prepareChildCompletion(
+            { childState: makeInlineChild(), result: 'pass' },
+            {
+              ...reissued,
+              substepStates: reissued.substepStates?.map((entry) => ({
+                ...entry,
+                delegation: entry.delegation && {
+                  ...entry.delegation,
+                  tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
+                },
+              })),
+            },
+          ).kind,
+        ).toBe('recorded');
+      });
+
+      it('ignores a cancelled parent delegation when the child linkage is inline', () => {
+        expect(
+          service.prepareChildCompletion(
+            { childState: makeInlineChild(), result: 'pass' },
+            makeParentWithDelegation('2026-01-01T00:00:01.000Z'),
+          ).kind,
+        ).toBe('recorded');
+      });
+
+      // Both gates reach through two optional links. A parent substep with no
+      // delegation record at all, and a parent with no matching substep state,
+      // are the two shapes that make each `?.` load-bearing rather than
+      // decorative — dropping either one turns a normal report into a TypeError.
+      it('records against a parent substep that carries no delegation record', () => {
+        const parent = state({
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+        });
+
+        expect(
+          service.prepareChildCompletion(
+            { childState: makeChildWithDelegationLinkage(), result: 'pass' },
+            parent,
+          ).kind,
+        ).toBe('recorded');
+      });
+
+      it('records against a parent that has no substep states at all', () => {
+        const parent = state({ substepStates: undefined });
+
+        const prepared = service.prepareChildCompletion(
+          { childState: makeChildWithDelegationLinkage(), result: 'pass' },
+          parent,
+        );
+
+        expect(prepared.kind).toBe('recorded');
+        if (prepared.kind !== 'recorded') throw new Error('expected recorded');
+        // The absent list defaults to empty rather than propagating undefined
+        // into the patch, so the mirrored substep state is still written.
+        expect(prepared.nextParentState.substepStates).toEqual([
+          expect.objectContaining({ id: '1', status: 'done', result: 'pass' }),
+        ]);
+      });
+
+      it('carries the key and the completion time onto the prepared state', () => {
+        const prepared = service.prepareChildCompletion(
+          {
+            childState: makeChildWithDelegationLinkage(),
+            result: 'pass',
+            completedAt: '2026-02-02T03:04:05.000Z',
+          },
+          makeParentWithDelegation(),
+        );
+
+        expect(prepared).toEqual(
+          expect.objectContaining({
+            kind: 'recorded',
+            key: buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1'),
+          }),
+        );
+        if (prepared.kind !== 'recorded') throw new Error('expected recorded');
+        // Stamped from the report, not wall clock: an aggregate commits this
+        // state later, and "now" there would date it to the commit.
+        expect(prepared.nextParentState.updatedAt).toBe('2026-02-02T03:04:05.000Z');
+        expect(prepared.nextParentState.resolvedCompletions?.[prepared.key]).toEqual(
+          expect.objectContaining({ result: 'pass', agentId: 'delegation' }),
+        );
+      });
+
+      it('falls back to wall clock when the report carries no completion time', () => {
+        const before = new Date().toISOString();
+        const prepared = service.prepareChildCompletion(
+          { childState: makeChildWithDelegationLinkage(), result: 'pass' },
+          makeParentWithDelegation(),
+        );
+        const after = new Date().toISOString();
+
+        if (prepared.kind !== 'recorded') throw new Error('expected recorded');
+        expect(prepared.nextParentState.updatedAt >= before).toBe(true);
+        expect(prepared.nextParentState.updatedAt <= after).toBe(true);
+      });
+
+      // Frame selection decides whether the report targets the LIVE cursor or a
+      // historical entry, and only the active form is exempt from the
+      // already-done duplicate rule. A RETRY re-opens a substep without clearing
+      // its `done` status, so the cursor sitting on a done substep is the case
+      // that separates the two.
+      it('targets the active frame when the linkage matches the live cursor', () => {
+        // Cursor is still on substep 1 of the active frame, so this is a
+        // legitimate re-completion rather than a duplicate.
+        expect(
+          service.prepareChildCompletion(
+            { childState: makeChildWithDelegationLinkage(), result: 'pass' },
+            makeReopenedParent(),
+          ).kind,
+        ).toBe('recorded');
+      });
+
+      it('targets an exact frame when the linkage names a different entry', () => {
+        const parent = makeParentWithDelegation();
+        const advanced = { ...parent, activeEntry: 2, frameEntryCounts: {} } as RunbookState;
+
+        const prepared = service.prepareChildCompletion(
+          { childState: makeChildWithDelegationLinkage(), result: 'pass' },
+          advanced,
+        );
+
+        if (prepared.kind !== 'recorded') throw new Error('expected recorded');
+        // Entry 1 from the linkage, not the live entry 2: the report belongs to
+        // the iteration it was issued under.
+        expect(prepared.key).toBe(buildCompletionKey(exactFrame(buildFrameKey('1'), 1), '1'));
+      });
+
+      /**
+       * A parent whose target substep is already `done` while the cursor still
+       * sits on it — what a RETRY leaves behind, since the machine does not
+       * reset the status. Only an ACTIVE target frame is exempt from the
+       * already-done duplicate rule, so this fixture is what makes the
+       * active-vs-exact choice observable: `recorded` proves the active frame
+       * was chosen, `duplicate` proves it was not. The completion key cannot
+       * tell them apart — both carry the same entry, so both build the same key.
+       */
+      function makeReopenedParent(overrides: Partial<RunbookState> = {}): RunbookState {
+        const parent = makeParentWithDelegation();
+        return {
+          ...parent,
+          substepStates: parent.substepStates?.map((entry) => ({
+            ...entry,
+            status: 'done' as const,
+            result: 'pass' as const,
+          })),
+          ...overrides,
+        };
+      }
+
+      it('reads the active frame key from the state, not from the cursor derivation', () => {
+        // `activeFrameKey` is authoritative when present. This state's persisted
+        // key disagrees with what its cursor would derive, and the linkage
+        // matches the persisted one — so recomputing instead of reading would
+        // classify the report against a different frame.
+        const parent = makeReopenedParent({ step: '2', activeFrameKey: buildFrameKey('1') });
+        expect(deriveActiveFrame(parent).frameKey).not.toBe(buildFrameKey('1'));
+
+        expect(
+          service.prepareChildCompletion(
+            { childState: makeChildWithDelegationLinkage(), result: 'pass' },
+            parent,
+          ).kind,
+        ).toBe('recorded');
+      });
+
+      it('defaults the active entry to 1 when the state carries none', () => {
+        // Entry 1 is the default, so a linkage issued at entry 1 still matches
+        // the live cursor. Losing the default drops the match and the report
+        // lands on a historical frame instead.
+        const parent = makeReopenedParent({ activeEntry: undefined });
+
+        expect(
+          service.prepareChildCompletion(
+            { childState: makeChildWithDelegationLinkage(), result: 'pass' },
+            parent,
           ).kind,
         ).toBe('recorded');
       });
@@ -2508,7 +2792,7 @@ describe('RunbookCompletionService', () => {
     });
   });
 
-  describe('unlocked twins (#500)', () => {
+  describe('fenced twins agree with their recorders', () => {
     beforeEach(() => {
       // Earlier tests spy on CompletionLock.prototype without restoring; clear
       // any prototype spies so the call counts below are this test's own.
@@ -2559,12 +2843,12 @@ describe('RunbookCompletionService', () => {
       expect(releaseSpy).not.toHaveBeenCalled();
     });
 
-    it('recordManualCompletionUnlocked records without touching the CompletionLock', async () => {
+    it('recordManualCompletion records without touching the CompletionLock', async () => {
       const acquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
       const current = state();
       await manager.save(current);
 
-      const result = await service.recordManualCompletionUnlocked({
+      const result = await service.recordManualCompletion({
         runbookId,
         currentState: current,
         targetStep: '1',
@@ -2644,7 +2928,7 @@ describe('RunbookCompletionService', () => {
         expected: 'recorded',
       },
     ])(
-      'prepareManualCompletion agrees with recordManualCompletionUnlocked for $label',
+      'prepareManualCompletion agrees with recordManualCompletion for $label',
       ({
         seed,
         expected,
@@ -2654,11 +2938,11 @@ describe('RunbookCompletionService', () => {
         expected: RecordCompletionResult['status'];
         targetFrame?: Frame;
       }) => {
-        // The fenced seam prepares a manual completion purely, while the locking
-        // twin records it. They are two renderings of ONE decision, so they must
-        // never disagree about duplicate-vs-recorded or about the completion key
-        // — a divergence would let the same substep be resolved twice through
-        // different commands. Pins the agreement before the two share a core.
+        // The fenced seam prepares a manual completion purely, while the
+        // recorder commits it. They are two renderings of ONE decision, so they
+        // must never disagree about duplicate-vs-recorded or about the
+        // completion key — a divergence would let the same substep be resolved
+        // twice through different commands.
         it('reaches the same status and key', async () => {
           const seeded = seed(state({ substep: '1' }));
           await manager.save(seeded);
@@ -2674,7 +2958,7 @@ describe('RunbookCompletionService', () => {
           };
 
           const prepared = service.prepareManualCompletion(args);
-          const recorded = await service.recordManualCompletionUnlocked(args);
+          const recorded = await service.recordManualCompletion(args);
 
           expect(prepared.status).toBe(expected);
           expect(recorded.status).toBe(expected);
@@ -2682,6 +2966,72 @@ describe('RunbookCompletionService', () => {
         });
       },
     );
+
+    it('prepareManualCompletion stamps the prepared state with the supplied completedAt', async () => {
+      const seeded = state({ substep: '1' });
+      await manager.save(seeded);
+
+      const prepared = service.prepareManualCompletion({
+        runbookId,
+        currentState: seeded,
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
+        result: 'pass',
+        agentId: 'manual',
+        completedAt: '2026-01-01T00:00:00.000Z',
+      });
+
+      // The caller's completion time is the state's `updatedAt`, not wall clock:
+      // an aggregate commit replays a prepared state some time after it derived
+      // it, and stamping "now" there would date the state to the commit.
+      expect(prepared.status).toBe('recorded');
+      expect(prepared.nextState.updatedAt).toBe('2026-01-01T00:00:00.000Z');
+    });
+
+    it('prepareManualCompletion seeds substep states when the state carries none', async () => {
+      const seeded = state({ substep: '1', substepStates: undefined });
+      await manager.save(seeded);
+
+      const prepared = service.prepareManualCompletion({
+        runbookId,
+        currentState: seeded,
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
+        result: 'pass',
+        agentId: 'manual',
+        completedAt: '2026-01-01T00:00:00.000Z',
+      });
+
+      // Absent defaults to empty on both reads — the duplicate scan and the
+      // patch — rather than propagating undefined into the upsert.
+      expect(prepared.status).toBe('recorded');
+      expect(prepared.nextState.substepStates).toEqual([
+        expect.objectContaining({ id: '1', status: 'done', result: 'pass' }),
+      ]);
+    });
+
+    it('prepareManualCompletion falls back to wall clock when no completedAt is given', async () => {
+      const seeded = state({ substep: '1' });
+      await manager.save(seeded);
+
+      const before = new Date().toISOString();
+      const prepared = service.prepareManualCompletion({
+        runbookId,
+        currentState: seeded,
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrame: activeFrame(buildFrameKey('1'), 1),
+        result: 'pass',
+        agentId: 'manual',
+      });
+      const after = new Date().toISOString();
+
+      expect(prepared.status).toBe('recorded');
+      expect(prepared.nextState.updatedAt >= before).toBe(true);
+      expect(prepared.nextState.updatedAt <= after).toBe(true);
+    });
 
     it('drainResolvedCompletions wraps the unlocked twin in exactly one lock scope', async () => {
       const acquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');

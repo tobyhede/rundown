@@ -1301,23 +1301,42 @@ By contrast, transaction contention on `mutateSession` and every other
 
 The single-store plan called for deleting all four core domain locks.
 `SessionLock` and `RunStateLock` are gone; **`CompletionLock` and
-`DelegationLock` are not**, and they remain wired at exactly six production call
-sites:
+`DelegationLock` are not**. #690 is retiring them site by site; four production
+acquisitions remain:
 
-| Lock             | Site                                                                           |
-| ---------------- | ------------------------------------------------------------------------------ |
-| `CompletionLock` | `completion-service.ts` — `recordManualCompletion`, `drainResolvedCompletions` |
-| `DelegationLock` | `completion-service.ts` — `recordChildCompletion`                              |
-| `DelegationLock` | `packages/cli/src/commands/run.ts` — run-start `afterInit`                     |
-| `DelegationLock` | `packages/cli/src/services/execution.ts` — inline launch                       |
-| `DelegationLock` | `packages/cli/src/helpers/runbook-pipeline.ts` — claim-and-launch              |
+| Lock             | Site                                                              |
+| ---------------- | ----------------------------------------------------------------- |
+| `CompletionLock` | `completion-service.ts` — `drainResolvedCompletions`              |
+| `DelegationLock` | `packages/cli/src/commands/run.ts` — run-start `afterInit`        |
+| `DelegationLock` | `packages/cli/src/services/execution.ts` — inline launch          |
+| `DelegationLock` | `packages/cli/src/helpers/runbook-pipeline.ts` — claim-and-launch |
 
-This is a **tracked deviation**, followed up in #690 (which also owns the
-`DELEGATION_LOCK_TIMEOUT` / RD-810 error surface outliving them). Until it
-closes: do not add consumers of either lock, and do not read their survival as
-licence to put new run or session state behind a file lock. The remaining
-legitimate uses of `file-lock.ts` are the artifact manifest and the sql.js
-driver's own durable-replacement critical section.
+The two core recorders — `recordManualCompletion` and `recordChildCompletion` —
+were the first to go, and how they went is the pattern for the rest. Each held
+its lock across a read-derive-write span: load state, classify the target
+(duplicate rule, and for a child report the token-hash fence and cancellation
+check), then commit a patch derived from that earlier read. The lock existed
+only to keep another writer out of the gap between the decision and the commit.
+Moving the classification **inside** the `mutateState` build callback closes
+that gap by construction — the decision is derived from the exact version the
+compare-and-swap commits onto, and a writer that loses the race re-derives
+against the committed row and reports `duplicate` rather than overwriting it.
+
+That also deleted the `DelegationLock → CompletionLock` ordering edge rather
+than documenting it: the child recorder used to record through the manual
+recorder, acquiring the second lock inside the first. It now commits its own
+patch from `classifyChildCompletionTarget`, the same decision owner the fenced
+`prepareChildCompletion` uses, so the two can never disagree.
+
+The drain is the one that cannot follow as-is: its per-completion commit is
+deliberate (only the first apply carries the parent-advance guard), so folding
+it into a single cycle is a design change, not a refactor.
+
+Until #690 closes — it also owns the `DELEGATION_LOCK_TIMEOUT` / RD-810 error
+surface outliving these locks — do not add consumers of either lock, and do not
+read their survival as licence to put new run or session state behind a file
+lock. The remaining legitimate uses of `file-lock.ts` are the artifact manifest
+and the sql.js driver's own durable-replacement critical section.
 
 Where a lock is still held, its release is scoped with `await using` and is
 best-effort and non-propagating (RD-102): a failed unlink leaks only a

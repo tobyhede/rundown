@@ -132,11 +132,11 @@ Domain locks expose `scope()` / `held()` built on them.
   bare `finally` — that is the RD-102 masking defect.
 
 **Examples:** The artifact-manifest and sql.js durable-replacement locks use
-these primitives. `CompletionLock` and `DelegationLock` also survive, over six
-production call sites: `recordManualCompletion`, `recordChildCompletion`, and
-`drainResolvedCompletions` in `packages/core/src/runbook/completion-service.ts`,
-plus the inline-launch (`packages/cli/src/services/execution.ts`), run-start
-`afterInit` (`packages/cli/src/commands/run.ts`), and claim-and-launch
+these primitives. `CompletionLock` and `DelegationLock` also survive, now over
+four production call sites: `drainResolvedCompletions` in
+`packages/core/src/runbook/completion-service.ts`, plus the inline-launch
+(`packages/cli/src/services/execution.ts`), run-start `afterInit`
+(`packages/cli/src/commands/run.ts`), and claim-and-launch
 (`packages/cli/src/helpers/runbook-pipeline.ts`) paths in the CLI.
 
 Their survival is a **tracked deviation from the single-store plan**, which
@@ -146,6 +146,15 @@ these two are not. Follow-up is tracked in #690, which also owns the
 `DELEGATION_LOCK_TIMEOUT` (RD-810) error surface that outlives them. Until then:
 do not add new consumers of either lock, and do not read their survival as
 licence to put new run or session state behind a file lock.
+
+**When you retire one, this is the shape.** `recordManualCompletion` and
+`recordChildCompletion` were the first two sites to go. Each lock existed only
+to keep another writer out of the gap between a decision and the commit that
+depended on it, so the fix was moving the classification **inside** the
+`mutateState` build callback: the decision is then derived from the exact
+version the compare-and-swap commits onto, and a loser re-derives against the
+committed row rather than overwriting it. Do not reach for a transaction —
+`SyncWork<T>` makes an async callback a compile error, and these spans await.
 
 **For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock
 derived from `manifestPath(cwd)` + `.lock`.
