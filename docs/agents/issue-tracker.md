@@ -35,10 +35,32 @@ the `gh pr` equivalents:
 
 - **Read a PR**: `gh pr view <number> --comments` and `gh pr diff <number>` for
   the diff.
-- **List external PRs for triage**:
-  `gh pr list --state open --json number,title,body,labels,author,authorAssociation,comments`
-  then keep only `authorAssociation` of `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`,
-  or `NONE` (drop `OWNER`/`MEMBER`/`COLLABORATOR`).
+- **List external PRs for triage**: author association is **not** available
+  through `gh pr list --json` or `gh pr view --json` — both reject
+  `authorAssociation` with `Unknown JSON field`. Go through the REST endpoint,
+  which returns it as `author_association`:
+
+  ```bash
+  gh api 'repos/{owner}/{repo}/pulls?state=open&per_page=100' --paginate \
+    --jq '.[]
+      | select(.user.type != "Bot")
+      | select(.author_association
+          | IN("CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", "FIRST_TIMER", "NONE"))
+      | {number, title, body, author_association, author: .user.login,
+         labels: [.labels[].name]}'
+  ```
+
+  Keep only associations of `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`,
+  `FIRST_TIMER`, or `NONE`; drop `OWNER`, `MEMBER`, and `COLLABORATOR`.
+
+  **Filter bots out explicitly**, as above — association alone does not do it.
+  On this repo `dependabot[bot]` reports `CONTRIBUTOR` and `github-actions[bot]`
+  reports `NONE`, so both survive the association filter and land in the triage
+  queue looking like external human PRs.
+
+  The REST list carries no comment bodies (only a `comments_url`). Fetch those
+  per PR with `gh pr view <number> --comments` once triage has narrowed the set.
+
 - **Comment / label / close**: `gh pr comment`,
   `gh pr edit --add-label`/`--remove-label`, `gh pr close`.
 
