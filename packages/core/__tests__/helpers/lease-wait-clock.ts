@@ -10,6 +10,17 @@ import type {
 export interface FakeWaitClock extends LeaseWaitClock {
   /** Milliseconds passed to each `sleep`, in call order — the APPLIED delay, post-cap. */
   readonly sleeps: number[];
+  /**
+   * How many times `sleep` was CALLED, including calls that applied nothing.
+   *
+   * An already-aborted sleep records no {@link FakeWaitClock.sleeps} entry and
+   * advances no virtual time, so `sleeps` alone cannot tell "the loop never
+   * reached its backoff" from "the loop backed off into an aborted signal".
+   * Asserting zero here is what pins the former.
+   *
+   * @returns The total call count.
+   */
+  sleepCalls(): number;
   /** Virtual milliseconds elapsed since construction. */
   elapsed(): number;
   /**
@@ -65,6 +76,7 @@ export function makeFakeWaitClock(options: FakeWaitClockOptions = {}): FakeWaitC
   return {
     sleeps,
     now: () => virtualNow,
+    sleepCalls: () => sleepCalls,
     elapsed: () => virtualNow,
     advance: (ms) => {
       virtualNow += ms;

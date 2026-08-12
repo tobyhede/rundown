@@ -246,6 +246,7 @@ describe('readBsdStartId', () => {
 
   it('pins the date rendering over the ambient environment, and inherits the rest', () => {
     const originalTz = process.env.TZ;
+    const originalProbe = process.env.RD_PS_AMBIENT_PROBE;
     process.env.TZ = 'Australia/Sydney';
     process.env.RD_PS_AMBIENT_PROBE = 'inherited';
     try {
@@ -263,7 +264,8 @@ describe('readBsdStartId', () => {
     } finally {
       if (originalTz === undefined) delete process.env.TZ;
       else process.env.TZ = originalTz;
-      delete process.env.RD_PS_AMBIENT_PROBE;
+      if (originalProbe === undefined) delete process.env.RD_PS_AMBIENT_PROBE;
+      else process.env.RD_PS_AMBIENT_PROBE = originalProbe;
     }
   });
 

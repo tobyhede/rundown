@@ -1176,19 +1176,29 @@ describe('default contention policy and finite wait', () => {
       return probes === 1 ? { kind: 'missing', runId } : { kind: 'alive', runId, ownerPid: 1 };
     });
 
+    let backoffCalls = 0;
+
     const result = await waiting.acquire(authority, process.pid, {
       budgetMs: 10_000,
-      backoff: () => 10,
+      backoff: () => {
+        backoffCalls += 1;
+        return 10;
+      },
       signal: controller.signal,
     });
 
     expect(result.kind).toBe('execution_in_progress');
-    // Two acquisitions, one probe, no sleep, no charged attempt.
+    // Two acquisitions, one probe, no charged attempt.
     expect(probes).toBe(1);
     expect(recorder.calls).toEqual(['immediate', 'immediate']);
     expect(progress).toEqual([]);
-    expect(clock.sleeps).toEqual([]);
-    expect(clock.elapsed()).toBe(0);
+    // And the loop never reached its backoff at all. `clock.sleeps` cannot say
+    // that here: an already-aborted sleep applies no delay and so records no
+    // entry, which makes an empty `sleeps` — and a zero `elapsed()` — equally
+    // consistent with backing off into the abort. The call count and the
+    // backoff counter are the two observations that distinguish them.
+    expect(backoffCalls).toBe(0);
+    expect(clock.sleepCalls()).toBe(0);
   });
 
   it('stops on abort rather than waiting out the remaining budget', async () => {
