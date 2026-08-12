@@ -7,7 +7,6 @@ import type { ResolvedStep } from '@rundown-org/parser';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
-import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { createEffectfulActorMutationRunner } from '../../src/runbook/effectful-actor-mutation-runner.js';
 import { RunbookCompletionService } from '../../src/runbook/completion-service.js';
 import {
@@ -298,7 +297,6 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     testDir = await mkdtemp(join(tmpdir(), 'claim-seen-seam-'));
     manager = new RunbookStateManager(testDir);
     actorService = new RunbookActorService(manager);
-    const lifecycleService = new ExecutionLifecycleService(manager);
     const completionService = new RunbookCompletionService(manager, actorService);
     sessionService = new SessionService(manager);
     seam = new RunbookLifecycleCommandService({
@@ -412,7 +410,6 @@ describe('claim-seen recording across mutating seams (#519)', () => {
       '2026-07-17T12:00:00.000Z',
       '2026-07-17T12:00:05.000Z',
     ]);
-    const lifecycleService = new ExecutionLifecycleService(manager);
     seam = new RunbookLifecycleCommandService({
       sessionService,
       actorService,

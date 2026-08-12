@@ -6,11 +6,9 @@ import {
   activeFrame,
   buildCompletionKey,
   buildFrameKey,
-  completionEntryForFrame,
   deriveActiveFrame,
   inactiveFrame,
   parseCompletionKey,
-  type Frame,
   type FrameKey,
 } from './targeting.js';
 import type { ResolvedCompletion, RunbookState } from './types.js';

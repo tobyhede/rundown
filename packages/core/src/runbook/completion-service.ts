@@ -1,8 +1,6 @@
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { Errors } from '../errors/factory.js';
-import { CompletionLock } from './completion-lock.js';
-import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
-import type { RunbookActorService, ActorSyncResult } from './actor-service.js';
+import type { RunbookActorService } from './actor-service.js';
 import type { DelegationCredentialIssuer } from './delegation-credential.js';
 import { merge } from './state-update-ops.js';
 import {
@@ -463,12 +461,11 @@ function findStepOrThrow(steps: readonly ResolvedStep[], stepName: string): Reso
 }
 
 /**
- * Map a state's lifecycle to the drain status that reports it, if terminal.
+ * Map a state's lifecycle to the terminal status that reports it, if terminal.
  *
- * The single lifecycle→status mapping, shared by the persisted drain (via
- * {@link terminalStatus}) and the prepared one, so a run reaching terminal is
- * named identically whether the pass committed per completion or derived the
- * whole thing for one commit.
+ * The single lifecycle→status mapping, shared by the single-apply primitive and
+ * the prepared pass, so a run reaching terminal is named identically whether it
+ * was committed one apply at a time or derived whole for one commit.
  *
  * @param state - State whose lifecycle is classified.
  * @returns `'done'`/`'stopped'` for a terminal lifecycle, otherwise `undefined`.
@@ -479,19 +476,16 @@ function terminalLifecycleStatus(state: RunbookState): 'done' | 'stopped' | unde
   return undefined;
 }
 
-function terminalStatus(result: ActorSyncResult): 'done' | 'stopped' | undefined {
-  return terminalLifecycleStatus(result.state);
-}
-
 /**
- * Verdict on whether one applied completion advanced a drain pass.
+ * Verdict on whether one applied completion advanced the pass.
  *
- * Both drain loops are unbounded `for (;;)`, and both terminate only because
- * every apply changes what the NEXT iteration selects. Nothing in this module
- * observed that: an apply that changed neither left the drain re-selecting the
- * same row from the same cursor forever, growing `applied` without bound — a
- * hang, not a failure. These classifications make the missing post-condition
- * explicit so a violation fails fast on the FIRST non-advancing apply.
+ * Every caller that drains a frame loops until nothing more applies, and that
+ * loop terminates only because each apply changes what the NEXT selection picks.
+ * Nothing else observes it: an apply that changed neither the candidate set nor
+ * the cursor leaves the caller re-selecting the same row from the same position
+ * forever — a hang, not a failure. These classifications make the missing
+ * post-condition explicit so a violation fails fast on the FIRST non-advancing
+ * apply, before it commits.
  */
 type ResolvedCompletionDrainProgress =
   | { readonly kind: 'progressed' }

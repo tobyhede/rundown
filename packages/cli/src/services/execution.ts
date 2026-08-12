@@ -1109,8 +1109,6 @@ export interface DrainResolvedCompletionsArgs {
   manager: RunbookStateManager;
   /** Session service for active runbook tracking. */
   sessionService: SessionService;
-  /** Lifecycle service for completion read/write operations. */
-  lifecycleService: ExecutionLifecycleService;
   /** Event emitter for execution progress notifications. */
   emitter: ExecutionEventEmitter;
   /** ID of the runbook being drained. */
@@ -1174,7 +1172,6 @@ export type DrainResolvedCompletionsResult =
  * @param args.actorService - Actor service for sending events to the runbook machine
  * @param args.manager - Runbook state manager used to construct the core completion service
  * @param args.sessionService - Session service for active runbook tracking
- * @param args.lifecycleService - Lifecycle service for completion read/write operations
  * @param args.emitter - Event emitter for execution progress notifications
  * @param args.runbookId - ID of the runbook being drained
  * @param args.steps - Parsed step definitions for the runbook
@@ -1191,7 +1188,6 @@ export async function drainResolvedCompletions({
   actorService,
   manager,
   sessionService,
-  lifecycleService,
   emitter,
   runbookId,
   steps,
@@ -1350,7 +1346,6 @@ export async function runExecutionLoop(
   const actorMutationRunner =
     options.actorMutationRunner ?? createEffectfulActorMutationRunner(cwd);
   const sessionService = new SessionService(manager);
-  const lifecycleService = new ExecutionLifecycleService(manager);
   let currentState: RunbookState = state;
 
   if (currentState.lifecycle === 'stopped') {
@@ -1498,7 +1493,6 @@ export async function runExecutionLoop(
       actorService,
       manager,
       sessionService,
-      lifecycleService,
       emitter,
       runbookId,
       steps,

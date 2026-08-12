@@ -32,7 +32,6 @@
 
 import {
   RunbookStateManager,
-  ExecutionLifecycleService,
   RunbookCompletionService,
   type AdvanceInlineParent,
   type LinkageCycleTrip,
@@ -172,7 +171,6 @@ export function buildAdvanceInlineParent(
     const manager = new RunbookStateManager(cwd);
     const parentActorService = createCliRunbookActorService(manager);
     const sessionService = new SessionService(manager);
-    const lifecycleService = new ExecutionLifecycleService(manager);
 
     const transitionConfig =
       result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
@@ -196,7 +194,6 @@ export function buildAdvanceInlineParent(
       actorService: parentActorService,
       manager,
       sessionService,
-      lifecycleService,
       emitter,
       runbookId: parentRunId,
       steps: parentSteps,
@@ -309,7 +306,6 @@ export async function buildInlineParentAdvanceDeps(
   const { SessionService } = await import('@rundown-org/core');
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
-  const lifecycleService = new ExecutionLifecycleService(manager);
   const completionService = new RunbookCompletionService(manager, actorService);
   const sessionService = new SessionService(manager);
   return {

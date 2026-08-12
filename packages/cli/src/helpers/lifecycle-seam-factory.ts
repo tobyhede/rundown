@@ -13,7 +13,6 @@ import {
   RunbookCompletionService,
   RunbookLifecycleCommandService,
   SessionService,
-  ExecutionLifecycleService,
   createEffectfulActorMutationRunner,
   DelegationScanService,
 } from '@rundown-org/core';
@@ -46,7 +45,6 @@ export function buildNonDelegatingLifecycleSeam(cwd: string): NonDelegatingLifec
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
   const sessionService = new SessionService(manager);
-  const lifecycleService = new ExecutionLifecycleService(manager);
   const completionService = new RunbookCompletionService(manager, actorService);
   // The "this front end never issues delegations" contract, as one named guard
   // rather than an inline throw, so the invariant reads as a decision and every

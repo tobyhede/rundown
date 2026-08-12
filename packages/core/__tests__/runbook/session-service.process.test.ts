@@ -18,7 +18,6 @@ import { assertClaimId } from '../../src/runbook/claim-id.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
 import type { RunId, Runbook, DelegationLinkage } from '../../src/runbook/types.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
-import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { RunbookCompletionService } from '../../src/runbook/completion-service.js';
 import { RunbookLifecycleCommandService } from '../../src/runbook/lifecycle-command-service.js';
 import { createEffectfulActorMutationRunner } from '../../src/runbook/effectful-actor-mutation-runner.js';
@@ -723,7 +722,6 @@ describe('cross-process session write contention (transaction replaces SessionLo
     );
 
     const actorService = new RunbookActorService(manager);
-    const lifecycleService = new ExecutionLifecycleService(manager);
     const completionService = new RunbookCompletionService(manager, actorService);
     const seam = new RunbookLifecycleCommandService({
       sessionService,

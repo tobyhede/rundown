@@ -23,7 +23,6 @@ import {
   activeFrame,
   assertClaimId,
   assertRunId,
-  brandCurrentCursorResolvedCompletionForTest,
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,

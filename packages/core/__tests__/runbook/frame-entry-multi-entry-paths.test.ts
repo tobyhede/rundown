@@ -22,7 +22,6 @@ import path from 'node:path';
 
 import {
   DelegationScanService,
-  ExecutionLifecycleService,
   RunbookActorService,
   RunbookCompletionService,
   RunbookLifecycleCommandService,
@@ -80,7 +79,6 @@ describe('one mutation, one entry bump', () => {
   let tmp: string;
   let manager: RunbookStateManager;
   let actorService: RunbookActorService;
-  let lifecycleService: ExecutionLifecycleService;
   let completionService: RunbookCompletionService;
   let sessionService: SessionService;
   let seam: RunbookLifecycleCommandService;
@@ -97,7 +95,6 @@ describe('one mutation, one entry bump', () => {
         childRunbookRef: { source: 'project' as const, path: runbookRef },
       }),
     });
-    lifecycleService = new ExecutionLifecycleService(manager);
     completionService = new RunbookCompletionService(manager, actorService);
     sessionService = new SessionService(manager);
     steps = [];

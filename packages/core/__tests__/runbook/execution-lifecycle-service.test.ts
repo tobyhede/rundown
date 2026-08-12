@@ -4,14 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
-import {
-  SENTINEL_ENTRY,
-  activeFrame,
-  buildCompletionKey,
-  buildFrameKey,
-  exactFrame,
-  inactiveFrame,
-} from '../../src/runbook/targeting.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type { Runbook, Step } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { seedResolvedCompletion } from '../helpers/resolved-completion-seed.js';
