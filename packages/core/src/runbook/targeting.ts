@@ -430,17 +430,34 @@ export function findSubstepState(
 }
 
 /**
- * True when `linkage` is a delegation linkage that matches `claim`'s parent
- * run / step / token hash. Verifies a child runbook's `parentLinkage` genuinely
- * originated from the supplied claim record.
+ * True when `linkage` is a delegation linkage that matches every authority
+ * coordinate in `claim`'s delegation descriptor. Verifies a child runbook's
+ * `parentLinkage` genuinely originated from the supplied claim record.
  *
  * Lives here (a dependency-free leaf) so both `session-service.ts` and the
  * storage layer reuse the identical predicate without a store → session-service
  * import cycle.
  *
+ * WHY ALL SIX. The field set is not a judgement call — it is dictated by
+ * `grantAllows` (`claim-id.ts`), which decides at the point of USE whether this
+ * claim may report the child's result, and compares seven: these six plus
+ * `childRunId`. Anything this predicate skips is a coordinate on which the claim
+ * and the child can diverge while every gate on the way in still passes, and
+ * `grantAllows` then refuses silently — `shouldReport` false, no parent target,
+ * the child closes `completed` with `reported: 'not-applicable'` and the parent
+ * waits forever. That is #738, and it was reachable precisely because this
+ * predicate compared three of the six. Widening a gate is never the whole fix
+ * for a coordinate that should not have drifted (see
+ * {@link classifyDelegationLiveness}, which rejects the drift at its source),
+ * but a gate weaker than the check it feeds is a silent-failure generator.
+ *
+ * The seventh, `childRunId`, is absent from `ParentLinkage` and needs no
+ * comparison here: callers obtain the child through `claim.controlledRunId`, and
+ * claim validation requires that id to equal `claim.delegation.childRunId`.
+ *
  * @param linkage - Parent linkage stored on the child runbook state (any kind, including absent).
- * @param claim - Claim record whose parent run id, parent step id, and token hash must all match.
- * @returns `true` only when `linkage.kind === 'delegation'` and every identifying field matches `claim`.
+ * @param claim - Claim record whose six shared delegation coordinates must all match.
+ * @returns `true` only when `linkage.kind === 'delegation'` and every shared field matches `claim`.
  */
 export function linkageMatchesClaim(
   linkage: RunbookState['parentLinkage'],
@@ -453,6 +470,9 @@ export function linkageMatchesClaim(
     linkage?.kind === 'delegation' &&
     linkage.parentRunId === claim.delegation.parentRunId &&
     linkage.parentStepId === claim.delegation.parentStepId &&
+    linkage.parentStep === claim.delegation.parentStep &&
+    linkage.parentFrameKey === claim.delegation.parentFrameKey &&
+    linkage.parentEntry === claim.delegation.parentEntry &&
     linkage.tokenHash === claim.delegation.tokenHash
   );
 }
@@ -521,10 +541,11 @@ export type DelegationLiveness =
  * A delegation is live only when the parent exists and is non-terminal, its
  * cursor still sits on the delegating step, the matching substep exists and is
  * neither resolved nor cancelled, that substep still carries the same delegation
- * token, and — where the persisted frame carries a current entry — that entry
- * still matches the one captured at delegation time. Any divergence is a closed
- * outcome; this deliberately does NOT reduce to `status !== 'done'`, which would
- * miss the top-level cursor-advance path that writes no `done` substep row.
+ * token, and both the claim's captured entry and — where the persisted frame
+ * records one — the frame's current entry still equal the entry stamped on the
+ * substep's credential at issuance. Any divergence is a closed outcome; this
+ * deliberately does NOT reduce to `status !== 'done'`, which would miss the
+ * top-level cursor-advance path that writes no `done` substep row.
  *
  * @param parent - Parent run state read inside the deciding transaction, or null when absent.
  * @param linkage - Parent-side linkage fields captured on the delegated claim.
@@ -564,14 +585,34 @@ export function classifyDelegationLiveness(
   if (delegation.cancelledAt !== null) {
     return { kind: 'closed', reason: 'resolved' };
   }
-  // Entry identity: a frame revisited via GOTO/loop re-entry advances its entry
-  // counter past the value captured on the claim. Compare only when the frame
-  // carries a current entry; a frame with no recorded entry cannot mismatch.
+  // Entry identity, decided against the ISSUANCE entry on the substep's
+  // credential — not against the caller's `linkage.parentEntry` alone (#738).
+  // The credential is written once when the delegation is issued and
+  // `resetReopenedSubsteps` preserves it across frame re-entry, so it is the
+  // only entry coordinate here that a caller cannot recompute. Comparing live
+  // state against a linkage the caller derived from that same live state is
+  // self-satisfying: `inferFrameEntryFromState` and `currentEntry` below are the
+  // identical expression over the identical fields, so for a freshly recomputed
+  // linkage they cannot disagree, for any input. That is what let a claim mint
+  // authority naming entry 2 for a child stamped at entry 1, whose report
+  // `grantAllows` then silently dropped.
+  //
+  // Two comparisons, because they fail on different drift:
+  //   - the claim's captured entry against issuance catches a linkage that never
+  //     named this delegation's entry (the recompute-then-mint defect);
+  //   - live state against issuance catches the frame re-entry itself, and holds
+  //     even where the frame carries no recorded entry to compare.
+  // This is `classifyReplacementUse`'s `entry_superseded` rule (#701), which the
+  // retry path has had since `delegation-inference.ts`, stated for liveness.
+  const issuedEntry = delegation.credential.parentEntry;
+  if (linkage.parentEntry !== issuedEntry) {
+    return { kind: 'closed', reason: 'cursor-advanced' };
+  }
   const currentEntry =
     parent.activeFrameKey === linkage.parentFrameKey && parent.activeEntry !== undefined
       ? parent.activeEntry
       : parent.frameEntryCounts?.[linkage.parentFrameKey];
-  if (currentEntry !== undefined && currentEntry !== linkage.parentEntry) {
+  if (currentEntry !== undefined && currentEntry !== issuedEntry) {
     return { kind: 'closed', reason: 'cursor-advanced' };
   }
   return { kind: 'live', substep };

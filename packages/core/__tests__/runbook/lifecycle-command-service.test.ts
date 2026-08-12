@@ -117,11 +117,11 @@ import { patchPersistedClaim, unwrapSessionMutation } from '../../src/testing/se
 // (`...(parentRunId === undefined ? [] : [{ runId: parentRunId, optional: true }])`).
 // Its 2 mutants — the `false ?` conditional and the empty-array arm — were
 // accepted as UNREACHABLE (#726), then corrected to untested (#738). They are
-// now KILLED, by 'never targets the parent when the claim was minted from a
-// drifted coordinate'. Reaching them needs a claim whose report grant disagrees
-// with the CHILD ROW's `parentLinkage`, which the mint permits because
-// `linkageMatchesLinkage` compares three fields where `grantAllows` compares
-// seven. Do not re-accept them: the arm has a fixture.
+// now KILLED by the defensive malformed-resolution fixture below. Production
+// minting and resolution reject all shared-coordinate drift before this arm;
+// the fixture injects the pre-fix state directly so the terminal service still
+// fails closed if its collaborator violates that contract. Do not re-accept
+// them: the arm has a fixture.
 //
 // Five further survivors are accepted as EQUIVALENT (#727) — each by a proof in
 // the code, not by inspection, so the verdict can be rechecked rather than
@@ -7028,33 +7028,11 @@ describe('RunbookLifecycleCommandService', () => {
       // Stand up a running parent + claimed child, then optionally overwrite the
       // child to a terminal tombstone lifecycle (claimRunbook refuses claiming a
       // terminal child, so the claim must land while the child is still running).
-      //
-      // `reEntry` models a parent whose delegating frame was re-entered before
-      // the claim was minted: the frame's entry counter has advanced, so the
-      // coordinate a re-claim derives from LIVE parent state carries the new
-      // entry while the child row keeps the one stamped at delegation time. The
-      // mint gate (`linkageMatchesLinkage`) compares only `parentRunId`,
-      // `parentStepId` and `tokenHash`, so that claim is minted without
-      // complaint (#738). Omitted, both sides share one coordinate — the
-      // fresh-launch case, where the same object reaches `create` and the claim.
-      async function setupClaim(
-        childLifecycle: RunbookState['lifecycle'],
-        reEntry?: { readonly parentFrameEntry: number },
-      ) {
+      async function setupClaim(childLifecycle: RunbookState['lifecycle']) {
         const stampedLinkage = linkageFor(claimParentRunId, 'a');
-        const claimLinkage =
-          reEntry === undefined
-            ? stampedLinkage
-            : { ...stampedLinkage, parentEntry: reEntry.parentFrameEntry };
         await manager.save(
           baseState({
             id: claimParentRunId,
-            ...(reEntry === undefined
-              ? {}
-              : {
-                  frameEntryCounts: { [stampedLinkage.parentFrameKey]: reEntry.parentFrameEntry },
-                  activeEntry: reEntry.parentFrameEntry,
-                }),
           }),
         );
         await sessionService.pushRunbook(claimParentRunId);
@@ -7067,7 +7045,7 @@ describe('RunbookLifecycleCommandService', () => {
         };
         await manager.save(baseState(childBase));
         const claimed = assertClaimed(
-          await claimLiveDelegation(sessionService, manager, claimChildRunId, claimLinkage),
+          await claimLiveDelegation(sessionService, manager, claimChildRunId, stampedLinkage),
         );
         if (childLifecycle !== 'running') {
           await manager.save(baseState({ ...childBase, lifecycle: childLifecycle }));
@@ -7428,31 +7406,45 @@ describe('RunbookLifecycleCommandService', () => {
         expect(out).toMatchObject({ kind: 'applied_claim', reported: 'recorded' });
       });
 
-      it('never targets the parent when the claim was minted from a drifted coordinate', async () => {
-        // The third state of the opportunistic spread, and the one nothing
-        // reached: `shouldReport` is FALSE, so `parentRunId` is undefined and the
-        // EMPTY arm runs. Both tests above have a defined `parentRunId` and differ
-        // only in whether capture keeps the parent, so neither can tell the two
-        // arms of the spread apart — which is why this arm was recorded as
-        // unreachable rather than untested (#726, corrected by #738).
-        //
-        // Reachable because two predicates over one link disagree about what
-        // identifies it. schemas.ts pins the report grant against the claim's OWN
-        // `delegation` descriptor; `claimCanReportDelegationResult` compares that
-        // grant against the CHILD ROW's `parentLinkage`, on seven fields. Nothing
-        // in between compares more than three, so the claim below is minted
-        // without complaint and then rejected at the point of use.
-        //
-        // The fixture is the mint hole itself: the child row keeps the entry
-        // stamped at delegation time while the claim is minted from a re-derived
-        // one, exactly as orphan adoption after a parent frame re-entry produces
-        // (#738 traces the full reproduction through GOTO).
-        //
-        // CHARACTERIZATION, NOT ENDORSEMENT. The child closes and the parent is
-        // never told, so its delegation stays in flight forever — the defect #738
-        // tracks. Pinned so the arm cannot be called unreachable again, and so
-        // fixing it has to change this test deliberately rather than silently.
-        const claimId = await setupClaim('running', { parentFrameEntry: 2 });
+      it('never targets the parent when defensive resolution supplies a drifted claim', async () => {
+        // Production claim minting and resolution now compare every shared
+        // authority coordinate, so neither can supply this state. Injecting the
+        // pre-fix resolution keeps the downstream guard observable: it remains
+        // fail-closed if a malformed collaborator result reaches the terminal
+        // service, and it kills both mutants on the empty target-list arm.
+        const claimId = await setupClaim('running');
+        const claimKey = claimKeyFromBearer(claimId);
+        const session = await manager.loadSession();
+        const record = session.claims[claimKey];
+        if (!record.delegation) throw new Error('Expected delegated claim');
+        const driftedDelegation = {
+          ...record.delegation,
+          parentEntry: record.delegation.parentEntry + 1,
+        };
+        const driftedGrants = record.grants.map((grant) =>
+          grant.action === 'report-delegation-result'
+            ? { ...grant, parentEntry: driftedDelegation.parentEntry }
+            : grant,
+        );
+        const driftedRecord = {
+          ...record,
+          delegation: driftedDelegation,
+          grants: driftedGrants,
+        };
+        const childState = await manager.load(claimChildRunId);
+        if (!childState) throw new Error('Expected claimed child state');
+        jest.spyOn(sessionService, 'getActiveForClaimId').mockResolvedValue({
+          status: 'claimed',
+          claimId,
+          claim: {
+            claimKey: driftedRecord.claimKey,
+            controlledRunId: driftedRecord.controlledRunId,
+            delegation: driftedRecord.delegation,
+            grants: driftedRecord.grants,
+          },
+          record: driftedRecord,
+          state: childState,
+        });
         loadStepsImpl = () => [
           {
             kind: 'base',
@@ -7478,8 +7470,8 @@ describe('RunbookLifecycleCommandService', () => {
           { runId: claimChildRunId, claimKey: claimKeyFromBearer(claimId) },
         ]);
         expect(out).toMatchObject({ kind: 'applied_claim', reported: 'not-applicable' });
-        // The damage, stated plainly: the child is closed, and the parent still
-        // believes the delegation it is waiting on is running.
+        // Defensive behavior still closes the authorized child without sending
+        // a result under authority that does not match its persisted linkage.
         expect((await manager.load(claimChildRunId))?.lifecycle).toBe('completed');
       });
 

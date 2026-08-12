@@ -1612,6 +1612,17 @@ export async function claimAndLaunch(
       };
     }
 
+    // Every linkage below takes its entry from the credential, never from
+    // `inferEntryFromState` (#738). The credential is stamped once when the
+    // delegation is issued and survives frame re-entry, so it names the entry
+    // the CHILD was stamped with; the parent's live entry names wherever the
+    // cursor has since got to. Recomputing here made the two indistinguishable
+    // and every downstream gate self-satisfying — the claim minted authority for
+    // the current entry against a child stamped with the issuance entry, and
+    // `grantAllows` then dropped that child's terminal report in silence. Read
+    // from the row and core's liveness classifier can see the disagreement.
+    const issuedParentEntry = freshDelegation.credential.parentEntry;
+
     // 4a′. Diagnostic pre-check for the durable latch. Classify the delegation
     // against the freshly re-read parent using the delegation's ORIGINAL step
     // name (`stepId`) — not `freshParent.step` — so a top-level cursor advance
@@ -1626,7 +1637,7 @@ export async function claimAndLaunch(
       parentStep: stepId,
       parentStepId: substepId ?? stepId,
       parentFrameKey: freshSubstep.frameKey,
-      parentEntry: inferEntryFromState(freshParent, freshSubstep.frameKey),
+      parentEntry: issuedParentEntry,
       tokenHash,
     });
     if (precheckLiveness.kind === 'closed' && precheckLiveness.reason === 'cursor-advanced') {
@@ -1659,7 +1670,7 @@ export async function claimAndLaunch(
         tokenHash,
         parentStep: freshParent.step,
         parentFrameKey: delegationFrameKey,
-        parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
+        parentEntry: issuedParentEntry,
       };
       const claimResult = await claimChildForPipeline(
         ctx,
@@ -1692,7 +1703,7 @@ export async function claimAndLaunch(
         tokenHash,
         parentStep: freshParent.step,
         parentFrameKey: freshSubstep.frameKey,
-        parentEntry: inferEntryFromState(freshParent, freshSubstep.frameKey),
+        parentEntry: issuedParentEntry,
       };
       const claimResult = await claimChildForPipeline(ctx, orphan.id, orphanLinkage, true);
       if (!claimResult.ok) {
@@ -1723,7 +1734,7 @@ export async function claimAndLaunch(
       tokenHash,
       parentStep: freshParent.step,
       parentFrameKey: delegationFrameKey,
-      parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
+      parentEntry: issuedParentEntry,
     };
 
     const existingClaim = await ctx.sessionService.findClaimForDelegation(delegationLinkage);

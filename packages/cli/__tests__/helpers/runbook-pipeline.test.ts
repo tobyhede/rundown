@@ -36,6 +36,7 @@ import {
   assertExecutionEpoch,
 } from '@rundown-org/core';
 import { makeClaimRecord } from '@rundown-org/core/testing/claim-fixtures';
+import { makeDelegationCredentialDescriptor } from '@rundown-org/core/testing/delegation-fixtures';
 import type { resolveVariables as resolveVariablesType } from '../../src/services/variable-discovery.js';
 import type {
   PreparedRunbook,
@@ -2679,6 +2680,7 @@ describe('claimAndLaunch', () => {
   it('returns an already-claimed error when token already has a live child', async () => {
     const delegation = {
       tokenHash: MOCK_TOKEN_HASH,
+      credential: makeDelegationCredentialDescriptor(),
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
@@ -2747,6 +2749,7 @@ describe('claimAndLaunch', () => {
   it('returns substepId (not stepId) on already-claimed failure for a delegated substep', async () => {
     const delegation = {
       tokenHash: MOCK_TOKEN_HASH,
+      credential: makeDelegationCredentialDescriptor(),
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
@@ -2823,6 +2826,7 @@ describe('claimAndLaunch', () => {
   }) => {
     const delegation = {
       tokenHash: MOCK_TOKEN_HASH,
+      credential: makeDelegationCredentialDescriptor(),
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
@@ -3072,6 +3076,7 @@ describe('claimAndLaunch', () => {
   it('returns error when delegation was cancelled', async () => {
     const delegation = {
       tokenHash: MOCK_TOKEN_HASH,
+      credential: makeDelegationCredentialDescriptor(),
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
@@ -3137,6 +3142,7 @@ describe('claimAndLaunch', () => {
     const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
+      credential: makeDelegationCredentialDescriptor(),
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
@@ -3219,6 +3225,7 @@ describe('claimAndLaunch', () => {
   it('rejects re-claim when the already-claimed child is owned by a different agent', async () => {
     const delegation = {
       tokenHash: MOCK_TOKEN_HASH,
+      credential: makeDelegationCredentialDescriptor(),
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
@@ -3286,6 +3293,7 @@ describe('claimAndLaunch', () => {
     const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
+      credential: makeDelegationCredentialDescriptor(),
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
@@ -3392,6 +3400,7 @@ describe('claimAndLaunch', () => {
     const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
+      credential: makeDelegationCredentialDescriptor(),
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
@@ -3518,6 +3527,7 @@ describe('claimAndLaunch', () => {
     const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
+      credential: makeDelegationCredentialDescriptor(),
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: {
@@ -3640,6 +3650,7 @@ describe('claimAndLaunch', () => {
     const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
+      credential: makeDelegationCredentialDescriptor(),
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: {
@@ -3765,6 +3776,7 @@ describe('claimAndLaunch', () => {
     const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
+      credential: makeDelegationCredentialDescriptor(),
       childRunbookPath: 'missing.md',
       childRunbookRef: { source: 'project', path: 'missing.md' },
       contextSnapshot: { vars: {}, ancestors: [] },
@@ -3840,6 +3852,7 @@ describe('claimAndLaunch', () => {
     const tokenHash = MOCK_TOKEN_HASH;
     const delegation = {
       tokenHash,
+      credential: makeDelegationCredentialDescriptor(),
       childRunbookPath: 'child.md',
       childRunbookRef: { source: 'project', path: 'child.md' },
       contextSnapshot: { vars: {}, ancestors: [] },

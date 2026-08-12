@@ -444,16 +444,28 @@ export type StashActiveResult =
 export type SessionMutationRefusalOutcome = SessionMutationRefusal;
 
 /**
- * True when persisted child linkage matches an incoming delegation linkage on the
- * three identifying fields (`parentRunId`, `parentStepId`, `tokenHash`).
+ * True when persisted child linkage matches an incoming delegation linkage on
+ * every stored authority coordinate.
  *
  * Used by {@link SessionService.claimRunbook} to refuse a claim when the child's
  * persisted linkage disagrees with the freshly token-validated linkage the caller
  * is presenting — a fail-closed signal for state corruption.
  *
+ * WHY ALL SIX, same reason as {@link linkageMatchesClaim}, one step earlier in
+ * the lifecycle: the `incoming` linkage is copied wholesale into the claim's
+ * `delegation` descriptor and its report grant a few lines into
+ * `claimRunbookInTransaction`, so whatever this predicate lets past becomes
+ * persisted authority. `grantAllows` later evaluates that grant against the
+ * CHILD ROW's `parentLinkage` — the `persisted` argument here — and compares all
+ * seven. Any coordinate skipped here is one the two can differ on for the life
+ * of the claim, and the divergence surfaces only as a dropped terminal report
+ * (#738). The child's `parentLinkage` is write-once at `manager.create`; the
+ * caller's linkage is not, which is why this comparison is the one that has to
+ * be total.
+ *
  * @param persisted - Parent linkage stored on the child runbook state
  * @param incoming - Freshly built delegation linkage offered by the caller
- * @returns `true` only when both are delegation-shaped and all identifying fields agree
+ * @returns `true` only when both are delegation-shaped and every shared field agrees
  */
 function linkageMatchesLinkage(
   persisted: RunbookState['parentLinkage'],
@@ -463,6 +475,9 @@ function linkageMatchesLinkage(
     persisted?.kind === 'delegation' &&
     persisted.parentRunId === incoming.parentRunId &&
     persisted.parentStepId === incoming.parentStepId &&
+    persisted.parentStep === incoming.parentStep &&
+    persisted.parentFrameKey === incoming.parentFrameKey &&
+    persisted.parentEntry === incoming.parentEntry &&
     persisted.tokenHash === incoming.tokenHash
   );
 }
@@ -1089,7 +1104,7 @@ export class SessionService {
    *
    * Validates write-side invariants before recording the claim: the child run
    * must exist on disk, and its persisted `parentLinkage` must match the
-   * incoming `linkage` on the three identifying fields. A mismatch indicates
+   * incoming `linkage` on every stored authority coordinate. A mismatch indicates
    * state corruption (manual edits, stale persisted linkage from a prior
    * delegation, cross-host state merge) and is refused rather than silently
    * propagated into the claim record.

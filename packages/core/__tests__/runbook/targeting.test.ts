@@ -22,9 +22,11 @@ import {
   parseCompletionKey,
   upsertSubstepState,
   classifyDelegationLiveness,
+  linkageMatchesClaim,
   type DelegationLivenessLinkage,
   type DelegationLivenessParent,
 } from '../../src/runbook/targeting.js';
+import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 import type {
   ForContext,
   ResolvedStep,
@@ -634,6 +636,65 @@ describe('targeting helpers', () => {
     });
   });
 
+  // The predicate had no tests of its own in this module before #738 — it was
+  // only ever reached transitively, through `session-service` and the store,
+  // which is how it kept comparing three of six shared coordinates for a year
+  // while `grantAllows` compared seven. Every field gets a case here so the
+  // asymmetry cannot reopen silently.
+  describe('linkageMatchesClaim', () => {
+    const TOKEN = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+    const PARENT_RUN_ID = brandRunIdForTest('rd_11111111111111111111111111111111');
+    const CHILD_RUN_ID = brandRunIdForTest('rd_22222222222222222222222222222222');
+
+    const delegation = {
+      childRunId: CHILD_RUN_ID,
+      tokenHash: TOKEN,
+      parentRunId: PARENT_RUN_ID,
+      parentStepId: '1.1',
+      parentStep: '1',
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
+    };
+    const claim = makeClaimRecord({ controlledRunId: CHILD_RUN_ID, delegation });
+    const linkage: RunbookState['parentLinkage'] = {
+      kind: 'delegation',
+      tokenHash: TOKEN,
+      parentRunId: PARENT_RUN_ID,
+      parentStepId: '1.1',
+      parentStep: '1',
+      parentFrameKey: buildFrameKey('1'),
+      parentEntry: 1,
+    };
+
+    it('matches when every shared coordinate agrees', () => {
+      expect(linkageMatchesClaim(linkage, claim)).toBe(true);
+    });
+
+    it('rejects a claim carrying no delegation descriptor', () => {
+      expect(linkageMatchesClaim(linkage, makeClaimRecord({}))).toBe(false);
+    });
+
+    it('rejects an absent linkage', () => {
+      expect(linkageMatchesClaim(undefined, claim)).toBe(false);
+    });
+
+    it('rejects an inline linkage', () => {
+      const { tokenHash: _tokenHash, ...shared } = linkage;
+      expect(linkageMatchesClaim({ ...shared, kind: 'inline' }, claim)).toBe(false);
+    });
+
+    it.each([
+      ['parentRunId', { parentRunId: brandRunIdForTest('rd_33333333333333333333333333333333') }],
+      ['parentStepId', { parentStepId: '1.2' }],
+      ['parentStep', { parentStep: '2' }],
+      ['parentFrameKey', { parentFrameKey: buildFrameKey('1', 2) }],
+      ['parentEntry', { parentEntry: 2 }],
+      ['tokenHash', { tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`) }],
+    ] as const)('rejects a linkage whose %s differs from the claim', (_field, drift) => {
+      expect(linkageMatchesClaim({ ...linkage, ...drift }, claim)).toBe(false);
+    });
+  });
+
   describe('classifyDelegationLiveness', () => {
     const TOKEN = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
     const OTHER_TOKEN = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
@@ -776,6 +837,38 @@ describe('targeting helpers', () => {
     it('closes as cursor-advanced when the frame was re-entered past the captured entry', () => {
       // The active frame's entry advanced beyond the value captured on the claim.
       expect(classifyDelegationLiveness(parent({ activeEntry: 2 }), linkage)).toEqual({
+        kind: 'closed',
+        reason: 'cursor-advanced',
+      });
+    });
+
+    it('closes as cursor-advanced when the live entry left the issuance entry behind', () => {
+      // #738: the caller recomputed `parentEntry` from the same state the
+      // classifier reads, so comparing the two can never mismatch. The issuance
+      // entry on the substep's credential is the independent coordinate — it is
+      // written once at delegation time and survives frame re-entry, which is
+      // what makes this comparison capable of failing at all.
+      const reentered = parent({ activeEntry: 2 });
+      expect(classifyDelegationLiveness(reentered, { ...linkage, parentEntry: 2 })).toEqual({
+        kind: 'closed',
+        reason: 'cursor-advanced',
+      });
+    });
+
+    it('closes as cursor-advanced when the claim names an entry the delegation never issued', () => {
+      // Drift in the other direction: live state and issuance agree, and the
+      // claim's captured entry is the odd one out.
+      expect(classifyDelegationLiveness(parent(), { ...linkage, parentEntry: 2 })).toEqual({
+        kind: 'closed',
+        reason: 'cursor-advanced',
+      });
+    });
+
+    it('stays live when a frame with no recorded entry matches the issuance entry', () => {
+      // `frameEntryCounts` has nothing to compare, so the issuance entry is the
+      // only witness left — and it still has to agree with the claim.
+      const state = parent({ activeFrameKey: buildFrameKey('other'), activeEntry: undefined });
+      expect(classifyDelegationLiveness(state, { ...linkage, parentEntry: 2 })).toEqual({
         kind: 'closed',
         reason: 'cursor-advanced',
       });
