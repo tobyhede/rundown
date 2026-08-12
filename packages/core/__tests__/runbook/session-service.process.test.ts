@@ -724,7 +724,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
 
     const actorService = new RunbookActorService(manager);
     const lifecycleService = new ExecutionLifecycleService(manager);
-    const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    const completionService = new RunbookCompletionService(manager, actorService);
     const seam = new RunbookLifecycleCommandService({
       sessionService,
       actorService,

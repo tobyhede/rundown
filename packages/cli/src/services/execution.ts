@@ -1202,92 +1202,90 @@ export async function drainResolvedCompletions({
   frameOverride,
   issueDelegationCredential,
 }: DrainResolvedCompletionsArgs): Promise<DrainResolvedCompletionsResult> {
-  const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
-  let drainState = currentState;
+  const completionService = new RunbookCompletionService(manager, actorService);
+  // `currentState` seeds only the caller-visible return value. It is deliberately
+  // NOT threaded into the applies: the core primitive reads its own state inside
+  // the compare-and-swap that commits, so a state supplied from out here could
+  // only be staler than the one the decision is made against — and would see
+  // nothing another process committed between two applies.
   let observedState = currentState;
   let appliedCount = 0;
 
   for (;;) {
-    const drained = await completionService.drainResolvedCompletions({
+    const applied = await completionService.applyNextResolvedCompletion({
       runbookId,
       steps,
-      currentState: drainState,
-      maxApplied: 1,
       issueDelegationCredential,
       ...(frameOverride ? { frameOverride } : {}),
     });
 
-    if (drained.status === 'failed') {
+    if (applied.kind === 'mismatch') {
       return {
         status: 'failed',
-        reason: drained.reason,
-        message: drained.message,
-        unresolved: drained.unresolved,
+        reason: applied.mismatch.reason,
+        message: applied.mismatch.message,
+        unresolved: applied.unresolved,
         applied: 0,
       };
     }
-    if (drained.status === 'not_active') {
+    if (applied.kind === 'not_active') {
+      // An INITIAL divergence is observation-only. A divergence after work means
+      // an apply advanced the cursor out of the override frame, and the entries
+      // already observed must still be reported.
       if (appliedCount > 0) {
         return {
           status: 'continue',
           state: observedState,
-          unresolved: drained.unresolved,
+          unresolved: applied.unresolved,
           applied: appliedCount,
         };
       }
-      return { status: 'not_active', unresolved: drained.unresolved, applied: 0 };
+      return { status: 'not_active', unresolved: applied.unresolved, applied: 0 };
+    }
+    if (applied.kind === 'missing') {
+      return {
+        status: 'continue',
+        state: observedState,
+        unresolved: 0,
+        applied: appliedCount,
+      };
+    }
+    if (applied.kind === 'none') {
+      return {
+        status: 'continue',
+        state: appliedCount > 0 ? observedState : applied.state,
+        unresolved: applied.unresolved,
+        applied: appliedCount,
+      };
     }
 
-    for (const applied of drained.applied) {
-      const currentStep = findStepOrThrow(steps, applied.stateBefore.step);
-      const observed = await observeAndOrchestrate({
-        sessionService,
-        emitter,
-        runbookId,
-        steps,
-        currentState: applied.stateBefore,
-        currentStep,
-        result: applied.completion.result,
-        transitionPolicy,
-        computeActionResult,
-        command,
-        syncSnapshot: applied.snapshot,
-        postState: applied.stateAfter,
-      });
-      appliedCount += 1;
-      if (observed.status === 'done' || observed.status === 'stopped') {
-        return {
-          status: observed.status,
-          unresolved: drained.unresolved,
-          applied: appliedCount,
-        };
-      }
-      observedState = observed.state;
-      drainState = observed.state;
+    // Category A: rendering and event emission belong to the CLI, and must happen
+    // for each transition before the next apply is derived. That is why the loop
+    // lives here rather than in core.
+    const entry = applied.entry;
+    const currentStep = findStepOrThrow(steps, entry.stateBefore.step);
+    const observed = await observeAndOrchestrate({
+      sessionService,
+      emitter,
+      runbookId,
+      steps,
+      currentState: entry.stateBefore,
+      currentStep,
+      result: entry.completion.result,
+      transitionPolicy,
+      computeActionResult,
+      command,
+      syncSnapshot: entry.snapshot,
+      postState: entry.stateAfter,
+    });
+    appliedCount += 1;
+    if (observed.status === 'done' || observed.status === 'stopped') {
+      return { status: observed.status, unresolved: applied.unresolved, applied: appliedCount };
     }
+    observedState = observed.state;
 
-    switch (drained.status) {
-      case 'done':
-      case 'stopped':
-        return {
-          status: drained.status,
-          unresolved: drained.unresolved,
-          applied: appliedCount,
-        };
-      case 'continue':
-        if (drained.applied.length === 0) {
-          return {
-            status: 'continue',
-            state: appliedCount > 0 ? observedState : drained.state,
-            unresolved: drained.unresolved,
-            applied: appliedCount,
-          };
-        }
-        break;
-      default: {
-        const _exhaustive: never = drained;
-        return _exhaustive;
-      }
+    if (applied.terminal) {
+      return { status: applied.terminal, unresolved: applied.unresolved, applied: appliedCount };
     }
   }
 }

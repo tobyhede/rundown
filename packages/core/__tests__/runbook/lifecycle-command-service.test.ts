@@ -306,7 +306,7 @@ describe('RunbookLifecycleCommandService', () => {
     manager = new RunbookStateManager(tmp);
     actorService = new RunbookActorService(manager);
     lifecycleService = new ExecutionLifecycleService(manager);
-    completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    completionService = new RunbookCompletionService(manager, actorService);
     actorMutationRunner = createEffectfulActorMutationRunner(tmp);
     sessionService = new SessionService(manager);
     loadStepsImpl = () => [];

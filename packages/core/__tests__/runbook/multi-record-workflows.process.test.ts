@@ -149,7 +149,7 @@ beforeEach(async () => {
     }),
   });
   lifecycleService = new ExecutionLifecycleService(manager);
-  completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+  completionService = new RunbookCompletionService(manager, actorService);
   sessionService = new SessionService(manager);
   children = [];
   opSeq = 0;

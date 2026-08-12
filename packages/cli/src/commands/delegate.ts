@@ -693,7 +693,7 @@ function buildDelegateSeam(
   return new RunbookLifecycleCommandService({
     sessionService,
     actorService,
-    completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
+    completionService: new RunbookCompletionService(manager, actorService),
     actorMutationRunner: createEffectfulActorMutationRunner(cwd),
     loadRun: async (id) => (await manager.load(id)) ?? undefined,
     loadSteps: (s) => getRunbookFromState(s, cwd),

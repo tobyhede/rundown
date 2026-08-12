@@ -792,6 +792,59 @@ export class RunbookStateManager {
   }
 
   /**
+   * Like {@link updateWithStateReturning}, but the callback derives the WHOLE
+   * next state rather than a patch.
+   *
+   * Use this when the next state comes from a derivation that already produced a
+   * complete `RunbookState` — an actor transition prepared by
+   * `RunbookActorService.prepareActorMutation` — so there is no patch to express
+   * and re-deriving one would be a lossy round trip. The returned state is
+   * committed verbatim under the same optimistic compare-and-swap, so the
+   * derivation and the version it commits onto are the same one.
+   *
+   * The callback runs once per attempt, exactly as
+   * {@link RunbookStore.mutateState} requires: on a stale version it is invoked
+   * again against the freshly read state and the earlier derivation is
+   * discarded. Callbacks must therefore be safe to repeat.
+   *
+   * Returning `next: null` leaves the run unchanged and writes nothing. When the
+   * runbook does not exist the callback never runs and the result is
+   * `{ state: null, value: null }`.
+   *
+   * @template R - Type of the value the callback reports.
+   * @param id - The runbook state ID to mutate.
+   * @param build - Callback deriving `{ next, value }` from the captured state.
+   * @returns The committed state (or `null` when missing) and the reported value
+   *   (or `null` when the runbook does not exist).
+   * @throws {ConcurrentStateModificationError} When the optimistic retry budget
+   *   is spent under sustained contention.
+   */
+  async mutateStateReturning<R>(
+    id: string,
+    build: (
+      current: RunbookState,
+    ) => { next: RunbookState | null; value: R } | Promise<{ next: RunbookState | null; value: R }>,
+  ): Promise<{ state: RunbookState | null; value: R | null }> {
+    const runId = this.toRunId(id);
+    if (runId === null) {
+      return { state: null, value: null };
+    }
+    const store = await this.store();
+    let captured: R | null = null;
+    const result = await store.mutateState(runId, async (current) => {
+      const { next, value } = await build(current);
+      // Captured on every attempt, so a retry against fresh state reports the
+      // value derived from the state that actually committed.
+      captured = value;
+      return next;
+    });
+    if (result.kind === 'missing') {
+      return { state: null, value: null };
+    }
+    return { state: this.requireCommitted(result, id), value: captured };
+  }
+
+  /**
    * Apply a derived patch to a run inside one guarded store cycle.
    *
    * The builder runs against the state read at the start of the cycle and reruns

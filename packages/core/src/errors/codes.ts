@@ -546,7 +546,7 @@ export const ErrorCodes = {
     description:
       `The retry hook fired while context.activeFrameKey was undefined and ` +
       `live delegations were present — an invariant violation. Retry transitions ` +
-      `only fire from drainResolvedCompletions, which requires an active frame. ` +
+      `only fire from a resolved-completion apply, which requires an active frame. ` +
       `This indicates upstream state corruption (actor hydration bug, state-file ` +
       `tampering, or missing frame setup in a new feature path).`,
     docSlug: 'retry-hook-no-frame',

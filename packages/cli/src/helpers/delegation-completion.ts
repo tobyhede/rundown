@@ -310,7 +310,7 @@ export async function buildInlineParentAdvanceDeps(
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
-  const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+  const completionService = new RunbookCompletionService(manager, actorService);
   const sessionService = new SessionService(manager);
   return {
     manager,

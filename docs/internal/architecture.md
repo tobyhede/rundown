@@ -644,9 +644,9 @@ it.
 4. **Drive the machine, preserving the two mutation paths.** The seam keeps the
    split it inherited and does not collapse it to an unconditional
    `sendAndSync(PASS|FAIL)`:
-   - **manual substep completion** (`#driveSubstep`) records via
-     `RunbookCompletionService.recordManualCompletion` and drains resolved
-     completions;
+   - **manual substep completion** (`#driveSubstep`) prepares via
+     `RunbookCompletionService.prepareManualCompletion` and applies the resolved
+     completions that follow, all inside one owned commit;
    - **top-level run transition** (`#driveTopLevel`) sends `PASS` / `FAIL`
      through `RunbookActorService.sendAndSync`.
 
@@ -969,8 +969,8 @@ elsewhere, and neither is an authority mechanism: the sql.js driver takes an
 advisory lock around its durable-replacement cycle, an implementation detail of
 that single-writer WebContainer adapter (see
 [§ Drivers](#drivers-two-implementations-one-atomicity-bar)), and
-`CompletionLock` / `DelegationLock` remain around the completion and delegation
-workflows as tracked debt (see
+`CompletionLock` / `DelegationLock` remain around three CLI launch/claim paths
+as tracked debt (see
 [§ Two domain locks survive](#two-domain-locks-survive-as-tracked-debt)). The
 one piece of run-adjacent state outside the database is **captured filesystem
 output**, which stays under `.rundown/runs/<run-id>/outputs/`
@@ -1301,24 +1301,25 @@ By contrast, transaction contention on `mutateSession` and every other
 
 The single-store plan called for deleting all four core domain locks.
 `SessionLock` and `RunStateLock` are gone; **`CompletionLock` and
-`DelegationLock` are not**. #690 is retiring them site by site; four production
-acquisitions remain:
+`DelegationLock` are not**. #690 is retiring them site by site; three production
+acquisitions remain, all in the CLI — **core takes neither lock any more**:
 
 | Lock             | Site                                                              |
 | ---------------- | ----------------------------------------------------------------- |
-| `CompletionLock` | `completion-service.ts` — `drainResolvedCompletions`              |
 | `DelegationLock` | `packages/cli/src/commands/run.ts` — run-start `afterInit`        |
 | `DelegationLock` | `packages/cli/src/services/execution.ts` — inline launch          |
 | `DelegationLock` | `packages/cli/src/helpers/runbook-pipeline.ts` — claim-and-launch |
 
 The two core recorders — `recordManualCompletion` and `recordChildCompletion` —
-were the first to go, and how they went is the pattern for the rest. Each held
-its lock across a read-derive-write span: load state, classify the target
-(duplicate rule, and for a child report the token-hash fence and cancellation
-check), then commit a patch derived from that earlier read. The lock existed
-only to keep another writer out of the gap between the decision and the commit.
-Moving the classification **inside** the `mutateState` build callback closes
-that gap by construction — the decision is derived from the exact version the
+were the first to go, and how they went is the pattern for the rest.
+(`recordManualCompletion` has since been deleted outright: the fenced seam
+prepares manual completions purely, so nothing called it.) Each held its lock
+across a read-derive-write span: load state, classify the target (duplicate
+rule, and for a child report the token-hash fence and cancellation check), then
+commit a patch derived from that earlier read. The lock existed only to keep
+another writer out of the gap between the decision and the commit. Moving the
+classification **inside** the `mutateState` build callback closes that gap by
+construction — the decision is derived from the exact version the
 compare-and-swap commits onto, and a writer that loses the race re-derives
 against the committed row and reports `duplicate` rather than overwriting it.
 
@@ -1328,9 +1329,37 @@ recorder, acquiring the second lock inside the first. It now commits its own
 patch from `classifyChildCompletionTarget`, the same decision owner the fenced
 `prepareChildCompletion` uses, so the two can never disagree.
 
-The drain is the one that cannot follow as-is: its per-completion commit is
-deliberate (only the first apply carries the parent-advance guard), so folding
-it into a single cycle is a design change, not a refactor.
+The drain followed third, and went further than the recorders did. Folding its
+decision inward was not enough on its own, because the seam that made the gap
+expressible was its **interface**: it selected a completion against a
+caller-supplied `currentState` and then let `sendAndSync` re-load a different
+one. The compare-and-swap always prevented a lost update, but never that — an
+apply could consume the row for the substep the caller captured while landing
+its PASS on the substep the machine had since advanced to.
+
+So the drain became `applyNextResolvedCompletion`: ONE apply per call, selection
+and actor transition and commit inside a single
+`RunbookStateManager.mutateStateReturning` cycle, and **no `currentState`
+parameter at all**. `selectNextResolvedCompletionApply` is the pure decision
+owner it shares with the prepared twin, mirroring how
+`classifyChildCompletionTarget` is shared by the child paths. The loop moved to
+the CLI, which owns it properly: it must observe and emit each transition before
+the next apply, which is a Category A concern. The per-completion commit that
+looked like an obstacle was never the problem — one apply per commit is exactly
+what the primitive preserves.
+
+Two things that fold demands, and neither is automatic. The build callback
+re-runs per attempt, so everything it reaches must be safe to repeat: the
+reachable machine actors are effect-free for this event apart from producer
+ARTIFACTS resolution, which creates a directory and appends a manifest row —
+both idempotent by identity, and already repeated whenever RETRY re-enters the
+step. And an async derivation that produces a whole state cannot be expressed as
+a patch, which is why `mutateStateReturning` exists next to the patch-shaped
+`updateWithStateReturning`.
+
+The parent-advance guard did not survive the move, because it had no production
+caller to survive for: no code ever passed `guard` to the drain, and the CLI
+wrapper never even destructured it.
 
 Until #690 closes — it also owns the `DELEGATION_LOCK_TIMEOUT` / RD-810 error
 surface outliving these locks — do not add consumers of either lock, and do not

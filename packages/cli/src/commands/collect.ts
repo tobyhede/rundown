@@ -497,7 +497,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     manager,
     actorService,
     lifecycleService,
-    completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
+    completionService: new RunbookCompletionService(manager, actorService),
     sessionService: ctx.sessionService,
     // The whole collection now commits through the same core-owned fence as
     // every other delegation seam, so the CLI hands core the runner rather than

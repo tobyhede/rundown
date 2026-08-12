@@ -124,7 +124,7 @@ describe('entry projection ordering: machine credential issuance agrees with com
       }),
     });
     lifecycleService = new ExecutionLifecycleService(manager);
-    completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    completionService = new RunbookCompletionService(manager, actorService);
     sessionService = new SessionService(manager);
     steps = fixtureSteps();
 

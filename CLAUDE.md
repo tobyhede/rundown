@@ -133,11 +133,11 @@ Domain locks expose `scope()` / `held()` built on them.
 
 **Examples:** The artifact-manifest and sql.js durable-replacement locks use
 these primitives. `CompletionLock` and `DelegationLock` also survive, now over
-four production call sites: `drainResolvedCompletions` in
-`packages/core/src/runbook/completion-service.ts`, plus the inline-launch
+**three** production call sites, all in the CLI: inline-launch
 (`packages/cli/src/services/execution.ts`), run-start `afterInit`
 (`packages/cli/src/commands/run.ts`), and claim-and-launch
-(`packages/cli/src/helpers/runbook-pipeline.ts`) paths in the CLI.
+(`packages/cli/src/helpers/runbook-pipeline.ts`). **Core takes neither lock any
+more.**
 
 Their survival is a **tracked deviation from the single-store plan**, which
 called for deleting all four core domain locks once the delegate/collect/abort
@@ -145,16 +145,37 @@ workflows became transactional — `SessionLock` and `RunStateLock` are gone,
 these two are not. Follow-up is tracked in #690, which also owns the
 `DELEGATION_LOCK_TIMEOUT` (RD-810) error surface that outlives them. Until then:
 do not add new consumers of either lock, and do not read their survival as
-licence to put new run or session state behind a file lock.
+licence to put new run or session state behind a file lock. The three remaining
+sites are a different shape from the core ones — they fence a launch/claim race
+rather than a read-derive-write gap — so the retirement recipe below does not
+transfer to them unmodified.
 
-**When you retire one, this is the shape.** `recordManualCompletion` and
-`recordChildCompletion` were the first two sites to go. Each lock existed only
+**When you retire one, this is the shape.** Three core sites have gone: the two
+completion recorders, then the resolved-completion drain. Each lock existed only
 to keep another writer out of the gap between a decision and the commit that
-depended on it, so the fix was moving the classification **inside** the
-`mutateState` build callback: the decision is then derived from the exact
-version the compare-and-swap commits onto, and a loser re-derives against the
-committed row rather than overwriting it. Do not reach for a transaction —
-`SyncWork<T>` makes an async callback a compile error, and these spans await.
+depended on it, so the fix was moving the decision **inside** the `mutateState`
+build callback: it is then derived from the exact version the compare-and-swap
+commits onto, and a loser re-derives against the committed row rather than
+overwriting it. Do not reach for a transaction — `SyncWork<T>` makes an async
+callback a compile error, and these spans await.
+
+The drain went further than the recorders did, and that is the part worth
+copying. Folding its decision inward also removed the interface that made the
+gap expressible: `applyNextResolvedCompletion` applies ONE completion and takes
+no `currentState`, because a caller-supplied state is stale by construction at
+that seam. The loop moved out to the CLI, which needs it anyway to observe each
+transition. **A lock retirement that leaves a `currentState` parameter in place
+has fixed the write and kept the defect** — the old drain's compare-and-swap
+already prevented a lost update, and it still applied a row selected against one
+version to the cursor of another.
+
+Two consequences of moving a derivation inside a `build` callback, both of which
+must be checked rather than assumed. It re-runs per attempt (up to 8), so it
+must be safe to repeat: the drain's reachable machine actors are effect-free for
+its event except for producer ARTIFACTS resolution, which is idempotent by
+identity and already repeats on RETRY re-entry. And an async derivation needs a
+whole-state builder, not a patch — `RunbookStateManager.mutateStateReturning` is
+that seam, alongside the patch-shaped `updateWithStateReturning`.
 
 **For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock
 derived from `manifestPath(cwd)` + `.lock`.

@@ -299,7 +299,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     manager = new RunbookStateManager(testDir);
     actorService = new RunbookActorService(manager);
     const lifecycleService = new ExecutionLifecycleService(manager);
-    const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    const completionService = new RunbookCompletionService(manager, actorService);
     sessionService = new SessionService(manager);
     seam = new RunbookLifecycleCommandService({
       sessionService,
@@ -416,7 +416,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     seam = new RunbookLifecycleCommandService({
       sessionService,
       actorService,
-      completionService: new RunbookCompletionService(manager, lifecycleService, actorService),
+      completionService: new RunbookCompletionService(manager, actorService),
       actorMutationRunner: createEffectfulActorMutationRunner(testDir),
       loadRun: async (id) => (await manager.load(id)) ?? undefined,
       loadSteps: () => seamSteps,

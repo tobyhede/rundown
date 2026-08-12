@@ -115,12 +115,12 @@ const listResolvedCompletionsFn = mockFn<(id: string) => Promise<unknown[]>>();
 listResolvedCompletionsFn.mockResolvedValue([]);
 const consumeResolvedCompletionFn = mockFn<(id: string) => Promise<unknown>>();
 consumeResolvedCompletionFn.mockResolvedValue(null);
-const completionDrainResolvedCompletionsFn =
+const completionApplyNextFn =
   mockFn<(args: Record<string, unknown>) => Promise<Record<string, unknown>>>();
 const recordChildCompletionFn =
   mockFn<(args: Record<string, unknown>) => Promise<'recorded' | 'blocked'>>();
 const mockCompletionService = {
-  drainResolvedCompletions: completionDrainResolvedCompletionsFn,
+  applyNextResolvedCompletion: completionApplyNextFn,
   recordChildCompletion: recordChildCompletionFn,
 };
 
@@ -446,12 +446,11 @@ describe('runExecutionLoop', () => {
     mockLifecycleService.listResolvedCompletions.mockResolvedValue([]);
     mockLifecycleService.consumeResolvedCompletion.mockReset();
     mockLifecycleService.consumeResolvedCompletion.mockResolvedValue(null);
-    mockCompletionService.drainResolvedCompletions.mockReset();
-    mockCompletionService.drainResolvedCompletions.mockImplementation(async (args) => ({
-      status: 'continue',
-      state: args.currentState,
+    mockCompletionService.applyNextResolvedCompletion.mockReset();
+    mockCompletionService.applyNextResolvedCompletion.mockImplementation(async () => ({
+      kind: 'none',
+      state: makeLoopState(),
       unresolved: 0,
-      applied: [],
     }));
     mockCompletionService.recordChildCompletion.mockReset();
     mockCompletionService.recordChildCompletion.mockResolvedValue('recorded');
@@ -644,52 +643,42 @@ describe('runExecutionLoop', () => {
       activeEntry: 1,
     });
 
-    mockCompletionService.drainResolvedCompletions
+    // No state is threaded in: the primitive reads its own, so the loop's only
+    // input per call is the run and its steps.
+    mockCompletionService.applyNextResolvedCompletion
       .mockImplementationOnce(async (args) => {
         order.push('apply-1');
-        expect(args).toEqual(expect.objectContaining({ currentState: beforeFirst, maxApplied: 1 }));
+        expect(args).not.toHaveProperty('currentState');
+        expect(args).not.toHaveProperty('maxApplied');
         return {
-          status: 'continue',
-          state: afterFirst,
+          kind: 'applied',
           unresolved: 1,
-          applied: [
-            {
-              key: '1|1|1',
-              completion: { result: 'pass', targetSubstep: '1' },
-              stateBefore: beforeFirst,
-              stateAfter: afterFirst,
-              snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
-            },
-          ],
+          entry: {
+            key: '1|1|1',
+            completion: { result: 'pass', targetSubstep: '1' },
+            stateBefore: beforeFirst,
+            stateAfter: afterFirst,
+            snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+          },
         };
       })
-      .mockImplementationOnce(async (args) => {
+      .mockImplementationOnce(async () => {
         order.push('apply-2');
-        expect(args).toEqual(expect.objectContaining({ currentState: afterFirst, maxApplied: 1 }));
         return {
-          status: 'continue',
-          state: afterSecond,
+          kind: 'applied',
           unresolved: 0,
-          applied: [
-            {
-              key: '1|1|2',
-              completion: { result: 'pass', targetSubstep: '2' },
-              stateBefore: afterFirst,
-              stateAfter: afterSecond,
-              snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
-            },
-          ],
+          entry: {
+            key: '1|1|2',
+            completion: { result: 'pass', targetSubstep: '2' },
+            stateBefore: afterFirst,
+            stateAfter: afterSecond,
+            snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+          },
         };
       })
-      .mockImplementationOnce(async (args) => {
+      .mockImplementationOnce(async () => {
         order.push('empty');
-        expect(args).toEqual(expect.objectContaining({ currentState: afterSecond, maxApplied: 1 }));
-        return {
-          status: 'continue',
-          state: afterSecond,
-          unresolved: 0,
-          applied: [],
-        };
+        return { kind: 'none', state: afterSecond, unresolved: 0 };
       });
     // The observation probe is the emitter, which is what "observes" actually
     // means here. It used to be the `ensureActiveEntry` projection call, but
@@ -740,12 +729,16 @@ describe('runExecutionLoop', () => {
       activeEntry: 1,
     });
 
-    mockCompletionService.drainResolvedCompletions.mockResolvedValueOnce({
-      status: 'failed',
-      reason: 'stale_state',
-      message: 'Runbook state is stale',
+    mockCompletionService.applyNextResolvedCompletion.mockResolvedValueOnce({
+      kind: 'mismatch',
+      state: currentState,
+      mismatch: {
+        status: 'failed',
+        reason: 'stale_state',
+        message: 'Runbook state is stale',
+        completion: { result: 'pass', targetSubstep: '1' },
+      },
       unresolved: 2,
-      applied: [],
     });
 
     const drained = await drainResolvedCompletions({
@@ -819,27 +812,24 @@ describe('runExecutionLoop', () => {
       activeEntry: 1,
     });
 
-    mockCompletionService.drainResolvedCompletions
+    mockCompletionService.applyNextResolvedCompletion
       .mockResolvedValueOnce({
-        status: 'continue',
-        state: after,
+        kind: 'applied',
         unresolved: 0,
-        applied: [
-          {
-            key: '1|1|1',
-            completion: { result: 'pass', targetSubstep: '1' },
-            stateBefore: before,
-            stateAfter: after,
-            snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
-          },
-        ],
+        entry: {
+          key: '1|1|1',
+          completion: { result: 'pass', targetSubstep: '1' },
+          stateBefore: before,
+          stateAfter: after,
+          snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+        },
       })
       .mockResolvedValueOnce({
-        status: 'not_active',
+        kind: 'not_active',
+        state: after,
         frameKey: '1|',
         activeFrameKey: '2|',
         unresolved: 0,
-        applied: [],
       });
     const drained = await drainResolvedCompletions({
       actorService: mockActorService as any,
@@ -1504,10 +1494,19 @@ describe('runExecutionLoop', () => {
         // The drain reaches its own terminal release site, distinct from the
         // command path. It was uncovered in `release-runbook` mode entirely.
         mockManager.load.mockResolvedValue(makeLoopState());
-        mockCompletionService.drainResolvedCompletions.mockResolvedValue({
-          status: 'done',
-          applied: [],
+        // Terminal rides on the applied arm: a run cannot reach terminal without
+        // an apply that carried it there, so the entry is part of the shape.
+        mockCompletionService.applyNextResolvedCompletion.mockResolvedValue({
+          kind: 'applied',
           unresolved: 0,
+          terminal: 'done',
+          entry: {
+            key: '1|1|1',
+            completion: { result: 'pass', targetSubstep: '1' },
+            stateBefore: makeLoopState(),
+            stateAfter: makeLoopState('1', { lifecycle: 'completed' }),
+            snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+          },
         });
         if (refuse) {
           mockSessionService.releaseRunbook.mockResolvedValue({

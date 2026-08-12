@@ -12,8 +12,12 @@ import {
   type RunbookState,
   type ResolvedStep,
   type RecordCompletionResult,
+  type AppliedResolvedCompletion,
+  type ApplyNextResolvedCompletionArgs,
+  type ApplyNextResolvedCompletionResult,
 } from '../../src/runbook/index.js';
 import { CompletionLock } from '../../src/runbook/completion-lock.js';
+import { merge } from '../../src/runbook/state-update-ops.js';
 import { DelegationLock } from '../../src/runbook/delegation-lock.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import {
@@ -101,12 +105,76 @@ describe('RunbookCompletionService', () => {
     };
   }
 
+  /**
+   * Drain the active frame by looping the one-apply primitive.
+   *
+   * The core no longer owns a drain loop: `applyNextResolvedCompletion` applies
+   * exactly one completion and the CLI loops it, observing each transition in
+   * between. This mirrors that loop so drain-level behaviour stays testable at
+   * the layer that now produces it.
+   *
+   * @param overrides - Extra apply arguments (frame override, credential issuer).
+   * @returns The applied entries in order, and the result that ended the loop.
+   */
+  async function drainAll(
+    overrides: Partial<Omit<ApplyNextResolvedCompletionArgs, 'runbookId'>> = {},
+  ): Promise<{
+    readonly applied: AppliedResolvedCompletion[];
+    readonly last: ApplyNextResolvedCompletionResult;
+  }> {
+    const applied: AppliedResolvedCompletion[] = [];
+    for (;;) {
+      const result = await service.applyNextResolvedCompletion({
+        runbookId,
+        steps,
+        ...overrides,
+      });
+      if (result.kind !== 'applied') return { applied, last: result };
+      applied.push(result.entry);
+      if (result.terminal) return { applied, last: result };
+    }
+  }
+
+  /**
+   * Name the drain-level arm a looped sequence of applies ended on.
+   *
+   * The prepared twin still reports a whole pass (`continue`/`done`/`stopped`/
+   * `failed`/`not_active`) while the persisted path reports one apply at a time.
+   * The equivalence tests exist to prove the two agree, so they need this
+   * translation; nothing in production does.
+   *
+   * @param last - Result that ended the loop.
+   * @returns The drain status the same pass would have reported.
+   */
+  function persistedArm(last: ApplyNextResolvedCompletionResult): string {
+    switch (last.kind) {
+      case 'applied':
+        return last.terminal ?? 'continue';
+      case 'mismatch':
+        return 'failed';
+      case 'missing':
+        return 'continue';
+      default:
+        return last.kind === 'not_active' ? 'not_active' : 'continue';
+    }
+  }
+
+  /**
+   * Read the unresolved count off any arm that carries one.
+   *
+   * @param last - Result that ended the loop.
+   * @returns The unresolved substep count, or 0 for a run that is gone.
+   */
+  function unresolvedOf(last: ApplyNextResolvedCompletionResult): number {
+    return last.kind === 'missing' ? 0 : last.unresolved;
+  }
+
   beforeEach(async () => {
     tmp = await mkdtemp(path.join(tmpdir(), 'completion-service-'));
     manager = new RunbookStateManager(tmp);
     lifecycleService = new ExecutionLifecycleService(manager);
     actorService = new RunbookActorService(manager);
-    service = new RunbookCompletionService(manager, lifecycleService, actorService);
+    service = new RunbookCompletionService(manager, actorService);
   });
 
   afterEach(async () => {
@@ -243,16 +311,12 @@ describe('RunbookCompletionService', () => {
         }),
       },
     });
-    const sendAndSync = jest.spyOn(actorService, 'sendAndSync');
+    const prepare = jest.spyOn(actorService, 'prepareActorMutation');
 
-    const result = await service.drainResolvedCompletions({
-      runbookId,
-      steps,
-      currentState: current,
-    });
+    const result = await drainAll();
 
-    expect(result.status).toBe('failed');
-    expect(sendAndSync).not.toHaveBeenCalled();
+    expect(result.last.kind).toBe('mismatch');
+    expect(prepare).not.toHaveBeenCalled();
     await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
   });
 
@@ -272,35 +336,25 @@ describe('RunbookCompletionService', () => {
         }),
       },
     });
-    const sendAndSync = jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
-      state: state({ substep: '2' }),
-      snapshot: {},
-      effects: [],
-    });
+    const prepare = jest.spyOn(actorService, 'prepareActorMutation');
 
-    const result = await service.drainResolvedCompletions({
-      runbookId,
-      steps,
-      currentState: current,
-    });
+    await drainAll();
 
-    expect(result.status).toBe('continue');
     // The brand is a module-private `unique symbol` so we can no longer assert
     // on `__currentCursorValidated`; verifying `targetEntry: 1` (sentinel
     // normalized to active entry) and the event type proves the validator ran.
-    expect(sendAndSync).toHaveBeenCalledWith(
+    expect(prepare).toHaveBeenCalledWith(
       runbookId,
+      expect.objectContaining({ id: runbookId }),
       steps,
       expect.objectContaining({
         type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
         completionKey: key,
         completion: expect.objectContaining({ targetEntry: 1, targetSubstep: '1' }),
       }),
-      // An unguarded drain forwards no parent-advance guard. The guard rides this
-      // argument only when the drain is the decisive write (duplicate record path).
-      {},
+      // No verified issuer supplied, so none is forwarded to the machine.
+      undefined,
     );
-    await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
   });
 
   it('forwards verified claim authority through the completion transition runtime', async () => {
@@ -319,25 +373,17 @@ describe('RunbookCompletionService', () => {
         }),
       },
     });
-    const sendAndSync = jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
-      state: state({ substep: '2' }),
-      snapshot: {},
-      effects: [],
-    });
+    const prepare = jest.spyOn(actorService, 'prepareActorMutation');
     const issueDelegationCredential = makeDelegationCredentialIssuer();
 
-    await service.drainResolvedCompletions({
-      runbookId,
-      steps,
-      currentState: current,
-      issueDelegationCredential,
-    });
+    await drainAll({ issueDelegationCredential });
 
-    expect(sendAndSync).toHaveBeenCalledWith(
+    expect(prepare).toHaveBeenCalledWith(
       runbookId,
+      expect.objectContaining({ id: runbookId }),
       steps,
       expect.objectContaining({ type: 'APPLY_CURRENT_RESOLVED_COMPLETION' }),
-      { runtime: { issueDelegationCredential } },
+      { issueDelegationCredential },
     );
   });
 
@@ -369,30 +415,22 @@ describe('RunbookCompletionService', () => {
         }),
       },
     });
-    // Mirror the real side effect the loop depends on: applying a completion
-    // consumes its lifecycle row in the same transaction. `listResolvedCompletions`
-    // re-reads from the store every iteration, so a mock that skips the consume
-    // would re-apply the same row forever instead of advancing to the second.
-    const sendAndSync = jest
-      .spyOn(actorService, 'sendAndSync')
-      .mockImplementation(async (_id, _steps, event) => {
-        await lifecycleService.consumeResolvedCompletion(
-          runbookId,
-          (event as { readonly completionKey: string }).completionKey,
-        );
-        return { state: state({ substep: '2' }), snapshot: {}, effects: [] };
-      });
+    // No actor mock: the real transition consumes the applied row and advances
+    // the cursor, which is what lets the second call select the second row. A
+    // mock that skipped the consume would re-select the first row forever.
+    const prepare = jest.spyOn(actorService, 'prepareActorMutation');
 
-    await service.drainResolvedCompletions({ runbookId, steps, currentState: current });
+    const { applied } = await drainAll();
 
-    expect(sendAndSync).toHaveBeenCalledTimes(2);
-    expect(sendAndSync.mock.calls.map((call) => call[2])).toEqual([
+    expect(applied.map((entry) => entry.key)).toEqual([firstKey, secondKey]);
+    expect(prepare).toHaveBeenCalledTimes(2);
+    expect(prepare.mock.calls.map((call) => call[3])).toEqual([
       expect.objectContaining({ completionKey: firstKey }),
       expect.objectContaining({ completionKey: secondKey }),
     ]);
   });
 
-  it('does not delete a resolved completion when actor sync fails before applying it', async () => {
+  it('reports missing without touching the machine when the run is gone', async () => {
     const current = state();
     const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
     const completion = buildResolvedCompletion({
@@ -407,20 +445,16 @@ describe('RunbookCompletionService', () => {
       ...current,
       resolvedCompletions: { [key]: completion },
     });
-    jest.spyOn(actorService, 'sendAndSync').mockResolvedValue(null);
+    // `prepareActorMutation` has no "not found" return: a run that is gone is
+    // detected by the store cycle, whose callback never runs.
+    const prepare = jest.spyOn(actorService, 'prepareActorMutation');
+    await manager.delete(runbookId);
 
-    const result = await service.drainResolvedCompletions({
-      runbookId,
-      steps,
-      currentState: current,
-    });
+    const result = await drainAll();
 
-    expect(result.status).toBe('continue');
-    if (result.status !== 'continue') throw new Error(`Unexpected status ${result.status}`);
+    expect(result.last.kind).toBe('missing');
     expect(result.applied).toEqual([]);
-    await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toEqual(
-      completion,
-    );
+    expect(prepare).not.toHaveBeenCalled();
   });
 
   it('consumes a resolved completion only after actor sync persists the applied transition', async () => {
@@ -440,15 +474,10 @@ describe('RunbookCompletionService', () => {
       },
     });
 
-    const result = await service.drainResolvedCompletions({
-      runbookId,
-      steps,
-      currentState: current,
-      maxApplied: 1,
-    });
+    const result = await drainAll();
 
-    expect(result.status).toBe('continue');
-    if (result.status !== 'continue') throw new Error(`Unexpected status ${result.status}`);
+    expect(result.last.kind).toBe('none');
+    if (result.last.kind !== 'none') throw new Error(`Unexpected arm ${result.last.kind}`);
     expect(result.applied).toHaveLength(1);
     await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toBeNull();
     await expect(manager.load(runbookId)).resolves.toEqual(
@@ -456,7 +485,7 @@ describe('RunbookCompletionService', () => {
     );
   });
 
-  it('recomputes unresolved from the state reached by a maxApplied drain', async () => {
+  it('recomputes unresolved against the state each apply reached', async () => {
     const current = state();
     const activeFrameKey = buildFrameKey('1');
     const nextFrameKey = buildFrameKey('1', 2);
@@ -481,8 +510,12 @@ describe('RunbookCompletionService', () => {
         }),
       },
     });
-    jest.spyOn(actorService, 'sendAndSync').mockResolvedValue({
-      state: state({
+    // The apply moves the cursor onto a NEW frame, where neither row applies.
+    // The next selection must therefore count both substeps unresolved — it is
+    // derived from the state the apply reached, not the one it started from.
+    jest.spyOn(actorService, 'prepareActorMutation').mockResolvedValue({
+      previousState: current,
+      nextState: state({
         substep: '1',
         activeFrameKey: nextFrameKey,
         activeEntry: 1,
@@ -492,17 +525,12 @@ describe('RunbookCompletionService', () => {
       effects: [],
     });
 
-    const result = await service.drainResolvedCompletions({
-      runbookId,
-      steps,
-      currentState: current,
-      maxApplied: 1,
-    });
+    const result = await drainAll();
 
-    expect(result.status).toBe('continue');
-    if (result.status !== 'continue') throw new Error(`Unexpected status ${result.status}`);
-    expect(result.unresolved).toBe(2);
-    expect(result.state.activeFrameKey).toBe(nextFrameKey);
+    expect(result.last.kind).toBe('none');
+    if (result.last.kind !== 'none') throw new Error(`Unexpected arm ${result.last.kind}`);
+    expect(result.last.unresolved).toBe(2);
+    expect(result.last.state.activeFrameKey).toBe(nextFrameKey);
   });
 
   it('records child completion with finalVars on the parent completion', async () => {
@@ -625,19 +653,15 @@ describe('RunbookCompletionService', () => {
           }),
         },
       });
-      const sendAndSync = jest.spyOn(actorService, 'sendAndSync');
+      const prepare = jest.spyOn(actorService, 'prepareActorMutation');
 
-      const result = await service.drainResolvedCompletions({
-        runbookId,
-        steps,
-        currentState: current,
-      });
+      const result = await drainAll();
 
-      expect(result.status).toBe('failed');
-      if (result.status === 'failed') {
-        expect(result.reason).toBe('target_mismatch');
+      expect(result.last.kind).toBe('mismatch');
+      if (result.last.kind === 'mismatch') {
+        expect(result.last.mismatch.reason).toBe('target_mismatch');
       }
-      expect(sendAndSync).not.toHaveBeenCalled();
+      expect(prepare).not.toHaveBeenCalled();
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
     });
 
@@ -658,19 +682,15 @@ describe('RunbookCompletionService', () => {
           }),
         },
       });
-      const sendAndSync = jest.spyOn(actorService, 'sendAndSync');
+      const prepare = jest.spyOn(actorService, 'prepareActorMutation');
 
-      const result = await service.drainResolvedCompletions({
-        runbookId,
-        steps,
-        currentState: current,
-      });
+      const result = await drainAll();
 
-      expect(result.status).toBe('failed');
-      if (result.status === 'failed') {
-        expect(result.reason).toBe('target_mismatch');
+      expect(result.last.kind).toBe('mismatch');
+      if (result.last.kind === 'mismatch') {
+        expect(result.last.mismatch.reason).toBe('target_mismatch');
       }
-      expect(sendAndSync).not.toHaveBeenCalled();
+      expect(prepare).not.toHaveBeenCalled();
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
     });
 
@@ -691,19 +711,15 @@ describe('RunbookCompletionService', () => {
           }),
         },
       });
-      const sendAndSync = jest.spyOn(actorService, 'sendAndSync');
+      const prepare = jest.spyOn(actorService, 'prepareActorMutation');
 
-      const result = await service.drainResolvedCompletions({
-        runbookId,
-        steps,
-        currentState: current,
-      });
+      const result = await drainAll();
 
-      expect(result.status).toBe('failed');
-      if (result.status === 'failed') {
-        expect(result.reason).toBe('target_mismatch');
+      expect(result.last.kind).toBe('mismatch');
+      if (result.last.kind === 'mismatch') {
+        expect(result.last.mismatch.reason).toBe('target_mismatch');
       }
-      expect(sendAndSync).not.toHaveBeenCalled();
+      expect(prepare).not.toHaveBeenCalled();
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
     });
   });
@@ -788,15 +804,11 @@ describe('RunbookCompletionService', () => {
         },
       });
 
-      const result = await service.drainResolvedCompletions({
-        runbookId,
-        steps: threeSubstepSteps,
-        currentState: current,
-      });
+      const result = await drainAll({ steps: threeSubstepSteps });
 
       // Both completions applied in substep order
-      expect(result.status).toBe('continue');
-      if (result.status === 'continue') {
+      expect(result.last.kind).toBe('none');
+      if (result.last.kind === 'none') {
         expect(result.applied.length).toBe(2);
         expect(result.applied[0].completion.targetSubstep).toBe('1');
         expect(result.applied[1].completion.targetSubstep).toBe('2');
@@ -804,8 +816,10 @@ describe('RunbookCompletionService', () => {
       // Both rows consumed
       await expect(lifecycleService.getResolvedCompletion(runbookId, key1)).resolves.toBeNull();
       await expect(lifecycleService.getResolvedCompletion(runbookId, key2)).resolves.toBeNull();
-      expect(acquireSpy).toHaveBeenCalledTimes(1);
-      expect(releaseSpy).toHaveBeenCalledTimes(1);
+      // No lock is taken for any of it: each apply's compare-and-swap is the
+      // whole of the mutual exclusion.
+      expect(acquireSpy).not.toHaveBeenCalled();
+      expect(releaseSpy).not.toHaveBeenCalled();
     });
 
     it('stops at the first unresolved substep — substep 1.1 only when 1.3 persisted without 1.2', async () => {
@@ -845,17 +859,13 @@ describe('RunbookCompletionService', () => {
         },
       });
 
-      const result = await service.drainResolvedCompletions({
-        runbookId,
-        steps: threeSubstepSteps,
-        currentState: current,
-      });
+      const result = await drainAll({ steps: threeSubstepSteps });
 
-      expect(result.status).toBe('continue');
-      if (result.status === 'continue') {
+      expect(result.last.kind).toBe('none');
+      if (result.last.kind === 'none') {
         expect(result.applied.length).toBe(1);
         expect(result.applied[0].completion.targetSubstep).toBe('1');
-        expect(result.unresolved).toBeGreaterThanOrEqual(1);
+        expect(result.last.unresolved).toBeGreaterThanOrEqual(1);
       }
       // 1.1 consumed; 1.3 remains
       await expect(lifecycleService.getResolvedCompletion(runbookId, key1)).resolves.toBeNull();
@@ -904,14 +914,11 @@ describe('RunbookCompletionService', () => {
         },
       });
 
-      const result = await service.drainResolvedCompletions({
-        runbookId,
-        steps: stepsDone,
-        currentState: current,
-      });
+      const result = await drainAll({ steps: stepsDone });
 
-      expect(result.status).toBe('done');
-      if (result.status === 'done') {
+      expect(result.last.kind).toBe('applied');
+      expect(result.last.kind === 'applied' && result.last.terminal).toBe('done');
+      if (result.last.kind === 'applied') {
         expect(result.applied.length).toBe(1);
       }
     });
@@ -958,14 +965,11 @@ describe('RunbookCompletionService', () => {
         },
       });
 
-      const result = await service.drainResolvedCompletions({
-        runbookId,
-        steps: stepsStopped,
-        currentState: current,
-      });
+      const result = await drainAll({ steps: stepsStopped });
 
-      expect(result.status).toBe('stopped');
-      if (result.status === 'stopped') {
+      expect(result.last.kind).toBe('applied');
+      expect(result.last.kind === 'applied' && result.last.terminal).toBe('stopped');
+      if (result.last.kind === 'applied') {
         expect(result.applied.length).toBe(1);
       }
     });
@@ -986,23 +990,18 @@ describe('RunbookCompletionService', () => {
           }),
         },
       });
-      const sendAndSync = jest.spyOn(actorService, 'sendAndSync');
+      const prepare = jest.spyOn(actorService, 'prepareActorMutation');
 
       const overrideKey = buildFrameKey('1', 5);
-      const result = await service.drainResolvedCompletions({
-        runbookId,
-        steps,
-        currentState: current,
-        frameOverride: inactiveFrame(overrideKey),
-      });
+      const result = await drainAll({ frameOverride: inactiveFrame(overrideKey) });
 
-      expect(result.status).toBe('not_active');
-      if (result.status === 'not_active') {
-        expect(result.frameKey).toBe(overrideKey);
-        expect(result.activeFrameKey).toBe(buildFrameKey('1'));
+      expect(result.last.kind).toBe('not_active');
+      if (result.last.kind === 'not_active') {
+        expect(result.last.frameKey).toBe(overrideKey);
+        expect(result.last.activeFrameKey).toBe(buildFrameKey('1'));
         expect(result.applied).toEqual([]);
       }
-      expect(sendAndSync).not.toHaveBeenCalled();
+      expect(prepare).not.toHaveBeenCalled();
       // Persisted completion untouched
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
     });
@@ -1025,16 +1024,11 @@ describe('RunbookCompletionService', () => {
         },
       });
 
-      const result = await service.drainResolvedCompletions({
-        runbookId,
-        steps,
-        currentState: current,
-        frameOverride: inactiveFrame(overrideKey),
-      });
+      const result = await drainAll({ frameOverride: inactiveFrame(overrideKey) });
 
-      expect(result.status).toBe('not_active');
-      if (result.status === 'not_active') {
-        expect(result.unresolved).toBe(1);
+      expect(result.last.kind).toBe('not_active');
+      if (result.last.kind === 'not_active') {
+        expect(result.last.unresolved).toBe(1);
       }
     });
 
@@ -1068,16 +1062,11 @@ describe('RunbookCompletionService', () => {
         },
       });
 
-      const result = await service.drainResolvedCompletions({
-        runbookId,
-        steps,
-        currentState: current,
-        frameOverride: inactiveFrame(requestedFrameKey),
-      });
+      const result = await drainAll({ frameOverride: inactiveFrame(requestedFrameKey) });
 
-      expect(result.status).toBe('not_active');
-      if (result.status === 'not_active') {
-        expect(result.unresolved).toBe(1);
+      expect(result.last.kind).toBe('not_active');
+      if (result.last.kind === 'not_active') {
+        expect(result.last.unresolved).toBe(1);
       }
     });
   });
@@ -1729,7 +1718,7 @@ describe('RunbookCompletionService', () => {
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.toBeNull();
     });
 
-    it('does not consume a resolved completion when sendAndSync returns null', async () => {
+    it('does not consume a resolved completion when the actor transition throws', async () => {
       const current = state();
       const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await manager.save({
@@ -1745,43 +1734,14 @@ describe('RunbookCompletionService', () => {
           }),
         },
       });
-      jest.spyOn(actorService, 'sendAndSync').mockResolvedValue(null);
+      jest
+        .spyOn(actorService, 'prepareActorMutation')
+        .mockRejectedValue(new Error('persist failed'));
 
-      const result = await service.drainResolvedCompletions({
-        runbookId,
-        steps,
-        currentState: current,
-      });
-
-      expect(result.status).toBe('continue');
-      await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
-    });
-
-    it('does not consume a resolved completion when sendAndSync throws', async () => {
-      const current = state();
-      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
-      await manager.save({
-        ...current,
-        resolvedCompletions: {
-          [key]: buildResolvedCompletion({
-            agentId: 'manual',
-            result: 'pass',
-            targetStep: '1',
-            targetSubstep: '1',
-            targetFrame: activeFrame(buildFrameKey('1'), 1),
-            completedAt: '2026-01-01T00:00:00.000Z',
-          }),
-        },
-      });
-      jest.spyOn(actorService, 'sendAndSync').mockRejectedValue(new Error('persist failed'));
-
-      await expect(
-        service.drainResolvedCompletions({
-          runbookId,
-          steps,
-          currentState: current,
-        }),
-      ).rejects.toThrow('persist failed');
+      // The derivation throws inside the build callback, so the cycle commits
+      // nothing at all — the row cannot be consumed by a transition that never
+      // reached a write.
+      await expect(drainAll()).rejects.toThrow('persist failed');
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
     });
 
@@ -2212,6 +2172,160 @@ describe('RunbookCompletionService', () => {
     });
   });
 
+  describe('the apply derives from the version it commits onto', () => {
+    /**
+     * Seed a cursor on substep '1' carrying rows for '1' and '2'.
+     *
+     * @returns The persisted state.
+     */
+    async function seedTwoRows(): Promise<RunbookState> {
+      const current = state({
+        substep: '1',
+        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+        resolvedCompletions: Object.fromEntries(
+          ['1', '2'].map((substep) => [
+            buildCompletionKey(activeFrame(buildFrameKey('1'), 1), substep),
+            buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: substep,
+              targetFrame: activeFrame(buildFrameKey('1'), 1),
+              completedAt: '2026-01-01T00:00:00.000Z',
+            }),
+          ]),
+        ),
+      });
+      await manager.save(current);
+      return current;
+    }
+
+    it('never applies a row for a cursor that moved after the caller read it', async () => {
+      // The defect the fold removes. While selection ran against a
+      // caller-supplied state and the write re-loaded its own, a cursor that
+      // moved in between left the apply consuming the row for the substep the
+      // caller captured while landing its PASS on the substep the machine had
+      // advanced to. There is no `currentState` parameter to reproduce it
+      // through any more, so the equivalent is a cursor that moves DURING the
+      // cycle: the losing attempt must re-derive rather than apply its stale pick.
+      await seedTwoRows();
+      const substepOneKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+
+      let moved = false;
+      const prepare = jest.spyOn(actorService, 'prepareActorMutation');
+      prepare.mockImplementation(async (id, previousState, steps_, event, runtime) => {
+        if (!moved) {
+          moved = true;
+          // A concurrent writer advances the cursor to '2' and bumps the version,
+          // so THIS attempt's compare-and-swap will lose.
+          await manager.update(runbookId, {
+            substep: '2',
+            substepStates: [
+              { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' },
+            ],
+          });
+        }
+        prepare.mockRestore();
+        return await actorService.prepareActorMutation(id, previousState, steps_, event, runtime);
+      });
+
+      const applied = await service.applyNextResolvedCompletion({ runbookId, steps });
+
+      // The re-derivation happened against the committed cursor ('2'), so the
+      // row that was applied is '2'. Substep '1' keeps the `done` status the
+      // concurrent writer committed, and its row is left for nobody — what must
+      // NEVER happen is substep '1' being consumed while its PASS lands on '2'.
+      expect(applied.kind).toBe('applied');
+      if (applied.kind !== 'applied') return;
+      expect(applied.entry.completion.targetSubstep).toBe('2');
+      expect(applied.entry.stateBefore.substep).toBe('2');
+      const persisted = await manager.load(runbookId);
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([substepOneKey]);
+    });
+
+    it('re-runs the derivation per attempt without applying twice', async () => {
+      // The build callback runs once per compare-and-swap attempt. A losing
+      // attempt must leave nothing behind: exactly one row is consumed, and the
+      // committed state is the one the WINNING derivation produced.
+      await seedTwoRows();
+      const derive = actorService.prepareActorMutation.bind(actorService);
+      let bumped = false;
+      const prepare = jest
+        .spyOn(actorService, 'prepareActorMutation')
+        .mockImplementation(async (id, previousState, steps_, event, runtime) => {
+          const result = await derive(id, previousState, steps_, event, runtime);
+          if (!bumped) {
+            bumped = true;
+            // Bump the version AFTER this attempt derived but BEFORE it commits,
+            // so its compare-and-swap loses and the callback runs again.
+            await manager.update(runbookId, { retryCount: 99 });
+          }
+          return result;
+        });
+
+      const applied = await service.applyNextResolvedCompletion({ runbookId, steps });
+
+      expect(applied.kind).toBe('applied');
+      // Two derivations, one commit.
+      expect(prepare).toHaveBeenCalledTimes(2);
+      // The SECOND derivation was handed the state the concurrent writer
+      // committed — that is what "derived from the version it commits onto"
+      // means, and asserting it on the input is exact. Asserting it on the
+      // committed output would not be: the machine owns `retryCount` and a PASS
+      // resets it.
+      expect(prepare.mock.calls[0]?.[1].retryCount).toBe(0);
+      expect(prepare.mock.calls[1]?.[1].retryCount).toBe(99);
+      const persisted = await manager.load(runbookId);
+      // One row consumed, not two: the losing attempt committed nothing.
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toHaveLength(1);
+    });
+
+    it('sees a row another process recorded between two applies', async () => {
+      // The CLI loops this primitive and no longer threads a state between
+      // calls. That is what lets the second call observe a row committed by a
+      // different process after the first apply returned.
+      const current = state({
+        substep: '1',
+        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+        resolvedCompletions: {
+          [buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1')]: buildResolvedCompletion({
+            agentId: 'manual',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      });
+      await manager.save(current);
+
+      const first = await service.applyNextResolvedCompletion({ runbookId, steps });
+      expect(first.kind).toBe('applied');
+
+      // Another process reports substep '2' only now.
+      const secondKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '2');
+      await manager.update(runbookId, {
+        resolvedCompletions: merge({
+          [secondKey]: buildResolvedCompletion({
+            agentId: 'manual',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '2',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-01-01T00:00:02.000Z',
+          }),
+        }),
+      });
+
+      const second = await service.applyNextResolvedCompletion({ runbookId, steps });
+
+      expect(second.kind).toBe('applied');
+      if (second.kind !== 'applied') return;
+      expect(second.entry.key).toBe(secondKey);
+    });
+  });
+
   describe('prepareResolvedCompletionDrain — the fenced twin', () => {
     /** Completion payload targeting one substep on the base frame's entry 1. */
     function completionFor(substep: string, result: 'pass' | 'fail' = 'pass') {
@@ -2312,15 +2426,11 @@ describe('RunbookCompletionService', () => {
           steps,
           capturedState: current,
         });
-        const persisted = await service.drainResolvedCompletions({
-          runbookId,
-          steps,
-          currentState: current,
-        });
+        const persisted = await drainAll();
 
         expect(prepared.status).toBe(expected);
-        expect(persisted.status).toBe(expected);
-        expect(prepared.unresolved).toBe(persisted.unresolved);
+        expect(persistedArm(persisted.last)).toBe(expected);
+        expect(prepared.unresolved).toBe(unresolvedOf(persisted.last));
         expect(prepared.applied.map((entry) => entry.completion.targetSubstep)).toEqual(
           persisted.applied.map((entry) => entry.completion.targetSubstep),
         );
@@ -2340,21 +2450,16 @@ describe('RunbookCompletionService', () => {
         capturedState: current,
         frameOverride: elsewhere,
       });
-      const persisted = await service.drainResolvedCompletions({
-        runbookId,
-        steps,
-        currentState: current,
-        frameOverride: elsewhere,
-      });
+      const persisted = await drainAll({ frameOverride: elsewhere });
 
       expect(prepared.status).toBe('not_active');
-      expect(persisted.status).toBe('not_active');
-      if (prepared.status !== 'not_active' || persisted.status !== 'not_active') {
+      expect(persisted.last.kind).toBe('not_active');
+      if (prepared.status !== 'not_active' || persisted.last.kind !== 'not_active') {
         throw new Error('expected not_active');
       }
-      expect(prepared.frameKey).toBe(persisted.frameKey);
-      expect(prepared.activeFrameKey).toBe(persisted.activeFrameKey);
-      expect(prepared.unresolved).toBe(persisted.unresolved);
+      expect(prepared.frameKey).toBe(persisted.last.frameKey);
+      expect(prepared.activeFrameKey).toBe(persisted.last.activeFrameKey);
+      expect(prepared.unresolved).toBe(unresolvedOf(persisted.last));
       expect(prepared.applied).toEqual([]);
     });
 
@@ -2373,20 +2478,16 @@ describe('RunbookCompletionService', () => {
         steps,
         capturedState: captured,
       });
-      const persisted = await service.drainResolvedCompletions({
-        runbookId,
-        steps,
-        currentState: captured,
-      });
+      const persisted = await drainAll();
 
       expect(prepared.status).toBe('failed');
-      expect(persisted.status).toBe('failed');
-      if (prepared.status !== 'failed' || persisted.status !== 'failed') {
+      expect(persisted.last.kind).toBe('mismatch');
+      if (prepared.status !== 'failed' || persisted.last.kind !== 'mismatch') {
         throw new Error('expected failed');
       }
-      expect(prepared.reason).toBe(persisted.reason);
-      expect(prepared.message).toBe(persisted.message);
-      expect(prepared.unresolved).toBe(persisted.unresolved);
+      expect(prepared.reason).toBe(persisted.last.mismatch.reason);
+      expect(prepared.message).toBe(persisted.last.mismatch.message);
+      expect(prepared.unresolved).toBe(unresolvedOf(persisted.last));
       // The failed arm still carries the state to commit — the prepared twin has
       // no reload to fall back on, so `state` is present on EVERY arm.
       expect(prepared.state.id).toBe(runbookId);
@@ -2618,21 +2719,26 @@ describe('RunbookCompletionService', () => {
       });
 
       it('refuses the PERSISTED twin when a committed apply neither consumes nor advances', async () => {
-        // The persisted loop re-selects from the store, so it carries the shared
-        // half only, checked against what the write committed. The no-growth half
-        // does not transfer — a concurrent writer may legitimately add a row
-        // mid-drain — but re-offering the key from the same cursor is still a spin.
+        // The persisted path carries the shared half only: it re-reads per call,
+        // so a concurrent writer may legitimately add a row between applies and
+        // the no-growth half would refuse honest work. Re-offering the same key
+        // from the same cursor is still a spin, and is refused BEFORE the commit.
         const current = await seedReported([['1', 'pass']]);
         let calls = 0;
-        const spy = jest.spyOn(actorService, 'sendAndSync').mockImplementation(async () => {
-          calls += 1;
-          if (calls > 5) throw new DrainSpinError('drain did not stop after 5 applies');
-          return await Promise.resolve({ state: current, snapshot: {}, effects: [] });
-        });
+        const spy = jest
+          .spyOn(actorService, 'prepareActorMutation')
+          .mockImplementation(async (_id, previousState) => {
+            calls += 1;
+            if (calls > 5) throw new DrainSpinError('drain did not stop after 5 applies');
+            return await Promise.resolve({
+              previousState,
+              nextState: current,
+              snapshot: {},
+              effects: [],
+            });
+          });
 
-        await expect(
-          service.drainResolvedCompletions({ runbookId, steps, currentState: current }),
-        ).rejects.toMatchObject({ code: 'RD-821' });
+        await expect(drainAll()).rejects.toMatchObject({ code: 'RD-821' });
         expect(spy).toHaveBeenCalledTimes(1);
       });
 
@@ -2667,7 +2773,7 @@ describe('RunbookCompletionService', () => {
       jest.restoreAllMocks();
     });
 
-    it('drainResolvedCompletionsUnlocked drains without touching the CompletionLock', async () => {
+    it('applyNextResolvedCompletion applies without touching the CompletionLock', async () => {
       const acquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
       const releaseSpy = jest.spyOn(CompletionLock.prototype, 'release');
       const current = state({
@@ -2689,19 +2795,14 @@ describe('RunbookCompletionService', () => {
         },
       });
 
-      const result = await service.drainResolvedCompletionsUnlocked({
-        runbookId,
-        steps,
-        currentState: current,
-      });
+      const applied = await service.applyNextResolvedCompletion({ runbookId, steps });
 
-      expect(result.status).toBe('continue');
-      if (result.status === 'continue') {
-        expect(result.applied).toHaveLength(1);
-        expect(result.applied[0].completion.targetSubstep).toBe('1');
+      expect(applied.kind).toBe('applied');
+      if (applied.kind === 'applied') {
+        expect(applied.entry.completion.targetSubstep).toBe('1');
       }
-      // The row was consumed and no lock was acquired: safe to call while the
-      // caller already holds the run's CompletionLock.
+      // The row was consumed and no lock was taken: the compare-and-swap the
+      // apply commits under is the whole of its mutual exclusion.
       await expect(lifecycleService.getResolvedCompletion(runbookId, key1)).resolves.toBeNull();
       expect(acquireSpy).not.toHaveBeenCalled();
       expect(releaseSpy).not.toHaveBeenCalled();
@@ -2889,26 +2990,6 @@ describe('RunbookCompletionService', () => {
       expect(prepared.status).toBe('recorded');
       expect(prepared.nextState.updatedAt >= before).toBe(true);
       expect(prepared.nextState.updatedAt <= after).toBe(true);
-    });
-
-    it('drainResolvedCompletions wraps the unlocked twin in exactly one lock scope', async () => {
-      const acquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
-      const releaseSpy = jest.spyOn(CompletionLock.prototype, 'release');
-      const current = state({
-        substep: '1',
-        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
-      });
-      await manager.save(current);
-
-      const result = await service.drainResolvedCompletions({
-        runbookId,
-        steps,
-        currentState: current,
-      });
-
-      expect(result.status).toBe('continue');
-      expect(acquireSpy).toHaveBeenCalledTimes(1);
-      expect(releaseSpy).toHaveBeenCalledTimes(1);
     });
   });
 });

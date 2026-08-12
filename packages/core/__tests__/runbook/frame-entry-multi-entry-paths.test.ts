@@ -98,7 +98,7 @@ describe('one mutation, one entry bump', () => {
       }),
     });
     lifecycleService = new ExecutionLifecycleService(manager);
-    completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    completionService = new RunbookCompletionService(manager, actorService);
     sessionService = new SessionService(manager);
     steps = [];
 

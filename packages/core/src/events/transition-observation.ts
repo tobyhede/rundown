@@ -270,11 +270,11 @@ export interface TerminalDrainObservationInput {
  * lifecycle through the persisted `state.lifecycle` even though the matching
  * per-completion snapshot did not surface a terminal status.
  *
- * `RunbookCompletionService.drainResolvedCompletions` derives terminal from the
- * applied completion's `state.lifecycle` (the machine context's assigned
+ * `RunbookCompletionService.applyNextResolvedCompletion` derives terminal from
+ * the applied completion's `state.lifecycle` (the machine context's assigned
  * lifecycle field), while {@link deriveTransitionObservation} derives terminal
  * from the XState snapshot's top-level `status`/`value`. These two signals are
- * independent and can legitimately diverge, so when the drain is the
+ * independent and can legitimately diverge, so when the apply is the
  * authoritative terminal source the seam still needs the matching terminal event
  * to keep agent-facing output symmetric with the terminal release.
  *

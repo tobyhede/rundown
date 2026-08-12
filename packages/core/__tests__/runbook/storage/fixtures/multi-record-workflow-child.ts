@@ -208,7 +208,7 @@ const actorService = new RunbookActorService(manager, {
   }),
 });
 const lifecycleService = new ExecutionLifecycleService(manager);
-const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+const completionService = new RunbookCompletionService(manager, actorService);
 const sessionService = new SessionService(manager);
 const actorMutationRunner = runnerParkedAfterCapture(createEffectfulActorMutationRunner(cwd));
 
