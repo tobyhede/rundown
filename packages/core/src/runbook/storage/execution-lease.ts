@@ -302,9 +302,16 @@ export interface ExecutionLeaseService {
   ): Promise<GuardedMutationResult<readonly ExecutionAttempt[]>>;
 }
 
-/** Owner identity read for liveness evaluation. */
+/**
+ * Owner identity read for liveness evaluation.
+ *
+ * An absent run and a run that names no owner are deliberately the same shape:
+ * the only question this read answers is "is there an owner to evaluate", and
+ * the all-null row is that answer for both. A `present` flag distinguishing them
+ * would be information no caller can act on — its sole consumer collapsed both
+ * arms onto the same `missing` outcome, which is why it is gone.
+ */
 interface OwnerRow {
-  readonly present: boolean;
   readonly execPid: number | null;
   readonly execTokenHash: string | null;
   readonly execEpoch: number | null;
@@ -582,11 +589,8 @@ export class SqliteExecutionLeaseService implements ExecutionLeaseService {
 
   async recoverDeadOwner(runId: RunId): Promise<DeadOwnerRecovery> {
     const owner = await this.driver.read((tx) => readOwner(tx, runId));
-    if (!owner.present) {
-      return { kind: 'missing', runId };
-    }
     if (owner.execPid === null || owner.execTokenHash === null || owner.execEpoch === null) {
-      // No active owner to recover.
+      // No active owner to recover — the run is absent, or it names none.
       return { kind: 'missing', runId };
     }
     // Liveness is evaluated OUTSIDE SQLite, then protected by exact-tuple CAS.
@@ -927,7 +931,7 @@ function nextEpoch(tx: SqlTransaction, runId: RunId): ExecutionEpoch {
  *
  * @param tx - Open transaction.
  * @param runId - Run to read.
- * @returns The owner row.
+ * @returns The owner row; all-null when the run is absent or names no owner.
  */
 function readOwner(tx: SqlReadTransaction, runId: RunId): OwnerRow {
   const row = tx
@@ -946,17 +950,9 @@ function readOwner(tx: SqlReadTransaction, runId: RunId): OwnerRow {
       readonly phase: string | null;
     }>({ runId });
   if (row === undefined) {
-    return {
-      present: false,
-      execPid: null,
-      execTokenHash: null,
-      execEpoch: null,
-      execStartId: null,
-      phase: null,
-    };
+    return { execPid: null, execTokenHash: null, execEpoch: null, execStartId: null, phase: null };
   }
   return {
-    present: true,
     execPid: row.exec_pid,
     execTokenHash: row.exec_token,
     execEpoch: row.exec_epoch,
