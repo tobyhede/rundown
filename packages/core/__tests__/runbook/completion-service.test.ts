@@ -2280,6 +2280,142 @@ describe('RunbookCompletionService', () => {
       expect(Object.keys(persisted?.resolvedCompletions ?? {})).toHaveLength(1);
     });
 
+    it('reports the pre-apply unresolved count on a non-terminal apply, and zero on a terminal one', async () => {
+      // Two distinct rules meet on the `applied` arm. A non-terminal apply
+      // reports what the selection counted — the substeps still without a row,
+      // measured before this apply ran. A terminal one reports 0 regardless,
+      // because a finished run has nothing outstanding. Reporting the selection
+      // count on a terminal apply would tell a caller to keep waiting for
+      // substeps the run will never reach.
+      const threeSubstepSteps: ResolvedStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Parent',
+          aggregation: { strategy: 'ALL' },
+          substeps: ['1', '2', '3'].map((id) => ({
+            id,
+            description: `Substep ${id}`,
+            transitions: {
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+          })),
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+        },
+      ];
+      await manager.save(
+        state({
+          substep: '1',
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+          resolvedCompletions: {
+            [buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1')]: buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: '1',
+              targetFrame: activeFrame(buildFrameKey('1'), 1),
+              completedAt: '2026-01-01T00:00:00.000Z',
+            }),
+          },
+        }),
+      );
+
+      const nonTerminal = await service.applyNextResolvedCompletion({
+        runbookId,
+        steps: threeSubstepSteps,
+      });
+
+      expect(nonTerminal.kind).toBe('applied');
+      if (nonTerminal.kind !== 'applied') return;
+      expect(nonTerminal.terminal).toBeUndefined();
+      // Substeps '2' and '3' had no row when this apply was selected.
+      expect(nonTerminal.unresolved).toBe(2);
+
+      // Now a terminal apply, on the single-substep COMPLETE step.
+      const terminalSteps: ResolvedStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Parent',
+          aggregation: { strategy: 'ALL' },
+          substeps: [
+            {
+              id: '1',
+              description: 'Only',
+              transitions: {
+                pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+              },
+            },
+          ],
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+        },
+      ];
+      await manager.delete(runbookId);
+      await manager.save(
+        state({
+          substep: '1',
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+          resolvedCompletions: {
+            [buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1')]: buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: '1',
+              targetFrame: activeFrame(buildFrameKey('1'), 1),
+              completedAt: '2026-01-01T00:00:00.000Z',
+            }),
+          },
+        }),
+      );
+
+      const terminal = await service.applyNextResolvedCompletion({
+        runbookId,
+        steps: terminalSteps,
+      });
+
+      expect(terminal.kind).toBe('applied');
+      if (terminal.kind !== 'applied') return;
+      expect(terminal.terminal).toBe('done');
+      expect(terminal.unresolved).toBe(0);
+    });
+
+    it('excludes rows that name no substep from the unresolved count', async () => {
+      // A row with no `targetSubstep` resolves nothing: it cannot mark a substep
+      // complete, so counting it would under-report what is still outstanding and
+      // tell a caller the frame is closer to done than it is.
+      await manager.save(
+        state({
+          substep: '1',
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+          resolvedCompletions: {
+            [buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '')]: buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              targetFrame: activeFrame(buildFrameKey('1'), 1),
+              completedAt: '2026-01-01T00:00:00.000Z',
+            }),
+          },
+        }),
+      );
+
+      const applied = await service.applyNextResolvedCompletion({ runbookId, steps });
+
+      // Both substeps are still unresolved: the substep-less row counts for
+      // neither, and it does not match the cursor either.
+      expect(applied.kind).toBe('none');
+      if (applied.kind !== 'none') return;
+      expect(applied.unresolved).toBe(2);
+    });
+
     it('sees a row another process recorded between two applies', async () => {
       // The CLI loops this primitive and no longer threads a state between
       // calls. That is what lets the second call observe a row committed by a
