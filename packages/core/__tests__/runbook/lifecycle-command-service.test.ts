@@ -115,15 +115,20 @@ import { patchPersistedClaim, unwrapSessionMutation } from '../../src/testing/se
 // The claim path's opportunistic parent target
 // (`...(parentRunId === undefined ? [] : [{ runId: parentRunId, optional: true }])`)
 // likewise keeps 2 mutants: the `false ?` conditional and the empty-array arm.
-// Both are UNREACHABLE rather than untested. `#driveTerminalClaim` is entered
-// only for a delegated child claim — a run-control claim is routed to
-// `#driveTerminalBare` before this point — and schemas.ts refines delegated
-// claims with "delegated claims must carry a matching report-delegation-result
-// grant". So `claimCanReportDelegationResult` is always true here and
-// `parentRunId` is never undefined. Stripping that grant to reach the arm makes
-// the claim fail session-schema validation, which is the system stating the
-// state is unrepresentable. The reachable arm IS pinned, by the `recorded` /
-// `not-applicable` pair on `reported` below.
+// Both are UNTESTED, not unreachable — this comment claimed the latter and was
+// wrong (#738). `#driveTerminalClaim` is entered only for a delegated child
+// claim, and schemas.ts does refine delegated claims with "delegated claims
+// must carry a matching report-delegation-result grant". But that refinement
+// pins the grant against the claim's OWN `delegation` descriptor, whereas
+// `claimCanReportDelegationResult` compares it against the CHILD ROW's
+// `parentLinkage` — a different object, and nothing equates the two on
+// `parentStep`, `parentFrameKey`, or `parentEntry`. Every gate on the claim
+// path (`linkageMatchesLinkage`, `linkageMatchesClaim`) checks only
+// `parentRunId`, `parentStepId`, and `tokenHash`, and the descriptor is built
+// from the parent's cursor at CLAIM time while the child row was stamped at
+// DELEGATION time. A re-claim after a frame re-entry diverges `parentEntry`, so
+// `parentRunId` IS undefined here and the arm runs. The other arm IS pinned, by
+// the `recorded` / `not-applicable` pair on `reported` below.
 //
 // Five further survivors are accepted as EQUIVALENT (#727) — each by a proof in
 // the code, not by inspection, so the verdict can be rechecked rather than
