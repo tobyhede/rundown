@@ -54,7 +54,11 @@ import {
 } from '../../src/runbook/delegation-token.js';
 import { claimKeyFromBearer } from '../../src/runbook/claim-id.js';
 import { Errors } from '../../src/errors/factory.js';
-import type { DelegationAbortOutcome } from '../../src/runbook/lifecycle-command-service.js';
+import type {
+  DelegationAbortOutcome,
+  LifecycleTerminalOutcome,
+} from '../../src/runbook/lifecycle-command-service.js';
+import type { TransitionObservationEvent } from '../../src/events/transition-observation.js';
 import { findSubstepState } from '../../src/runbook/targeting.js';
 import type { DelegationCredentialIssuer } from '../../src/runbook/delegation-credential.js';
 import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
@@ -69,6 +73,7 @@ import {
   linkageFor,
   claimLiveDelegation,
   raceChildClaimDuringActorPrepare,
+  retireDuringCapture,
   seedLiveDelegation,
 } from './claim-test-helpers.js';
 import { patchPersistedClaim, unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
@@ -85,6 +90,40 @@ import { patchPersistedClaim, unwrapSessionMutation } from '../../src/testing/se
 // resolveTransitionTarget and are pinned in command-target-resolver.test.ts;
 // their end-to-end CLI rendering is pinned in the CLI pass/fail integration and
 // scenario suites.
+
+// ACCEPTED MUTATION SURVIVORS in the force-terminal result mapping (#672).
+//
+// The seam-scoped run
+//   STRYKER_SCOPED=true STRYKER_CONCURRENCY=1 pnpm --filter @rundown-org/core \
+//     exec stryker run --force \
+//     --mutate 'src/runbook/lifecycle-command-service.ts:3021-3029,src/runbook/lifecycle-command-service.ts:3317-3327' \
+//     --testFiles __tests__/runbook/lifecycle-command-service.test.ts
+// leaves the `'fail'` literal of `input.command === 'complete' ? 'pass' : 'fail'`
+// alive on BOTH force-terminal drives (`#driveTerminalClaim` and
+// `#driveTerminalBare`, 1 mutant each). Both are equivalent, and no annotation
+// is added at the source line because `Stryker disable next-line StringLiteral`
+// is line-granular: it would also suppress the `'complete'` and `'pass'`
+// literals on those same lines, which the projection tests below DO kill.
+//
+// Why equivalent: that value has exactly two consumers, and both compare it
+// only against `'pass'` — `actionResult = … : input.result === 'pass'` in
+// deriveTransitionObservation, and `result === 'pass' ? … : …` in
+// deriveTransitionMessage. `'fail'` and `''` therefore take the same branch in
+// both. A test that "killed" this would have to observe a distinction the
+// projection cannot express.
+//
+// The claim path's opportunistic parent target
+// (`...(parentRunId === undefined ? [] : [{ runId: parentRunId, optional: true }])`)
+// likewise keeps 2 mutants: the `false ?` conditional and the empty-array arm.
+// Both are UNREACHABLE rather than untested. `#driveTerminalClaim` is entered
+// only for a delegated child claim — a run-control claim is routed to
+// `#driveTerminalBare` before this point — and schemas.ts refines delegated
+// claims with "delegated claims must carry a matching report-delegation-result
+// grant". So `claimCanReportDelegationResult` is always true here and
+// `parentRunId` is never undefined. Stripping that grant to reach the arm makes
+// the claim fail session-schema validation, which is the system stating the
+// state is unrepresentable. The reachable arm IS pinned, by the `recorded` /
+// `not-applicable` pair on `reported` below.
 
 const RELEASE_POLICY: LifecycleTerminalReleasePolicy = {
   onComplete: { releaseRunbook: true },
@@ -5474,6 +5513,80 @@ describe('RunbookLifecycleCommandService', () => {
       expect(persisted?.lastResult).toBe('fail');
       expect(fenced).toHaveBeenCalledTimes(1);
     });
+
+    it('threads computeActionResult into the top-level observation', async () => {
+      // The DISPLAY result is policy the caller supplies; the PERSISTED result is
+      // the command. A `fail` whose callback returns true must project PASS while
+      // still persisting `fail` — asserting both is what separates "the callback
+      // was threaded" from "the command was misread".
+      loadStepsImpl = () => [
+        { kind: 'base', name: '1', description: 'one', transitions: tx('STOP', 'CONTINUE') },
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      await activate(baseState());
+
+      const outcome = await seam.runTransition({
+        command: 'fail',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+        computeActionResult: () => true,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      const transitioned = outcome.events.find((e) => e.type === 'STEP_TRANSITIONED');
+      expect(transitioned?.payload).toMatchObject({ result: 'PASS' });
+      expect((await manager.load(runId))?.lastResult).toBe('fail');
+    });
+
+    it('validates a top-level transition against the PRESENTED claim, not the current one', async () => {
+      // The fenced mutation is capture-keyed by the presented bearer. Drop that
+      // key and the runner falls back to `captureRunAuthorityState`, which
+      // resolves whatever claim CURRENTLY controls the run — so a bearer that
+      // went stale between authorization and capture would be silently upgraded
+      // to whatever authority replaced it.
+      //
+      // `retireDuringCapture` is what makes the difference observable: the seam
+      // it spies is reached ONLY on the keyed path, so retiring the claim from
+      // inside it both opens the race and witnesses that the key was used.
+      // Modelled on the goto seam's witness, at the same fence point.
+      const steps: ResolvedStep[] = [
+        { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => steps;
+      await activate(baseState());
+      const childRunId = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeee31');
+      const linkage = linkageFor(runId, 'a');
+      await manager.save(
+        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+      );
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, childRunId, linkage),
+      );
+      const evidence: CallerEvidence = { kind: 'claim_bearer', claimId: claimed.claimId };
+
+      const capturedRunIds = retireDuringCapture(
+        await getRunbookStore(tmp),
+        new SessionService(new RunbookStateManager(tmp)),
+        childRunId,
+      );
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: evidence,
+        targetSelector: { kind: 'claim', claimId: claimed.claimId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      // The keyed capture is the arm under test: if the spread is dropped this
+      // never runs, the retirement never lands, and the transition commits.
+      expect(capturedRunIds()).toEqual([childRunId]);
+      expect(outcome.kind).toBe('claim_superseded');
+      // Write-free: the run never left step 1.
+      expect((await manager.load(childRunId))?.step).toBe('1');
+    });
   });
 
   /**
@@ -5900,6 +6013,103 @@ describe('RunbookLifecycleCommandService', () => {
       const persisted = await manager.load(runId);
       expect(persisted?.step).toBe('2');
       expect(persisted?.substep).toBeUndefined();
+    });
+
+    it('threads computeActionResult into the substep drain observation', async () => {
+      // The substep drain builds its own observation, separately from the
+      // top-level drive, so the callback has to be threaded twice and can be
+      // dropped from either. Inverted the other way here — a `pass` whose
+      // callback returns false — so the assertion cannot pass by coincidence of
+      // sharing the previous test's direction.
+      const steps: ResolvedStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Substeps',
+          aggregation: { strategy: 'ALL' },
+          substeps: [{ id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') }],
+          transitions: tx('CONTINUE', 'STOP'),
+        },
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => steps;
+      await activate(
+        baseState({
+          step: '1',
+          stepName: 'Substeps',
+          substep: '1',
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+        }),
+      );
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+        computeActionResult: () => false,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      const transitioned = outcome.events.find((e) => e.type === 'STEP_TRANSITIONED');
+      expect(transitioned?.payload).toMatchObject({ result: 'FAIL' });
+      // The drain still advanced: only the projection was overridden.
+      expect(outcome.updatedState?.step).toBe('2');
+    });
+
+    it('validates a substep completion against the PRESENTED claim, not the current one', async () => {
+      // The substep fence builds its own `actorMutationRunner.run` description
+      // with its own copy of the capture key, so the top-level witness does not
+      // cover it. Same mechanism, same fence point: `captureAuthorityState` is
+      // reached only when the key is threaded.
+      const steps: ResolvedStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Substeps',
+          aggregation: { strategy: 'ALL' },
+          substeps: [{ id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') }],
+          transitions: tx('CONTINUE', 'STOP'),
+        },
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => steps;
+      await activate(baseState());
+      const childRunId = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeee32');
+      const linkage = linkageFor(runId, 'a');
+      await manager.save(
+        baseState({
+          id: childRunId,
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+          step: '1',
+          stepName: 'Substeps',
+          substep: '1',
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+        }),
+      );
+      const claimed = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, childRunId, linkage),
+      );
+      const evidence: CallerEvidence = { kind: 'claim_bearer', claimId: claimed.claimId };
+
+      const capturedRunIds = retireDuringCapture(
+        await getRunbookStore(tmp),
+        new SessionService(new RunbookStateManager(tmp)),
+        childRunId,
+      );
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: evidence,
+        targetSelector: { kind: 'claim', claimId: claimed.claimId },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(capturedRunIds()).toEqual([childRunId]);
+      expect(outcome.kind).toBe('claim_superseded');
+      expect((await manager.load(childRunId))?.substep).toBe('1');
     });
 
     it('treats an explicit cursor for an already-advanced sibling substep as an idempotent duplicate (no orphan row)', async () => {
@@ -6548,6 +6758,50 @@ describe('RunbookLifecycleCommandService', () => {
   });
 
   describe('runTerminal', () => {
+    /**
+     * Flatten a claim-path terminal outcome's observation events.
+     *
+     * @param outcome - Outcome returned by `runTerminal`.
+     * @returns The observation events the claim path surfaced.
+     * @throws {Error} When the outcome is not `applied_claim`.
+     */
+    function claimEvents(outcome: LifecycleTerminalOutcome): readonly TransitionObservationEvent[] {
+      if (outcome.kind !== 'applied_claim') {
+        throw new Error(`expected applied_claim, got ${outcome.kind}`);
+      }
+      return outcome.events;
+    }
+
+    /**
+     * Flatten a bare-path terminal outcome's observation events.
+     *
+     * The bare cascade tags each event with the run it came from, so unwrap to
+     * the same shape the claim path returns and both assertions can be read
+     * side by side.
+     *
+     * @param outcome - Outcome returned by `runTerminal`.
+     * @returns The observation events, stripped of their run tagging.
+     * @throws {Error} When the outcome is not `applied_bare`.
+     */
+    function bareEvents(outcome: LifecycleTerminalOutcome): readonly TransitionObservationEvent[] {
+      if (outcome.kind !== 'applied_bare') {
+        throw new Error(`expected applied_bare, got ${outcome.kind}`);
+      }
+      return outcome.events.map((tagged) => tagged.event);
+    }
+
+    /**
+     * The single `STEP_TRANSITIONED` observation in an event list.
+     *
+     * @param events - Observation events from a terminal outcome.
+     * @returns The step-transition event, or undefined when none was emitted.
+     */
+    function stepTransition(
+      events: readonly TransitionObservationEvent[],
+    ): TransitionObservationEvent | undefined {
+      return events.find((event) => event.type === 'STEP_TRANSITIONED');
+    }
+
     it('rejects an explicit-step selector', async () => {
       await expect(
         seam.runTerminal({
@@ -6787,6 +7041,101 @@ describe('RunbookLifecycleCommandService', () => {
         );
       });
 
+      it.each([
+        ['complete', 'PASS'],
+        ['stop', 'FAIL'],
+      ] as const)(
+        'projects a force-%s onto a %s transition result the parent can read',
+        async (command, expected) => {
+          // The result the claim path reports is derived from the COMMAND, not from
+          // anything the machine decided: `complete` is a pass, `stop` is a fail.
+          // Nothing else in this describe reads `events`, so without this the whole
+          // mapping is free to invert — a force-stop could report PASS to the
+          // delegating parent and every other assertion here would still hold.
+          const claimId = await setupClaim('running');
+          loadStepsImpl = () => [
+            {
+              kind: 'base',
+              name: '1',
+              description: 'child one',
+              transitions: tx('COMPLETE', 'STOP'),
+            },
+          ];
+
+          const out = await seam.runTerminal({
+            command,
+            callerEvidence: presentedBy(claimId),
+            targetSelector: { kind: 'claim', claimId },
+          });
+
+          expect(out).toMatchObject({ kind: 'applied_claim' });
+          expect(stepTransition(claimEvents(out))?.payload).toMatchObject({ result: expected });
+        },
+      );
+
+      it('threads computeActionResult into the claim-path observation', async () => {
+        // `computeActionResult` overrides the command-derived result for DISPLAY
+        // only. Proving it arrives needs a callback that DISAGREES with the
+        // fallback: on a force-stop the fallback is FAIL, so a callback returning
+        // true can only produce PASS if it was actually threaded through.
+        const claimId = await setupClaim('running');
+        loadStepsImpl = () => [
+          {
+            kind: 'base',
+            name: '1',
+            description: 'child one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
+        ];
+
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: presentedBy(claimId),
+          targetSelector: { kind: 'claim', claimId },
+          computeActionResult: () => true,
+        });
+
+        expect(stepTransition(claimEvents(out))?.payload).toMatchObject({ result: 'PASS' });
+      });
+
+      it('records the presented bearer as seen before dispatching the force', async () => {
+        // Observing the holder is what lets a later `rundown collect` tell a claim
+        // that acted from one that never showed up. It happens BEFORE dispatch on
+        // purpose, so an authorized policy refusal or a no-op still records the
+        // holder — nothing downstream of the force can be the thing that proves
+        // this ran.
+        //
+        // ORDER IS THE ASSERTION, not invocation. A bare `toHaveBeenCalledWith`
+        // is satisfied by a recorder moved to AFTER the aggregate, which is
+        // precisely the arrangement this behaviour rules out: the force can
+        // refuse or fail to commit, and the holder must be observed anyway.
+        // `runAll` is the dispatch witness — the single seam every claim-path
+        // force passes through — so the two call orders are directly comparable.
+        const claimId = await setupClaim('running');
+        loadStepsImpl = () => [
+          {
+            kind: 'base',
+            name: '1',
+            description: 'child one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
+        ];
+        const seen = jest.spyOn(sessionService, 'recordClaimSeen');
+        const dispatch = jest.spyOn(actorMutationRunner, 'runAll');
+
+        await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: presentedBy(claimId),
+          targetSelector: { kind: 'claim', claimId },
+        });
+
+        // Both calls must have happened for the order comparison to mean
+        // anything — a never-dispatched force would otherwise read as "early".
+        expect(seen).toHaveBeenCalledWith(claimId);
+        expect(dispatch).toHaveBeenCalled();
+        expect(seen.mock.invocationCallOrder[0]).toBeLessThan(dispatch.mock.invocationCallOrder[0]);
+      });
+
       it('routes a delegated child to the report path even when it also holds a collect-for-run grant', async () => {
         // Routing between the report path and the bare inline-cascade must be
         // decided by claim SHAPE (a delegation linkage), not by the presence of a
@@ -6860,6 +7209,38 @@ describe('RunbookLifecycleCommandService', () => {
 
         expect(out).toMatchObject({ kind: 'applied_claim', status: 'completed' });
         expect((await manager.load(claimChildRunId))?.lifecycle).toBe('completed');
+        // The parent target was DROPPED from the aggregate, not captured and
+        // failed — so no report was attempted and the outcome says exactly that.
+        // Paired with the `recorded` case below, this is what pins the spread:
+        // one arm adds the parent, the other omits it, and `reported` is the
+        // only field that tells them apart.
+        expect(out).toMatchObject({ reported: 'not-applicable' });
+      });
+
+      it('targets the delegating parent so the child result is actually reported', async () => {
+        // The opposite arm of the opportunistic spread, and the one nothing
+        // asserted: when the parent IS reachable it must be added to the
+        // aggregate and receive the child's outcome. Read off `reported`, not off
+        // the parent's `resolvedCompletions` — the delegation fixture seeds a
+        // substep on the parent, so a count-based assertion can be satisfied by
+        // setup and stay green while the report never happens.
+        const claimId = await setupClaim('running');
+        loadStepsImpl = () => [
+          {
+            kind: 'base',
+            name: '1',
+            description: 'child one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
+        ];
+
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: presentedBy(claimId),
+          targetSelector: { kind: 'claim', claimId },
+        });
+
+        expect(out).toMatchObject({ kind: 'applied_claim', reported: 'recorded' });
       });
 
       it('claim complete returns claim_grant_required when the claim lacks mutate-run grant', async () => {
@@ -7090,6 +7471,90 @@ describe('RunbookLifecycleCommandService', () => {
         expect((await manager.load(ROOT))?.lifecycle).toBe('completed');
         expect(releaseRootSpy).not.toHaveBeenCalled();
         expect(releaseDescendantsSpy).not.toHaveBeenCalled();
+      });
+
+      it.each([
+        ['complete', 'PASS'],
+        ['stop', 'FAIL'],
+      ] as const)(
+        'projects a bare force-%s onto a %s transition result',
+        async (command, expected) => {
+          // The bare cascade derives its result from the command exactly as the
+          // claim path does, and its own copy of that mapping is separately
+          // mutable — pinning one does not pin the other.
+          const root = baseState({ id: ROOT });
+          await manager.save(root);
+          await issueRunControlClaimFor(ROOT);
+          loadStepsImpl = () => [
+            { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+          ];
+          installResolvedPlan(root, [root]);
+
+          const out = await seam.runTerminal({
+            command,
+            callerEvidence: runControlEvidence(ROOT),
+            targetSelector: { kind: 'default' },
+          });
+
+          expect(out).toMatchObject({ kind: 'applied_bare' });
+          expect(stepTransition(bareEvents(out))?.payload).toMatchObject({ result: expected });
+        },
+      );
+
+      it('threads computeActionResult into the bare-path observation', async () => {
+        // As on the claim path: a force-stop's fallback is FAIL, so PASS here can
+        // only come from the supplied callback actually reaching the projection.
+        const root = baseState({ id: ROOT });
+        await manager.save(root);
+        await issueRunControlClaimFor(ROOT);
+        loadStepsImpl = () => [
+          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+        ];
+        installResolvedPlan(root, [root]);
+
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: runControlEvidence(ROOT),
+          targetSelector: { kind: 'default' },
+          computeActionResult: () => true,
+        });
+
+        expect(stepTransition(bareEvents(out))?.payload).toMatchObject({ result: 'PASS' });
+      });
+
+      it('keys the bare cascade capture to the run the presented claim controls', async () => {
+        // The bare cascade captures a whole chain, and only ONE member is the run
+        // the presented bearer controls — the key goes on that member and nowhere
+        // else. Mis-routing it (or dropping it) turns the root's capture into a
+        // bare one that resolves whatever claim currently controls the run.
+        //
+        // Same fence point as the top-level and substep witnesses: retiring from
+        // inside `captureAuthorityState` both opens the race and proves the keyed
+        // arm ran at all.
+        const root = baseState({ id: ROOT });
+        await manager.save(root);
+        await issueRunControlClaimFor(ROOT);
+        loadStepsImpl = () => [
+          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+        ];
+        installResolvedPlan(root, [root]);
+
+        const capturedRunIds = retireDuringCapture(
+          await getRunbookStore(tmp),
+          new SessionService(new RunbookStateManager(tmp)),
+          ROOT,
+        );
+
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: runControlEvidence(ROOT),
+          targetSelector: { kind: 'default' },
+        });
+
+        // The key landed on the bearer's own run, and only there.
+        expect(capturedRunIds()).toEqual([ROOT]);
+        expect(out.kind).toBe('claim_superseded');
+        expect((await manager.load(ROOT))?.lifecycle).toBe('running');
       });
 
       it('bare stop maps a non-running resolved root to already_terminal', async () => {
