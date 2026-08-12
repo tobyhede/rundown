@@ -1222,10 +1222,14 @@ export class RunbookCompletionService {
    * cancellation check, frame selection, duplicate check, write — is one
    * compare-and-swap cycle against a single captured parent state. That
    * replaced the parent `DelegationLock`, and it removes the
-   * `DelegationLock → CompletionLock` ordering edge outright: this path no
-   * longer records through {@link recordManualCompletion}, it commits its own
-   * patch from {@link classifyChildCompletionTarget}, the same decision owner
-   * the fenced {@link prepareChildCompletion} uses.
+   * `DelegationLock → CompletionLock` ordering edge outright rather than
+   * documenting it: this path used to record through the manual completion
+   * recorder, which took the run's `CompletionLock` while the parent's
+   * `DelegationLock` was still held. It now commits its own patch from
+   * {@link classifyChildCompletionTarget}, the same decision owner the fenced
+   * {@link prepareChildCompletion} uses, so the two can never disagree — and
+   * the nested acquisition has no site left to occur at. The manual recorder
+   * itself has since been deleted, its callers having moved to the fenced seam.
    *
    * @param args - Child completion input
    * @returns The recording outcome:
