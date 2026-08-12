@@ -111,8 +111,6 @@ const mockSessionService = {
   >().mockResolvedValue({ kind: 'refused_credential_issued' }),
 };
 
-const listResolvedCompletionsFn = mockFn<(id: string) => Promise<unknown[]>>();
-listResolvedCompletionsFn.mockResolvedValue([]);
 const consumeResolvedCompletionFn = mockFn<(id: string) => Promise<unknown>>();
 consumeResolvedCompletionFn.mockResolvedValue(null);
 const completionApplyNextFn =
@@ -126,7 +124,6 @@ const mockCompletionService = {
 
 const mockLifecycleService = {
   setLastResult: jest.fn() as any,
-  listResolvedCompletions: listResolvedCompletionsFn,
   consumeResolvedCompletion: consumeResolvedCompletionFn,
 };
 
@@ -442,8 +439,6 @@ describe('runExecutionLoop', () => {
     mockManager.update.mockResolvedValue(undefined);
     mockManager.delete.mockResolvedValue(undefined);
 
-    mockLifecycleService.listResolvedCompletions.mockReset();
-    mockLifecycleService.listResolvedCompletions.mockResolvedValue([]);
     mockLifecycleService.consumeResolvedCompletion.mockReset();
     mockLifecycleService.consumeResolvedCompletion.mockResolvedValue(null);
     mockCompletionService.applyNextResolvedCompletion.mockReset();
@@ -761,6 +756,116 @@ describe('runExecutionLoop', () => {
       unresolved: 2,
       applied: 0,
     });
+  });
+
+  it('reports the terminating pass unresolved count and the observed state on the ordinary exit', async () => {
+    // The `none` arm is how the drain ordinarily stops, and both values it
+    // passes through there were unpinned: every other non-zero `unresolved`
+    // assertion in this file rides the `mismatch` refusal arm, and every `none`
+    // exercised here carries zero. A drain that reported a constant 0, or the
+    // count from the FIRST apply rather than the terminating one, or the idle
+    // pass's own state instead of the state it actually observed, would have
+    // been invisible. Both are load-bearing for the caller: `unresolved` is the
+    // remaining-work count `rundown collect` reports, and `state` is what the
+    // next stage continues from.
+    const substepSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent',
+        aggregation: { strategy: 'ALL' },
+        substeps: [
+          {
+            id: '1',
+            description: 'First',
+            transitions: {
+              pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: '1.2' },
+              fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+            },
+          },
+          {
+            id: '2',
+            description: 'Second',
+            transitions: {
+              pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: '1.3' },
+              fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+            },
+          },
+        ],
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' }, next: 'COMPLETE' },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+        },
+      },
+    ];
+    const beforeFirst = makeLoopState('1', {
+      substep: '1',
+      retryCount: 0,
+      lifecycle: 'running',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+    const afterFirst = makeLoopState('1', {
+      substep: '2',
+      retryCount: 0,
+      lifecycle: 'running',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+    // Deliberately NOT `afterFirst`. The drain must report the state it
+    // observed, and the idle pass's state is the plausible wrong answer.
+    const idlePassState = makeLoopState('1', {
+      substep: '9',
+      retryCount: 0,
+      lifecycle: 'running',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+
+    mockCompletionService.applyNextResolvedCompletion
+      // A count distinct from the terminating one, so reporting this apply's
+      // number instead of the last one's is a visible failure rather than a
+      // coincidence.
+      .mockImplementationOnce(async () => ({
+        kind: 'applied',
+        unresolved: 5,
+        entry: {
+          key: '1|1|1',
+          completion: { result: 'pass', targetSubstep: '1' },
+          stateBefore: beforeFirst,
+          stateAfter: afterFirst,
+          snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+        },
+      }))
+      .mockImplementationOnce(async () => ({
+        kind: 'none',
+        state: idlePassState,
+        unresolved: 2,
+      }));
+
+    const drained = await drainResolvedCompletions({
+      actorService: mockActorService as any,
+      manager: asManager(mockManager),
+      sessionService: mockSessionService as any,
+      emitter: asEmitter(mockEmitter),
+      runbookId: runbookId,
+      steps: asSteps(substepSteps),
+      currentState: beforeFirst as any,
+      transitionPolicy: {
+        onComplete: { releaseRunbook: false },
+        onStopped: { releaseRunbook: false },
+      },
+    });
+
+    expect(drained).toEqual({
+      status: 'continue',
+      state: afterFirst,
+      unresolved: 2,
+      applied: 1,
+    });
+    // One apply plus the idle pass that ends the loop. A drain that stopped
+    // after the first call never reaches the `none` arm these values come from.
+    expect(mockCompletionService.applyNextResolvedCompletion).toHaveBeenCalledTimes(2);
   });
 
   it('preserves observed progress when an override frame becomes inactive after a drain', async () => {
