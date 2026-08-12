@@ -1326,11 +1326,13 @@ two different places, and only one of them recovers anything:
 
 The envelope below is the **session-targeting** one, and its message says so:
 retrying the same command cannot make progress, because nothing about the run
-changed. It is not telling you to run something else either — the interrupted
-attempt leaves the run execution-owned, so a later execution-owning command
-refuses `EXECUTION_IN_PROGRESS` rather than recovering it. A run that reaches
-this state persistently is the SIGKILL case described in
-[docs/internal/architecture.md § PID-identity recovery](../internal/architecture.md#pid-identity-recovery-and-its-two-known-weaknesses).
+changed. The interrupted attempt leaves the run execution-owned, so what clears
+it depends on the owner: while that process is still alive, a later
+execution-owning command refuses `EXECUTION_IN_PROGRESS` rather than recovering
+it. Once the owner is gone — the SIGKILL case — the next execution-owning
+command's dead-owner probe recovers the exact epoch inline and unblocks the run,
+still reporting the refusal so the command is not retried. See
+[docs/internal/architecture.md § Owner-identity recovery](../internal/architecture.md#owner-identity-recovery).
 
 The message names the run and the recovery epoch of the unresolved attempt.
 

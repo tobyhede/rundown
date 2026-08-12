@@ -19,6 +19,7 @@ import {
   hashExecutionToken,
   type CapturedAuthority,
 } from '../../../src/runbook/storage/mutation-result.js';
+import { readProcessStartId } from '../../../src/runbook/process-identity.js';
 import { RunbookStateManager } from '../../../src/runbook/state.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
 import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
@@ -38,9 +39,13 @@ import {
 // The scoped run
 //   stryker run --mutate src/runbook/storage/execution-lease.ts \
 //     --testFiles __tests__/runbook/storage/execution-lease{,.properties}.test.ts
-// leaves 19 mutants alive. Every one is equivalent or unreachable — a test that
+// left 19 mutants alive. Every one is equivalent or unreachable — a test that
 // "killed" any of them would be asserting something the system cannot do. They
-// are recorded here so the next run reads the residue instead of re-deriving it:
+// are recorded here so the next run reads the residue instead of re-deriving it.
+//
+// The COUNT predates the owner-identity change (#722), which added code to this
+// file; the entries below are unaffected by it and each still holds. Re-measure
+// the total before trusting it as a baseline.
 //
 //  - `recoverDeadOwner`'s three-way null guard
 //    (`execPid === null || execTokenHash === null || execEpoch === null`, 6
@@ -64,6 +69,11 @@ import {
 
 const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
 const mockRunbook: Runbook = { title: 'Test', description: 'A test', steps: mockSteps };
+
+/** Whether this host can supply a process start id at all. */
+const HOST_HAS_START_IDS = readProcessStartId(process.pid) !== null;
+/** Runs a case only where the start-id disambiguator exists to be exercised. */
+const onStartIdHost = HOST_HAS_START_IDS ? it : it.skip;
 
 let dir: string;
 let driver: SqlDriver;
@@ -110,10 +120,31 @@ async function preparedRun(): Promise<{ state: RunbookState; captured: CapturedA
   return { state, captured: cap.authority };
 }
 
-/** Overwrite the run's active owner pid (to simulate a foreign/dead owner). */
+/**
+ * Re-point the run's active ownership at another process, as an owner running
+ * there would have recorded it: pid AND the host start id for that pid.
+ *
+ * Writing the pid alone would leave this process's start id attached to a
+ * foreign pid, which is precisely the mismatch recovery reads as proof of death
+ * — so a "live foreign owner" fixture built that way would silently become a
+ * dead-owner fixture. `null` for a pid the host cannot identify is what an owner
+ * on such a host writes, and drops the decision back to pid-only.
+ */
 function setOwnerPid(runId: RunId, pid: number): Promise<void> {
+  const startId = readProcessStartId(pid);
   return store.transaction((txn) => {
-    txn.tx.prepare('UPDATE runs SET exec_pid = :pid WHERE id = :id').run({ pid, id: runId });
+    txn.tx
+      .prepare('UPDATE runs SET exec_pid = :pid, exec_start_id = :startId WHERE id = :id')
+      .run({ pid, startId, id: runId });
+  });
+}
+
+/** Overwrite only the recorded start id, simulating a pid the kernel recycled. */
+function setOwnerStartId(runId: RunId, startId: string | null): Promise<void> {
+  return store.transaction((txn) => {
+    txn.tx
+      .prepare('UPDATE runs SET exec_start_id = :startId WHERE id = :id')
+      .run({ startId, id: runId });
   });
 }
 
@@ -122,7 +153,9 @@ function clearOwner(runId: RunId): Promise<void> {
   return store.transaction((txn) => {
     txn.tx
       .prepare(
-        'UPDATE runs SET exec_pid = NULL, exec_token = NULL, exec_epoch = NULL WHERE id = :id',
+        `UPDATE runs SET exec_pid = NULL, exec_token = NULL, exec_epoch = NULL,
+                         exec_start_id = NULL
+          WHERE id = :id`,
       )
       .run({ id: runId });
   });
@@ -268,7 +301,7 @@ describe('effect boundary', () => {
       txn.tx
         .prepare(
           `UPDATE runs
-              SET exec_pid = NULL, exec_token = NULL, exec_epoch = NULL
+              SET exec_pid = NULL, exec_token = NULL, exec_epoch = NULL, exec_start_id = NULL
             WHERE id = :runId`,
         )
         .run({ runId: state.id });
@@ -332,6 +365,84 @@ describe('PID-aware dead-owner recovery', () => {
     // pid 1 (init) exists; kill(1,0) as non-root is EPERM → treated as alive.
     await setOwnerPid(state.id, 1);
     const recovered = await lease.recoverDeadOwner(state.id);
+    expect(recovered.kind).toBe('alive');
+  });
+
+  it('records the owner start id on both the run and its attempt', async () => {
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    const expected = readProcessStartId(process.pid);
+
+    const recorded = await store.read((txn) => ({
+      run: txn.tx
+        .prepare('SELECT exec_start_id FROM runs WHERE id = :id')
+        .get<{ readonly exec_start_id: string | null }>({ id: state.id })?.exec_start_id,
+      attempt: txn.tx
+        .prepare(
+          'SELECT owner_start_id FROM execution_attempts WHERE run_id = :id AND exec_epoch = :epoch',
+        )
+        .get<{ readonly owner_start_id: string | null }>({
+          id: state.id,
+          epoch: acquired.value.epoch,
+        })?.owner_start_id,
+    }));
+
+    // Not merely non-null: the two columns must agree with each other and with
+    // what the host reports for this process, or the comparison at recovery is
+    // between values on different scales.
+    expect(recorded.run).toBe(expected);
+    expect(recorded.attempt).toBe(expected);
+    // Three nulls satisfy those equalities vacuously, so on a host that HAS
+    // start ids, insist one was actually written.
+    if (HOST_HAS_START_IDS) expect(recorded.run).not.toBeNull();
+  });
+
+  // Both recycled-pid cases turn on the host observing a start id for the live
+  // owner. Where it cannot, there is nothing to compare and `alive` is the
+  // correct (and separately tested) answer, so the premise does not hold.
+  onStartIdHost(
+    'reclaims a live pid whose start id proves it was recycled onto a new process',
+    async () => {
+      const { state, captured } = await preparedRun();
+      const acquired = await lease.acquire(captured, process.pid);
+      if (acquired.kind !== 'committed') throw new Error('acquire failed');
+      // This process is alive and owns the run, so the pid-only decision says
+      // "alive". The recorded start id says the process that acquired the lease is
+      // not the one running here now — which is exactly what a recycled pid looks
+      // like, and the only signal that separates the two.
+      await setOwnerStartId(state.id, 'start-id-of-a-process-that-is-gone');
+
+      const recovered = await lease.recoverDeadOwner(state.id);
+
+      expect(recovered.kind).toBe('reclaimed_pre_effect');
+    },
+  );
+
+  onStartIdHost(
+    'moves a recycled pid past the effect boundary to recovery, never reclaiming it',
+    async () => {
+      const { state, captured } = await preparedRun();
+      const acquired = await lease.acquire(captured, process.pid);
+      if (acquired.kind !== 'committed') throw new Error('acquire failed');
+      await lease.markEffectStarted(acquired.value);
+      await setOwnerStartId(state.id, 'start-id-of-a-process-that-is-gone');
+
+      const recovered = await lease.recoverDeadOwner(state.id);
+
+      expect(recovered.kind).toBe('recovery_pending');
+    },
+  );
+
+  it('falls back to the pid-only decision for a lease carrying no start id', async () => {
+    const { state, captured } = await preparedRun();
+    await lease.acquire(captured, process.pid);
+    // A host that cannot supply a start id writes NULL — the schema permits it
+    // in the owned disjunct — and must not thereby become reclaimable.
+    await setOwnerStartId(state.id, null);
+
+    const recovered = await lease.recoverDeadOwner(state.id);
+
     expect(recovered.kind).toBe('alive');
   });
 
@@ -748,10 +859,64 @@ describe('all-or-none multi-run acquisition', () => {
       new Set([a.state.id, b.state.id]),
     );
   });
+
+  it('reclaims every member an aggregate owner stranded, in one call', async () => {
+    // One killed process owned BOTH runs, which is the normal shape of a dead
+    // aggregate: `acquireAll` acquires the set together, so it dies holding the
+    // set. Clearing one member per invocation would make the operator repeat the
+    // command once per run to escape a single crash.
+    const a = await preparedRun();
+    const b = await preparedRun();
+    const ownedA = await lease.acquire(a.captured, process.pid);
+    const ownedB = await lease.acquire(b.captured, process.pid);
+    if (ownedA.kind !== 'committed' || ownedB.kind !== 'committed') {
+      throw new Error('setup acquire failed');
+    }
+    const dead = deadPid();
+    await setOwnerPid(a.state.id, dead);
+    await setOwnerPid(b.state.id, dead);
+    const recapA = await store.captureAuthority(a.state.id, a.captured.claimKey);
+    const recapB = await store.captureAuthority(b.state.id, b.captured.claimKey);
+    if (recapA.kind !== 'captured' || recapB.kind !== 'captured') {
+      throw new Error('recapture failed');
+    }
+
+    // No wait policy: the bare default path, the only one production takes.
+    const result = await lease.acquireAll([recapA.authority, recapB.authority], process.pid);
+
+    expect(result.kind).toBe('committed');
+    if (result.kind !== 'committed') return;
+    expect(new Set(result.value.map((attempt) => attempt.runId))).toEqual(
+      new Set([a.state.id, b.state.id]),
+    );
+  });
+
+  it('probes each contended run at most once when the aggregate cannot be won', async () => {
+    // The per-run budget must still terminate: an obstruction the probe cannot
+    // clear has to stop the loop rather than be re-probed forever.
+    const capA = await contendedRun();
+    const capB = await contendedRun();
+    const { lease: waiting, clock } = instrumentedLease();
+    const probed: RunId[] = [];
+    jest.spyOn(waiting, 'recoverDeadOwner').mockImplementation(async (runId) => {
+      probed.push(runId);
+      // Claim the obstruction is gone — licensing a free retry — while leaving
+      // it in place, so only the per-run guard can end the loop.
+      return { kind: 'missing', runId };
+    });
+
+    const result = await waiting.acquireAll([capA, capB], process.pid);
+
+    expect(result.kind).toBe('execution_in_progress');
+    // A is never actually cleared, so every retry refuses on A again and B is
+    // never reached. The second visit finds A already probed and stops.
+    expect(probed).toEqual([capA.runId]);
+    expect(clock.sleeps).toEqual([]);
+  });
 });
 
 describe('default contention policy and finite wait', () => {
-  it('refuses immediately with no wait policy', async () => {
+  it('refuses a live owner after one dead-owner probe, with no wait policy', async () => {
     const { captured } = await preparedRun();
     await lease.acquire(captured, process.pid);
     const { lease: waiting, clock, progress, recorder } = instrumentedLease();
@@ -759,10 +924,64 @@ describe('default contention policy and finite wait', () => {
     const second = await waiting.acquire(captured, process.pid);
 
     expect(second.kind).toBe('execution_in_progress');
-    // One attempt, then out: no recovery probe, no backoff, no progress.
-    expect(recorder.calls).toEqual(['immediate']);
+    // One acquisition, one probe (the read), then out. The probe finds a live
+    // owner and changes nothing, so there is no retry, no backoff, no progress.
+    expect(recorder.calls).toEqual(['immediate', 'read']);
     expect(clock.sleeps).toEqual([]);
     expect(progress).toEqual([]);
+  });
+
+  it('probes at most once with no wait policy, however the obstruction moves', async () => {
+    const { state, captured } = await preparedRun();
+    await lease.acquire(captured, process.pid);
+    const { lease: waiting } = instrumentedLease();
+    // Every probe reports the obstruction gone (licensing a free retry) and then
+    // puts it straight back, so a probe that were not charged would loop forever.
+    let probes = 0;
+    jest.spyOn(waiting, 'recoverDeadOwner').mockImplementation(async (runId) => {
+      probes += 1;
+      await clearOwner(runId);
+      const cap = await store.captureAuthority(state.id, captured.claimKey);
+      if (cap.kind !== 'captured') throw new Error('recapture failed');
+      await lease.acquire(cap.authority, process.pid);
+      return { kind: 'missing', runId };
+    });
+
+    const result = await waiting.acquire(captured, process.pid);
+
+    expect(result.kind).toBe('execution_in_progress');
+    expect(probes).toBe(1);
+  });
+
+  it('reclaims a hard-killed pre-effect owner with no wait policy at all', async () => {
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    await setOwnerPid(state.id, deadPid());
+    const recap = await store.captureAuthority(state.id, captured.claimKey);
+    if (recap.kind !== 'captured') throw new Error('recapture failed');
+
+    // The bare default path: no LeaseWaitPolicy is constructed anywhere in
+    // production, so this is the only route a SIGKILLed owner can be cleared by.
+    const result = await lease.acquire(recap.authority, process.pid);
+
+    expect(result.kind).toBe('committed');
+  });
+
+  it('surfaces a hard-killed mid-effect owner as recovery_required with no wait policy', async () => {
+    const { state, captured } = await preparedRun();
+    const acquired = await lease.acquire(captured, process.pid);
+    if (acquired.kind !== 'committed') throw new Error('acquire failed');
+    await lease.markEffectStarted(acquired.value);
+    await setOwnerPid(state.id, deadPid());
+    const recap = await store.captureAuthority(state.id, captured.claimKey);
+    if (recap.kind !== 'captured') throw new Error('recapture failed');
+
+    const result = await lease.acquire(recap.authority, process.pid);
+
+    // Never auto-re-executed: the ambiguous effect goes to the recovery path,
+    // which is what unblocks the run.
+    expect(result.kind).toBe('recovery_required');
   });
 
   it('retries immediately without progress or backoff when recovery finds a cleared tuple', async () => {
@@ -858,7 +1077,7 @@ describe('default contention policy and finite wait', () => {
     ]);
   });
 
-  it('refuses after the first attempt when the budget is already spent', async () => {
+  it('still probes for a dead owner when the budget is already spent', async () => {
     const authority = await contendedRun();
     const { lease: waiting, clock, progress, recorder } = instrumentedLease();
 
@@ -868,10 +1087,66 @@ describe('default contention policy and finite wait', () => {
     });
 
     expect(result.kind).toBe('execution_in_progress');
-    // The loop-top deadline check exits before recovery is even attempted, so
-    // there is no progress record — which is what separates this exit from the
-    // exhausted-budget exit below, where an attempt IS consumed and reported.
-    expect(recorder.calls).toEqual(['immediate']);
+    // The first probe is ungated by the budget: a zero-budget policy must not be
+    // the one caller with no exit from a hard-killed owner. It buys the probe
+    // (the read) and the attempt it is charged for, and nothing more.
+    expect(recorder.calls).toEqual(['immediate', 'read']);
+    expect(progress).toEqual([{ runId: authority.runId, attempts: 1, remainingMs: 0 }]);
+    expect(clock.sleeps).toEqual([]);
+  });
+
+  it('stops on abort at the loop top, where a free retry skipped the backoff check', async () => {
+    const authority = await contendedRun();
+    const controller = new AbortController();
+    const { lease: waiting, clock, progress } = instrumentedLease();
+    // A free retry (`missing`) neither sleeps nor charges an attempt, so the
+    // post-backoff abort check never runs on that path. The loop top is the only
+    // place the abort can be seen — without it, an aborted caller spins on free
+    // retries until the budget runs out, and forever on virtual time.
+    let probes = 0;
+    jest.spyOn(waiting, 'recoverDeadOwner').mockImplementation(async (runId) => {
+      probes += 1;
+      controller.abort();
+      return { kind: 'missing', runId };
+    });
+
+    const result = await waiting.acquire(authority, process.pid, {
+      budgetMs: 10_000,
+      backoff: () => 10,
+      signal: controller.signal,
+    });
+
+    expect(result.kind).toBe('execution_in_progress');
+    // Nowhere near the budget, so only the abort can have stopped it.
+    expect(probes).toBe(1);
+    expect(clock.elapsed()).toBe(0);
+    expect(clock.sleeps).toEqual([]);
+    expect(progress).toEqual([]);
+  });
+
+  it('does not probe a second time once the budget is spent', async () => {
+    const authority = await contendedRun();
+    const { lease: waiting, clock, progress } = instrumentedLease();
+    // `missing` licenses a free retry, so the loop returns to the top with the
+    // probe already spent — the one place the budget can gate a probe. Counted
+    // on the spy, not inferred from driver traffic: the probe is what the
+    // loop-top guard governs, and an extra one is the exact defect.
+    let probes = 0;
+    jest.spyOn(waiting, 'recoverDeadOwner').mockImplementation(async (runId) => {
+      probes += 1;
+      clock.advance(50);
+      return { kind: 'missing', runId };
+    });
+
+    const result = await waiting.acquire(authority, process.pid, {
+      budgetMs: 50,
+      backoff: () => 10,
+    });
+
+    expect(result.kind).toBe('execution_in_progress');
+    // One probe, no sleep, no charged attempt: the free retry exited at the loop
+    // top rather than probing an exhausted budget again.
+    expect(probes).toBe(1);
     expect(progress).toEqual([]);
     expect(clock.sleeps).toEqual([]);
   });
