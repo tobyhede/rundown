@@ -420,40 +420,6 @@ export type PreparedResolvedCompletionDrain =
       readonly applied: readonly [];
     };
 
-/** Result of a resolved-completion drain pass. */
-export type DrainResolvedCompletionsResult =
-  | {
-      /** Drain advanced the cursor with remaining substeps still pending. */
-      readonly status: 'continue';
-      /** State after the last applied completion (or current state if none). */
-      readonly state: RunbookState;
-      /** Count of substeps still without a persisted completion. */
-      readonly unresolved: number;
-      /** Each completion applied during this pass, in dispatch order. */
-      readonly applied: readonly AppliedResolvedCompletion[];
-    }
-  | {
-      /** Runbook reached a terminal lifecycle (`done` or `stopped`). */
-      readonly status: 'done' | 'stopped';
-      /** Always zero on terminal exits. */
-      readonly unresolved: number;
-      /** Each completion applied during this pass, in dispatch order. */
-      readonly applied: readonly AppliedResolvedCompletion[];
-    }
-  | DrainCompletionTargetMismatch
-  | {
-      /** Requested frame is not currently active; drain is observation-only. */
-      readonly status: 'not_active';
-      /** Frame key that was requested via `frameOverride`. */
-      readonly frameKey: FrameKey;
-      /** Frame key the machine is actually positioned on. */
-      readonly activeFrameKey: FrameKey;
-      /** Count of substeps still without a persisted completion. */
-      readonly unresolved: number;
-      /** Always empty when `not_active`. */
-      readonly applied: readonly [];
-    };
-
 function findStepOrThrow(steps: readonly ResolvedStep[], stepName: string): ResolvedStep {
   const step = steps.find((candidate) => candidate.name === stepName);
   if (!step) throw new Error(`Step "${stepName}" not found`);
