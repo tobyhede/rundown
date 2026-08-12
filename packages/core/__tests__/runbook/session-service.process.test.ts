@@ -714,6 +714,23 @@ describe('cross-process session write contention (transaction replaces SessionLo
     // reaching it proves both fast checks already returned no open children, and
     // awaiting the worker there commits the child claim before the guarded
     // decisive write begins.
+    //
+    // SENSITIVE IN BOTH DIRECTIONS, measured — which is what separates it from the
+    // sequential coverage #700 found insufficient, all of which asserts the refusal
+    // when a child is already open at read time. Disarming EITHER half flips
+    // `outcome.kind` to `'applied'`: forcing `guardOpenChildren` false in
+    // `lifecycle-command-service.ts` (the #700 routing defect) skips the guarded
+    // path entirely, and suppressing only the throw in the store's
+    // `assertParentAdvanceAllowed` lets the pre-checks' stale [] carry the write.
+    // The seam is hand-assembled here rather than built by the CLI's
+    // `buildNonDelegatingLifecycleSeam`, which core cannot import — but the path
+    // this window measures is the same one. The two wire the identical
+    // `createEffectfulActorMutationRunner`, so the decisive write reaches
+    // `commitOwnedState` through production code either way; every dep that
+    // differs is a DI callable of the actor service (steps loading, helpers,
+    // artifact-read policy, delegation/inline runbook resolution) consulted by
+    // step execution and delegation issuance, neither of which a `pass` on a
+    // single base step performs.
     const parentRunId = await newRun();
     const linkage = linkageFor(parentRunId, 'a');
     const childRunId = await newRun({ parentLinkage: linkage });
