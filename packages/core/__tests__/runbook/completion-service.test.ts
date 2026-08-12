@@ -2416,6 +2416,170 @@ describe('RunbookCompletionService', () => {
       expect(applied.unresolved).toBe(2);
     });
 
+    it('selects nothing when the cursor is not on a step with substeps', async () => {
+      // The selection's first guard. Resolved completions only ever target a
+      // substep, so a cursor parked on a base step has nothing selectable — and
+      // reaching past the guard would index `currentStep.substeps` on a step that
+      // has none.
+      const baseSteps: ResolvedStep[] = [
+        {
+          kind: 'base',
+          name: '1',
+          description: 'Plain',
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+        },
+      ];
+      await manager.save(
+        state({
+          substep: undefined,
+          resolvedCompletions: {
+            [buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1')]: buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: '1',
+              targetFrame: activeFrame(buildFrameKey('1'), 1),
+              completedAt: '2026-01-01T00:00:00.000Z',
+            }),
+          },
+        }),
+      );
+
+      const applied = await service.applyNextResolvedCompletion({
+        runbookId,
+        steps: baseSteps,
+      });
+
+      expect(applied.kind).toBe('none');
+      if (applied.kind !== 'none') return;
+      expect(applied.unresolved).toBe(0);
+    });
+
+    it('proceeds normally when the frame override names the frame the cursor is on', async () => {
+      // A frame override is a scope, not a refusal. Naming the ACTIVE frame must
+      // select and apply exactly as an unscoped call does; only a divergent frame
+      // is observation-only.
+      await manager.save(
+        state({
+          substep: '1',
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+          resolvedCompletions: {
+            [buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1')]: buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: '1',
+              targetFrame: activeFrame(buildFrameKey('1'), 1),
+              completedAt: '2026-01-01T00:00:00.000Z',
+            }),
+          },
+        }),
+      );
+
+      const applied = await service.applyNextResolvedCompletion({
+        runbookId,
+        steps,
+        frameOverride: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      expect(applied.kind).toBe('applied');
+      if (applied.kind !== 'applied') return;
+      expect(applied.entry.completion.targetSubstep).toBe('1');
+    });
+
+    it("counts the override frame's UNresolved substeps, not its resolved ones", async () => {
+      // `not_active` is observation-only, so its count is the whole answer the
+      // caller gets. Counting the resolved substeps instead would report a frame
+      // as nearly done exactly when it is barely started.
+      const threeSubstepSteps: ResolvedStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Parent',
+          aggregation: { strategy: 'ALL' },
+          substeps: ['1', '2', '3'].map((id) => ({
+            id,
+            description: `Substep ${id}`,
+            transitions: {
+              pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+              fail: { kind: 'fail' as const, retry: 0, action: { type: 'STOP' as const } },
+            },
+          })),
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+        },
+      ];
+      const overrideKey = buildFrameKey('1', 2);
+      await manager.save(
+        state({
+          substep: '1',
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+          resolvedCompletions: {
+            // One of three substeps reported on the OVERRIDE frame.
+            [buildCompletionKey(activeFrame(overrideKey, 1), '1')]: buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              targetSubstep: '1',
+              targetFrame: activeFrame(overrideKey, 1),
+              completedAt: '2026-01-01T00:00:00.000Z',
+            }),
+          },
+        }),
+      );
+
+      const applied = await service.applyNextResolvedCompletion({
+        runbookId,
+        steps: threeSubstepSteps,
+        frameOverride: activeFrame(overrideKey, 1),
+      });
+
+      expect(applied.kind).toBe('not_active');
+      if (applied.kind !== 'not_active') return;
+      expect(applied.frameKey).toBe(overrideKey);
+      expect(applied.activeFrameKey).toBe(buildFrameKey('1'));
+      // Substeps '2' and '3' carry no row on the override frame.
+      expect(applied.unresolved).toBe(2);
+    });
+
+    it('falls back to a row that targets the cursor substep under another key', async () => {
+      // The selection's last resort. A row can sit under a key whose substep
+      // suffix is not the cursor's — a report written against a different key
+      // shape — while its payload names the cursor substep. Dropping this
+      // disjunct strands such a row: it is on the active frame, it targets the
+      // live cursor, and nothing else would ever pick it up.
+      const misKeyed = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '2');
+      await manager.save(
+        state({
+          substep: '1',
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+          resolvedCompletions: {
+            [misKeyed]: buildResolvedCompletion({
+              agentId: 'manual',
+              result: 'pass',
+              targetStep: '1',
+              // Payload targets the CURSOR substep, not the key's suffix.
+              targetSubstep: '1',
+              targetFrame: activeFrame(buildFrameKey('1'), 1),
+              completedAt: '2026-01-01T00:00:00.000Z',
+            }),
+          },
+        }),
+      );
+
+      const applied = await service.applyNextResolvedCompletion({ runbookId, steps });
+
+      expect(applied.kind).toBe('applied');
+      if (applied.kind !== 'applied') return;
+      expect(applied.entry.key).toBe(misKeyed);
+      expect(applied.entry.completion.targetSubstep).toBe('1');
+    });
+
     it('sees a row another process recorded between two applies', async () => {
       // The CLI loops this primitive and no longer threads a state between
       // calls. That is what lets the second call observe a row committed by a
