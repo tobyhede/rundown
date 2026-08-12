@@ -51,8 +51,16 @@ import {
  */
 const DEAD_PID = 999999999;
 
-/** Whether this host is one of the two platforms that can supply a start id. */
-const HOST_SUPPORTED = process.platform === 'linux' || process.platform === 'darwin';
+/**
+ * Whether this host actually supplies a start id, probed rather than assumed.
+ *
+ * The platform alone does not decide it. A sandbox that denies `/proc` or the
+ * `ps` spawn is a supported platform on which every read still answers `null` —
+ * which is correct, documented behaviour, and would turn the live-host cases
+ * below into failures if they were gated on `process.platform`. Matches
+ * `HOST_HAS_START_IDS` in the execution-lease suite.
+ */
+const HOST_HAS_START_IDS = readProcessStartId(process.pid) !== null;
 
 /** Build one `/proc/<pid>/stat` line with the given comm and starttime. */
 function procStat(comm: string, starttime: string): string {
@@ -303,7 +311,7 @@ describe('readBsdStartId', () => {
 });
 
 describe('readProcessStartId', () => {
-  const maybe = HOST_SUPPORTED ? it : it.skip;
+  const maybe = HOST_HAS_START_IDS ? it : it.skip;
   /**
    * The pid-1 comparison additionally needs this process NOT to be pid 1, which
    * a container without an init shim makes false — jest itself would be pid 1
@@ -312,7 +320,7 @@ describe('readProcessStartId', () => {
    * resolution, so a child spawned in the same second as its parent legitimately
    * matches. Boot time versus now is the comparison that cannot tie.
    */
-  const maybeDistinct = HOST_SUPPORTED && process.pid !== 1 ? it : it.skip;
+  const maybeDistinct = HOST_HAS_START_IDS && process.pid !== 1 ? it : it.skip;
 
   maybe('reads a start id for this live process', () => {
     expect(readProcessStartId(process.pid)).toMatch(/\S/);
