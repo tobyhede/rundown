@@ -1,10 +1,13 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { listPersistedRunIds } from '@rundown-org/core/testing/session-fixtures';
 import { join } from 'node:path';
 import {
   appendArtifactManifestRecordSync,
   assertRunId,
+  deriveActiveFrame,
+  RunbookStateManager,
+  upsertSubstepState,
   type RunbookState,
 } from '@rundown-org/core';
 import {
@@ -473,6 +476,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
   });
 
   afterEach(async () => {
+    jest.restoreAllMocks();
     await workspace.cleanup();
   });
 
@@ -663,6 +667,74 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       expect(childState).not.toBeNull();
       const templateVars = childState!.templateVars;
       expect(templateVars.Region).toBe('cli-region');
+    });
+  });
+
+  describe('concurrent parent substep writes', () => {
+    it('keeps a sibling substep row committed while the launch derives its own', async () => {
+      const parentRunId = await startSubstepParent();
+      await writePassingChild();
+
+      // Land a real, UNRELATED substep write on the parent inside the window
+      // between the launch's derivation of substep 1.1's row and the commit that
+      // depends on it. This models the writers that actually exist: every
+      // parent-side substep mutation (`rundown delegate`, `rundown pass`, ...)
+      // goes through the state machine and takes no `DelegationLock`, so the
+      // lock this site holds never excluded them.
+      //
+      // The hook sits on the manager's WRITE seam, not its read seam: a read
+      // seam only exists while the derivation is outside the compare-and-swap,
+      // so hooking it would make this test vacuous the moment the derivation
+      // moves inside. Both the patch-shaped `update` and the
+      // derive-inside-the-CAS `updateWithStateIfExists` are wrapped, so the
+      // sibling row lands immediately before the commit either way.
+      let injected = false;
+      const injectSiblingSubstepWrite = async (): Promise<void> => {
+        if (injected) return;
+        // Set before writing: the injection itself goes through the wrapped seam.
+        injected = true;
+        const sideband = new RunbookStateManager(workspace.cwd);
+        await sideband.updateWithState(parentRunId, (current) => ({
+          substepStates: upsertSubstepState(
+            current.substepStates ?? [],
+            '2',
+            current.activeFrameKey ?? deriveActiveFrame(current).frameKey,
+            { status: 'running' as const },
+          ),
+        }));
+      };
+
+      /* eslint-disable @typescript-eslint/unbound-method -- captured to re-apply with the spy's `this` */
+      const realUpdate = RunbookStateManager.prototype.update;
+      const realUpdateWithStateIfExists = RunbookStateManager.prototype.updateWithStateIfExists;
+      /* eslint-enable @typescript-eslint/unbound-method */
+      jest.spyOn(RunbookStateManager.prototype, 'update').mockImplementation(async function (
+        this: RunbookStateManager,
+        ...args
+      ) {
+        if (args[0] === parentRunId) await injectSiblingSubstepWrite();
+        return await realUpdate.apply(this, args);
+      });
+      jest
+        .spyOn(RunbookStateManager.prototype, 'updateWithStateIfExists')
+        .mockImplementation(async function (this: RunbookStateManager, ...args) {
+          if (args[0] === parentRunId) await injectSiblingSubstepWrite();
+          return await realUpdateWithStateIfExists.apply(this, args);
+        });
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+      // Proves the interleave happened rather than the assertion below passing
+      // because nothing was ever written into the window.
+      expect(injected).toBe(true);
+
+      const parent = await readRunbookState(workspace, parentRunId);
+      const substeps = parent!.substepStates ?? [];
+      // The launch's own row still commits...
+      expect(substeps.find((s) => s.id === '1')?.status).toBe('done');
+      // ...and it does not carry a pre-read snapshot of the array over the top
+      // of the sibling row that committed in between.
+      expect(substeps.find((s) => s.id === '2')?.status).toBe('running');
     });
   });
 

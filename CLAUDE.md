@@ -132,14 +132,13 @@ Domain locks expose `scope()` / `held()` built on them.
   bare `finally` — that is the RD-102 masking defect.
 
 **Examples:** The artifact-manifest and sql.js durable-replacement locks use
-these primitives. **Three production lock acquisitions survive, and all three
-are `DelegationLock`, all in the CLI:** inline-launch
-(`packages/cli/src/services/execution.ts`), run-start `afterInit`
-(`packages/cli/src/commands/run.ts`), and claim-and-launch
+these primitives. **Two production lock acquisitions survive, and both are
+`DelegationLock`, both in the CLI:** inline-launch
+(`packages/cli/src/services/execution.ts`) and claim-and-launch
 (`packages/cli/src/helpers/runbook-pipeline.ts`). **Core takes neither lock any
 more.**
 
-`CompletionLock` is a different case and must not be lumped in with those three:
+`CompletionLock` is a different case and must not be lumped in with those two:
 it has **zero** production call sites anywhere. It survives only as an exported
 class with no consumer outside tests — and the tests that name it assert it is
 _not_ acquired. It is unreferenced surface awaiting the phase that deletes the
@@ -151,19 +150,20 @@ workflows became transactional — `SessionLock` and `RunStateLock` are gone,
 these two are not. Follow-up is tracked in #690, which also owns the
 `DELEGATION_LOCK_TIMEOUT` (RD-810) error surface that outlives them. Until then:
 do not add new consumers of either lock, and do not read their survival as
-licence to put new run or session state behind a file lock. The three remaining
-sites are a different shape from the core ones — they fence a launch/claim race
-rather than a read-derive-write gap — so the retirement recipe below does not
-transfer to them unmodified.
+licence to put new run or session state behind a file lock. The two remaining
+sites are a different shape from the retired ones — they fence a launch/claim
+race rather than a read-derive-write gap — so the retirement recipe below does
+not transfer to them unmodified.
 
-**When you retire one, this is the shape.** Three core sites have gone: the two
-completion recorders, then the resolved-completion drain. Each lock existed only
-to keep another writer out of the gap between a decision and the commit that
-depended on it, so the fix was moving the decision **inside** the `mutateState`
-build callback: it is then derived from the exact version the compare-and-swap
-commits onto, and a loser re-derives against the committed row rather than
-overwriting it. Do not reach for a transaction — `SyncWork<T>` makes an async
-callback a compile error, and these spans await.
+**When you retire one, this is the shape.** Four sites have gone: the two core
+completion recorders, the resolved-completion drain, then the CLI's run-start
+`afterInit`. Each lock existed only to keep another writer out of the gap
+between a decision and the commit that depended on it, so the fix was moving the
+decision **inside** the `mutateState` build callback: it is then derived from
+the exact version the compare-and-swap commits onto, and a loser re-derives
+against the committed row rather than overwriting it. Do not reach for a
+transaction — `SyncWork<T>` makes an async callback a compile error, and these
+spans await.
 
 The drain went further than the recorders did, and that is the part worth
 copying. Folding its decision inward also removed the interface that made the
@@ -181,7 +181,24 @@ must be safe to repeat: the drain's reachable machine actors are effect-free for
 its event except for producer ARTIFACTS resolution, which is idempotent by
 identity and already repeats on RETRY re-entry. And an async derivation needs a
 whole-state builder, not a patch — `RunbookStateManager.mutateStateReturning` is
-that seam, alongside the patch-shaped `updateWithStateReturning`.
+that seam, alongside the patch-shaped `updateWithStateReturning`. A pure,
+synchronous derivation — `upsertSubstepState` at the run-start site — needs
+neither audit nor a builder: `updateWithStateIfExists` takes the patch, and its
+`null` return on a missing run is the pre-read existence guard.
+
+**Do not assume the lock you are removing ever worked.** The run-start site held
+`DelegationLock` across a load-derive-write on the parent's `substepStates`, and
+lost updates the whole time: `substepStates` is a verbatim-replace field,
+`RunbookStateManager.update`'s build callback ignores the state the
+compare-and-swap captured, and `DelegationLock` excludes only other
+`DelegationLock` acquirers — while every writer that mutates a parent's substep
+rows (`delegate`, `pass`, `fail`, `goto`, `abort`) goes through the state
+machine and takes no lock at all. A sibling row committed inside that gap was
+overwritten by the pre-read array, lock held or not. So establish what a lock
+actually excludes before crediting it with an invariant; the fold is the fix
+either way, but "the lock was load-bearing" and "the lock was decoration over a
+live defect" are different changes, and only the second one is a user-visible
+bug fix.
 
 **For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock
 derived from `manifestPath(cwd)` + `.lock`.

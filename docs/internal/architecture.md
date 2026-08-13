@@ -1336,13 +1336,12 @@ By contrast, transaction contention on `mutateSession` and every other
 
 The single-store plan called for deleting all four core domain locks.
 `SessionLock` and `RunStateLock` are gone; **`CompletionLock` and
-`DelegationLock` are not**. #690 is retiring them site by site. **Three
-production acquisitions remain, and every one of them is `DelegationLock`, all
-in the CLI** — **core takes neither lock any more**:
+`DelegationLock` are not**. #690 is retiring them site by site. **Two production
+acquisitions remain, and both are `DelegationLock`, both in the CLI** — **core
+takes neither lock any more**:
 
 | Lock             | Site                                                              |
 | ---------------- | ----------------------------------------------------------------- |
-| `DelegationLock` | `packages/cli/src/commands/run.ts` — run-start `afterInit`        |
 | `DelegationLock` | `packages/cli/src/services/execution.ts` — inline launch          |
 | `DelegationLock` | `packages/cli/src/helpers/runbook-pipeline.ts` — claim-and-launch |
 
@@ -1408,6 +1407,24 @@ The parent-advance guard did not survive the move, because it had no production
 caller to survive for: no code ever passed `guard` to the drain, and the CLI
 wrapper never even destructured it.
 
+The run-start `afterInit` callback in `commands/run.ts` was the fourth site, and
+the first CLI one. It is the same shape as the recorders — load the parent,
+derive the substep row for the substep this launch targets, commit — folded the
+same way, into `RunbookStateManager.updateWithStateIfExists`, whose `null`
+return on a missing run is exactly the early exit the pre-read guard performed.
+Two things separate it from the core sites. `upsertSubstepState` is pure and
+synchronous, so the callback's per-attempt rerun is free rather than something
+to audit. And the lock **never prevented the lost update it appeared to fence**:
+`substepStates` is a verbatim-replace field, `RunbookStateManager.update`'s
+build callback ignores the state the compare-and-swap captured, and
+`DelegationLock` excludes only other `DelegationLock` acquirers — while every
+writer that mutates a parent's substep rows (`delegate`, `pass`, `fail`, `goto`,
+`abort`) goes through the state machine and takes no lock at all. A sibling
+substep row committed between the load and the write was therefore overwritten
+by the pre-read array, lock held or not. Removing the acquisition removes no
+exclusion the write depended on, and removes an RD-810 timeout from the launch
+path.
+
 Until #690 closes — it also owns the `DELEGATION_LOCK_TIMEOUT` / RD-810 error
 surface outliving these locks — do not add consumers of either lock, and do not
 read their survival as licence to put new run or session state behind a file
@@ -1420,9 +1437,8 @@ self-healing lock, reclaimed by the next acquirer via PID-aware stale detection,
 and must never replace the committed outcome of the work it protected. Releasing
 a domain lock from a bare `finally` is the RD-102 masking defect.
 
-Only the run-start site holds its lock to scope exit, as a plain `await using`
-guard. **Both launch sites deliberately release before the child execution
-loop**, so neither is a plain scope-exit release: inline launch (`execution.ts`)
+**Both remaining sites deliberately release before the child execution loop**,
+so neither is a plain scope-exit release: inline launch (`execution.ts`)
 releases from several branches under a safety-net `finally`, and
 claim-and-launch (`runbook-pipeline.ts`) releases from `afterStarted`, once
 `RUNBOOK_STARTED` is emitted, ending the protected reread-to-claim window before

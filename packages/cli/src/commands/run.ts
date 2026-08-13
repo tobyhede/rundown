@@ -5,7 +5,6 @@ import {
   RunbookStateManager,
   SessionService,
   ExecutionLifecycleService,
-  DelegationLock,
   RunbookSyntaxError,
   RundownError,
   isNodeError,
@@ -224,22 +223,29 @@ export function registerRunCommand(program: Command): void {
             if (parentLinkage && parentState) {
               const link = parentLinkage;
               afterInit = async (_stateId) => {
-                // Acquire lock and re-load fresh parent state to avoid stale-read race:
-                // parentState was captured at buildInlineLinkage() time and may
-                // be stale by the time afterInit runs (another child may have
-                // modified substepStates in between).
-                const lock = new DelegationLock(cwd);
-                await using _guard = await lock.scope(link.parentRunId);
-                const fresh = await manager.load(link.parentRunId);
-                if (!fresh) return;
-                const substeps = fresh.substepStates ?? [];
-                const updated = upsertSubstepState(
-                  substeps,
-                  link.parentStepId,
-                  link.parentFrameKey,
-                  { status: 'running' as const },
-                );
-                await manager.update(link.parentRunId, { substepStates: updated });
+                // Derive the row INSIDE the compare-and-swap. `substepStates` is
+                // a verbatim-replace field, so a patch derived from a state read
+                // before the cycle commits its whole array over whatever landed
+                // in between — a lost update the `DelegationLock` this site used
+                // to hold never prevented, because the writers that mutate a
+                // parent's substep rows (`delegate`, `pass`, `fail`, `goto`,
+                // `abort`) go through the state machine and take no such lock.
+                // Deriving from `current` makes the array the one the CAS
+                // commits onto, and a loser re-derives against the committed row.
+                //
+                // `upsertSubstepState` is pure and synchronous, so the up-to-8
+                // reruns the CAS may perform are free of external effects.
+                //
+                // A missing parent resolves to `null` and writes nothing, which
+                // is the same "nothing to do" outcome the pre-read guard had.
+                await manager.updateWithStateIfExists(link.parentRunId, (current) => ({
+                  substepStates: upsertSubstepState(
+                    current.substepStates ?? [],
+                    link.parentStepId,
+                    link.parentFrameKey,
+                    { status: 'running' as const },
+                  ),
+                }));
               };
             }
 
