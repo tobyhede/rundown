@@ -3514,11 +3514,17 @@ describe('claimAndLaunch', () => {
         // discriminant: a mutation corrupting parentStepId (the substepId ??
         // stepId coalescing), parentStep, parentFrameKey, or parentEntry must
         // fail here. The idempotent-claim branch is covered separately.
+        //
+        // `parentStep` is the scan's `stepId` ('2', the delegating step), not
+        // `parentState.step` ('1', this fixture's cursor). The two differ here
+        // only because the fixture contrives `stepId !== substepId` for the
+        // coalescing above; in a real parent still sitting on its delegating
+        // step they coincide.
         parentLinkage: {
           kind: 'delegation',
           parentRunId: PARENT_RUN_ID,
           parentStepId: '1',
-          parentStep: '1',
+          parentStep: '2',
           parentFrameKey: brandFrameKeyForTest('1'),
           parentEntry: 1,
           tokenHash,

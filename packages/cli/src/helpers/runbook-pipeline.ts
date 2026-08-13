@@ -1553,6 +1553,19 @@ export async function claimAndLaunch(
     };
   }
 
+  // `stepId` is the DELEGATING step (`contextSnapshot.step`), not the parent's
+  // cursor. Every `DelegationLinkage` built below carries it as `parentStep`,
+  // and none may substitute the freshly-read `parentState.step` /
+  // `freshParent.step`. `classifyDelegationLiveness` decides liveness by
+  // comparing the parent cursor it reads inside the deciding transaction
+  // against `linkage.parentStep`; sourcing that field from a read of the same
+  // cursor makes the comparison self-fulfilling, so it could only ever fire on
+  // the narrow window between the read and the commit — never on a cursor that
+  // had already advanced before the claim began. The two values coincide
+  // whenever the parent is still sitting on its delegating step, which is why
+  // the difference is invisible outside the superseded case the latch exists
+  // for. The same field is persisted onto the claim, so it also decides the
+  // parent-side half in `RunbookStore.invalidateClosedDelegatedClaims`.
   const { parentState, stepId, substepId, delegation: _delegation } = scanResult;
   const lock = new DelegationLock(cwd);
 
@@ -1664,7 +1677,7 @@ export async function claimAndLaunch(
         parentRunId: freshParent.id,
         parentStepId: substepId ?? stepId,
         tokenHash,
-        parentStep: freshParent.step,
+        parentStep: stepId,
         parentFrameKey: delegationFrameKey,
         parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
       };
@@ -1697,7 +1710,7 @@ export async function claimAndLaunch(
         parentRunId: freshParent.id,
         parentStepId: substepId ?? stepId,
         tokenHash,
-        parentStep: freshParent.step,
+        parentStep: stepId,
         parentFrameKey: freshSubstep.frameKey,
         parentEntry: inferEntryFromState(freshParent, freshSubstep.frameKey),
       };
@@ -1728,7 +1741,7 @@ export async function claimAndLaunch(
       parentRunId: freshParent.id,
       parentStepId: substepId ?? stepId,
       tokenHash,
-      parentStep: freshParent.step,
+      parentStep: stepId,
       parentFrameKey: delegationFrameKey,
       parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
     };

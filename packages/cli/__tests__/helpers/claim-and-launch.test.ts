@@ -1853,6 +1853,134 @@ describe('claimAndLaunch', () => {
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 
+  it('uses the delegating step for linkage, not the advanced parent cursor', async () => {
+    // Parent state: the delegation was issued on step '1'; the parent's cursor
+    // has since advanced to step '2'. The linkage must carry the DELEGATING
+    // step — it is the value `classifyDelegationLiveness` compares the
+    // in-transaction parent cursor against, and the value persisted onto the
+    // claim for the parent-side half of the same latch. Copying the parent's
+    // current cursor makes that comparison self-fulfilling.
+    const parentState = {
+      id: RUN_ID,
+      step: '2',
+      variables: {},
+      substepStates: [
+        {
+          id: 'delegate',
+          frameKey: '1|0',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [], step: '1' },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: 'delegate',
+        delegation: parentState.substepStates[0].delegation,
+        frameKey: brandFrameKeyForTest('1', 0),
+      }),
+      null,
+    );
+    mockHappyDelegationLock();
+
+    jest.mocked(core.deriveActiveFrame).mockReturnValue({
+      step: '2',
+      iteration: undefined,
+      frameKey: brandFrameKeyForTest('2'),
+    });
+
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/work/test/child.md',
+      source: 'project',
+      sourceRoot: '/work/test',
+    });
+    // Cast through unknown: the parser fixture is a minimal stand-in
+    // (real Runbook type carries many more fields than this test reads).
+    jest.mocked(parser.parseRunbookDocument).mockReturnValue({
+      runbook: { steps: [{ kind: 'base', name: '1', description: 'Step' }] },
+      frontmatter: null,
+      diagnostics: [],
+    } as unknown as ReturnType<typeof parser.parseRunbookDocument>);
+    jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
+    // Cast through unknown: ResolvedVariables uses a branded vars map
+    // and tracks more fields than this fixture provides.
+    jest.mocked(resolveVariables).mockResolvedValue({
+      vars: {},
+      warnings: [],
+      providedKeys: new Set(),
+    } as unknown as Awaited<ReturnType<typeof resolveVariables>>);
+    // Cast through unknown: test impl identity-passes the AST, but
+    // resolveForBounds returns a `ResolvedRunbook` (post-FOR-resolution brand).
+    jest
+      .mocked(resolveForBounds)
+      .mockImplementation(
+        (runbook) => ({ runbook, warnings: [] }) as unknown as ReturnType<typeof resolveForBounds>,
+      );
+    jest.mocked(substituteRunbookVariables).mockImplementation((runbook) => runbook);
+    jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
+    // Cast through unknown: the bridged emitter exposes more methods than
+    // emit(); the test doesn't exercise them so a partial stub suffices.
+    jest
+      .mocked(createBridgedEmitter)
+      .mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<typeof createBridgedEmitter>);
+    jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+
+    const mockCreate = mockFn<(...args: unknown[]) => Promise<{ id: RunId; title: string }>>();
+    mockCreate.mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' });
+
+    const mockClaimAndInitialLink = mockClaimAndInitialLinkSuccess();
+
+    const ctx = makeCtx({
+      manager: {
+        load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
+          parentState as unknown as RunbookState,
+        ),
+        create: mockCreate,
+        update: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
+        initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+      },
+      actorService: {
+        initializeState: mockFn<() => Promise<RunbookState>>().mockResolvedValue({
+          id: NEW_CHILD_ID,
+          step: '1',
+        } as unknown as RunbookState),
+      },
+      sessionService: {
+        pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        claimAndInitialLink: mockClaimAndInitialLink,
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
+      },
+    });
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(`Expected success, got ${result.reason}`);
+
+    // Assert on the linkage core RECEIVED, not on the command outcome: the 4a′
+    // precheck is stubbed `live` here, so the outcome cannot distinguish the
+    // two candidate values.
+    expect(mockClaimAndInitialLink).toHaveBeenCalledTimes(1);
+    const linkage = mockClaimAndInitialLink.mock.calls[0][0].linkage;
+    expect(linkage.parentStep).toBe('1');
+    expect(linkage.parentStepId).toBe('delegate');
+    expect(linkage.parentFrameKey).toBe('1|0');
+  });
+
   it('returns LAUNCH_FAILED (RD-816) when manager.create throws and releases the lock', async () => {
     const parentState = {
       id: RUN_ID,
