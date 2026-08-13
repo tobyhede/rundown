@@ -89,15 +89,15 @@ succeeds. Of the two mechanisms that replaced it, only one behaves that way:
   write) blocks like the lock did — `PRAGMA busy_timeout = 5000` inside SQLite
   plus 10 application-level retries at 25ms × attempt in the native driver.
 - **The optimistic CAS** behind `RunbookStore.mutateState` — the per-run
-  read-modify-write that replaced the run-state lock — waits, but does not
-  block. It replays the whole cycle at most **8 times**, pausing between
-  attempts for a jittered interval scaled by attempt number (25–50ms × attempt,
-  so at most ~1.4s across the default budget). The jitter is what lets more
-  concurrent writers than the attempt budget all commit: without it the losers
-  re-read in lockstep and the writer at the back of the queue exhausts the
-  budget before its turn. Sustained contention still spends the budget, and the
-  call then returns `concurrent_modification` — a command failure where the lock
-  would have waited and won.
+  read-modify-write behind every run-state write — waits, but does not block. It
+  replays the whole cycle at most **8 times**, pausing between attempts for a
+  jittered interval scaled by attempt number (25–50ms × attempt, so at most
+  ~1.4s across the default budget). The jitter is what lets more concurrent
+  writers than the attempt budget all commit: without it the losers re-read in
+  lockstep and the writer at the back of the queue exhausts the budget before
+  its turn. Sustained contention still spends the budget, and the call then
+  returns `concurrent_modification` — a command failure where the lock would
+  have waited and won.
 
 Treat `concurrent_modification` as a reachable arm on any path that can be
 driven concurrently — handle it or retry it, and never document it as
@@ -118,7 +118,8 @@ return await doWork(); // a failed release can never mask this committed result 
 `packages/core/src/runbook/file-lock.ts` are the underlying primitives;
 `heldLock` / `heldLockSync` (returning `ScopedLock` / `ScopedLockSync`) are the
 consumer-facing wrappers that own the best-effort, non-masking release policy.
-Domain locks expose `scope()` / `held()` built on them.
+The artifact manifest and the sql.js driver call them directly;
+`PluginSessionLock` re-exposes them as `scope()` / `held()`.
 
 - **Lock mechanism:** Atomic file creation (`fs.open(..., 'wx')`) on
   `.rundown/locks/<name>.lock`
@@ -128,165 +129,89 @@ Domain locks expose `scope()` / `held()` built on them.
 - **Release:** Best-effort and idempotent. A failed unlink only leaks a
   self-healing lock (reclaimed by the next acquirer via PID-aware stale
   detection) and is **never propagated** by the disposer, so it cannot mask the
-  committed outcome of the protected work. Never release a domain lock from a
-  bare `finally` — that is the RD-102 masking defect.
+  committed outcome of the protected work. Never release a lock from a bare
+  `finally` — that is the RD-102 masking defect.
 
-**Examples:** The artifact-manifest and sql.js durable-replacement locks use
-these primitives. **`CompletionLock` and `DelegationLock` are taken nowhere in
-production — not in core, not in the CLI.**
-`grep -rn "new DelegationLock(\|new CompletionLock(" packages/*/src/` returns
-nothing; re-run it rather than trusting this sentence. Both survive only as
-exported classes with no consumer outside tests — and the tests that name them
-assert they are _not_ acquired. That is unreferenced surface awaiting the phase
-that deletes the lock modules themselves, not a lock anything still takes.
+**Examples:** three consumers remain, and every one of them protects a
+file-backed artifact rather than run or session authority — the artifact
+manifest, the sql.js driver's durable-replacement cycle, and the plugin's
+`PluginSessionLock`. Do not add a fourth for run or session state: that belongs
+in a transaction or in the compare-and-swap. Note also that `acquireFileLock` is
+**not reentrant** — a second acquisition on the same call path blocks its own
+predecessor for the full 5s deadline and then times out, so a lock reached twice
+within one process is worse than no lock at all.
 
-The modules' survival is the **last remnant of a tracked deviation from the
-single-store plan**, which called for deleting all four core domain locks once
-the delegate/collect/abort workflows became transactional. `SessionLock` and
-`RunStateLock` went with the cutover; these two outlived it and have now lost
-every call site. #690 still owns deleting the modules and the
-`DELEGATION_LOCK_TIMEOUT` (RD-810) error surface that was minted to report their
-timeouts and now reports nothing. Until then: do not add new consumers of either
-lock, and do not read the surviving modules as licence to put new run or session
-state behind a file lock.
+**Writing a decision a concurrent writer could invalidate.** Derive it
+**inside** the `mutateState` build callback, so it is computed against the exact
+version the compare-and-swap commits onto and a loser re-derives against the
+committed row rather than overwriting it. Do not reach for a transaction instead
+— `SyncWork<T>` makes an async callback a compile error, and these spans await.
+This fold is what retired every run-state, completion, and delegation lock the
+codebase used to hold; four rules generalise from it.
 
-**When you retire one, this is the shape.** Six sites have gone: the two core
-completion recorders, the resolved-completion drain, the CLI's run-start
-`afterInit`, the CLI's inline launch, then the CLI's claim-and-launch. Each lock
-existed only to keep another writer out of the gap between a decision and the
-commit that depended on it, so the fix was moving the decision **inside** the
-`mutateState` build callback: it is then derived from the exact version the
-compare-and-swap commits onto, and a loser re-derives against the committed row
-rather than overwriting it. Do not reach for a transaction — `SyncWork<T>` makes
-an async callback a compile error, and these spans await.
+- **Fold the interface, not just the write.** A seam taking a caller-supplied
+  `currentState` is stale by construction, and the compare-and-swap does not
+  rescue it: it prevents the lost update while still applying a row selected
+  against one version to the cursor of another. `applyNextResolvedCompletion`
+  applies ONE completion and takes no `currentState`; the loop lives in the CLI,
+  which needs it anyway to observe each transition. A change that fixes the
+  write and leaves the parameter has kept the defect.
+- **Audit the callback for repeatability rather than assuming it.** It re-runs
+  once per attempt (up to 8) and must perform no external effect — filesystem
+  resolution, dynamic imports, run creation, and emitted warnings all stay
+  outside it, and the callback decides only. A clean audit is still a result
+  worth recording: the drain's reachable machine actors are effect-free for its
+  event apart from producer ARTIFACTS resolution, which is idempotent by
+  identity and already repeats on RETRY re-entry.
+- **Pick the builder the derivation needs.** An async derivation produces a
+  whole state and needs `RunbookStateManager.mutateStateReturning`; a
+  patch-shaped one uses `updateWithStateReturning` or `updateWithStateIfExists`,
+  whose `null` return on a missing run IS the pre-read existence guard.
+- **When the fold is unavailable, loop from outside** — and confirm it is
+  unavailable rather than assuming. If the derivation is async and the commit's
+  work is `SyncWork`, no callback can hold the span, so wrap capture → derive →
+  commit in a bounded re-derive loop paced by the store's exported
+  `DEFAULT_MUTATE_ATTEMPTS` / `mutateBackoffMs`, never a mirrored constant.
+  Retry only the ambiguous arm: a version mismatch carries no reason, which is
+  the point of re-deriving, while every permanent refusal stays permanent. Never
+  re-run the side effect the loop sits inside, and let an exhausted budget
+  report `concurrent_modification` rather than a cause it never observed.
 
-The drain went further than the recorders did, and that is the part worth
-copying. Folding its decision inward also removed the interface that made the
-gap expressible: `applyNextResolvedCompletion` applies ONE completion and takes
-no `currentState`, because a caller-supplied state is stale by construction at
-that seam. The loop moved out to the CLI, which needs it anyway to observe each
-transition. **A lock retirement that leaves a `currentState` parameter in place
-has fixed the write and kept the defect** — the old drain's compare-and-swap
-already prevented a lost update, and it still applied a row selected against one
-version to the cursor of another.
+**Exactly-once entry is a different shape from a read-derive-write gap.** Where
+the protected span cannot live inside a callback at all — a launch, a run
+creation — the replacement is an atomic **compare-and-latch**: a prior
+`mutateStateReturning` cycle whose callback decides the entire question against
+the version it commits onto (refuse, stand down, or win) and writes the durable
+"I own this" record in the same commit, with only the winner performing the
+span. Decide every refusal **ahead of** the latch write, or a refused attempt
+leaves a durable record of a start that never happened. Latching before the
+create does move one failure: a process that dies between them leaves the work
+latched with no child, and recovery is the sanctioned one (finish, stop, prune)
+rather than a duplicate `INSERT`.
 
-Two consequences of moving a derivation inside a `build` callback, both of which
-must be checked rather than assumed. It re-runs per attempt (up to 8), so it
-must be safe to repeat: the drain's reachable machine actors are effect-free for
-its event except for producer ARTIFACTS resolution, which is idempotent by
-identity and already repeats on RETRY re-entry. And an async derivation needs a
-whole-state builder, not a patch — `RunbookStateManager.mutateStateReturning` is
-that seam, alongside the patch-shaped `updateWithStateReturning`. A pure,
-synchronous derivation — `upsertSubstepState` at the run-start site — needs
-neither audit nor a builder: `updateWithStateIfExists` takes the patch, and its
-`null` return on a missing run is the pre-read existence guard. The audit can
-also come back clean, and saying so is part of it: the inline latch's
-`INLINE_CHILD_STARTED` is a root-level handler with no `target`, so the
-transition is internal — nothing is exited or entered, no `invoke` starts, and
-the drain's one effectful exception (entry-time producer ARTIFACTS resolution)
-is unreachable by construction rather than merely idempotent.
+**Three checks that are cheap to run and expensive to skip.**
 
-**A lock can fence a race the compare-and-swap does not, and then folding a
-derivation inward is not the fix.** The first four sites were read-derive-write
-gaps: the CAS already prevented the lost update, and the fold only removed the
-stale derivation. Inline launch was not one of those. Its intent names a FIXED
-child run id; `manager.create` for it reads-then-inserts against a bare
-`INSERT INTO runs`; so two observers of one intent race an untyped
-`SQLITE_CONSTRAINT` throw rather than a typed refusal. What that lock uniquely
-provided was **exactly-once launch**.
-
-The shape that replaces it is an atomic **compare-and-latch**: a separate, PRIOR
-`mutateStateReturning` cycle that decides the entire question against the
-version it commits onto — refuse, stand down, or win — and writes the durable "I
-own this launch" record in the same commit. Only the winner performs the span,
-and the span stays OUTSIDE the callback because it is precisely what a build
-callback may not contain: filesystem resolution, dynamic imports, emitted
-warnings, a run creation. Two rules the latch adds to the recipe:
-
-- **Decide every refusal ahead of the latch write.** A refused attempt must
-  leave no durable record of a start that never happened. Inline launch's
-  `inlineLaunchIntentActor` carries `startedAt` forward into the next intent it
-  prepares for the same substep, so a latch written before a refusal poisons
-  every later re-entry of that frame.
-- **Do not move the one-shot record the crash-replay path depends on.**
-  `INLINE_LAUNCH_CONSUMED` stays in `afterStarted` exactly because the intent
-  has to survive until the child exists to be re-observed and finished.
-
-Ordering the latch before the create does move one failure: a process that dies
-between them leaves the launch latched with no child, and a later observer
-reports `waiting` rather than relaunching. That is the sanctioned recovery
-(finish, stop, prune), and it is the price of not shipping a duplicate `INSERT`.
-
-**When the fold is unavailable, loop from outside — and check that it is
-unavailable rather than assuming it.** `claimChildForPipeline`'s initial link
-derives with `prepareDelegationChildLink` (async) and commits with
-`SessionService.claimAndInitialLink`, whose `mutateGuarded` work is `SyncWork`
-and spans two runs. No callback can hold that span, so the gap stays open by
-construction: capture at version _v_, derive against _v_, fence on _v_. The
-replacement is a bounded **re-derive loop** around capture → prepare → commit,
-paced by the store's own exported `DEFAULT_MUTATE_ATTEMPTS` / `mutateBackoffMs`
-rather than a mirrored constant. Three rules it adds:
-
-- **Retry only the ambiguous arm.** A bare version mismatch carries no reason
-  for the move, which is the whole point: re-deriving is what tells "someone
-  took this delegation, permanently" apart from "the parent happened to move".
-  Every preparation refusal is already permanent, so retrying one only delays
-  the same answer.
-- **Never re-run the side effect the loop sits inside.** The cycle re-runs
-  capture, derivation, and commit — never the child creation the caller already
-  performed. Repeating the derivation is safe for the same reason the inline
-  latch's is: `DELEGATION_CHILD_LINKED` is a root-level handler with no
-  `target`, so the transition is internal and no `invoke` starts.
-- **Exhausting the budget stays honest.** A spent budget is a genuine sustained
-  race and reports `concurrent_modification`; it must not be converted into a
-  permanent cause the loop never observed.
-
-A refusal decided this way has to name the run the fact is about, not the run
-the caller was working on. `already_linked` carries `occupyingChildRunId` — the
-child that holds the delegation — because on the fresh-launch path the rejected
-child is a run the claim's own cleanup is about to delete.
-
-**Do not assume the lock you are removing ever worked.** The run-start site held
-`DelegationLock` across a load-derive-write on the parent's `substepStates`, and
-lost updates the whole time: `substepStates` is a verbatim-replace field,
-`RunbookStateManager.update`'s build callback ignores the state the
-compare-and-swap captured, and `DelegationLock` excludes only other
-`DelegationLock` acquirers — while every writer that mutates a parent's substep
-rows (`delegate`, `pass`, `fail`, `goto`, `abort`) goes through the state
-machine and takes no lock at all. A sibling row committed inside that gap was
-overwritten by the pre-read array, lock held or not. So establish what a lock
-actually excludes before crediting it with an invariant; the fold is the fix
-either way, but "the lock was load-bearing" and "the lock was decoration over a
-live defect" are different changes, and only the second one is a user-visible
-bug fix. Check reentrancy too: `DelegationLock` has none, so at the
-inline-launch site a second observer reached from the SAME process blocked its
-own predecessor for the full 5s deadline and then failed RD-810 — the lock was
-load-bearing across processes and a self-deadlock within one.
-
-**The last site needed no replacement at all, and that is a shape too.**
-Claim-and-launch was a **pure deletion**: the acquisition, its RD-810 timeout
-arm, and its `afterStarted` release came out and nothing went in. The five
-earlier sites each swapped the lock for something; this one had nothing to swap,
-because separate commits ahead of it had already moved every refusal the lock
-stood in for into core's claim transaction. That is the order to work in — make
-each refusal transactional FIRST, one commit at a time, then delete the lock as
-a no-op. Two prerequisites are worth naming because either one, left undone,
-turns the deletion lossy:
-
-- **Feed the in-transaction classifier the input its contract needs, and let it
-  be the sole owner.** Liveness is decided against `linkage.parentStep`, the
-  DELEGATING step. Source that from a fresh read of the parent's cursor and the
-  comparison is self-fulfilling; the CLI's own pre-check must go in the same
-  breath, or two owners disagree.
-- **Check that every refusal the race now produces is spelled correctly, at
-  every seam it can surface through.** An occupied delegation is permanent, so
-  it must classify `already_linked` (no-retry), never `concurrent_modification`
-  ("Retry.") — a claim that can never succeed must not tell the caller to try
-  again. And a seam that wraps claim failures in a generic envelope will
-  re-label it: the fresh-launch `afterInit` handler turns a claim failure into
-  `CLAIM_INVARIANT_VIOLATED`, so every reason a CONCURRENT claimer can cause has
-  to be passed through as itself. Reserve RD-820 for failures about the child
-  this process just created, which no rival can explain.
+- **Establish what an exclusion actually excludes before crediting it with an
+  invariant.** The run-start delegation lock fenced a load-derive-write over the
+  parent's `substepStates` and lost updates the whole time, because it excluded
+  only other acquirers of itself while every writer of those rows (`delegate`,
+  `pass`, `fail`, `goto`, `abort`) went through the state machine and took no
+  lock at all. "It was load-bearing" and "it was decoration over a live defect"
+  need the same fix but are different changes — only the second is a
+  user-visible bug fix.
+- **Check what each refusal DEGRADES to, not only that correctness holds.**
+  Deleting an exclusion makes a formerly impossible race reachable, and the
+  refusal it produces has to be spelled correctly at every seam it surfaces
+  through: an occupied delegation is permanent, so it classifies
+  `already_linked` (no retry) and never `concurrent_modification` ("Retry.") — a
+  call that can never succeed must not tell the caller to try again. A wrapper
+  that folds failures into a generic envelope re-labels it, so pass every reason
+  a concurrent actor can cause through as itself. Move each refusal into the
+  transactional owner FIRST, one commit at a time; deleting the exclusion is
+  then a no-op rather than a lossy edit.
+- **"Stub it out and see what breaks" is a BLIND check** when every unit suite
+  mocks the module boundary you stubbed. Nothing fails, and nothing was tested.
+  Only a real multi-process test observes a genuine race.
 
 **For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock
 derived from `manifestPath(cwd)` + `.lock`.

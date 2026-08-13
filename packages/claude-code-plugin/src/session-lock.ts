@@ -44,8 +44,7 @@ export class PluginSessionLockTimeoutError extends FileLockTimeoutError {
  *
  * Lock path: `.claude/session/locks/state.lock`. The project root is
  * realpath-resolved so symlinked spellings of the same directory — e.g. macOS
- * `/var/folders` vs `/private/var/folders` — contend on one lock file, the same
- * rule core's remaining domain locks follow.
+ * `/var/folders` vs `/private/var/folders` — contend on one lock file.
  *
  * This lock guards the plugin's own `.claude/session` state and is unaffected by
  * the single-store cutover: core's `SessionLock` was deleted when run and

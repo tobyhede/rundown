@@ -965,14 +965,14 @@ Run, session, and claim authority live in **one SQLite database per project**,
 state file, no separate session file, and no file lock guarding run or session
 _authority_ — on the native multi-process path, concurrent CLI processes are
 serialised by transactions and execution leases alone. Two file locks do survive
-elsewhere, and neither is an authority mechanism: the sql.js driver takes an
+in core, and neither is an authority mechanism: the sql.js driver takes an
 advisory lock around its durable-replacement cycle, an implementation detail of
 that single-writer WebContainer adapter (see
 [§ Drivers](#drivers-two-implementations-one-atomicity-bar)), and the artifact
-manifest serialises its read-modify-append. `CompletionLock` and
-`DelegationLock` are taken nowhere at all — they survive only as unreferenced
-exported surface (see
-[§ Both domain locks are down to zero call sites](#both-domain-locks-are-down-to-zero-call-sites)).
+manifest serialises its read-modify-append. No domain lock remains — the four
+that once fenced run, session, completion, and delegation state are all deleted,
+and the patterns that replaced them are described in
+[§ Fencing concurrent writes without domain locks](#fencing-concurrent-writes-without-domain-locks).
 The one piece of run-adjacent state outside the database is **captured
 filesystem output**, which stays under `.rundown/runs/<run-id>/outputs/`
 (`outputsDirForRun`, `packages/core/src/runbook/output-channels.ts`) because it
@@ -1333,25 +1333,23 @@ By contrast, transaction contention on `mutateSession` and every other
 `BEGIN IMMEDIATE` write **does** block like the lock did, via
 `busy_timeout = 5000` inside SQLite plus the native driver's bounded retry.
 
-### Both domain locks are down to zero call sites
+### Fencing concurrent writes without domain locks
 
 The single-store plan called for deleting all four core domain locks once the
-delegate/collect/abort workflows became transactional. `SessionLock` and
-`RunStateLock` went with the cutover; **`CompletionLock` and `DelegationLock`
-outlived it and have since lost every call site**. Neither is taken anywhere in
-production — not in core, not in the CLI:
+delegate/collect/abort workflows became transactional, and all four are gone.
+`SessionLock` and `RunStateLock` went with the cutover; `CompletionLock` and
+`DelegationLock` followed, one call site at a time, and the
+`DELEGATION_LOCK_TIMEOUT` / RD-810 error surface minted to report their timeouts
+went with them:
 
 ```bash
-grep -rn "new DelegationLock(\|new CompletionLock(" packages/*/src/   # no matches
+grep -rn "DelegationLock\|CompletionLock\|RD-810" packages/*/src/   # no matches
 ```
 
-Re-run that rather than trusting this sentence. Both survive purely as exported
-classes — the modules, their re-exports from `runbook/index.ts`, and tests,
-several of which exist specifically to assert they are _not_ acquired. That is
-unreferenced surface awaiting the phase that deletes the lock modules
-themselves, not a lock anything still takes. #690 still owns deleting the
-modules and the `DELEGATION_LOCK_TIMEOUT` / RD-810 error surface that was minted
-to report their timeouts and now reports nothing.
+Six sites came out, in three shapes, and a fourth shape covers the writes where
+none of those three can apply. The shapes are the durable part of this section:
+a new concurrent write over run or session state faces the same four choices,
+and what follows is the worked example of each.
 
 The two core recorders — `recordManualCompletion` and `recordChildCompletion` —
 were the first to go, and how they went is the pattern for the rest.
@@ -1414,12 +1412,12 @@ synchronous, so the callback's per-attempt rerun is free rather than something
 to audit. And the lock **never prevented the lost update it appeared to fence**:
 `substepStates` is a verbatim-replace field, `RunbookStateManager.update`'s
 build callback ignores the state the compare-and-swap captured, and
-`DelegationLock` excludes only other `DelegationLock` acquirers — while every
+`DelegationLock` excluded only other `DelegationLock` acquirers — while every
 writer that mutates a parent's substep rows (`delegate`, `pass`, `fail`, `goto`,
 `abort`) goes through the state machine and takes no lock at all. A sibling
 substep row committed between the load and the write was therefore overwritten
-by the pre-read array, lock held or not. Removing the acquisition removes no
-exclusion the write depended on, and removes an RD-810 timeout from the launch
+by the pre-read array, lock held or not. Removing the acquisition removed no
+exclusion the write depended on, and removed an RD-810 timeout from the launch
 path.
 
 Inline launch in `services/execution.ts` was the fifth, and the first site whose
@@ -1458,9 +1456,11 @@ before the create means a process that dies between them leaves the intent
 latched with no child; a later observer reports `waiting` rather than launching,
 and the recovery is the sanctioned one — finish, stop, or prune. The previous
 ordering recovered that window automatically but paid for it with the duplicate
-`INSERT`. The lock itself was no better than it looks: it is not reentrant, so a
-second observer reached from the same process blocks its own predecessor for the
-full 5s deadline and then fails RD-810.
+`INSERT`. The lock itself was no better than it looks: `acquireFileLock` is not
+reentrant, so a second observer reached from the same process blocked its own
+predecessor for the full 5s deadline and then failed RD-810. That reentrancy
+trap belongs to the primitive, not to the deleted lock, so it still applies to
+the three file locks that survive.
 
 Claim-and-launch in `helpers/runbook-pipeline.ts` was the sixth and last, and it
 needed **no replacement at all**. The acquisition, its RD-810 timeout arm, and
@@ -1488,19 +1488,36 @@ prerequisites are worth naming because either one left undone makes it lossy:
   failures about the child this process just created, which no rival can
   explain.
 
-Until #690 closes — it also owns deleting the lock modules and the
-`DELEGATION_LOCK_TIMEOUT` / RD-810 error surface that outlives them — do not add
-consumers of either lock, and do not read the surviving modules as licence to
-put new run or session state behind a file lock. The remaining legitimate uses
-of `file-lock.ts` are the artifact manifest and the sql.js driver's own
-durable-replacement critical section.
+**The fourth shape is for when the fold is unavailable**, which has to be
+established rather than assumed. `claimChildForPipeline`'s initial link derives
+with `prepareDelegationChildLink` (async) and commits through
+`SessionService.claimAndInitialLink`, whose `mutateGuarded` work is `SyncWork`
+and spans two runs — so no build callback can hold that span, and the capture →
+derive → commit gap stays open by construction. `deriveAndCommitInitialLink`
+closes it from outside with a bounded re-derive loop, paced by the store's
+exported `DEFAULT_MUTATE_ATTEMPTS` / `mutateBackoffMs` rather than a mirrored
+constant. Only the commit's `concurrent_modification` is retried: every
+preparation refusal is already permanent, and re-deriving is exactly what tells
+"someone took this delegation" apart from "the parent happened to move". The
+cycle re-runs capture, preparation, and commit — never the child creation the
+caller already performed — and an exhausted budget reports
+`concurrent_modification` rather than a permanent cause it never observed. A
+refusal decided this way names the run the fact is about: `already_linked`
+carries `occupyingChildRunId`, because on the fresh-launch path the rejected
+child is a run the claim's own cleanup is about to delete.
 
-Where a lock is still held — which now means only those two — its release goes
+Do not read `file-lock.ts`'s survival as licence to put new run or session state
+behind a file lock. Its remaining legitimate uses are the artifact manifest and
+the sql.js driver's own durable-replacement critical section — plus the plugin's
+`PluginSessionLock`, which guards `.claude/session/state.json`, plugin state
+that was never part of the single store.
+
+Where a lock is still held — which now means only those three — its release goes
 through a `ScopedLock` and is best-effort and non-propagating (RD-102): a failed
 unlink leaks only a self-healing lock, reclaimed by the next acquirer via
 PID-aware stale detection, and must never replace the committed outcome of the
-work it protected. Releasing a domain lock from a bare `finally` is the RD-102
-masking defect.
+work it protected. Releasing a lock from a bare `finally` is the RD-102 masking
+defect.
 
 ---
 
