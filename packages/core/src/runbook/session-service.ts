@@ -1496,6 +1496,12 @@ export class SessionService {
    *
    * Read-only: no transaction (consistent with getActiveForClaimId).
    *
+   * The in-transaction half of this predicate is
+   * `RunbookStore.openDelegatedChildrenFor`, which selects the same claims from
+   * the `parent_run_id` column rather than the `delegation.parentRunId` filter
+   * below. Its docblock owns the argument for why the two halves of the row
+   * cannot name different parents; read it before changing either enumeration.
+   *
    * @param parentRunId - Parent runbook whose open claimed children should be listed
    * @returns Claim records for non-terminal children still linked to this parent
    *   whose delegated substep remains unresolved

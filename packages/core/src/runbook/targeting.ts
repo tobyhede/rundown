@@ -525,6 +525,11 @@ export function delegationAuthorityCoordinatesMatch(
  * The seventh, `childRunId`, is absent from `ParentLinkage` and needs no
  * comparison here: callers obtain the child through `claim.controlledRunId`, and
  * claim validation requires that id to equal `claim.delegation.childRunId`.
+ * "Claim validation" is two gates, not one — `ClaimRecordSchema`'s refinement
+ * covers a record built in memory, and `assertClaimColumnsMirrorDelegation`
+ * covers one hydrated from SQLite, where that refinement is not applied. The
+ * second was added by #755; before it, the sentence above held for every claim
+ * this codebase mints and for none it reads back.
  *
  * @param linkage - Parent linkage stored on the child runbook state (any kind, including absent).
  * @param claim - Claim record whose six shared delegation coordinates must all match.
