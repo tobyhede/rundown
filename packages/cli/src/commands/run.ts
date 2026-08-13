@@ -11,6 +11,7 @@ import {
   getErrorMessage,
   deriveActiveFrame,
   buildFrameKey,
+  type FrameKey,
   findSubstepState,
   upsertSubstepState,
   buildContextSnapshot,
@@ -167,6 +168,7 @@ export function registerRunCommand(program: Command): void {
             let parentState: RunbookState | undefined;
 
             let linkageIteration: number | undefined;
+            let orderedSubstepIds: readonly string[] = [];
 
             if (options.step && !options.prompted) {
               const linkageResult = await buildInlineLinkage(
@@ -179,6 +181,7 @@ export function registerRunCommand(program: Command): void {
               parentLinkage = linkageResult.linkage;
               parentState = linkageResult.parentState;
               linkageIteration = linkageResult.explicitIteration;
+              orderedSubstepIds = linkageResult.orderedSubstepIds;
             }
 
             // Build inherited vars from parent state (mirrors claimAndLaunch)
@@ -220,8 +223,16 @@ export function registerRunCommand(program: Command): void {
 
             // Build afterInit callback outside the startRunbook call for clean captures
             let afterInit: ((stateId: string) => Promise<void>) | undefined;
+            // Set only by the CAS below, and only on the arm that wrote nothing.
+            // It turns the generic launch-failed envelope the thrown error would
+            // otherwise produce into the permanent refusal this actually is. A
+            // mutable holder rather than a bare `let`: the write happens inside
+            // the `afterInit` closure, which control-flow analysis does not track,
+            // so a plain boolean reads as permanently `false` at the check.
+            const inlineLaunchRefusal: { message: string | null } = { message: null };
             if (parentLinkage && parentState) {
               const link = parentLinkage;
+              const targetSubstepIds = orderedSubstepIds;
               afterInit = async (_stateId) => {
                 // Derive the row INSIDE the compare-and-swap. `substepStates` is
                 // a verbatim-replace field, so a patch derived from a state read
@@ -239,14 +250,48 @@ export function registerRunCommand(program: Command): void {
                 //
                 // A missing parent resolves to `null` and writes nothing, which
                 // is the same "nothing to do" outcome the pre-read guard had.
-                await manager.updateWithStateIfExists(link.parentRunId, (current) => ({
-                  substepStates: upsertSubstepState(
-                    current.substepStates ?? [],
-                    link.parentStepId,
-                    link.parentFrameKey,
-                    { status: 'running' as const },
-                  ),
-                }));
+                //
+                // The "already resolved" decision is derived here too, not just
+                // read before the launch. `buildInlineLinkage` decides it against
+                // a state captured before the runbook is prepared and the child
+                // run is created, and a `pass`/`fail`/`goto`/`abort` committed in
+                // that window would otherwise be overwritten: `upsertSubstepState`
+                // MERGES its patch, so `{status:'done', result:'pass'}` becomes
+                // `{status:'running', result:'pass'}`. That row is not cosmetic —
+                // once a resolved completion has been drained it is the only
+                // persistent duplicate evidence `isDuplicateChildCompletion` has,
+                // so reverting it lets the substep resolve a second time.
+                const { value } = await manager.updateWithStateReturning(
+                  link.parentRunId,
+                  (current) =>
+                    inlineTargetAlreadyResolved(
+                      current,
+                      link.parentStepId,
+                      link.parentFrameKey,
+                      targetSubstepIds,
+                    )
+                      ? { updates: null, value: 'already-resolved' as const }
+                      : {
+                          updates: {
+                            substepStates: upsertSubstepState(
+                              current.substepStates ?? [],
+                              link.parentStepId,
+                              link.parentFrameKey,
+                              { status: 'running' as const },
+                            ),
+                          },
+                          value: 'marked' as const,
+                        },
+                );
+                if (value === 'already-resolved') {
+                  // Nothing was written. Throwing routes through the launch's
+                  // rollback, which deletes the child run created moments ago;
+                  // session activation happens after `afterInit`, so there is no
+                  // session entry to leak.
+                  const message = `Substep ${link.parentStepId} is already resolved`;
+                  inlineLaunchRefusal.message = message;
+                  throw new Error(message);
+                }
               };
             }
 
@@ -258,7 +303,12 @@ export function registerRunCommand(program: Command): void {
             });
 
             if (!result.ok) {
-              if (result.reason === 'session-refused') {
+              // Checked ahead of the generic envelope: this refusal is permanent
+              // and has its own code, and reporting it as LAUNCH_FAILED would
+              // invite a retry that can never succeed.
+              if (inlineLaunchRefusal.message !== null) {
+                output.error(inlineLaunchRefusal.message, 'DELEGATION_ALREADY_RESOLVED');
+              } else if (result.reason === 'session-refused') {
                 renderSessionMutationRefusal(output, result.refusal);
               } else {
                 output.error(result.error, result.code, result.details);
@@ -409,6 +459,48 @@ export function textModeAgentAdvisory(
 }
 
 /**
+ * Decide whether an inline launch's target substep is already resolved.
+ *
+ * Two independent ways a substep is spent, and both must be checked:
+ *
+ * 1. Its row is `done` — a completion was recorded against it.
+ * 2. The parent cursor has advanced past it. Drain consumes the resolved
+ *    completion and advances the cursor WITHOUT marking the row `done`, so (1)
+ *    does not catch it. Only meaningful on the active frame: `state.substep` is
+ *    the current iteration's cursor, not the target iteration's.
+ *
+ * Pure and synchronous by construction, because it is evaluated in two places
+ * that impose different constraints: once as the caller-facing pre-read refusal,
+ * and again inside the `afterInit` compare-and-swap, which may re-run its build
+ * callback up to eight times and must therefore have no external effect.
+ *
+ * @param state - Parent state to decide against — the pre-read copy at the guard,
+ *   the CAS's captured version inside the callback
+ * @param substepId - Target substep id within the frame
+ * @param frameKey - Frame the target substep belongs to
+ * @param orderedSubstepIds - Substep ids of the target step in document order;
+ *   empty when the step has no substeps, which disables the cursor check
+ * @returns Whether the substep is already resolved and must not be re-entered
+ */
+function inlineTargetAlreadyResolved(
+  state: RunbookState,
+  substepId: string,
+  frameKey: FrameKey,
+  orderedSubstepIds: readonly string[],
+): boolean {
+  if (findSubstepState(state.substepStates ?? [], substepId, frameKey)?.status === 'done') {
+    return true;
+  }
+  if (frameKey !== state.activeFrameKey || !state.substep || orderedSubstepIds.length === 0) {
+    return false;
+  }
+  const cursorIndex = orderedSubstepIds.indexOf(state.substep);
+  const targetIndex = orderedSubstepIds.indexOf(substepId);
+  // If either ID is not found (-1), skip — state may be corrupt or mid-transition.
+  return cursorIndex !== -1 && targetIndex !== -1 && cursorIndex > targetIndex;
+}
+
+/**
  * Build inline linkage for `rd run --step` substep targeting.
  *
  * Validates the active parent runbook has the target substep at the execution
@@ -427,7 +519,12 @@ async function buildInlineLinkage(
   output: OutputEmitter,
   stepId: string,
   indexOption?: string,
-): Promise<{ linkage: InlineLinkage; parentState: RunbookState; explicitIteration?: number }> {
+): Promise<{
+  linkage: InlineLinkage;
+  parentState: RunbookState;
+  explicitIteration?: number;
+  orderedSubstepIds: readonly string[];
+}> {
   // 1. Load active parent
   const parentState = await sessionService.getActive();
   if (!parentState) {
@@ -508,32 +605,12 @@ async function buildInlineLinkage(
       : (parentState.activeFrameKey ?? deriveActiveFrame(parentState).frameKey);
 
   // 7. Check substep not already resolved
+  const orderedSubstepIds = resolvedStepHasSubsteps(step) ? step.substeps.map((ss) => ss.id) : [];
   const existingSubstep = findSubstepState(parentState.substepStates ?? [], substepId, frameKey);
-  if (existingSubstep?.status === 'done') {
+  if (inlineTargetAlreadyResolved(parentState, substepId, frameKey, orderedSubstepIds)) {
     output.error(`Substep ${substepId} is already resolved`, 'DELEGATION_ALREADY_RESOLVED');
     output.flush();
     process.exit(1);
-  }
-
-  // Also check if the parent cursor has advanced past this substep (completion was drained).
-  // Drain consumes the resolved completion and advances the cursor without marking
-  // substepStates[].status as 'done', so the check above doesn't catch it.
-  // Only applies to the active frame — parentState.substep reflects the current iteration's
-  // cursor, not the target iteration, so this check is invalid for non-active frames.
-  if (
-    frameKey === parentState.activeFrameKey &&
-    parentState.substep &&
-    resolvedStepHasSubsteps(step)
-  ) {
-    const orderedIds = step.substeps.map((ss) => ss.id);
-    const cursorIndex = orderedIds.indexOf(parentState.substep);
-    const targetIndex = orderedIds.indexOf(substepId);
-    // If either ID is not found (-1), skip — state may be corrupt or mid-transition.
-    if (cursorIndex !== -1 && targetIndex !== -1 && cursorIndex > targetIndex) {
-      output.error(`Substep ${substepId} is already resolved`, 'DELEGATION_ALREADY_RESOLVED');
-      output.flush();
-      process.exit(1);
-    }
   }
 
   // 8. Check no active delegation on substep
@@ -557,5 +634,8 @@ async function buildInlineLinkage(
     parentEntry: inferFrameEntryFromState(parentState, frameKey),
   };
 
-  return { linkage, parentState, explicitIteration };
+  // Carried out so the `afterInit` CAS callback can re-decide the cursor half of
+  // `inlineTargetAlreadyResolved` without re-parsing the parent runbook — the
+  // callback must stay pure across its retries.
+  return { linkage, parentState, explicitIteration, orderedSubstepIds };
 }

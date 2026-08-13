@@ -685,9 +685,13 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       // The hook sits on the manager's WRITE seam, not its read seam: a read
       // seam only exists while the derivation is outside the compare-and-swap,
       // so hooking it would make this test vacuous the moment the derivation
-      // moves inside. Both the patch-shaped `update` and the
-      // derive-inside-the-CAS `updateWithStateIfExists` are wrapped, so the
-      // sibling row lands immediately before the commit either way.
+      // moves inside. Every builder the launch could use is wrapped — the
+      // patch-shaped `update`, and the two derive-inside-the-CAS forms
+      // `updateWithStateIfExists` and `updateWithStateReturning` — so the sibling
+      // row lands immediately before the commit whichever one the launch picks.
+      // `injected` below is what keeps that list honest: swapping the launch to a
+      // builder that is not wrapped here fails the test rather than silently
+      // making it vacuous.
       let injected = false;
       const injectSiblingSubstepWrite = async (): Promise<void> => {
         if (injected) return;
@@ -707,6 +711,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       /* eslint-disable @typescript-eslint/unbound-method -- captured to re-apply with the spy's `this` */
       const realUpdate = RunbookStateManager.prototype.update;
       const realUpdateWithStateIfExists = RunbookStateManager.prototype.updateWithStateIfExists;
+      const realUpdateWithStateReturning = RunbookStateManager.prototype.updateWithStateReturning;
       /* eslint-enable @typescript-eslint/unbound-method */
       jest.spyOn(RunbookStateManager.prototype, 'update').mockImplementation(async function (
         this: RunbookStateManager,
@@ -720,6 +725,12 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
         .mockImplementation(async function (this: RunbookStateManager, ...args) {
           if (args[0] === parentRunId) await injectSiblingSubstepWrite();
           return await realUpdateWithStateIfExists.apply(this, args);
+        });
+      jest
+        .spyOn(RunbookStateManager.prototype, 'updateWithStateReturning')
+        .mockImplementation(async function (this: RunbookStateManager, ...args) {
+          if (args[0] === parentRunId) await injectSiblingSubstepWrite();
+          return await realUpdateWithStateReturning.apply(this, args);
         });
 
       const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
@@ -735,6 +746,62 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       // ...and it does not carry a pre-read snapshot of the array over the top
       // of the sibling row that committed in between.
       expect(substeps.find((s) => s.id === '2')?.status).toBe('running');
+    });
+
+    it('refuses the launch when the TARGET substep resolves inside the same window', async () => {
+      // The sibling case above is the lost-update half. This is the other half:
+      // the writer lands on the substep the launch is targeting. The refusal for
+      // that is decided in `buildInlineLinkage`, long before the child run is
+      // created, so acting on it at `afterInit` time means re-deciding it against
+      // the version the write commits onto — otherwise `upsertSubstepState`
+      // MERGES `{status:'running'}` onto the committed `{status:'done', result}`
+      // and erases the resolution while keeping the result.
+      //
+      // An integration-level version of this lives in inline-linkage.test.ts, but
+      // the Stryker sandbox excludes `integration`, so this sibling-visible copy
+      // is what actually pins the branch under mutation.
+      const parentRunId = await startSubstepParent();
+      await writePassingChild();
+
+      let injected = false;
+      const injectTargetResolution = async (): Promise<void> => {
+        if (injected) return;
+        injected = true;
+        const sideband = new RunbookStateManager(workspace.cwd);
+        await sideband.updateWithState(parentRunId, (current) => ({
+          substepStates: upsertSubstepState(
+            current.substepStates ?? [],
+            '1',
+            current.activeFrameKey ?? deriveActiveFrame(current).frameKey,
+            { status: 'done' as const, result: 'pass' as const },
+          ),
+        }));
+      };
+
+      /* eslint-disable-next-line @typescript-eslint/unbound-method -- captured to re-apply with the spy's `this` */
+      const realUpdateWithStateReturning = RunbookStateManager.prototype.updateWithStateReturning;
+      jest
+        .spyOn(RunbookStateManager.prototype, 'updateWithStateReturning')
+        .mockImplementation(async function (this: RunbookStateManager, ...args) {
+          if (args[0] === parentRunId) await injectTargetResolution();
+          return await realUpdateWithStateReturning.apply(this, args);
+        });
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(injected).toBe(true);
+
+      // Permanent refusal with its own code — not the generic LAUNCH_FAILED a
+      // thrown `afterInit` would otherwise produce, which reads as retryable.
+      expect(result.exitCode).toBe(1);
+      const refusal = result.stdout + result.stderr;
+      expect(refusal).toContain('already resolved');
+      expect(refusal).toContain('DELEGATION_ALREADY_RESOLVED');
+
+      // The concurrent writer's resolution survives verbatim.
+      const parent = await readRunbookState(workspace, parentRunId);
+      const target = (parent!.substepStates ?? []).find((s) => s.id === '1');
+      expect(target?.status).toBe('done');
+      expect(target?.result).toBe('pass');
     });
   });
 
