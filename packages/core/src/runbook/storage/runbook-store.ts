@@ -222,6 +222,33 @@ export class StoreInvariantError extends Error {
 }
 
 /**
+ * Raised when a persisted claim row's mirrored run-id columns disagree with the
+ * delegation descriptor beside them — a database corrupted outside this store.
+ *
+ * Typed rather than bare because the failure escapes on a READ, and one consumer
+ * (`rdpath`, a hook binary) degrades to "no active context" on an unreadable
+ * session instead of exiting non-zero. It classifies with `instanceof` against
+ * core's exports, so an untyped throw here is invisible to it; the same
+ * reasoning already made `NativeSqliteUnavailableError` public.
+ *
+ * Scope is exactly the mirror check. `deserializeClaim`'s other persisted-edge
+ * refusals — a malformed lookup key, secret hash, grants blob, or delegation
+ * linkage — still throw bare `Error`s and are still unclassified by that
+ * consumer. That gap predates this class and is not narrowed by it.
+ */
+export class InvalidPersistedClaimError extends Error {
+  /**
+   * Construct an invalid-persisted-claim error.
+   *
+   * @param message - Human-readable description of the disagreement.
+   */
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidPersistedClaimError';
+  }
+}
+
+/**
  * Build the execution-ownership refusal for a session mutation.
  *
  * One wording for one condition: the preflight arm and the normalized
@@ -1007,6 +1034,10 @@ export class RunbookStore {
    * Load the project session (default stack, stash slot, claims).
    *
    * @returns The reconstructed session data.
+   * @throws {Error} When any active claim row is malformed at the persisted edge
+   *   — see {@link RunbookStore.readSession}.
+   * @throws {InvalidPersistedClaimError} When one's mirrored run-id columns
+   *   disagree with its delegation descriptor.
    */
   loadSession(): Promise<SessionData> {
     return this.driver.read((tx) => this.readSession(tx));
@@ -2066,14 +2097,35 @@ export class RunbookStore {
    * A claim is open only when the child state exists, is non-terminal, still
    * has delegation linkage matching the claim, AND the parent's corresponding
    * delegated substep is not yet `done`. Mirrors
-   * {@link SessionService.listOpenClaimsForParent} exactly, but as synchronous
+   * {@link SessionService.listOpenClaimsForParent}, but as synchronous
    * in-transaction SQL so the result is atomic with the decisive write that
    * follows in the same transaction — the whole point of the guard.
+   *
+   * THE TWO ENUMERATE FROM DIFFERENT HALVES OF THE ROW, and only one thing makes
+   * that a mirror rather than a coincidence. This one selects on the
+   * `parent_run_id` COLUMN; the session-service one filters `active` claims on
+   * `delegation.parentRunId`, the DESCRIPTOR. They pick the same rows because
+   * {@link assertClaimColumnsMirrorDelegation} refuses any row whose column and
+   * descriptor name different parents — the cross-check #755 asked for, applied
+   * at every reader of these rows, this one and
+   * {@link RunbookStore.invalidateClosedDelegatedClaims} included. Selecting on
+   * the descriptor here instead would cost the `claims_parent_run` index and buy
+   * nothing the invariant does not already give.
+   *
+   * The invariant is one-sided, and the remaining side is unobservable rather
+   * than closed: `ON DELETE SET NULL` can null the column while the descriptor
+   * still names the parent, and a nulled column matches no `parentRunId` here
+   * while the descriptor filter still would. It nulls only when the parent run
+   * ROW IS DELETED, and both callers name a parent they have loaded — this one
+   * the run its own transaction is about to update. A parent that does not exist
+   * is not a parent anything can advance.
    *
    * @param tx - Open write transaction (pre-UPDATE).
    * @param parentRunId - The advancing parent run.
    * @returns Claim records for non-terminal children still linked to this parent
    *   whose delegated substep remains unresolved.
+   * @throws {InvalidPersistedClaimError} When a claim row's mirrored run-id
+   *   columns disagree with its delegation descriptor, aborting the transaction.
    * @throws {LegacySnapshotError | InvalidRunbookStateError} When the parent, or
    *   any delegated child of it, is persisted in a shape the loader refuses —
    *   see the note at the child read below.
@@ -2150,6 +2202,8 @@ export class RunbookStore {
    * @returns The keys of the claims superseded by this call.
    * @throws {Error} When an active delegated claim carries no persisted
    *   delegation linkage (invalid state), aborting the transaction.
+   * @throws {InvalidPersistedClaimError} When one carries a linkage whose run
+   *   ids disagree with its mirrored columns, aborting the transaction.
    */
   private invalidateClosedDelegatedClaims(
     tx: SqlTransaction,
@@ -2158,6 +2212,8 @@ export class RunbookStore {
     const rows = tx
       .prepare(
         `SELECT claims.key AS key,
+                claims.controlled_run AS controlled_run,
+                claims.parent_run_id AS parent_run_id,
                 claims.delegation_json AS delegation_json,
                 runs.lifecycle AS controlled_lifecycle,
                 runs.exec_token AS controlled_exec_token
@@ -2167,6 +2223,8 @@ export class RunbookStore {
       )
       .all<{
         readonly key: string;
+        readonly controlled_run: string;
+        readonly parent_run_id: string | null;
         readonly delegation_json: string | null;
         readonly controlled_lifecycle: string;
         readonly controlled_exec_token: string | null;
@@ -2208,6 +2266,14 @@ export class RunbookStore {
       // Validated, not cast: a malformed linkage must abort like every other
       // raw row at this edge, not reach the classifier as a shape-checked lie.
       const linkage = deserializeDelegation(row.delegation_json);
+      // The THIRD reader of these rows, and the one that writes. It selects by
+      // the `parent_run_id` column but classifies the DESCRIPTOR, so a row whose
+      // two halves name different parents would have this parent's committed
+      // state decide the liveness of a delegation belonging to another — and
+      // tombstone the child's claim on the strength of it, stripping a bearer's
+      // authority. Unlike the enumerations, this runs on EVERY authoritative
+      // write, guarded or not, so it cannot lean on the guard having looked.
+      assertClaimColumnsMirrorDelegation(row, linkage);
       const liveness = classifyDelegationLiveness(parent, linkage);
       if (liveness.kind === 'closed') {
         update.run({ key });
@@ -2391,8 +2457,18 @@ export class RunbookStore {
   /**
    * Read and reconstruct the session data.
    *
+   * The claims this returns get NO schema pass. `RunbookStateManager.loadSession`
+   * adds one (`SessionDataSchema`), but the store's own `loadSession` and the
+   * in-transaction reads behind `mutateSession` return this output directly, so
+   * every claim invariant a caller may rely on has to hold at this edge —
+   * see {@link assertClaimColumnsMirrorDelegation}.
+   *
    * @param tx - Open transaction.
    * @returns The session data.
+   * @throws {Error} When an active claim row carries a malformed key, secret
+   *   hash, run id, grants blob, or delegation linkage.
+   * @throws {InvalidPersistedClaimError} When one carries a linkage whose run
+   *   ids disagree with its mirrored columns.
    */
   private readSession(tx: SqlReadTransaction): SessionData {
     const claims: Record<string, ClaimRecord> = {};
@@ -2536,10 +2612,80 @@ function deserializeDelegation(json: string): DelegationClaimLinkage {
 }
 
 /**
+ * Assert that a delegated claim row's mirrored columns agree with the run ids
+ * inside its delegation descriptor.
+ *
+ * `insertClaim` derives `controlled_run` and `parent_run_id` from the same
+ * `ClaimRecord` it serialises into `delegation_json`, and no UPDATE touches any
+ * of the three, so the halves agree by construction — but only for rows this
+ * store wrote. Nothing re-checked them on the way back out, and the two mirrors
+ * that enumerate a parent's open delegated children read DIFFERENT halves:
+ * {@link RunbookStore.openDelegatedChildrenFor} selects on `parent_run_id`,
+ * {@link SessionService.listOpenClaimsForParent} filters on
+ * `delegation.parentRunId`. Under a hand-edited blob they would hold different
+ * parents, and the in-transaction guard and the pre-check would disagree about
+ * whether a given parent may advance (#755).
+ *
+ * The child half is not redundant with `ClaimRecordSchema`'s
+ * `childRunId === controlledRunId` refinement, though it overlaps it.
+ * `RunbookStateManager.loadSession` parses `SessionDataSchema` over whatever
+ * this store hands back, so a claim read THROUGH THE MANAGER was always covered.
+ * A claim read straight off the store was not: `RunbookStore.loadSession`,
+ * `loadClaim`, and the in-transaction `readSession` behind `mutateSession` all
+ * return `deserializeClaim` output with no schema pass, and it is those callers
+ * — including every guard that runs inside a write transaction — that
+ * `linkageMatchesClaim` is speaking for when it skips `childRunId` on the
+ * grounds that "claim validation requires that id to equal
+ * `claim.delegation.childRunId`".
+ *
+ * A NULL `parent_run_id` beside a descriptor that names a parent is NOT
+ * corruption: `claims.parent_run_id` is `REFERENCES runs(id) ON DELETE SET
+ * NULL`, so pruning a parent nulls the column on every claim that named it
+ * while the descriptor keeps its copy. Rejecting that would make one `rd prune`
+ * poison every later session read. It is also the one asymmetry the cross-check
+ * cannot close — see {@link RunbookStore.openDelegatedChildrenFor} for why no
+ * caller can observe it.
+ *
+ * The child half also decides which error a `childRunId` drift produces.
+ * Before this check it reached `SessionDataSchema` through
+ * `RunbookStateManager.loadSession` and surfaced as that layer's classified
+ * "finish or prune" message; now it aborts here first. Hence
+ * {@link InvalidPersistedClaimError} rather than a bare throw — see its
+ * docblock for the consumer that stops degrading gracefully otherwise.
+ *
+ * @param row - The claim row's mirrored columns, the assertion's left-hand side.
+ * @param delegation - Delegation linkage already hydrated from `delegation_json`.
+ * @throws {InvalidPersistedClaimError} When a column and the descriptor name
+ *   different runs (inconsistent database).
+ */
+function assertClaimColumnsMirrorDelegation(
+  row: Pick<ClaimRow, 'key' | 'controlled_run' | 'parent_run_id'>,
+  delegation: DelegationClaimLinkage,
+): void {
+  if (delegation.childRunId !== row.controlled_run) {
+    throw new InvalidPersistedClaimError(
+      `Invalid persisted claim ${row.key}: controlled_run ${row.controlled_run} does not match ` +
+        `child ${delegation.childRunId} in its delegation linkage; ` +
+        `the runbook database is inconsistent.`,
+    );
+  }
+  if (row.parent_run_id !== null && row.parent_run_id !== delegation.parentRunId) {
+    throw new InvalidPersistedClaimError(
+      `Invalid persisted claim ${row.key}: parent_run_id ${row.parent_run_id} does not match ` +
+        `parent ${delegation.parentRunId} in its delegation linkage; ` +
+        `the runbook database is inconsistent.`,
+    );
+  }
+}
+
+/**
  * Reconstruct a claim record from its row.
  *
  * @param row - Raw claim row.
  * @returns The claim record.
+ * @throws {InvalidPersistedClaimError} When the row's mirrored run-id columns
+ *   disagree with its delegation descriptor — see
+ *   {@link assertClaimColumnsMirrorDelegation}.
  */
 function deserializeClaim(row: ClaimRow): ClaimRecord {
   const grants = GrantsSchema.parse(
@@ -2547,6 +2693,9 @@ function deserializeClaim(row: ClaimRow): ClaimRecord {
   ) as unknown as ClaimRecord['grants'];
   const delegation =
     row.delegation_json !== null ? deserializeDelegation(row.delegation_json) : undefined;
+  if (delegation) {
+    assertClaimColumnsMirrorDelegation(row, delegation);
+  }
   return {
     claimKey: assertClaimLookupKey(row.key),
     secretHash: assertClaimSecretHash(row.secret_hash),

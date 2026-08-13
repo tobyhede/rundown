@@ -10,6 +10,7 @@ import {
   selectCommitRow,
   assertExactlyOneRow,
   assertExecutionPhase,
+  InvalidPersistedClaimError,
   isOpenDelegatedChildrenError,
   parentAdvanceGuard,
   StoreInvariantError,
@@ -2408,6 +2409,93 @@ describe('session reconstruction', () => {
     const session = await store.loadSession();
     const claimKey = assertClaimLookupKey(`rdclk_${'ea'.repeat(16)}`);
     expect(session.claims[claimKey].delegation?.parentFrameKey).toBe('2|12');
+  });
+
+  it('refuses to hydrate a claim whose delegation names a parent the column does not', async () => {
+    // #755. The two open-claim enumerations read the linkage from different
+    // places: `RunbookStore.openDelegatedChildrenFor` selects on the
+    // `parent_run_id` COLUMN, `SessionService.listOpenClaimsForParent` filters on
+    // the `delegation_json` DESCRIPTOR. `insertClaim` derives the column from the
+    // descriptor, so they agree by construction — but nothing re-checked that
+    // afterwards, and under a hand-edited blob the two would hold DIFFERENT
+    // parents: the in-transaction guard and the pre-check would then disagree
+    // about whether a given parent may advance.
+    const otherParent = assertRunId(`rd_${'9'.repeat(32)}`);
+    await corruptDelegationBlob('ec'.repeat(16), { parentRunId: otherParent });
+    // Typed, and named: `rdpath` degrades instead of exiting non-zero on a
+    // session it cannot read, and it classifies by `instanceof` against this
+    // export. A bare throw here is invisible to that guard.
+    const thrown: unknown = await store.loadSession().then(
+      () => undefined,
+      (reason: unknown) => reason,
+    );
+    expect(thrown).toBeInstanceOf(InvalidPersistedClaimError);
+    expect((thrown as Error).name).toBe('InvalidPersistedClaimError');
+    // The whole message, suffix included: naming the inconsistency as the
+    // DATABASE's is what tells the operator this is a prune-and-restart, not a
+    // command they mistyped.
+    await expect(store.loadSession()).rejects.toThrow(
+      new RegExp(
+        `^Invalid persisted claim rdclk_${'ec'.repeat(16)}: parent_run_id rd_[0-9a-f]{32} ` +
+          `does not match parent ${otherParent} in its delegation linkage; ` +
+          `the runbook database is inconsistent\\.$`,
+      ),
+    );
+  });
+
+  it('refuses to hydrate a claim whose delegation names a child the column does not', async () => {
+    // The same mirror on the other column. `linkageMatchesClaim` documents that
+    // it need not compare `childRunId` because "claim validation requires that id
+    // to equal `claim.delegation.childRunId`" — validation this read path did not
+    // perform, so a drifted blob handed every caller a claim whose
+    // `controlledRunId` named one run and whose descriptor named another.
+    const otherChild = assertRunId(`rd_${'8'.repeat(32)}`);
+    await corruptDelegationBlob('ed'.repeat(16), { childRunId: otherChild });
+    await expect(store.loadSession()).rejects.toThrow(
+      new RegExp(
+        `^Invalid persisted claim rdclk_${'ed'.repeat(16)}: controlled_run rd_[0-9a-f]{32} ` +
+          `does not match child ${otherChild} in its delegation linkage; ` +
+          `the runbook database is inconsistent\\.$`,
+      ),
+    );
+  });
+
+  it('hydrates a delegated claim whose parent column was nulled by the parent going away', async () => {
+    // `claims.parent_run_id` is `REFERENCES runs(id) ON DELETE SET NULL`, so
+    // pruning the parent nulls the column while the descriptor keeps naming it.
+    // That is the FK doing its job, not corruption — the cross-check above must
+    // not turn a pruned parent into a session that can no longer be read at all.
+    const parent = await newState();
+    const child = await newState();
+    await store.createRun(parent);
+    await store.createRun(child);
+    const claimKey = assertClaimLookupKey(`rdclk_${'ee'.repeat(16)}`);
+    const delegation = {
+      childRunId: child.id,
+      parentRunId: parent.id,
+      tokenHash: assertDelegationTokenHash(`sha256:${'d'.repeat(64)}`),
+      parentStepId: '2',
+      parentStep: '2',
+      parentFrameKey: buildFrameKey('2'),
+      parentEntry: 1,
+    };
+    await store.transaction((txn) => {
+      txn.insertClaim(
+        makeClaimRecord({ claimKey, controlledRunId: child.id, delegation }),
+        assertClaimGeneration(0),
+      );
+    });
+
+    await store.deleteRun(parent.id);
+
+    const nulled = await store.read((txn) =>
+      txn.tx
+        .prepare('SELECT parent_run_id FROM claims WHERE key = :key')
+        .get<{ readonly parent_run_id: string | null }>({ key: claimKey }),
+    );
+    expect(nulled).toEqual({ parent_run_id: null });
+    const session = await store.loadSession();
+    expect(session.claims[claimKey].delegation).toEqual(delegation);
   });
 });
 

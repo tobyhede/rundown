@@ -275,6 +275,116 @@ describe.each(RUNTIMES)('guarded parent advance (%s)', (runtime) => {
     expect(await store.readRunJson(parent.id)).toEqual(before); // write rolled back
   });
 
+  it('aborts a guarded write when the claim column and its delegation name different parents', async () => {
+    // #755. This guard enumerates by the `parent_run_id` COLUMN;
+    // `SessionService.listOpenClaimsForParent`, which its docblock says it
+    // mirrors, enumerates by the `delegation_json` DESCRIPTOR. Drift the two
+    // apart and the mirror breaks in the most consequential direction: this
+    // parent's column still names it, so the guard would evaluate a delegation
+    // the pre-check attributes to a different parent entirely.
+    //
+    // Only a hand-edited row reaches the state — `insertClaim` writes both from
+    // one value — so the row is patched rather than minted, and the store now
+    // refuses it at the read path instead of quietly enumerating a claim whose
+    // two halves disagree.
+    const parent = await seedRun(store, {
+      substepStates: [{ id: PARENT_STEP_ID, frameKey: PARENT_FRAME, status: 'pending' }],
+    });
+    const otherParent = await seedRun(store, {});
+    const child = await seedRun(store, { parentLinkage: delegationLinkage(parent.id) });
+    await insertActiveDelegatedClaim(store, { parentRunId: parent.id, controlledRunId: child.id });
+    await store.transaction((txn) => {
+      txn.tx.prepare('UPDATE claims SET delegation_json = :json WHERE key = :key').run({
+        json: JSON.stringify({
+          childRunId: child.id,
+          parentRunId: otherParent.id,
+          parentStepId: PARENT_STEP_ID,
+          parentStep: '1',
+          parentFrameKey: PARENT_FRAME,
+          parentEntry: 1,
+          tokenHash: TOKEN_HASH,
+        }),
+        key: `rdclk_${'c'.repeat(32)}`,
+      });
+    });
+
+    const guard = parentAdvanceGuard(parent.id);
+    const before = await store.readRunJson(parent.id);
+    const error: unknown = await store
+      .mutateState(parent.id, (current) => ({ ...current, step: '2' }), { guard })
+      .then(
+        (value) => value,
+        (reason: unknown) => reason,
+      );
+    expect(isOpenDelegatedChildrenError(error)).toBe(false);
+    expect(getErrorMessage(error)).toBe(
+      `Invalid persisted claim rdclk_${'c'.repeat(32)}: parent_run_id ${parent.id} does not ` +
+        `match parent ${otherParent.id} in its delegation linkage; ` +
+        `the runbook database is inconsistent.`,
+    );
+    // An inconsistent row must cost the caller nothing beyond the refusal.
+    expect(await store.readRunJson(parent.id)).toEqual(before); // write rolled back
+  });
+
+  it('aborts an UNGUARDED write when a claim column and its delegation name different parents', async () => {
+    // The guard is not the only reader of these rows, and it is the one that
+    // runs least often. `invalidateClosedDelegatedClaims` fires from
+    // `afterAuthoritativeStateWrite` on EVERY authoritative write — no guard
+    // needed — selects by the `parent_run_id` column, and classifies the
+    // DESCRIPTOR against this parent's committed state. On a drifted row that
+    // means deciding a foreign delegation's liveness from the wrong parent's
+    // cursor, and tombstoning the child's claim on the strength of it: the
+    // bearer loses authority over a delegation this parent never held.
+    //
+    // So the cross-check has to sit at that reader too, not only at the two
+    // enumerations. This case reaches it precisely because no guard is passed.
+    const parent = await seedRun(store, {
+      substepStates: [{ id: PARENT_STEP_ID, frameKey: PARENT_FRAME, status: 'done' }],
+    });
+    const otherParent = await seedRun(store, {});
+    const child = await seedRun(store, { parentLinkage: delegationLinkage(parent.id) });
+    const claimKey = `rdclk_${'c'.repeat(32)}`;
+    await insertActiveDelegatedClaim(store, { parentRunId: parent.id, controlledRunId: child.id });
+    await store.transaction((txn) => {
+      txn.tx.prepare('UPDATE claims SET delegation_json = :json WHERE key = :key').run({
+        json: JSON.stringify({
+          childRunId: child.id,
+          parentRunId: otherParent.id,
+          parentStepId: PARENT_STEP_ID,
+          parentStep: '1',
+          parentFrameKey: PARENT_FRAME,
+          parentEntry: 1,
+          tokenHash: TOKEN_HASH,
+        }),
+        key: claimKey,
+      });
+    });
+
+    const before = await store.readRunJson(parent.id);
+    const error: unknown = await store
+      .mutateState(parent.id, (current) => ({ ...current, step: '2' }))
+      .then(
+        (value) => value,
+        (reason: unknown) => reason,
+      );
+    expect(getErrorMessage(error)).toBe(
+      `Invalid persisted claim ${claimKey}: parent_run_id ${parent.id} does not ` +
+        `match parent ${otherParent.id} in its delegation linkage; ` +
+        `the runbook database is inconsistent.`,
+    );
+    expect(await store.readRunJson(parent.id)).toEqual(before); // write rolled back
+    // The claim keeps its authority. Aborting is only half the contract — a
+    // check that threw after the tombstone landed would leave the bearer just as
+    // stripped as no check at all.
+    const status = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT status FROM claims WHERE key = :key')
+          .get<{ readonly status: string }>({ key: claimKey })?.status,
+    );
+    expect(status).toBe('active');
+  });
+
   it('throws when a parent-advance guard is applied to a write of another run', async () => {
     // The guard names the parent it was minted for. Applying it to any other run
     // would evaluate the open-child predicate against the wrong parent — silently
