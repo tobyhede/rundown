@@ -945,6 +945,35 @@ describe('SessionService', () => {
       },
     );
 
+    it('refuses rather than throws when a run-control claim displaced the delegated one', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, 'c');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      assertClaimed(await claimLiveDelegation(sessionService, manager, child.id, linkage));
+      // Installing run-control authority over the child deletes the delegated
+      // claim (SessionDataSchema allows one claim per controlled run), leaving a
+      // claim with no delegation descriptor holding a child whose own linkage is
+      // still intact — the one shape `findClaimByChildRunId` can return that
+      // carries no delegated authority to compare.
+      expect((await sessionService.issueRunControlClaim(child.id)).kind).toBe('committed');
+
+      const result = await claimLiveDelegation(sessionService, manager, child.id, linkage, {
+        seedParent: false,
+      });
+
+      expect(result).toEqual({
+        status: 'linkage-mismatch',
+        childRunId: child.id,
+        incoming: linkage,
+        persisted: undefined,
+      });
+    });
+
     it('refuses delegation token replay before treating a new child id as claimable', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
@@ -2846,6 +2875,30 @@ describe('SessionService', () => {
       await manager.update(child.id, { parentLinkage: linkageFor(parent.id, 'f') });
 
       await expect(sessionService.listOpenClaimsForParent(parent.id)).resolves.toEqual([]);
+    });
+
+    it('lists a claim whose child linkage diverges on scope alone', async () => {
+      // Counterpart to the token-rotation case above. Identity still matches, so
+      // the claim controls this delegation and only the scope coordinates
+      // disagree — corruption, since descriptor and write-once child linkage are
+      // written together. Every check in this method excludes claims, so the
+      // fail-closed reading is to keep it and hold the parent.
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, 'a');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      await sessionService.pushRunbook(parent.id);
+      await claimLiveDelegation(sessionService, manager, child.id, linkage);
+
+      await manager.update(child.id, { parentLinkage: { ...linkage, parentEntry: 99 } });
+
+      const open = await sessionService.listOpenClaimsForParent(parent.id);
+      expect(open).toHaveLength(1);
+      expect(open[0]?.controlledRunId).toBe(child.id);
     });
 
     it('excludes a claim whose parent delegated substep has already resolved (stale after advance)', async () => {

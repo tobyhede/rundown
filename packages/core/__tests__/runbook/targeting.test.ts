@@ -81,6 +81,15 @@ describe('targeting helpers', () => {
       expect(linkageMatchesClaim(undefined, claim)).toBe(false);
     });
 
+    it('refuses a claim whose controlled run differs from its delegation child', () => {
+      expect(
+        linkageMatchesClaim(linkage, {
+          ...claim,
+          controlledRunId: parentRunId,
+        }),
+      ).toBe(false);
+    });
+
     it.each([
       ['parent run', { ...linkage, parentRunId: childRunId }],
       ['parent step id', { ...linkage, parentStepId: '2.1' }],

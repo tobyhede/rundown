@@ -470,6 +470,46 @@ export function delegationAuthorityCoordinatesMatch(
 }
 
 /**
+ * The subset of authority coordinates that identify *which* delegation a claim
+ * belongs to, as opposed to the scope it was granted over.
+ *
+ * Identity can legitimately stop matching: reissuing a delegation token changes
+ * `tokenHash`, which is how a rotated claim becomes stale
+ * (`classifyDelegationLiveness` reports `token-reissued`). The remaining three
+ * coordinates cannot — a claim descriptor and a child's write-once linkage are
+ * written together from the same values — so a disagreement there is corruption.
+ * That difference is why the parent-advance guards must tell the two apart.
+ */
+const DELEGATION_IDENTITY_COORDINATE_KEYS = [
+  'parentRunId',
+  'parentStepId',
+  'tokenHash',
+] as const satisfies readonly (keyof DelegationAuthorityCoordinates)[];
+
+/**
+ * True when `linkage` names the same delegation as `claim`, ignoring the scope
+ * coordinates (`parentStep`, `parentFrameKey`, `parentEntry`).
+ *
+ * Pairs with {@link linkageMatchesClaim} at the parent-advance guards: identity
+ * matching but full comparison failing is the corruption signal, while identity
+ * itself failing is the ordinary stale-claim case (a rotated token).
+ *
+ * @param linkage - Parent linkage stored on the child runbook state (any kind, including absent).
+ * @param claim - Claim record whose delegation identity must match.
+ * @returns `true` only when both are delegation-shaped and the three identity coordinates agree.
+ */
+export function linkageIdentifiesClaim(
+  linkage: RunbookState['parentLinkage'],
+  claim: ClaimRecord,
+): boolean {
+  const delegation = claim.delegation;
+  if (!delegation || linkage?.kind !== 'delegation') {
+    return false;
+  }
+  return DELEGATION_IDENTITY_COORDINATE_KEYS.every((key) => linkage[key] === delegation[key]);
+}
+
+/**
  * True when `linkage` is a delegation linkage that matches every authority
  * coordinate in `claim`'s delegation descriptor. Verifies a child runbook's
  * `parentLinkage` genuinely originated from the supplied claim record.
@@ -478,22 +518,23 @@ export function delegationAuthorityCoordinatesMatch(
  * reuse the identical predicate without a store → service import cycle. The
  * descriptor's `childRunId` is not repeated in
  * `ParentLinkage`; callers obtain the child through `claim.controlledRunId`, and
- * claim validation requires that id to equal `claim.delegation.childRunId`.
+ * this predicate requires that id to equal `claim.delegation.childRunId` before
+ * comparing the six coordinates shared with `ParentLinkage`.
  *
  * @param linkage - Parent linkage stored on the child runbook state (any kind, including absent).
  * @param claim - Claim record whose six shared delegation coordinates must all match.
- * @returns `true` only when `linkage.kind === 'delegation'` and every shared field matches `claim`.
+ * @returns `true` only when the claim's child ids agree, `linkage.kind === 'delegation'`,
+ *   and every shared field matches `claim`.
  */
 export function linkageMatchesClaim(
   linkage: RunbookState['parentLinkage'],
   claim: ClaimRecord,
 ): boolean {
-  if (!claim.delegation) {
+  const delegation = claim.delegation;
+  if (delegation?.childRunId !== claim.controlledRunId) {
     return false;
   }
-  return (
-    linkage?.kind === 'delegation' && delegationAuthorityCoordinatesMatch(linkage, claim.delegation)
-  );
+  return linkage?.kind === 'delegation' && delegationAuthorityCoordinatesMatch(linkage, delegation);
 }
 
 /**

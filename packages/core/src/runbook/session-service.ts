@@ -58,6 +58,7 @@ import {
   classifyDelegationLiveness,
   delegationAuthorityCoordinatesMatch,
   findSubstepState,
+  linkageIdentifiesClaim,
   linkageMatchesClaim,
 } from './targeting.js';
 import {
@@ -488,18 +489,37 @@ function topOfStack(session: SessionData): readonly RunId[] {
   return topId ? [topId] : [];
 }
 
-function claimRecordToDelegationLinkage(claim: ClaimRecord): DelegationLinkage {
-  if (!claim.delegation) {
-    throw new Error(`Claim ${claim.claimKey} has no delegation linkage`);
-  }
+/**
+ * A claim record whose delegation descriptor is statically known to be present.
+ *
+ * {@link SessionService.findClaimByDelegationLinkage} matches only claims whose
+ * `delegation` satisfies three coordinate equalities, so every record it returns
+ * carries one. Naming that in the type lets callers read the descriptor directly
+ * instead of routing through a converter that has to throw for a shape the
+ * lookup cannot produce.
+ */
+type DelegatedClaimRecord = ClaimRecord & { readonly delegation: DelegationClaimLinkage };
+
+/**
+ * Widen a claim's delegation descriptor to the child-linkage shape.
+ *
+ * Total, unlike a converter taking a bare {@link ClaimRecord}: the descriptor is
+ * required, so there is no absent-delegation arm to throw from. The descriptor's
+ * `childRunId` is dropped — {@link DelegationLinkage} identifies the child by
+ * position, through `claim.controlledRunId`.
+ *
+ * @param delegation - Delegation descriptor carried by a delegated claim record.
+ * @returns The same authority coordinates as a delegation-kind parent linkage.
+ */
+function delegationLinkageFromDescriptor(delegation: DelegationClaimLinkage): DelegationLinkage {
   return {
     kind: 'delegation',
-    parentRunId: claim.delegation.parentRunId,
-    parentStepId: claim.delegation.parentStepId,
-    tokenHash: claim.delegation.tokenHash,
-    parentStep: claim.delegation.parentStep,
-    parentFrameKey: claim.delegation.parentFrameKey,
-    parentEntry: claim.delegation.parentEntry,
+    parentRunId: delegation.parentRunId,
+    parentStepId: delegation.parentStepId,
+    tokenHash: delegation.tokenHash,
+    parentStep: delegation.parentStep,
+    parentFrameKey: delegation.parentFrameKey,
+    parentEntry: delegation.parentEntry,
   };
 }
 
@@ -713,9 +733,9 @@ export class SessionService {
   private findClaimByDelegationLinkage(
     claims: Record<string, ClaimRecord>,
     linkage: DelegationLinkage,
-  ): ClaimRecord | undefined {
+  ): DelegatedClaimRecord | undefined {
     return Object.values(claims).find(
-      (claim) =>
+      (claim): claim is DelegatedClaimRecord =>
         claim.delegation?.parentRunId === linkage.parentRunId &&
         claim.delegation.parentStepId === linkage.parentStepId &&
         claim.delegation.tokenHash === linkage.tokenHash,
@@ -1250,7 +1270,7 @@ export class SessionService {
     // this: it is a corruption signal about the state this read depends on.
     const existingForDelegation = this.findClaimByDelegationLinkage(session.claims, linkage);
     let existingLiveClaim:
-      | { readonly claim: ClaimRecord; readonly state: RunbookState }
+      | { readonly claim: DelegatedClaimRecord; readonly state: RunbookState }
       | undefined;
     if (existingForDelegation !== undefined) {
       const existingState = ctx.readState(existingForDelegation.controlledRunId);
@@ -1291,13 +1311,26 @@ export class SessionService {
           persisted: existingLiveClaim.state.parentLinkage,
         };
       }
-      const existingClaimLinkage = claimRecordToDelegationLinkage(existingLiveClaim.claim);
-      if (!linkageMatchesLinkage(existingClaimLinkage, linkage)) {
+      // The descriptor is compared directly rather than through
+      // `linkageMatchesLinkage`: that predicate re-tests `kind === 'delegation'`,
+      // which is fixed by construction on a value widened from a descriptor, so
+      // routing through it would leave a branch no test can exercise.
+      if (
+        existingLiveClaim.claim.controlledRunId !== existingLiveClaim.claim.delegation.childRunId
+      ) {
         return {
           status: 'linkage-mismatch',
           childRunId: existingLiveClaim.claim.controlledRunId,
           incoming: linkage,
-          persisted: existingClaimLinkage,
+          persisted: delegationLinkageFromDescriptor(existingLiveClaim.claim.delegation),
+        };
+      }
+      if (!delegationAuthorityCoordinatesMatch(existingLiveClaim.claim.delegation, linkage)) {
+        return {
+          status: 'linkage-mismatch',
+          childRunId: existingLiveClaim.claim.controlledRunId,
+          incoming: linkage,
+          persisted: delegationLinkageFromDescriptor(existingLiveClaim.claim.delegation),
         };
       }
       return {
@@ -1325,7 +1358,26 @@ export class SessionService {
 
     const existing = this.findClaimByChildRunId(session.claims, childRunId);
     if (existing !== undefined) {
-      const existingLinkage = claimRecordToDelegationLinkage(existing);
+      if (!existing.delegation) {
+        // `findClaimByChildRunId` keys on `controlledRunId` alone, so the claim
+        // holding this child can be a run-control claim carrying no delegation
+        // descriptor: `issueRunControlClaim` on a delegated child installs one,
+        // and `installRunControlClaim` deletes the delegated claim it replaces.
+        // Refused rather than thrown — the sibling corruption classes
+        // (`missing-child`, `missing-parent`, `terminal-child`) all return typed
+        // refusals, and this arm runs inside an open session transaction.
+        // `already-claimed` would be actively wrong: it would surface a
+        // run-control record to the caller as a delegation bearer.
+        return {
+          status: 'linkage-mismatch',
+          childRunId,
+          incoming: linkage,
+          // The child's own linkage is intact; the controlling claim is what
+          // carries no delegated authority to compare against.
+          persisted: undefined,
+        };
+      }
+      const existingLinkage = delegationLinkageFromDescriptor(existing.delegation);
       if (!linkageMatchesLinkage(existingLinkage, linkage)) {
         return {
           status: 'linkage-mismatch',
@@ -1454,11 +1506,16 @@ export class SessionService {
    * List active claimed children that belong to a parent runbook.
    *
    * A claim is considered open only when the child state exists, is non-terminal,
-   * still has delegation linkage matching the claim record, AND the parent's
-   * corresponding delegated substep is not yet resolved. Terminal tombstones
-   * retained for idempotent `rd pass/fail --claim-id` confirmation are
-   * intentionally excluded, as are claims whose child state is missing on disk or
-   * whose persisted linkage has diverged from the claim record.
+   * AND the parent's corresponding delegated substep is not yet resolved. Terminal
+   * tombstones retained for idempotent `rd pass/fail --claim-id` confirmation are
+   * intentionally excluded, as are claims whose child state is missing on disk.
+   *
+   * Linkage divergence splits two ways. A claim whose delegation identity no
+   * longer matches the child (a reissued token rotates `tokenHash`) is stale and
+   * is excluded — holding the parent on it would wedge the run. A claim whose
+   * identity still matches but whose scope coordinates disagree is corruption and
+   * counts as OPEN: every check here removes claims from the open set, so letting
+   * the parent advance past a possibly-running child is the unsafe direction.
    *
    * The parent-substep check closes the "advance wins the lock first" TOCTOU
    * ordering: if a concurrent bare parent advance resolved the delegated substep
@@ -1489,6 +1546,14 @@ export class SessionService {
       }
 
       if (!linkageMatchesClaim(child.parentLinkage, claim)) {
+        // See the matching arm in `RunbookStore.openDelegatedChildrenFor`, which
+        // this mirrors. Scope disagreement with identity intact is corruption:
+        // fail closed and hold the parent. Identity disagreement is a rotated
+        // token, which legitimately makes the claim stale — excluding it is what
+        // lets the parent advance instead of wedging.
+        if (linkageIdentifiesClaim(child.parentLinkage, claim)) {
+          openClaims.push(claim);
+        }
         continue;
       }
 

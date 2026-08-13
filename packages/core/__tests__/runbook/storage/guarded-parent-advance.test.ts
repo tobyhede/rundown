@@ -209,6 +209,34 @@ describe.each(RUNTIMES)('guarded parent advance (%s)', (runtime) => {
     expect(result.kind).toBe('committed');
   });
 
+  it('refuses a guarded write when the child linkage diverges on scope alone', async () => {
+    // The counterpart to the token-replacement case above, and the reason the
+    // guard cannot treat every linkage disagreement alike. Identity
+    // (parentRunId/parentStepId/tokenHash) still matches, so this claim DOES
+    // control the delegation the parent is advancing past — only the scope
+    // coordinates disagree. Descriptor and write-once child linkage are written
+    // together from the same values, so that is corruption, and excluding it
+    // would release the parent past a child that may still be running.
+    const parent = await seedRun(store, {
+      substepStates: [{ id: PARENT_STEP_ID, frameKey: PARENT_FRAME, status: 'pending' }],
+    });
+    const child = await seedRun(store, {
+      parentLinkage: { ...delegationLinkage(parent.id), parentEntry: 99 },
+    });
+    await insertActiveDelegatedClaim(store, { parentRunId: parent.id, controlledRunId: child.id });
+
+    const guard = parentAdvanceGuard(parent.id);
+    const before = await store.readRunJson(parent.id);
+    const error: unknown = await store
+      .mutateState(parent.id, (current) => ({ ...current, step: '2' }), { guard })
+      .then(
+        (value) => value,
+        (reason: unknown) => reason,
+      );
+    expect(isOpenDelegatedChildrenError(error)).toBe(true);
+    expect(await store.readRunJson(parent.id)).toEqual(before); // write rolled back
+  });
+
   it('refuses a guarded write when the parent holds no substep state for the delegation', async () => {
     // A parent that has not yet recorded the delegated substep has certainly not
     // resolved it, so the child is open. Reading the absent substep must not throw.

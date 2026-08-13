@@ -482,6 +482,19 @@ describe('ClaimRecordSchema', () => {
     expect(result.success).toBe(false);
   });
 
+  it('rejects delegated claims whose descriptor child differs from controlledRunId', () => {
+    const result = ClaimRecordSchema.safeParse({
+      ...validClaim,
+      delegation: { ...validClaim.delegation, childRunId: PARENT_RUN_ID },
+      grants: [
+        { action: 'mutate-run', runId: CHILD_RUN_ID },
+        { ...validClaim.grants[1], childRunId: PARENT_RUN_ID },
+      ],
+    });
+
+    expect(result.success).toBe(false);
+  });
+
   it('rejects delegated claims without a matching report-delegation-result grant', () => {
     const result = ClaimRecordSchema.safeParse({
       ...validClaim,

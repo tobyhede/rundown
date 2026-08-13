@@ -31,7 +31,12 @@ import {
   assertClaimLookupKey,
   assertClaimSecretHash,
 } from '../claim-id.js';
-import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } from '../targeting.js';
+import {
+  classifyDelegationLiveness,
+  findSubstepState,
+  linkageIdentifiesClaim,
+  linkageMatchesClaim,
+} from '../targeting.js';
 import { getErrorMessage } from '../../errors.js';
 import { logger } from '../../logger.js';
 import type { SessionData } from '../state.js';
@@ -2063,9 +2068,12 @@ export class RunbookStore {
    * evaluated inside an open write transaction against the PRE-update parent
    * state.
    *
-   * A claim is open only when the child state exists, is non-terminal, still
-   * has delegation linkage matching the claim, AND the parent's corresponding
-   * delegated substep is not yet `done`. Mirrors
+   * A claim is open only when the child state exists, is non-terminal, AND the
+   * parent's corresponding delegated substep is not yet `done`. Linkage
+   * disagreement splits two ways: a rotated token (identity no longer matches)
+   * is an ordinary stale claim and is excluded, while identity matching with the
+   * scope coordinates disagreeing is corruption and counts as OPEN — every check
+   * here removes claims, so releasing the parent is the unsafe direction. Mirrors
    * {@link SessionService.listOpenClaimsForParent} exactly, but as synchronous
    * in-transaction SQL so the result is atomic with the decisive write that
    * follows in the same transaction — the whole point of the guard.
@@ -2108,6 +2116,24 @@ export class RunbookStore {
         continue;
       }
       if (!linkageMatchesClaim(child.parentLinkage, claim)) {
+        // Note the direction: this guard EXCLUDES claims, so every extra reason
+        // to say "no" shrinks the open set and lets the parent advance MORE
+        // easily. The two reasons must therefore be told apart.
+        //
+        // Identity still matching means the claim names this delegation but
+        // disagrees on scope (`parentStep`/`parentFrameKey`/`parentEntry`).
+        // Descriptor and write-once child linkage are written together from the
+        // same values, so that is corruption — fail closed, count the child open
+        // and hold the parent. The remaining exclusion check reads the very
+        // coordinates just shown to be untrustworthy, so it is not consulted.
+        //
+        // Identity NOT matching is the ordinary stale claim: a reissued token
+        // rotates `tokenHash`, and that claim no longer controls the delegation
+        // the parent is advancing past. Holding the parent on it would wedge the
+        // run forever, so it stays excluded.
+        if (linkageIdentifiesClaim(child.parentLinkage, claim)) {
+          open.push(claim);
+        }
         continue;
       }
       const parentSubstep = findSubstepState(
