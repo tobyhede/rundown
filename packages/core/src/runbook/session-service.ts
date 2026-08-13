@@ -1547,10 +1547,10 @@ export class SessionService {
 
       if (!linkageMatchesClaim(child.parentLinkage, claim)) {
         // See the matching arm in `RunbookStore.openDelegatedChildrenFor`, which
-        // this mirrors. Scope disagreement with identity intact is corruption:
-        // fail closed and hold the parent. Identity disagreement is a rotated
-        // token, which legitimately makes the claim stale — excluding it is what
-        // lets the parent advance instead of wedging.
+        // this mirrors and which carries the full rationale. Scope disagreement
+        // with identity intact is corruption: fail closed and hold the parent.
+        // Identity disagreement names a different delegation entirely, so
+        // excluding it is what lets the parent advance instead of wedging.
         if (linkageIdentifiesClaim(child.parentLinkage, claim)) {
           openClaims.push(claim);
         }

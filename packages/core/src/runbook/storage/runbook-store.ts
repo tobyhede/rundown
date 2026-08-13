@@ -2120,17 +2120,22 @@ export class RunbookStore {
         // to say "no" shrinks the open set and lets the parent advance MORE
         // easily. The two reasons must therefore be told apart.
         //
-        // Identity still matching means the claim names this delegation but
-        // disagrees on scope (`parentStep`/`parentFrameKey`/`parentEntry`).
-        // Descriptor and write-once child linkage are written together from the
-        // same values, so that is corruption — fail closed, count the child open
-        // and hold the parent. The remaining exclusion check reads the very
-        // coordinates just shown to be untrustworthy, so it is not consulted.
+        // Neither arm is production-reachable: the mint gate in
+        // `claimRunbookInTransaction` refuses unless the child's write-once
+        // linkage equals the incoming linkage on all six shared coordinates, and
+        // the descriptor is built from that same linkage. Reaching here means a
+        // row written before that gate was widened (#738) or a tampered
+        // `delegation_json`. What follows is how to fail safely on one.
         //
-        // Identity NOT matching is the ordinary stale claim: a reissued token
-        // rotates `tokenHash`, and that claim no longer controls the delegation
-        // the parent is advancing past. Holding the parent on it would wedge the
-        // run forever, so it stays excluded.
+        // Identity still matching means the claim names this delegation but
+        // disagrees on scope (`parentStep`/`parentFrameKey`/`parentEntry`) — the
+        // coordinates it would need to report its result. Fail closed: count the
+        // child open and hold the parent. The remaining exclusion check reads the
+        // very coordinates just shown to be untrustworthy, so it is not consulted.
+        //
+        // Identity NOT matching means the claim names a DIFFERENT delegation, so
+        // it does not control the one the parent is advancing past. Holding the
+        // parent on it would wedge the run forever, so it stays excluded.
         if (linkageIdentifiesClaim(child.parentLinkage, claim)) {
           open.push(claim);
         }

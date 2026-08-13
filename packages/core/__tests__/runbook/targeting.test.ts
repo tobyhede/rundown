@@ -99,6 +99,18 @@ describe('targeting helpers', () => {
         expect(linkageMatchesClaim(undefined, claim)).toBe(false);
       });
 
+      it('refuses a claim carrying no delegation descriptor rather than throwing', () => {
+        // Pins the optional chain on `delegation?.childRunId`, which nothing else
+        // in the suite reaches: `stashForClaimId` accepts a run-control bearer and
+        // its docblock states as fact that this predicate answers `false` there.
+        // Without the chain that call throws a TypeError instead, and every other
+        // call site pre-guards on `claim.delegation`, so the whole 5698-test core
+        // suite stays green — this assertion is the only thing holding it.
+        expect(linkageMatchesClaim(linkage, makeClaimRecord({ controlledRunId: childRunId }))).toBe(
+          false,
+        );
+      });
+
       it('refuses a claim whose controlled run differs from its delegation child', () => {
         expect(
           linkageMatchesClaim(linkage, {
@@ -134,10 +146,16 @@ describe('targeting helpers', () => {
           // The entire reason this predicate exists beside `linkageMatchesClaim`:
           // the parent-advance guards consult it precisely when the full
           // comparison has already failed, and the two answers disagreeing here
-          // is what separates corruption (hold the parent) from a rotated token
-          // (release it). Asserting both calls in one test states that
-          // divergence directly, so a change that collapsed the two predicates
-          // into one could not pass by satisfying each half separately.
+          // is what makes them hold the parent open instead of releasing it.
+          // Asserting both calls in one test states that divergence directly, so
+          // a change that collapsed the two predicates into one could not pass by
+          // satisfying each half separately.
+          //
+          // Neither state is production-reachable — the mint gate refuses all six
+          // coordinates — so this is a policy for failing safely on a pre-fix or
+          // tampered row, not a live distinction. Do not describe the identity
+          // arm as a rotated token: a reissue rewrites the parent's substep, not
+          // the child's write-once linkage.
           expect(linkageMatchesClaim(drifted, claim)).toBe(false);
           expect(linkageIdentifiesClaim(drifted, claim)).toBe(true);
         },

@@ -473,12 +473,32 @@ export function delegationAuthorityCoordinatesMatch(
  * The subset of authority coordinates that identify *which* delegation a claim
  * belongs to, as opposed to the scope it was granted over.
  *
- * Identity can legitimately stop matching: reissuing a delegation token changes
- * `tokenHash`, which is how a rotated claim becomes stale
- * (`classifyDelegationLiveness` reports `token-reissued`). The remaining three
- * coordinates cannot — a claim descriptor and a child's write-once linkage are
- * written together from the same values — so a disagreement there is corruption.
- * That difference is why the parent-advance guards must tell the two apart.
+ * NEITHER SUBSET CAN DISAGREE IN PRODUCTION. `claimRunbookInTransaction` refuses
+ * unless the child's write-once `parentLinkage` equals the incoming linkage on
+ * all six shared coordinates (`session-service.ts`, the `linkageMatchesLinkage`
+ * gate), and the descriptor is then built field-by-field from that same incoming
+ * linkage. The equality is established by that gate, not by the two being written
+ * together — before it was widened, the replay and orphan-adoption paths minted a
+ * descriptor from a recomputed coordinate and the pair genuinely diverged (#738).
+ * Do not restate the invariant as a co-write: that reads as licence to delete the
+ * check that creates it.
+ *
+ * So a claim reaching the parent-advance guards with ANY disagreement is either a
+ * row written before that gate existed or a tampered `delegation_json`. The split
+ * is a policy for failing safely once that has already happened, and the two
+ * halves need opposite defaults because this guard EXCLUDES claims:
+ *
+ * - Identity disagreeing means the claim does not name this delegation at all.
+ *   Holding the parent on it would wedge the run on a claim that was never about
+ *   the delegation being advanced past, so it stays excluded.
+ * - Identity agreeing while scope disagrees means the claim does name this
+ *   delegation and only its granted scope is untrustworthy. Excluding it would
+ *   release the parent past a child that may still be running, so it counts open.
+ *
+ * Do not read `token-reissued` as a legitimate source of identity drift.
+ * `classifyDelegationLiveness` compares the claim against the PARENT SUBSTEP's
+ * token, never against the child's `parentLinkage`, and a reissue rewrites
+ * neither the child's write-once linkage nor an existing descriptor.
  */
 const DELEGATION_IDENTITY_COORDINATE_KEYS = [
   'parentRunId',
@@ -490,9 +510,12 @@ const DELEGATION_IDENTITY_COORDINATE_KEYS = [
  * True when `linkage` names the same delegation as `claim`, ignoring the scope
  * coordinates (`parentStep`, `parentFrameKey`, `parentEntry`).
  *
- * Pairs with {@link linkageMatchesClaim} at the parent-advance guards: identity
- * matching but full comparison failing is the corruption signal, while identity
- * itself failing is the ordinary stale-claim case (a rotated token).
+ * Pairs with {@link linkageMatchesClaim} at the parent-advance guards, and is
+ * consulted only once that predicate has already failed: identity still matching
+ * means the claim names this delegation and is held open, identity failing means
+ * it names a different one and stays excluded. See
+ * {@link DELEGATION_IDENTITY_COORDINATE_KEYS} for why both states are
+ * production-unreachable and why the two arms nonetheless need opposite defaults.
  *
  * @param linkage - Parent linkage stored on the child runbook state (any kind, including absent).
  * @param claim - Claim record whose delegation identity must match.
@@ -511,8 +534,18 @@ export function linkageIdentifiesClaim(
 
 /**
  * True when `linkage` is a delegation linkage that matches every authority
- * coordinate in `claim`'s delegation descriptor. Verifies a child runbook's
- * `parentLinkage` genuinely originated from the supplied claim record.
+ * coordinate in `claim`'s delegation descriptor. Equality on all seven is a
+ * consistency check, NOT a proof of provenance — the child's `parentLinkage` is
+ * written at `manager.create` before any claim exists, and the descriptor is
+ * later copied from a linkage, so neither can be said to originate from the
+ * other. Do not restate this as verifying that the linkage came from the claim.
+ *
+ * ALL SIX SHARED COORDINATES ARE REQUIRED because the descriptor is also spread
+ * into the claim's `report-delegation-result` grant, and
+ * `claimCanReportDelegationResult` evaluates that grant against the CHILD ROW's
+ * `parentLinkage`. A claim allowed to differ on `parentStep`, `parentFrameKey` or
+ * `parentEntry` therefore holds authority it can never exercise: it resolves, it
+ * drives the child to terminal, and the parent report is silently dropped (#738).
  *
  * Lives here (a dependency-free leaf) so claim consumers and the storage layer
  * reuse the identical predicate without a store → service import cycle. The
@@ -524,7 +557,10 @@ export function linkageIdentifiesClaim(
  * @param linkage - Parent linkage stored on the child runbook state (any kind, including absent).
  * @param claim - Claim record whose six shared delegation coordinates must all match.
  * @returns `true` only when the claim's child ids agree, `linkage.kind === 'delegation'`,
- *   and every shared field matches `claim`.
+ *   and every shared field matches `claim`. A claim carrying no delegation
+ *   descriptor returns `false` rather than throwing — `stashForClaimId` accepts a
+ *   run-control bearer and relies on that, so the optional chain on `delegation`
+ *   is load-bearing and is pinned by its own test.
  */
 export function linkageMatchesClaim(
   linkage: RunbookState['parentLinkage'],

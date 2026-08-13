@@ -2929,9 +2929,10 @@ describe('SessionService', () => {
 
     it('lists a claim whose child linkage diverges on scope alone', async () => {
       // Counterpart to the token-rotation case above. Identity still matches, so
-      // the claim controls this delegation and only the scope coordinates
-      // disagree — corruption, since descriptor and write-once child linkage are
-      // written together. Every check in this method excludes claims, so the
+      // the claim names this delegation and only the scope coordinates disagree —
+      // exactly the coordinates it would need to report its result. The mint gate
+      // makes that unreachable in production, so this fixture stages a pre-fix or
+      // tampered row. Every check in this method excludes claims, so the
       // fail-closed reading is to keep it and hold the parent.
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
