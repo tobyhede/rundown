@@ -33,18 +33,26 @@ import { createRunbook } from './fixtures.js';
 import type { ChildOp, ChildResult } from './storage/fixtures/multi-record-workflow-child.js';
 
 /**
- * CROSS-PROCESS all-or-none boundaries for the three multi-record delegation
- * workflows: delegate retry, collect, and abort.
+ * CROSS-PROCESS write boundaries for the delegation workflows that replaced a
+ * domain file lock: delegate retry, collect, abort, and the terminal child report.
  *
- * WHAT IS UNDER TEST. All three now derive in memory from state captured under
+ * WHAT IS UNDER TEST. The first three derive in memory from state captured under
  * one aggregate lease and commit once through
  * `EffectfulActorMutationRunner.runAll` → `RunbookStore.commitOwnedRunSet`, which
- * re-checks the captured `state_version` / `claim_generation`. The property these
+ * re-checks the captured `state_version` / `claim_generation`. The property those
  * races assert is the consequence: when two processes reach the same workflow
  * from the same captured version, exactly ONE commits, the other is refused with
  * a typed transaction arm, and nothing partial survives — no half-written run
  * state, no orphan session release, no leaked claim, and no execution lease or
  * unfinished attempt row.
+ *
+ * The child report is the other half of that guarantee and the reason it is here
+ * rather than in a fourth all-or-none race. It takes no lease and runs no
+ * aggregate: its whole read-derive-write span is one `RunbookStore.mutateState`
+ * compare-and-swap. Two siblings reporting DIFFERENT substeps of one parent are
+ * not in conflict, so the correct outcome is BOTH committing — the loser
+ * re-deriving against the winner's row rather than being refused. That is the
+ * optimistic retry the other races never reach, since they all end at a refusal.
  *
  * WHY SEPARATE OS PROCESSES. `RunbookStateManager` and
  * `createEffectfulActorMutationRunner` both resolve their store through a
@@ -58,20 +66,23 @@ import type { ChildOp, ChildResult } from './storage/fixtures/multi-record-workf
  *
  * DETERMINISM. Workers are barrier-synchronized, never slept, across TWO stages.
  * The first releases every warmed worker together. The second is the decisive
- * one: each worker parks INSIDE the aggregate fence, after its capture and
- * preparation and before it acquires an execution lease, and the parent releases
- * that barrier only once every worker has parked. So each worker provably holds a
- * capture of the same `state_version` when the first commit lands — which is
- * exactly the interleaving a lost-update defect needs, and exactly the one a
- * timing-luck race almost never produces.
+ * one: each worker parks once it has read the version it will write against —
+ * inside the aggregate fence, after capture and preparation and before it
+ * acquires an execution lease, or for the child report inside its
+ * compare-and-swap callback, after the derivation and before the guarded write —
+ * and the parent releases that barrier only once every worker has parked. So each
+ * worker provably holds a read of the same `state_version` when the first commit
+ * lands, which is exactly the interleaving a lost-update defect needs and exactly
+ * the one a timing-luck race almost never produces.
  *
  * SENSITIVITY WITNESS. A correct-but-serialized implementation would satisfy
- * "one winner" while proving nothing, so each race additionally asserts
- * `expectCapturedBeforeAnyReturn`: every worker's capture stamp precedes every
- * worker's return stamp. Overlap is MEASURED, not assumed — workers stamp an
- * epoch clock at capture and at return on both the success and failure arms — and
- * a failure means the two-stage barrier degenerated to serial execution (lost
- * sensitivity), never a correctness regression.
+ * "one winner" — and, for the report, "both landed" — while proving nothing, so
+ * each race additionally asserts `expectCapturedBeforeAnyReturn`: every worker's
+ * capture stamp precedes every worker's return stamp. Overlap is MEASURED, not
+ * assumed — workers stamp an epoch clock at capture and at return on both the
+ * success and failure arms — and a failure means the two-stage barrier
+ * degenerated to serial execution (lost sensitivity), never a correctness
+ * regression.
  */
 
 const CHILD = fileURLToPath(
@@ -115,6 +126,33 @@ const TERMINAL_PARENT_MARKDOWN = PARENT_MARKDOWN.replace(
   '- PASS ALL CONTINUE',
   '- PASS ALL COMPLETE',
 );
+
+/**
+ * Same parent, but step 1 owns TWO authored DELEGATE substeps.
+ *
+ * Two siblings is the minimum shape in which a child report can lose another
+ * report: one substep can only ever be reported once, so a single-delegation
+ * parent makes every concurrent report a duplicate of the winner and hides the
+ * lost update entirely.
+ */
+const SIBLING_PARENT_MARKDOWN = PARENT_MARKDOWN.replace(
+  '## 2. Done',
+  `### 1.2 Sibling task
+
+- DELEGATE
+- child.runbook.md
+
+## 2. Done`,
+);
+
+/** Minimal document standing in for the delegated child's own runbook. */
+const CHILD_MARKDOWN = `# Child
+
+## 1. Work
+
+- PASS COMPLETE
+- FAIL STOP
+`;
 
 /** The refusal arms a losing worker may legitimately return. */
 const REFUSAL_KINDS = [
@@ -336,20 +374,33 @@ async function race(ops: readonly ChildOp[]): Promise<readonly ChildResult[]> {
 type ChildOutcome = { readonly kind: string } & Readonly<Record<string, unknown>>;
 
 /**
- * Assert every worker completed without throwing and return their outcomes.
+ * Assert every worker completed without throwing and return their reported values.
  *
  * A workflow refusal is a VALUE on the `ok: true` arm; `ok: false` means the
  * worker threw, which is never an expected outcome here.
+ *
+ * @param results - Results collected from a cohort.
+ * @returns Each worker's reported value, in cohort order.
+ * @throws {Error} When any worker threw.
+ */
+function values(results: readonly ChildResult[]): readonly unknown[] {
+  return results.map((r) => {
+    if (!r.ok) throw new Error(`worker threw: ${r.error}`);
+    return r.value;
+  });
+}
+
+/**
+ * The same values, read as the discriminated outcomes the aggregate workflows
+ * return. A child report answers with a bare status string instead, so it reads
+ * {@link values} directly.
  *
  * @param results - Results collected from a cohort.
  * @returns The workflow outcomes, discriminated on `kind`.
  * @throws {Error} When any worker threw.
  */
 function outcomes(results: readonly ChildResult[]): readonly ChildOutcome[] {
-  return results.map((r) => {
-    if (!r.ok) throw new Error(`worker threw: ${r.error}`);
-    return r.value as ChildOutcome;
-  });
+  return values(results) as readonly ChildOutcome[];
 }
 
 /**
@@ -554,15 +605,56 @@ async function echoDelegation(
 }
 
 /**
- * Read the delegation persisted on the parent's authored DELEGATE substep.
+ * Read the delegation persisted on one of the parent's authored DELEGATE substeps.
  *
  * @param runId - Parent run to read.
+ * @param substepId - Substep to read; defaults to the first authored DELEGATE.
  * @returns The persisted delegation, or undefined when the substep carries none.
  */
-async function readDelegation(runId: RunId): Promise<StepDelegation | undefined> {
+async function readDelegation(runId: RunId, substepId = '1'): Promise<StepDelegation | undefined> {
   const state = await manager.load(runId);
   expect(state).not.toBeNull();
-  return findSubstepState(state?.substepStates ?? [], '1', buildFrameKey('1'))?.delegation;
+  return findSubstepState(state?.substepStates ?? [], substepId, buildFrameKey('1'))?.delegation;
+}
+
+/**
+ * Create a terminal delegated child whose persisted linkage names one authored
+ * DELEGATE substep of the parent.
+ *
+ * The linkage's token hash is read back off the parent rather than invented, so
+ * the report passes the recorder's token fence for the reason a real child's
+ * does: it is the hash the machine actually issued into that substep.
+ *
+ * @param parentRunId - Parent run owning the delegation.
+ * @param substepId - Parent substep this child was delegated from.
+ * @returns The created child's run id.
+ * @throws {Error} When the named substep carries no auto-issued delegation.
+ */
+async function seedReportingChild(parentRunId: RunId, substepId: string): Promise<RunId> {
+  const delegation = await readDelegation(parentRunId, substepId);
+  if (!delegation) throw new Error(`substep 1.${substepId} carries no auto-issued delegation`);
+  const childRunId = assertRunId(`rd_${substepId.repeat(32)}`);
+  await manager.create(
+    { source: 'project', path: 'child.runbook.md' },
+    { title: 'Child', description: '', steps: createRunbook(CHILD_MARKDOWN) },
+    {
+      runId: childRunId,
+      runbookPath: 'child.runbook.md',
+      frontmatterOutputs: [],
+      templateVars: { RunId: childRunId },
+      parentLinkage: {
+        kind: 'delegation',
+        parentRunId,
+        parentStepId: substepId,
+        parentStep: '1',
+        parentFrameKey: buildFrameKey('1'),
+        parentEntry: 1,
+        tokenHash: delegation.tokenHash,
+      },
+    },
+  );
+  await manager.update(childRunId, { lifecycle: 'completed' });
+  return childRunId;
 }
 
 describe('cross-process all-or-none delegation workflows', () => {
@@ -696,5 +788,77 @@ describe('cross-process all-or-none delegation workflows', () => {
       parent.runId,
     ]);
     await expectNoPartialLease(parent.runId, 1);
+  }, 120_000);
+
+  it('keeps both reports when two sibling children report to one parent', async () => {
+    // The other three races assert that exactly ONE writer may commit. This one
+    // asserts the opposite half of the same guarantee, and it is the half the
+    // retired `DelegationLock` at this site actually stood for: two siblings
+    // reporting DIFFERENT substeps are not in conflict, so both must land. The
+    // in-process coverage of this recorder races eight reports of the SAME child,
+    // which can only ever produce one winner and seven duplicates — a shape in
+    // which a lost update is unobservable.
+    //
+    // The loss is real and not hypothetical. The recorder's patch carries
+    // `substepStates` as a WHOLE array derived from the captured parent, so a
+    // sibling's committed `done` row is inside every writer's payload; a write
+    // that lands without re-reading reverts it. `resolvedCompletions` is merged
+    // rather than replaced, so the outcome rows alone would survive the defect —
+    // the substep rows are where it shows.
+    //
+    // This is also the only cross-process exercise of `RunbookStore.mutateState`'s
+    // OPTIMISTIC retry. The other races end at a refusal, and the session races
+    // contend on `BEGIN IMMEDIATE`, which blocks; here the loser's compare-and-swap
+    // fails, and it must re-derive against the winner's committed row and commit
+    // on its own version.
+    const parent = await startParent(SIBLING_PARENT_MARKDOWN);
+    const childRunIds = await Promise.all(
+      ['1', '2'].map((substepId) => seedReportingChild(parent.runId, substepId)),
+    );
+    const before = await readRunFence(parent.runId);
+
+    const results = await race(
+      childRunIds.map((childRunId) => ({
+        kind: 'reportChildCompletion' as const,
+        childRunId,
+        result: 'pass' as const,
+      })),
+    );
+    expectCapturedBeforeAnyReturn(results);
+
+    // Neither report is a duplicate of the other: both are new rows on the parent.
+    expect(values(results)).toEqual(['recorded', 'recorded']);
+
+    // Both halves of both patches are durable. A lost update shows here as a
+    // sibling reverted to `running`, or as a single outcome row.
+    const persisted = await manager.load(parent.runId);
+    expect(
+      ['1', '2'].map((substepId) =>
+        findSubstepState(persisted?.substepStates ?? [], substepId, buildFrameKey('1')),
+      ),
+    ).toEqual([
+      expect.objectContaining({ id: '1', status: 'done', result: 'pass' }),
+      expect.objectContaining({ id: '2', status: 'done', result: 'pass' }),
+    ]);
+    expect(
+      Object.values(persisted?.resolvedCompletions ?? {})
+        .map(({ targetSubstep }) => targetSubstep)
+        .sort(),
+    ).toEqual(['1', '2']);
+
+    // Two commits, two versions. One version means a writer overwrote the other
+    // instead of re-deriving; three means a losing attempt committed as well.
+    const after = await readRunFence(parent.runId);
+    expect(after.stateVersion).toBe(before.stateVersion + 2);
+
+    // Reporting takes no execution lease and touches no session state, so both
+    // must be exactly as the setup left them.
+    expect(after.execToken).toBeNull();
+    expect(after.attemptPhases).toEqual(before.attemptPhases);
+    const session = await manager.loadSession();
+    expect(session.defaultStack).toEqual([parent.runId]);
+    expect(Object.values(session.claims).map((claim) => claim.controlledRunId)).toEqual([
+      parent.runId,
+    ]);
   }, 120_000);
 });
