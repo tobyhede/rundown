@@ -762,7 +762,7 @@ Two companion CLIs ship alongside `rundown`:
 | `rundown delegate <runbook> --step <id> --input key=value` | Delegate with variables (`--input`/`--input-json`/`--input-file`, all repeatable) |
 | `rundown delegate --retry <token>`                         | Retry a delegation: supersede and re-issue with a fresh token                     |
 | `rundown delegate --retry --step <id>`                     | Retry the delegation on a substep                                                 |
-| `rundown delegate --retry --step <id> --index <n>`         | Retry a delegation within a FOR iteration                                         |
+| `rundown delegate --retry --step <id> --index <n>`         | Retry a delegation within the **active** FOR iteration                            |
 | `rundown delegate --retry`                                 | Retry the delegation inferred from the active substep                             |
 | `rundown delegate --retry --step <id> --input key=value`   | Retry with variable overrides                                                     |
 | `rundown claim <token>`                                    | Claim a delegation token, launch child, and return `claim_id`                     |
@@ -821,9 +821,28 @@ Delegation semantics:
 - `rundown delegate --retry <token>` refuses a live claimed child, but can
   supersede a terminal linked child and mint a fresh token. The target is
   resolved from a token positional, from `--step` (optionally with `--index` for
-  a FOR iteration), or inferred from the active substep.
-  `--input`/`--input-json`/`--input-file` supply variable overrides on the
-  re-issued delegation.
+  a FOR iteration — see the active-iteration rule below), or inferred from the
+  active substep. `--input`/`--input-json`/`--input-file` supply variable
+  overrides on the re-issued delegation.
+- **`--index` must name the iteration the parent is executing**, on both the
+  fresh and the `--retry` paths. Naming any other iteration is refused with
+  RD-832 (`DELEGATION_INDEX_NOT_ACTIVE`), and the message reports both the
+  requested and the active iteration. The FOR model is strictly
+  single-iteration: one iteration is live at a time, and the frame entry ordinal
+  a delegation is minted against is unknowable until the parent enters that
+  frame. A bearer minted against any other iteration cannot be claimed —
+  `classifyDelegationLiveness` closes it `cursor-advanced` on presentation — and
+  before this refusal existed such a mint wedged the run, because the
+  pending-collection guard named a completion key the drain could never match.
+  Fan-out width therefore comes from the number of `DELEGATE` substeps in one
+  frame, which are issued together and claimed in parallel; a `FOR` loop repeats
+  that width serially, one iteration at a time.
+- **This rule is specific to `delegate`.**
+  `rundown pass --step <id> --index <n>` and
+  `rundown fail --step <id> --index <n>` still accept a non-active iteration,
+  recording a pre-resolved completion against that frame. Recording a completion
+  mints no authority, so it carries none of the risk that a delegation bearer
+  does.
 - **`--retry` is idempotent over an unobserved replacement.** A retry that has
   already been applied — the replacement exists and shows no committed evidence
   its bearer was used (never claimed, never aborted, and its frame entry still
