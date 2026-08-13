@@ -447,9 +447,29 @@ export function findSubstepState(
  * the child closes `completed` with `reported: 'not-applicable'` and the parent
  * waits forever. That is #738, and it was reachable precisely because this
  * predicate compared three of the six. Widening a gate is never the whole fix
- * for a coordinate that should not have drifted (see
- * {@link classifyDelegationLiveness}, which rejects the drift at its source),
- * but a gate weaker than the check it feeds is a silent-failure generator.
+ * for a coordinate that should not have drifted — see
+ * {@link classifyDelegationLiveness}, which rejects the drift at its source.
+ *
+ * POLARITY IS NOT UNIFORM ACROSS THE CALL SITES, so "which direction is
+ * dangerous" has no single answer and must be read at the site that asked:
+ *
+ * - FAIL-CLOSED (three sites, all in `session-service.ts`:
+ *   `getActiveForClaimId`, `stashForClaimId`, `unstashForClaimId`). `false` is
+ *   a refusal — `child-linkage-mismatch` — and the caller stops. Here a
+ *   predicate that is too WEAK is the silent-failure generator: it admits a
+ *   claim/child pair that diverges on a coordinate `grantAllows` will compare
+ *   later, and the divergence surfaces only as a report that never arrives.
+ * - FAIL-OPEN (two sites: `SessionService.listOpenClaimsForParent` and
+ *   `RunbookStore.openDelegatedChildrenFor`). `false` means `continue` — the
+ *   claim is EXCLUDED from the set of children that must block the parent, so
+ *   the parent is free to advance past it. Here the danger inverts: a predicate
+ *   that is too STRICT drops a genuinely open child from the blocking set and
+ *   lets the parent walk away from work still in flight, while a weaker one
+ *   merely over-blocks.
+ *
+ * Both failures are silent and they are not the same failure. Any change to the
+ * field set has to be judged against both directions, not against the
+ * fail-closed reading alone.
  *
  * The seventh, `childRunId`, is absent from `ParentLinkage` and needs no
  * comparison here: callers obtain the child through `claim.controlledRunId`, and
@@ -478,12 +498,19 @@ export function linkageMatchesClaim(
 }
 
 /**
- * The parent-side linkage fields a delegation-liveness decision depends on.
+ * The parent-side linkage a caller presents to a delegation-liveness decision.
  *
  * Structurally a `Pick` of the persisted delegation-claim linkage, declared here
  * rather than imported from `claim-id.ts` to keep `targeting.ts` free of a claim
  * import cycle. Both transaction paths (the claim-side refusal and the
- * parent-commit invalidation hook) pass exactly these fields.
+ * parent-commit invalidation hook) pass exactly these fields, as does
+ * `claimAndLaunch`'s pre-check, which builds one inline.
+ *
+ * Note it is the *presented* shape, not the read surface — unlike
+ * {@link DelegationLivenessParent}, which is exactly what the classifier reads.
+ * The set is the persisted linkage's, so a caller holding one passes it whole;
+ * see {@link DelegationLivenessLinkage.parentEntry} for the field that is
+ * carried but deliberately not decided on.
  */
 export interface DelegationLivenessLinkage {
   /** Parent step name captured at delegation time (e.g. "1"). */
@@ -492,7 +519,16 @@ export interface DelegationLivenessLinkage {
   readonly parentStepId: string;
   /** Parent execution frame key at delegation time. */
   readonly parentFrameKey: FrameKey;
-  /** Parent frame entry counter captured at delegation time. */
+  /**
+   * Parent frame entry counter captured at delegation time.
+   *
+   * Part of the linkage, and compared by {@link linkageMatchesClaim} — but NOT
+   * read by {@link classifyDelegationLiveness}, which decides entry identity
+   * against the issuance entry on the substep's own credential. Keeping it in
+   * the shape lets a caller pass its persisted linkage unchanged; trusting it
+   * would reopen #738, where the entry a caller recomputed from live state was
+   * compared against live state. See the comment inside the classifier.
+   */
   readonly parentEntry: number;
   /** Hash of the delegation token that produced the child claim. */
   readonly tokenHash: DelegationTokenHash;
@@ -541,14 +577,19 @@ export type DelegationLiveness =
  * A delegation is live only when the parent exists and is non-terminal, its
  * cursor still sits on the delegating step, the matching substep exists and is
  * neither resolved nor cancelled, that substep still carries the same delegation
- * token, and both the claim's captured entry and — where the persisted frame
- * records one — the frame's current entry still equal the entry stamped on the
- * substep's credential at issuance. Any divergence is a closed outcome; this
- * deliberately does NOT reduce to `status !== 'done'`, which would miss the
- * top-level cursor-advance path that writes no `done` substep row.
+ * token, and — where the persisted frame records one — the frame's current entry
+ * still equals the entry stamped on the substep's credential at issuance. Any
+ * divergence is a closed outcome; this deliberately does NOT reduce to
+ * `status !== 'done'`, which would miss the top-level cursor-advance path that
+ * writes no `done` substep row.
+ *
+ * Entry identity is decided against the credential alone. `linkage.parentEntry`
+ * is not consulted, so no caller can present a recomputed entry and have it
+ * believed; see the comment at the entry comparison.
  *
  * @param parent - Parent run state read inside the deciding transaction, or null when absent.
- * @param linkage - Parent-side linkage fields captured on the delegated claim.
+ * @param linkage - Parent-side linkage presented by the caller. Every field but
+ *   `parentEntry` participates in the decision.
  * @returns The three-way liveness classification.
  */
 export function classifyDelegationLiveness(
@@ -586,35 +627,42 @@ export function classifyDelegationLiveness(
     return { kind: 'closed', reason: 'resolved' };
   }
   // Entry identity, decided against the ISSUANCE entry on the substep's
-  // credential — not against the caller's `linkage.parentEntry` alone (#738).
-  // The credential is written once when the delegation is issued and
+  // credential — never against the caller's `linkage.parentEntry` (#738). The
+  // credential is written once when the delegation is issued and
   // `resetReopenedSubsteps` preserves it across frame re-entry, so it is the
   // only entry coordinate here that a caller cannot recompute. Comparing live
-  // state against a linkage the caller derived from that same live state is
-  // self-satisfying: `inferFrameEntryFromState` and `currentEntry` below are the
-  // identical expression over the identical fields, so for a freshly recomputed
-  // linkage they cannot disagree, for any input. That is what let a claim mint
-  // authority naming entry 2 for a child stamped at entry 1, whose report
-  // `grantAllows` then silently dropped.
+  // state against a linkage the caller derived from that same live state was
+  // self-satisfying, and that is what let a claim mint authority naming entry 2
+  // for a child stamped at entry 1, whose report `grantAllows` then silently
+  // dropped.
   //
-  // Two comparisons, in this order, because they answer different questions:
-  //   - claim against issuance rejects a caller still presenting a recomputed
-  //     coordinate — the mint defect itself. It is also the only witness on a
-  //     frame that records no current entry, where the second is skipped.
-  //   - live state against issuance rejects the frame re-entry. This is the arm
-  //     the production path reaches now that `claimAndLaunch` reads the entry off
-  //     the credential: the first comparison passes because both sides came from
-  //     the row, and this one sees the cursor has moved.
-  // Given the first, the second is the pre-#738 rule with `issuedEntry`
-  // substituted for an equal `linkage.parentEntry` — deliberately, so the
-  // classifier states one coordinate as authoritative rather than two that
-  // happen to agree. This is `classifyReplacementUse`'s `entry_superseded` rule
-  // (#701), which the retry path has had since `delegation-inference.ts`, stated
-  // for liveness.
+  // ONE comparison, live state against issuance, which is `classifyReplacementUse`'s
+  // `entry_superseded` rule (#701) stated for liveness. It is what the
+  // production path reaches now that `claimAndLaunch` reads the entry off the
+  // credential: the cursor has moved past the entry the child was stamped with.
+  //
+  // `linkage.parentEntry` is deliberately NOT read. Asserting it equals
+  // `issuedEntry` would be a check no production input can fail — the
+  // pre-check reads both off the same substep row, every other caller presents
+  // a persisted linkage minted from the credential, and a re-issue changes the
+  // `tokenHash`, which the arm above catches first — and it reported
+  // `cursor-advanced` for a condition in which no cursor had moved. Not reading
+  // the coordinate is the stronger form of the same invariant than asserting
+  // agreement with it: a caller cannot induce this classifier to trust a
+  // recomputed entry when there is no path by which a recomputed entry is
+  // consulted. State that could only reach that assertion — an older binary, a
+  // hand edit — is the persistence boundary's to refuse, not a pure
+  // classifier's to reinterpret.
+  //
+  // `inferFrameEntryFromState` computes almost this `currentEntry`, but the two
+  // are NOT the same expression and must not be unified: it ends `?? 1`, so it
+  // always yields a number, while this abstains (`undefined`) and the guard
+  // below skips the comparison. Abstention is correct here. A frame with no
+  // recorded entry is one this run's committed state never entered, and the
+  // entry ordinal is run-global monotonic, so a delegation's issuance entry is
+  // legitimately > 1; defaulting to 1 would manufacture a coordinate and close
+  // a live delegation `cursor-advanced` on the strength of an invented number.
   const issuedEntry = delegation.credential.parentEntry;
-  if (linkage.parentEntry !== issuedEntry) {
-    return { kind: 'closed', reason: 'cursor-advanced' };
-  }
   const currentEntry =
     parent.activeFrameKey === linkage.parentFrameKey && parent.activeEntry !== undefined
       ? parent.activeEntry

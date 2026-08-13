@@ -835,11 +835,10 @@ describe('targeting helpers', () => {
     });
 
     // #738's reproduction at this layer, and the case the whole fix turns on:
-    // the claim's entry agrees with issuance (the pipeline now reads both off
-    // the credential), so the FIRST comparison passes and live-versus-issuance
-    // is what closes the delegation. Before the fix the caller derived
-    // `parentEntry` from this same state, making it 2 here as well — the compared
-    // pair was one value read twice, and the delegation stayed live.
+    // live state has moved to entry 2 while the credential still says 1, and
+    // that disagreement is what closes the delegation. Before the fix the
+    // caller derived `parentEntry` from this same state, so the compared pair
+    // was one value read twice and the delegation stayed live.
     it('closes as cursor-advanced when the frame was re-entered past the issuance entry', () => {
       expect(classifyDelegationLiveness(parent({ activeEntry: 2 }), linkage)).toEqual({
         kind: 'closed',
@@ -847,25 +846,30 @@ describe('targeting helpers', () => {
       });
     });
 
-    it('closes as cursor-advanced when the claim names an entry the delegation never issued', () => {
-      // Drift the other way, and the arm that catches a caller still passing a
-      // recomputed coordinate: live state and issuance agree at 1, the claim
-      // says 2. This is the comparison the pre-#738 rule did not make at all.
-      expect(classifyDelegationLiveness(parent(), { ...linkage, parentEntry: 2 })).toEqual({
-        kind: 'closed',
-        reason: 'cursor-advanced',
-      });
-    });
-
-    it('closes as cursor-advanced on a claim-versus-issuance drift with no recorded entry', () => {
-      // `frameEntryCounts` has nothing to offer, so live-versus-issuance is
-      // skipped entirely and claim-versus-issuance is the only witness left.
-      // The pre-#738 rule had no witness here at all and returned live.
-      const state = parent({ activeFrameKey: buildFrameKey('other'), activeEntry: undefined });
-      expect(classifyDelegationLiveness(state, { ...linkage, parentEntry: 2 })).toEqual({
-        kind: 'closed',
-        reason: 'cursor-advanced',
-      });
+    it('ignores the caller’s parentEntry entirely — the credential decides', () => {
+      // Replaces two tests that asserted a `linkage.parentEntry !== issuedEntry`
+      // arm ("closes as cursor-advanced when the claim names an entry the
+      // delegation never issued", and the same drift with no recorded entry).
+      // That arm was unreachable from every production caller — the
+      // `claimAndLaunch` pre-check reads both sides off the same substep row,
+      // every other caller presents a persisted linkage minted from the
+      // credential, and a re-issue changes the `tokenHash`, which closes
+      // `token-reissued` first — and it answered `cursor-advanced` for a
+      // condition in which no cursor had moved. Deleting the read states the
+      // #738 invariant more strongly than asserting agreement did: the
+      // coordinate a caller could recompute is not consulted at all.
+      //
+      // Both halves matter. A caller-supplied entry that DISAGREES with issuance
+      // no longer closes anything...
+      expect(classifyDelegationLiveness(parent(), { ...linkage, parentEntry: 99 }).kind).toBe(
+        'live',
+      );
+      // ...and one that AGREES with live state does not rescue a delegation the
+      // credential says was stamped at a different entry. Live state versus
+      // issuance is the whole rule.
+      expect(
+        classifyDelegationLiveness(parent({ activeEntry: 2 }), { ...linkage, parentEntry: 2 }),
+      ).toEqual({ kind: 'closed', reason: 'cursor-advanced' });
     });
 
     it('closes as cursor-advanced on an entry mismatch recorded in frameEntryCounts', () => {
