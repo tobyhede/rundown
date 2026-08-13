@@ -1952,65 +1952,81 @@ export async function claimAndLaunch(
   });
 
   if (invariantViolation !== undefined) {
-    // The durable latch (R2) is not an invariant violation — it is the ONLY
-    // place a supersession is decided on this path. `claimRunbook` re-reads
-    // the parent inside its own transaction and classifies liveness against
-    // the linkage built above, so a parent that had already advanced, or that
-    // advanced, terminalized, or reissued its token after the 3a re-read,
-    // legitimately refuses here. Reporting that as CLAIM_INVARIANT_VIOLATED
-    // blames Rundown for a real supersession and drops the no-retry signal
-    // the bearer holder needs. The child created moments ago is removed by
-    // launch cleanup; the atomic transaction wrote nothing.
-    if (invariantViolation.reason === 'delegation-superseded') {
-      return {
-        ok: false,
-        reason: 'delegation-superseded',
-        parentRunId: freshParent.id,
-        stepId: substepId ?? stepId,
-        // No child is named, and none may be synthesized. This arm is reached
-        // only from the fresh-launch `afterInit`, which 3c already guarantees
-        // has `freshDelegation.childRunId === null` — the delegation names no
-        // child, and the one this claim just created is about to be removed by
-        // launch cleanup. The routes that DO have a child to name carry it
-        // through `claimResultToFailure` instead.
-      };
+    // Exhaustive rather than a fall-through chain. CLAIM_INVARIANT_VIOLATED is a
+    // claim about Rundown, not about the caller, so it must be reached only by
+    // reasons deliberately classified as such — never by a reason nobody has
+    // classified yet. The `never` arm makes a new `ClaimChildResult` variant a
+    // compile error here instead of silently inheriting that blame; the comments
+    // below record that this exact fall-through already mislabelled one race
+    // once.
+    const violation = invariantViolation;
+    switch (violation.reason) {
+      // The durable latch (R2) is not an invariant violation — it is the ONLY
+      // place a supersession is decided on this path. `claimRunbook` re-reads
+      // the parent inside its own transaction and classifies liveness against
+      // the linkage built above, so a parent that had already advanced, or that
+      // advanced, terminalized, or reissued its token after the 3a re-read,
+      // legitimately refuses here. Reporting that as CLAIM_INVARIANT_VIOLATED
+      // blames Rundown for a real supersession and drops the no-retry signal
+      // the bearer holder needs. The child created moments ago is removed by
+      // launch cleanup; the atomic transaction wrote nothing.
+      case 'delegation-superseded':
+        return {
+          ok: false,
+          reason: 'delegation-superseded',
+          parentRunId: freshParent.id,
+          stepId: substepId ?? stepId,
+          // No child is named, and none may be synthesized. This arm is reached
+          // only from the fresh-launch `afterInit`, which 3c already guarantees
+          // has `freshDelegation.childRunId === null` — the delegation names no
+          // child, and the one this claim just created is about to be removed by
+          // launch cleanup. The routes that DO have a child to name carry it
+          // through `claimResultToFailure` instead.
+        };
+      // Same reasoning for a parent deleted between the 3a re-read and the
+      // claim transaction: a race, not a broken invariant. `claimResultToFailure`
+      // already owns the mapping, and 3a emits this very refusal earlier for the
+      // same fact — so the outcome must not change just because the race lost
+      // later.
+      //
+      // `delegation-already-claimed` is the same class and the reason this arm
+      // matters most: a second claimer of one token that got past 3c before the
+      // winner committed lands here, and the fact it must report is the winner's
+      // — the delegation is taken, permanently, by the child the refusal names.
+      // Reporting CLAIM_INVARIANT_VIOLATED instead blamed Rundown for a race it
+      // handled correctly, and named this claimer's own about-to-be-deleted
+      // child.
+      case 'parent-missing':
+      case 'concurrent-modification':
+      case 'delegation-already-claimed':
+        return claimResultToFailure(violation, freshParent.id, substepId ?? stepId);
+      // An ownership refusal is likewise a race, not a broken invariant: the
+      // claim transaction refused before writing anything.
+      case 'session-refused':
+        return violation;
+      // These three genuinely are broken invariants on this path: 3c has already
+      // established the delegation is unresolved and names no child, and built
+      // the linkage the transaction re-checks, so the transaction disagreeing
+      // means our own precondition was wrong.
+      case 'child-missing':
+      case 'delegation-resolved':
+      case 'linkage-mismatch':
+        return {
+          ok: false,
+          reason: 'launch-failed',
+          runbook: childDisplayPath,
+          code: ErrorCodes.CLAIM_INVARIANT_VIOLATED.code,
+          cause: `Claim invariant violated for fresh child ${describeClaimFailureTarget(violation)}: ${violation.reason}`,
+          details: {
+            runbookName: childDisplayPath,
+            runbook: childDisplayPath,
+          },
+        };
+      default: {
+        const _exhaustive: never = violation;
+        return _exhaustive;
+      }
     }
-    // Same reasoning for a parent deleted between the 3a re-read and the
-    // claim transaction: a race, not a broken invariant. `claimResultToFailure`
-    // already owns the mapping, and 3a emits this very refusal earlier for the
-    // same fact — so the outcome must not change just because the race lost
-    // later.
-    //
-    // `delegation-already-claimed` is the same class and the reason this arm
-    // matters most: a second claimer of one token that got past 3c before the
-    // winner committed lands here, and the fact it must report is the winner's
-    // — the delegation is taken, permanently, by the child the refusal names.
-    // Reporting CLAIM_INVARIANT_VIOLATED instead blamed Rundown for a race it
-    // handled correctly, and named this claimer's own about-to-be-deleted
-    // child.
-    if (
-      invariantViolation.reason === 'parent-missing' ||
-      invariantViolation.reason === 'concurrent-modification' ||
-      invariantViolation.reason === 'delegation-already-claimed'
-    ) {
-      return claimResultToFailure(invariantViolation, freshParent.id, substepId ?? stepId);
-    }
-    // An ownership refusal is likewise a race, not a broken invariant: the
-    // claim transaction refused before writing anything.
-    if (invariantViolation.reason === 'session-refused') {
-      return invariantViolation;
-    }
-    return {
-      ok: false,
-      reason: 'launch-failed',
-      runbook: childDisplayPath,
-      code: ErrorCodes.CLAIM_INVARIANT_VIOLATED.code,
-      cause: `Claim invariant violated for fresh child ${describeClaimFailureTarget(invariantViolation)}: ${invariantViolation.reason}`,
-      details: {
-        runbookName: childDisplayPath,
-        runbook: childDisplayPath,
-      },
-    };
   }
 
   if (!launchResult.ok) {
