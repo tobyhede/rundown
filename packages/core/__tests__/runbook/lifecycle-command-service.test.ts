@@ -118,10 +118,18 @@ import { patchPersistedClaim, unwrapSessionMutation } from '../../src/testing/se
 // Its 2 mutants — the `false ?` conditional and the empty-array arm — were
 // accepted as UNREACHABLE (#726), then corrected to untested (#738). They are
 // now KILLED by the defensive malformed-resolution fixture below. Production
-// minting and resolution reject all shared-coordinate drift before this arm;
-// the fixture injects the pre-fix state directly so the terminal service still
-// fails closed if its collaborator violates that contract. Do not re-accept
-// them: the arm has a fixture.
+// minting and resolution reject all shared-coordinate drift before this arm, so
+// the fixture injects the pre-fix state directly, by doubling the resolving
+// collaborator. Read the arm honestly: it does NOT fail closed. It closes the
+// authorized child and drops the parent report — the identical outcome #738
+// classifies as the P1 silent failure. What it declines to do is exercise
+// authority the claim cannot prove, which is the right call once the state is
+// already invalid, but it is a lesser evil rather than a refusal.
+//
+// Because the arm is unreachable in production, this is defence in depth against
+// a collaborator contract violation, not a reproduction. Do not re-accept the
+// mutants: the arm has a fixture. If the guard above it is ever deleted, delete
+// this fixture with it rather than preserving a test of dead code.
 //
 // Five further survivors are accepted as EQUIVALENT (#727) — each by a proof in
 // the code, not by inspection, so the verdict can be rechecked rather than

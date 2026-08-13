@@ -1092,6 +1092,113 @@ while [ ! -f release-first-claim ]; do sleep 0.05; done
       );
     }, 15_000);
 
+    it('refuses orphan adoption once the parent frame has been re-entered', async () => {
+      // Issue #738's reproduction, driven rather than staged. The other tests of
+      // this refusal hand-write the drifted coordinate or mock core's answer;
+      // this one makes the parent's own frame counter produce the drift, so the
+      // machinery that creates it is under test. A regression in the frame-entry
+      // bump, in the GOTO substep reset preserving `delegation`, or in orphan
+      // adoption recomputing the linkage from live parent state would break the
+      // reproduction here, where the staged fixtures would stay green.
+      //
+      // The adoption above is the same flow WITHOUT the re-entry, so the pair
+      // isolates the frame bump as the single cause of the refusal.
+      await writeParentRunbook();
+      await writeChildRunbook();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+      const parent = await getActiveState(workspace);
+      expect(parent).not.toBeNull();
+
+      const token = await getAutoIssuedToken();
+      const delegatedParent = await readRunbookState(workspace, parent!.id);
+      const delegatedSubstep = delegatedParent?.substepStates?.find(
+        (substep) => substep.id === '1',
+      );
+      const delegation = delegatedSubstep?.delegation;
+      expect(delegation).toEqual(
+        expect.objectContaining({ tokenHash: expect.any(String), childRunId: null }),
+      );
+      // The entry stamped on the child at delegation time.
+      const entryAtDelegation = inferEntryFromState(delegatedParent!, delegatedSubstep!.frameKey);
+
+      result = await runCliInProcess('run --prompted child.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+      const orphan = await getActiveState(workspace);
+      expect(orphan).not.toBeNull();
+
+      await patchPersistedRunState(workspace.cwd, orphan!.id, {
+        parentLinkage: {
+          kind: 'delegation',
+          parentRunId: parent!.id,
+          parentStepId: delegatedSubstep!.id,
+          tokenHash: delegation!.tokenHash,
+          parentStep: delegatedParent!.step,
+          parentFrameKey: delegatedSubstep!.frameKey,
+          parentEntry: entryAtDelegation,
+        },
+      });
+      // Drop the child's own claim: an orphan is a child run whose claim commit
+      // never landed, and it is precisely that absence which leaves the parent
+      // with zero open claims and therefore free to move.
+      const sessionBeforeAdoption = await readSession(workspace);
+      const parentClaims = Object.fromEntries(
+        Object.entries(sessionBeforeAdoption.claims).filter(
+          ([, claim]) => claim.controlledRunId === parent!.id,
+        ),
+      );
+      await writeSession(workspace, { defaultStack: [parent!.id], claims: parentClaims });
+
+      // Re-enter the delegating frame. A self-targeting GOTO is the shortest
+      // production route to the bump (see the header of
+      // `__tests__/integration/inline-child-launch.test.ts`); the issue reaches
+      // the same state by leaving the frame and returning.
+      const parentClaimId = await issueRunControlClaim(workspace, parent!.id);
+      result = await runCliInProcess(`goto 1 --claim-id ${parentClaimId}`, workspace);
+      expect(result.exitCode).toBe(0);
+
+      // The drift is now real, and produced by the parent rather than the test.
+      const reenteredParent = await readRunbookState(workspace, parent!.id);
+      const reenteredSubstep = reenteredParent?.substepStates?.find(
+        (substep) => substep.id === delegatedSubstep!.id,
+      );
+      expect(inferEntryFromState(reenteredParent!, delegatedSubstep!.frameKey)).toBeGreaterThan(
+        entryAtDelegation,
+      );
+      // The delegation row survives re-entry — token intact, no child adopted.
+      // Without this the token below would be unclaimable for an unrelated reason
+      // and the refusal under test would be reached by accident.
+      expect(reenteredSubstep?.delegation).toEqual(
+        expect.objectContaining({ tokenHash: delegation!.tokenHash, childRunId: null }),
+      );
+
+      result = await runCliInProcess(`claim ${token}`, workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(findActionOutput(result.stdout)).toBeNull();
+      const envelope = parseConcatenatedJson(result.stdout).find(
+        (entry): entry is Record<string, unknown> =>
+          typeof entry === 'object' &&
+          entry !== null &&
+          (entry as { kind?: string }).kind === 'error',
+      );
+      expect(envelope).toEqual(
+        expect.objectContaining({ kind: 'error', code: 'CHILD_LINKAGE_MISMATCH' }),
+      );
+
+      // The parent is not linked to the child it refused to adopt.
+      const afterRefusal = await readRunbookState(workspace, parent!.id);
+      expect(
+        afterRefusal?.substepStates?.find((substep) => substep.id === delegatedSubstep!.id)
+          ?.delegation?.childRunId,
+      ).toBeNull();
+      const sessionAfter = await readSession(workspace);
+      expect(
+        Object.values(sessionAfter.claims).some((claim) => claim.controlledRunId === orphan!.id),
+      ).toBe(false);
+    }, 15_000);
+
     it('refuses a replay claim with CHILD_RUN_MISSING when the claimed child run is deleted', async () => {
       // Regression pin for the CHILD_RUN_MISSING refusal, previously covered only
       // by the `delegate-claim-corruption` scenario's `node -e` edit of
