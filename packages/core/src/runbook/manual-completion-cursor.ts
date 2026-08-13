@@ -17,7 +17,7 @@ import type { RunbookState } from './types.js';
  * frontend's job; every state-dependent decision — step match, substep
  * existence, FOR bounds, active-iteration default, active-vs-inactive frame —
  * is made by {@link resolveManualCompletionCursor} against the state the seam
- * reads under the completion lock.
+ * captured for the guarded cycle it commits in.
  */
 export interface ExplicitTransitionTarget {
   /** Raw qualified step id (e.g. `1.2` or `1.2.1`). */
@@ -51,7 +51,8 @@ export interface ExplicitCompletionCursor {
  *
  * @deprecated `LifecycleTransitionInput` no longer takes a pre-resolved cursor
  * (`manualTarget` was replaced by the raw `explicitTarget` — #500): the seam
- * derives the cursor in-lock via {@link resolveManualCompletionCursor}, which
+ * derives the cursor inside the guarded cycle via
+ * {@link resolveManualCompletionCursor}, which
  * returns {@link ExplicitCompletionCursor}. Retained as a type-only alias
  * (zero runtime cost) so the published surface keeps the name.
  */
@@ -61,8 +62,9 @@ export type ManualCompletionCursor = ExplicitCompletionCursor;
  * Resolve the substep completion cursor for an explicit `--step` / `--index`
  * pass/fail transition against the supplied runbook state.
  *
- * Derive-or-refuse: called by the lifecycle seam INSIDE its completion-lock
- * scope against the locked re-read, so the returned cursor cannot go stale
+ * Derive-or-refuse: called by the lifecycle seam INSIDE its guarded
+ * compute-and-commit cycle, against the captured state that cycle's
+ * compare-and-swap commits onto, so the returned cursor cannot go stale
  * between resolution and the record/drain it feeds (#500). Pure — no IO.
  *
  * @param steps - Parsed runbook steps for the resolved target run

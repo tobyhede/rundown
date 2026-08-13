@@ -408,8 +408,8 @@ describe('runSeamTransition — explicit --step target resolution', () => {
     const output = makeOutput();
     // Under #500 the CLI performs no cursor resolution: it forwards the raw step
     // id as an explicitTarget and the seam derives the completion cursor in-core,
-    // inside the completion-lock scope. resolveTransitionTarget is never called
-    // on the CLI side (it now lives behind the seam).
+    // inside its guarded compute-and-commit cycle. resolveTransitionTarget is
+    // never called on the CLI side (it now lives behind the seam).
     mockRunTransition.mockResolvedValue(appliedOutcome());
 
     const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig(), {

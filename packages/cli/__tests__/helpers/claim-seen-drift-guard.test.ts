@@ -437,7 +437,7 @@ describe('claim liveness recording drift guard (#519 AC4)', () => {
   it('records claim liveness on delegate --retry, the distinct retry issuance site (#519)', async () => {
     // The RECORDING_COMMANDS it.each drives `delegate` through its FRESH issuance
     // site (issueDelegation). `delegate --retry` records at a SEPARATE site inside
-    // #issueRetry, under the DelegationLock (lifecycle-command-service.ts:1290-1292)
+    // #issueRetry (lifecycle-command-service.ts, the retry issuance path)
     // — a line the fresh case never reaches. Deleting it leaves the entire it.each
     // green, so the retry recorder was unpinned end-to-end. This drives that exact
     // site through the real CLI and asserts the mark moved.

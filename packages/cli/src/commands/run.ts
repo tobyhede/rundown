@@ -226,10 +226,11 @@ export function registerRunCommand(program: Command): void {
                 // Derive the row INSIDE the compare-and-swap. `substepStates` is
                 // a verbatim-replace field, so a patch derived from a state read
                 // before the cycle commits its whole array over whatever landed
-                // in between — a lost update the `DelegationLock` this site used
-                // to hold never prevented, because the writers that mutate a
-                // parent's substep rows (`delegate`, `pass`, `fail`, `goto`,
-                // `abort`) go through the state machine and take no such lock.
+                // in between — a lost update the retired delegation file lock
+                // this site used to hold never prevented, because the writers
+                // that mutate a parent's substep rows (`delegate`, `pass`,
+                // `fail`, `goto`, `abort`) go through the state machine and
+                // never took that lock.
                 // Deriving from `current` makes the array the one the CAS
                 // commits onto, and a loser re-derives against the committed row.
                 //

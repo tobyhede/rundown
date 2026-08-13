@@ -233,8 +233,8 @@ function delegatePromptedForStep(
  * authority, positional runbook, claim-seen recording) and before the fence's
  * own `beforeEffect` re-read.
  *
- * This is the concurrent-writer seam the `DelegationLock` used to provide: a
- * document mutation landing here is invisible to any load hoisted out of
+ * This is the concurrent-writer seam the retired delegation file lock used to
+ * provide: a document mutation landing here is invisible to any load hoisted out of
  * `beforeEffect`, so a decision that observes it must have been made from the
  * in-fence re-read.
  *
@@ -4399,10 +4399,9 @@ describe('RunbookLifecycleCommandService', () => {
 
     it('does not over-tighten: a deliberate non-active --index target records at an inactive frame', async () => {
       // A deliberate `--step`/`--index` target of a non-active FOR iteration
-      // resolves in-lock to an `inactive` frame (frame-only, sentinel entry) and
-      // records — live-frame identity only pins `active`-kind targets. Record and
-      // drain are mocked (the unlocked twins — the explicit span holds the
-      // CompletionLock) so this isolates the frame decision.
+      // resolves inside the guarded cycle to an `inactive` frame (frame-only,
+      // sentinel entry) and records — live-frame identity only pins `active`-kind
+      // targets. Record and drain are mocked so this isolates the frame decision.
       const forSteps: ResolvedStep[] = [
         {
           kind: 'for',

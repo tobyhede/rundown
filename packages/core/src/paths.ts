@@ -43,7 +43,13 @@ export function assertSafeId(value: string, field: string): void {
 /** Directory path (relative to project root) for per-run filesystem artifacts. */
 export const RUNS_DIR = `${RUNDOWN_DIR}/runs`;
 
-/** Directory path (relative to project root) for delegation lock files. */
+/**
+ * Directory path (relative to project root) for file-lock files.
+ *
+ * Run and session authority live in SQLite and use transactions and execution
+ * leases, so nothing under here fences run state. The surviving occupants are
+ * the artifact-manifest append lock and the sql.js durable-replacement lock.
+ */
 export const LOCKS_DIR = `${RUNDOWN_DIR}/locks`;
 
 /** Directory path (relative to project root) for project-local runbook sources. */
@@ -98,7 +104,7 @@ export const runsDir = (cwd: string): string => path.join(cwd, RUNS_DIR);
 export const dbPath = (cwd: string): string => path.join(cwd, DB_FILE);
 
 /**
- * Absolute path to the delegation lock directory.
+ * Absolute path to the file-lock directory ({@link LOCKS_DIR}).
  *
  * @param cwd - Project root directory
  * @returns Path to `.rundown/locks/`
@@ -152,34 +158,4 @@ export const ensureStateDirs = async (cwd: string): Promise<void> => {
       fs.mkdir(path.join(cwd, dir), { recursive: true }),
     ),
   );
-};
-
-/**
- * Absolute path to a delegation lock file.
- *
- * Lock path: `.rundown/locks/run-<parentRunId>.delegation.lock`
- *
- * @param cwd - Project root directory
- * @param runId - Parent run ID to lock (must match `[A-Za-z0-9._-]+`)
- * @returns Path to the lock file
- * @throws {Error} If `runId` contains path separators, `..`, or is otherwise unsafe
- */
-export const delegationLockPath = (cwd: string, runId: string): string => {
-  assertSafeId(runId, 'runId');
-  return path.join(cwd, LOCKS_DIR, `run-${runId}.delegation.lock`);
-};
-
-/**
- * Absolute path to a resolved-completion lock file.
- *
- * Lock path: `.rundown/locks/run-<runId>.completion.lock`
- *
- * @param cwd - Project root directory
- * @param runId - Run ID to lock (must match `[A-Za-z0-9._-]+`)
- * @returns Path to the lock file
- * @throws {Error} If `runId` contains path separators, `..`, or is otherwise unsafe
- */
-export const completionLockPath = (cwd: string, runId: string): string => {
-  assertSafeId(runId, 'runId');
-  return path.join(cwd, LOCKS_DIR, `run-${runId}.completion.lock`);
 };

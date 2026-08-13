@@ -826,8 +826,8 @@ async function launchInlineChildFromIntent({
   };
   const childRunId = assertRunId(intent.childRunId);
 
-  // Latch the launch before performing any of it. This replaced the
-  // `DelegationLock` this site used to hold across the read-derive-write span:
+  // Latch the launch before performing any of it. This replaced the retired
+  // delegation file lock this site held across the read-derive-write span:
   // the lock's job was to keep a second observer out of the gap between the
   // decision and the write it depended on, and deriving the decision inside the
   // compare-and-swap closes that gap by construction instead of by exclusion.

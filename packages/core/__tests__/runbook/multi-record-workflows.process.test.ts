@@ -793,7 +793,7 @@ describe('cross-process all-or-none delegation workflows', () => {
   it('keeps both reports when two sibling children report to one parent', async () => {
     // The other three races assert that exactly ONE writer may commit. This one
     // asserts the opposite half of the same guarantee, and it is the half the
-    // retired `DelegationLock` at this site actually stood for: two siblings
+    // retired delegation file lock at this site actually stood for: two siblings
     // reporting DIFFERENT substeps are not in conflict, so both must land. The
     // in-process coverage of this recorder races eight reports of the SAME child,
     // which can only ever produce one winner and seven duplicates — a shape in

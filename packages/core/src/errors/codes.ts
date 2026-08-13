@@ -328,13 +328,6 @@ export const ErrorCodes = {
     description: 'This delegation has been cancelled and cannot be claimed.',
     docSlug: 'token-cancelled',
   },
-  DELEGATION_LOCK_TIMEOUT: {
-    code: 'RD-810',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation lock timeout',
-    description: 'Could not acquire delegation lock. Another operation may be in progress.',
-    docSlug: 'delegation-lock-timeout',
-  },
   DELEGATION_ALREADY_CLAIMED: {
     code: 'RD-811',
     category: ErrorCategory.DELEGATION,

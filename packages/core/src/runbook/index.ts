@@ -479,16 +479,6 @@ export {
   type DelegationTokenHash,
 } from './delegation-token.js';
 export {
-  DelegationLock,
-  DelegationLockTimeoutError,
-  type DelegationLockLike,
-} from './delegation-lock.js';
-export {
-  CompletionLock,
-  CompletionLockTimeoutError,
-  type CompletionLockLike,
-} from './completion-lock.js';
-export {
   acquireFileLock,
   FileLockTimeoutError,
   heldLock,

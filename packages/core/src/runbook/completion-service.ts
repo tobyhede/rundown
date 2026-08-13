@@ -1221,11 +1221,11 @@ export class RunbookCompletionService {
    * The whole read-derive-write span — parent load, token-hash fence,
    * cancellation check, frame selection, duplicate check, write — is one
    * compare-and-swap cycle against a single captured parent state. That
-   * replaced the parent `DelegationLock`, and it removes the
-   * `DelegationLock → CompletionLock` ordering edge outright rather than
+   * replaced the retired parent delegation file lock, and it removes the
+   * delegation-then-completion lock ordering edge outright rather than
    * documenting it: this path used to record through the manual completion
-   * recorder, which took the run's `CompletionLock` while the parent's
-   * `DelegationLock` was still held. It now commits its own patch from
+   * recorder, which took the run's completion file lock while the parent's
+   * delegation lock was still held. It now commits its own patch from
    * {@link classifyChildCompletionTarget}, the same decision owner the fenced
    * {@link prepareChildCompletion} uses, so the two can never disagree — and
    * the nested acquisition has no site left to occur at. The manual recorder
@@ -1381,7 +1381,7 @@ export class RunbookCompletionService {
    * attempt that loses the compare-and-swap re-derives from the committed state
    * rather than replaying a decision made against a version that has moved.
    *
-   * That fold is what retired the run {@link CompletionLock} here. The lock's job
+   * That fold is what retired the run's completion file lock here. The lock's job
    * was to keep another writer out of the gap between the selection and the write
    * that depended on it; running the selection inside the cycle closes the gap by
    * construction instead of by exclusion. What the lock never prevented, and this

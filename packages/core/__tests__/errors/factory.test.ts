@@ -553,13 +553,6 @@ describe('Errors factory - exhaustive coverage', () => {
       expect(error.context.token).toBe('rdtk_CAN...ED22');
     });
 
-    it('delegationLockTimeout maps parentRunId → RD-810', () => {
-      const error = Errors.delegationLockTimeout('run-123');
-      expect(error).toBeInstanceOf(RundownError);
-      expect(error.code).toBe('RD-810');
-      expect(error.context.parentRunId).toBe('run-123');
-    });
-
     it('delegationAlreadyClaimed maps step + childRunId → RD-811', () => {
       const error = Errors.delegationAlreadyClaimed('2', 'child-9');
       expect(error).toBeInstanceOf(RundownError);

@@ -50,7 +50,7 @@ let seq = 0;
  *
  * A spawned-and-reaped pid is only dead until the OS recycles it, and this
  * property holds one pid across every cycle of a run — matching the constant
- * already used by the file-lock and delegation-lock suites removes that window
+ * already used by the file-lock and process-identity suites removes that window
  * entirely, and the spawn with it.
  */
 const DEAD_PID = 999999999;

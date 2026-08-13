@@ -679,8 +679,8 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       // between the launch's derivation of substep 1.1's row and the commit that
       // depends on it. This models the writers that actually exist: every
       // parent-side substep mutation (`rundown delegate`, `rundown pass`, ...)
-      // goes through the state machine and takes no `DelegationLock`, so the
-      // lock this site holds never excluded them.
+      // goes through the state machine and never took the delegation file lock
+      // this site used to hold, so that lock never excluded them.
       //
       // The hook sits on the manager's WRITE seam, not its read seam: a read
       // seam only exists while the derivation is outside the compare-and-swap,

@@ -16,9 +16,7 @@ import {
   type ApplyNextResolvedCompletionArgs,
   type ApplyNextResolvedCompletionResult,
 } from '../../src/runbook/index.js';
-import { CompletionLock } from '../../src/runbook/completion-lock.js';
 import { merge } from '../../src/runbook/state-update-ops.js';
-import { DelegationLock } from '../../src/runbook/delegation-lock.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import {
   activeFrame,
@@ -766,8 +764,6 @@ describe('RunbookCompletionService', () => {
     ];
 
     it('applies completions in substep order across a single drain', async () => {
-      const acquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
-      const releaseSpy = jest.spyOn(CompletionLock.prototype, 'release');
       // Persist completions for substeps 1.1 and 1.2; drain should apply both
       // in order and stop at 1.3 (unresolved).
       const current = state({
@@ -816,10 +812,6 @@ describe('RunbookCompletionService', () => {
       // Both rows consumed
       await expect(lifecycleService.getResolvedCompletion(runbookId, key1)).resolves.toBeNull();
       await expect(lifecycleService.getResolvedCompletion(runbookId, key2)).resolves.toBeNull();
-      // No lock is taken for any of it: each apply's compare-and-swap is the
-      // whole of the mutual exclusion.
-      expect(acquireSpy).not.toHaveBeenCalled();
-      expect(releaseSpy).not.toHaveBeenCalled();
     });
 
     it('stops at the first unresolved substep — substep 1.1 only when 1.3 persisted without 1.2', async () => {
@@ -1523,18 +1515,11 @@ describe('RunbookCompletionService', () => {
       });
     }
 
-    it('records the whole report in one guarded cycle, taking no domain lock', async () => {
-      // The DelegationLock's job here was making the read-derive-write span
-      // atomic; the store's compare-and-swap does that now. The CompletionLock
-      // assertion is the other half: this path no longer records through
-      // recordManualCompletion, so the DelegationLock -> CompletionLock ordering
-      // edge has no remaining site to occur at.
-      const delegationAcquire = jest.spyOn(DelegationLock.prototype, 'acquire');
-      const completionAcquire = jest.spyOn(CompletionLock.prototype, 'acquire');
-      // Prototype spies survive earlier tests in this file, so a fresh spyOn
-      // inherits their call history. Only this test's calls may count.
-      delegationAcquire.mockClear();
-      completionAcquire.mockClear();
+    it('records the whole report in one guarded cycle', async () => {
+      // One cycle, not two: the token fence, cancellation check, duplicate
+      // check and write all derive from the single version the compare-and-swap
+      // commits onto. A second commit here would mean some part of the decision
+      // was made against a version the write did not land on.
       const updateWithStateReturningSpy = jest.spyOn(manager, 'updateWithStateReturning');
       await manager.save(makeParentWithDelegation());
       const child = makeChildWithDelegationLinkage();
@@ -1543,8 +1528,6 @@ describe('RunbookCompletionService', () => {
         service.recordChildCompletion({ childState: child, result: 'pass' }),
       ).resolves.toBe('recorded');
 
-      expect(delegationAcquire).not.toHaveBeenCalled();
-      expect(completionAcquire).not.toHaveBeenCalled();
       expect(updateWithStateReturningSpy).toHaveBeenCalledTimes(1);
     });
 
@@ -1564,8 +1547,8 @@ describe('RunbookCompletionService', () => {
       await manager.save(makeParentWithDelegation());
       const child = makeChildWithDelegationLinkage();
 
-      // The DelegationLock's exclusion guarantee, restated as a CAS guarantee.
-      // The token fence, cancellation check, duplicate check and write all read
+      // The retired delegation file lock's exclusion guarantee, restated as a
+      // CAS guarantee. The token fence, cancellation check, duplicate check and write all read
       // one captured parent version, so a loser re-derives against the committed
       // outcome and reports duplicate rather than writing a second row.
       const results = await Promise.all(
@@ -3063,19 +3046,11 @@ describe('RunbookCompletionService', () => {
   });
 
   describe('fenced twins agree with their recorders', () => {
-    beforeEach(() => {
-      // Earlier tests spy on CompletionLock.prototype without restoring; clear
-      // any prototype spies so the call counts below are this test's own.
-      jest.restoreAllMocks();
-    });
-
     afterEach(() => {
       jest.restoreAllMocks();
     });
 
-    it('applyNextResolvedCompletion applies without touching the CompletionLock', async () => {
-      const acquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
-      const releaseSpy = jest.spyOn(CompletionLock.prototype, 'release');
+    it('applyNextResolvedCompletion applies the next completion and consumes its row', async () => {
       const current = state({
         substep: '1',
         substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
@@ -3101,16 +3076,12 @@ describe('RunbookCompletionService', () => {
       if (applied.kind === 'applied') {
         expect(applied.entry.completion.targetSubstep).toBe('1');
       }
-      // The row was consumed and no lock was taken: the compare-and-swap the
-      // apply commits under is the whole of its mutual exclusion.
+      // The row is consumed by the same compare-and-swap that applies it, so a
+      // replay of the drain cannot re-apply a completion already folded in.
       await expect(lifecycleService.getResolvedCompletion(runbookId, key1)).resolves.toBeNull();
-      expect(acquireSpy).not.toHaveBeenCalled();
-      expect(releaseSpy).not.toHaveBeenCalled();
     });
 
-    it('prepareManualCompletion prepares without touching the CompletionLock', () => {
-      const acquireSpy = jest.spyOn(CompletionLock.prototype, 'acquire');
-
+    it('prepareManualCompletion reports a recorded completion', () => {
       const prepared = service.prepareManualCompletion({
         runbookId,
         currentState: state(),
@@ -3123,7 +3094,6 @@ describe('RunbookCompletionService', () => {
       });
 
       expect(prepared.status).toBe('recorded');
-      expect(acquireSpy).not.toHaveBeenCalled();
     });
 
     describe.each<{
