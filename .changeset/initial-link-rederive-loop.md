@@ -39,5 +39,5 @@ correctly; it is now the typed `DELEGATION_ALREADY_CLAIMED`, alongside the
 occupying child cannot be omitted from the one arm that has one. Consumers
 reading `error.reason` read `error.refusal.reason`.
 
-The `DelegationLock` still held over `rundown claim` is unchanged; closing this
-gap is a prerequisite for retiring it (#690).
+Closing this gap was the prerequisite for retiring the `DelegationLock` held
+over `rundown claim`, which #690 has since deleted.
