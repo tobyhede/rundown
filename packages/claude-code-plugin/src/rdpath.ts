@@ -13,6 +13,7 @@ import {
   assembleRdPath,
   findRdPathFiles,
   IncompatibleSchemaError,
+  InvalidPersistedClaimError,
   InvalidRunbookStateError,
   InvalidRunIdError,
   LegacySnapshotError,
@@ -113,6 +114,14 @@ const STORE_OPEN_ERROR_CODES: ReadonlySet<string> = new Set([
  * === true`. (Structural guards remain correct for genuinely cross-realm values
  * — see `isZodError` in `shared/errors.ts`.)
  *
+ * `InvalidPersistedClaimError` is a claim row whose `controlled_run` /
+ * `parent_run_id` columns contradict the delegation blob beside them (#755).
+ * The session read hydrates every active claim, so one such row fails the whole
+ * lookup — the same shape as the malformed-run-id case below. Its child half
+ * used to reach `SessionDataSchema` and land on the message match further down;
+ * core now rejects it at the store's edge, which is why this arm exists rather
+ * than that one covering it.
+ *
  * `NativeSqliteUnavailableError` / `SqljsUnavailableError` are core's storage
  * driver-factory refusals: `.rundown/rundown.db` is not a database, a directory
  * sits in its place, the path is unreadable, or the host's SQLite adapter cannot
@@ -133,6 +142,7 @@ function isRecoverableActiveStateLookupError(error: unknown): boolean {
     error instanceof InvalidRunbookStateError ||
     error instanceof LegacySnapshotError ||
     error instanceof IncompatibleSchemaError ||
+    error instanceof InvalidPersistedClaimError ||
     error instanceof NativeSqliteUnavailableError ||
     error instanceof SqljsUnavailableError ||
     error instanceof InvalidRunIdError

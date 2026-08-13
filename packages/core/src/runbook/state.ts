@@ -847,7 +847,13 @@ export class RunbookStateManager {
     if (runId !== null) {
       const store = await this.store();
       // The row delete cascades to claims, stack, stash, completions, and
-      // attempts, and refuses while an execution owns the run.
+      // attempts, and refuses while an execution owns the run. Cascade is the
+      // rule for a run this delete OWNS a row about — `claims.controlled_run`
+      // among them — but not for `claims.parent_run_id`, which is `ON DELETE SET
+      // NULL`: deleting a parent must not destroy its children's claims, so
+      // those rows survive with a nulled column and a `delegation_json` that
+      // still names the deleted parent. `assertClaimColumnsMirrorDelegation`
+      // exempts exactly that pairing for this reason.
       await store.deleteRun(runId);
       // Logged immediately after the row is confirmed removed — and before the
       // outputs-dir cleanup below — so a later `fs.rm` failure cannot suppress

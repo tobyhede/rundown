@@ -45,6 +45,11 @@ export { WalJournalModeUnavailableError } from './storage/native-sqlite-driver.j
 // "the database would not open" needs both arms or it still falls through to
 // RD-999 on exactly one class of host.
 export { NativeSqliteUnavailableError, SqljsUnavailableError } from './storage/driver-factory.js';
+// A claim row whose mirrored run-id columns contradict its delegation blob is
+// the same kind of surface: it escapes on a session READ, so `rdpath` needs an
+// `instanceof` arm or a corrupt row turns a hook invocation whose base directory
+// was already supplied into a non-zero exit.
+export { InvalidPersistedClaimError } from './storage/runbook-store.js';
 // The ownership-refusal result surface is public for the same reason: a CLI
 // front end must be able to narrow a session mutation's typed refusal.
 export type {

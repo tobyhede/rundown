@@ -10,6 +10,7 @@ import {
   selectCommitRow,
   assertExactlyOneRow,
   assertExecutionPhase,
+  InvalidPersistedClaimError,
   isOpenDelegatedChildrenError,
   parentAdvanceGuard,
   StoreInvariantError,
@@ -2421,13 +2422,22 @@ describe('session reconstruction', () => {
     // about whether a given parent may advance.
     const otherParent = assertRunId(`rd_${'9'.repeat(32)}`);
     await corruptDelegationBlob('ec'.repeat(16), { parentRunId: otherParent });
+    // Typed, and named: `rdpath` degrades instead of exiting non-zero on a
+    // session it cannot read, and it classifies by `instanceof` against this
+    // export. A bare throw here is invisible to that guard.
+    const thrown: unknown = await store.loadSession().then(
+      () => undefined,
+      (reason: unknown) => reason,
+    );
+    expect(thrown).toBeInstanceOf(InvalidPersistedClaimError);
+    expect((thrown as Error).name).toBe('InvalidPersistedClaimError');
     // The whole message, suffix included: naming the inconsistency as the
     // DATABASE's is what tells the operator this is a prune-and-restart, not a
     // command they mistyped.
     await expect(store.loadSession()).rejects.toThrow(
       new RegExp(
-        `^Delegated claim rdclk_${'ec'.repeat(16)} has parent_run_id rd_[0-9a-f]{32}, ` +
-          `which does not match parent ${otherParent} in its persisted delegation linkage; ` +
+        `^Invalid persisted claim rdclk_${'ec'.repeat(16)}: parent_run_id rd_[0-9a-f]{32} ` +
+          `does not match parent ${otherParent} in its delegation linkage; ` +
           `the runbook database is inconsistent\\.$`,
       ),
     );
@@ -2443,8 +2453,8 @@ describe('session reconstruction', () => {
     await corruptDelegationBlob('ed'.repeat(16), { childRunId: otherChild });
     await expect(store.loadSession()).rejects.toThrow(
       new RegExp(
-        `^Delegated claim rdclk_${'ed'.repeat(16)} has controlled_run rd_[0-9a-f]{32}, ` +
-          `which does not match child ${otherChild} in its persisted delegation linkage; ` +
+        `^Invalid persisted claim rdclk_${'ed'.repeat(16)}: controlled_run rd_[0-9a-f]{32} ` +
+          `does not match child ${otherChild} in its delegation linkage; ` +
           `the runbook database is inconsistent\\.$`,
       ),
     );

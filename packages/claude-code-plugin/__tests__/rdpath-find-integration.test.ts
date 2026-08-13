@@ -501,6 +501,14 @@ Active step.
      */
     const MALFORMED_RUN_ID = 'not-a-run-id';
 
+    /**
+     * A well-formed run id that is NOT the claim's `controlled_run`.
+     *
+     * Well-formed on purpose: the point is a row that clears every shape check
+     * and fails only the column-against-descriptor mirror.
+     */
+    const FOREIGN_CHILD_RUN_ID = `rd_${'a'.repeat(32)}`;
+
     const UNREADABLE_ACTIVE_STATES: readonly UnreadableActiveState[] = [
       {
         what: 'the run state is not valid JSON',
@@ -548,6 +556,33 @@ Active step.
           });
         }),
         realError: 'Session data is invalid for this runbook schema',
+      },
+      {
+        what: 'a claim row contradicts its own delegation linkage',
+        seed: brokenRun(async (cwd) => {
+          tamperWithStore(cwd, (db) => {
+            // #755. The columns and the blob are written from one value, so only
+            // out-of-band corruption separates them — and core rejects the row at
+            // the store's edge, BEFORE `SessionDataSchema` sees it. That is why
+            // this needs its own `instanceof` arm: the child half used to land on
+            // the "Session data is invalid" fixture above and no longer does.
+            db.prepare('UPDATE claims SET delegation_json = :json').run({
+              json: JSON.stringify({
+                childRunId: FOREIGN_CHILD_RUN_ID,
+                parentRunId: `rd_${'b'.repeat(32)}`,
+                parentStepId: '1',
+                parentStep: '1',
+                parentFrameKey: '1|0',
+                parentEntry: 1,
+                tokenHash: `sha256:${'c'.repeat(64)}`,
+              }),
+            });
+          });
+        }),
+        // The id from the blob, which appears only in the typed refusal's
+        // message — proof the abort came from the column/descriptor mirror and
+        // not from some earlier shape check that would pass on a repaired row.
+        realError: FOREIGN_CHILD_RUN_ID,
       },
       {
         what: 'the session stack carries a malformed run id',
