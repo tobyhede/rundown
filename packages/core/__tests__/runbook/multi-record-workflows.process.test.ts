@@ -852,8 +852,13 @@ describe('cross-process all-or-none delegation workflows', () => {
     expect(after.stateVersion).toBe(before.stateVersion + 2);
 
     // Reporting takes no execution lease and touches no session state, so both
-    // must be exactly as the setup left them.
+    // must be exactly as the setup left them. All three lease columns are
+    // asserted, not just the token: a recorder that took a lease would write
+    // `exec_pid` / `exec_epoch` alongside it, and checking only `exec_token`
+    // leaves that half unpinned.
     expect(after.execToken).toBeNull();
+    expect(after.execPid).toBe(before.execPid);
+    expect(after.execEpoch).toBe(before.execEpoch);
     expect(after.attemptPhases).toEqual(before.attemptPhases);
     const session = await manager.loadSession();
     expect(session.defaultStack).toEqual([parent.runId]);

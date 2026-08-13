@@ -21,9 +21,13 @@ describe('assertSafeId (via path builders)', () => {
 
   describe('rejects unsafe ids that would enable path traversal', () => {
     // Every builder here routes a caller-supplied identity segment through
-    // `assertSafeId` before it reaches `path.join`. The guard is the security
-    // control — an id that survives it is interpolated into a filename — so it
-    // is exercised in each distinct parameter position, not once per module.
+    // `assertSafeId` before interpolating it, but into two different targets:
+    // `assembleArtifactPath` validates ctx (via `validateArtifactCtx`) and file
+    // and then builds a filesystem path with `path.join`, while
+    // `buildArtifactUri` validates contextId and then percent-encodes it into an
+    // `rd://` URI that `artifactUriToPath` resolves separately. The guard is the
+    // security control on both routes, so it is exercised in each distinct
+    // parameter position, not once per module.
     const builders: Array<{
       name: string;
       build: (id: string) => string;
