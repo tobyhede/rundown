@@ -597,13 +597,20 @@ export function classifyDelegationLiveness(
   // authority naming entry 2 for a child stamped at entry 1, whose report
   // `grantAllows` then silently dropped.
   //
-  // Two comparisons, because they fail on different drift:
-  //   - the claim's captured entry against issuance catches a linkage that never
-  //     named this delegation's entry (the recompute-then-mint defect);
-  //   - live state against issuance catches the frame re-entry itself, and holds
-  //     even where the frame carries no recorded entry to compare.
-  // This is `classifyReplacementUse`'s `entry_superseded` rule (#701), which the
-  // retry path has had since `delegation-inference.ts`, stated for liveness.
+  // Two comparisons, in this order, because they answer different questions:
+  //   - claim against issuance rejects a caller still presenting a recomputed
+  //     coordinate — the mint defect itself. It is also the only witness on a
+  //     frame that records no current entry, where the second is skipped.
+  //   - live state against issuance rejects the frame re-entry. This is the arm
+  //     the production path reaches now that `claimAndLaunch` reads the entry off
+  //     the credential: the first comparison passes because both sides came from
+  //     the row, and this one sees the cursor has moved.
+  // Given the first, the second is the pre-#738 rule with `issuedEntry`
+  // substituted for an equal `linkage.parentEntry` — deliberately, so the
+  // classifier states one coordinate as authoritative rather than two that
+  // happen to agree. This is `classifyReplacementUse`'s `entry_superseded` rule
+  // (#701), which the retry path has had since `delegation-inference.ts`, stated
+  // for liveness.
   const issuedEntry = delegation.credential.parentEntry;
   if (linkage.parentEntry !== issuedEntry) {
     return { kind: 'closed', reason: 'cursor-advanced' };
