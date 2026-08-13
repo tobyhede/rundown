@@ -1096,24 +1096,35 @@ describe('RunbookLifecycleCommandService', () => {
       expect(resolveExtraVars).not.toHaveBeenCalled();
     });
 
-    it('records the explicit --index iteration in the delegation context snapshot (not the live FOR iteration)', async () => {
-      // A fresh `--step 1.1 --index 2` against a FOR step whose LIVE iteration is
-      // 1 must capture iteration 2 in the persisted context snapshot. The frame
-      // key already scopes the substep entry to `1|2`; the snapshot's `index`/`at`
-      // must agree, or the claimed child inherits the wrong `Index`. (Regression:
-      // the seam passed a step id WITHOUT the iteration segment to
-      // createDelegation, so the snapshot iteration fell back to the live one.)
+    it('records the explicit --index iteration in the delegation context snapshot', async () => {
+      // A fresh `--step 1.1 --index 2` must capture iteration 2 in the persisted
+      // context snapshot. The frame key already scopes the substep entry to
+      // `1|2`; the snapshot's `index`/`at` must agree, or the claimed child
+      // inherits the wrong `Index`. (Regression: the seam passed a step id
+      // WITHOUT the iteration segment to createDelegation, so the snapshot
+      // iteration fell back to the live one.)
+      //
+      // The fixture ran on iteration 1 and delegated `--index 2`, and the old
+      // title said so ("not the live FOR iteration"). That shape is exactly the
+      // #738 drift and is now refused RD-832, so it cannot stand as the fixture
+      // for a snapshot-index defect it never had anything to do with — no spec,
+      // issue or ADR ever asked for it. The snapshot assertion moves onto the
+      // ACTIVE iteration, where it belongs; the discriminating fixture for the
+      // fallback — the only place `--index` can still name a frame with no live
+      // iteration behind it — moves to the prompted-FOR test below, which has no
+      // `activeFor` for the snapshot to fall back to.
       const steps: readonly ResolvedStep[] = [
         delegateForStep('1', [delegateSubstep('1', 'child.md')]),
       ];
-      const activeFrameKey = buildFrameKey('1', 1);
+      const activeFrameKey = buildFrameKey('1', 2);
       const state = baseState({
         activeFrameKey,
-        frameEntryCounts: { [activeFrameKey]: 1 },
+        activeEntry: 2,
+        frameEntryCounts: { [buildFrameKey('1', 1)]: 1, [activeFrameKey]: 2 },
         forStack: [
           {
             stepId: '1',
-            iteration: 1,
+            iteration: 2,
             start: 1,
             end: 2,
             implicit: false,
@@ -1541,12 +1552,151 @@ describe('RunbookLifecycleCommandService', () => {
       // delegation written to the un-indexed frame `1|`.
       const persisted = await manager.load(runId);
       const iterationFrameKey = buildFrameKey('1', 2);
-      expect(
-        findSubstepState(persisted?.substepStates ?? [], '1', iterationFrameKey)?.delegation,
-      ).toBeDefined();
+      const delegation = findSubstepState(
+        persisted?.substepStates ?? [],
+        '1',
+        iterationFrameKey,
+      )?.delegation;
+      expect(delegation).toBeDefined();
       expect(
         findSubstepState(persisted?.substepStates ?? [], '1', buildFrameKey('1'))?.delegation,
       ).toBeUndefined();
+      // And the snapshot carries the named iteration. This is where the
+      // "seam dropped the iteration segment, so the snapshot fell back to the
+      // live iteration" regression is now discriminated: `buildContextSnapshot`
+      // resolves `iterationOverride ?? activeFor?.iteration`, and a prompted-FOR
+      // step has NO live FOR context, so the fallback yields nothing. On a `for`
+      // step the two agree by construction now that `--index` must name the
+      // active iteration (RD-832), which is why the fixture lives here.
+      expect(delegation?.contextSnapshot.index).toBe(2);
+      expect(delegation?.contextSnapshot.at).toBe('1.2.1');
+    });
+
+    it('refuses a fresh --index naming an iteration the parent is not on (RD-832)', async () => {
+      // #738. The FOR model is strictly single-iteration: one `ForContext`
+      // whose `iteration` the advance transition overwrites, one active frame
+      // key, one XState leaf. Iteration 2 is therefore not merely "not current"
+      // while the parent sits on 1 — it does not exist yet, so no entry ordinal
+      // can be known for it and no bearer minted against it can ever be live.
+      // Accepting the mint WEDGED the run: `hasActiveDelegation` saw the early
+      // row and skipped issuance when iteration 2 actually opened, so that
+      // iteration never got a token, while the child's claim closed
+      // `cursor-advanced` against a frame the parent had not entered.
+      const steps: readonly ResolvedStep[] = [
+        delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const activeFrameKey = buildFrameKey('1', 1);
+      const state = baseState({
+        activeFrameKey,
+        frameEntryCounts: { [activeFrameKey]: 1 },
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 1,
+            start: 1,
+            end: 2,
+            implicit: false,
+            source: { kind: 'range' },
+          },
+        ],
+      });
+      await activate(state);
+      const { seam: localSeam, manager: mgr } = buildIssuanceSeam(state, steps);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: '1.1', iteration: 2 },
+      });
+
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-832');
+      // Both coordinates, so the operator can see the mismatch itself rather
+      // than being told only that something was wrong.
+      expect(outcome.error.message).toContain('--index 2');
+      expect(outcome.error.message).toContain('iteration 1 is active');
+      // Refused before any effect: nothing landed on the non-active frame.
+      expect((await mgr.load(state.id))?.substepStates ?? []).toHaveLength(0);
+    });
+
+    it('leaves a FOREIGN step’s --index to the delegation resolver, not RD-832', async () => {
+      // The active iteration belongs to the CURSOR's loop. Comparing another
+      // step's `--index` against it would refuse the caller with a number read
+      // off a different loop entirely — "iteration 1 is active" about step 2,
+      // which is on no iteration at all. Step currency is RD-802's question and
+      // stays there, so the index rule abstains and the resolver answers.
+      const steps: readonly ResolvedStep[] = [
+        delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+        delegateForStep('2', [delegateSubstep('1', 'other.md')]),
+      ];
+      const activeFrameKey = buildFrameKey('1', 1);
+      const state = baseState({
+        activeFrameKey,
+        frameEntryCounts: { [activeFrameKey]: 1 },
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 1,
+            start: 1,
+            end: 2,
+            implicit: false,
+            source: { kind: 'range' },
+          },
+        ],
+      });
+      await activate(state);
+      const { seam: localSeam } = buildIssuanceSeam(state, steps);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: '2.1', iteration: 3 },
+      });
+
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-802'); // DELEGATION_STEP_NOT_CURRENT
+    });
+
+    it('accepts a fresh --index naming the iteration the parent is actually on', async () => {
+      // The other half of the RD-832 rule. Naming the ACTIVE iteration
+      // explicitly is still legitimate — it is how an orchestrator pins the
+      // frame it believes it is on — so the refusal must key on the mismatch,
+      // never on `--index` being present at all.
+      const steps: readonly ResolvedStep[] = [
+        delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const activeFrameKey = buildFrameKey('1', 2);
+      const state = baseState({
+        activeFrameKey,
+        frameEntryCounts: { [buildFrameKey('1', 1)]: 1, [activeFrameKey]: 2 },
+        activeEntry: 2,
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 2,
+            start: 1,
+            end: 2,
+            implicit: false,
+            source: { kind: 'range' },
+          },
+        ],
+      });
+      await activate(state);
+      const { seam: localSeam, manager: mgr } = buildIssuanceSeam(state, steps);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: '1.1', iteration: 2 },
+      });
+
+      expect(outcome.kind).toBe('delegated');
+      const persisted = await mgr.load(state.id);
+      expect(
+        findSubstepState(persisted?.substepStates ?? [], '1', activeFrameKey)?.delegation,
+      ).toBeDefined();
     });
 
     it('defers an unparsable indexed target to the delegation error contract', async () => {
@@ -1571,6 +1721,34 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('error');
       if (outcome.kind !== 'error') throw new Error('expected error');
       expect(outcome.error.code).toBe('RD-814');
+    });
+
+    it('defers an indexed target naming an absent step to the delegation error contract', async () => {
+      // The other half of the same abstention, and a DIFFERENT hole from the
+      // unparsable target above: `9.1` parses cleanly, so the parse guard lets
+      // it through and only the name-keyed lookup can tell that step `9` is not
+      // in this document. Whether a step EXISTS is RD-801's question and the
+      // index rule has no business answering it — there is no `kind` to
+      // classify and no loop whose iteration an `--index` could be compared
+      // against. Dropping the lookup guard does not merely mis-route the
+      // refusal: the very next line dereferences `undefined`, so the TypeError
+      // escapes as an unhandled rejection instead of a typed outcome.
+      const state = baseState();
+      await activate(state);
+      const { seam: localSeam } = buildIssuanceSeam(state, [
+        delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+      ]);
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: '9.1', iteration: 2 },
+      });
+
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      // RD-801 DELEGATION_STEP_NOT_FOUND, minted by the resolver — never RD-832.
+      expect(outcome.error.code).toBe('RD-801');
     });
   });
 
@@ -2078,17 +2256,24 @@ describe('RunbookLifecycleCommandService', () => {
       // A `--retry --step 1.1 --index 2` must surface the iteration-qualified
       // label `1.2.1`, matching the token/active retry forms — not the bare
       // `1.1` (which drops the resolved frame's iteration).
+      //
+      // The parent is ON iteration 2 here. This is the verified recovery gesture
+      // from the #738 wedge, and the reason RD-832 refuses only a NON-active
+      // iteration: a retry naming the frame the parent occupies has to keep
+      // working. (The fixture used to sit on iteration 1 and retry `--index 2`,
+      // which is the drift itself and is now refused.)
       const steps: readonly ResolvedStep[] = [
         delegateForStep('1', [delegateSubstep('1', 'child.md')]),
       ];
-      const activeFrameKey = buildFrameKey('1', 1);
+      const activeFrameKey = buildFrameKey('1', 2);
       const state = baseState({
         activeFrameKey,
-        frameEntryCounts: { [activeFrameKey]: 1 },
+        activeEntry: 2,
+        frameEntryCounts: { [buildFrameKey('1', 1)]: 1, [activeFrameKey]: 2 },
         forStack: [
           {
             stepId: '1',
-            iteration: 1,
+            iteration: 2,
             start: 1,
             end: 2,
             implicit: false,
@@ -2224,18 +2409,22 @@ describe('RunbookLifecycleCommandService', () => {
 
     it('surfaces the canonical snapshot `at` as the token-retry label (FOR iteration)', async () => {
       // A token retry whose snapshot records `at` = "1.2.1" (a FOR iteration)
-      // must surface that canonical label, not the bare step.
+      // must surface that canonical label, not the bare step. The setup
+      // delegation names the iteration the parent is on — the seeding gesture is
+      // not what this test is about, and the drifted form it used to use is now
+      // refused RD-832.
       const steps: readonly ResolvedStep[] = [
         delegateForStep('1', [delegateSubstep('1', 'child.md')]),
       ];
-      const activeFrameKey = buildFrameKey('1', 1);
+      const activeFrameKey = buildFrameKey('1', 2);
       const state = baseState({
         activeFrameKey,
-        frameEntryCounts: { [activeFrameKey]: 1 },
+        activeEntry: 2,
+        frameEntryCounts: { [buildFrameKey('1', 1)]: 1, [activeFrameKey]: 2 },
         forStack: [
           {
             stepId: '1',
-            iteration: 1,
+            iteration: 2,
             start: 1,
             end: 2,
             implicit: false,
@@ -2478,6 +2667,167 @@ describe('RunbookLifecycleCommandService', () => {
       const persisted = await mgr.load(state.id);
       const entry = findSubstepState(persisted?.substepStates ?? [], '1', buildFrameKey('1', 2));
       expect(entry?.delegation?.tokenHash).toBe(first.tokenHash);
+    });
+
+    it('refuses a retry --index naming an iteration the parent has left (RD-832)', async () => {
+      // #738 applies to retry in the same shape it applies to a fresh issue.
+      // Re-minting onto iteration 1 while the parent executes iteration 2
+      // produces exactly the bearer a fresh mint onto an unopened iteration
+      // does: one whose claim `classifyDelegationLiveness` closes
+      // `cursor-advanced` the moment it is presented. Retry is not exempt
+      // because the direction of the drift is irrelevant — what makes a bearer
+      // usable is that it names the frame the parent is on.
+      const steps: readonly ResolvedStep[] = [
+        delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const iteration1Frame = buildFrameKey('1', 1);
+      const state = baseState({
+        activeFrameKey: iteration1Frame,
+        frameEntryCounts: { [iteration1Frame]: 1 },
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 1,
+            start: 1,
+            end: 2,
+            implicit: false,
+            source: { kind: 'range' },
+          },
+        ],
+      });
+      await activate(state);
+      const { seam: localSeam, manager: mgr } = buildIssuanceSeam(state, steps);
+
+      // A real, legitimately-issued delegation on iteration 1 — so the refusal
+      // below is the index rule firing, not "there was nothing to retry".
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: '1.1', iteration: 1 },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      // The loop advances: iteration 1's frame closes, iteration 2 opens.
+      const iteration2Frame = buildFrameKey('1', 2);
+      await mgr.updateWithState(state.id, () => ({
+        activeFrameKey: iteration2Frame,
+        activeEntry: 2,
+        frameEntryCounts: replace({ [iteration1Frame]: 1, [iteration2Frame]: 2 }),
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 2,
+            start: 1,
+            end: 2,
+            implicit: false,
+            source: { kind: 'range' as const },
+          },
+        ],
+      }));
+
+      const outcome = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: runControlEvidence(runId),
+        locator: { kind: 'step', step: '1.1', iteration: 1 },
+      });
+
+      expect(outcome.kind).toBe('error');
+      if (outcome.kind !== 'error') throw new Error('expected error');
+      expect(outcome.error.code).toBe('RD-832');
+      expect(outcome.error.message).toContain('--index 1');
+      expect(outcome.error.message).toContain('iteration 2 is active');
+      // No re-mint on the abandoned frame.
+      const persisted = await mgr.load(state.id);
+      expect(
+        findSubstepState(persisted?.substepStates ?? [], '1', iteration1Frame)?.delegation
+          ?.tokenHash,
+      ).toBe(first.tokenHash);
+    });
+
+    it('still retries the ACTIVE iteration after the loop advances (the #738 recovery path)', async () => {
+      // The verified recovery from the #738 wedge is
+      // `rundown delegate --retry --step 1.1 --index 2` issued while the parent
+      // IS on iteration 2. RD-832 must not take it away: the refusal keys on a
+      // NON-active iteration, so the one gesture that unsticks the run stays
+      // open. If this ever fails, the refusal has been over-tightened into a
+      // blanket "no --index on retry".
+      const steps: readonly ResolvedStep[] = [
+        delegateForStep('1', [delegateSubstep('1', 'child.md')]),
+      ];
+      const iteration1Frame = buildFrameKey('1', 1);
+      const state = baseState({
+        activeFrameKey: iteration1Frame,
+        frameEntryCounts: { [iteration1Frame]: 1 },
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 1,
+            start: 1,
+            end: 2,
+            implicit: false,
+            source: { kind: 'range' },
+          },
+        ],
+      });
+      await activate(state);
+      const { seam: localSeam, manager: mgr } = buildIssuanceSeam(state, steps);
+
+      const first = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: '1.1', iteration: 1 },
+      });
+      if (first.kind !== 'delegated') throw new Error('expected delegated');
+
+      const iteration2Frame = buildFrameKey('1', 2);
+      await mgr.updateWithState(state.id, () => ({
+        activeFrameKey: iteration2Frame,
+        activeEntry: 2,
+        frameEntryCounts: replace({ [iteration1Frame]: 1, [iteration2Frame]: 2 }),
+        forStack: [
+          {
+            stepId: '1',
+            iteration: 2,
+            start: 1,
+            end: 2,
+            implicit: false,
+            source: { kind: 'range' as const },
+          },
+        ],
+      }));
+
+      // Iteration 2 gets its own delegation, named explicitly — the gesture
+      // RD-832 permits.
+      const second = await localSeam.issueDelegation({
+        mode: 'fresh',
+        callerEvidence: runControlEvidence(runId),
+        explicitTarget: { stepId: '1.1', iteration: 2 },
+      });
+      if (second.kind !== 'delegated') throw new Error('expected second delegated');
+
+      const retried = await localSeam.issueDelegation({
+        mode: 'retry',
+        callerEvidence: runControlEvidence(runId),
+        locator: { kind: 'step', step: '1.1', iteration: 2 },
+      });
+
+      expect(retried.kind).toBe('retried');
+      if (retried.kind !== 'retried') throw new Error('expected retried');
+      expect(retried.stepLabel).toBe('1.2.1');
+      // A genuinely fresh bearer landed on the ACTIVE frame, and iteration 1's
+      // own delegation is untouched by it.
+      const persisted = await mgr.load(state.id);
+      const reissued = findSubstepState(
+        persisted?.substepStates ?? [],
+        '1',
+        iteration2Frame,
+      )?.delegation;
+      expect(reissued).toBeDefined();
+      expect(reissued?.tokenHash).not.toBe(second.tokenHash);
+      expect(
+        findSubstepState(persisted?.substepStates ?? [], '1', iteration1Frame)?.delegation
+          ?.tokenHash,
+      ).toBe(first.tokenHash);
     });
 
     // Everything a retry decides — which substep on which frame, whether the
@@ -7406,12 +7756,15 @@ describe('RunbookLifecycleCommandService', () => {
         expect(out).toMatchObject({ kind: 'applied_claim', reported: 'recorded' });
       });
 
-      it('never targets the parent when defensive resolution supplies a drifted claim', async () => {
+      it('refuses a drifted claim rather than closing the child with no report', async () => {
         // Production claim minting and resolution now compare every shared
         // authority coordinate, so neither can supply this state. Injecting the
-        // pre-fix resolution keeps the downstream guard observable: it remains
-        // fail-closed if a malformed collaborator result reaches the terminal
-        // service, and it kills both mutants on the empty target-list arm.
+        // pre-fix resolution keeps the downstream guard observable — and pins
+        // that it fails closed LOUDLY: the refusal names the same
+        // `claim_grant_required` shape the missing-grant arm returns, and the
+        // child is left running so an operator can inspect or prune it. Closing
+        // it `completed` with `reported: 'not-applicable'` would have discarded
+        // the only actor able to report, stranding the parent's substep forever.
         const claimId = await setupClaim('running');
         const claimKey = claimKeyFromBearer(claimId);
         const session = await manager.loadSession();
@@ -7461,18 +7814,11 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'claim', claimId },
         });
 
-        // The parent is not a target AT ALL, as opposed to a target that capture
-        // dropped. `reported` cannot see that difference — it reads
-        // `captured.at(1)`, which is empty either way — so the target list is the
-        // only thing that pins this arm. Invert the spread and a second entry
-        // appears here.
-        expect(aggregate.mock.calls[0][0].targets).toEqual([
-          { runId: claimChildRunId, claimKey: claimKeyFromBearer(claimId) },
-        ]);
-        expect(out).toMatchObject({ kind: 'applied_claim', reported: 'not-applicable' });
-        // Defensive behavior still closes the authorized child without sending
-        // a result under authority that does not match its persisted linkage.
-        expect((await manager.load(claimChildRunId))?.lifecycle).toBe('completed');
+        expect(out).toEqual({ kind: 'claim_grant_required', claimId, runId: claimChildRunId });
+        // Nothing is forced: the refusal precedes the aggregate entirely, so
+        // neither the child nor the parent is captured or mutated.
+        expect(aggregate).not.toHaveBeenCalled();
+        expect((await manager.load(claimChildRunId))?.lifecycle).toBe('running');
       });
 
       it('claim complete returns claim_grant_required when the claim lacks mutate-run grant', async () => {
