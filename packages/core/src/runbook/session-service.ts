@@ -54,7 +54,12 @@ import {
   delegationRuntimeCapabilities,
   type DelegationRuntimeCapabilities,
 } from './delegation-credential.js';
-import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } from './targeting.js';
+import {
+  classifyDelegationLiveness,
+  delegationAuthorityCoordinatesMatch,
+  findSubstepState,
+  linkageMatchesClaim,
+} from './targeting.js';
 import {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
@@ -472,13 +477,7 @@ function linkageMatchesLinkage(
   incoming: DelegationLinkage,
 ): boolean {
   return (
-    persisted?.kind === 'delegation' &&
-    persisted.parentRunId === incoming.parentRunId &&
-    persisted.parentStepId === incoming.parentStepId &&
-    persisted.parentStep === incoming.parentStep &&
-    persisted.parentFrameKey === incoming.parentFrameKey &&
-    persisted.parentEntry === incoming.parentEntry &&
-    persisted.tokenHash === incoming.tokenHash
+    persisted?.kind === 'delegation' && delegationAuthorityCoordinatesMatch(persisted, incoming)
   );
 }
 
