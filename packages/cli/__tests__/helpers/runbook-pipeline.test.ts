@@ -2963,6 +2963,19 @@ describe('claimAndLaunch', () => {
       expected: { reason: 'concurrent-modification' },
     },
     {
+      // Permanent occupancy, not a race: it must not reach the user as the
+      // retryable `concurrent-modification`.
+      name: 'already-linked prepared delegation',
+      options: {
+        prepareResult: {
+          kind: 'already_linked',
+          runId: PARENT_RUN_ID,
+          message: 'delegation is already linked to another child',
+        },
+      },
+      expected: { reason: 'delegation-already-claimed' },
+    },
+    {
       name: 'execution-in-progress atomic commit',
       options: {
         initialLinkResult: {

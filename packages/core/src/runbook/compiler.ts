@@ -175,6 +175,23 @@ interface SetInlineLaunchFailedParams {
 type InlineChildStartedEvent = Extract<RunbookEvent, { type: 'INLINE_CHILD_STARTED' }>;
 type DelegationChildLinkedEvent = Extract<RunbookEvent, { type: 'DELEGATION_CHILD_LINKED' }>;
 type DelegationChildUnlinkedEvent = Extract<RunbookEvent, { type: 'DELEGATION_CHILD_UNLINKED' }>;
+/**
+ * Stable refusal classes a delegated-child link derivation can raise.
+ *
+ * The three are distinct facts and must never collapse into one another:
+ *
+ * - `delegation_superseded` — the coordinate no longer names this delegation.
+ * - `already_linked` — the delegation is permanently occupied by a different
+ *   child. Re-reading cannot change it, so the caller must refuse rather than
+ *   retry.
+ * - `concurrent_modification` — a version race. Re-deriving against the
+ *   committed row can succeed, so the caller may retry.
+ */
+export type DelegationChildLinkRefusalReason =
+  | 'delegation_superseded'
+  | 'already_linked'
+  | 'concurrent_modification';
+
 /** Typed refusal raised while deriving an exact delegated-child link transition. */
 export class DelegationChildLinkPreparationError extends Error {
   /**
@@ -184,7 +201,7 @@ export class DelegationChildLinkPreparationError extends Error {
    * @param message - Diagnostic text.
    */
   constructor(
-    readonly reason: 'delegation_superseded' | 'concurrent_modification',
+    readonly reason: DelegationChildLinkRefusalReason,
     message: string,
   ) {
     super(message);
@@ -198,7 +215,7 @@ export class DelegationChildLinkPreparationError extends Error {
  * @param substepStates - Current machine-owned substep state.
  * @param event - Typed link event.
  * @returns Updated substep state, or the original array for an idempotent replay.
- * @throws {DelegationChildLinkPreparationError} When the delegation was superseded or occupied.
+ * @throws {DelegationChildLinkPreparationError} `delegation_superseded` when the coordinate or token no longer names this delegation; `already_linked` when a different child already holds it.
  */
 export function deriveDelegationChildLinkedSubsteps(
   substepStates: readonly SubstepState[] | undefined,
@@ -220,8 +237,12 @@ export function deriveDelegationChildLinkedSubsteps(
   }
   if (target.delegation.childRunId !== null) {
     if (target.delegation.childRunId === event.childRunId) return substepStates;
+    // Occupancy by another child is permanent, not a version race: this
+    // delegation names one child for the life of the entry, so no amount of
+    // re-reading frees it. Classifying it `concurrent_modification` told the
+    // caller to retry a link that can never succeed.
     throw new DelegationChildLinkPreparationError(
-      'concurrent_modification',
+      'already_linked',
       `Delegation ${event.parentStepId} is already linked to another child`,
     );
   }

@@ -712,7 +712,7 @@ Review the plan manually.
             tokenHash,
             childRunId: otherChildRunId,
           },
-          reason: 'concurrent_modification',
+          reason: 'already_linked',
           message: 'Delegation 1.1 is already linked to another child',
         },
         {

@@ -56,6 +56,7 @@ import {
   DelegationChildLinkPreparationError,
   deriveDelegationChildLinkedSubsteps,
   deriveDelegationChildUnlinkedSubsteps,
+  type DelegationChildLinkRefusalReason,
   type RunbookEvent,
   type RunbookContext,
 } from './compiler.js';
@@ -152,17 +153,32 @@ export interface PreparedDelegationChildUnlink {
   readonly mutation: PreparedActorMutation;
 }
 
+/**
+ * Typed refusal from preparing a delegated-child link change.
+ *
+ * The `kind` is the {@link DelegationChildLinkRefusalReason} raised by the
+ * derivation, propagated verbatim. Both preparations share one derivation
+ * contract, so both carry the same refusal vocabulary; narrowing on `kind` is
+ * what separates the retryable race (`concurrent_modification`) from the two
+ * permanent refusals.
+ */
+export type PrepareDelegationChildLinkRefusal = {
+  readonly [TReason in DelegationChildLinkRefusalReason]: {
+    readonly kind: TReason;
+    readonly runId: RunId;
+    readonly message: string;
+  };
+}[DelegationChildLinkRefusalReason];
+
 /** Typed outcome of preparing an exact delegated child link. */
 export type PrepareDelegationChildLinkResult =
   | { readonly kind: 'prepared'; readonly prepared: PreparedDelegationChildLink }
-  | { readonly kind: 'delegation_superseded'; readonly runId: RunId; readonly message: string }
-  | { readonly kind: 'concurrent_modification'; readonly runId: RunId; readonly message: string };
+  | PrepareDelegationChildLinkRefusal;
 
 /** Typed outcome of preparing an exact delegated child unlink. */
 export type PrepareDelegationChildUnlinkResult =
   | { readonly kind: 'prepared'; readonly prepared: PreparedDelegationChildUnlink }
-  | { readonly kind: 'delegation_superseded'; readonly runId: RunId; readonly message: string }
-  | { readonly kind: 'concurrent_modification'; readonly runId: RunId; readonly message: string };
+  | PrepareDelegationChildLinkRefusal;
 
 /**
  * Typed outcome of preparing a manual delegation issue, retry, or abort.

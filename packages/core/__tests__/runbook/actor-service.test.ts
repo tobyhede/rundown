@@ -2177,7 +2177,7 @@ echo ok
         await expect(
           service.prepareDelegationChildLink(prepared.nextState, steps, otherChildRunId, linkage),
         ).resolves.toEqual({
-          kind: 'concurrent_modification',
+          kind: 'already_linked',
           runId: state.id,
           message: 'Delegation 1.1 is already linked to another child',
         });
@@ -2366,7 +2366,7 @@ echo ok
       await exercisePreparedMutation('unlink');
     });
 
-    it('classifies link and unlink concurrent modifications independently', async () => {
+    it('classifies an occupied link apart from a raced unlink', async () => {
       await exercisePreparedMutation('concurrent');
     });
 

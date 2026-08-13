@@ -1290,6 +1290,13 @@ async function claimChildForPipeline(
     if (prepared.kind === 'delegation_superseded') {
       return { ok: false, reason: 'delegation-superseded', childRunId };
     }
+    // The delegation names a different child. That is permanent — it is the
+    // same fact the 4c already-linked path reports — so it must reach the user
+    // as the no-retry `DELEGATION_ALREADY_CLAIMED`, never as the retryable
+    // `CONCURRENT_MODIFICATION` whose message tells them to try again.
+    if (prepared.kind === 'already_linked') {
+      return { ok: false, reason: 'delegation-already-claimed', childRunId };
+    }
     if (prepared.kind === 'concurrent_modification') {
       return { ok: false, reason: 'concurrent-modification', childRunId };
     }
