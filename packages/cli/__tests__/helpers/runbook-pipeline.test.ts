@@ -518,7 +518,6 @@ const {
   loadAndParseResolvedRunbook,
   startRunbook,
   countSubsteps,
-  inferEntryFromState,
   buildContextVars,
   buildTemplateVars,
 } = await import('../../src/helpers/runbook-pipeline.js');
@@ -862,43 +861,6 @@ describe('countSubsteps', () => {
 
   it('returns 0 when no step defines substeps', () => {
     expect(countSubsteps([makeStep(), makeStep({ name: '2' })])).toBe(0);
-  });
-});
-
-describe('inferEntryFromState', () => {
-  const FRAME_KEY = brandFrameKeyForTest('1');
-
-  const OTHER_KEY = brandFrameKeyForTest('2');
-
-  it('returns the active entry when the target frame is the active frame', () => {
-    const state = makeState(MOCK_RUN_ID, {
-      activeFrameKey: FRAME_KEY,
-      activeEntry: 7,
-    }) as unknown as RunbookState;
-    // Pins the `activeFrameKey === frameKey && activeEntry` active-frame branch.
-    expect(inferEntryFromState(state, FRAME_KEY)).toBe(7);
-    expect(core.inferFrameEntryFromState as unknown as jest.Mock).toHaveBeenCalledWith(
-      state,
-      FRAME_KEY,
-    );
-  });
-
-  it('returns the recorded frame entry count when the frame is not the active frame', () => {
-    const state = makeState(MOCK_RUN_ID, {
-      activeFrameKey: OTHER_KEY,
-      activeEntry: 3,
-      frameEntryCounts: { [FRAME_KEY]: 5 },
-    }) as unknown as RunbookState;
-    // The active frame differs, so the recorded count must win, not activeEntry.
-    expect(inferEntryFromState(state, FRAME_KEY)).toBe(5);
-  });
-
-  it('defaults to 1 when there is no active match and no recorded count', () => {
-    const state = makeState(MOCK_RUN_ID, {
-      activeFrameKey: OTHER_KEY,
-      activeEntry: 3,
-    }) as unknown as RunbookState;
-    expect(inferEntryFromState(state, FRAME_KEY)).toBe(1);
   });
 });
 
@@ -3410,6 +3372,11 @@ describe('claimAndLaunch', () => {
     };
 
     const parentState = makeState(PARENT_RUN_ID, {
+      // The parent's cursor sits on the delegating step. `makeState` defaults to
+      // '1', which would put the cursor a step away from the delegation the scan
+      // below reports — a state the 4a′ pre-check refuses as `cursor-advanced`,
+      // reachable here only because this suite stubs the classifier `live`.
+      step: '2',
       substepStates: [
         {
           id: '1',
@@ -3510,11 +3477,13 @@ describe('claimAndLaunch', () => {
         // discriminant: a mutation corrupting parentStepId (the substepId ??
         // stepId coalescing), parentStep, parentFrameKey, or parentEntry must
         // fail here. The idempotent-claim branch is covered separately.
+        // `parentStep` is the delegation's own step, which is why it is '2'
+        // where `parentStepId` is the substep '1'.
         parentLinkage: {
           kind: 'delegation',
           parentRunId: PARENT_RUN_ID,
           parentStepId: '1',
-          parentStep: '1',
+          parentStep: '2',
           parentFrameKey: brandFrameKeyForTest('1'),
           parentEntry: 1,
           tokenHash,
