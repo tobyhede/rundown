@@ -210,6 +210,8 @@ const { getHelperRegistry, resetHelperRegistry, setHelperRegistry } = await impo
 const { runExecutionLoop, executeCommandWithPolicyCheck, drainResolvedCompletions } = await import(
   '../../src/services/execution.js'
 );
+const resolveRunbookModule = await import('../../src/helpers/resolve-runbook.js');
+const mockedResolveRunbookRef = jest.mocked(resolveRunbookModule.resolveRunbookRef);
 const mockedPolicyContext = jest.mocked(policyContext);
 
 // Production types — used solely for the `as unknown as` casts below.
@@ -224,11 +226,20 @@ type ResolvedStepType = ResolvedStep;
 type LoadFn = jest.Mock<(id: string) => Promise<Record<string, unknown> | null>>;
 type UpdateFn = jest.Mock<(id: string, patch: Record<string, unknown>) => Promise<void>>;
 type EmitFn = jest.Mock<(input: { type: string; payload?: unknown }) => void>;
+type MutateStateReturningSignature = (
+  id: string,
+  build: (
+    current: Record<string, unknown>,
+  ) => Promise<{ next: Record<string, unknown> | null; value: unknown }>,
+) => Promise<{ state: Record<string, unknown> | null; value: unknown }>;
+type MutateStateReturningFn = jest.Mock<MutateStateReturningSignature>;
 type MockManagerLike = {
   cwd: string;
   load: LoadFn;
   update: UpdateFn;
   delete: jest.Mock<(id: string) => Promise<void>>;
+  /** Whole-state compare-and-swap seam; the inline-launch latch runs on it. */
+  mutateStateReturning: MutateStateReturningFn;
 };
 type MockEmitterLike = {
   emit: EmitFn;
@@ -435,9 +446,21 @@ describe('runExecutionLoop', () => {
       load: mockFn<(id: string) => Promise<Record<string, unknown> | null>>(),
       update: mockFn<(id: string, patch: Record<string, unknown>) => Promise<void>>(),
       delete: mockFn<(id: string) => Promise<void>>(),
+      mutateStateReturning: mockFn<MutateStateReturningSignature>(),
     };
     mockManager.update.mockResolvedValue(undefined);
     mockManager.delete.mockResolvedValue(undefined);
+    // Stands in for the store's optimistic cycle: read the row, derive against
+    // it, report what the derivation decided. Reading through `load` keeps this
+    // double honest about the one read a real cycle performs — a test that
+    // sequences `load` sees the latch consume exactly one entry, as the pre-read
+    // it replaced did.
+    mockManager.mutateStateReturning.mockImplementation(async (id, build) => {
+      const current = await mockManager.load(id);
+      if (!current) return { state: null, value: null };
+      const { next, value } = await build(current);
+      return { state: next ?? current, value };
+    });
 
     mockLifecycleService.consumeResolvedCompletion.mockReset();
     mockLifecycleService.consumeResolvedCompletion.mockResolvedValue(null);
@@ -542,6 +565,17 @@ describe('runExecutionLoop', () => {
     );
     mockSessionService.popRunbook.mockReset();
     mockSessionService.popRunbook.mockResolvedValue(committed(null));
+
+    // Re-seeded rather than left to the module factory: one test replaces this
+    // implementation to interleave a second observer inside the inline launch
+    // span, and `jest.clearAllMocks()` clears calls without restoring
+    // implementations.
+    mockedResolveRunbookRef.mockReset();
+    mockedResolveRunbookRef.mockResolvedValue({
+      ok: false,
+      reason: 'file-missing',
+      runbookRef: { source: 'project', path: 'child.runbook.md' },
+    });
 
     // Default evaluate behavior. ConditionResult requires `action`; the test
     // bodies only check the `message` field so we cast through `unknown` to
@@ -3401,6 +3435,160 @@ describe('runExecutionLoop', () => {
     expect(mockEmitter.emit).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'RUNBOOK_STARTED' }),
     );
+  });
+
+  // Two observers of ONE inline launch intent. The intent names a FIXED
+  // `childRunId`, and `startRunbook` → `launchRunbook` opens with an
+  // unconditional `manager.create` for it, whose `RunbookStateManager.save`
+  // reads-then-inserts — so two observers inside the launch span race a bare
+  // `INSERT INTO runs` and the loser gets an untyped SQLITE_CONSTRAINT throw.
+  // Exactly-once is therefore a property of the launch span's ENTRY, and
+  // `resolveRunbookRef` is its gate: nothing between it and `manager.create` can
+  // refuse, so one entry is one create.
+  //
+  // The contender is injected AT that gate rather than at the old pre-read
+  // precheck. A hook on the precheck would go vacuous the moment the decision
+  // moves inside the compare-and-swap; this one stays on live control flow
+  // either way. `injected` pins that the interleave actually happened.
+  it('latches an inline launch so a second observer of the same intent never enters the launch span', async () => {
+    const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
+    const inlineLaunch = {
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+      childRunId,
+      childRunbookPath: 'child.runbook.md',
+      childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+      contextSnapshot: {
+        RunId: runbookId,
+        ContextId: 'ctx-unit',
+        WorkPath: '.rundown/work',
+      },
+    };
+    const inlineSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent step',
+        substeps: [
+          {
+            id: '1',
+            description: 'Inline child',
+            runbooks: ['child.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+    const parentWith = (
+      startedAt: string | null,
+      intent: unknown = inlineLaunch,
+    ): Record<string, unknown> =>
+      makeLoopState('1', {
+        lifecycle: 'running',
+        substep: '1',
+        activeFrameKey: '1|',
+        activeEntry: 1,
+        substepStates: [
+          {
+            id: '1',
+            frameKey: '1|',
+            status: 'running',
+            inline: {
+              childRunbookPath: 'child.runbook.md',
+              childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+              contextSnapshot: inlineLaunch.contextSnapshot,
+              childRunId,
+              createdAt: '2026-05-30T00:00:00.000Z',
+              startedAt,
+            },
+          },
+        ],
+        snapshot: { context: { inlineLaunchIntent: intent } },
+      });
+
+    // The one persisted parent row both observers read and write. Every seam
+    // below reads it fresh, so a commit by one observer is visible to the other
+    // — which is the whole point of the interleave.
+    let parent = parentWith(null);
+    let latchedAt: string | null = null;
+    mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
+    mockManager.mutateStateReturning = mockFn<MutateStateReturningSignature>().mockImplementation(
+      async (_id, build) => {
+        const { next, value } = await build(parent);
+        if (next) parent = next;
+        return { state: next ?? parent, value };
+      },
+    );
+    // The machine events this path raises, applied to the shared row exactly as
+    // the real `sendAndSync` / `prepareActorMutation` pair would.
+    mockActorService.sendAndSync.mockImplementation(
+      async (_id: string, _steps: unknown, event: { type: string; startedAt?: string }) => {
+        if (event.type === 'INLINE_CHILD_STARTED') {
+          latchedAt = event.startedAt ?? '2026-05-30T00:00:01.000Z';
+          parent = parentWith(latchedAt);
+        }
+        if (event.type === 'INLINE_LAUNCH_CONSUMED') {
+          parent = parentWith(latchedAt, undefined);
+        }
+        return { state: parent, snapshot: {} };
+      },
+    );
+    mockActorService.observeExecutionUnitEntry.mockImplementation(async () => [
+      {
+        kind: 'execution_observation',
+        event: {
+          type: 'STEP_ENTERED',
+          payload: {
+            position: { current: '1.1', total: 1 },
+            stepName: '1',
+            description: 'Inline child',
+            isSubstep: true,
+            inlineLaunch,
+          },
+        },
+      },
+    ]);
+
+    const driveLoop = () =>
+      runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(inlineSteps),
+        mockManager.cwd,
+        false,
+        asEmitter(mockEmitter),
+        { output: { executionEvent: jest.fn() } as never },
+      );
+
+    let injected = false;
+    let contender: 'done' | 'stopped' | 'waiting' | undefined;
+    mockedResolveRunbookRef.mockImplementation(async () => {
+      if (!injected) {
+        injected = true;
+        contender = await driveLoop();
+      }
+      return {
+        ok: false,
+        reason: 'file-missing',
+        runbookRef: { source: 'project', path: 'child.runbook.md' },
+      };
+    });
+
+    const first = await driveLoop();
+
+    expect(injected).toBe(true);
+    // One entry into the launch span across both observers, so one
+    // `manager.create` for the fixed child run id.
+    expect(mockedResolveRunbookRef).toHaveBeenCalledTimes(1);
+    // The contender saw the latch already taken and stood down without
+    // launching. It reports `waiting`, exactly as an observer of a superseded
+    // intent does — the launch is someone else's, not this observer's failure.
+    expect(contender).toBe('waiting');
+    expect(first).toBe('stopped');
   });
 
   it('announces the adopted bearer when a resumed inline child re-establishes authority', async () => {

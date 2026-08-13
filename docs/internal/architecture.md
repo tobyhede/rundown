@@ -969,11 +969,11 @@ elsewhere, and neither is an authority mechanism: the sql.js driver takes an
 advisory lock around its durable-replacement cycle, an implementation detail of
 that single-writer WebContainer adapter (see
 [§ Drivers](#drivers-two-implementations-one-atomicity-bar)), and
-`DelegationLock` remains around three CLI launch/claim paths as tracked debt,
-and `CompletionLock` survives only as unreferenced exported surface (see
-[§ Two domain locks survive](#two-domain-locks-survive-as-tracked-debt)). The
-one piece of run-adjacent state outside the database is **captured filesystem
-output**, which stays under `.rundown/runs/<run-id>/outputs/`
+`DelegationLock` remains around one CLI claim path as tracked debt, and
+`CompletionLock` survives only as unreferenced exported surface (see
+[§ One domain lock acquisition survives](#one-domain-lock-acquisition-survives-as-tracked-debt)).
+The one piece of run-adjacent state outside the database is **captured
+filesystem output**, which stays under `.rundown/runs/<run-id>/outputs/`
 (`outputsDirForRun`, `packages/core/src/runbook/output-channels.ts`) because it
 is arbitrary user data, not authority.
 
@@ -1332,17 +1332,16 @@ By contrast, transaction contention on `mutateSession` and every other
 `BEGIN IMMEDIATE` write **does** block like the lock did, via
 `busy_timeout = 5000` inside SQLite plus the native driver's bounded retry.
 
-### Two domain locks survive, as tracked debt
+### One domain lock acquisition survives, as tracked debt
 
 The single-store plan called for deleting all four core domain locks.
 `SessionLock` and `RunStateLock` are gone; **`CompletionLock` and
-`DelegationLock` are not**. #690 is retiring them site by site. **Two production
-acquisitions remain, and both are `DelegationLock`, both in the CLI** — **core
-takes neither lock any more**:
+`DelegationLock` are not**. #690 is retiring them site by site. **One production
+acquisition remains, a `DelegationLock` in the CLI** — **core takes neither lock
+any more**:
 
 | Lock             | Site                                                              |
 | ---------------- | ----------------------------------------------------------------- |
-| `DelegationLock` | `packages/cli/src/services/execution.ts` — inline launch          |
 | `DelegationLock` | `packages/cli/src/helpers/runbook-pipeline.ts` — claim-and-launch |
 
 Read that table as exhaustive for both locks: **`CompletionLock` has no row
@@ -1350,11 +1349,11 @@ because it has no production call site at all.** It survives purely as an
 exported class — the module, its re-export from `runbook/index.ts`, and tests,
 several of which exist specifically to assert it is _not_ acquired. So the two
 locks are at different stages, and conflating them understates the progress and
-misdirects the remaining work: retiring `DelegationLock` means removing call
-sites, whereas `CompletionLock` is already down to unreferenced surface awaiting
-the phase that deletes the lock modules. Neither is closed by this work; #690
-still owns both, along with the `DELEGATION_LOCK_TIMEOUT` / RD-810 error
-surface.
+misdirects the remaining work: retiring `DelegationLock` means removing its one
+remaining call site, whereas `CompletionLock` is already down to unreferenced
+surface awaiting the phase that deletes the lock modules. Neither is closed by
+this work; #690 still owns both, along with the `DELEGATION_LOCK_TIMEOUT` /
+RD-810 error surface.
 
 The two core recorders — `recordManualCompletion` and `recordChildCompletion` —
 were the first to go, and how they went is the pattern for the rest.
@@ -1425,6 +1424,46 @@ by the pre-read array, lock held or not. Removing the acquisition removes no
 exclusion the write depended on, and removes an RD-810 timeout from the launch
 path.
 
+Inline launch in `services/execution.ts` was the fifth, and the first site whose
+lock was load-bearing for something real. It is not a lost-update site: what the
+lock uniquely provided was **exactly-once launch**. The intent names a fixed
+`childRunId`, and `startRunbook` → `launchRunbook` opens with an unconditional
+`manager.create` for it, whose `RunbookStateManager.save` reads-then-inserts —
+so two observers of one intent inside the launch span race a bare
+`INSERT INTO runs` and the loser gets an untyped `SQLITE_CONSTRAINT` throw
+rather than a typed refusal.
+
+The replacement is an atomic **compare-and-latch** — a separate, prior
+`mutateStateReturning` cycle (`latchInlineLaunch`) whose build callback decides
+the whole question against the version the compare-and-swap commits onto:
+inactive parent, superseded intent, linkage refusal, already latched, or won.
+`inline.startedAt` is the latch, and only the `won` arm proceeds into the launch
+span. The span itself must stay outside the callback — it resolves runbook refs,
+reads files, dynamically imports the pipeline and writes warnings, and a build
+callback re-runs up to eight times, so those are exactly the external effects it
+may not perform.
+
+Three things the fold demands here. Every refusal is decided **ahead of** the
+latch write, because `inlineLaunchIntentActor` carries `startedAt` forward into
+the next intent it prepares for the same substep — a start recorded for a launch
+that was then refused would make every later re-entry of that frame report an
+already-started launch. `INLINE_LAUNCH_CONSUMED` deliberately stays where it
+was, in `afterStarted`: the one-shot intent surviving until the child exists is
+what lets a crashed launch be re-observed and finished. And the per-attempt
+rerun needed auditing, not assuming — `INLINE_CHILD_STARTED` is a root-level
+handler with no `target`, so the transition is internal, nothing is exited or
+entered, no `invoke` starts, and the drain's one effectful exception (entry-time
+producer ARTIFACTS resolution) is unreachable.
+
+The one behaviour that genuinely changes is the crash window. Ordering the latch
+before the create means a process that dies between them leaves the intent
+latched with no child; a later observer reports `waiting` rather than launching,
+and the recovery is the sanctioned one — finish, stop, or prune. The previous
+ordering recovered that window automatically but paid for it with the duplicate
+`INSERT`. The lock itself was no better than it looks: it is not reentrant, so a
+second observer reached from the same process blocks its own predecessor for the
+full 5s deadline and then fails RD-810.
+
 Until #690 closes — it also owns the `DELEGATION_LOCK_TIMEOUT` / RD-810 error
 surface outliving these locks — do not add consumers of either lock, and do not
 read their survival as licence to put new run or session state behind a file
@@ -1437,15 +1476,14 @@ self-healing lock, reclaimed by the next acquirer via PID-aware stale detection,
 and must never replace the committed outcome of the work it protected. Releasing
 a domain lock from a bare `finally` is the RD-102 masking defect.
 
-**Both remaining sites deliberately release before the child execution loop**,
-so neither is a plain scope-exit release: inline launch (`execution.ts`)
-releases from several branches under a safety-net `finally`, and
-claim-and-launch (`runbook-pipeline.ts`) releases from `afterStarted`, once
-`RUNBOOK_STARTED` is emitted, ending the protected reread-to-claim window before
-the child runs (#732). Both drive the guard's `release()` rather than unlinking
-directly, and keep async disposal as the safety net for their earlier returns.
-That is sound because `ScopedLock.release()` runs at most once and never throws:
-the explicit call and the disposer that backs it up are both non-masking.
+**The remaining site deliberately releases before the child execution loop**, so
+it is not a plain scope-exit release: claim-and-launch (`runbook-pipeline.ts`)
+releases from `afterStarted`, once `RUNBOOK_STARTED` is emitted, ending the
+protected reread-to-claim window before the child runs (#732). It drives the
+guard's `release()` rather than unlinking directly, and keeps async disposal as
+the safety net for its earlier returns. That is sound because
+`ScopedLock.release()` runs at most once and never throws: the explicit call and
+the disposer that backs it up are both non-masking.
 
 ---
 

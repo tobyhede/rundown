@@ -132,14 +132,13 @@ Domain locks expose `scope()` / `held()` built on them.
   bare `finally` — that is the RD-102 masking defect.
 
 **Examples:** The artifact-manifest and sql.js durable-replacement locks use
-these primitives. **Two production lock acquisitions survive, and both are
-`DelegationLock`, both in the CLI:** inline-launch
-(`packages/cli/src/services/execution.ts`) and claim-and-launch
+these primitives. **One production lock acquisition survives — a
+`DelegationLock` in the CLI:** claim-and-launch
 (`packages/cli/src/helpers/runbook-pipeline.ts`). **Core takes neither lock any
 more.**
 
-`CompletionLock` is a different case and must not be lumped in with those two:
-it has **zero** production call sites anywhere. It survives only as an exported
+`CompletionLock` is a different case and must not be lumped in with that one: it
+has **zero** production call sites anywhere. It survives only as an exported
 class with no consumer outside tests — and the tests that name it assert it is
 _not_ acquired. It is unreferenced surface awaiting the phase that deletes the
 lock modules themselves, not a lock anything still takes.
@@ -150,20 +149,20 @@ workflows became transactional — `SessionLock` and `RunStateLock` are gone,
 these two are not. Follow-up is tracked in #690, which also owns the
 `DELEGATION_LOCK_TIMEOUT` (RD-810) error surface that outlives them. Until then:
 do not add new consumers of either lock, and do not read their survival as
-licence to put new run or session state behind a file lock. The two remaining
-sites are a different shape from the retired ones — they fence a launch/claim
-race rather than a read-derive-write gap — so the retirement recipe below does
-not transfer to them unmodified.
+licence to put new run or session state behind a file lock. The remaining site
+is a different shape from the retired ones — it fences a claim race rather than
+a read-derive-write gap — so the retirement recipe below does not transfer to it
+unmodified.
 
-**When you retire one, this is the shape.** Four sites have gone: the two core
-completion recorders, the resolved-completion drain, then the CLI's run-start
-`afterInit`. Each lock existed only to keep another writer out of the gap
-between a decision and the commit that depended on it, so the fix was moving the
-decision **inside** the `mutateState` build callback: it is then derived from
-the exact version the compare-and-swap commits onto, and a loser re-derives
-against the committed row rather than overwriting it. Do not reach for a
-transaction — `SyncWork<T>` makes an async callback a compile error, and these
-spans await.
+**When you retire one, this is the shape.** Five sites have gone: the two core
+completion recorders, the resolved-completion drain, the CLI's run-start
+`afterInit`, then the CLI's inline launch. Each lock existed only to keep
+another writer out of the gap between a decision and the commit that depended on
+it, so the fix was moving the decision **inside** the `mutateState` build
+callback: it is then derived from the exact version the compare-and-swap commits
+onto, and a loser re-derives against the committed row rather than overwriting
+it. Do not reach for a transaction — `SyncWork<T>` makes an async callback a
+compile error, and these spans await.
 
 The drain went further than the recorders did, and that is the part worth
 copying. Folding its decision inward also removed the interface that made the
@@ -184,7 +183,43 @@ whole-state builder, not a patch — `RunbookStateManager.mutateStateReturning` 
 that seam, alongside the patch-shaped `updateWithStateReturning`. A pure,
 synchronous derivation — `upsertSubstepState` at the run-start site — needs
 neither audit nor a builder: `updateWithStateIfExists` takes the patch, and its
-`null` return on a missing run is the pre-read existence guard.
+`null` return on a missing run is the pre-read existence guard. The audit can
+also come back clean, and saying so is part of it: the inline latch's
+`INLINE_CHILD_STARTED` is a root-level handler with no `target`, so the
+transition is internal — nothing is exited or entered, no `invoke` starts, and
+the drain's one effectful exception (entry-time producer ARTIFACTS resolution)
+is unreachable by construction rather than merely idempotent.
+
+**A lock can fence a race the compare-and-swap does not, and then folding a
+derivation inward is not the fix.** The first four sites were read-derive-write
+gaps: the CAS already prevented the lost update, and the fold only removed the
+stale derivation. Inline launch was not one of those. Its intent names a FIXED
+child run id; `manager.create` for it reads-then-inserts against a bare
+`INSERT INTO runs`; so two observers of one intent race an untyped
+`SQLITE_CONSTRAINT` throw rather than a typed refusal. What that lock uniquely
+provided was **exactly-once launch**.
+
+The shape that replaces it is an atomic **compare-and-latch**: a separate, PRIOR
+`mutateStateReturning` cycle that decides the entire question against the
+version it commits onto — refuse, stand down, or win — and writes the durable "I
+own this launch" record in the same commit. Only the winner performs the span,
+and the span stays OUTSIDE the callback because it is precisely what a build
+callback may not contain: filesystem resolution, dynamic imports, emitted
+warnings, a run creation. Two rules the latch adds to the recipe:
+
+- **Decide every refusal ahead of the latch write.** A refused attempt must
+  leave no durable record of a start that never happened. Inline launch's
+  `inlineLaunchIntentActor` carries `startedAt` forward into the next intent it
+  prepares for the same substep, so a latch written before a refusal poisons
+  every later re-entry of that frame.
+- **Do not move the one-shot record the crash-replay path depends on.**
+  `INLINE_LAUNCH_CONSUMED` stays in `afterStarted` exactly because the intent
+  has to survive until the child exists to be re-observed and finished.
+
+Ordering the latch before the create does move one failure: a process that dies
+between them leaves the launch latched with no child, and a later observer
+reports `waiting` rather than relaunching. That is the sanctioned recovery
+(finish, stop, prune), and it is the price of not shipping a duplicate `INSERT`.
 
 **Do not assume the lock you are removing ever worked.** The run-start site held
 `DelegationLock` across a load-derive-write on the parent's `substepStates`, and
@@ -198,7 +233,10 @@ overwritten by the pre-read array, lock held or not. So establish what a lock
 actually excludes before crediting it with an invariant; the fold is the fix
 either way, but "the lock was load-bearing" and "the lock was decoration over a
 live defect" are different changes, and only the second one is a user-visible
-bug fix.
+bug fix. Check reentrancy too: `DelegationLock` has none, so at the
+inline-launch site a second observer reached from the SAME process blocked its
+own predecessor for the full 5s deadline and then failed RD-810 — the lock was
+load-bearing across processes and a self-deadlock within one.
 
 **For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock
 derived from `manifestPath(cwd)` + `.lock`.
