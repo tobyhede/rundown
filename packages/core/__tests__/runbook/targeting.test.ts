@@ -20,6 +20,7 @@ import {
   getActiveForContext,
   inactiveFrame,
   delegationAuthorityCoordinatesMatch,
+  linkageIdentifiesClaim,
   linkageMatchesClaim,
   parseCompletionKey,
   upsertSubstepState,
@@ -30,6 +31,7 @@ import {
 import type {
   ForContext,
   DelegationLinkage,
+  InlineLinkage,
   ResolvedStep,
   ResolvedStepHavingSubsteps,
   RunbookState,
@@ -43,10 +45,11 @@ import { makeStepDelegation } from '../helpers/step-factories.js';
 import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 
 describe('targeting helpers', () => {
-  describe('linkageMatchesClaim', () => {
+  describe('delegation linkage predicates', () => {
     const parentRunId = brandRunIdForTest(`rd_${'1'.repeat(32)}`);
     const childRunId = brandRunIdForTest(`rd_${'2'.repeat(32)}`);
     const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
+    const rotatedTokenHash = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
     const linkage: DelegationLinkage = {
       kind: 'delegation',
       parentRunId,
@@ -69,46 +72,107 @@ describe('targeting helpers', () => {
       },
     });
 
-    it('accepts the claim the child linkage was minted from', () => {
-      // The positive control the drift cases below cannot supply: without it a
-      // predicate that answered `false` to everything satisfies every remaining
-      // assertion here, and only an integration test would notice that every
-      // delegated claim had stopped resolving.
-      expect(linkageMatchesClaim(linkage, claim)).toBe(true);
-    });
-
-    it('refuses a claim when the child has no parent linkage', () => {
-      expect(linkageMatchesClaim(undefined, claim)).toBe(false);
-    });
-
-    it('refuses a claim whose controlled run differs from its delegation child', () => {
-      expect(
-        linkageMatchesClaim(linkage, {
-          ...claim,
-          controlledRunId: parentRunId,
-        }),
-      ).toBe(false);
-    });
-
-    it.each([
+    /** The three coordinates that name *which* delegation, drifted one at a time. */
+    const identityDrift = [
       ['parent run', { ...linkage, parentRunId: childRunId }],
       ['parent step id', { ...linkage, parentStepId: '2.1' }],
+      ['token hash', { ...linkage, tokenHash: rotatedTokenHash }],
+    ] as const;
+
+    /** The three coordinates that name the *scope* a delegation was granted over. */
+    const scopeDrift = [
       ['parent step', { ...linkage, parentStep: '2' }],
       ['parent frame', { ...linkage, parentFrameKey: buildFrameKey('1', 2) }],
       ['parent entry', { ...linkage, parentEntry: 2 }],
-      [
-        'token hash',
-        { ...linkage, tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`) },
-      ],
-    ] as const)('refuses a claim whose %s differs from the child linkage', (_field, drifted) => {
-      expect(linkageMatchesClaim(drifted, claim)).toBe(false);
+    ] as const;
+
+    describe('linkageMatchesClaim', () => {
+      it('accepts the claim the child linkage was minted from', () => {
+        // The positive control the drift cases below cannot supply: without it a
+        // predicate that answered `false` to everything satisfies every remaining
+        // assertion here, and only an integration test would notice that every
+        // delegated claim had stopped resolving.
+        expect(linkageMatchesClaim(linkage, claim)).toBe(true);
+      });
+
+      it('refuses a claim when the child has no parent linkage', () => {
+        expect(linkageMatchesClaim(undefined, claim)).toBe(false);
+      });
+
+      it('refuses a claim whose controlled run differs from its delegation child', () => {
+        expect(
+          linkageMatchesClaim(linkage, {
+            ...claim,
+            controlledRunId: parentRunId,
+          }),
+        ).toBe(false);
+      });
+
+      it.each([...identityDrift, ...scopeDrift])(
+        'refuses a claim whose %s differs from the child linkage',
+        (_field, drifted) => {
+          expect(linkageMatchesClaim(drifted, claim)).toBe(false);
+        },
+      );
+
+      it('uses the same coordinate predicate for linkage-to-linkage comparisons', () => {
+        expect(delegationAuthorityCoordinatesMatch(linkage, linkage)).toBe(true);
+        expect(delegationAuthorityCoordinatesMatch(linkage, { ...linkage, parentEntry: 2 })).toBe(
+          false,
+        );
+      });
     });
 
-    it('uses the same coordinate predicate for linkage-to-linkage comparisons', () => {
-      expect(delegationAuthorityCoordinatesMatch(linkage, linkage)).toBe(true);
-      expect(delegationAuthorityCoordinatesMatch(linkage, { ...linkage, parentEntry: 2 })).toBe(
-        false,
+    describe('linkageIdentifiesClaim', () => {
+      it('accepts the claim the child linkage was minted from', () => {
+        expect(linkageIdentifiesClaim(linkage, claim)).toBe(true);
+      });
+
+      it.each(scopeDrift)(
+        'still identifies the claim when only the %s disagrees',
+        (_field, drifted) => {
+          // The entire reason this predicate exists beside `linkageMatchesClaim`:
+          // the parent-advance guards consult it precisely when the full
+          // comparison has already failed, and the two answers disagreeing here
+          // is what separates corruption (hold the parent) from a rotated token
+          // (release it). Asserting both calls in one test states that
+          // divergence directly, so a change that collapsed the two predicates
+          // into one could not pass by satisfying each half separately.
+          expect(linkageMatchesClaim(drifted, claim)).toBe(false);
+          expect(linkageIdentifiesClaim(drifted, claim)).toBe(true);
+        },
       );
+
+      it.each(identityDrift)(
+        'refuses a claim whose %s differs from the child linkage',
+        (_field, drifted) => {
+          expect(linkageIdentifiesClaim(drifted, claim)).toBe(false);
+        },
+      );
+
+      it('refuses a claim when the child has no parent linkage', () => {
+        expect(linkageIdentifiesClaim(undefined, claim)).toBe(false);
+      });
+
+      it('refuses a claim against an inline child linkage', () => {
+        // An inline child carries every coordinate this predicate reads, so only
+        // the `kind` discriminant keeps a delegated claim from identifying one.
+        const inline: InlineLinkage = {
+          kind: 'inline',
+          parentRunId,
+          parentStepId: linkage.parentStepId,
+          parentStep: linkage.parentStep,
+          parentFrameKey: linkage.parentFrameKey,
+          parentEntry: linkage.parentEntry,
+        };
+        expect(linkageIdentifiesClaim(inline, claim)).toBe(false);
+      });
+
+      it('refuses a claim carrying no delegation descriptor', () => {
+        expect(
+          linkageIdentifiesClaim(linkage, makeClaimRecord({ controlledRunId: childRunId })),
+        ).toBe(false);
+      });
     });
   });
 

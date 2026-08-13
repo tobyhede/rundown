@@ -945,6 +945,56 @@ describe('SessionService', () => {
       },
     );
 
+    it('refuses replay when the existing claim names a child it does not control', async () => {
+      // The descriptor's own `childRunId` is the one coordinate
+      // `linkageMatchesLinkage` cannot police: `ParentLinkage` does not carry it,
+      // so the child-linkage comparison above passes untouched and only the
+      // direct descriptor check sees the disagreement. Reachable because
+      // `deserializeClaim` reads `controlledRunId` from the `controlled_run`
+      // column and the descriptor from `delegation_json`, cross-checking
+      // neither — so a row where the two disagree hydrates without complaint.
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, 'd');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      const stranger = await manager.create(
+        { source: 'project', path: 'stranger.md' },
+        mockRunbook,
+        { runbookPath: 'stranger.md' },
+      );
+      const first = assertClaimed(
+        await claimLiveDelegation(sessionService, manager, child.id, linkage),
+      );
+      expect(first.claim.delegation).toBeDefined();
+      if (!first.claim.delegation) return;
+      const driftedDescriptor = { ...first.claim.delegation, childRunId: stranger.id };
+      await patchPersistedClaim(testDir, first.claim.claimKey, {
+        delegation: driftedDescriptor,
+        grants: [
+          { action: 'mutate-run', runId: child.id },
+          { action: 'report-delegation-result', ...driftedDescriptor },
+        ],
+      });
+
+      const result = await claimLiveDelegation(sessionService, manager, child.id, linkage, {
+        seedParent: false,
+      });
+
+      // `persisted` reports the descriptor widened to a linkage, and that
+      // widening drops `childRunId` — so it necessarily equals `incoming` here.
+      // The refusal is the assertion; the reported pair cannot show the drift.
+      expect(result).toEqual({
+        status: 'linkage-mismatch',
+        childRunId: child.id,
+        incoming: linkage,
+        persisted: linkage,
+      });
+    });
+
     it('refuses rather than throws when a run-control claim displaced the delegated one', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
