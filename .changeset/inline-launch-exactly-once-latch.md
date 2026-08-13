@@ -46,5 +46,6 @@ The `DelegationLock` acquisition is removed rather than replaced, taking a
 `DELEGATION_LOCK_TIMEOUT` (RD-810) failure off the launch path with it — a
 failure that was reachable without any second process at all, because the lock
 is not reentrant and an inline launch reached from a composing parent's own loop
-could block itself for the full five-second deadline. The claim-and-launch site
-is untouched. Part of #690.
+could block itself for the full five-second deadline. This covers the
+inline-launch acquisition only; the claim-and-launch site needs a different
+replacement and is retired separately in this same release. Part of #690.

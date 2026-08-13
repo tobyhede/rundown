@@ -3,6 +3,11 @@
 **Date:** 2026-08-13 **Supersedes parts of:**
 [2026-08-12-690-site-3-drain-lock-finding.md](2026-08-12-690-site-3-drain-lock-finding.md)
 
+**Scope:** this note records the state of the tree **when site 3 landed**. Two
+of its sections were overtaken by later commits on the same branch — see
+[Postscript](#postscript--overtaken-by-the-rest-of-690) at the end before acting
+on "Considered and rejected" or "Still open".
+
 ## Corrections to the 2026-08-12 note
 
 That note is accurate about the **problem** and wrong about the **cost of the
@@ -128,3 +133,28 @@ write ever stops being idempotent.
 - `completion-service.test.ts` leaks memory under Stryker (18–22 OOM events per
   run, with worker restarts and occasional SIGABRT). Pre-existing, unrelated to
   this branch, and it makes that file's mutation gate unreliable.
+
+## Postscript — overtaken by the rest of #690
+
+Appended after the branch finished. The body above is left as written; these two
+sections no longer describe the tree.
+
+**"Considered and rejected" was reversed, and its stated reason no longer
+holds.** `mutateBackoffMs` is no longer module-private: it and
+`DEFAULT_MUTATE_ATTEMPTS` are exported from `@rundown-org/core`
+(`src/runbook/index.ts`), and the exported-jitter option the note rejected is
+exactly what `deriveAndCommitInitialLink`
+(`packages/cli/src/helpers/runbook-pipeline.ts`) does — a bounded capture →
+derive → commit re-derive loop paced by those two symbols. The rejection was
+sound for site 3, where the fold **was** available and is still the better
+design; it does not generalise. CLAUDE.md now carries the rule that separates
+them: fold the derivation into the callback when you can, and loop from outside
+only when the derivation is async and the commit's work is `SyncWork`, pacing it
+from the store's exported constants rather than a mirrored copy.
+
+**"Still open" is closed.** All three CLI sites (3a `run.ts`, 3b
+`runbook-pipeline.ts`, 3c `execution.ts`) were retired, and the
+`CompletionLock` / `DelegationLock` modules and the RD-810 error surface were
+deleted — `grep -rn "DelegationLock\|CompletionLock\|RD-810" packages/*/src/`
+returns nothing. Only the third bullet survives: `completion-service.test.ts`'s
+memory behaviour under Stryker is still pre-existing and still unrelated.

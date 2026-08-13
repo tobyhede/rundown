@@ -29,6 +29,7 @@ orchestrator raising a delegation on substep 1.2 while an inline child is
 launched against 1.1.
 
 The acquisition is therefore removed rather than replaced, which also removes a
-`DELEGATION_LOCK_TIMEOUT` (RD-810) failure from the launch path. The two
-remaining `DelegationLock` sites are untouched — they fence a launch/claim race
-rather than a read-derive-write gap. Part of #690.
+`DELEGATION_LOCK_TIMEOUT` (RD-810) failure from the launch path. The other
+`DelegationLock` acquisitions fenced a launch/claim race rather than a
+read-derive-write gap, so this fold does not transfer to them; they are retired
+separately in this same release. Part of #690.

@@ -5,9 +5,14 @@
 # Delete the completion and delegation domain locks
 
 The two surviving core domain locks are gone, along with the error surface that
-existed only to report their timeouts. This is a pure deletion: every production
-acquisition had already been retired site by site under #690, so no behaviour
-changes here — the modules were dead code with a live public export.
+existed only to report their timeouts. Every production acquisition had already
+been retired site by site under #690, so **no runtime behaviour changes** — by
+the time they were deleted the modules were dead code with a live public export.
+
+**The public API does change, and that is the breaking part of this major.** Six
+exported symbols, one error code, and two path helpers leave
+`@rundown-org/core`'s surface, so a consumer that imports any removed name no
+longer compiles. Each removal is enumerated below.
 
 **Removed from `@rundown-org/core`'s public surface** (six symbols):
 
