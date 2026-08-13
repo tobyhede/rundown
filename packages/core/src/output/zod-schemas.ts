@@ -556,6 +556,10 @@ export const StatusResponseSchema = z
      * Discriminated on `kind` so narrowing enforces the contract:
      * - `delegation` variant carries a required `tokenHash`.
      * - `inline` variant omits `tokenHash` entirely.
+     *
+     * The two variants also differ in WHEN the frame coordinates were captured,
+     * so their descriptions differ rather than being copied: see
+     * `DelegationLinkage` / `InlineLinkage` in `runbook/types.ts`.
      */
     parentLinkage: z
       .discriminatedUnion('kind', [
@@ -565,8 +569,14 @@ export const StatusResponseSchema = z
           parentRunId: z.string().describe('RunId of the parent runbook execution'),
           parentStepId: z.string().describe('Parent substep ID at link time'),
           parentStep: z.string().describe('Parent step name at link time'),
-          parentFrameKey: z.string().describe('Parent frame key at link time'),
-          parentEntry: z.number().int().positive().describe('Parent frame entry at link time'),
+          parentFrameKey: z
+            .string()
+            .describe('Parent frame key stamped when the delegation was issued'),
+          parentEntry: z
+            .number()
+            .int()
+            .positive()
+            .describe('Parent frame entry stamped when the delegation was issued'),
         }),
         z.object({
           kind: z.literal('inline'),

@@ -32,7 +32,6 @@ import { validateCommandOutput } from '../helpers/schema-validator.js';
 // credits the behavioural tests below (which reach the command only via the
 // dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
 import { registerClaimCommand } from '../../src/commands/claim.js';
-import { inferEntryFromState } from '../../src/helpers/runbook-pipeline.js';
 
 const CLAIM_ID_PATTERN = /^rdclm_[a-f0-9]{32}_[A-Za-z0-9_-]{43}$/;
 
@@ -369,7 +368,11 @@ describe('claim command', () => {
           tokenHash: delegation.tokenHash,
           parentStep: delegatedParent.step,
           parentFrameKey: delegatedSubstep.frameKey,
-          parentEntry: inferEntryFromState(delegatedParent, delegatedSubstep.frameKey),
+          // Read off the delegation row, never recomputed from the live parent
+          // (#738). Recomputing here is the self-satisfying shape the fix
+          // removed from production: the fixture would keep matching whatever
+          // the pipeline derived, including a regression back to the cursor.
+          parentEntry: delegation.credential.parentEntry,
         },
       });
       const sessionBeforeClaim = await readSession(workspace);
@@ -1045,7 +1048,9 @@ while [ ! -f release-first-claim ]; do sleep 0.05; done
           tokenHash: delegation!.tokenHash,
           parentStep: delegatedParent!.step,
           parentFrameKey: delegatedSubstep!.frameKey,
-          parentEntry: inferEntryFromState(delegatedParent!, delegatedSubstep!.frameKey),
+          // Read off the delegation row, never recomputed from the live parent
+          // (#738) — see the concurrent-modification test above.
+          parentEntry: delegation!.credential.parentEntry,
         },
       });
       const sessionBeforeAdoption = await readSession(workspace);

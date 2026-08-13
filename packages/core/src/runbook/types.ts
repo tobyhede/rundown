@@ -768,19 +768,47 @@ export interface AncestorSnapshot {
  * parent identification fields needed by `propagateChildTerminal` to propagate
  * a child's terminal result back to the parent substep (synchronously for
  * inline linkage, report-only for delegation linkage).
+ *
+ * WHAT each field names is shared and documented here; WHEN it is captured is
+ * variant-specific and documented on the variants. Inline linkage reads the
+ * parent's live frame at link time; delegation linkage replays the frame
+ * stamped when the delegation was ISSUED, which is an earlier moment. A single
+ * shared "at link time" claim on this base was therefore true of one variant
+ * only — precisely the ambiguity that let the two sides of a delegation drift
+ * apart on `parentEntry` (#738), so do not restore a timing claim here.
  */
 export interface ParentLinkageBase {
   readonly parentRunId: RunId;
   readonly parentStepId: string;
-  /** Parent's step name at link time (e.g., "1"). */
+  /** Parent's step name, read at link time on both variants (e.g., "1"). */
   readonly parentStep: string;
-  /** Parent's frame key at link time for completion key construction. */
+  /** Parent's frame key for completion key construction; see the variant for when it is captured. */
   readonly parentFrameKey: FrameKey;
-  /** Parent's entry counter at link time for completion key construction. */
+  /** Parent's entry counter for completion key construction; see the variant for when it is captured. */
   readonly parentEntry: number;
 }
 
-/** Linkage data a child run carries to identify its parent delegation. */
+/**
+ * Linkage data a child run carries to identify its parent delegation.
+ *
+ * `parentStep`, `parentFrameKey` and `parentEntry` are all ISSUANCE
+ * coordinates, not link-time ones: each comes from the delegation row
+ * `rd delegate` stamped on the parent substep — its step id, its frame key, and
+ * its credential's entry — and none is re-read from the parent's live cursor
+ * when the child claims. The claim's own delegation descriptor is written from
+ * these same values, so the two sides agree by construction. That matters
+ * because `grantAllows` compares all of them at the point of use: recomputing
+ * one side against the parent's current entry produced a claim that passed
+ * every gate on the way in and then silently declined to report the child's
+ * result (#738).
+ *
+ * `parentStep` was the last coordinate to stop following the cursor. While it
+ * read `freshParent.step`, core's own re-check in `claimRunbookInTransaction`
+ * compared live state against a value derived from that same live state, so the
+ * step arm of `classifyDelegationLiveness` could never fail and an advanced
+ * cursor read `live` inside core. Any new coordinate added here must be read
+ * from the delegation row, never from the cursor.
+ */
 export interface DelegationLinkage extends ParentLinkageBase {
   readonly kind: 'delegation';
   readonly tokenHash: DelegationTokenHash;
@@ -791,6 +819,10 @@ export interface DelegationLinkage extends ParentLinkageBase {
  *
  * Unlike {@link DelegationLinkage}, no token is involved — the child executes
  * inline in the same agent process and the result auto-propagates on completion.
+ * For the same reason every {@link ParentLinkageBase} coordinate here IS a
+ * link-time read of the parent's live state: the child is launched from the
+ * frame the parent currently occupies, so there is no issuance/link split to
+ * reconcile.
  */
 export interface InlineLinkage extends ParentLinkageBase {
   readonly kind: 'inline';

@@ -10,6 +10,8 @@ import {
   selectCommitRow,
   assertExactlyOneRow,
   assertExecutionPhase,
+  isOpenDelegatedChildrenError,
+  parentAdvanceGuard,
   StoreInvariantError,
   type CommitRow,
 } from '../../../src/runbook/storage/runbook-store.js';
@@ -1848,6 +1850,119 @@ describe('captureAuthority delegated linkage', () => {
       runId: state.id,
       message: `The presented claim does not control run ${state.id}.`,
     });
+  });
+});
+
+describe('open delegated children (in-transaction parent-advance guard)', () => {
+  const PARENT_STEP_ID = 'a';
+  const PARENT_FRAME = buildFrameKey('1');
+  const DELEGATION_TOKEN_HASH = assertDelegationTokenHash(`sha256:${'c'.repeat(64)}`);
+
+  it('skips a child whose persisted parentEntry disagrees with the claim, permitting the advance', async () => {
+    // CHARACTERIZATION. `openDelegatedChildrenFor` is the IN-TRANSACTION
+    // enforcement of the open-children rule — `SessionService.listOpenClaimsForParent`
+    // documents its own copy as a cheap pre-check fast-path — so this is where
+    // the polarity of the linkage-agreement test actually decides whether a
+    // parent may advance past a live delegation.
+    //
+    // It is fail-OPEN: a mismatch is `continue`, which drops the child from the
+    // open set entirely, and the parent's bare pass/fail is then permitted with
+    // a live, non-terminal delegated child still out there. The child-read
+    // comment a few lines above it argues at length for the opposite
+    // disposition on an unreadable child (refuse rather than skip), so the
+    // divergence is worth pinning rather than assuming.
+    //
+    // The state is NOT reachable from production — claim and linkage are
+    // written once from the same issuance entry, so they cannot disagree — which
+    // is why the drift below is patched into the row rather than minted. Pinned
+    // so a future change of predicate or polarity shows up in this diff.
+    const parent = await newState({
+      substepStates: [{ id: PARENT_STEP_ID, frameKey: PARENT_FRAME, status: 'pending' }],
+    });
+    const child = await newState({
+      parentLinkage: {
+        kind: 'delegation',
+        parentRunId: parent.id,
+        parentStepId: PARENT_STEP_ID,
+        parentStep: '1',
+        parentFrameKey: PARENT_FRAME,
+        parentEntry: 1,
+        tokenHash: DELEGATION_TOKEN_HASH,
+      },
+    });
+    await store.createRun(parent);
+    await store.createRun(child);
+    const claimKey = assertClaimLookupKey(`rdclk_${'f'.repeat(32)}`);
+    const agreeing = {
+      childRunId: child.id,
+      parentRunId: parent.id,
+      parentStepId: PARENT_STEP_ID,
+      parentStep: '1',
+      parentFrameKey: PARENT_FRAME,
+      parentEntry: 1,
+      tokenHash: DELEGATION_TOKEN_HASH,
+    };
+    await store.transaction((txn) => {
+      txn.insertClaim(
+        makeClaimRecord({
+          claimKey,
+          controlledRunId: child.id,
+          delegation: agreeing,
+          grants: [{ action: 'mutate-run', runId: child.id }],
+        }),
+        assertClaimGeneration(0),
+      );
+    });
+    const guard = parentAdvanceGuard(parent.id);
+    const advance = (): Promise<unknown> =>
+      store
+        .mutateState(parent.id, (current) => ({ ...current, step: '2' }), { guard })
+        .then(
+          (value: unknown) => value,
+          (reason: unknown) => reason,
+        );
+
+    // Control: with every coordinate agreeing, the child IS open and the bare
+    // advance is refused (and rolled back). This is what makes `parentEntry` the
+    // single delta below — without it, a `committed` result could just as well
+    // mean the fixture never registered as a delegated child at all.
+    expect(isOpenDelegatedChildrenError(await advance())).toBe(true);
+    expect((await store.loadRun(parent.id))?.step).toBe(parent.step);
+
+    // Drift `parentEntry` alone, leaving the child's persisted linkage and every
+    // other claim coordinate untouched.
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare('UPDATE claims SET delegation_json = :json WHERE key = :key')
+        .run({ json: JSON.stringify({ ...agreeing, parentEntry: 2 }), key: claimKey });
+    });
+
+    const drifted = await advance();
+
+    // FAIL-OPEN, as shipped: the child is dropped from the open set on the
+    // strength of one disagreeing coordinate, and the parent advances.
+    expect(isOpenDelegatedChildrenError(drifted)).toBe(false);
+    expect(drifted).toMatchObject({ kind: 'committed' });
+    expect((await store.loadRun(parent.id))?.step).toBe('2');
+    // The child was skipped, not resolved — it is still running, still carrying
+    // its delegation linkage to this parent, and its claim is still active. The
+    // parent has advanced past a delegation nobody has reported.
+    const skipped = await store.loadRun(child.id);
+    expect(skipped?.lifecycle).toBe('running');
+    expect(skipped?.parentLinkage).toMatchObject({ parentRunId: parent.id, parentEntry: 1 });
+    // And the same committed advance then tombstones the drifted claim through
+    // the invalidation hook, which reads the delegation as closed now that the
+    // parent's cursor has moved. So the fail-open skip does not merely let the
+    // parent past — it strips the child's bearer of its authority on the way,
+    // leaving a running child with no active claim and no route home.
+    const status = await store.read(
+      (txn) =>
+        txn.tx
+          .prepare('SELECT status FROM claims WHERE key = :key')
+          .get<{ readonly status: string }>({ key: claimKey })?.status,
+    );
+    expect(status).toBe('superseded');
+    expect((await store.loadSession()).claims[claimKey]).toBeUndefined();
   });
 });
 

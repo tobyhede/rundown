@@ -108,11 +108,17 @@ export interface StatusOutputData {
     tokenHash?: string;
     parentRunId: string;
     parentStepId: string;
-    /** Parent's step name at link time (e.g., "1"). */
+    /** Parent's step name, read at link time for both kinds (e.g., "1"). */
     parentStep: string;
-    /** Parent frame key at link time. */
+    /**
+     * Parent frame key for completion-key construction. Read from the parent's
+     * live frame at link time for `inline`; stamped when the delegation was
+     * issued for `delegation`. This projection flattens both kinds into one
+     * shape, so the timing is per-kind rather than uniform — see
+     * `DelegationLinkage` / `InlineLinkage` in core's `runbook/types.ts`.
+     */
     parentFrameKey: string;
-    /** Parent entry counter at link time. */
+    /** Parent entry counter, captured with `parentFrameKey` — same per-kind timing. */
     parentEntry: number;
   };
   /** Effective variable space: templateVars (base) merged with step OUTPUTS (state.variables). */

@@ -638,6 +638,33 @@ describe('Errors factory - exhaustive coverage', () => {
       expect(error.code).toBe('RD-821');
       expect(error.context.reason).toBe('retryDelegation abort result');
     });
+
+    it('delegationIndexNotActive maps requested/active/step + interpolated message → RD-832', () => {
+      // #738/RD-832. `requested` and `active` are asserted as NUMBERS, not
+      // strings: they sit outside `formatMessage`'s fixed key list, so `context`
+      // is the only surface an agent can read them from without parsing the
+      // English, and the factory must not coerce them on the way in — only the
+      // prose applies `String(...)`. The two arguments also carry deliberately
+      // different values so an argument-order swap is observable.
+      const error = Errors.delegationIndexNotActive('1', 2, 1);
+      expect(error).toBeInstanceOf(RundownError);
+      expect(error.code).toBe('RD-832');
+      expect(error.context.requested).toBe(2);
+      expect(error.context.active).toBe(1);
+      expect(error.context.step).toBe('1');
+      // The whole template, verbatim. A `toContain` loose enough to tolerate a
+      // blanked message is not an assertion — the message is the only place the
+      // operator is told which iteration they may delegate instead.
+      expect(error.context.message).toBe(
+        '--index 2 names a FOR iteration the parent has not entered; iteration 1 is active',
+      );
+      // And the rendered sentence, so the `step` key is pinned where it is
+      // actually read from: `formatMessage` renders it as ` at step 1`.
+      expect(error.message).toBe(
+        'Delegation index names a non-active iteration at step 1 - ' +
+          '--index 2 names a FOR iteration the parent has not entered; iteration 1 is active',
+      );
+    });
   });
 
   describe('Retry-hook errors', () => {

@@ -533,6 +533,23 @@ export const ErrorCodes = {
       `restart execution rather than adopting a child the parent does not claim.`,
     docSlug: 'inline-child-linkage-mismatch',
   },
+  DELEGATION_INDEX_NOT_ACTIVE: {
+    code: 'RD-832',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation index names a non-active iteration',
+    description:
+      `\`--index\` named a FOR iteration other than the one the parent is ` +
+      `executing. The FOR model is strictly single-iteration — one iteration ` +
+      `frame per loop is ever open — so a not-yet-entered iteration has no ` +
+      `entry ordinal to stamp on a credential, and a bearer minted against it ` +
+      `can never be live. Issuing one wedges the loop: the early substep row ` +
+      `suppresses issuance when that iteration actually opens, so it never ` +
+      `receives a token, while the child's claim closes cursor-advanced. ` +
+      `Distinct from RD-825: nothing has been superseded, the named frame has ` +
+      `simply not been reached. Delegate the active iteration, or wait for the ` +
+      `loop to advance and delegate then.`,
+    docSlug: 'delegation-index-not-active',
+  },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
   // canonical-at requirements). Kept as EXECUTION rather than a dedicated

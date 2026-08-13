@@ -270,6 +270,18 @@ export const Errors = {
       message: 'more than one delegation attempt records this bearer as superseded',
     }),
 
+  delegationIndexNotActive: (step: string, requested: number, active: number): RundownError =>
+    new RundownError('DELEGATION_INDEX_NOT_ACTIVE', {
+      // Both coordinates ride as structured keys AND in the prose. They are
+      // outside `formatMessage`'s fixed key list, so `context` is the only way
+      // an agent reads them without parsing English — the same shape
+      // `delegationReplacementConsumed` uses for its `reason`.
+      requested,
+      active,
+      step,
+      message: `--index ${String(requested)} names a FOR iteration the parent has not entered; iteration ${String(active)} is active`,
+    }),
+
   claimSeenUnreadable: (claimKey: string, lastSeenAt: string): RundownError =>
     new RundownError('CLAIM_SEEN_UNREADABLE', {
       // These keys are NOT arbitrary — `RundownError.formatMessage` renders a
