@@ -240,10 +240,6 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   ),
   inferFrameEntryFromState: jest.fn(realInferFrameEntryFromState),
   parseStepIdFromString: jest.fn(),
-  // Defaults to live so the 4a′ latch precheck is a no-op here; the precheck
-  // only short-circuits on { kind: 'closed', reason: 'cursor-advanced' }, and
-  // that path is covered against the real classifier in core's targeting tests.
-  classifyDelegationLiveness: jest.fn(() => ({ kind: 'live' })),
   RUNS_DIR: '.rundown/runs',
   runbooksDir: jest.fn((cwd: string) => `${cwd}/.rundown/runbooks`),
   RunbookRefSchema: {
@@ -706,13 +702,6 @@ beforeEach(() => {
     iteration: undefined,
     frameKey: '1' as unknown as ReturnType<typeof core.deriveActiveFrame>['frameKey'],
   });
-  // Live by default: the 4a′ latch precheck only short-circuits on
-  // { kind: 'closed', reason: 'cursor-advanced' }, so every test that is not
-  // about that path must see a live delegation. The precheck itself is covered
-  // against the real classifier in core's targeting tests.
-  jest.mocked(core.classifyDelegationLiveness).mockReturnValue({
-    kind: 'live',
-  } as unknown as ReturnType<typeof core.classifyDelegationLiveness>);
   jest.mocked(core.isJsonArray).mockImplementation((v: unknown) => Array.isArray(v));
   jest.mocked(core.isJsonArrayStream).mockImplementation(realIsJsonArrayStream);
   jest.mocked(core.partitionVariables).mockImplementation(partitionVariablesForTest);

@@ -13,6 +13,7 @@ import {
   parseCliJsonObject,
   parseConcatenatedJson,
   findActionOutput,
+  listRunbookStates,
   type TestWorkspace,
   withRunTarget,
   findFrontierInEvents,
@@ -291,6 +292,53 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
     // The transition is complete: the parent cursor advanced to step 2.
     const afterParent = await readRunbookState(workspace, parentRunId);
     expect(afterParent?.step).toBe('2');
+  }, 20_000);
+
+  // The durable latch (R2) end to end, on the one shape that isolates it. `goto`
+  // moves the parent's top-level cursor off the delegating step while leaving
+  // both delegated substep rows `pending` and both tokens uncancelled — the
+  // "top-level cursor-advance path that writes no `done` substep row" that
+  // `classifyDelegationLiveness` documents as the case a `status !== 'done'`
+  // test would miss. Every cheaper way to advance the parent (passing 1.1 and
+  // 1.2) also resolves the substep, so it would be refused as `resolved`
+  // whatever the cursor said, and would pin nothing about the cursor rule.
+  //
+  // Core's claim transaction owns this refusal: it re-reads the parent inside
+  // its own transaction and classifies liveness against the delegating step
+  // carried on the linkage. Asserted at the CLI envelope, not at a call
+  // argument, so the observable contract stays independent of which layer
+  // notices the supersession.
+  it('refuses an unclaimed token with DELEGATION_SUPERSEDED once the parent cursor has left the delegating step', async () => {
+    const { parentRunId, token1 } = await setupParentWithChildren(workspace);
+
+    const advance = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
+    expect(advance.exitCode).toBe(0);
+
+    const advanced = await readRunbookState(workspace, parentRunId);
+    expect(advanced?.step).toBe('2');
+    // Still running, and the delegation itself is untouched — neither
+    // `parent-ended` nor `resolved` nor `token-reissued` can be what closes it.
+    expect(advanced?.lifecycle).toBe('running');
+    expect(advanced?.substepStates?.map((s) => s.status)).toEqual(['pending', 'pending']);
+    expect(advanced?.substepStates?.[0]?.delegation?.cancelledAt).toBeNull();
+
+    const runsBefore = await listRunbookStates(workspace);
+    expect(runsBefore).toEqual([`${parentRunId}.json`]);
+
+    const claim = await runCliInProcess(`claim ${token1}`, workspace);
+    expect(claim.exitCode).toBe(1);
+    expect(parseCliJsonObject(claim.stdout || claim.stderr)).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'DELEGATION_SUPERSEDED',
+        command: 'claim',
+        details: { parentRunId, stepId: '1' },
+      }),
+    );
+
+    // Refused before any child survives: a superseded bearer must not leave a
+    // run row behind for a parent that could never collect its outcome.
+    expect(await listRunbookStates(workspace)).toEqual(runsBefore);
   }, 20_000);
 });
 

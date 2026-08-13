@@ -1425,12 +1425,11 @@ guard. **Both launch sites deliberately release before the child execution
 loop**, so neither is a plain scope-exit release: inline launch (`execution.ts`)
 releases from several branches under a safety-net `finally`, and
 claim-and-launch (`runbook-pipeline.ts`) releases from `afterStarted`, once
-`RUNBOOK_STARTED` is emitted, ending the protected precheck-to-claim window
-before the child runs (#732). Both drive the guard's `release()` rather than
-unlinking directly, and keep async disposal as the safety net for their earlier
-returns. That is sound because `ScopedLock.release()` runs at most once and
-never throws: the explicit call and the disposer that backs it up are both
-non-masking.
+`RUNBOOK_STARTED` is emitted, ending the protected reread-to-claim window before
+the child runs (#732). Both drive the guard's `release()` rather than unlinking
+directly, and keep async disposal as the safety net for their earlier returns.
+That is sound because `ScopedLock.release()` runs at most once and never throws:
+the explicit call and the disposer that backs it up are both non-masking.
 
 ---
 

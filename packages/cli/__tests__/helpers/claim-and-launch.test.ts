@@ -136,10 +136,6 @@ function mockClaimAndInitialLinkSuccess(): jest.Mock<SessionService['claimAndIni
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
-  // The claim pipeline's diagnostic pre-check calls this; default it to `live`
-  // so these wiring tests are unaffected. The classifier itself is covered by
-  // the core targeting suite, and the superseded path by the core claim suite.
-  classifyDelegationLiveness: jest.fn(() => ({ kind: 'live' })),
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
@@ -614,11 +610,6 @@ function mockHappyDelegationLock(): {
 beforeEach(() => {
   jest.resetAllMocks();
   // Restore defaults after reset
-  // Default the durable-latch pre-check to `live` so it stays inert; individual
-  // tests override it to exercise the superseded path.
-  jest
-    .mocked(core.classifyDelegationLiveness)
-    .mockReturnValue({ kind: 'live' } as ReturnType<typeof core.classifyDelegationLiveness>);
   jest
     .mocked(core.inferFrameEntryFromState)
     .mockImplementation((state, frameKey) => realInferFrameEntryFromState(state, frameKey));
@@ -856,78 +847,6 @@ describe('claimAndLaunch', () => {
     }
   });
 
-  it('returns delegation-superseded before launch when the fresh parent cursor advanced', async () => {
-    const parentState = {
-      id: RUN_ID,
-      step: '2',
-      variables: {},
-      substepStates: [
-        {
-          id: 'delegate',
-          frameKey: '1|0',
-          status: 'pending',
-          delegation: {
-            tokenHash: MOCK_TOKEN_HASH,
-            childRunbookPath: 'child.md',
-            childRunbookRef: { source: 'project', path: 'child.md' },
-            childRunId: null,
-            cancelledAt: null,
-            contextSnapshot: { vars: {}, ancestors: [] },
-            createdAt: '2026-02-27T10:00:00.000Z',
-          },
-        },
-      ],
-    };
-    const claimRunbook = mockClaimRunbookSuccess();
-    const create = mockFn<RunbookStateManager['create']>();
-    const ctx = makeCtx({
-      manager: {
-        load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
-          parentState as unknown as RunbookState,
-        ),
-        create,
-      },
-      sessionService: {
-        claimRunbook,
-      },
-    });
-
-    mockScanService(
-      scanResult({
-        parentState,
-        stepId: '1',
-        substepId: 'delegate',
-        delegation: parentState.substepStates[0].delegation,
-        frameKey: brandFrameKeyForTest('1', 0),
-      }),
-      null,
-    );
-    mockHappyDelegationLock();
-    jest.mocked(core.classifyDelegationLiveness).mockReturnValue({
-      kind: 'closed',
-      reason: 'cursor-advanced',
-    });
-
-    // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
-
-    expect(result).toEqual({
-      ok: false,
-      reason: 'delegation-superseded',
-      parentRunId: RUN_ID,
-      stepId: 'delegate',
-    });
-    expect(core.classifyDelegationLiveness).toHaveBeenCalledTimes(1);
-    const [classifiedParent, linkage] = jest.mocked(core.classifyDelegationLiveness).mock.calls[0];
-    expect(classifiedParent).toBe(parentState);
-    expect(linkage.parentStep).toBe('1');
-    expect(linkage.parentStepId).toBe('delegate');
-    expect(linkage.parentFrameKey).toBe('1|0');
-    expect(linkage.tokenHash).toBe(MOCK_TOKEN_HASH);
-    expect(create).not.toHaveBeenCalled();
-    expect(claimRunbook).not.toHaveBeenCalled();
-  });
-
   it('returns TOKEN_CANCELLED when delegation is cancelled', async () => {
     const ctx = makeCtx();
 
@@ -968,10 +887,6 @@ describe('claimAndLaunch', () => {
     // Mock manager.load returning fresh state with cancelled delegation
     // (cast through unknown: tests use minimal fixtures rather than full RunbookState)
     jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
-    // Liveness stays at the `beforeEach` default of `live`: 4a′ early-returns
-    // only on `cursor-advanced`, so a cancelled-but-otherwise-live delegation
-    // reaches 4b either way, and `token-reissued` is unreachable here anyway —
-    // `freshSubstep` was matched on this exact token.
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -1971,9 +1886,11 @@ describe('claimAndLaunch', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(`Expected success, got ${result.reason}`);
 
-    // Assert on the linkage core RECEIVED, not on the command outcome: the 4a′
-    // precheck is stubbed `live` here, so the outcome cannot distinguish the
-    // two candidate values.
+    // Assert on the linkage core RECEIVED, not on the command outcome: core is
+    // mocked here and its claim transaction — the only thing that classifies
+    // liveness — is stubbed to succeed, so the outcome cannot distinguish the
+    // two candidate values. The end-to-end consequence is pinned by
+    // `__tests__/integration/delegate-workflow.test.ts`.
     expect(mockClaimAndInitialLink).toHaveBeenCalledTimes(1);
     const linkage = mockClaimAndInitialLink.mock.calls[0][0].linkage;
     expect(linkage.parentStep).toBe('1');

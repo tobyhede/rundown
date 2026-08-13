@@ -26,7 +26,6 @@ import {
   type ClaimId,
   type SessionMutationRefusalOutcome,
   type DelegationRuntimeCapabilities,
-  classifyDelegationLiveness,
   DelegationScanService,
   DelegationLock,
   DelegationLockTimeoutError,
@@ -1566,13 +1565,18 @@ export async function claimAndLaunch(
   // the difference is invisible outside the superseded case the latch exists
   // for. The same field is persisted onto the claim, so it also decides the
   // parent-side half in `RunbookStore.invalidateClosedDelegatedClaims`.
+  //
+  // This is now load-bearing rather than belt-and-braces: the CLI no longer
+  // pre-classifies liveness of its own, so core's in-transaction
+  // classification is the sole owner of the `delegation-superseded` refusal on
+  // this path, and it can only be as correct as the linkage it is handed.
   const { parentState, stepId, substepId, delegation: _delegation } = scanResult;
   const lock = new DelegationLock(cwd);
 
   // 3. Acquire delegation lock. This site releases before the child execution
   //    loop and has many earlier returns. Async disposal provides the
   //    best-effort safety net for those exits, while the ScopedLock's idempotent
-  //    release closure lets afterStarted end the protected precheck-to-claim
+  //    release closure lets afterStarted end the protected reread-to-claim
   //    window precisely without risking a masking release failure (RD-102).
   try {
     await lock.acquire(parentState.id);
@@ -1629,32 +1633,6 @@ export async function claimAndLaunch(
         reason: 'delegation-removed',
         parentRunId: parentState.id,
         stepId,
-      };
-    }
-
-    // 4a′. Diagnostic pre-check for the durable latch. Classify the delegation
-    // against the freshly re-read parent using the delegation's ORIGINAL step
-    // name (`stepId`) — not `freshParent.step` — so a top-level cursor advance
-    // (parent moved on without a `done` substep row) surfaces here as
-    // `delegation-superseded`. Scoped to `cursor-advanced` only: parent
-    // termination (handled above), cancellation (4b), and replay/resolution
-    // (4c) keep their more specific diagnostics, and `token-reissued` cannot
-    // occur since `freshSubstep` was matched on this exact token. `childRunId`
-    // is omitted — no child is guaranteed on the fresh path and none may be
-    // synthesized. Core's claim transaction stays authoritative for the rest.
-    const precheckLiveness = classifyDelegationLiveness(freshParent, {
-      parentStep: stepId,
-      parentStepId: substepId ?? stepId,
-      parentFrameKey: freshSubstep.frameKey,
-      parentEntry: inferEntryFromState(freshParent, freshSubstep.frameKey),
-      tokenHash,
-    });
-    if (precheckLiveness.kind === 'closed' && precheckLiveness.reason === 'cursor-advanced') {
-      return {
-        ok: false,
-        reason: 'delegation-superseded',
-        parentRunId: freshParent.id,
-        stepId: substepId ?? stepId,
       };
     }
 
@@ -1926,13 +1904,15 @@ export async function claimAndLaunch(
     });
 
     if (invariantViolation !== undefined) {
-      // The durable latch (R2) is not an invariant violation. `claimRunbook`
-      // re-reads the parent inside its own transaction, so a parent that
-      // advanced, terminalized, or reissued its token between the 4a′ precheck
-      // and this claim legitimately refuses here. Reporting that as
-      // CLAIM_INVARIANT_VIOLATED blames Rundown for a real supersession and
-      // drops the no-retry signal the bearer holder needs. The child created
-      // moments ago is removed by launch cleanup; the atomic transaction wrote nothing.
+      // The durable latch (R2) is not an invariant violation — it is the ONLY
+      // place a supersession is decided on this path. `claimRunbook` re-reads
+      // the parent inside its own transaction and classifies liveness against
+      // the linkage built above, so a parent that had already advanced, or that
+      // advanced, terminalized, or reissued its token after the 4a re-read,
+      // legitimately refuses here. Reporting that as CLAIM_INVARIANT_VIOLATED
+      // blames Rundown for a real supersession and drops the no-retry signal
+      // the bearer holder needs. The child created moments ago is removed by
+      // launch cleanup; the atomic transaction wrote nothing.
       if (invariantViolation.reason === 'delegation-superseded') {
         return {
           ok: false,
