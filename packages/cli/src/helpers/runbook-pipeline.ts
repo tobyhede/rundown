@@ -14,7 +14,6 @@ import {
   type RunbookActorService,
   type SessionService,
   type ExecutionLifecycleService,
-  type FrameKey,
   type RunbookState,
   type ExecutionEventEmitter,
   type ResolvedRunbook,
@@ -44,7 +43,6 @@ import {
   generateRunId,
   partitionVariables,
   prepareParsedRunbook,
-  inferFrameEntryFromState,
   type PreparedTemplateVariables as CorePreparedTemplateVariables,
   type RunnableTemplateVariables as CoreRunnableTemplateVariables,
 } from '@rundown-org/core';
@@ -265,9 +263,13 @@ export type ClaimFailure =
       /**
        * The parent moved past this delegation (advanced, ended, reset, or
        * reissued its token) before the claim committed. The durable latch
-       * refuses it; the token must not be retried. `childRunId` is present only
-       * when an existing/orphaned child was identified — the fresh prelaunch
-       * diagnostic omits it. Rendered as `DELEGATION_SUPERSEDED`.
+       * refuses it; the token must not be retried. `childRunId` is present
+       * whenever the refused claim named a child — replay of a linked child,
+       * orphan adoption, or reuse of an existing claim, each of which carries
+       * it through `claimResultToFailure`. It is absent only on the fresh
+       * launch, where the delegation records no child and the run this claim
+       * just created is about to be removed by launch cleanup; none is ever
+       * synthesized. Rendered as `DELEGATION_SUPERSEDED`.
        */
       readonly reason: 'delegation-superseded';
       readonly parentRunId: string;
@@ -1213,17 +1215,6 @@ export async function startRunbook(
   });
 }
 
-/**
- * Infer entry number from persisted frame state when not explicitly set.
- *
- * @param state - Current runbook state containing frame entry history
- * @param frameKey - Frame key to look up (`step|iteration` format)
- * @returns The inferred entry number, defaulting to `1` when no history exists
- */
-export function inferEntryFromState(state: RunbookState, frameKey: FrameKey): number {
-  return inferFrameEntryFromState(state, frameKey);
-}
-
 /** Outcome of {@link claimChildForPipeline}. */
 type ClaimChildResult =
   | { readonly ok: true; readonly claimId: ClaimId; readonly childRunId: RunId }
@@ -1412,9 +1403,12 @@ async function claimChildForPipeline(
     case 'linkage-mismatch':
       return { ok: false, reason: 'linkage-mismatch', childRunId: claim.childRunId };
     case 'delegation-superseded':
-      // Core is authoritative for the post-launch race: the parent moved past
-      // this delegation between the pre-check and the claim transaction. Use the
-      // pipeline's known child id (core omits it on the fresh-prelaunch path).
+      // Core is authoritative for this refusal, and on this path it is the only
+      // thing that classifies liveness at all: a parent that had already moved
+      // past the delegation, or that moved between the 3a re-read and the claim
+      // transaction, is refused inside that transaction. Use the pipeline's
+      // known child id — core omits it on the fresh-launch path, where the
+      // child it would name is the one this claim just created.
       return { ok: false, reason: 'delegation-superseded', childRunId };
     case 'missing-parent':
       // Core refuses an unreadable parent with a typed result rather than
@@ -1677,6 +1671,53 @@ export async function claimAndLaunch(
     };
   }
 
+  // Every linkage below takes its entry from the credential, never from a live
+  // read of the parent's frame history (#738). The credential is stamped once
+  // when the delegation is issued and survives frame re-entry, so it names the
+  // entry the CHILD was stamped with; the parent's live entry names wherever
+  // the cursor has since got to. Recomputing here made the two
+  // indistinguishable and every downstream gate self-satisfying — the claim
+  // minted authority for the current entry against a child stamped with the
+  // issuance entry, and `grantAllows` then dropped that child's terminal report
+  // in silence. Read from the row and core's liveness classifier can see the
+  // disagreement.
+  //
+  // The re-derive loop in `deriveAndCommitInitialLink` needs this read for a
+  // second, independent reason. The linkage is built here, once, and every one
+  // of that loop's attempts is judged against it: `delegationParentEntryRefusal`
+  // re-infers the entry from each freshly captured parent and compares it
+  // against `linkage.parentEntry`. Sourcing that field from a live read would
+  // pin the CLI's own observation of the same field as the value all eight
+  // attempts compare against — the loop would re-read the parent every time and
+  // never once check it against the entry the delegation was issued at. The
+  // credential is that stamp, so each attempt's comparison is a real one.
+  const issuedParentEntry = freshDelegation.credential.parentEntry;
+
+  // The linkage every claim route below presents — replay (3c), orphan
+  // adoption (3d), existing-claim reuse, and the fresh launch. One value, not
+  // four copies of the same seven fields: `grantAllows` compares all of them at
+  // the point of use, so a coordinate that drifts between two of these sites is
+  // a claim that passes every gate on the way in and then silently refuses to
+  // report (#738). Every input is `const` and nothing between here and the
+  // launch mutates them.
+  //
+  // The frame key is the delegation's stored one, never the parent's current
+  // frame: the parent may have advanced past the iteration that created the
+  // delegation. `parentStep` is the delegation's own step (`stepId`), never
+  // `freshParent.step`, for the reason recorded above the destructure — with no
+  // CLI-side pre-classification left on this path, core's in-transaction
+  // classifier is the sole owner of the supersession verdict, and it can only
+  // be as correct as the coordinates it is handed.
+  const delegationLinkage: DelegationLinkage = {
+    kind: 'delegation',
+    parentRunId: freshParent.id,
+    parentStepId: substepId ?? stepId,
+    tokenHash,
+    parentStep: stepId,
+    parentFrameKey: freshSubstep.frameKey,
+    parentEntry: issuedParentEntry,
+  };
+
   // 3b. Check for cancellation before replaying a linked child.
   if (freshDelegation.cancelledAt) {
     return {
@@ -1690,17 +1731,11 @@ export async function claimAndLaunch(
 
   // 3c. Refuse replay if already claimed
   if (freshDelegation.childRunId) {
-    const delegationFrameKey = freshSubstep.frameKey;
-    const freshLinkage: DelegationLinkage = {
-      kind: 'delegation',
-      parentRunId: freshParent.id,
-      parentStepId: substepId ?? stepId,
-      tokenHash,
-      parentStep: stepId,
-      parentFrameKey: delegationFrameKey,
-      parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
-    };
-    const claimResult = await claimChildForPipeline(ctx, freshDelegation.childRunId, freshLinkage);
+    const claimResult = await claimChildForPipeline(
+      ctx,
+      freshDelegation.childRunId,
+      delegationLinkage,
+    );
     if (!claimResult.ok) {
       return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
     }
@@ -1720,16 +1755,7 @@ export async function claimAndLaunch(
   // 3d. Orphan reconciliation: scan for child run with matching tokenHash
   const orphan = await scanner.findOrphanedChild(tokenHash);
   if (orphan) {
-    const orphanLinkage: DelegationLinkage = {
-      kind: 'delegation',
-      parentRunId: freshParent.id,
-      parentStepId: substepId ?? stepId,
-      tokenHash,
-      parentStep: stepId,
-      parentFrameKey: freshSubstep.frameKey,
-      parentEntry: inferEntryFromState(freshParent, freshSubstep.frameKey),
-    };
-    const claimResult = await claimChildForPipeline(ctx, orphan.id, orphanLinkage, true);
+    const claimResult = await claimChildForPipeline(ctx, orphan.id, delegationLinkage, true);
     if (!claimResult.ok) {
       return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
     }
@@ -1746,20 +1772,6 @@ export async function claimAndLaunch(
       loopResult: 'waiting',
     });
   }
-
-  // Build delegation linkage for the child.
-  // Use the delegation's stored frame key — not the parent's current frame.
-  // The parent may have advanced past the iteration where the delegation was created.
-  const delegationFrameKey = freshSubstep.frameKey;
-  const delegationLinkage: DelegationLinkage = {
-    kind: 'delegation' as const,
-    parentRunId: freshParent.id,
-    parentStepId: substepId ?? stepId,
-    tokenHash,
-    parentStep: stepId,
-    parentFrameKey: delegationFrameKey,
-    parentEntry: inferEntryFromState(freshParent, delegationFrameKey),
-  };
 
   const existingClaim = await ctx.sessionService.findClaimForDelegation(delegationLinkage);
   if (existingClaim !== null) {
@@ -1955,6 +1967,12 @@ export async function claimAndLaunch(
         reason: 'delegation-superseded',
         parentRunId: freshParent.id,
         stepId: substepId ?? stepId,
+        // No child is named, and none may be synthesized. This arm is reached
+        // only from the fresh-launch `afterInit`, which 3c already guarantees
+        // has `freshDelegation.childRunId === null` — the delegation names no
+        // child, and the one this claim just created is about to be removed by
+        // launch cleanup. The routes that DO have a child to name carry it
+        // through `claimResultToFailure` instead.
       };
     }
     // Same reasoning for a parent deleted between the 3a re-read and the

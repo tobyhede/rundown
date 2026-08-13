@@ -643,7 +643,7 @@ describe('delegate command', () => {
   });
 
   describe('frame-scoped delegate echo (FOR iterations)', () => {
-    it('echoes at the issued --index and mints fresh at a different --index', async () => {
+    it('echoes at the issued --index and refuses a non-active --index (RD-832)', async () => {
       // FOR parent whose delegate substep hosts one delegation per iteration.
       const parentContent = createRunbook({
         title: 'FOR Parent',
@@ -693,9 +693,11 @@ describe('delegate command', () => {
         expect(abort.exitCode).toBe(0);
       }
 
+      // The parent is on iteration 1, so that is the only iteration `--index`
+      // may name (#738 / RD-832).
       const issued = await runCliInProcess(
         await withRunTarget(
-          ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '2'],
+          ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '1'],
           workspace,
         ),
         workspace,
@@ -707,7 +709,7 @@ describe('delegate command', () => {
       // Repeating the same frame-scoped target echoes the in-flight token.
       const repeat = await runCliInProcess(
         await withRunTarget(
-          ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '2'],
+          ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '1'],
           workspace,
         ),
         workspace,
@@ -717,7 +719,12 @@ describe('delegate command', () => {
       expect(repeatJson).toMatchObject({ action: 'already-delegated', step: '1.1' });
       expect(repeatJson.token).toBe(issuedJson.token);
 
-      // A different iteration is a different frame: no echo, fresh mint.
+      // A different iteration is a different frame — and one the parent has not
+      // entered. It used to mint a second live bearer here, which wedged the
+      // loop: the early substep row suppressed issuance when iteration 3 opened,
+      // so it never got a token while the child's claim closed cursor-advanced.
+      // The frames are still isolated; what changed is that only the frame the
+      // parent occupies may be named.
       const other = await runCliInProcess(
         await withRunTarget(
           ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '3'],
@@ -725,10 +732,20 @@ describe('delegate command', () => {
         ),
         workspace,
       );
-      expect(other.exitCode).toBe(0);
-      const otherJson = parseCliJsonObject(other.stdout);
-      expect(otherJson.action).toBe('delegated');
-      expect(otherJson.token).not.toBe(issuedJson.token);
+      expect(other.exitCode).not.toBe(0);
+      expect(findErrorEnvelope(other.stdout || other.stderr)).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'RD-832',
+          error: expect.stringContaining('iteration 1 is active'),
+        }),
+      );
+
+      // Nothing was minted on the unentered frame: iteration 1 still holds the
+      // only delegation, unchanged.
+      const state = await getActiveState(workspace);
+      const frames = (state?.substepStates ?? []).map((ss) => ss.frameKey);
+      expect(frames).toEqual(['1|1']);
     });
   });
 
@@ -2195,7 +2212,8 @@ describe('delegate command', () => {
         expect(abort.exitCode).toBe(0);
       }
 
-      // Seed delegations in both FOR iteration frames (buildFrameKey('1', 1) and ('1', 2))
+      // Seed delegations in both FOR iteration frames (buildFrameKey('1', 1) and
+      // ('1', 2)) — IN SEQUENCE, each while the parent occupies that frame.
       const del1 = await runCliInProcess(
         await withRunTarget(
           ['delegate', 'runbooks/child.runbook.md', '--step', '1.1', '--index', '1'],
@@ -2205,8 +2223,27 @@ describe('delegate command', () => {
       );
       expect(del1.exitCode).toBe(0);
       const del1Output = JSON.parse(del1.stdout) as Record<string, unknown>;
-      const _iter1Token = del1Output.token as string;
+      const iter1Token = del1Output.token as string;
       const iter1Hash = del1Output.token_hash as string;
+
+      // Resolve iteration 1 so the loop advances. Two iteration frames can only
+      // carry delegations in sequence now that `--index` must name the frame the
+      // parent occupies (#738 / RD-832); this is the advance that used to be
+      // skipped by minting both up front.
+      const seeded = await getActiveState(workspace);
+      if (!seeded) throw new Error('Expected active run for loop advance');
+      const parentClaimForAdvance = requireEmittedRunClaim(workspace, seeded.id);
+      const abortIter1 = await runCliInProcess(
+        ['abort', iter1Token, '--claim-id', parentClaimForAdvance, '--force'],
+        workspace,
+      );
+      expect(abortIter1.exitCode).toBe(0);
+      const advance = await runCliInProcess(
+        ['pass', '--step', '1.1', '--claim-id', parentClaimForAdvance],
+        workspace,
+      );
+      expect(advance.exitCode).toBe(0);
+      expect(advance.stdout).toContain('"forIndex":2');
 
       const del2 = await runCliInProcess(
         await withRunTarget(
@@ -2247,9 +2284,13 @@ describe('delegate command', () => {
       const iter1Delegation = iter1Entry?.delegation as Record<string, unknown> | undefined;
       const iter2Delegation = iter2Entry?.delegation as Record<string, unknown> | undefined;
 
-      // Iteration 1 preserved its original hash — frame isolation.
+      // Iteration 1 preserved its OWN hash — frame isolation. The retry
+      // re-minted only the frame it named; the closed iteration's row is not
+      // rewritten, and it still carries the cancellation that ended it rather
+      // than anything the retry did.
       expect(iter1Delegation?.tokenHash).toBe(iter1Hash);
-      expect(iter1Delegation?.cancelledAt).toBeNull();
+      expect(iter1Delegation?.tokenHash).not.toBe(retryOutput.token_hash);
+      expect(iter1Delegation?.cancelledAt).not.toBeNull();
 
       // Iteration 2 has the fresh hash and the old one is gone.
       expect(iter2Delegation?.tokenHash).toBe(retryOutput.token_hash);

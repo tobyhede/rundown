@@ -16,6 +16,7 @@ import {
   buildContextSnapshot,
   reconstituteContextVars,
   extractInheritedUserVars,
+  inferFrameEntryFromState,
   Errors,
   type InlineLinkage,
   type IterationBinding,
@@ -37,7 +38,6 @@ import {
 import {
   prepareRunnableRunbook,
   startRunbook,
-  inferEntryFromState,
   type RunPipelineContext,
 } from '../helpers/runbook-pipeline.js';
 import {
@@ -554,7 +554,7 @@ async function buildInlineLinkage(
     parentStepId: substepId,
     parentStep: parentState.step,
     parentFrameKey: frameKey,
-    parentEntry: inferEntryFromState(parentState, frameKey),
+    parentEntry: inferFrameEntryFromState(parentState, frameKey),
   };
 
   return { linkage, parentState, explicitIteration };

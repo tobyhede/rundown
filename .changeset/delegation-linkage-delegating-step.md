@@ -4,11 +4,13 @@
 
 # Anchor a delegated child's linkage to its delegating step
 
-`claimAndLaunch` now builds every delegation linkage with the **delegating**
+`claimAndLaunch` now builds one delegation linkage, carrying the **delegating**
 step — the step the delegation was raised from — instead of the parent's current
-cursor position. All three construction sites are affected: the replay linkage,
-the orphan-reconciliation linkage, and the fresh-launch linkage that is also
-persisted as the child's `parentLinkage`.
+cursor position. Every claim route presents that same value: replay, orphan
+reconciliation, existing-claim reuse, and the fresh launch that also persists it
+as the child's `parentLinkage`. The entry coordinate alongside it is read from
+the delegation's issuance credential rather than recomputed from the parent's
+live frame history, for the same reason and against the same class of defect.
 
 Core's claim transaction classifies delegation liveness by comparing the
 parent's committed step against `linkage.parentStep`, and
@@ -28,7 +30,7 @@ core: `invalidateClosedDelegatedClaims` classifies against the persisted
 keep the value they were minted with — per the no-migration principle, that is
 left alone rather than rewritten.
 
-Prerequisite for the domain-lock deletion in #690: the CLI's pre-claim liveness
-check is deleted there, leaving core's in-transaction classification as the sole
-owner of this refusal. That is only safe once the classification is fed the step
-its contract asks for.
+This was the prerequisite for the domain-lock deletion in #690, which has since
+deleted the CLI's pre-claim liveness check. Core's in-transaction classification
+is now the sole owner of this refusal, and that is only safe because the
+classification is fed the coordinates its contract asks for.

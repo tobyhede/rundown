@@ -1092,23 +1092,96 @@ function withFrameIteration(stepId: string, iteration: number | undefined): stri
 }
 
 /**
- * Return the existing CLI-compatible refusal message when an explicit
- * iteration targets an authored non-FOR step. Missing steps deliberately pass
- * through so the delegation resolver retains ownership of RD-801.
+ * The two ways an explicit `--index` can be illegal, as the outcome each seam
+ * returns verbatim. Both members are already `DelegationIssuanceOutcome`
+ * variants, so a caller narrows nothing: it forwards what it is handed.
+ *
+ * Returning the OUTCOME rather than a message is what lets one function own
+ * both conditions despite their different surfaces — a document-shape refusal
+ * (`invalid_index`, rendered `INVALID_INDEX`) and a state refusal carrying a
+ * registered code (RD-832). Splitting them across two call sites is how the two
+ * seams drift.
+ */
+type DelegationIndexRefusal = Extract<
+  DelegationIssuanceOutcome,
+  { readonly kind: 'invalid_index' | 'error' }
+>;
+
+/**
+ * Decide whether an explicit `--index` may name the frame it names.
+ *
+ * TWO conditions, in this order:
+ *
+ * 1. The named step must be a FOR (or prompted-FOR) step. A document-shape
+ *    question, decidable from the parsed steps alone. Missing steps
+ *    deliberately pass through so the delegation resolver retains ownership of
+ *    RD-801.
+ * 2. The named iteration must be the one the parent is EXECUTING (#738). A
+ *    state question, which is why this takes the captured state: the rule
+ *    belongs to core, and the only state the seams may read it from is the
+ *    document-and-state pair the aggregate fence captured.
+ *
+ * The second condition is not a tightening of the first — it closes a distinct
+ * hole. The FOR model is strictly single-iteration: `ForContext.iteration` is
+ * one number the advance transition overwrites, `activeFrameKey`/`activeEntry`
+ * are a singular pair, and there is one cursor and one XState leaf. So a
+ * not-yet-entered iteration is not a frame that merely is not current — it does
+ * not exist, has no entry ordinal, and cannot carry a live credential.
+ * Accepting `--index 2` from iteration 1 minted a bearer for a frame the parent
+ * had not reached; when iteration 2 finally opened, `hasActiveDelegation` saw
+ * the early row and skipped issuance, so the run wedged with no token for the
+ * iteration and the child's claim closed `cursor-advanced`.
+ *
+ * It ABSTAINS wherever no active iteration is knowable, which is the whole of
+ * its conservatism:
+ * - a prompted-FOR step, which has no `forClause` and therefore no iteration
+ *   machinery — the agent drives its frames by hand and `--index` is how it
+ *   names them;
+ * - a step the cursor is not on, whose currency the delegation resolver already
+ *   owns (RD-802);
+ * - a FOR step with no live non-implicit context, where there is no active
+ *   iteration to compare against.
+ *
+ * Shared by the fresh and retry seams unchanged. Retry is deliberately NOT
+ * exempt: re-minting onto a closed iteration produces the same unusable bearer
+ * as minting onto an unopened one. Retrying the ACTIVE iteration — the verified
+ * recovery from the wedge above — is untouched, because that names the frame
+ * the parent is on.
  *
  * @param steps - Parsed steps from the locked runbook reread.
  * @param stepId - Raw qualified target from the frontend.
- * @returns The refusal message, or `undefined` when validation should continue.
+ * @param iteration - The explicit iteration the caller named.
+ * @param state - The parent state captured inside the same fence.
+ * @returns The refusal to propagate, or `undefined` when validation continues.
  */
-function invalidDelegationIndexMessage(
+function invalidDelegationIndexOutcome(
   steps: readonly ResolvedStep[],
   stepId: string,
-): string | undefined {
+  iteration: number,
+  state: RunbookState,
+): DelegationIndexRefusal | undefined {
   const parsed = parseStepIdFromString(stepId);
   if (!parsed) return undefined;
   const target = steps.find((step) => step.name === parsed.step);
-  if (!target || target.kind === 'for' || target.kind === 'prompted-for') return undefined;
-  return `--index requires step "${parsed.step}" to be a FOR step, but it is "${target.kind}"`;
+  if (!target) return undefined;
+  if (target.kind !== 'for' && target.kind !== 'prompted-for') {
+    return {
+      kind: 'invalid_index',
+      message: `--index requires step "${parsed.step}" to be a FOR step, but it is "${target.kind}"`,
+    };
+  }
+  // `deriveActiveFrame` reports an iteration only for a live, non-implicit FOR
+  // context naming the CURSOR's step, so `active.step` is the only step this
+  // iteration can legitimately be compared against. Comparing a foreign
+  // target's `--index` to it would refuse the caller with a number from a
+  // different loop; step currency belongs to the delegation resolver (RD-802).
+  const active = deriveActiveFrame(state);
+  if (active.step !== parsed.step) return undefined;
+  if (active.iteration === undefined || active.iteration === iteration) return undefined;
+  return {
+    kind: 'error',
+    error: Errors.delegationIndexNotActive(parsed.step, iteration, active.iteration),
+  };
 }
 
 /**
@@ -1427,8 +1500,13 @@ export class RunbookLifecycleCommandService {
           return { kind: 'return', value: { kind: 'refused', policy } };
         }
         if (explicitTarget?.iteration !== undefined) {
-          const message = invalidDelegationIndexMessage(capturedSteps, explicitTarget.stepId);
-          if (message) return { kind: 'return', value: { kind: 'invalid_index', message } };
+          const refusal = invalidDelegationIndexOutcome(
+            capturedSteps,
+            explicitTarget.stepId,
+            explicitTarget.iteration,
+            captured.state,
+          );
+          if (refusal) return { kind: 'return', value: refusal };
         }
         const frameKey =
           explicitTarget?.iteration !== undefined
@@ -1885,8 +1963,13 @@ export class RunbookLifecycleCommandService {
         // observed. It is spelled out so the `locator.step` read below narrows.
         // Stryker disable next-line ConditionalExpression: equivalent — only a step locator can carry an iteration
         if (locator.kind === 'step' && locator.iteration !== undefined) {
-          const message = invalidDelegationIndexMessage(parentSteps, locator.step);
-          if (message) return { kind: 'return', value: { kind: 'invalid_index', message } };
+          const refusal = invalidDelegationIndexOutcome(
+            parentSteps,
+            locator.step,
+            locator.iteration,
+            parent.state,
+          );
+          if (refusal) return { kind: 'return', value: refusal };
         }
         const exactSubstep = findSubstepState(
           parent.state.substepStates ?? [],
@@ -2975,8 +3058,33 @@ export class RunbookLifecycleCommandService {
       await sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
 
-    const shouldReport = claimCanReportDelegationResult(resolution.claim, state);
-    const parentRunId = shouldReport ? state.parentLinkage?.parentRunId : undefined;
+    // A delegated child's ONLY route back to its parent is this bearer's
+    // report grant, and that grant must match the child's persisted delegation
+    // linkage on every coordinate. Two gates upstream — the six-field
+    // `linkageMatchesClaim` in `getActiveForClaimId` and `SessionDataSchema`,
+    // which requires a matching `report-delegation-result` grant on every claim
+    // read — make a divergence unreachable for a loadable session. If one ever
+    // arrives anyway, refuse with the same shape the missing-grant arm returns
+    // instead of forcing the child terminal with nothing to report: closing it
+    // would burn the last actor able to report and strand the parent's substep
+    // forever, whereas refusing leaves a running child an operator can prune.
+    //
+    // Narrow the LINKAGE rather than reading a field off it behind `?.`. The
+    // predicate's own first statement is `linkage?.kind !== 'delegation' →
+    // false`, so its true arm already proves `parentLinkage` is a
+    // `DelegationLinkage`; an optional chain here could never short-circuit and
+    // was dead syntax that TypeScript — which cannot narrow through a `boolean`
+    // return — nonetheless demanded. Binding the linkage and refusing on it
+    // carries that proof in the types instead, at no runtime cost: the guard
+    // below is the same single refusal, just keyed on the value the branch
+    // actually established.
+    const linkage = claimCanReportDelegationResult(resolution.claim, state)
+      ? state.parentLinkage
+      : undefined;
+    if (linkage === undefined) {
+      return { kind: 'claim_grant_required', claimId, runId: state.id };
+    }
+    const parentRunId = linkage.parentRunId;
     const targets = [
       {
         runId: state.id,
@@ -2984,7 +3092,7 @@ export class RunbookLifecycleCommandService {
       },
       // The report is opportunistic: a delegating parent that holds no
       // controlling claim of its own still must not veto closing this child.
-      ...(parentRunId === undefined ? [] : [{ runId: parentRunId, optional: true }]),
+      { runId: parentRunId, optional: true },
     ];
     const { stepsByRun, stepsFor } = this.#createStepsMemo();
     for (const target of targets) {

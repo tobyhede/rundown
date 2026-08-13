@@ -25,6 +25,7 @@ import type * as VariableDiscoveryModule from '../../src/services/variable-disco
 import type { ResolvedRunbook } from '@rundown-org/parser';
 import { assertClaimLookupKey, assertClaimSecretHash } from '@rundown-org/core';
 import { makeClaimRecord } from '@rundown-org/core/testing/claim-fixtures';
+import { makeDelegationCredentialDescriptor } from '@rundown-org/core/testing/delegation-fixtures';
 import { assertVariant } from './assert-variant.js';
 import {
   brandDelegationTokenHashForTest,
@@ -750,6 +751,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
@@ -798,6 +800,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: EXISTING_CHILD_RUN_ID,
@@ -831,6 +834,197 @@ describe('claimAndLaunch', () => {
     expect(result.parentRunId).toBe(RUN_ID);
   });
 
+  // #738: the pipeline used to derive `parentEntry` with `inferFrameEntryFromState`,
+  // reading the parent's CURRENT frame entry. Core's liveness classifier then
+  // recomputed the same expression over the same state, so the two could not
+  // disagree for any input — and the claim minted a grant naming an entry the
+  // child was never stamped with, whose terminal report `grantAllows` silently
+  // dropped. The entry now comes off the delegation row's credential, which is
+  // written once at issuance and survives frame re-entry.
+  //
+  // Nothing in the CLI classifies liveness on this path any more, so the linkage
+  // handed to `claimRunbook` is the only evidence core's in-transaction
+  // classifier has. The fixture makes the two coordinates disagree — live state
+  // is on the frame's third entry, the credential records the first — so an
+  // entry recomputed from `freshParent` would report 3, agree with whatever core
+  // re-derives from those same rows, and make the disagreement invisible at the
+  // one place left that can act on it.
+  it('builds the 3c claim linkage entry from the credential, not from live frame state', async () => {
+    const ctx = makeCtx();
+
+    const parentState = {
+      id: RUN_ID,
+      step: '1',
+      variables: {},
+      // Live state says the frame is on its third entry — two GOTOs past the
+      // issuance the delegation row still records.
+      activeFrameKey: '1|0',
+      activeEntry: 3,
+      frameEntryCounts: { '1|0': 3 },
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|0',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor({ parentEntry: 1 }),
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            // Routes the claim through 3c, where the hoisted linkage is handed
+            // straight to `claimRunbook`.
+            childRunId: EXISTING_CHILD_RUN_ID,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+    const claimRunbook = mockClaimRunbookSuccess();
+    Object.assign(ctx.sessionService, { claimRunbook });
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+        frameKey: brandFrameKeyForTest('1', 0),
+      }),
+    );
+    jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
+
+    // cspell:disable-next-line
+    await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(claimRunbook).toHaveBeenCalledTimes(1);
+    expect(claimRunbook.mock.calls[0][1]).toMatchObject({ parentEntry: 1 });
+  });
+
+  // The same pairing as above, for the step coordinate rather than the entry.
+  // The parent's live cursor has moved to step "2"; the delegation was issued on
+  // step "1". A linkage that read `freshParent.step` would name "2" — a
+  // coordinate recomputed from live state, which is the drift class #738 exists
+  // to remove — while the claim's counterparty was stamped with "1". Core
+  // compares its own read of the cursor against `linkage.parentStep` inside the
+  // claim transaction, so recomputing the field here would make that comparison
+  // self-fulfilling and an advanced cursor unobservable.
+  it('builds the 3c claim linkage step from the delegation, not from the parent cursor', async () => {
+    const ctx = makeCtx();
+
+    const parentState = {
+      id: RUN_ID,
+      // Live cursor has advanced past the delegating step.
+      step: '2',
+      variables: {},
+      activeFrameKey: '1|0',
+      activeEntry: 1,
+      frameEntryCounts: { '1|0': 1 },
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|0',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor({ parentEntry: 1 }),
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            childRunId: EXISTING_CHILD_RUN_ID,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+    const claimRunbook = mockClaimRunbookSuccess();
+    Object.assign(ctx.sessionService, { claimRunbook });
+
+    mockScanService(
+      scanResult({
+        parentState,
+        // The delegation's own step, as `DelegationScanService` records it from
+        // the issuance-time context snapshot.
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+        frameKey: brandFrameKeyForTest('1', 0),
+      }),
+    );
+    jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
+
+    // cspell:disable-next-line
+    await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(claimRunbook).toHaveBeenCalledTimes(1);
+    expect(claimRunbook.mock.calls[0][1]).toMatchObject({ parentStep: '1', parentStepId: '1' });
+  });
+
+  // `claimResultToFailure`'s child-naming arm, on the one route that has a child
+  // to name. 3c hands core a delegation that already records a child, and core's
+  // in-transaction classifier — the sole owner of this verdict since the CLI
+  // stopped pre-classifying — refuses the claim as superseded. Core's own
+  // `delegation-superseded` result leaves `childRunId` unset, so an id in the
+  // envelope can only come from the pipeline substituting the child it was
+  // claiming: a bearer holder needs to know WHICH run holds the delegation it
+  // just lost. The fresh-launch arm deliberately carries none, because the only
+  // child it could name is the one launch cleanup is about to delete.
+  it('names the claimed child when core supersedes an already-linked claim', async () => {
+    const ctx = makeCtx();
+
+    const parentState = {
+      id: RUN_ID,
+      step: '1',
+      variables: {},
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|0',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            childRunId: EXISTING_CHILD_RUN_ID,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+    const claimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({ status: 'delegation-superseded', parentRunId: RUN_ID, parentStepId: '1' }),
+    );
+    Object.assign(ctx.sessionService, { claimRunbook });
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+        frameKey: brandFrameKeyForTest('1', 0),
+      }),
+    );
+    jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'delegation-superseded',
+      parentRunId: RUN_ID,
+      stepId: '1',
+      childRunId: EXISTING_CHILD_RUN_ID,
+    });
+    expect(claimRunbook).toHaveBeenCalledTimes(1);
+  });
+
   it('adopts orphaned child run when findOrphanedChild returns a match', async () => {
     const ctx = makeCtx();
 
@@ -843,6 +1037,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
@@ -906,6 +1101,7 @@ describe('claimAndLaunch', () => {
           frameKey: brandFrameKeyForTest('1'),
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
@@ -993,6 +1189,7 @@ describe('claimAndLaunch', () => {
           frameKey: brandFrameKeyForTest('1'),
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
@@ -1088,6 +1285,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: EXISTING_CHILD_RUN_ID,
@@ -1145,6 +1343,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: EXISTING_CHILD_RUN_ID,
@@ -1223,6 +1422,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
@@ -1270,6 +1470,7 @@ describe('claimAndLaunch', () => {
             status: 'pending',
             delegation: {
               tokenHash: MOCK_TOKEN_HASH,
+              credential: makeDelegationCredentialDescriptor(),
               childRunbookPath: 'child.md',
               childRunbookRef: { source: 'project', path: 'child.md' },
               childRunId: null,
@@ -1317,6 +1518,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
@@ -1468,6 +1670,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
@@ -1624,6 +1827,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
@@ -1747,6 +1951,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
@@ -1841,6 +2046,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
@@ -1983,6 +2189,7 @@ describe('claimAndLaunch', () => {
             status: 'pending',
             delegation: {
               tokenHash: MOCK_TOKEN_HASH,
+              credential: makeDelegationCredentialDescriptor(),
               childRunbookPath: 'child.md',
               childRunbookRef: { source: 'project', path: 'child.md' },
               childRunId: null,
@@ -2092,6 +2299,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
@@ -2202,6 +2410,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
@@ -2323,6 +2532,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
@@ -2442,6 +2652,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,
@@ -2678,6 +2889,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: null,

@@ -8,7 +8,10 @@ import type { RunbookStore } from '../../src/runbook/storage/runbook-store.js';
 import type { ClaimRunbookResult } from '../../src/runbook/claim-id.js';
 import type { DelegationLinkage, RunId, SubstepState } from '../../src/runbook/types.js';
 import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
-import { makeStepDelegation } from '../helpers/step-factories.js';
+import {
+  makeDelegationCredentialDescriptor,
+  makeStepDelegation,
+} from '../helpers/step-factories.js';
 
 /**
  * Build a delegation linkage for a parent run id, used for both child creation
@@ -37,6 +40,21 @@ export const linkageFor = (
   tokenHash: assertDelegationTokenHash(`sha256:${fill.repeat(64)}`),
 });
 
+/** Deliberate issuance-vs-claim drift for {@link seedLiveDelegation}. */
+export interface SeedLiveDelegationOptions {
+  /**
+   * Frame entry stamped on the seeded substep's CREDENTIAL, when it must differ
+   * from `linkage.parentEntry`.
+   *
+   * Defaults to `linkage.parentEntry`, which is what a real delegation writes.
+   * Pass this only to reproduce a claim naming an entry the delegation never
+   * issued — the drift `classifyDelegationLiveness` exists to reject — and say
+   * so at the call site, because the refusal it produces
+   * (`delegation-superseded`) is indistinguishable from a broken fixture.
+   */
+  readonly issuedEntry?: number;
+}
+
 /**
  * Seed the parent so the delegation described by `linkage` is live.
  *
@@ -47,12 +65,24 @@ export const linkageFor = (
  * the linkage's token. A parent that does not exist is left untouched, so a
  * test can still exercise the parent-unreadable path.
  *
+ * DERIVED, NOT ASSUMED. The substep's credential coordinates come from
+ * `linkage`, because production stamps them from the issuing state
+ * (`createDelegation` in `src/runbook/delegation-service.ts`) and because
+ * {@link classifyDelegationLiveness} decides entry identity against
+ * `credential.parentEntry`. A fixture that stamped the factory defaults instead
+ * would be live only for the one linkage shape those defaults happen to name,
+ * and every other linkage would be refused `delegation-superseded` from the
+ * first gate in `claimRunbookInTransaction` — before the assertion the test was
+ * written for, and with no entry information in the refusal to say why.
+ *
  * @param manager - State manager owning the parent run.
  * @param linkage - Delegation linkage whose parent-side substep to seed.
+ * @param options - Opt-in issuance drift; see {@link SeedLiveDelegationOptions}.
  */
 export async function seedLiveDelegation(
   manager: RunbookStateManager,
   linkage: DelegationLinkage,
+  options: SeedLiveDelegationOptions = {},
 ): Promise<void> {
   const parent = await manager.load(linkage.parentRunId);
   if (!parent) {
@@ -63,7 +93,15 @@ export async function seedLiveDelegation(
     id: linkage.parentStepId,
     frameKey: linkage.parentFrameKey,
     status: 'running',
-    delegation: makeStepDelegation({ tokenHash: linkage.tokenHash }),
+    delegation: makeStepDelegation({
+      tokenHash: linkage.tokenHash,
+      credential: makeDelegationCredentialDescriptor({
+        parentRunId: linkage.parentRunId,
+        parentStepId: linkage.parentStepId,
+        parentFrameKey: linkage.parentFrameKey,
+        parentEntry: options.issuedEntry ?? linkage.parentEntry,
+      }),
+    }),
   };
   const merged = [
     ...existing.filter(

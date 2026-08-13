@@ -54,7 +54,12 @@ import {
   delegationRuntimeCapabilities,
   type DelegationRuntimeCapabilities,
 } from './delegation-credential.js';
-import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } from './targeting.js';
+import {
+  classifyDelegationLiveness,
+  delegationAuthorityCoordinatesMatch,
+  findSubstepState,
+  linkageMatchesClaim,
+} from './targeting.js';
 import {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
@@ -444,26 +449,35 @@ export type StashActiveResult =
 export type SessionMutationRefusalOutcome = SessionMutationRefusal;
 
 /**
- * True when persisted child linkage matches an incoming delegation linkage on the
- * three identifying fields (`parentRunId`, `parentStepId`, `tokenHash`).
+ * True when persisted child linkage matches an incoming delegation linkage on
+ * every stored authority coordinate.
  *
  * Used by {@link SessionService.claimRunbook} to refuse a claim when the child's
  * persisted linkage disagrees with the freshly token-validated linkage the caller
  * is presenting — a fail-closed signal for state corruption.
  *
+ * WHY ALL SIX, same reason as {@link linkageMatchesClaim}, one step earlier in
+ * the lifecycle: the `incoming` linkage is copied wholesale into the claim's
+ * `delegation` descriptor and its report grant a few lines into
+ * `claimRunbookInTransaction`, so whatever this predicate lets past becomes
+ * persisted authority. `grantAllows` later evaluates that grant against the
+ * CHILD ROW's `parentLinkage` — the `persisted` argument here — and compares all
+ * seven. Any coordinate skipped here is one the two can differ on for the life
+ * of the claim, and the divergence surfaces only as a dropped terminal report
+ * (#738). The child's `parentLinkage` is write-once at `manager.create`; the
+ * caller's linkage is not, which is why this comparison is the one that has to
+ * be total.
+ *
  * @param persisted - Parent linkage stored on the child runbook state
  * @param incoming - Freshly built delegation linkage offered by the caller
- * @returns `true` only when both are delegation-shaped and all identifying fields agree
+ * @returns `true` only when both are delegation-shaped and every shared field agrees
  */
 function linkageMatchesLinkage(
   persisted: RunbookState['parentLinkage'],
   incoming: DelegationLinkage,
 ): boolean {
   return (
-    persisted?.kind === 'delegation' &&
-    persisted.parentRunId === incoming.parentRunId &&
-    persisted.parentStepId === incoming.parentStepId &&
-    persisted.tokenHash === incoming.tokenHash
+    persisted?.kind === 'delegation' && delegationAuthorityCoordinatesMatch(persisted, incoming)
   );
 }
 
@@ -705,6 +719,34 @@ export class SessionService {
     return Object.values(claims).find((claim) => claim.controlledRunId === childRunId);
   }
 
+  /**
+   * Find the claim record a delegation linkage identifies, by delegation
+   * IDENTITY rather than by authority validation.
+   *
+   * THREE FIELDS ON PURPOSE, against the six {@link linkageMatchesLinkage}
+   * compares. `tokenHash` is the sha256 of an HMAC over the full issuance
+   * coordinates plus a per-issuance `issuanceNonce` of 32 fresh random bytes
+   * (`deriveDelegationToken`), so it alone identifies one issuance and the two
+   * remaining conjuncts are redundant belt-and-braces. The width difference is
+   * therefore not laxity: this answers "which record is this delegation?", while
+   * `linkageMatchesLinkage` answers "may this linkage exercise that record's
+   * authority?" — and the latter still has work to do, because `parentStep` is
+   * not among the derivation's inputs and because it compares two caller-
+   * authored structs, neither of them token-derived.
+   *
+   * Widening this to six would be strictly worse. A drifted record would be
+   * missed here and re-found by the child-run arms below, which return the same
+   * `linkage-mismatch` — nothing gained — while the narrow key reaches the
+   * terminal-child check first, so a drifted record whose child is terminal
+   * keeps the more precise refusal. And a drifted record whose CHILD differs
+   * from the run being claimed would not be re-found at all: the incoming claim
+   * would pass every fresh-child gate and mint a SECOND active claim against the
+   * same token hash.
+   *
+   * @param claims - Active claim records from the session read in this transaction.
+   * @param linkage - Delegation linkage naming the issuance to locate.
+   * @returns The claim record for that delegation, or `undefined` when unclaimed.
+   */
   private findClaimByDelegationLinkage(
     claims: Record<string, ClaimRecord>,
     linkage: DelegationLinkage,
@@ -1089,7 +1131,7 @@ export class SessionService {
    *
    * Validates write-side invariants before recording the claim: the child run
    * must exist on disk, and its persisted `parentLinkage` must match the
-   * incoming `linkage` on the three identifying fields. A mismatch indicates
+   * incoming `linkage` on every stored authority coordinate. A mismatch indicates
    * state corruption (manual edits, stale persisted linkage from a prior
    * delegation, cross-host state merge) and is refused rather than silently
    * propagated into the claim record.
