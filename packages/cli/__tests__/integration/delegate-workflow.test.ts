@@ -344,8 +344,8 @@ describe('DELEGATE full workflow — rd run → auto-delegation → rd claim →
 
 /**
  * State-dependent preconditions belong in the core seam and must be evaluated
- * against its claim-anchored, DelegationLock-scoped reread. `--claim-id A`
- * therefore remains pinned to A even when the active default is B.
+ * against its claim-anchored, in-transaction reread. `--claim-id A` therefore
+ * remains pinned to A even when the active default is B.
  */
 describe('DELEGATE claim-anchored CLI preconditions (#586 follow-up)', () => {
   let workspace: TestWorkspace;

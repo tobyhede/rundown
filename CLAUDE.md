@@ -132,37 +132,33 @@ Domain locks expose `scope()` / `held()` built on them.
   bare `finally` — that is the RD-102 masking defect.
 
 **Examples:** The artifact-manifest and sql.js durable-replacement locks use
-these primitives. **One production lock acquisition survives — a
-`DelegationLock` in the CLI:** claim-and-launch
-(`packages/cli/src/helpers/runbook-pipeline.ts`). **Core takes neither lock any
-more.**
+these primitives. **`CompletionLock` and `DelegationLock` are taken nowhere in
+production — not in core, not in the CLI.**
+`grep -rn "new DelegationLock(\|new CompletionLock(" packages/*/src/` returns
+nothing; re-run it rather than trusting this sentence. Both survive only as
+exported classes with no consumer outside tests — and the tests that name them
+assert they are _not_ acquired. That is unreferenced surface awaiting the phase
+that deletes the lock modules themselves, not a lock anything still takes.
 
-`CompletionLock` is a different case and must not be lumped in with that one: it
-has **zero** production call sites anywhere. It survives only as an exported
-class with no consumer outside tests — and the tests that name it assert it is
-_not_ acquired. It is unreferenced surface awaiting the phase that deletes the
-lock modules themselves, not a lock anything still takes.
+The modules' survival is the **last remnant of a tracked deviation from the
+single-store plan**, which called for deleting all four core domain locks once
+the delegate/collect/abort workflows became transactional. `SessionLock` and
+`RunStateLock` went with the cutover; these two outlived it and have now lost
+every call site. #690 still owns deleting the modules and the
+`DELEGATION_LOCK_TIMEOUT` (RD-810) error surface that was minted to report their
+timeouts and now reports nothing. Until then: do not add new consumers of either
+lock, and do not read the surviving modules as licence to put new run or session
+state behind a file lock.
 
-Their survival is a **tracked deviation from the single-store plan**, which
-called for deleting all four core domain locks once the delegate/collect/abort
-workflows became transactional — `SessionLock` and `RunStateLock` are gone,
-these two are not. Follow-up is tracked in #690, which also owns the
-`DELEGATION_LOCK_TIMEOUT` (RD-810) error surface that outlives them. Until then:
-do not add new consumers of either lock, and do not read their survival as
-licence to put new run or session state behind a file lock. The remaining site
-is a different shape from the retired ones — it fences a claim race rather than
-a read-derive-write gap — so the retirement recipe below does not transfer to it
-unmodified.
-
-**When you retire one, this is the shape.** Five sites have gone: the two core
+**When you retire one, this is the shape.** Six sites have gone: the two core
 completion recorders, the resolved-completion drain, the CLI's run-start
-`afterInit`, then the CLI's inline launch. Each lock existed only to keep
-another writer out of the gap between a decision and the commit that depended on
-it, so the fix was moving the decision **inside** the `mutateState` build
-callback: it is then derived from the exact version the compare-and-swap commits
-onto, and a loser re-derives against the committed row rather than overwriting
-it. Do not reach for a transaction — `SyncWork<T>` makes an async callback a
-compile error, and these spans await.
+`afterInit`, the CLI's inline launch, then the CLI's claim-and-launch. Each lock
+existed only to keep another writer out of the gap between a decision and the
+commit that depended on it, so the fix was moving the decision **inside** the
+`mutateState` build callback: it is then derived from the exact version the
+compare-and-swap commits onto, and a loser re-derives against the committed row
+rather than overwriting it. Do not reach for a transaction — `SyncWork<T>` makes
+an async callback a compile error, and these spans await.
 
 The drain went further than the recorders did, and that is the part worth
 copying. Folding its decision inward also removed the interface that made the
@@ -266,6 +262,31 @@ bug fix. Check reentrancy too: `DelegationLock` has none, so at the
 inline-launch site a second observer reached from the SAME process blocked its
 own predecessor for the full 5s deadline and then failed RD-810 — the lock was
 load-bearing across processes and a self-deadlock within one.
+
+**The last site needed no replacement at all, and that is a shape too.**
+Claim-and-launch was a **pure deletion**: the acquisition, its RD-810 timeout
+arm, and its `afterStarted` release came out and nothing went in. The five
+earlier sites each swapped the lock for something; this one had nothing to swap,
+because separate commits ahead of it had already moved every refusal the lock
+stood in for into core's claim transaction. That is the order to work in — make
+each refusal transactional FIRST, one commit at a time, then delete the lock as
+a no-op. Two prerequisites are worth naming because either one, left undone,
+turns the deletion lossy:
+
+- **Feed the in-transaction classifier the input its contract needs, and let it
+  be the sole owner.** Liveness is decided against `linkage.parentStep`, the
+  DELEGATING step. Source that from a fresh read of the parent's cursor and the
+  comparison is self-fulfilling; the CLI's own pre-check must go in the same
+  breath, or two owners disagree.
+- **Check that every refusal the race now produces is spelled correctly, at
+  every seam it can surface through.** An occupied delegation is permanent, so
+  it must classify `already_linked` (no-retry), never `concurrent_modification`
+  ("Retry.") — a claim that can never succeed must not tell the caller to try
+  again. And a seam that wraps claim failures in a generic envelope will
+  re-label it: the fresh-launch `afterInit` handler turns a claim failure into
+  `CLAIM_INVARIANT_VIOLATED`, so every reason a CONCURRENT claimer can cause has
+  to be passed through as itself. Reserve RD-820 for failures about the child
+  this process just created, which no rival can explain.
 
 **For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock
 derived from `manifestPath(cwd)` + `.lock`.

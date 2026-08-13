@@ -63,11 +63,6 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     run: mockActorMutationRun,
     runAll: jest.fn(),
   }),
-  // `buildNonDelegatingLifecycleSeam` (via transitions.ts) statically imports
-  // `DelegationLock` and `CompletionLock`; stub them so the mocked core module
-  // provides the exports.
-  DelegationLock: jest.fn(),
-  CompletionLock: jest.fn(),
   resolveCommandTarget: mockResolveCommandTarget,
   resolveTransitionTarget: mockResolveTransitionTarget,
   // `refusal-renderers.ts` (via transitions.ts) redacts claim ids for output

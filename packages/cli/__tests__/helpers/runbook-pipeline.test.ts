@@ -9,7 +9,6 @@ import type {
   SessionService,
   ExecutionLifecycleService,
   DelegationScanService,
-  DelegationLock,
   PrepareParsedRunbookInput,
   PrepareParsedRunbookResult,
   PreparedRunControlClaim,
@@ -18,7 +17,6 @@ import type {
   RunbookRef,
   RunId,
   RunnableTemplateVariables,
-  ScopedLock,
   TemplateVarValue,
 } from '@rundown-org/core';
 import type {
@@ -304,25 +302,6 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   DelegationScanService: jest.fn(),
   DEFAULT_MUTATE_ATTEMPTS: realDefaultMutateAttempts,
   mutateBackoffMs: realMutateBackoffMs,
-  DelegationLock: jest.fn(),
-  DelegationLockTimeoutError: class DelegationLockTimeoutError extends Error {
-    readonly parentRunId: string;
-    readonly lockFile: string;
-    constructor(parentRunId: string, lockFile = '/tmp/test.lock') {
-      super(`Delegation lock timeout for run ${parentRunId}: ${lockFile}.`);
-      this.name = 'DelegationLockTimeoutError';
-      this.parentRunId = parentRunId;
-      this.lockFile = lockFile;
-    }
-  },
-  FileLockTimeoutError: class FileLockTimeoutError extends Error {
-    readonly lockFile: string;
-    constructor(lockFile = '/tmp/test.lock') {
-      super(`File lock timeout: ${lockFile}.`);
-      this.name = 'FileLockTimeoutError';
-      this.lockFile = lockFile;
-    }
-  },
   reconstituteContextVars: mockFn<
     (...args: unknown[]) => Record<string, unknown>
   >().mockReturnValue({}),
@@ -339,7 +318,6 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     INVALID_TOKEN: { code: 'RD-807' },
     TOKEN_NOT_FOUND: { code: 'RD-808' },
     TOKEN_CANCELLED: { code: 'RD-809' },
-    DELEGATION_LOCK_TIMEOUT: { code: 'RD-810' },
     LAUNCH_FAILED: { code: 'RD-816' },
   },
   isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
@@ -560,37 +538,6 @@ const {
 const { setHelperRegistry, resetHelperRegistry } = await import(
   '../../src/services/helper-registry.js'
 );
-
-/**
- * Install a fully-successful `core.DelegationLock` mock.
- *
- * Production takes the lock via the disposable scope API (`scope`/`held`,
- * returning an `AsyncDisposable`), so the mock implements those and delegates
- * disposal to an always-resolving `release`. Centralised so the many
- * startRunbook/claim tests that just need the lock to succeed stay in lock-step
- * with the lock's API.
- */
-function installHappyDelegationLockMock(): jest.Mock<(...args: unknown[]) => Promise<void>> {
-  const release = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
-  jest.mocked(core.DelegationLock).mockImplementation(() => {
-    const acquire = mockFn<(...args: unknown[]) => Promise<void>>().mockResolvedValue(undefined);
-    const held = (runId?: string): ScopedLock => {
-      let released = false;
-      const run = async (): Promise<void> => {
-        if (released) return;
-        released = true;
-        await release(runId);
-      };
-      return { release: run, [Symbol.asyncDispose]: run };
-    };
-    const scope = async (runId?: string): Promise<ScopedLock> => {
-      await acquire(runId);
-      return held(runId);
-    };
-    return { acquire, release, held, scope } as unknown as jest.MockedObject<DelegationLock>;
-  });
-  return release;
-}
 
 function makeState(id: RunId, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -2745,8 +2692,6 @@ describe('claimAndLaunch', () => {
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
-    installHappyDelegationLockMock();
-
     const claimSpy = mockClaimRunbookAlreadyClaimed();
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
@@ -2806,8 +2751,6 @@ describe('claimAndLaunch', () => {
     jest
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
-
-    installHappyDelegationLockMock();
 
     const claimSpy = mockClaimRunbookAlreadyClaimed();
     const ctx = {
@@ -2901,8 +2844,6 @@ describe('claimAndLaunch', () => {
     jest
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
-
-    installHappyDelegationLockMock();
 
     const prepareSequence = attemptSequence(opts.prepareResult, opts.prepareResults);
     const prepareSpy =
@@ -3104,8 +3045,8 @@ describe('claimAndLaunch', () => {
     expect(result).toMatchObject({ ok: false, ...expected });
   });
 
-  // The gap the delegation lock was still fencing: preparation reads a captured
-  // parent version, the atomic commit fences a different one, and a bare version
+  // The gap the retired delegation lock used to fence: preparation reads a
+  // captured parent version, the atomic commit fences a different one, and a bare version
   // mismatch carries no reason for the move. Re-deriving is the only thing that
   // can tell "someone else took this delegation, permanently" apart from "the
   // parent happened to move", so the loop must run and report the former.
@@ -3268,8 +3209,6 @@ describe('claimAndLaunch', () => {
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
-    installHappyDelegationLockMock();
-
     const ctx = {
       output: {} as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
@@ -3347,8 +3286,6 @@ describe('claimAndLaunch', () => {
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
-    installHappyDelegationLockMock();
-
     const claimSpy = mockClaimRunbookSuccess();
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
@@ -3414,8 +3351,6 @@ describe('claimAndLaunch', () => {
     jest
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
-
-    installHappyDelegationLockMock();
 
     const claimSpy = mockClaimRunbookSuccess();
     const mockSessionService = {
@@ -3500,8 +3435,6 @@ describe('claimAndLaunch', () => {
     jest
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
-
-    installHappyDelegationLockMock();
 
     const claimSpy = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
       committed({
@@ -3614,8 +3547,6 @@ describe('claimAndLaunch', () => {
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
-    const releaseLock = installHappyDelegationLockMock();
-
     jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
 
     const ctx = {
@@ -3648,10 +3579,6 @@ describe('claimAndLaunch', () => {
       expect(result.childRunId).toBe('new-child-id');
       expect(result.loopResult).toBe('waiting');
     }
-    expect(releaseLock).toHaveBeenCalledTimes(1);
-    expect(releaseLock.mock.invocationCallOrder[0]).toBeLessThan(
-      jest.mocked(runExecutionLoop).mock.invocationCallOrder[0],
-    );
     expect(mockCreate).toHaveBeenCalledWith(
       { source: 'project', path: 'child.md' },
       expect.anything(),
@@ -3750,8 +3677,6 @@ describe('claimAndLaunch', () => {
     jest
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
-
-    installHappyDelegationLockMock();
 
     jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
 
@@ -3883,8 +3808,6 @@ describe('claimAndLaunch', () => {
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
-    installHappyDelegationLockMock();
-
     jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
 
     const ctx = {
@@ -3975,8 +3898,6 @@ describe('claimAndLaunch', () => {
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
     jest.mocked(core.reconstituteContextVars).mockReturnValue({});
 
-    installHappyDelegationLockMock();
-
     const ctx = {
       output: {} as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
@@ -4060,8 +3981,6 @@ describe('claimAndLaunch', () => {
     jest
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
-
-    installHappyDelegationLockMock();
 
     jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
 

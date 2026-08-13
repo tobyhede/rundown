@@ -113,7 +113,6 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   // advanceParentForInlineChild lazily constructs a bridged emitter; a no-op
   // stub satisfies the link check (these tests assert on drain/loop branches).
   ExecutionEventEmitter: jest.fn().mockImplementation(() => ({ subscribe: jest.fn() })),
-  DelegationLock: jest.fn(),
   // Used by buildTransitionContext in transitions.ts; mocks satisfy the ESM
   // named-import link check (not exercised by these tests).
   resolveCommandTarget: jest.fn(),

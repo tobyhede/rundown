@@ -15,7 +15,6 @@ import type {
   RunbookStateManager,
   RunnableTemplateVariables,
   RunbookState,
-  ScopedLock,
   SessionService,
   TemplateVarValue,
   StepDelegation,
@@ -186,25 +185,6 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   })),
   DEFAULT_MUTATE_ATTEMPTS: realDefaultMutateAttempts,
   mutateBackoffMs: realMutateBackoffMs,
-  DelegationLock: jest.fn(),
-  DelegationLockTimeoutError: class DelegationLockTimeoutError extends Error {
-    readonly parentRunId: string;
-    readonly lockFile: string;
-    constructor(parentRunId: string, lockFile = '/tmp/test.lock') {
-      super(`Delegation lock timeout for run ${parentRunId}: ${lockFile}.`);
-      this.name = 'DelegationLockTimeoutError';
-      this.parentRunId = parentRunId;
-      this.lockFile = lockFile;
-    }
-  },
-  FileLockTimeoutError: class FileLockTimeoutError extends Error {
-    readonly lockFile: string;
-    constructor(lockFile = '/tmp/test.lock') {
-      super(`File lock timeout: ${lockFile}.`);
-      this.name = 'FileLockTimeoutError';
-      this.lockFile = lockFile;
-    }
-  },
   reconstituteContextVars: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
   extractInheritedUserVars: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
   hashDelegationToken: mockFn<() => string>().mockReturnValue(MOCK_TOKEN_HASH),
@@ -219,7 +199,6 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     INVALID_TOKEN: { code: 'RD-807' },
     TOKEN_NOT_FOUND: { code: 'RD-808' },
     TOKEN_CANCELLED: { code: 'RD-809' },
-    DELEGATION_LOCK_TIMEOUT: { code: 'RD-810' },
     LAUNCH_FAILED: { code: 'RD-816' },
     CLAIM_INVARIANT_VIOLATED: { code: 'RD-820' },
   },
@@ -559,60 +538,6 @@ function mockScanService(result: FindByTokenResult, orphan?: FindOrphanedChildRe
   );
 }
 
-/**
- * Configure `core.DelegationLock` with the given acquire/release mocks.
- *
- * Production takes the lock via the disposable scope API (`scope`/`held`,
- * returning an `AsyncDisposable`), so the mock implements those too. Both
- * delegate disposal to the supplied `release` mock so `toHaveBeenCalledWith`
- * assertions on `release` still observe the scope-exit unlink. The cast
- * surfaces the full instance shape without forcing the private
- * `cwd` / `lockDir` / `lockPath` fields onto the literal.
- *
- * `release` accepts an optional `runId` argument in production (the lock
- * scopes per-parent-run) — the mock signature mirrors that so
- * `toHaveBeenCalledWith(RUN_ID)` type-checks.
- */
-function mockDelegationLock(
-  acquire: jest.Mock<(...args: unknown[]) => Promise<void>>,
-  release: jest.Mock<(...args: unknown[]) => Promise<void>>,
-): void {
-  const held = (runId?: string): ScopedLock => {
-    let released = false;
-    const run = async (): Promise<void> => {
-      if (released) return;
-      released = true;
-      await release(runId);
-    };
-    return { release: run, [Symbol.asyncDispose]: run };
-  };
-  const scope = async (runId?: string): Promise<ScopedLock> => {
-    await acquire(runId);
-    return held(runId);
-  };
-  jest
-    .mocked(core.DelegationLock)
-    .mockImplementation(
-      () =>
-        ({ acquire, release, held, scope }) as unknown as jest.MockedObject<
-          InstanceType<typeof core.DelegationLock>
-        >,
-    );
-}
-
-/** Convenience: build a default acquire/release pair that always succeeds. */
-function mockHappyDelegationLock(): {
-  acquire: jest.Mock<(...args: unknown[]) => Promise<void>>;
-  release: jest.Mock<(...args: unknown[]) => Promise<void>>;
-} {
-  const acquire = mockFn<(...args: unknown[]) => Promise<void>>();
-  acquire.mockResolvedValue(undefined);
-  const release = mockFn<(...args: unknown[]) => Promise<void>>();
-  release.mockResolvedValue(undefined);
-  mockDelegationLock(acquire, release);
-  return { acquire, release };
-}
-
 beforeEach(() => {
   jest.resetAllMocks();
   // Restore defaults after reset
@@ -813,46 +738,6 @@ describe('claimAndLaunch', () => {
     }
   });
 
-  it('returns DELEGATION_LOCK_TIMEOUT when lock acquisition fails', async () => {
-    const ctx = makeCtx();
-
-    // Mock scan returning a result
-    mockScanService(
-      scanResult({
-        parentState: { id: RUN_ID, substepStates: [] },
-        stepId: '1',
-        substepId: '1',
-        delegation: { tokenHash: MOCK_TOKEN_HASH, childRunbookPath: 'child.md' },
-      }),
-    );
-
-    // Mock lock acquisition failure with a real DelegationLockTimeoutError
-    // (the production code now branches on `instanceof`, not on the message string).
-    const mockAcquire = mockFn<(...args: unknown[]) => Promise<void>>();
-    // `core` is the mocked module; the constructor is the mock-installed
-    // class, not the real export. Cast through unknown to surface the
-    // runtime constructor signature.
-    mockAcquire.mockRejectedValue(
-      new (
-        core as unknown as {
-          DelegationLockTimeoutError: new (id: string, lock: string) => Error;
-        }
-      ).DelegationLockTimeoutError(RUN_ID, '/tmp/test.lock'),
-    );
-    const mockRelease = mockFn<(...args: unknown[]) => Promise<void>>();
-    mockRelease.mockResolvedValue(undefined);
-    mockDelegationLock(mockAcquire, mockRelease);
-
-    // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      assertVariant(result, 'reason', 'lock-timeout');
-      expect(result.parentRunId).toBe(RUN_ID);
-    }
-  });
-
   it('returns TOKEN_CANCELLED when delegation is cancelled', async () => {
     const ctx = makeCtx();
 
@@ -886,9 +771,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-
-    // Mock lock
-    mockHappyDelegationLock();
 
     // Mock manager.load returning fresh state with cancelled delegation
     // (cast through unknown: tests use minimal fixtures rather than full RunbookState)
@@ -936,9 +818,6 @@ describe('claimAndLaunch', () => {
         delegation: parentState.substepStates[0].delegation,
       }),
     );
-
-    // Mock lock
-    mockHappyDelegationLock();
 
     // Mock manager.load returning fresh state with already-claimed delegation
     jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
@@ -990,9 +869,6 @@ describe('claimAndLaunch', () => {
       }),
       orphanState as unknown as RunbookState,
     );
-
-    // Mock lock
-    mockHappyDelegationLock();
 
     // Mock manager.load returning fresh state with unclaimed delegation
     jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
@@ -1077,7 +953,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-    mockHappyDelegationLock();
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -1187,7 +1062,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-    mockHappyDelegationLock();
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -1247,7 +1121,6 @@ describe('claimAndLaunch', () => {
         delegation: parentState.substepStates[0].delegation,
       }),
     );
-    mockHappyDelegationLock();
     jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
 
     // cspell:disable-next-line
@@ -1325,7 +1198,6 @@ describe('claimAndLaunch', () => {
         delegation: parentState.substepStates[0].delegation,
       }),
     );
-    mockHappyDelegationLock();
     jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
 
     // cspell:disable-next-line
@@ -1340,34 +1212,7 @@ describe('claimAndLaunch', () => {
     expect(mockClaimRunbook).toHaveBeenCalled();
   });
 
-  it('re-throws non-timeout lock errors instead of masking them', async () => {
-    const ctx = makeCtx();
-
-    // Mock scan returning a result
-    mockScanService(
-      scanResult({
-        parentState: { id: RUN_ID, substepStates: [] },
-        stepId: '1',
-        substepId: '1',
-        delegation: { tokenHash: MOCK_TOKEN_HASH, childRunbookPath: 'child.md' },
-      }),
-    );
-
-    // Mock lock throwing a non-timeout error (e.g. permission denied)
-    const permissionError = new Error('EACCES: permission denied');
-    const mockAcquire = mockFn<(...args: unknown[]) => Promise<void>>();
-    mockAcquire.mockRejectedValue(permissionError);
-    const mockRelease = mockFn<(...args: unknown[]) => Promise<void>>();
-    mockRelease.mockResolvedValue(undefined);
-    mockDelegationLock(mockAcquire, mockRelease);
-
-    // cspell:disable-next-line
-    await expect(claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {})).rejects.toThrow(
-      'EACCES: permission denied',
-    );
-  });
-
-  it('returns TOKEN_NOT_FOUND when parent state no longer exists after lock', async () => {
+  it('returns TOKEN_NOT_FOUND when parent state no longer exists at the freshness re-read', async () => {
     const ctx = makeCtx();
 
     const parentState = {
@@ -1399,9 +1244,6 @@ describe('claimAndLaunch', () => {
       }),
     );
 
-    // Mock lock
-    mockHappyDelegationLock();
-
     // Mock manager.load returning null (state was deleted)
     jest.mocked(ctx.manager).load.mockResolvedValue(null);
 
@@ -1416,7 +1258,7 @@ describe('claimAndLaunch', () => {
   });
 
   it.each(['completed', 'stopped'] as const)(
-    'returns parent-ended when parent is %s after lock',
+    'returns parent-ended when parent is %s at the freshness re-read',
     async (lifecycle) => {
       const ctx = makeCtx();
       const parentState = {
@@ -1447,7 +1289,6 @@ describe('claimAndLaunch', () => {
           delegation: parentState.substepStates[0].delegation,
         }),
       );
-      mockHappyDelegationLock();
       jest.mocked(ctx.manager).load.mockResolvedValue({
         ...parentState,
         lifecycle,
@@ -1465,7 +1306,7 @@ describe('claimAndLaunch', () => {
     },
   );
 
-  it('returns TOKEN_NOT_FOUND when delegation disappears after lock', async () => {
+  it('returns TOKEN_NOT_FOUND when delegation disappears before the freshness re-read', async () => {
     const ctx = makeCtx();
 
     const parentState = {
@@ -1496,9 +1337,6 @@ describe('claimAndLaunch', () => {
         delegation: parentState.substepStates[0].delegation,
       }),
     );
-
-    // Mock lock
-    mockHappyDelegationLock();
 
     // Mock manager.load returning state without delegation
     jest.mocked(ctx.manager).load.mockResolvedValue({
@@ -1549,9 +1387,6 @@ describe('claimAndLaunch', () => {
         delegation: parentState.substepStates[0].delegation,
       }),
     );
-
-    // Mock lock
-    mockHappyDelegationLock();
 
     // Mock manager.load returning state with different hash
     jest.mocked(ctx.manager).load.mockResolvedValue({
@@ -1655,9 +1490,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-
-    // Mock lock
-    mockHappyDelegationLock();
 
     // deriveActiveFrame returns the WRONG frame (parent has advanced to iteration 5)
     jest.mocked(core.deriveActiveFrame).mockReturnValue({
@@ -1813,7 +1645,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-    mockHappyDelegationLock();
 
     jest.mocked(core.deriveActiveFrame).mockReturnValue({
       step: '2',
@@ -1904,7 +1735,7 @@ describe('claimAndLaunch', () => {
     expect(linkage.parentFrameKey).toBe('1|0');
   });
 
-  it('returns LAUNCH_FAILED (RD-816) when manager.create throws and releases the lock', async () => {
+  it('returns LAUNCH_FAILED (RD-816) when manager.create throws', async () => {
     const parentState = {
       id: RUN_ID,
       step: '1',
@@ -1937,8 +1768,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-
-    const { release: mockRelease } = mockHappyDelegationLock();
 
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
@@ -1998,8 +1827,6 @@ describe('claimAndLaunch', () => {
       expect(result.code).toBe('RD-816');
       expect(result.cause).toContain('disk full');
     }
-    // Lock must be released even on init failure
-    expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
 
   it('returns CLAIM_INVARIANT_VIOLATED (RD-820) when claimChildForPipeline fails after fresh launch and does not execute the loop', async () => {
@@ -2035,8 +1862,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-
-    const { release: mockRelease } = mockHappyDelegationLock();
 
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
@@ -2112,8 +1937,6 @@ describe('claimAndLaunch', () => {
     expect(mockClaimAndInitialLink).toHaveBeenCalledWith(
       expect.objectContaining({ childRunId: NEW_CHILD_ID }),
     );
-    // Lock must be released even on claim failure
-    expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
 
   it.each([
@@ -2181,7 +2004,6 @@ describe('claimAndLaunch', () => {
         }),
         null,
       );
-      mockHappyDelegationLock();
 
       jest.mocked(resolveRunbookFile).mockResolvedValue({
         path: '/tmp/test/child.md',
@@ -2292,8 +2114,6 @@ describe('claimAndLaunch', () => {
       null,
     );
 
-    const { release: mockRelease } = mockHappyDelegationLock();
-
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
       source: 'project',
@@ -2368,7 +2188,6 @@ describe('claimAndLaunch', () => {
     }
     expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
     expect(runExecutionLoop).not.toHaveBeenCalled();
-    expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
 
   it('names the winning child when a second claimer loses the delegation, rather than RD-820', async () => {
@@ -2404,8 +2223,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-
-    const { release: mockRelease } = mockHappyDelegationLock();
 
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
@@ -2492,7 +2309,6 @@ describe('claimAndLaunch', () => {
     expect(mockClaimAndInitialLink).not.toHaveBeenCalled();
     expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
     expect(runExecutionLoop).not.toHaveBeenCalled();
-    expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
 
   it('does not claim or link when fresh delegated launch initialization fails', async () => {
@@ -2528,8 +2344,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-
-    const { release: mockRelease } = mockHappyDelegationLock();
 
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
@@ -2614,7 +2428,6 @@ describe('claimAndLaunch', () => {
     expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
     expect(mockUpdate).not.toHaveBeenCalled();
     expect(runExecutionLoop).not.toHaveBeenCalled();
-    expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
 
   async function arrangeInitialLinkRollback() {
@@ -2658,7 +2471,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-    mockHappyDelegationLock();
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
       source: 'project',
@@ -2887,8 +2699,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-
-    mockHappyDelegationLock();
 
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
