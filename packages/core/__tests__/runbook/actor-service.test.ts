@@ -2180,6 +2180,9 @@ echo ok
           kind: 'already_linked',
           runId: state.id,
           message: 'Delegation 1.1 is already linked to another child',
+          // The occupant, not `otherChildRunId` — a caller reporting this
+          // permanent refusal must name the child that holds the delegation.
+          occupyingChildRunId: childRunId,
         });
         await expect(
           service.prepareDelegationChildUnlink(prepared.nextState, steps, otherChildRunId, linkage),

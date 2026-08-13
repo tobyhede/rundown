@@ -24,7 +24,12 @@ import {
 } from '@rundown-org/core/testing/session-fixtures';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
-import { delegationLockPath, ErrorResponseSchema, SessionService } from '@rundown-org/core';
+import {
+  DEFAULT_MUTATE_ATTEMPTS,
+  delegationLockPath,
+  ErrorResponseSchema,
+  SessionService,
+} from '@rundown-org/core';
 import { Command } from 'commander';
 import { validateCommandOutput } from '../helpers/schema-validator.js';
 // Stryker static-import linkage (mutation testing): links this test file into
@@ -391,7 +396,13 @@ describe('claim command', () => {
         const result = await runCliInProcess(`claim ${token}`, workspace);
 
         expect(result.exitCode).toBe(1);
-        expect(claimAndInitialLink).toHaveBeenCalledTimes(1);
+        // Sustained contention: every re-derive prepares cleanly and every
+        // commit still loses, so the claim spends the store's whole optimistic
+        // budget before reporting the race. Reporting it after one attempt was
+        // the defect — a single version mismatch says nothing about why the
+        // parent moved, and re-deriving is what distinguishes this genuine race
+        // from the permanent DELEGATION_ALREADY_CLAIMED.
+        expect(claimAndInitialLink).toHaveBeenCalledTimes(DEFAULT_MUTATE_ATTEMPTS);
         const envelope = parseCliJsonObject(result.stdout || result.stderr);
         expect(envelope).toEqual({
           kind: 'error',

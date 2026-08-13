@@ -51,6 +51,11 @@ export type {
   SessionMutationRefusal,
   SessionMutationResult,
 } from './storage/runbook-store.js';
+// The optimistic-cycle budget and pacing are public for a narrower reason: a
+// front end that owns a read-derive-write span the store cannot hold (an async
+// derivation committed by a synchronous session transaction) must re-derive on
+// the same budget, and a mirrored constant is where that pacing drifts.
+export { DEFAULT_MUTATE_ATTEMPTS, mutateBackoffMs } from './storage/runbook-store.js';
 // `GuardedMutationResult` and `AbandonedAttemptSetOutcome` are public for the
 // same narrow reason: a CLI renderer must DERIVE the refusal union it renders
 // from these rather than re-declaring it. A hand-restatement compiles while

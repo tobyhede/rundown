@@ -29,6 +29,8 @@ import {
   DelegationScanService,
   DelegationLock,
   DelegationLockTimeoutError,
+  DEFAULT_MUTATE_ATTEMPTS,
+  mutateBackoffMs,
   reconstituteContextVars,
   extractInheritedUserVars,
   hashDelegationToken,
@@ -1248,6 +1250,101 @@ type ClaimChildResult =
   | SessionRefusedFailure;
 
 /**
+ * Outcome of one {@link deriveAndCommitInitialLink} cycle.
+ *
+ * `refused` is decided during preparation and is terminal for the whole cycle;
+ * `committed` is the atomic claim transaction's own typed result, which
+ * {@link claimChildForPipeline} classifies alongside the non-initial-link path.
+ */
+type InitialLinkOutcome =
+  | { readonly committed: Awaited<ReturnType<SessionService['claimAndInitialLink']>> }
+  | { readonly refused: Extract<ClaimChildResult, { readonly ok: false }> };
+
+/**
+ * Derive the delegated-child parent link and commit it, re-deriving while the
+ * parent keeps moving underneath the capture.
+ *
+ * The derivation cannot be folded into the commit's callback the way the
+ * retired core lock sites folded theirs: `claimAndInitialLink` commits inside a
+ * synchronous session transaction (`SyncWork`), and preparing the link is
+ * async. So the read-derive-write gap stays open by construction and the loop
+ * closes it from outside instead — a loser re-derives against the row the
+ * winner committed, which is what turns an uninformative version mismatch into
+ * the permanent `already_linked` the parent state now actually shows.
+ *
+ * Only the commit's `concurrent_modification` is retried. Every preparation
+ * refusal is permanent: re-reading cannot free an occupied delegation or
+ * un-supersede a moved one, so retrying those would only spend the budget
+ * before reporting the same fact. Exhausting the budget returns the genuine
+ * `concurrent_modification` rather than guessing at a permanent cause.
+ *
+ * The cycle re-runs capture, preparation, and commit — never child creation,
+ * which the caller performed before invoking this and must not repeat.
+ * Preparation is safe to repeat: `DELEGATION_CHILD_LINKED` is a root-level
+ * handler with no `target`, so the transition is internal — nothing is exited
+ * or entered and no `invoke` starts.
+ *
+ * @param ctx - Run pipeline context carrying the manager, actor, and session services
+ * @param childRunId - Child run being linked to the parent's delegation
+ * @param linkage - Exact delegation coordinates the link is derived against
+ * @returns The atomic claim result to classify, or a terminal preparation refusal
+ */
+async function deriveAndCommitInitialLink(
+  ctx: RunPipelineContext,
+  childRunId: RunId,
+  linkage: DelegationLinkage,
+): Promise<InitialLinkOutcome> {
+  for (let attempt = 0; ; attempt++) {
+    const captured = await ctx.manager.captureRunAuthorityState(linkage.parentRunId);
+    if (captured.kind === 'missing') {
+      return {
+        refused: { ok: false, reason: 'parent-missing', parentRunId: linkage.parentRunId },
+      };
+    }
+    if (captured.kind === 'claim_superseded') {
+      return { refused: { ok: false, reason: 'delegation-superseded', childRunId } };
+    }
+    const prepared = await ctx.actorService.prepareDelegationChildLink(
+      captured.state,
+      getRunbookFromState(captured.state, ctx.cwd),
+      childRunId,
+      linkage,
+    );
+    if (prepared.kind === 'delegation_superseded') {
+      return { refused: { ok: false, reason: 'delegation-superseded', childRunId } };
+    }
+    // The delegation names a different child. That is permanent — it is the
+    // same fact the 4c already-linked path reports — so it must reach the user
+    // as the no-retry `DELEGATION_ALREADY_CLAIMED`, never as the retryable
+    // `CONCURRENT_MODIFICATION` whose message tells them to try again. It names
+    // the occupying child, not the one being linked: on the fresh-launch path
+    // the rejected child is a run this claim's own cleanup is about to delete.
+    if (prepared.kind === 'already_linked') {
+      return {
+        refused: {
+          ok: false,
+          reason: 'delegation-already-claimed',
+          childRunId: prepared.occupyingChildRunId,
+        },
+      };
+    }
+    if (prepared.kind === 'concurrent_modification') {
+      return { refused: { ok: false, reason: 'concurrent-modification', childRunId } };
+    }
+    const committed = await ctx.sessionService.claimAndInitialLink({
+      childRunId,
+      linkage,
+      capturedParent: captured.authority,
+      preparedParent: prepared.prepared,
+    });
+    if (committed.kind !== 'concurrent_modification' || attempt + 1 >= DEFAULT_MUTATE_ATTEMPTS) {
+      return { committed };
+    }
+    await new Promise((resolve) => setTimeout(resolve, mutateBackoffMs(attempt)));
+  }
+}
+
+/**
  * Claim or refresh a delegated child through {@link SessionService.claimRunbook}.
  *
  * `claimRunbook` owns the idempotent delegation contract: for a matching
@@ -1273,38 +1370,9 @@ async function claimChildForPipeline(
     | Awaited<ReturnType<SessionService['claimRunbook']>>
     | Awaited<ReturnType<SessionService['claimAndInitialLink']>>;
   if (initialLink) {
-    const captured = await ctx.manager.captureRunAuthorityState(linkage.parentRunId);
-    if (captured.kind === 'missing') {
-      return { ok: false, reason: 'parent-missing', parentRunId: linkage.parentRunId };
-    }
-    if (captured.kind === 'claim_superseded') {
-      return { ok: false, reason: 'delegation-superseded', childRunId };
-    }
-    const prepared = await ctx.actorService.prepareDelegationChildLink(
-      captured.state,
-      getRunbookFromState(captured.state, ctx.cwd),
-      childRunId,
-      linkage,
-    );
-    if (prepared.kind === 'delegation_superseded') {
-      return { ok: false, reason: 'delegation-superseded', childRunId };
-    }
-    // The delegation names a different child. That is permanent — it is the
-    // same fact the 4c already-linked path reports — so it must reach the user
-    // as the no-retry `DELEGATION_ALREADY_CLAIMED`, never as the retryable
-    // `CONCURRENT_MODIFICATION` whose message tells them to try again.
-    if (prepared.kind === 'already_linked') {
-      return { ok: false, reason: 'delegation-already-claimed', childRunId };
-    }
-    if (prepared.kind === 'concurrent_modification') {
-      return { ok: false, reason: 'concurrent-modification', childRunId };
-    }
-    result = await ctx.sessionService.claimAndInitialLink({
-      childRunId,
-      linkage,
-      capturedParent: captured.authority,
-      preparedParent: prepared.prepared,
-    });
+    const outcome = await deriveAndCommitInitialLink(ctx, childRunId, linkage);
+    if ('refused' in outcome) return outcome.refused;
+    result = outcome.committed;
   } else {
     result = await ctx.sessionService.claimRunbook(childRunId, linkage);
   }
@@ -1926,9 +1994,18 @@ export async function claimAndLaunch(
       // already owns the mapping, and 4a emits this very refusal earlier for the
       // same fact — so the outcome must not change just because the race lost
       // later.
+      //
+      // `delegation-already-claimed` is the same class and the reason this arm
+      // matters most: a second claimer of one token that got past 4c before the
+      // winner committed lands here, and the fact it must report is the winner's
+      // — the delegation is taken, permanently, by the child the refusal names.
+      // Reporting CLAIM_INVARIANT_VIOLATED instead blamed Rundown for a race it
+      // handled correctly, and named this claimer's own about-to-be-deleted
+      // child.
       if (
         invariantViolation.reason === 'parent-missing' ||
-        invariantViolation.reason === 'concurrent-modification'
+        invariantViolation.reason === 'concurrent-modification' ||
+        invariantViolation.reason === 'delegation-already-claimed'
       ) {
         return claimResultToFailure(invariantViolation, freshParent.id, substepId ?? stepId);
       }

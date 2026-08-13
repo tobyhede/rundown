@@ -86,8 +86,16 @@ export function assertExecutionPhase(value: string): ExecutionPhase {
   return value as ExecutionPhase;
 }
 
-/** Attempt budget for an optimistic {@link RunbookStore.mutateState} cycle. */
-const DEFAULT_MUTATE_ATTEMPTS = 8;
+/**
+ * Attempt budget for an optimistic {@link RunbookStore.mutateState} cycle.
+ *
+ * Public so a front end whose own read-derive-write span cannot be folded into
+ * a `build` callback re-derives on the *same* budget rather than mirroring the
+ * number. The only such span today is the CLI's delegated-child initial link,
+ * whose derivation is async and whose commit is a synchronous session
+ * transaction — no callback can hold it.
+ */
+export const DEFAULT_MUTATE_ATTEMPTS = 8;
 
 /**
  * Backoff floor between contended {@link RunbookStore.mutateState} attempts,
@@ -114,10 +122,14 @@ const MUTATE_RETRY_MAX_MS = 50;
  * default eight attempts cap the added wait at 1.4s, inside the 5s deadline the
  * file lock this path replaced would have waited.
  *
+ * Public alongside {@link DEFAULT_MUTATE_ATTEMPTS}, and for the same reason: an
+ * out-of-store re-derive loop must pace itself identically, and a mirrored
+ * constant is a second place for the pacing to drift.
+ *
  * @param attempt - Zero-based index of the attempt that just went stale.
  * @returns Milliseconds to pause before rebuilding from fresh state.
  */
-function mutateBackoffMs(attempt: number): number {
+export function mutateBackoffMs(attempt: number): number {
   const span = MUTATE_RETRY_MAX_MS - MUTATE_RETRY_MIN_MS;
   return (attempt + 1) * (MUTATE_RETRY_MIN_MS + Math.random() * span);
 }

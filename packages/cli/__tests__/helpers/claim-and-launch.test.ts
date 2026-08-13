@@ -47,6 +47,10 @@ const {
   inferFrameEntryFromState: realInferFrameEntryFromState,
   isDelegationToken: realIsDelegationToken,
   isJsonArrayStream: realIsJsonArrayStream,
+  // The initial-link re-derive loop paces itself on the store's own optimistic
+  // budget; both are captured real so this suite exercises the shipped loop.
+  DEFAULT_MUTATE_ATTEMPTS: realDefaultMutateAttempts,
+  mutateBackoffMs: realMutateBackoffMs,
 } = await import('@rundown-org/core');
 
 const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
@@ -180,6 +184,8 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   DelegationScanService: mockFn<() => { findByToken: jest.Mock }>().mockImplementation(() => ({
     findByToken: mockFn<() => Promise<TokenScanResult | null>>().mockResolvedValue(null),
   })),
+  DEFAULT_MUTATE_ATTEMPTS: realDefaultMutateAttempts,
+  mutateBackoffMs: realMutateBackoffMs,
   DelegationLock: jest.fn(),
   DelegationLockTimeoutError: class DelegationLockTimeoutError extends Error {
     readonly parentRunId: string;
@@ -2360,6 +2366,130 @@ describe('claimAndLaunch', () => {
       assertVariant(result, 'reason', 'parent-missing');
       expect(result.parentRunId).toBe(RUN_ID);
     }
+    expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
+    expect(runExecutionLoop).not.toHaveBeenCalled();
+    expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
+  });
+
+  it('names the winning child when a second claimer loses the delegation, rather than RD-820', async () => {
+    const parentState = {
+      id: RUN_ID,
+      step: '1',
+      variables: {},
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|0',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+        frameKey: brandFrameKeyForTest('1', 0),
+      }),
+      null,
+    );
+
+    const { release: mockRelease } = mockHappyDelegationLock();
+
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/tmp/test/child.md',
+      source: 'project',
+      sourceRoot: '/tmp/test',
+    });
+    // Cast through unknown: minimal parser fixture (see frameKey linkage test).
+    jest.mocked(parser.parseRunbookDocument).mockReturnValue({
+      runbook: { steps: [{ kind: 'base', name: '1', description: 'Step' }] },
+      frontmatter: null,
+      diagnostics: [],
+    } as unknown as ReturnType<typeof parser.parseRunbookDocument>);
+    jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
+    jest.mocked(resolveVariables).mockResolvedValue({
+      vars: {},
+      warnings: [],
+      providedKeys: new Set(),
+    } as unknown as Awaited<ReturnType<typeof resolveVariables>>);
+    jest
+      .mocked(resolveForBounds)
+      .mockImplementation(
+        (runbook) => ({ runbook, warnings: [] }) as unknown as ReturnType<typeof resolveForBounds>,
+      );
+    jest.mocked(substituteRunbookVariables).mockImplementation((runbook) => runbook);
+    jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
+
+    // Two processes claim one token. This one got past the 4c replay check
+    // before the winner committed, launched its own child, and only learns the
+    // truth when it re-derives the link against the committed parent. That is a
+    // race Rundown handled correctly, not a broken invariant — and the fact the
+    // user needs is the WINNER's run id, not this claimer's child, which launch
+    // cleanup is about to delete.
+    const winningChildRunId = brandRunIdForTest('rd_77777777777777777777777777777777');
+    const mockPrepare = mockFn<
+      RunbookActorService['prepareDelegationChildLink']
+    >().mockResolvedValue({
+      kind: 'already_linked',
+      runId: RUN_ID,
+      message: `Delegation 1 is already linked to another child`,
+      occupyingChildRunId: winningChildRunId,
+    });
+    const mockClaimAndInitialLink = mockFn<SessionService['claimAndInitialLink']>();
+    const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
+
+    const ctx = makeCtx({
+      manager: {
+        load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
+          parentState as unknown as RunbookState,
+        ),
+        create: mockFn<
+          (...args: unknown[]) => Promise<{ id: RunId; title: string }>
+        >().mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' }),
+        update: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        delete: mockDelete,
+        list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
+        initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+      },
+      actorService: {
+        initializeState: mockFn<() => Promise<RunbookState>>().mockResolvedValue({
+          id: NEW_CHILD_ID,
+          step: '1',
+        } as unknown as RunbookState),
+        prepareDelegationChildLink: mockPrepare,
+      },
+      sessionService: {
+        pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        claimAndInitialLink: mockClaimAndInitialLink,
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
+      },
+    });
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      assertVariant(result, 'reason', 'delegation-already-claimed');
+      expect(result.parentRunId).toBe(RUN_ID);
+      expect(result.stepId).toBe('1');
+      expect(result.childRunId).toBe(winningChildRunId);
+    }
+    // The permanent refusal was decided before any commit was attempted.
+    expect(mockClaimAndInitialLink).not.toHaveBeenCalled();
     expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
     expect(runExecutionLoop).not.toHaveBeenCalled();
     expect(mockRelease).toHaveBeenCalledWith(RUN_ID);

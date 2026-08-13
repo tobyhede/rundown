@@ -64,6 +64,12 @@ const {
   isDelegationToken: realIsDelegationToken,
   isJsonArrayStream: realIsJsonArrayStream,
   RunbookRefSchema: realRunbookRefSchema,
+  // The initial-link re-derive loop paces itself on the store's own optimistic
+  // budget. Both are captured real, not stubbed: the attempt count is the
+  // behaviour under test, and a shortened backoff would test a different loop
+  // from the one that ships.
+  DEFAULT_MUTATE_ATTEMPTS: realDefaultMutateAttempts,
+  mutateBackoffMs: realMutateBackoffMs,
 } = await import('@rundown-org/core');
 
 const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
@@ -74,6 +80,8 @@ const MOCK_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
 const PARENT_RUN_ID = brandRunIdForTest(`rd_${'b'.repeat(32)}`);
 const DIFFERENT_PARENT_RUN_ID = brandRunIdForTest(`rd_${'c'.repeat(32)}`);
 const ORPHAN_RUN_ID = brandRunIdForTest(`rd_${'d'.repeat(32)}`);
+/** The child that won the delegation, as an `already_linked` refusal names it. */
+const OCCUPYING_CHILD_RUN_ID = brandRunIdForTest(`rd_${'f'.repeat(32)}`);
 
 type ClaimRecordOverride = Partial<Omit<ClaimRecord, 'delegation'>> & {
   readonly delegation?: Partial<NonNullable<ClaimRecord['delegation']>>;
@@ -213,6 +221,36 @@ function mockClaimAndInitialLinkSuccess(): jest.Mock<SessionService['claimAndIni
   );
 }
 
+/**
+ * Normalize a single per-call result and an explicit per-attempt sequence into
+ * one optional sequence, so a caller may pin either shape.
+ *
+ * @param single - Result to return on every attempt, or undefined
+ * @param many - Per-attempt results, or undefined
+ * @returns The sequence to walk, or undefined when neither was supplied
+ */
+function attemptSequence<T>(
+  single: T | undefined,
+  many: readonly T[] | undefined,
+): readonly T[] | undefined {
+  if (many !== undefined) return many;
+  return single === undefined ? undefined : [single];
+}
+
+/**
+ * Build a mock implementation that walks a sequence, repeating the last entry.
+ *
+ * Repeating (rather than running out) is what lets a test pin the retry budget:
+ * a one-entry sequence behaves exactly like `mockResolvedValue`.
+ *
+ * @param results - Per-attempt results, in order
+ * @returns An implementation resolving the attempt's result
+ */
+function resolvesInSequence<T>(results: readonly T[]): () => Promise<T> {
+  let attempt = 0;
+  return async () => results[Math.min(attempt++, results.length - 1)];
+}
+
 function adaptClaimMockToInitialLink(
   claim: jest.Mock<SessionService['claimRunbook']>,
 ): jest.Mock<SessionService['claimAndInitialLink']> {
@@ -264,6 +302,8 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   RunbookStateManager: jest.fn(),
   loadPolicy: jest.fn(),
   DelegationScanService: jest.fn(),
+  DEFAULT_MUTATE_ATTEMPTS: realDefaultMutateAttempts,
+  mutateBackoffMs: realMutateBackoffMs,
   DelegationLock: jest.fn(),
   DelegationLockTimeoutError: class DelegationLockTimeoutError extends Error {
     readonly parentRunId: string;
@@ -2800,7 +2840,7 @@ describe('claimAndLaunch', () => {
   // report the substep id that owns the delegation, not the bare outer step id.
   // Each case scans a delegation living on substep `2.1` (stepId '2',
   // substepId '1') and asserts the failure carries stepId '1'.
-  const runSubstepClaimFailure = async (opts: {
+  interface SubstepClaimFailureOptions {
     cancelledAt?: string | null;
     findOrphanedChild?: unknown;
     findClaimForDelegation?: unknown;
@@ -2809,7 +2849,15 @@ describe('claimAndLaunch', () => {
     captureResult?: Awaited<ReturnType<RunbookStateManager['captureRunAuthorityState']>>;
     prepareResult?: Awaited<ReturnType<RunbookActorService['prepareDelegationChildLink']>>;
     initialLinkResult?: Awaited<ReturnType<SessionService['claimAndInitialLink']>>;
-  }) => {
+    /** Per-attempt preparation results; the last one repeats once exhausted. */
+    prepareResults?: readonly Awaited<
+      ReturnType<RunbookActorService['prepareDelegationChildLink']>
+    >[];
+    /** Per-attempt commit results; the last one repeats once exhausted. */
+    initialLinkResults?: readonly Awaited<ReturnType<SessionService['claimAndInitialLink']>>[];
+  }
+
+  const runSubstepClaimFailureWithSpies = async (opts: SubstepClaimFailureOptions) => {
     const delegation = {
       tokenHash: MOCK_TOKEN_HASH,
       childRunbookPath: 'child.md',
@@ -2856,25 +2904,30 @@ describe('claimAndLaunch', () => {
 
     installHappyDelegationLockMock();
 
+    const prepareSequence = attemptSequence(opts.prepareResult, opts.prepareResults);
+    const prepareSpy =
+      prepareSequence === undefined
+        ? mockPrepareDelegationChildLink()
+        : mockFn<RunbookActorService['prepareDelegationChildLink']>().mockImplementation(
+            resolvesInSequence(prepareSequence),
+          );
+    const initialLinkSequence = attemptSequence(opts.initialLinkResult, opts.initialLinkResults);
+    const initialLinkSpy =
+      initialLinkSequence === undefined
+        ? adaptClaimMockToInitialLink(opts.claimSpy ?? mockClaimRunbookSuccess())
+        : mockFn<SessionService['claimAndInitialLink']>().mockImplementation(
+            resolvesInSequence(initialLinkSequence),
+          );
+
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
       manager: mockManager as unknown as RunbookStateManager,
       actorService: {
-        prepareDelegationChildLink:
-          opts.prepareResult === undefined
-            ? mockPrepareDelegationChildLink()
-            : mockFn<RunbookActorService['prepareDelegationChildLink']>().mockResolvedValue(
-                opts.prepareResult,
-              ),
+        prepareDelegationChildLink: prepareSpy,
       } as unknown as RunbookActorService,
       sessionService: {
         claimRunbook: opts.claimSpy ?? mockClaimRunbookSuccess(),
-        claimAndInitialLink:
-          opts.initialLinkResult === undefined
-            ? adaptClaimMockToInitialLink(opts.claimSpy ?? mockClaimRunbookSuccess())
-            : mockFn<SessionService['claimAndInitialLink']>().mockResolvedValue(
-                opts.initialLinkResult,
-              ),
+        claimAndInitialLink: initialLinkSpy,
         findClaimForDelegation: mockFn<
           (...args: unknown[]) => Promise<unknown>
         >().mockResolvedValue(opts.findClaimForDelegation ?? null),
@@ -2885,8 +2938,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    return claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    return { result, prepareSpy, initialLinkSpy };
   };
+
+  const runSubstepClaimFailure = async (opts: SubstepClaimFailureOptions) =>
+    (await runSubstepClaimFailureWithSpies(opts)).result;
 
   it('reports substepId (not stepId) on a substep delegation-cancelled failure', async () => {
     const result = await runSubstepClaimFailure({ cancelledAt: new Date().toISOString() });
@@ -2953,16 +3010,21 @@ describe('claimAndLaunch', () => {
     },
     {
       // Permanent occupancy, not a race: it must not reach the user as the
-      // retryable `concurrent-modification`.
+      // retryable `concurrent-modification`. It names the OCCUPANT, not the
+      // child that was refused — the refused one is about to be cleaned up.
       name: 'already-linked prepared delegation',
       options: {
         prepareResult: {
           kind: 'already_linked',
           runId: PARENT_RUN_ID,
           message: 'delegation is already linked to another child',
+          occupyingChildRunId: OCCUPYING_CHILD_RUN_ID,
         },
       },
-      expected: { reason: 'delegation-already-claimed' },
+      expected: {
+        reason: 'delegation-already-claimed',
+        childRunId: OCCUPYING_CHILD_RUN_ID,
+      },
     },
     {
       name: 'execution-in-progress atomic commit',
@@ -3005,6 +3067,9 @@ describe('claimAndLaunch', () => {
       expected: { reason: 'delegation-superseded' },
     },
     {
+      // Sustained contention: every re-derive prepares cleanly and every commit
+      // still loses. Spending the budget must report the race honestly rather
+      // than guessing at a permanent cause it never observed.
       name: 'concurrently modified atomic commit',
       options: {
         initialLinkResult: {
@@ -3037,6 +3102,98 @@ describe('claimAndLaunch', () => {
     });
 
     expect(result).toMatchObject({ ok: false, ...expected });
+  });
+
+  // The gap the delegation lock was still fencing: preparation reads a captured
+  // parent version, the atomic commit fences a different one, and a bare version
+  // mismatch carries no reason for the move. Re-deriving is the only thing that
+  // can tell "someone else took this delegation, permanently" apart from "the
+  // parent happened to move", so the loop must run and report the former.
+  describe('initial-link re-derivation', () => {
+    const orphanState = () =>
+      makeState(ORPHAN_RUN_ID, {
+        delegation: { parentRunId: PARENT_RUN_ID, parentStepId: '1', tokenHash: MOCK_TOKEN_HASH },
+      });
+
+    const racedCommit = {
+      kind: 'concurrent_modification',
+      runId: PARENT_RUN_ID,
+      message: 'parent changed during commit',
+    } as const;
+
+    const occupiedPreparation = {
+      kind: 'already_linked',
+      runId: PARENT_RUN_ID,
+      message: 'delegation is already linked to another child',
+      occupyingChildRunId: OCCUPYING_CHILD_RUN_ID,
+    } as const;
+
+    // The commit is mocked, so only the discriminant matters here.
+    const preparedLink = {
+      kind: 'prepared',
+      prepared: {
+        operation: 'link',
+        mutation: { previousState: {}, nextState: {}, snapshot: {}, effects: [] },
+      },
+    } as unknown as Awaited<ReturnType<RunbookActorService['prepareDelegationChildLink']>>;
+
+    it('re-derives after a raced commit and reports the permanent occupant', async () => {
+      const { result, prepareSpy, initialLinkSpy } = await runSubstepClaimFailureWithSpies({
+        findOrphanedChild: orphanState(),
+        initialLinkResults: [racedCommit],
+        prepareResults: [preparedLink, occupiedPreparation],
+      });
+
+      // The second derivation sees the committed row and names the winner —
+      // never the retryable CONCURRENT_MODIFICATION the first commit produced,
+      // and never this claimer's own child.
+      expect(result).toMatchObject({
+        ok: false,
+        reason: 'delegation-already-claimed',
+        parentRunId: PARENT_RUN_ID,
+        stepId: '1',
+        childRunId: OCCUPYING_CHILD_RUN_ID,
+      });
+      expect(prepareSpy).toHaveBeenCalledTimes(2);
+      // The second preparation refused, so no second commit was attempted.
+      expect(initialLinkSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('spends exactly the store attempt budget before reporting the race', async () => {
+      const { result, prepareSpy, initialLinkSpy } = await runSubstepClaimFailureWithSpies({
+        findOrphanedChild: orphanState(),
+        initialLinkResult: racedCommit,
+      });
+
+      expect(result).toMatchObject({ ok: false, reason: 'concurrent-modification' });
+      expect(prepareSpy).toHaveBeenCalledTimes(realDefaultMutateAttempts);
+      expect(initialLinkSpy).toHaveBeenCalledTimes(realDefaultMutateAttempts);
+    });
+
+    it.each([
+      {
+        name: 'occupied delegation',
+        prepareResult: occupiedPreparation,
+      },
+      {
+        name: 'superseded delegation',
+        prepareResult: {
+          kind: 'delegation_superseded',
+          runId: PARENT_RUN_ID,
+          message: 'delegation moved before preparation',
+        },
+      },
+    ] as const)('does not retry a permanent $name refusal', async ({ prepareResult }) => {
+      const { prepareSpy, initialLinkSpy } = await runSubstepClaimFailureWithSpies({
+        findOrphanedChild: orphanState(),
+        prepareResult,
+      });
+
+      // Re-reading cannot free an occupied delegation or un-supersede a moved
+      // one, so spending the budget on either only delays the same answer.
+      expect(prepareSpy).toHaveBeenCalledTimes(1);
+      expect(initialLinkSpy).not.toHaveBeenCalled();
+    });
   });
 
   it('reports substepId (not stepId) on an existing-claim child-missing failure', async () => {

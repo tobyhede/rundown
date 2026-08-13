@@ -221,6 +221,35 @@ between them leaves the launch latched with no child, and a later observer
 reports `waiting` rather than relaunching. That is the sanctioned recovery
 (finish, stop, prune), and it is the price of not shipping a duplicate `INSERT`.
 
+**When the fold is unavailable, loop from outside — and check that it is
+unavailable rather than assuming it.** `claimChildForPipeline`'s initial link
+derives with `prepareDelegationChildLink` (async) and commits with
+`SessionService.claimAndInitialLink`, whose `mutateGuarded` work is `SyncWork`
+and spans two runs. No callback can hold that span, so the gap stays open by
+construction: capture at version _v_, derive against _v_, fence on _v_. The
+replacement is a bounded **re-derive loop** around capture → prepare → commit,
+paced by the store's own exported `DEFAULT_MUTATE_ATTEMPTS` / `mutateBackoffMs`
+rather than a mirrored constant. Three rules it adds:
+
+- **Retry only the ambiguous arm.** A bare version mismatch carries no reason
+  for the move, which is the whole point: re-deriving is what tells "someone
+  took this delegation, permanently" apart from "the parent happened to move".
+  Every preparation refusal is already permanent, so retrying one only delays
+  the same answer.
+- **Never re-run the side effect the loop sits inside.** The cycle re-runs
+  capture, derivation, and commit — never the child creation the caller already
+  performed. Repeating the derivation is safe for the same reason the inline
+  latch's is: `DELEGATION_CHILD_LINKED` is a root-level handler with no
+  `target`, so the transition is internal and no `invoke` starts.
+- **Exhausting the budget stays honest.** A spent budget is a genuine sustained
+  race and reports `concurrent_modification`; it must not be converted into a
+  permanent cause the loop never observed.
+
+A refusal decided this way has to name the run the fact is about, not the run
+the caller was working on. `already_linked` carries `occupyingChildRunId` — the
+child that holds the delegation — because on the fresh-launch path the rejected
+child is a run the claim's own cleanup is about to delete.
+
 **Do not assume the lock you are removing ever worked.** The run-start site held
 `DelegationLock` across a load-derive-write on the parent's `substepStates`, and
 lost updates the whole time: `substepStates` is a verbatim-replace field,
