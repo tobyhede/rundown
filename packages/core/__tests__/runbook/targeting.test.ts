@@ -22,6 +22,7 @@ import {
   parseCompletionKey,
   upsertSubstepState,
   classifyDelegationLiveness,
+  delegationAuthorityCoordinatesMatch,
   linkageMatchesClaim,
   type DelegationLivenessLinkage,
   type DelegationLivenessParent,
@@ -646,6 +647,16 @@ describe('targeting helpers', () => {
     const PARENT_RUN_ID = brandRunIdForTest('rd_11111111111111111111111111111111');
     const CHILD_RUN_ID = brandRunIdForTest('rd_22222222222222222222222222222222');
 
+    /** One drift per shared authority coordinate; all six, exactly once each. */
+    const COORDINATE_DRIFT = [
+      ['parentRunId', { parentRunId: brandRunIdForTest('rd_33333333333333333333333333333333') }],
+      ['parentStepId', { parentStepId: '1.2' }],
+      ['parentStep', { parentStep: '2' }],
+      ['parentFrameKey', { parentFrameKey: buildFrameKey('1', 2) }],
+      ['parentEntry', { parentEntry: 2 }],
+      ['tokenHash', { tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`) }],
+    ] as const;
+
     const delegation = {
       childRunId: CHILD_RUN_ID,
       tokenHash: TOKEN,
@@ -683,15 +694,28 @@ describe('targeting helpers', () => {
       expect(linkageMatchesClaim({ ...shared, kind: 'inline' }, claim)).toBe(false);
     });
 
-    it.each([
-      ['parentRunId', { parentRunId: brandRunIdForTest('rd_33333333333333333333333333333333') }],
-      ['parentStepId', { parentStepId: '1.2' }],
-      ['parentStep', { parentStep: '2' }],
-      ['parentFrameKey', { parentFrameKey: buildFrameKey('1', 2) }],
-      ['parentEntry', { parentEntry: 2 }],
-      ['tokenHash', { tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`) }],
-    ] as const)('rejects a linkage whose %s differs from the claim', (_field, drift) => {
-      expect(linkageMatchesClaim({ ...linkage, ...drift }, claim)).toBe(false);
+    it.each(COORDINATE_DRIFT)(
+      'rejects a linkage whose %s differs from the claim',
+      (_field, drift) => {
+        expect(linkageMatchesClaim({ ...linkage, ...drift }, claim)).toBe(false);
+      },
+    );
+
+    describe('delegationAuthorityCoordinatesMatch', () => {
+      // The helper is the single list both `linkageMatchesClaim` and
+      // `linkageMatchesLinkage` read, so it is pinned directly and over the same
+      // drift table the predicate above uses. A coordinate dropped from the list
+      // then fails here, at the list, instead of only at whichever of the two
+      // predicates happens to still have a test naming that field.
+      it('accepts two descriptors agreeing on every coordinate', () => {
+        expect(delegationAuthorityCoordinatesMatch(delegation, { ...delegation })).toBe(true);
+      });
+
+      it.each(COORDINATE_DRIFT)('rejects a %s difference', (_field, drift) => {
+        expect(delegationAuthorityCoordinatesMatch(delegation, { ...delegation, ...drift })).toBe(
+          false,
+        );
+      });
     });
   });
 

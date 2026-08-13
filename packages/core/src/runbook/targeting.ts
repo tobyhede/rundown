@@ -430,9 +430,60 @@ export function findSubstepState(
 }
 
 /**
+ * The authority coordinates a delegation linkage and a claim's delegation
+ * descriptor share, and the single place their comparison is written.
+ *
+ * `linkageMatchesClaim` and `linkageMatchesLinkage` compare the same six fields
+ * for the same reason (see WHY ALL SIX below), and spelling that comparison out
+ * twice is what let the field set drift apart before: the two predicates were
+ * introduced together at three fields, `grantAllows` grew to seven, and neither
+ * was widened (#738). One list means a coordinate cannot be added to the
+ * descriptor and forgotten at one gate but not the other.
+ */
+export interface DelegationAuthorityCoordinates {
+  readonly parentRunId: RunbookState['id'];
+  readonly parentStepId: string;
+  readonly parentStep: string;
+  readonly parentFrameKey: FrameKey;
+  readonly parentEntry: number;
+  readonly tokenHash: DelegationTokenHash;
+}
+
+const DELEGATION_AUTHORITY_COORDINATE_KEYS = [
+  'parentRunId',
+  'parentStepId',
+  'parentStep',
+  'parentFrameKey',
+  'parentEntry',
+  'tokenHash',
+] as const satisfies readonly (keyof DelegationAuthorityCoordinates)[];
+
+/**
+ * True when two authority-bearing linkages agree on every shared coordinate.
+ *
+ * @param left - First authority-bearing linkage descriptor.
+ * @param right - Second authority-bearing linkage descriptor.
+ * @returns `true` only when all six shared authority coordinates are equal.
+ */
+export function delegationAuthorityCoordinatesMatch(
+  left: DelegationAuthorityCoordinates,
+  right: DelegationAuthorityCoordinates,
+): boolean {
+  return DELEGATION_AUTHORITY_COORDINATE_KEYS.every((key) => left[key] === right[key]);
+}
+
+/**
  * True when `linkage` is a delegation linkage that matches every authority
- * coordinate in `claim`'s delegation descriptor. Verifies a child runbook's
- * `parentLinkage` genuinely originated from the supplied claim record.
+ * coordinate in `claim`'s delegation descriptor.
+ *
+ * Equality on all six is a CONSISTENCY check, not a proof of provenance. The
+ * child's `parentLinkage` is written at `manager.create` before any claim
+ * exists, and the descriptor is later copied from a linkage, so neither can be
+ * said to originate from the other and this predicate cannot establish that it
+ * did. It answers only "do these two agree", which is what every call site
+ * needs. Do not restate it as verifying that the linkage came from the claim —
+ * that was the wording #738 called out, because it names a property three
+ * fields plainly did not establish and six still do not.
  *
  * Lives here (a dependency-free leaf) so both `session-service.ts` and the
  * storage layer reuse the identical predicate without a store → session-service
@@ -487,13 +538,7 @@ export function linkageMatchesClaim(
     return false;
   }
   return (
-    linkage?.kind === 'delegation' &&
-    linkage.parentRunId === claim.delegation.parentRunId &&
-    linkage.parentStepId === claim.delegation.parentStepId &&
-    linkage.parentStep === claim.delegation.parentStep &&
-    linkage.parentFrameKey === claim.delegation.parentFrameKey &&
-    linkage.parentEntry === claim.delegation.parentEntry &&
-    linkage.tokenHash === claim.delegation.tokenHash
+    linkage?.kind === 'delegation' && delegationAuthorityCoordinatesMatch(linkage, claim.delegation)
   );
 }
 
