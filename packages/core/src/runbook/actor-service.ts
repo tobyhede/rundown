@@ -56,6 +56,8 @@ import {
   DelegationChildLinkPreparationError,
   deriveDelegationChildLinkedSubsteps,
   deriveDelegationChildUnlinkedSubsteps,
+  type DelegationChildLinkRefusal,
+  type DelegationChildLinkRefusalReason,
   type RunbookEvent,
   type RunbookContext,
 } from './compiler.js';
@@ -152,17 +154,34 @@ export interface PreparedDelegationChildUnlink {
   readonly mutation: PreparedActorMutation;
 }
 
+/**
+ * Typed refusal from preparing a delegated-child link change.
+ *
+ * The `kind` is the {@link DelegationChildLinkRefusalReason} raised by the
+ * derivation, propagated verbatim, and each arm carries whatever facts
+ * {@link DelegationChildLinkRefusal} attaches to that class — so an
+ * `already_linked` refusal still names the occupying child. Both preparations
+ * share one derivation contract, so both carry the same refusal vocabulary;
+ * narrowing on `kind` is what separates the retryable race
+ * (`concurrent_modification`) from the two permanent refusals.
+ */
+export type PrepareDelegationChildLinkRefusal = {
+  readonly [TReason in DelegationChildLinkRefusalReason]: {
+    readonly kind: TReason;
+    readonly runId: RunId;
+    readonly message: string;
+  } & Omit<Extract<DelegationChildLinkRefusal, { readonly reason: TReason }>, 'reason'>;
+}[DelegationChildLinkRefusalReason];
+
 /** Typed outcome of preparing an exact delegated child link. */
 export type PrepareDelegationChildLinkResult =
   | { readonly kind: 'prepared'; readonly prepared: PreparedDelegationChildLink }
-  | { readonly kind: 'delegation_superseded'; readonly runId: RunId; readonly message: string }
-  | { readonly kind: 'concurrent_modification'; readonly runId: RunId; readonly message: string };
+  | PrepareDelegationChildLinkRefusal;
 
 /** Typed outcome of preparing an exact delegated child unlink. */
 export type PrepareDelegationChildUnlinkResult =
   | { readonly kind: 'prepared'; readonly prepared: PreparedDelegationChildUnlink }
-  | { readonly kind: 'delegation_superseded'; readonly runId: RunId; readonly message: string }
-  | { readonly kind: 'concurrent_modification'; readonly runId: RunId; readonly message: string };
+  | PrepareDelegationChildLinkRefusal;
 
 /**
  * Typed outcome of preparing a manual delegation issue, retry, or abort.
@@ -1376,7 +1395,11 @@ export class RunbookActorService {
       derive(authoritativeSubstepStates, event);
     } catch (error: unknown) {
       if (!(error instanceof DelegationChildLinkPreparationError)) throw error;
-      return { kind: error.reason, runId: parent.id, message: error.message };
+      const { refusal } = error;
+      const envelope = { runId: parent.id, message: error.message } as const;
+      return refusal.reason === 'already_linked'
+        ? { ...envelope, kind: refusal.reason, occupyingChildRunId: refusal.occupyingChildRunId }
+        : { ...envelope, kind: refusal.reason };
     }
     const mutation = await this.prepareActorMutation(
       parent.id,

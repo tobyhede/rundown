@@ -32,8 +32,9 @@ upgrading, then start fresh.
 | `RunbookStartedEvent.statePath`          | `RunbookMetadata.runId` for run identity; `RunbookMetadata.state` now reports `.rundown/rundown.db` |
 
 `RunStateLock` was internal and is deleted without a public-API impact.
-`CompletionLock` and `DelegationLock` are **retained** for now — see
-`docs/superpowers/plans/2026-08-07-608-pr13-implementation-deviations.md`.
+`CompletionLock` and `DelegationLock` are deleted too — #690 moved every refusal
+they fenced into the transaction or compare-and-swap that commits the fact it
+depends on, leaving nothing for the locks to exclude.
 
 **`RunbookState.templateVars` is now required.** It was optional. `create`
 always writes it (`{}` at minimum) and `load` rejects a persisted row without

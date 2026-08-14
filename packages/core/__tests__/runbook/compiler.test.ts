@@ -712,7 +712,9 @@ Review the plan manually.
             tokenHash,
             childRunId: otherChildRunId,
           },
-          reason: 'concurrent_modification',
+          // The occupant is named, and it is the child that HOLDS the
+          // delegation — never `otherChildRunId`, the one being refused.
+          refusal: { reason: 'already_linked', occupyingChildRunId: childRunId },
           message: 'Delegation 1.1 is already linked to another child',
         },
         {
@@ -723,7 +725,7 @@ Review the plan manually.
             tokenHash: otherTokenHash,
             childRunId,
           },
-          reason: 'delegation_superseded',
+          refusal: { reason: 'delegation_superseded' },
           message: 'Delegation 1.1 no longer matches the presented token',
         },
       ] as const) {
@@ -736,7 +738,8 @@ Review the plan manually.
           throw new Error('Expected delegated-child link refusal');
         } catch (error: unknown) {
           expect(error).toBeInstanceOf(DelegationChildLinkPreparationError);
-          expect(error).toMatchObject({ reason: scenario.reason, message: scenario.message });
+          expect(error).toMatchObject({ refusal: scenario.refusal, message: scenario.message });
+          expect((error as DelegationChildLinkPreparationError).refusal).toEqual(scenario.refusal);
         }
         expect(initial).toEqual([target, sameIdOtherFrame, sibling]);
       }
@@ -800,19 +803,19 @@ Review the plan manually.
         {
           states: undefined,
           event,
-          reason: 'delegation_superseded',
+          refusal: { reason: 'delegation_superseded' },
           message: 'Delegation 1.1 no longer names the captured frame entry',
         },
         {
           states: initial,
           event: { ...event, tokenHash: otherTokenHash },
-          reason: 'delegation_superseded',
+          refusal: { reason: 'delegation_superseded' },
           message: 'Delegation 1.1 no longer matches the rollback token',
         },
         {
           states: initial,
           event: { ...event, childRunId: otherChildRunId },
-          reason: 'concurrent_modification',
+          refusal: { reason: 'concurrent_modification' },
           message: 'Delegation 1.1 is linked to a newer child',
         },
       ] as const) {
@@ -821,7 +824,8 @@ Review the plan manually.
           throw new Error('Expected delegated-child unlink refusal');
         } catch (error: unknown) {
           expect(error).toBeInstanceOf(DelegationChildLinkPreparationError);
-          expect(error).toMatchObject({ reason: scenario.reason, message: scenario.message });
+          expect(error).toMatchObject({ refusal: scenario.refusal, message: scenario.message });
+          expect((error as DelegationChildLinkPreparationError).refusal).toEqual(scenario.refusal);
         }
         if (scenario.states !== undefined) expect(scenario.states).toEqual(initial);
       }

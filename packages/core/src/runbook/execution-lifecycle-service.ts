@@ -6,11 +6,9 @@ import {
   activeFrame,
   buildCompletionKey,
   buildFrameKey,
-  completionEntryForFrame,
   deriveActiveFrame,
   inactiveFrame,
   parseCompletionKey,
-  type Frame,
   type FrameKey,
 } from './targeting.js';
 import type { ResolvedCompletion, RunbookState } from './types.js';
@@ -122,33 +120,6 @@ export class ExecutionLifecycleService {
     );
 
     return value;
-  }
-
-  /**
-   * List resolved completions for a frame target.
-   *
-   * @param id - The runbook state ID
-   * @param frame - Frame target to list
-   * @returns Array of key/completion pairs matching the frame target
-   */
-  async listResolvedCompletions(
-    id: string,
-    frame: Frame,
-  ): Promise<ReadonlyArray<{ key: string; completion: ResolvedCompletion }>> {
-    const state = await this.manager.load(id);
-    if (!state) return [];
-
-    const entry = completionEntryForFrame(frame);
-    const exactPrefix = `${frame.frameKey}|${String(entry)}|`;
-    const sentinelPrefix = `${frame.frameKey}|${String(SENTINEL_ENTRY)}|`;
-    return Object.entries(state.resolvedCompletions ?? {})
-      .filter(([key]) => {
-        if (frame.kind === 'active') {
-          return key.startsWith(exactPrefix) || key.startsWith(sentinelPrefix);
-        }
-        return key.startsWith(exactPrefix);
-      })
-      .map(([key, completion]) => ({ key, completion }));
   }
 
   /**

@@ -229,9 +229,6 @@ export const Errors = {
   tokenCancelled: (token: string): RundownError =>
     new RundownError('TOKEN_CANCELLED', { token: truncateDelegationToken(token) }),
 
-  delegationLockTimeout: (parentRunId: string): RundownError =>
-    new RundownError('DELEGATION_LOCK_TIMEOUT', { parentRunId }),
-
   delegationAlreadyClaimed: (step: string, childRunId: string): RundownError =>
     new RundownError('DELEGATION_ALREADY_CLAIMED', { step, childRunId }),
 

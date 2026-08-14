@@ -1001,6 +1001,67 @@ describe('mutateState (transactional replacement for the per-run lock)', () => {
     expect(result.kind).toBe('concurrent_modification');
     expect((await store.loadRun(state.id))?.stepName).not.toBe('never');
   });
+
+  it('lets more concurrent writers than the attempt budget all commit', async () => {
+    const state = await newState();
+    await store.createRun(state);
+    const before = await counters(state.id);
+    // Deliberately above DEFAULT_MUTATE_ATTEMPTS: without backoff the writers
+    // replay in lockstep, so the ones at the back of the queue burn one attempt
+    // per predecessor and exhaust the budget before their turn arrives.
+    const writers = 12;
+
+    const results = await Promise.all(
+      Array.from({ length: writers }, (_unused, index) =>
+        store.mutateState(state.id, (current) => ({
+          ...current,
+          stepName: `writer-${String(index)}`,
+        })),
+      ),
+    );
+
+    expect(results.map((result) => result.kind)).toEqual(Array<string>(writers).fill('committed'));
+    // Every writer consumed exactly one version: none was lost, none replayed.
+    expect((await counters(state.id)).stateVersion).toBe(before.stateVersion + writers);
+  });
+
+  it('spaces contended retries with attempt-scaled jitter, and never after the last', async () => {
+    const state = await newState();
+    await store.createRun(state);
+
+    const requested: number[] = [];
+    const realSetTimeout = globalThis.setTimeout;
+    jest.spyOn(globalThis, 'setTimeout').mockImplementation((handler: () => void, ms?: number) => {
+      requested.push(ms ?? 0);
+      // Collapse the real wait; the assertion is on the delay that was asked for.
+      return realSetTimeout(handler, 0);
+    });
+    // Pin the jitter draw to the midpoint so the schedule is an exact sequence
+    // rather than a band: a band admits a jitter term collapsed to near-zero,
+    // which is indistinguishable from the floor alone.
+    jest.spyOn(Math, 'random').mockReturnValue(0.5);
+
+    const result = await store.mutateState(
+      state.id,
+      async (current) => {
+        await store.transaction((txn) => {
+          txn.tx
+            .prepare(
+              "UPDATE runs SET state_json = json_set(state_json, '$.stepName', 'churn') WHERE id = :id",
+            )
+            .run({ id: state.id });
+        });
+        return { ...current, stepName: 'never' };
+      },
+      { attempts: 4 },
+    );
+
+    expect(result.kind).toBe('concurrent_modification');
+    // Floor 25ms + a midpoint draw across the 25ms span = 37.5ms, scaled by
+    // attempt. Three pauses across four attempts: one between each pair, and
+    // none after the budget is spent.
+    expect(requested).toEqual([37.5, 75, 112.5]);
+  });
 });
 
 describe('session persistence and run listing', () => {

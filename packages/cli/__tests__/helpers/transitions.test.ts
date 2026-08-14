@@ -63,11 +63,6 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     run: mockActorMutationRun,
     runAll: jest.fn(),
   }),
-  // `buildNonDelegatingLifecycleSeam` (via transitions.ts) statically imports
-  // `DelegationLock` and `CompletionLock`; stub them so the mocked core module
-  // provides the exports.
-  DelegationLock: jest.fn(),
-  CompletionLock: jest.fn(),
   resolveCommandTarget: mockResolveCommandTarget,
   resolveTransitionTarget: mockResolveTransitionTarget,
   // `refusal-renderers.ts` (via transitions.ts) redacts claim ids for output
@@ -413,8 +408,8 @@ describe('runSeamTransition — explicit --step target resolution', () => {
     const output = makeOutput();
     // Under #500 the CLI performs no cursor resolution: it forwards the raw step
     // id as an explicitTarget and the seam derives the completion cursor in-core,
-    // inside the completion-lock scope. resolveTransitionTarget is never called
-    // on the CLI side (it now lives behind the seam).
+    // inside its guarded compute-and-commit cycle. resolveTransitionTarget is
+    // never called on the CLI side (it now lives behind the seam).
     mockRunTransition.mockResolvedValue(appliedOutcome());
 
     const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig(), {

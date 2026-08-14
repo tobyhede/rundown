@@ -328,13 +328,6 @@ export const ErrorCodes = {
     description: 'This delegation has been cancelled and cannot be claimed.',
     docSlug: 'token-cancelled',
   },
-  DELEGATION_LOCK_TIMEOUT: {
-    code: 'RD-810',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation lock timeout',
-    description: 'Could not acquire delegation lock. Another operation may be in progress.',
-    docSlug: 'delegation-lock-timeout',
-  },
   DELEGATION_ALREADY_CLAIMED: {
     code: 'RD-811',
     category: ErrorCategory.DELEGATION,
@@ -563,7 +556,7 @@ export const ErrorCodes = {
     description:
       `The retry hook fired while context.activeFrameKey was undefined and ` +
       `live delegations were present — an invariant violation. Retry transitions ` +
-      `only fire from drainResolvedCompletions, which requires an active frame. ` +
+      `only fire from a resolved-completion apply, which requires an active frame. ` +
       `This indicates upstream state corruption (actor hydration bug, state-file ` +
       `tampering, or missing frame setup in a new feature path).`,
     docSlug: 'retry-hook-no-frame',

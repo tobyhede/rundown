@@ -1,6 +1,6 @@
-// Test-only worker: a REAL separate OS process driving one REAL multi-record
-// delegation workflow — a delegate retry, a collect, or an abort — against a
-// project's `.rundown/rundown.db`.
+// Test-only worker: a REAL separate OS process driving one REAL delegation
+// workflow — a delegate retry, a collect, an abort, or a terminal child report —
+// against a project's `.rundown/rundown.db`.
 //
 // Why a child process at all: `RunbookStateManager` and
 // `createEffectfulActorMutationRunner` both resolve their store through a
@@ -23,20 +23,26 @@
 //      schema, read the session) so post-barrier work is the workflow alone.
 //   2. Write `readyFile` — "I am warm and parked at the release barrier".
 //   3. Spin on `goFile` until the parent releases every worker together.
-//   4. Enter the workflow. Inside it, the aggregate fence captures every target's
-//      authority and state and prepares the mutation; the runner decorator then
-//      writes `capturedFile` and PARKS before the fence acquires an execution
-//      lease.
+//   4. Enter the workflow and park once it has read what it will write against.
+//      For an aggregate workflow that is inside the fence, after it captured
+//      every target's authority and state and prepared the mutation and before
+//      it acquires an execution lease (the runner decorator). For a child report,
+//      which takes no lease and runs no aggregate, it is inside the
+//      compare-and-swap callback, after the derivation and before the guarded
+//      write (`ParkedAfterFirstDerivation`). Either way the worker writes
+//      `capturedFile` there.
 //   5. Wait on `captureGoFile`. Releasing it only after EVERY worker has written
 //      its `capturedFile` is what makes the race decisive rather than lucky:
-//      each worker provably captured the same `state_version` before any of them
-//      committed, so at most one commit can pass the captured-authority re-check.
+//      each worker provably read the same `state_version` before any of them
+//      committed, so at most one commit can pass the version re-check.
 //   6. Write `resultFile` as JSON: `{ ok: true, value }` or `{ ok: false, error }`.
 //
-// The park sits between preparation and lease acquisition on purpose. Parking
-// after acquisition would deadlock the cohort — the first worker would hold the
-// lease while parked and every sibling would be refused `execution_in_progress`
-// before it could ever signal `capturedFile`.
+// The aggregate park sits between preparation and lease acquisition on purpose.
+// Parking after acquisition would deadlock the cohort — the first worker would
+// hold the lease while parked and every sibling would be refused
+// `execution_in_progress` before it could ever signal `capturedFile`. The
+// compare-and-swap park is safe for the mirror-image reason: `mutateState` runs
+// its callback outside the guarded write, so no transaction is open across it.
 //
 // Invoked as:
 //   node --import tsx multi-record-workflow-child.ts \
@@ -44,7 +50,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import * as path from 'node:path';
-import { RunbookStateManager } from '../../../../src/runbook/state.js';
+import { RunbookStateManager, type RunbookStateUpdate } from '../../../../src/runbook/state.js';
 import { RunbookActorService } from '../../../../src/runbook/actor-service.js';
 import { RunbookCollectionService } from '../../../../src/runbook/collection-service.js';
 import { RunbookCompletionService } from '../../../../src/runbook/completion-service.js';
@@ -101,6 +107,14 @@ export type ChildOp =
       readonly token: string;
       /** Run-control bearer claim authorizing the abort. */
       readonly claimId: string;
+    }
+  | {
+      /** Report `childRunId`'s terminal outcome to its delegating parent. */
+      readonly kind: 'reportChildCompletion';
+      /** Terminal delegated child whose persisted linkage names one parent substep. */
+      readonly childRunId: string;
+      /** Terminal outcome this child reports. */
+      readonly result: 'pass' | 'fail';
     };
 
 /**
@@ -159,6 +173,65 @@ async function awaitBarrier(file: string): Promise<void> {
 }
 
 /**
+ * Stamp this worker's capture, publish it, and park until the parent releases
+ * the whole cohort.
+ *
+ * The single meeting point for both park sites. The aggregate workflows reach it
+ * from the mutation runner's `beforeEffect`; the child report reaches it from
+ * inside its compare-and-swap derivation. Either way the guarantee the parent's
+ * witness depends on is the same one: this worker has read the version it is
+ * about to write against, and it will not attempt that write until every sibling
+ * has read the same version.
+ */
+async function signalCapturedAndPark(): Promise<void> {
+  tCaptured = performance.timeOrigin + performance.now();
+  writeFileSync(capturedFile, String(process.pid));
+  await awaitBarrier(captureGoFile);
+}
+
+/**
+ * State manager that parks ONCE inside the first `updateWithStateReturning`
+ * cycle it runs, after the callback has derived its patch from the version the
+ * compare-and-swap read and before that patch is committed.
+ *
+ * The child-report path takes no execution lease and never enters
+ * `EffectfulActorMutationRunner.runAll`, so the aggregate workflows' park site
+ * cannot serve it. Its whole read-derive-write span IS the compare-and-swap
+ * callback, which makes the inside of that callback the only place where a
+ * worker provably holds the same captured version as its siblings.
+ *
+ * Parking here cannot deadlock the cohort the way parking after a lease
+ * acquisition would: `RunbookStore.mutateState` invokes this callback OUTSIDE
+ * the guarded write, so no SQLite transaction is open across the barrier wait.
+ *
+ * Only the FIRST cycle parks. A loser's compare-and-swap re-runs the callback
+ * against the freshly committed version, and that replay must proceed to the
+ * commit unimpeded — parking it again would hang on a barrier the parent has
+ * already released and will never write twice.
+ */
+class ParkedAfterFirstDerivation extends RunbookStateManager {
+  private parked = false;
+
+  override async updateWithStateReturning<R>(
+    id: string,
+    buildResult: (
+      current: RunbookState,
+    ) =>
+      | { updates: RunbookStateUpdate | null; value: R }
+      | Promise<{ updates: RunbookStateUpdate | null; value: R }>,
+  ): Promise<{ state: RunbookState | null; value: R | null }> {
+    return await super.updateWithStateReturning<R>(id, async (current) => {
+      const derived = await buildResult(current);
+      if (!this.parked) {
+        this.parked = true;
+        await signalCapturedAndPark();
+      }
+      return derived;
+    });
+  }
+}
+
+/**
  * Decorate the real mutation runner so every aggregate parks between preparation
  * and lease acquisition.
  *
@@ -185,9 +258,7 @@ function runnerParkedAfterCapture(
           const outcome = beforeEffect
             ? await beforeEffect(captured)
             : ({ kind: 'continue' } as const);
-          tCaptured = performance.timeOrigin + performance.now();
-          writeFileSync(capturedFile, String(process.pid));
-          await awaitBarrier(captureGoFile);
+          await signalCapturedAndPark();
           return outcome;
         },
       });
@@ -195,7 +266,13 @@ function runnerParkedAfterCapture(
   };
 }
 
-const manager = new RunbookStateManager(cwd);
+// Only the child report needs the compare-and-swap park; the aggregate
+// workflows park in the mutation runner and must keep the plain manager, whose
+// behaviour they already depend on.
+const manager =
+  op.kind === 'reportChildCompletion'
+    ? new ParkedAfterFirstDerivation(cwd)
+    : new RunbookStateManager(cwd);
 const actorService = new RunbookActorService(manager, {
   // Mirrors the suite's own service graph: the parent runbook's DELEGATE substep
   // names a child document, and a service with no resolver would refuse to
@@ -208,7 +285,7 @@ const actorService = new RunbookActorService(manager, {
   }),
 });
 const lifecycleService = new ExecutionLifecycleService(manager);
-const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+const completionService = new RunbookCompletionService(manager, actorService);
 const sessionService = new SessionService(manager);
 const actorMutationRunner = runnerParkedAfterCapture(createEffectfulActorMutationRunner(cwd));
 
@@ -295,6 +372,17 @@ async function run(): Promise<unknown> {
         targetState,
         steps: loadSteps(targetState),
         callerEvidence: evidenceFor(op.claimId),
+      });
+    }
+    case 'reportChildCompletion': {
+      // The child reads its OWN persisted run and reports it, exactly as the
+      // CLI's `reportTerminalToDelegatingRun` does: no run-control claim, no
+      // execution lease, and no state handed across the process boundary.
+      const childState = await manager.load(assertRunId(op.childRunId));
+      if (!childState) throw new Error(`reporting child ${op.childRunId} is missing`);
+      return await completionService.recordChildCompletion({
+        childState,
+        result: op.result,
       });
     }
     default: {

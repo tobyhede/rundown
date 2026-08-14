@@ -5,26 +5,42 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import {
-  completionLockPath,
   CONTEXTS_DIR,
   DB_SIDECAR_SUFFIXES,
-  delegationLockPath,
   ensureStateDirs,
   LOCKS_DIR,
   RUNS_DIR,
   WORK_DIR,
 } from '../src/paths.js';
+import { assembleArtifactPath } from '../src/runbook/artifact-paths.js';
+import { buildArtifactUri } from '../src/runbook/artifact-uri.js';
 
 describe('assertSafeId (via path builders)', () => {
   const cwd = '/tmp/project';
+  const runId = `rd_${'a'.repeat(32)}`;
 
   describe('rejects unsafe ids that would enable path traversal', () => {
+    // Every builder here routes a caller-supplied identity segment through
+    // `assertSafeId` before interpolating it, but into two different targets:
+    // `assembleArtifactPath` validates ctx (via `validateArtifactCtx`) and file
+    // and then builds a filesystem path with `path.join`, while
+    // `buildArtifactUri` validates contextId and then percent-encodes it into an
+    // `rd://` URI that `artifactUriToPath` resolves separately. The guard is the
+    // security control on both routes, so it is exercised in each distinct
+    // parameter position, not once per module.
     const builders: Array<{
       name: string;
       build: (id: string) => string;
     }> = [
-      { name: 'completionLockPath', build: (id) => completionLockPath(cwd, id) },
-      { name: 'delegationLockPath', build: (id) => delegationLockPath(cwd, id) },
+      {
+        name: 'assembleArtifactPath (ctx)',
+        build: (id) => assembleArtifactPath(cwd, id, 'out.md'),
+      },
+      { name: 'assembleArtifactPath (file)', build: (id) => assembleArtifactPath(cwd, 'ctx', id) },
+      {
+        name: 'buildArtifactUri (contextId)',
+        build: (id) => buildArtifactUri({ contextId: id, runId, key: 'out.md' }),
+      },
     ];
 
     const badIds = ['..', '.', 'foo/bar', 'foo\\bar', '', '../outside'];

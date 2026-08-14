@@ -359,7 +359,7 @@ describe('RunbookCollectionService', () => {
     manager = new RunbookStateManager(tmp);
     actorService = new RunbookActorService(manager);
     lifecycleService = new ExecutionLifecycleService(manager);
-    completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    completionService = new RunbookCompletionService(manager, actorService);
     realSession = new SessionService(manager);
     actorMutationRunner = createEffectfulActorMutationRunner(tmp);
     releaseRunbookSpy = jest.fn(async (runbookId: RunId) => ({

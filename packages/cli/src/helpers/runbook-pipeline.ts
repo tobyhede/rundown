@@ -25,10 +25,9 @@ import {
   type ClaimId,
   type SessionMutationRefusalOutcome,
   type DelegationRuntimeCapabilities,
-  classifyDelegationLiveness,
   DelegationScanService,
-  DelegationLock,
-  DelegationLockTimeoutError,
+  DEFAULT_MUTATE_ATTEMPTS,
+  mutateBackoffMs,
   reconstituteContextVars,
   extractInheritedUserVars,
   hashDelegationToken,
@@ -46,7 +45,6 @@ import {
   prepareParsedRunbook,
   type PreparedTemplateVariables as CorePreparedTemplateVariables,
   type RunnableTemplateVariables as CoreRunnableTemplateVariables,
-  type ScopedLock,
 } from '@rundown-org/core';
 export { buildContextVars, buildTemplateVars } from '@rundown-org/core';
 import {
@@ -266,11 +264,12 @@ export type ClaimFailure =
        * The parent moved past this delegation (advanced, ended, reset, or
        * reissued its token) before the claim committed. The durable latch
        * refuses it; the token must not be retried. `childRunId` is present
-       * whenever a child was identified — either claimed through core, or
-       * already recorded on the delegation row when the pre-launch diagnostic
-       * fired. It is absent only when the refusal genuinely names no child (a
-       * delegation superseded before anything was launched or adopted); none is
-       * ever synthesized. Rendered as `DELEGATION_SUPERSEDED`.
+       * whenever the refused claim named a child — replay of a linked child,
+       * orphan adoption, or reuse of an existing claim, each of which carries
+       * it through `claimResultToFailure`. It is absent only on the fresh
+       * launch, where the delegation records no child and the run this claim
+       * just created is about to be removed by launch cleanup; none is ever
+       * synthesized. Rendered as `DELEGATION_SUPERSEDED`.
        */
       readonly reason: 'delegation-superseded';
       readonly parentRunId: string;
@@ -288,7 +287,6 @@ export type ClaimFailure =
       readonly stepId: string;
       readonly childRunId: string;
     }
-  | { readonly reason: 'lock-timeout'; readonly parentRunId: string }
   | {
       readonly reason: 'prepare-failed';
       readonly runbook: string;
@@ -975,8 +973,8 @@ async function launchRunbook(
 
   // Init phase: state creation through start-event emission. Failures here
   // produce a structured launch failure so callers (notably claimAndLaunch)
-  // can release locks and report cleanly. The loop itself is outside the
-  // try/catch — loop failures still propagate as exceptions.
+  // can report cleanly. The loop itself is outside the try/catch — loop
+  // failures still propagate as exceptions.
   let stateId: RunId | undefined;
   let launch: {
     stateId: RunId;
@@ -1231,7 +1229,7 @@ type ClaimChildResult =
         | 'linkage-mismatch';
       readonly childRunId: RunId;
     }
-  // The parent vanished between the 4a re-read and the claim transaction. Named
+  // The parent vanished between the 3a re-read and the claim transaction. Named
   // by the parent, not the child: no child fact explains it, and the existing
   // `parent-missing` envelope already says exactly this.
   | { readonly ok: false; readonly reason: 'parent-missing'; readonly parentRunId: RunId }
@@ -1239,12 +1237,107 @@ type ClaimChildResult =
   | SessionRefusedFailure;
 
 /**
+ * Outcome of one {@link deriveAndCommitInitialLink} cycle.
+ *
+ * `refused` is decided during preparation and is terminal for the whole cycle;
+ * `committed` is the atomic claim transaction's own typed result, which
+ * {@link claimChildForPipeline} classifies alongside the non-initial-link path.
+ */
+type InitialLinkOutcome =
+  | { readonly committed: Awaited<ReturnType<SessionService['claimAndInitialLink']>> }
+  | { readonly refused: Extract<ClaimChildResult, { readonly ok: false }> };
+
+/**
+ * Derive the delegated-child parent link and commit it, re-deriving while the
+ * parent keeps moving underneath the capture.
+ *
+ * The derivation cannot be folded into the commit's callback the way the
+ * retired core lock sites folded theirs: `claimAndInitialLink` commits inside a
+ * synchronous session transaction (`SyncWork`), and preparing the link is
+ * async. So the read-derive-write gap stays open by construction and the loop
+ * closes it from outside instead — a loser re-derives against the row the
+ * winner committed, which is what turns an uninformative version mismatch into
+ * the permanent `already_linked` the parent state now actually shows.
+ *
+ * Only the commit's `concurrent_modification` is retried. Every preparation
+ * refusal is permanent: re-reading cannot free an occupied delegation or
+ * un-supersede a moved one, so retrying those would only spend the budget
+ * before reporting the same fact. Exhausting the budget returns the genuine
+ * `concurrent_modification` rather than guessing at a permanent cause.
+ *
+ * The cycle re-runs capture, preparation, and commit — never child creation,
+ * which the caller performed before invoking this and must not repeat.
+ * Preparation is safe to repeat: `DELEGATION_CHILD_LINKED` is a root-level
+ * handler with no `target`, so the transition is internal — nothing is exited
+ * or entered and no `invoke` starts.
+ *
+ * @param ctx - Run pipeline context carrying the manager, actor, and session services
+ * @param childRunId - Child run being linked to the parent's delegation
+ * @param linkage - Exact delegation coordinates the link is derived against
+ * @returns The atomic claim result to classify, or a terminal preparation refusal
+ */
+async function deriveAndCommitInitialLink(
+  ctx: RunPipelineContext,
+  childRunId: RunId,
+  linkage: DelegationLinkage,
+): Promise<InitialLinkOutcome> {
+  for (let attempt = 0; ; attempt++) {
+    const captured = await ctx.manager.captureRunAuthorityState(linkage.parentRunId);
+    if (captured.kind === 'missing') {
+      return {
+        refused: { ok: false, reason: 'parent-missing', parentRunId: linkage.parentRunId },
+      };
+    }
+    if (captured.kind === 'claim_superseded') {
+      return { refused: { ok: false, reason: 'delegation-superseded', childRunId } };
+    }
+    const prepared = await ctx.actorService.prepareDelegationChildLink(
+      captured.state,
+      getRunbookFromState(captured.state, ctx.cwd),
+      childRunId,
+      linkage,
+    );
+    if (prepared.kind === 'delegation_superseded') {
+      return { refused: { ok: false, reason: 'delegation-superseded', childRunId } };
+    }
+    // The delegation names a different child. That is permanent — it is the
+    // same fact the 3c already-linked path reports — so it must reach the user
+    // as the no-retry `DELEGATION_ALREADY_CLAIMED`, never as the retryable
+    // `CONCURRENT_MODIFICATION` whose message tells them to try again. It names
+    // the occupying child, not the one being linked: on the fresh-launch path
+    // the rejected child is a run this claim's own cleanup is about to delete.
+    if (prepared.kind === 'already_linked') {
+      return {
+        refused: {
+          ok: false,
+          reason: 'delegation-already-claimed',
+          childRunId: prepared.occupyingChildRunId,
+        },
+      };
+    }
+    if (prepared.kind === 'concurrent_modification') {
+      return { refused: { ok: false, reason: 'concurrent-modification', childRunId } };
+    }
+    const committed = await ctx.sessionService.claimAndInitialLink({
+      childRunId,
+      linkage,
+      capturedParent: captured.authority,
+      preparedParent: prepared.prepared,
+    });
+    if (committed.kind !== 'concurrent_modification' || attempt + 1 >= DEFAULT_MUTATE_ATTEMPTS) {
+      return { committed };
+    }
+    await new Promise((resolve) => setTimeout(resolve, mutateBackoffMs(attempt)));
+  }
+}
+
+/**
  * Claim or refresh a delegated child through {@link SessionService.claimRunbook}.
  *
  * `claimRunbook` owns the idempotent delegation contract: for a matching
  * parent linkage it refreshes an existing claim before validating the incoming
  * child id, and returns discriminated failures for missing, terminal, or
- * linkage-divergent children. The 4b already-linked branch in
+ * linkage-divergent children. The 3b already-linked branch in
  * {@link claimAndLaunch} intentionally relies on those source-of-truth
  * semantics instead of re-loading the child locally.
  *
@@ -1264,31 +1357,9 @@ async function claimChildForPipeline(
     | Awaited<ReturnType<SessionService['claimRunbook']>>
     | Awaited<ReturnType<SessionService['claimAndInitialLink']>>;
   if (initialLink) {
-    const captured = await ctx.manager.captureRunAuthorityState(linkage.parentRunId);
-    if (captured.kind === 'missing') {
-      return { ok: false, reason: 'parent-missing', parentRunId: linkage.parentRunId };
-    }
-    if (captured.kind === 'claim_superseded') {
-      return { ok: false, reason: 'delegation-superseded', childRunId };
-    }
-    const prepared = await ctx.actorService.prepareDelegationChildLink(
-      captured.state,
-      getRunbookFromState(captured.state, ctx.cwd),
-      childRunId,
-      linkage,
-    );
-    if (prepared.kind === 'delegation_superseded') {
-      return { ok: false, reason: 'delegation-superseded', childRunId };
-    }
-    if (prepared.kind === 'concurrent_modification') {
-      return { ok: false, reason: 'concurrent-modification', childRunId };
-    }
-    result = await ctx.sessionService.claimAndInitialLink({
-      childRunId,
-      linkage,
-      capturedParent: captured.authority,
-      preparedParent: prepared.prepared,
-    });
+    const outcome = await deriveAndCommitInitialLink(ctx, childRunId, linkage);
+    if ('refused' in outcome) return outcome.refused;
+    result = outcome.committed;
   } else {
     result = await ctx.sessionService.claimRunbook(childRunId, linkage);
   }
@@ -1332,13 +1403,16 @@ async function claimChildForPipeline(
     case 'linkage-mismatch':
       return { ok: false, reason: 'linkage-mismatch', childRunId: claim.childRunId };
     case 'delegation-superseded':
-      // Core is authoritative for the post-launch race: the parent moved past
-      // this delegation between the pre-check and the claim transaction. Use the
-      // pipeline's known child id (core omits it on the fresh-prelaunch path).
+      // Core is authoritative for this refusal, and on this path it is the only
+      // thing that classifies liveness at all: a parent that had already moved
+      // past the delegation, or that moved between the 3a re-read and the claim
+      // transaction, is refused inside that transaction. Use the pipeline's
+      // known child id — core omits it on the fresh-launch path, where the
+      // child it would name is the one this claim just created.
       return { ok: false, reason: 'delegation-superseded', childRunId };
     case 'missing-parent':
       // Core refuses an unreadable parent with a typed result rather than
-      // throwing; it maps onto the refusal 4a already emits for the same fact.
+      // throwing; it maps onto the refusal 3a already emits for the same fact.
       return { ok: false, reason: 'parent-missing', parentRunId: claim.parentRunId };
     default: {
       const _exhaustive: never = claim;
@@ -1497,10 +1571,14 @@ function emitClaimedSuccess(args: {
  * Algorithm (per design doc section 6.2):
  * 1. Validate token format (must be a canonical rdtk_ token)
  * 2. Scan all run states for matching token hash
- * 3. Acquire delegation lock for parent run ID
- * 4. Under lock: re-load parent, check idempotency/cancellation, reconstitute context
- * 5. Prepare and launch child runbook
- * 6. Update parent delegation with child run ID
+ * 3. Re-load parent, check idempotency/cancellation, reconstitute context
+ * 4. Prepare and launch child runbook
+ * 5. Link the parent delegation to the child run inside core's claim transaction
+ *
+ * No lock spans any of it. Every refusal the steps above can produce is decided
+ * inside the transaction that commits the fact it depends on, so a concurrent
+ * claimer of the same token re-derives against the committed row and reports the
+ * winner's outcome rather than overwriting it.
  *
  * @param ctx - Pipeline context
  * @param rawToken - The plain-text delegation token to claim
@@ -1536,493 +1614,455 @@ export async function claimAndLaunch(
     };
   }
 
+  // `stepId` is the DELEGATING step (`contextSnapshot.step`), not the parent's
+  // cursor. Every `DelegationLinkage` built below carries it as `parentStep`,
+  // and none may substitute the freshly-read `parentState.step` /
+  // `freshParent.step`. `classifyDelegationLiveness` decides liveness by
+  // comparing the parent cursor it reads inside the deciding transaction
+  // against `linkage.parentStep`; sourcing that field from a read of the same
+  // cursor makes the comparison self-fulfilling, so it could only ever fire on
+  // the narrow window between the read and the commit — never on a cursor that
+  // had already advanced before the claim began. The two values coincide
+  // whenever the parent is still sitting on its delegating step, which is why
+  // the difference is invisible outside the superseded case the latch exists
+  // for. The same field is persisted onto the claim, so it also decides the
+  // parent-side half in `RunbookStore.invalidateClosedDelegatedClaims`.
+  //
+  // This is now load-bearing rather than belt-and-braces: the CLI no longer
+  // pre-classifies liveness of its own, so core's in-transaction
+  // classification is the sole owner of the `delegation-superseded` refusal on
+  // this path, and it can only be as correct as the linkage it is handed.
   const { parentState, stepId, substepId, delegation: _delegation } = scanResult;
-  const lock = new DelegationLock(cwd);
 
-  // 3. Acquire delegation lock. This site releases before the child execution
-  //    loop and has many earlier returns. Async disposal provides the
-  //    best-effort safety net for those exits, while the ScopedLock's idempotent
-  //    release closure lets afterStarted end the protected precheck-to-claim
-  //    window precisely without risking a masking release failure (RD-102).
-  try {
-    await lock.acquire(parentState.id);
-  } catch (err) {
-    // acquire() throws DelegationLockTimeoutError on deadline expiry.
-    // Re-throw anything else (EACCES, EIO, etc.) as an unexpected error.
-    if (err instanceof DelegationLockTimeoutError) {
-      return {
-        ok: false,
-        reason: 'lock-timeout',
-        parentRunId: parentState.id,
-      };
-    }
-    throw err;
+  // 3a. Re-load parent state (freshness check)
+  const freshParent = await manager.load(parentState.id);
+  if (!freshParent) {
+    return {
+      ok: false,
+      reason: 'parent-missing',
+      parentRunId: parentState.id,
+    };
   }
 
-  {
-    await using guard: ScopedLock = lock.held(parentState.id);
-    const releaseLock = async (): Promise<void> => {
-      await guard.release();
-    };
-
-    // 4a. Re-load parent state (freshness check)
-    const freshParent = await manager.load(parentState.id);
-    if (!freshParent) {
-      return {
-        ok: false,
-        reason: 'parent-missing',
-        parentRunId: parentState.id,
-      };
-    }
-
-    // Reject claims against stopped or completed parents — the run has ended
-    if (freshParent.lifecycle === 'stopped' || freshParent.lifecycle === 'completed') {
-      const reason = freshParent.lifecycle === 'completed' ? 'completed' : 'stopped';
-      return {
-        ok: false,
-        reason: 'parent-ended',
-        parentRunId: freshParent.id,
-        lifecycle: reason,
-      };
-    }
-
-    // Re-locate delegation on fresh state (match by tokenHash for precision)
-    const tokenHash = hashDelegationToken(rawToken);
-    const freshSubstep = (freshParent.substepStates ?? []).find(
-      (ss) => ss.id === (substepId ?? stepId) && ss.delegation?.tokenHash === tokenHash,
-    );
-    const freshDelegation = freshSubstep?.delegation;
-
-    if (!freshDelegation) {
-      return {
-        ok: false,
-        reason: 'delegation-removed',
-        parentRunId: parentState.id,
-        stepId,
-      };
-    }
-
-    // Every linkage below takes its entry from the credential, never from
-    // `inferFrameEntryFromState` (#738). The credential is stamped once when the
-    // delegation is issued and survives frame re-entry, so it names the entry
-    // the CHILD was stamped with; the parent's live entry names wherever the
-    // cursor has since got to. Recomputing here made the two indistinguishable
-    // and every downstream gate self-satisfying — the claim minted authority for
-    // the current entry against a child stamped with the issuance entry, and
-    // `grantAllows` then dropped that child's terminal report in silence. Read
-    // from the row and core's liveness classifier can see the disagreement.
-    const issuedParentEntry = freshDelegation.credential.parentEntry;
-
-    // The linkage every claim route below presents — replay (4c), orphan
-    // adoption (4d), existing-claim reuse, and the fresh launch. One value, not
-    // four copies of the same seven fields: `grantAllows` compares all of them
-    // at the point of use, so a coordinate that drifts between two of these
-    // sites is a claim that passes every gate on the way in and then silently
-    // refuses to report (#738). Every input is `const` and nothing between here
-    // and the launch mutates them.
-    //
-    // The frame key is the delegation's stored one, never the parent's current
-    // frame: the parent may have advanced past the iteration that created the
-    // delegation.
-    //
-    // `parentStep` is the delegation's own step (`stepId`), never
-    // `freshParent.step`. Both name the same value on every path that reaches a
-    // use of this linkage, so the read is not a behaviour change — it states the
-    // coordinate the claim is actually about instead of recomputing it from the
-    // parent's live cursor, which is the drift class #738 removes.
-    //
-    // The equality is the 4a′ pre-check's, and it holds because of where the
-    // classifier compares the step. `classifyDelegationLiveness` answers
-    // `parent-unreadable` (parent absent) and `parent-ended` (parent terminal)
-    // before comparing, and both are already refused above — so the FIRST arm
-    // this call can return is the step comparison, which yields
-    // `cursor-advanced` and returns below whenever `freshParent.step !== stepId`.
-    // Every other verdict it can produce — `live`, `resolved`, `token-reissued`,
-    // and the later `cursor-advanced` arms — is reached only after that
-    // comparison passed. So no route that uses this linkage (4c replay, 4d
-    // orphan adoption, existing-claim reuse, fresh launch) can observe the two
-    // expressions disagreeing.
-    //
-    // The pre-check still does NOT reuse this value: it is a different type
-    // (`DelegationLivenessLinkage`, no `kind`/`parentRunId`).
-    const delegationLinkage: DelegationLinkage = {
-      kind: 'delegation',
+  // Reject claims against stopped or completed parents — the run has ended
+  if (freshParent.lifecycle === 'stopped' || freshParent.lifecycle === 'completed') {
+    const reason = freshParent.lifecycle === 'completed' ? 'completed' : 'stopped';
+    return {
+      ok: false,
+      reason: 'parent-ended',
       parentRunId: freshParent.id,
-      parentStepId: substepId ?? stepId,
-      tokenHash,
-      parentStep: stepId,
-      parentFrameKey: freshSubstep.frameKey,
-      parentEntry: issuedParentEntry,
+      lifecycle: reason,
     };
+  }
 
-    // 4a′. Diagnostic pre-check for the durable latch. Classify the delegation
-    // against the freshly re-read parent using the delegation's ORIGINAL step
-    // name (`stepId`), so a top-level cursor advance (parent moved on without a
-    // `done` substep row) surfaces here as `delegation-superseded`. Scoped to
-    // `cursor-advanced` only: parent termination is handled above, cancellation
-    // falls through to 4b (the classifier folds it into `resolved`), and
-    // `token-reissued` cannot occur since `freshSubstep` was matched on this
-    // exact token.
-    //
-    // This used to be the ONLY place the step advance could be caught. Core
-    // re-runs the same classifier inside `claimRunbookInTransaction` over the
-    // linkage it is handed, and that linkage used to carry `freshParent.step` —
-    // live state compared against a coordinate recomputed from that same live
-    // state, so the step arm could not fail and an advanced cursor read `live`
-    // there. That is the identical self-satisfying comparison #738 removed for
-    // the entry coordinate, and `delegationLinkage` above now takes the step
-    // from the delegation for the same reason. So core CAN make this call on
-    // the already-linked route now; this pre-check is no longer load-bearing
-    // for it. Narrowing the pre-check to the launch-capable routes is
-    // deliberately left as follow-up rather than folded into this change.
-    //
-    // It does preempt, and the cost is precision rather than safety. Core
-    // deliberately answers `missing-child` and `terminal-child` BEFORE its own
-    // liveness verdict (`claimRunbookInTransaction`, and see its comment on why
-    // terminal evidence outlives the parent-side delegation), so a re-entered
-    // frame whose child has already finished reports `DELEGATION_SUPERSEDED`
-    // here where the 4c route would have reported `DELEGATION_ALREADY_RESOLVED`
-    // or `CHILD_RUN_MISSING`. Both are non-retryable refusals naming the same
-    // dead delegation. Restoring the distinction means letting core's ordering
-    // govern the already-linked route, not re-stating that ordering here.
-    // Core's claim transaction stays authoritative for the rest.
-    const precheckLiveness = classifyDelegationLiveness(freshParent, {
-      parentStep: stepId,
-      parentStepId: substepId ?? stepId,
-      parentFrameKey: freshSubstep.frameKey,
-      parentEntry: issuedParentEntry,
-      tokenHash,
+  // Re-locate delegation on fresh state (match by tokenHash for precision)
+  const tokenHash = hashDelegationToken(rawToken);
+  const freshSubstep = (freshParent.substepStates ?? []).find(
+    (ss) => ss.id === (substepId ?? stepId) && ss.delegation?.tokenHash === tokenHash,
+  );
+  const freshDelegation = freshSubstep?.delegation;
+
+  if (!freshDelegation) {
+    return {
+      ok: false,
+      reason: 'delegation-removed',
+      parentRunId: parentState.id,
+      stepId,
+    };
+  }
+
+  // Every linkage below takes its entry from the credential, never from a live
+  // read of the parent's frame history (#738). The credential is stamped once
+  // when the delegation is issued and survives frame re-entry, so it names the
+  // entry the CHILD was stamped with; the parent's live entry names wherever
+  // the cursor has since got to. Recomputing here made the two
+  // indistinguishable and every downstream gate self-satisfying — the claim
+  // minted authority for the current entry against a child stamped with the
+  // issuance entry, and `grantAllows` then dropped that child's terminal report
+  // in silence. Read from the row and core's liveness classifier can see the
+  // disagreement.
+  //
+  // The re-derive loop in `deriveAndCommitInitialLink` needs this read for a
+  // second, independent reason. The linkage is built here, once, and every one
+  // of that loop's attempts is judged against it: `delegationParentEntryRefusal`
+  // re-infers the entry from each freshly captured parent and compares it
+  // against `linkage.parentEntry`. Sourcing that field from a live read would
+  // pin the CLI's own observation of the same field as the value all eight
+  // attempts compare against — the loop would re-read the parent every time and
+  // never once check it against the entry the delegation was issued at. The
+  // credential is that stamp, so each attempt's comparison is a real one.
+  const issuedParentEntry = freshDelegation.credential.parentEntry;
+
+  // The linkage every claim route below presents — replay (3c), orphan
+  // adoption (3d), existing-claim reuse, and the fresh launch. One value, not
+  // four copies of the same seven fields: `grantAllows` compares all of them at
+  // the point of use, so a coordinate that drifts between two of these sites is
+  // a claim that passes every gate on the way in and then silently refuses to
+  // report (#738). Every input is `const` and nothing between here and the
+  // launch mutates them.
+  //
+  // The frame key is the delegation's stored one, never the parent's current
+  // frame: the parent may have advanced past the iteration that created the
+  // delegation. `parentStep` is the delegation's own step (`stepId`), never
+  // `freshParent.step`, for the reason recorded above the destructure — with no
+  // CLI-side pre-classification left on this path, core's in-transaction
+  // classifier is the sole owner of the supersession verdict, and it can only
+  // be as correct as the coordinates it is handed.
+  const delegationLinkage: DelegationLinkage = {
+    kind: 'delegation',
+    parentRunId: freshParent.id,
+    parentStepId: substepId ?? stepId,
+    tokenHash,
+    parentStep: stepId,
+    parentFrameKey: freshSubstep.frameKey,
+    parentEntry: issuedParentEntry,
+  };
+
+  // 3b. Check for cancellation before replaying a linked child.
+  if (freshDelegation.cancelledAt) {
+    return {
+      ok: false,
+      reason: 'delegation-cancelled',
+      parentRunId: freshParent.id,
+      stepId: substepId ?? stepId,
+      cancelledAt: freshDelegation.cancelledAt,
+    };
+  }
+
+  // 3c. Refuse replay if already claimed
+  if (freshDelegation.childRunId) {
+    const claimResult = await claimChildForPipeline(
+      ctx,
+      freshDelegation.childRunId,
+      delegationLinkage,
+    );
+    if (!claimResult.ok) {
+      return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
+    }
+    return emitClaimedSuccess({
+      output,
+      truncatedToken,
+      childRunId: claimResult.childRunId,
+      claimId: claimResult.claimId,
+      childRunbookPath: freshDelegation.childRunbookPath,
+      parentRunId: freshParent.id,
+      stepId: substepId ?? stepId,
+      parentStepAt: freshDelegation.contextSnapshot.at,
+      loopResult: 'waiting',
     });
-    if (precheckLiveness.kind === 'closed' && precheckLiveness.reason === 'cursor-advanced') {
+  }
+
+  // 3d. Orphan reconciliation: scan for child run with matching tokenHash
+  const orphan = await scanner.findOrphanedChild(tokenHash);
+  if (orphan) {
+    const claimResult = await claimChildForPipeline(ctx, orphan.id, delegationLinkage, true);
+    if (!claimResult.ok) {
+      return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
+    }
+    const adoptedChildRunId = claimResult.childRunId;
+    return emitClaimedSuccess({
+      output,
+      truncatedToken,
+      childRunId: adoptedChildRunId,
+      claimId: claimResult.claimId,
+      childRunbookPath: freshDelegation.childRunbookPath,
+      parentRunId: freshParent.id,
+      stepId: substepId ?? stepId,
+      parentStepAt: freshDelegation.contextSnapshot.at,
+      loopResult: 'waiting',
+    });
+  }
+
+  const existingClaim = await ctx.sessionService.findClaimForDelegation(delegationLinkage);
+  if (existingClaim !== null) {
+    const existingChild = await manager.load(existingClaim.controlledRunId);
+    if (!existingChild) {
       return {
         ok: false,
-        reason: 'delegation-superseded',
+        reason: 'child-missing',
         parentRunId: freshParent.id,
         stepId: substepId ?? stepId,
-        // Named only when the delegation row already records one. This
-        // diagnostic preempts the 4c route below, whose failures carry the
-        // child through `claimResultToFailure`; dropping the field here would
-        // make the same refusal less identifiable purely because it was caught
-        // earlier. On the fresh path there is genuinely no child to name, and
-        // none may be synthesized.
-        ...(freshDelegation.childRunId === null ? {} : { childRunId: freshDelegation.childRunId }),
+        childRunId: existingClaim.controlledRunId,
       };
     }
-
-    // 4b. Check for cancellation before replaying a linked child.
-    if (freshDelegation.cancelledAt) {
+    if (existingChild.lifecycle === 'completed' || existingChild.lifecycle === 'stopped') {
       return {
         ok: false,
-        reason: 'delegation-cancelled',
+        reason: 'delegation-resolved',
         parentRunId: freshParent.id,
         stepId: substepId ?? stepId,
-        cancelledAt: freshDelegation.cancelledAt,
+        childRunId: existingClaim.controlledRunId,
       };
     }
-
-    // 4c. Refuse replay if already claimed
-    if (freshDelegation.childRunId) {
-      const claimResult = await claimChildForPipeline(
-        ctx,
-        freshDelegation.childRunId,
-        delegationLinkage,
-      );
-      if (!claimResult.ok) {
-        return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
-      }
-      return emitClaimedSuccess({
-        output,
-        truncatedToken,
-        childRunId: claimResult.childRunId,
-        claimId: claimResult.claimId,
-        childRunbookPath: freshDelegation.childRunbookPath,
-        parentRunId: freshParent.id,
-        stepId: substepId ?? stepId,
-        parentStepAt: freshDelegation.contextSnapshot.at,
-        loopResult: 'waiting',
-      });
+    const claimResult = await claimChildForPipeline(
+      ctx,
+      existingClaim.controlledRunId,
+      delegationLinkage,
+      true,
+    );
+    if (!claimResult.ok) {
+      return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
     }
+    return emitClaimedSuccess({
+      output,
+      truncatedToken,
+      childRunId: claimResult.childRunId,
+      claimId: claimResult.claimId,
+      childRunbookPath: freshDelegation.childRunbookPath,
+      parentRunId: freshParent.id,
+      stepId: substepId ?? stepId,
+      parentStepAt: freshDelegation.contextSnapshot.at,
+      loopResult: 'waiting',
+    });
+  }
 
-    // 4d. Orphan reconciliation: scan for child run with matching tokenHash
-    const orphan = await scanner.findOrphanedChild(tokenHash);
-    if (orphan) {
-      const claimResult = await claimChildForPipeline(ctx, orphan.id, delegationLinkage, true);
-      if (!claimResult.ok) {
-        return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
-      }
-      const adoptedChildRunId = claimResult.childRunId;
-      return emitClaimedSuccess({
-        output,
-        truncatedToken,
-        childRunId: adoptedChildRunId,
-        claimId: claimResult.claimId,
-        childRunbookPath: freshDelegation.childRunbookPath,
-        parentRunId: freshParent.id,
-        stepId: substepId ?? stepId,
-        parentStepAt: freshDelegation.contextSnapshot.at,
-        loopResult: 'waiting',
-      });
-    }
+  // 3e. Reconstitute context vars from frozen snapshot
+  const inheritedContextVars = reconstituteContextVars(freshDelegation.contextSnapshot);
+  const inheritedUserVars = extractInheritedUserVars(freshDelegation.contextSnapshot);
 
-    const existingClaim = await ctx.sessionService.findClaimForDelegation(delegationLinkage);
-    if (existingClaim !== null) {
-      const existingChild = await manager.load(existingClaim.controlledRunId);
-      if (!existingChild) {
-        return {
-          ok: false,
-          reason: 'child-missing',
-          parentRunId: freshParent.id,
-          stepId: substepId ?? stepId,
-          childRunId: existingClaim.controlledRunId,
-        };
-      }
-      if (existingChild.lifecycle === 'completed' || existingChild.lifecycle === 'stopped') {
-        return {
-          ok: false,
-          reason: 'delegation-resolved',
-          parentRunId: freshParent.id,
-          stepId: substepId ?? stepId,
-          childRunId: existingClaim.controlledRunId,
-        };
-      }
-      const claimResult = await claimChildForPipeline(
-        ctx,
-        existingClaim.controlledRunId,
-        delegationLinkage,
-        true,
-      );
-      if (!claimResult.ok) {
-        return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
-      }
-      return emitClaimedSuccess({
-        output,
-        truncatedToken,
-        childRunId: claimResult.childRunId,
-        claimId: claimResult.claimId,
-        childRunbookPath: freshDelegation.childRunbookPath,
-        parentRunId: freshParent.id,
-        stepId: substepId ?? stepId,
-        parentStepAt: freshDelegation.contextSnapshot.at,
-        loopResult: 'waiting',
-      });
-    }
-
-    // 4e. Reconstitute context vars from frozen snapshot
-    const inheritedContextVars = reconstituteContextVars(freshDelegation.contextSnapshot);
-    const inheritedUserVars = extractInheritedUserVars(freshDelegation.contextSnapshot);
-
-    // 4f. Prepare child runbook from persisted source identity
-    const childRunbookRef = freshDelegation.childRunbookRef;
-    const childDisplayPath = freshDelegation.childRunbookPath;
-    const childResolution = await resolveRunbookRef(cwd, childRunbookRef);
-    if (!childResolution.ok) {
-      if (childResolution.reason === 'plugin-context-missing') {
-        return {
-          ok: false,
-          reason: 'prepare-failed',
-          runbook: childDisplayPath,
-          code: 'RUNBOOK_REF_RESOLUTION_ERROR',
-          cause: `Plugin runbook context is unavailable for ${childRunbookRef.source}:${childRunbookRef.path}. Set CLAUDE_PLUGIN_ROOT or install the Rundown Claude Code plugin alongside the CLI.`,
-          details: { runbook: childDisplayPath },
-        };
-      }
+  // 3f. Prepare child runbook from persisted source identity
+  const childRunbookRef = freshDelegation.childRunbookRef;
+  const childDisplayPath = freshDelegation.childRunbookPath;
+  const childResolution = await resolveRunbookRef(cwd, childRunbookRef);
+  if (!childResolution.ok) {
+    if (childResolution.reason === 'plugin-context-missing') {
       return {
         ok: false,
         reason: 'prepare-failed',
         runbook: childDisplayPath,
-        code: 'RUNBOOK_NOT_FOUND',
-        cause: `Runbook not found: ${childRunbookRef.source}:${childRunbookRef.path}`,
+        code: 'RUNBOOK_REF_RESOLUTION_ERROR',
+        cause: `Plugin runbook context is unavailable for ${childRunbookRef.source}:${childRunbookRef.path}. Set CLAUDE_PLUGIN_ROOT or install the Rundown Claude Code plugin alongside the CLI.`,
         details: { runbook: childDisplayPath },
       };
     }
-    const childResolved = childResolution.resolved;
+    return {
+      ok: false,
+      reason: 'prepare-failed',
+      runbook: childDisplayPath,
+      code: 'RUNBOOK_NOT_FOUND',
+      cause: `Runbook not found: ${childRunbookRef.source}:${childRunbookRef.path}`,
+      details: { runbook: childDisplayPath },
+    };
+  }
+  const childResolved = childResolution.resolved;
 
-    const prepResult = await prepareResolvedRunnableRunbook(
-      {
-        resolved: childResolved,
-        runbookRef: childRunbookRef,
-        displayName: childDisplayPath,
-      },
-      inputOpts,
-      cwd,
-      {
-        inheritedContextVars,
-        inheritedUserVars,
-        iterationBinding: freshDelegation.contextSnapshot.iterationBinding,
-      },
-    );
-    if (!prepResult.ok) {
-      return {
-        ok: false,
-        reason: 'prepare-failed',
-        runbook: childDisplayPath,
-        code: prepResult.code,
-        cause: prepResult.error,
-        details: { ...prepResult.details, runbook: childDisplayPath },
-      };
+  const prepResult = await prepareResolvedRunnableRunbook(
+    {
+      resolved: childResolved,
+      runbookRef: childRunbookRef,
+      displayName: childDisplayPath,
+    },
+    inputOpts,
+    cwd,
+    {
+      inheritedContextVars,
+      inheritedUserVars,
+      iterationBinding: freshDelegation.contextSnapshot.iterationBinding,
+    },
+  );
+  if (!prepResult.ok) {
+    return {
+      ok: false,
+      reason: 'prepare-failed',
+      runbook: childDisplayPath,
+      code: prepResult.code,
+      cause: prepResult.error,
+      details: { ...prepResult.details, runbook: childDisplayPath },
+    };
+  }
+
+  if (prepResult.warnings?.length) {
+    for (const msg of prepResult.warnings) {
+      output.warning(msg);
     }
+  }
+  for (const name of prepResult.unresolved) {
+    output.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
+  }
 
-    if (prepResult.warnings?.length) {
-      for (const msg of prepResult.warnings) {
-        output.warning(msg);
+  const parentPrompted = freshParent.prompted ?? false;
+
+  // 3g. Launch child runbook
+  let capturedClaim: { readonly claimId: ClaimId; readonly childRunId: RunId } | undefined;
+  let initialLinkCommitted = false;
+  // Captures a write-side claim invariant violation in `afterInit` so we
+  // can surface it as a structured launch-failed result instead of an
+  // anonymous thrown Error. Should never trigger in practice — the child
+  // was just created with the same delegationLinkage being validated.
+  let invariantViolation: Extract<ClaimChildResult, { ok: false }> | undefined;
+
+  const launchResult = await launchRunbook(ctx, prepResult.prepared, {
+    runbookName: childDisplayPath,
+    prompted: parentPrompted,
+    parentLinkage: delegationLinkage,
+    sessionActivation: { kind: 'none' },
+    afterInit: async (childStateId) => {
+      const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage, true);
+      if (!claimResult.ok) {
+        // Capture and bail; the outer block translates this into a typed
+        // launch-failed envelope with CLAIM_INVARIANT_VIOLATED so
+        // post-mortem from CLI output reveals the cause.
+        invariantViolation = claimResult;
+        throw new Error(
+          `Claim invariant violated for fresh child ${describeClaimFailureTarget(claimResult)}: ${claimResult.reason}`,
+        );
       }
-    }
-    for (const name of prepResult.unresolved) {
-      output.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
-    }
-
-    const parentPrompted = freshParent.prompted ?? false;
-
-    // 4g. Launch child runbook
-    let capturedClaim: { readonly claimId: ClaimId; readonly childRunId: RunId } | undefined;
-    let initialLinkCommitted = false;
-    // Captures a write-side claim invariant violation in `afterInit` so we
-    // can surface it as a structured launch-failed result instead of an
-    // anonymous thrown Error. Should never trigger in practice — the child
-    // was just created with the same delegationLinkage being validated.
-    let invariantViolation: Extract<ClaimChildResult, { ok: false }> | undefined;
-
-    const launchResult = await launchRunbook(ctx, prepResult.prepared, {
-      runbookName: childDisplayPath,
-      prompted: parentPrompted,
-      parentLinkage: delegationLinkage,
-      sessionActivation: { kind: 'none' },
-      afterInit: async (childStateId) => {
-        const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage, true);
-        if (!claimResult.ok) {
-          // Capture and bail; the outer block translates this into a typed
-          // launch-failed envelope with CLAIM_INVARIANT_VIOLATED so
-          // post-mortem from CLI output reveals the cause.
-          invariantViolation = claimResult;
-          throw new Error(
-            `Claim invariant violated for fresh child ${describeClaimFailureTarget(claimResult)}: ${claimResult.reason}`,
-          );
+      capturedClaim = { claimId: claimResult.claimId, childRunId: claimResult.childRunId };
+      initialLinkCommitted = true;
+    },
+    afterInitRollback: async (childStateId) => {
+      if (!initialLinkCommitted) return;
+      capturedClaim = undefined;
+      const warnUnlinkRefusal = (reason: string): void => {
+        output.warning(
+          `Could not unlink delegated child ${childStateId} from parent ${delegationLinkage.parentRunId}: ${reason}`,
+        );
+      };
+      try {
+        const captured = await manager.captureRunAuthorityState(delegationLinkage.parentRunId);
+        if (captured.kind !== 'captured') {
+          warnUnlinkRefusal(captured.message);
+          return;
         }
-        capturedClaim = { claimId: claimResult.claimId, childRunId: claimResult.childRunId };
-        initialLinkCommitted = true;
-      },
-      afterStarted: releaseLock,
-      afterInitRollback: async (childStateId) => {
-        if (!initialLinkCommitted) return;
-        capturedClaim = undefined;
-        const warnUnlinkRefusal = (reason: string): void => {
-          output.warning(
-            `Could not unlink delegated child ${childStateId} from parent ${delegationLinkage.parentRunId}: ${reason}`,
-          );
-        };
-        try {
-          const captured = await manager.captureRunAuthorityState(delegationLinkage.parentRunId);
-          if (captured.kind !== 'captured') {
-            warnUnlinkRefusal(captured.message);
-            return;
-          }
-          const prepared = await ctx.actorService.prepareDelegationChildUnlink(
-            captured.state,
-            getRunbookFromState(captured.state, ctx.cwd),
-            childStateId,
-            delegationLinkage,
-          );
-          if (prepared.kind !== 'prepared') {
-            warnUnlinkRefusal(prepared.message);
-            return;
-          }
-          const rollback = await ctx.sessionService.rollbackInitialLink({
-            childRunId: childStateId,
-            linkage: delegationLinkage,
-            capturedParent: captured.authority,
-            preparedParent: prepared.prepared,
-          });
-          if (rollback.kind !== 'committed') {
-            warnUnlinkRefusal(rollback.message);
-            return;
-          }
-          initialLinkCommitted = false;
-        } catch (error: unknown) {
-          warnUnlinkRefusal(getErrorMessage(error));
+        const prepared = await ctx.actorService.prepareDelegationChildUnlink(
+          captured.state,
+          getRunbookFromState(captured.state, ctx.cwd),
+          childStateId,
+          delegationLinkage,
+        );
+        if (prepared.kind !== 'prepared') {
+          warnUnlinkRefusal(prepared.message);
+          return;
         }
-      },
-    });
+        const rollback = await ctx.sessionService.rollbackInitialLink({
+          childRunId: childStateId,
+          linkage: delegationLinkage,
+          capturedParent: captured.authority,
+          preparedParent: prepared.prepared,
+        });
+        if (rollback.kind !== 'committed') {
+          warnUnlinkRefusal(rollback.message);
+          return;
+        }
+        initialLinkCommitted = false;
+      } catch (error: unknown) {
+        warnUnlinkRefusal(getErrorMessage(error));
+      }
+    },
+  });
 
-    if (invariantViolation !== undefined) {
-      // The durable latch (R2) is not an invariant violation. `claimRunbook`
-      // re-reads the parent inside its own transaction, so a parent that
-      // advanced, terminalized, or reissued its token between the 4a′ precheck
-      // and this claim legitimately refuses here. Reporting that as
-      // CLAIM_INVARIANT_VIOLATED blames Rundown for a real supersession and
-      // drops the no-retry signal the bearer holder needs. The child created
-      // moments ago is removed by launch cleanup; the atomic transaction wrote nothing.
-      if (invariantViolation.reason === 'delegation-superseded') {
+  if (invariantViolation !== undefined) {
+    // Exhaustive rather than a fall-through chain. CLAIM_INVARIANT_VIOLATED is a
+    // claim about Rundown, not about the caller, so it must be reached only by
+    // reasons deliberately classified as such — never by a reason nobody has
+    // classified yet. The `never` arm makes a new `ClaimChildResult` variant a
+    // compile error here instead of silently inheriting that blame; the comments
+    // below record that this exact fall-through already mislabelled one race
+    // once.
+    const violation = invariantViolation;
+    switch (violation.reason) {
+      // The durable latch (R2) is not an invariant violation — it is the ONLY
+      // place a supersession is decided on this path. `claimRunbook` re-reads
+      // the parent inside its own transaction and classifies liveness against
+      // the linkage built above, so a parent that had already advanced, or that
+      // advanced, terminalized, or reissued its token after the 3a re-read,
+      // legitimately refuses here. Reporting that as CLAIM_INVARIANT_VIOLATED
+      // blames Rundown for a real supersession and drops the no-retry signal
+      // the bearer holder needs. The child created moments ago is removed by
+      // launch cleanup; the atomic transaction wrote nothing.
+      case 'delegation-superseded':
         return {
           ok: false,
           reason: 'delegation-superseded',
           parentRunId: freshParent.id,
           stepId: substepId ?? stepId,
+          // No child is named, and none may be synthesized. This arm is reached
+          // only from the fresh-launch `afterInit`, which 3c already guarantees
+          // has `freshDelegation.childRunId === null` — the delegation names no
+          // child, and the one this claim just created is about to be removed by
+          // launch cleanup. The routes that DO have a child to name carry it
+          // through `claimResultToFailure` instead.
         };
-      }
-      // Same reasoning for a parent deleted between the 4a re-read and the
+      // Same reasoning for a parent deleted between the 3a re-read and the
       // claim transaction: a race, not a broken invariant. `claimResultToFailure`
-      // already owns the mapping, and 4a emits this very refusal earlier for the
+      // already owns the mapping, and 3a emits this very refusal earlier for the
       // same fact — so the outcome must not change just because the race lost
       // later.
-      if (
-        invariantViolation.reason === 'parent-missing' ||
-        invariantViolation.reason === 'concurrent-modification'
-      ) {
-        return claimResultToFailure(invariantViolation, freshParent.id, substepId ?? stepId);
-      }
+      //
+      // `delegation-already-claimed` is the same class and the reason this arm
+      // matters most: a second claimer of one token that got past 3c before the
+      // winner committed lands here, and the fact it must report is the winner's
+      // — the delegation is taken, permanently, by the child the refusal names.
+      // Reporting CLAIM_INVARIANT_VIOLATED instead blamed Rundown for a race it
+      // handled correctly, and named this claimer's own about-to-be-deleted
+      // child.
+      case 'parent-missing':
+      case 'concurrent-modification':
+      case 'delegation-already-claimed':
+        return claimResultToFailure(violation, freshParent.id, substepId ?? stepId);
       // An ownership refusal is likewise a race, not a broken invariant: the
       // claim transaction refused before writing anything.
-      if (invariantViolation.reason === 'session-refused') {
-        return invariantViolation;
+      case 'session-refused':
+        return violation;
+      // These three genuinely are broken invariants on this path: 3c has already
+      // established the delegation is unresolved and names no child, and built
+      // the linkage the transaction re-checks, so the transaction disagreeing
+      // means our own precondition was wrong.
+      case 'child-missing':
+      case 'delegation-resolved':
+      case 'linkage-mismatch':
+        return {
+          ok: false,
+          reason: 'launch-failed',
+          runbook: childDisplayPath,
+          code: ErrorCodes.CLAIM_INVARIANT_VIOLATED.code,
+          cause: `Claim invariant violated for fresh child ${describeClaimFailureTarget(violation)}: ${violation.reason}`,
+          details: {
+            runbookName: childDisplayPath,
+            runbook: childDisplayPath,
+          },
+        };
+      default: {
+        const _exhaustive: never = violation;
+        return _exhaustive;
       }
-      return {
-        ok: false,
-        reason: 'launch-failed',
-        runbook: childDisplayPath,
-        code: ErrorCodes.CLAIM_INVARIANT_VIOLATED.code,
-        cause: `Claim invariant violated for fresh child ${describeClaimFailureTarget(invariantViolation)}: ${invariantViolation.reason}`,
-        details: {
-          runbookName: childDisplayPath,
-          runbook: childDisplayPath,
-        },
-      };
     }
-
-    if (!launchResult.ok) {
-      if (launchResult.reason === 'session-refused') return launchResult;
-      return {
-        ok: false,
-        reason: 'launch-failed',
-        runbook: childDisplayPath,
-        code: launchResult.code,
-        cause: launchResult.error,
-        details: { ...launchResult.details, runbook: childDisplayPath },
-      };
-    }
-
-    if (capturedClaim === undefined) {
-      return {
-        ok: false,
-        reason: 'launch-failed',
-        runbook: childDisplayPath,
-        code: ErrorCodes.LAUNCH_FAILED.code,
-        cause: 'Claim id was not created for delegated child.',
-        details: {
-          runbookName: childDisplayPath,
-          runbook: childDisplayPath,
-        },
-      };
-    }
-    return emitClaimedSuccess({
-      output,
-      truncatedToken,
-      childRunId: capturedClaim.childRunId,
-      claimId: capturedClaim.claimId,
-      childRunbookPath: childDisplayPath,
-      parentRunId: freshParent.id,
-      stepId: substepId ?? stepId,
-      parentStepAt: freshDelegation.contextSnapshot.at,
-      loopResult: launchResult.loopResult,
-    });
   }
+
+  if (!launchResult.ok) {
+    if (launchResult.reason === 'session-refused') return launchResult;
+    return {
+      ok: false,
+      reason: 'launch-failed',
+      runbook: childDisplayPath,
+      code: launchResult.code,
+      cause: launchResult.error,
+      details: { ...launchResult.details, runbook: childDisplayPath },
+    };
+  }
+
+  if (capturedClaim === undefined) {
+    return {
+      ok: false,
+      reason: 'launch-failed',
+      runbook: childDisplayPath,
+      code: ErrorCodes.LAUNCH_FAILED.code,
+      cause: 'Claim id was not created for delegated child.',
+      details: {
+        runbookName: childDisplayPath,
+        runbook: childDisplayPath,
+      },
+    };
+  }
+  return emitClaimedSuccess({
+    output,
+    truncatedToken,
+    childRunId: capturedClaim.childRunId,
+    claimId: capturedClaim.claimId,
+    childRunbookPath: childDisplayPath,
+    parentRunId: freshParent.id,
+    stepId: substepId ?? stepId,
+    parentStepAt: freshDelegation.contextSnapshot.at,
+    loopResult: launchResult.loopResult,
+  });
 }

@@ -1,13 +1,13 @@
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { Errors } from '../errors/factory.js';
-import { CompletionLock } from './completion-lock.js';
-import { DelegationLock } from './delegation-lock.js';
-import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
-import type { RunbookActorService, ActorSyncResult } from './actor-service.js';
+import type { RunbookActorService } from './actor-service.js';
 import type { DelegationCredentialIssuer } from './delegation-credential.js';
 import { merge } from './state-update-ops.js';
-import { applyRunbookStateUpdate, type RunbookStateManager } from './state.js';
-import { guardOptions, type ParentAdvanceGuard } from './storage/runbook-store.js';
+import {
+  applyRunbookStateUpdate,
+  type RunbookStateManager,
+  type RunbookStateUpdate,
+} from './state.js';
 import {
   SENTINEL_ENTRY,
   activeFrame,
@@ -280,37 +280,75 @@ export type PreparedChildCompletion =
     };
 
 /** Arguments for draining persisted completions into the current machine cursor. */
-export interface DrainResolvedCompletionsArgs {
-  /** Run id of the runbook being drained. */
+export interface ApplyNextResolvedCompletionArgs {
+  /** Run id of the runbook whose next completion is applied. */
   readonly runbookId: RunId;
   /** Resolved step definitions for the runbook (used for substep ordering). */
   readonly steps: readonly ResolvedStep[];
-  /** Current persisted state to derive active frame/cursor from. */
-  readonly currentState: RunbookState;
   /**
-   * Optional override frame — when supplied and not equal to the active
-   * frame, drain short-circuits to `not_active` without dispatching any event.
+   * Optional override frame — when supplied and not equal to the active frame,
+   * the apply short-circuits to `not_active` without dispatching any event.
    */
   readonly frameOverride?: Frame;
-  /**
-   * Optional upper bound on completions to apply in this drain pass.
-   *
-   * Used by callers that must observe each machine transition before the next
-   * persisted completion is applied. Omitted means drain all currently
-   * applicable completions.
-   */
-  readonly maxApplied?: number;
-  /**
-   * Optional parent-advance guard threaded into each applied completion's store
-   * write. Supplied only when the drain IS the decisive parent-advancing write —
-   * that is, when the preceding record short-circuited as a duplicate and so
-   * evaluated no guard of its own. When present, a live delegated child aborts
-   * the write inside its transaction.
-   */
-  readonly guard?: ParentAdvanceGuard;
   /** Verified runtime-only issuer for a completion transition that enters delegation. */
   readonly issueDelegationCredential?: DelegationCredentialIssuer;
 }
+
+/**
+ * Outcome of one {@link RunbookCompletionService.applyNextResolvedCompletion}.
+ *
+ * `terminal` rides on the `applied` arm rather than replacing it: a transition
+ * that ends the run is still an apply the caller must observe and emit for, and
+ * splitting it out would make every caller unpack the same entry twice.
+ *
+ * Every non-applied arm carries the state it decided against, so a looping
+ * caller that stops has the version that stopped it without a further read.
+ */
+export type ApplyNextResolvedCompletionResult =
+  | {
+      /** A completion was selected, applied, and committed. */
+      readonly kind: 'applied';
+      /** The applied completion, with the states either side of it. */
+      readonly entry: AppliedResolvedCompletion;
+      /** Count of substeps still without a persisted completion. */
+      readonly unresolved: number;
+      /** Set when the applied transition carried the run terminal. */
+      readonly terminal?: 'done' | 'stopped';
+    }
+  | {
+      /** No completion is applicable at the current cursor. */
+      readonly kind: 'none';
+      /** The state the decision was made against. */
+      readonly state: RunbookState;
+      /** Count of substeps still without a persisted completion. */
+      readonly unresolved: number;
+    }
+  | {
+      /** Requested frame is not the active one; the call is observation-only. */
+      readonly kind: 'not_active';
+      /** The state the decision was made against. */
+      readonly state: RunbookState;
+      /** Frame key that was requested via `frameOverride`. */
+      readonly frameKey: FrameKey;
+      /** Frame key the machine is actually positioned on. */
+      readonly activeFrameKey: FrameKey;
+      /** Count of substeps still without a persisted completion. */
+      readonly unresolved: number;
+    }
+  | {
+      /** The applicable row does not target the committed cursor. */
+      readonly kind: 'mismatch';
+      /** The state the decision was made against. */
+      readonly state: RunbookState;
+      /** The refusal, carrying the offending row. */
+      readonly mismatch: CompletionTargetMismatch;
+      /** Count of substeps still without a persisted completion. */
+      readonly unresolved: number;
+    }
+  | {
+      /** The run does not exist, so there is nothing to apply against. */
+      readonly kind: 'missing';
+    };
 
 /** Arguments for preparing a resolved-completion drain without persisting it. */
 export interface PrepareResolvedCompletionDrainArgs {
@@ -382,40 +420,6 @@ export type PreparedResolvedCompletionDrain =
       readonly applied: readonly [];
     };
 
-/** Result of a resolved-completion drain pass. */
-export type DrainResolvedCompletionsResult =
-  | {
-      /** Drain advanced the cursor with remaining substeps still pending. */
-      readonly status: 'continue';
-      /** State after the last applied completion (or current state if none). */
-      readonly state: RunbookState;
-      /** Count of substeps still without a persisted completion. */
-      readonly unresolved: number;
-      /** Each completion applied during this pass, in dispatch order. */
-      readonly applied: readonly AppliedResolvedCompletion[];
-    }
-  | {
-      /** Runbook reached a terminal lifecycle (`done` or `stopped`). */
-      readonly status: 'done' | 'stopped';
-      /** Always zero on terminal exits. */
-      readonly unresolved: number;
-      /** Each completion applied during this pass, in dispatch order. */
-      readonly applied: readonly AppliedResolvedCompletion[];
-    }
-  | DrainCompletionTargetMismatch
-  | {
-      /** Requested frame is not currently active; drain is observation-only. */
-      readonly status: 'not_active';
-      /** Frame key that was requested via `frameOverride`. */
-      readonly frameKey: FrameKey;
-      /** Frame key the machine is actually positioned on. */
-      readonly activeFrameKey: FrameKey;
-      /** Count of substeps still without a persisted completion. */
-      readonly unresolved: number;
-      /** Always empty when `not_active`. */
-      readonly applied: readonly [];
-    };
-
 function findStepOrThrow(steps: readonly ResolvedStep[], stepName: string): ResolvedStep {
   const step = steps.find((candidate) => candidate.name === stepName);
   if (!step) throw new Error(`Step "${stepName}" not found`);
@@ -423,12 +427,11 @@ function findStepOrThrow(steps: readonly ResolvedStep[], stepName: string): Reso
 }
 
 /**
- * Map a state's lifecycle to the drain status that reports it, if terminal.
+ * Map a state's lifecycle to the terminal status that reports it, if terminal.
  *
- * The single lifecycle→status mapping, shared by the persisted drain (via
- * {@link terminalStatus}) and the prepared one, so a run reaching terminal is
- * named identically whether the pass committed per completion or derived the
- * whole thing for one commit.
+ * The single lifecycle→status mapping, shared by the single-apply primitive and
+ * the prepared pass, so a run reaching terminal is named identically whether it
+ * was committed one apply at a time or derived whole for one commit.
  *
  * @param state - State whose lifecycle is classified.
  * @returns `'done'`/`'stopped'` for a terminal lifecycle, otherwise `undefined`.
@@ -439,19 +442,16 @@ function terminalLifecycleStatus(state: RunbookState): 'done' | 'stopped' | unde
   return undefined;
 }
 
-function terminalStatus(result: ActorSyncResult): 'done' | 'stopped' | undefined {
-  return terminalLifecycleStatus(result.state);
-}
-
 /**
- * Verdict on whether one applied completion advanced a drain pass.
+ * Verdict on whether one applied completion advanced the pass.
  *
- * Both drain loops are unbounded `for (;;)`, and both terminate only because
- * every apply changes what the NEXT iteration selects. Nothing in this module
- * observed that: an apply that changed neither left the drain re-selecting the
- * same row from the same cursor forever, growing `applied` without bound — a
- * hang, not a failure. These classifications make the missing post-condition
- * explicit so a violation fails fast on the FIRST non-advancing apply.
+ * Every caller that drains a frame loops until nothing more applies, and that
+ * loop terminates only because each apply changes what the NEXT selection picks.
+ * Nothing else observes it: an apply that changed neither the candidate set nor
+ * the cursor leaves the caller re-selecting the same row from the same position
+ * forever — a hang, not a failure. These classifications make the missing
+ * post-condition explicit so a violation fails fast on the FIRST non-advancing
+ * apply, before it commits.
  */
 type ResolvedCompletionDrainProgress =
   | { readonly kind: 'progressed' }
@@ -460,7 +460,7 @@ type ResolvedCompletionDrainProgress =
 /**
  * The coordinates a drain iteration's selection is computed from.
  *
- * Selection is `listResolvedCompletions*(state, activeFrame(activeFrameKey,
+ * Selection is `listResolvedCompletionsInState(state, activeFrame(activeFrameKey,
  * entry))` narrowed to `state.substep` on `state.step`. Holding all four fixed
  * fixes the candidate row, which is why an apply that moves ANY of them has
  * made progress even if it consumed nothing.
@@ -593,8 +593,12 @@ function assertCompleteParentLinkage(
 /**
  * Find an already-resolved completion for a target inside a state blob.
  *
- * The in-state twin of {@link RunbookCompletionService.findExistingCompletion},
- * and deliberately entry-PRECISE for a frame that carries one. Completion keys
+ * The sole existing-row lookup behind the manual-completion decision, for both
+ * the recorder and its fenced twin — the recorder's separate loading lookup is
+ * gone, because its classification now runs inside the commit against the state
+ * the compare-and-swap captured.
+ *
+ * Deliberately entry-PRECISE for a frame that carries an entry. Completion keys
  * embed the entry, and a RETRY/GOTO that re-opens a substep bumps it, so a row
  * left by an earlier entry on the same frame is not a duplicate of this one —
  * matching on `frameKey` + `substep` alone would refuse the legitimate
@@ -629,11 +633,12 @@ function findCompletionKeyInState(
 /**
  * List a state's resolved completions for a frame target, without IO.
  *
- * The in-state twin of {@link ExecutionLifecycleService.listResolvedCompletions},
- * matching its key-prefix rule exactly (an `active` frame also admits the
- * sentinel entry; an exact frame does not). The prepared drain must classify
- * against the state it captured, not against whatever the store holds now, so
- * it cannot reuse the loading method.
+ * The only reader of this map on the apply path. It was the in-state twin of a
+ * store-loading sibling on `ExecutionLifecycleService`, which existed to serve a
+ * drain that re-read per iteration; both paths now classify against a state they
+ * already hold, so the twin outlived its counterpart.
+ *
+ * An `active` frame also admits the sentinel entry; an exact frame does not.
  *
  * @param state - State whose `resolvedCompletions` map is read.
  * @param frame - Frame target to list.
@@ -678,12 +683,186 @@ function observedSubstepsForFrameInState(
   );
 }
 
-/** State the manual-completion decision reads, supplied by each caller. */
+/**
+ * Narrow a {@link ResolvedCompletion} to the current cursor, rejecting any
+ * row whose target step/substep/frame does not match.
+ *
+ * On a match the returned value is normalised against the live cursor:
+ * `targetSubstep` is set to `state.substep`, and `targetEntry` is rewritten
+ * from {@link SENTINEL_ENTRY} (or any persisted entry) to the live active
+ * entry so downstream consumers always see the resolved entry rather than
+ * the sentinel.
+ *
+ * @param state - Current runbook state.
+ * @param completion - Resolved completion candidate.
+ * @param ensured - Live active entry derived by the caller.
+ * @param ensured.entry - Live active entry number.
+ * @returns A branded {@link CurrentCursorResolvedCompletion} on match, or a
+ *   {@link CompletionTargetMismatch} describing the rejection.
+ */
+function resolveAgainstCurrentCursor(
+  state: RunbookState,
+  completion: ResolvedCompletion,
+  ensured: { readonly entry: number },
+): CurrentCursorResolvedCompletion | CompletionTargetMismatch {
+  if (!state.substep) {
+    return {
+      status: 'failed',
+      reason: 'target_mismatch',
+      message: 'Resolved completion cannot apply because the current cursor has no substep.',
+      completion,
+    };
+  }
+  const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+  const activeEntry = state.activeEntry ?? ensured.entry;
+  const mismatch =
+    completion.targetStep !== state.step ||
+    completion.targetSubstep !== state.substep ||
+    completion.targetFrameKey !== activeFrameKey ||
+    (completion.targetEntry !== activeEntry && completion.targetEntry !== SENTINEL_ENTRY);
+  if (mismatch) {
+    return {
+      status: 'failed',
+      reason: 'target_mismatch',
+      message: `Resolved completion target does not match current cursor ${state.step}.${state.substep}.`,
+      completion,
+    };
+  }
+  return {
+    ...completion,
+    targetSubstep: state.substep,
+    targetEntry: activeEntry,
+    [currentCursorValidatedBrand]: true,
+  };
+}
+
+/**
+ * The decision behind one resolved-completion apply.
+ *
+ * Every arm carries `unresolved` because the count is a by-product of the same
+ * substep walk the selection already performs: deriving it here costs nothing,
+ * while asking a caller for it would mean a second read of the same rows.
+ *
+ * The `apply` arm carries a branded {@link CurrentCursorResolvedCompletion}, so
+ * a selection that succeeded is proof the row matches the cursor it was selected
+ * against — there is no arm in which a caller holds a completion it still has to
+ * validate.
+ */
+type ResolvedCompletionApplySelection =
+  | {
+      readonly kind: 'apply';
+      /** Canonical key of the row to apply. */
+      readonly key: string;
+      /** The row, narrowed and normalised against the cursor it was selected on. */
+      readonly completion: CurrentCursorResolvedCompletion;
+      readonly unresolved: number;
+    }
+  | { readonly kind: 'none'; readonly unresolved: number }
+  | {
+      readonly kind: 'not_active';
+      /** Frame the caller asked about. */
+      readonly frameKey: FrameKey;
+      /** Frame the cursor is actually on. */
+      readonly activeFrameKey: FrameKey;
+      readonly unresolved: number;
+    }
+  | {
+      readonly kind: 'mismatch';
+      /** The refusal, carrying the offending row. */
+      readonly mismatch: CompletionTargetMismatch;
+      readonly unresolved: number;
+    };
+
+/**
+ * Select the next resolved completion to apply against one exact state.
+ *
+ * The single decision owner behind both apply paths — the persisted
+ * {@link RunbookCompletionService.applyNextResolvedCompletion} and the prepared
+ * {@link RunbookCompletionService.prepareResolvedCompletionDrain}. It is pure
+ * and reads only `state`, which is what lets the persisted path run it INSIDE
+ * its compare-and-swap: the row it picks and the cursor it validates against are
+ * then the exact version the write commits onto.
+ *
+ * That placement is the whole point. While the selection ran against a
+ * separately-captured state, a cursor that moved between capture and write left
+ * the apply deriving from one version and landing on another — applying a row
+ * for the substep the capture named to whatever substep the machine had since
+ * advanced to.
+ *
+ * A frame override that does not name the active frame reports `not_active`
+ * without selecting: the caller asked about a frame the cursor is not on, so
+ * there is nothing here to apply. Callers that have already applied within a
+ * pass own the decision about what a LATER divergence means; this function has
+ * no memory of a pass.
+ *
+ * @param state - The exact state to select against.
+ * @param steps - Resolved steps, for substep ordering and the unresolved count.
+ * @param frameOverride - Optional frame the caller is scoped to.
+ * @returns The apply decision, every arm carrying the unresolved substep count.
+ * @throws {Error} If the step named by the cursor is missing from `steps`.
+ */
+function selectNextResolvedCompletionApply(
+  state: RunbookState,
+  steps: readonly ResolvedStep[],
+  frameOverride?: Frame,
+): ResolvedCompletionApplySelection {
+  const currentStep = findStepOrThrow(steps, state.step);
+  if (!resolvedStepHasSubsteps(currentStep) || !state.substep) {
+    return { kind: 'none', unresolved: 0 };
+  }
+  const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+  if (frameOverride && frameOverride.frameKey !== activeFrameKey) {
+    const overrideResolved = observedSubstepsForFrameInState(state, frameOverride.frameKey);
+    return {
+      kind: 'not_active',
+      frameKey: frameOverride.frameKey,
+      activeFrameKey,
+      unresolved: currentStep.substeps.filter((substep) => !overrideResolved.has(substep.id))
+        .length,
+    };
+  }
+
+  const entry = state.activeEntry ?? 1;
+  const activeTargetFrame = activeFrame(activeFrameKey, entry);
+  const resolved = listResolvedCompletionsInState(state, activeTargetFrame);
+  const resolvedBySubstep = new Map(
+    resolved
+      .filter(({ completion }) => completion.targetSubstep !== undefined)
+      .map(({ completion }) => [completion.targetSubstep, completion]),
+  );
+  const unresolved = currentStep.substeps.filter(
+    (substep) => !resolvedBySubstep.has(substep.id),
+  ).length;
+
+  const currentKey = buildCompletionKey(activeTargetFrame, state.substep);
+  const current =
+    resolved.find(({ key }) => key === currentKey) ??
+    resolved.find(
+      ({ key, completion }) =>
+        key === buildCompletionKey(inactiveFrame(activeFrameKey), state.substep) ||
+        completion.targetSubstep === state.substep,
+    );
+  if (!current) return { kind: 'none', unresolved };
+
+  const validated = resolveAgainstCurrentCursor(state, current.completion, { entry });
+  if (!(currentCursorValidatedBrand in validated)) {
+    return { kind: 'mismatch', mismatch: validated, unresolved };
+  }
+  return { kind: 'apply', key: current.key, completion: validated, unresolved };
+}
+
+/**
+ * State the manual-completion decision reads, supplied by each caller.
+ *
+ * Substep states are read off `cursorState` rather than carried separately.
+ * They were a distinct field while the recorder classified against the freshest
+ * load and could fall back to a caller-supplied state for one and not the
+ * other; both now come from one captured version, so a second field could only
+ * ever disagree with it.
+ */
 interface ManualCompletionEvidence {
-  /** State whose cursor decides whether the target is the live one. */
+  /** State whose cursor decides whether the target is the live one, and whose substep states are searched for a prior `done` resolution. */
   readonly cursorState: RunbookState;
-  /** Substep states searched for a prior `done` resolution. */
-  readonly substepStates: readonly SubstepState[];
   /** Key of an already-recorded completion for this target; nullish when unresolved. */
   readonly existingKey: string | null | undefined;
 }
@@ -738,7 +917,7 @@ function classifyManualCompletionTarget(
     args.targetFrame.frameKey === activeFrameKey;
   if (!isActiveCursorTarget) {
     const existingSubstepState = findSubstepState(
-      evidence.substepStates,
+      evidence.cursorState.substepStates ?? [],
       args.targetSubstep,
       args.targetFrame.frameKey,
     );
@@ -758,6 +937,159 @@ function classifyManualCompletionTarget(
       finalVars: args.finalVars,
       completedAt: args.completedAt,
     }),
+  };
+}
+
+/**
+ * Read the manual-completion decision's evidence out of one captured state.
+ *
+ * Every field {@link classifyManualCompletionTarget} weighs comes from the same
+ * snapshot, which is what makes the decision consistent with the write that
+ * lands on it. The store's compare-and-swap supplies that snapshot to the
+ * recorder; the fenced twin supplies the state captured under its lease.
+ *
+ * @param args - Manual completion target and result.
+ * @param state - The single state all evidence is read from.
+ * @returns Cursor state, substep states, and any existing completion key.
+ */
+function manualCompletionEvidence(
+  args: RecordManualCompletionArgs,
+  state: RunbookState,
+): ManualCompletionEvidence {
+  return {
+    cursorState: state,
+    existingKey: findCompletionKeyInState(state, args.targetFrame, args.targetSubstep),
+  };
+}
+
+/**
+ * The patch recording one manual completion and mirroring its substep state.
+ *
+ * The two writes are one patch on purpose. Splitting them opens a window in
+ * which a concurrent reader observes a resolved row without its matching `done`
+ * substep state, and a concurrent delete between them flips the missing-parent
+ * behaviour.
+ *
+ * @param args - Manual completion target and result.
+ * @param substepStates - Substep states from the state the patch will apply to.
+ * @param decision - The recorded decision carrying the key and completion.
+ * @param decision.key - Canonical completion key the row is written under.
+ * @param decision.completion - The resolved completion to persist.
+ * @returns The tagged state patch.
+ */
+function manualCompletionUpdates(
+  args: RecordManualCompletionArgs,
+  substepStates: readonly SubstepState[],
+  decision: { readonly key: string; readonly completion: ResolvedCompletion },
+): RunbookStateUpdate {
+  return {
+    resolvedCompletions: merge({ [decision.key]: decision.completion }),
+    substepStates: upsertSubstepState(
+      substepStates,
+      args.targetSubstep,
+      args.targetFrame.frameKey,
+      {
+        status: 'done',
+        result: args.result,
+      },
+    ),
+  };
+}
+
+/** The single decision behind recording or preparing a delegated child report. */
+type ChildCompletionDecision =
+  | { readonly status: 'not-applicable' | 'blocked' | 'cancelled' | 'duplicate' }
+  | {
+      readonly status: 'recorded';
+      readonly key: string;
+      readonly updates: RunbookStateUpdate;
+    };
+
+/**
+ * Decide what a delegated child's terminal report does to its parent.
+ *
+ * The sole owner of the child-report rule, shared by the recorder and the pure
+ * preparation so the two can never disagree — the same relationship
+ * {@link classifyManualCompletionTarget} holds for manual completions. Evidence
+ * is one captured parent state: the recorder passes the state its
+ * compare-and-swap read, the fenced twin passes the state captured under its
+ * lease.
+ *
+ * The duplicate rule here is frame-WIDE, unlike the entry-precise manual
+ * lookup: a delegated child reports against the linkage it was issued under, so
+ * any recorded outcome for this parent substep — whatever entry it carries —
+ * already answers this report. That is strictly broader than the manual rule,
+ * so a report this classifier admits is never one the manual classifier would
+ * have rejected.
+ *
+ * @param args - Terminal child report input.
+ * @param parentState - Exact captured delegating parent state.
+ * @returns The no-write verdict, or the key and patch to persist.
+ */
+function classifyChildCompletionTarget(
+  args: RecordChildCompletionArgs,
+  parentState: RunbookState,
+): ChildCompletionDecision {
+  if (!args.childState.parentLinkage) return { status: 'not-applicable' };
+  const linkage = assertCompleteParentLinkage(args.childState);
+  if (parentState.id !== linkage.parentRunId) return { status: 'not-applicable' };
+  const projection = projectDelegationTerminalOutcome(args.childState, args.result);
+  if (projection.kind === 'not_terminal') return { status: 'not-applicable' };
+  if (projection.kind === 'command_infrastructure') return { status: 'blocked' };
+
+  const activeParentFrameKey =
+    parentState.activeFrameKey ?? deriveActiveFrame(parentState).frameKey;
+  const activeParentEntry = parentState.activeEntry ?? 1;
+  const substepState = findSubstepState(
+    parentState.substepStates ?? [],
+    linkage.parentStepId,
+    linkage.parentFrameKey,
+  );
+  if (
+    linkage.kind === 'delegation' &&
+    substepState?.delegation?.tokenHash !== undefined &&
+    substepState.delegation.tokenHash !== linkage.tokenHash
+  ) {
+    return { status: 'not-applicable' };
+  }
+  if (
+    linkage.kind === 'delegation' &&
+    substepState?.delegation?.cancelledAt &&
+    !args.ignoreCancellation
+  ) {
+    return { status: 'cancelled' };
+  }
+
+  const targetFrame =
+    linkage.parentFrameKey === activeParentFrameKey && linkage.parentEntry === activeParentEntry
+      ? activeFrame(linkage.parentFrameKey, activeParentEntry)
+      : exactFrame(linkage.parentFrameKey, linkage.parentEntry);
+  const key = buildCompletionKey(targetFrame, linkage.parentStepId);
+  if (isDuplicateChildCompletion(parentState, targetFrame, linkage.parentStepId)) {
+    return { status: 'duplicate' };
+  }
+
+  const completion = buildResolvedCompletion({
+    agentId: linkage.kind === 'inline' ? 'inline' : 'delegation',
+    result: projection.result,
+    targetStep: linkage.parentStep,
+    targetSubstep: linkage.parentStepId,
+    targetFrame,
+    finalVars: args.childState.finalVars,
+    completedAt: args.completedAt,
+  });
+  return {
+    status: 'recorded',
+    key,
+    updates: {
+      resolvedCompletions: merge({ [key]: completion }),
+      substepStates: upsertSubstepState(
+        parentState.substepStates ?? [],
+        linkage.parentStepId,
+        linkage.parentFrameKey,
+        { status: 'done', result: projection.result },
+      ),
+    },
   };
 }
 
@@ -803,12 +1135,10 @@ export class RunbookCompletionService {
    * Create a completion service.
    *
    * @param manager - Runbook state manager
-   * @param lifecycleService - Lifecycle persistence helper
    * @param actorService - DI-aware actor service used to apply validated completions
    */
   constructor(
     private readonly manager: RunbookStateManager,
-    private readonly lifecycleService: ExecutionLifecycleService,
     private readonly actorService: RunbookActorService,
   ) {}
 
@@ -826,72 +1156,17 @@ export class RunbookCompletionService {
     args: RecordChildCompletionArgs,
     parentState: RunbookState,
   ): PreparedChildCompletion {
-    if (!args.childState.parentLinkage) return { kind: 'not-applicable' };
-    const linkage = assertCompleteParentLinkage(args.childState);
-    if (parentState.id !== linkage.parentRunId) return { kind: 'not-applicable' };
-    const projection = projectDelegationTerminalOutcome(args.childState, args.result);
-    if (projection.kind === 'not_terminal') return { kind: 'not-applicable' };
-    if (projection.kind === 'command_infrastructure') return { kind: 'blocked' };
-
-    const activeParentFrameKey =
-      parentState.activeFrameKey ?? deriveActiveFrame(parentState).frameKey;
-    const activeParentEntry = parentState.activeEntry ?? 1;
-    const substepState = findSubstepState(
-      parentState.substepStates ?? [],
-      linkage.parentStepId,
-      linkage.parentFrameKey,
-    );
-    if (
-      linkage.kind === 'delegation' &&
-      substepState?.delegation?.tokenHash !== undefined &&
-      substepState.delegation.tokenHash !== linkage.tokenHash
-    ) {
-      return { kind: 'not-applicable' };
-    }
-    if (
-      linkage.kind === 'delegation' &&
-      substepState?.delegation?.cancelledAt &&
-      !args.ignoreCancellation
-    ) {
-      return { kind: 'cancelled' };
-    }
-
-    const targetFrame =
-      linkage.parentFrameKey === activeParentFrameKey && linkage.parentEntry === activeParentEntry
-        ? activeFrame(linkage.parentFrameKey, activeParentEntry)
-        : exactFrame(linkage.parentFrameKey, linkage.parentEntry);
-    const key = buildCompletionKey(targetFrame, linkage.parentStepId);
-    // Frame-WIDE on purpose, unlike the entry-precise manual lookup above: a
-    // delegated child reports against the linkage it was issued under, so any
-    // recorded outcome for this parent substep — whatever entry it carries —
-    // already answers this report. `recordChildCompletion` uses the same rule.
-    if (isDuplicateChildCompletion(parentState, targetFrame, linkage.parentStepId)) {
-      return { kind: 'duplicate' };
-    }
-
-    const completion = buildResolvedCompletion({
-      agentId: linkage.kind === 'inline' ? 'inline' : 'delegation',
-      result: projection.result,
-      targetStep: linkage.parentStep,
-      targetSubstep: linkage.parentStepId,
-      targetFrame,
-      finalVars: args.childState.finalVars,
-      completedAt: args.completedAt,
-    });
-    const nextParentState = applyRunbookStateUpdate(
-      parentState,
-      {
-        resolvedCompletions: merge({ [key]: completion }),
-        substepStates: upsertSubstepState(
-          parentState.substepStates ?? [],
-          linkage.parentStepId,
-          linkage.parentFrameKey,
-          { status: 'done', result: projection.result },
-        ),
-      },
-      args.completedAt ?? new Date().toISOString(),
-    );
-    return { kind: 'recorded', key, nextParentState };
+    const decision = classifyChildCompletionTarget(args, parentState);
+    if (decision.status !== 'recorded') return { kind: decision.status };
+    return {
+      kind: 'recorded',
+      key: decision.key,
+      nextParentState: applyRunbookStateUpdate(
+        parentState,
+        decision.updates,
+        args.completedAt ?? new Date().toISOString(),
+      ),
+    };
   }
 
   /**
@@ -901,33 +1176,19 @@ export class RunbookCompletionService {
    * @returns Duplicate/recorded status plus the prepared parent state.
    */
   prepareManualCompletion(args: RecordManualCompletionArgs): PreparedManualCompletion {
-    const decision = classifyManualCompletionTarget(args, {
-      cursorState: args.currentState,
-      substepStates: args.currentState.substepStates ?? [],
-      existingKey: findCompletionKeyInState(
-        args.currentState,
-        args.targetFrame,
-        args.targetSubstep,
-      ),
-    });
+    const decision = classifyManualCompletionTarget(
+      args,
+      manualCompletionEvidence(args, args.currentState),
+    );
     if (decision.status === 'duplicate') {
       return { status: 'duplicate', key: decision.key, nextState: args.currentState };
     }
-    const { key, completion } = decision;
     const nextState = applyRunbookStateUpdate(
       args.currentState,
-      {
-        resolvedCompletions: merge({ [key]: completion }),
-        substepStates: upsertSubstepState(
-          args.currentState.substepStates ?? [],
-          args.targetSubstep,
-          args.targetFrame.frameKey,
-          { status: 'done', result: args.result },
-        ),
-      },
+      manualCompletionUpdates(args, args.currentState.substepStates ?? [], decision),
       args.completedAt ?? new Date().toISOString(),
     );
-    return { status: 'recorded', key, nextState };
+    return { status: 'recorded', key: decision.key, nextState };
   }
 
   /**
@@ -943,199 +1204,7 @@ export class RunbookCompletionService {
     completion: ResolvedCompletion,
     entry: number,
   ): CurrentCursorResolvedCompletion | CompletionTargetMismatch {
-    return this.resolveAgainstCurrentCursor(state, completion, { entry });
-  }
-
-  private async findExistingCompletion(
-    runbookId: RunId,
-    args: { readonly frame: Frame; readonly substep: string },
-  ): Promise<string | null> {
-    if (frameHasExactEntry(args.frame)) {
-      const exactKey = buildCompletionKey(args.frame, args.substep);
-      const sentinelKey = buildCompletionKey(inactiveFrame(args.frame.frameKey), args.substep);
-      if (await this.lifecycleService.getResolvedCompletion(runbookId, exactKey)) return exactKey;
-      if (await this.lifecycleService.getResolvedCompletion(runbookId, sentinelKey))
-        return sentinelKey;
-      return null;
-    }
-
-    const observed = await this.lifecycleService.listResolvedCompletionsForFrameObservation(
-      runbookId,
-      args.frame.frameKey,
-    );
-    return (
-      observed.find(({ completion }) => completion.targetSubstep === args.substep)?.key ?? null
-    );
-  }
-
-  private async observedSubstepsForFrame(
-    runbookId: RunId,
-    frameKey: FrameKey,
-  ): Promise<ReadonlySet<string>> {
-    const observed = await this.lifecycleService.listResolvedCompletionsForFrameObservation(
-      runbookId,
-      frameKey,
-    );
-    return new Set(
-      observed
-        .map(({ completion }) => completion.targetSubstep)
-        .filter((substep): substep is string => substep !== undefined),
-    );
-  }
-
-  private async countUnresolvedForState(
-    runbookId: RunId,
-    steps: readonly ResolvedStep[],
-    state: RunbookState,
-  ): Promise<number> {
-    const currentStep = findStepOrThrow(steps, state.step);
-    if (!resolvedStepHasSubsteps(currentStep) || !state.substep) return 0;
-    const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
-    const resolved = await this.lifecycleService.listResolvedCompletions(
-      runbookId,
-      activeFrame(activeFrameKey, state.activeEntry ?? 1),
-    );
-    const resolvedSubsteps = new Set(
-      resolved
-        .map(({ completion }) => completion.targetSubstep)
-        .filter((substep): substep is string => substep !== undefined),
-    );
-    return currentStep.substeps.filter((substep) => !resolvedSubsteps.has(substep.id)).length;
-  }
-
-  /**
-   * Narrow a {@link ResolvedCompletion} to the current cursor, rejecting any
-   * row whose target step/substep/frame does not match.
-   *
-   * On a match the returned value is normalised against the live cursor:
-   * `targetSubstep` is set to `state.substep`, and `targetEntry` is rewritten
-   * from {@link SENTINEL_ENTRY} (or any persisted entry) to the live active
-   * entry so downstream consumers always see the resolved entry rather than
-   * the sentinel.
-   *
-   * @param state - Current runbook state.
-   * @param completion - Resolved completion candidate.
-   * @param ensured - Live active entry derived by the caller.
-   * @param ensured.entry - Live active entry number.
-   * @returns A branded {@link CurrentCursorResolvedCompletion} on match, or a
-   *   {@link CompletionTargetMismatch} describing the rejection.
-   */
-  private resolveAgainstCurrentCursor(
-    state: RunbookState,
-    completion: ResolvedCompletion,
-    ensured: { readonly entry: number },
-  ): CurrentCursorResolvedCompletion | CompletionTargetMismatch {
-    if (!state.substep) {
-      return {
-        status: 'failed',
-        reason: 'target_mismatch',
-        message: 'Resolved completion cannot apply because the current cursor has no substep.',
-        completion,
-      };
-    }
-    const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
-    const activeEntry = state.activeEntry ?? ensured.entry;
-    const mismatch =
-      completion.targetStep !== state.step ||
-      completion.targetSubstep !== state.substep ||
-      completion.targetFrameKey !== activeFrameKey ||
-      (completion.targetEntry !== activeEntry && completion.targetEntry !== SENTINEL_ENTRY);
-    if (mismatch) {
-      return {
-        status: 'failed',
-        reason: 'target_mismatch',
-        message: `Resolved completion target does not match current cursor ${state.step}.${state.substep}.`,
-        completion,
-      };
-    }
-    return {
-      ...completion,
-      targetSubstep: state.substep,
-      targetEntry: activeEntry,
-      [currentCursorValidatedBrand]: true,
-    };
-  }
-
-  /**
-   * Record a manual completion for a parent substep.
-   *
-   * Acquires the run {@link CompletionLock} for the duration of the write.
-   * Callers that already hold the run's completion lock MUST use
-   * {@link recordManualCompletionUnlocked} instead — the lock is exclusive and
-   * non-reentrant, so re-acquiring here would deadlock.
-   *
-   * @param args - Manual completion target and result
-   * @param options - Optional write options.
-   * @param options.guard - Parent-advance guard forwarded to the completion write; when present it refuses if the run has a live delegated child.
-   * @returns Whether a completion was recorded or already existed
-   */
-  async recordManualCompletion(
-    args: RecordManualCompletionArgs,
-    options: { readonly guard?: ParentAdvanceGuard } = {},
-  ): Promise<RecordCompletionResult> {
-    const lock = new CompletionLock(this.manager.cwd);
-    await using _guard = await lock.scope(args.runbookId);
-    return await this.recordManualCompletionUnlocked(args, options);
-  }
-
-  /**
-   * Record a manual completion while the caller holds the completion lock.
-   *
-   * Locking contract: this method performs no locking and MUST only be called
-   * by code paths that already hold the run's {@link CompletionLock} (for
-   * example the lifecycle seam's explicit-target span, which derives the
-   * cursor, records, and drains under one lock scope — #500). Callers without
-   * the lock must use {@link recordManualCompletion}.
-   *
-   * @param args - Manual completion target and result
-   * @param options - Optional write options.
-   * @param options.guard - Parent-advance guard forwarded to the completion write; when present it refuses if the run has a live delegated child.
-   * @returns Whether a completion was recorded or already existed
-   */
-  async recordManualCompletionUnlocked(
-    args: RecordManualCompletionArgs,
-    options: { readonly guard?: ParentAdvanceGuard } = {},
-  ): Promise<RecordCompletionResult> {
-    // The one difference from the pure twin, and the reason the shared decision
-    // takes its inputs rather than reading them: this path re-reads the freshest
-    // persisted state, while the fenced twin must classify against the exact
-    // state it captured under its lease.
-    const freshState = await this.manager.load(args.runbookId);
-    const decision = classifyManualCompletionTarget(args, {
-      cursorState: freshState ?? args.currentState,
-      substepStates: freshState?.substepStates ?? args.currentState.substepStates ?? [],
-      existingKey: await this.findExistingCompletion(args.runbookId, {
-        frame: args.targetFrame,
-        substep: args.targetSubstep,
-      }),
-    });
-    if (decision.status === 'duplicate') return { status: 'duplicate', key: decision.key };
-    const { key, completion } = decision;
-
-    // Persist the resolved completion row and its mirrored substep state in a
-    // single locked read-modify-write. Splitting these into two writes (e.g. via
-    // upsertResolvedCompletion + a separate updateWithState) opens a window in
-    // which a concurrent reader observes a resolved row without its matching
-    // `done` substep state, and a concurrent delete between them flips the
-    // missing-parent behavior. updateWithState throws if the parent is gone,
-    // which is the intended fail-closed semantics for recording a completion.
-    await this.manager.updateWithState(
-      args.runbookId,
-      (freshParent) => {
-        return {
-          resolvedCompletions: merge({ [key]: completion }),
-          substepStates: upsertSubstepState(
-            freshParent.substepStates ?? [],
-            args.targetSubstep,
-            args.targetFrame.frameKey,
-            { status: 'done', result: args.result },
-          ),
-        };
-      },
-      guardOptions(options.guard),
-    );
-
-    return { status: 'recorded', key };
+    return resolveAgainstCurrentCursor(state, completion, { entry });
   }
 
   /**
@@ -1149,9 +1218,18 @@ export class RunbookCompletionService {
    * applies the outcome to the delegating run — collection is the only apply
    * path.
    *
-   * Acquires the parent {@link DelegationLock} for the duration of the
-   * recording. Callers that already hold the parent delegation lock must use
-   * {@link recordChildCompletionUnlocked} instead to avoid deadlock.
+   * The whole read-derive-write span — parent load, token-hash fence,
+   * cancellation check, frame selection, duplicate check, write — is one
+   * compare-and-swap cycle against a single captured parent state. That
+   * replaced the retired parent delegation file lock, and it removes the
+   * delegation-then-completion lock ordering edge outright rather than
+   * documenting it: this path used to record through the manual completion
+   * recorder, which took the run's completion file lock while the parent's
+   * delegation lock was still held. It now commits its own patch from
+   * {@link classifyChildCompletionTarget}, the same decision owner the fenced
+   * {@link prepareChildCompletion} uses, so the two can never disagree — and
+   * the nested acquisition has no site left to occur at. The manual recorder
+   * itself has since been deleted, its callers having moved to the fenced seam.
    *
    * @param args - Child completion input
    * @returns The recording outcome:
@@ -1163,7 +1241,7 @@ export class RunbookCompletionService {
    * - `'blocked'` — the child stopped for command infrastructure reasons that
    *   must remain recoverable instead of becoming delegated fail.
    * - `'not-applicable'` — the child carries no parent linkage (or no terminal
-   *   result), so there is nothing to report.
+   *   result), or the parent run is gone, so there is nothing to report.
    */
   async recordChildCompletion(
     args: RecordChildCompletionArgs,
@@ -1172,147 +1250,43 @@ export class RunbookCompletionService {
     if (!linkage) return 'not-applicable';
     assertCompleteParentLinkage(args.childState);
 
-    const lock = new DelegationLock(this.manager.cwd);
-    await using _guard = await lock.scope(linkage.parentRunId);
-    return await this.recordChildCompletionUnlocked(args);
-  }
-
-  /**
-   * Record a completed child run against its parent linkage, assuming the
-   * caller already holds the parent {@link DelegationLock}.
-   *
-   * Locking contract: this method performs no locking and MUST only be called
-   * by code paths that already hold the parent delegation lock (for example,
-   * the `abort --force` command which acquires the lock to mutate substep
-   * state before recording the failure). Callers without the lock should use
-   * {@link recordChildCompletion}.
-   *
-   * @param args - Child completion input
-   * @returns Recording outcome
-   */
-  async recordChildCompletionUnlocked(
-    args: RecordChildCompletionArgs,
-  ): Promise<'recorded' | 'duplicate' | 'not-applicable' | 'cancelled' | 'blocked'> {
-    if (!args.childState.parentLinkage) return 'not-applicable';
-    const linkage = assertCompleteParentLinkage(args.childState);
-    const projection = projectDelegationTerminalOutcome(args.childState, args.result);
-    if (projection.kind === 'not_terminal') return 'not-applicable';
-    if (projection.kind === 'command_infrastructure') return 'blocked';
-    const result = projection.result;
-
-    const parentState = await this.manager.load(linkage.parentRunId);
-    if (!parentState) return 'not-applicable';
-    const activeParentFrameKey =
-      parentState.activeFrameKey ?? deriveActiveFrame(parentState).frameKey;
-    const activeParentEntry = parentState.activeEntry ?? 1;
-    const frameKey = linkage.parentFrameKey;
-    const substepState = findSubstepState(
-      parentState.substepStates ?? [],
-      linkage.parentStepId,
-      frameKey,
-    );
-    const currentTokenHash = substepState?.delegation?.tokenHash;
-    if (
-      linkage.kind === 'delegation' &&
-      currentTokenHash !== undefined &&
-      currentTokenHash !== linkage.tokenHash
-    ) {
-      return 'not-applicable';
-    }
-    if (
-      linkage.kind === 'delegation' &&
-      substepState?.delegation?.cancelledAt &&
-      !args.ignoreCancellation
-    ) {
-      return 'cancelled';
-    }
-    const targetFrame =
-      frameKey === activeParentFrameKey && linkage.parentEntry === activeParentEntry
-        ? activeFrame(frameKey, activeParentEntry)
-        : exactFrame(frameKey, linkage.parentEntry);
-    if (isDuplicateChildCompletion(parentState, targetFrame, linkage.parentStepId)) {
-      return 'duplicate';
-    }
-    const recorded = await this.recordManualCompletion({
-      runbookId: linkage.parentRunId,
-      currentState: parentState,
-      targetStep: linkage.parentStep,
-      targetSubstep: linkage.parentStepId,
-      targetFrame,
-      result,
-      agentId: linkage.kind === 'inline' ? 'inline' : 'delegation',
-      finalVars: args.childState.finalVars,
-      completedAt: args.completedAt,
+    const { value } = await this.manager.updateWithStateReturning<
+      ChildCompletionDecision['status']
+    >(linkage.parentRunId, (parentState) => {
+      const decision = classifyChildCompletionTarget(args, parentState);
+      return decision.status === 'recorded'
+        ? { updates: decision.updates, value: decision.status }
+        : { updates: null, value: decision.status };
     });
-    return recorded.status;
-  }
-
-  /**
-   * Consume stale delegated outcome rows for a substep.
-   *
-   * Caller must already hold the parent run's DelegationLock. This method is
-   * intentionally unlocked because retry and force-abort cleanup already
-   * execute inside that lock and a second acquisition would deadlock.
-   *
-   * @param args - Parent run id, frame, and substep whose delegated rows are stale.
-   * @param args.runbookId - Parent run id containing stale delegated outcome rows.
-   * @param args.frameKey - Parent frame key containing the target substep.
-   * @param args.substepId - Parent substep id whose delegated rows are stale.
-   * @returns Number of rows consumed.
-   */
-  async supersedeDelegationOutcomeUnlocked(args: {
-    readonly runbookId: RunId;
-    readonly frameKey: FrameKey;
-    readonly substepId: string;
-  }): Promise<number> {
-    const rows = await this.lifecycleService.listResolvedCompletionsForFrameObservation(
-      args.runbookId,
-      args.frameKey,
-    );
-    let removed = 0;
-    for (const { key, completion } of rows) {
-      if (completion.targetSubstep === args.substepId && completion.agentId === 'delegation') {
-        const consumed = await this.lifecycleService.consumeResolvedCompletion(args.runbookId, key);
-        if (consumed) removed += 1;
-      }
-    }
-    return removed;
+    // A `null` value means the callback never ran because the parent is gone —
+    // there is no run to report against, which is not-applicable, not an error.
+    return value ?? 'not-applicable';
   }
 
   /**
    * Derive a whole resolved-completion drain against one captured state,
    * without persisting anything.
    *
-   * The fenced twin of {@link drainResolvedCompletionsUnlocked}, and the seam
-   * that makes a drain committable in ONE transaction. Three substitutions turn
-   * the persisted loop into a pure one, and each replaces a write or a re-read
-   * with its existing pure counterpart:
+   * The fenced twin of
+   * {@link RunbookCompletionService.applyNextResolvedCompletion}, and the seam
+   * that makes a whole pass committable in ONE transaction. Both derive their
+   * decision from {@link selectNextResolvedCompletionApply}; they differ only in
+   * what they do with it. This one chains each prepared state into the next
+   * selection and persists nothing, so its caller can commit the entire pass
+   * against the version it captured under a lease. The persisted twin commits
+   * each apply on its own compare-and-swap and re-reads for the next one.
+   *
+   * Two substitutions turn the persisted pass into a pure one:
    *
    * - The active-entry projection is gone entirely: the machine is the single
    *   writer of frame entry (#680), so the frame coordinate is read off the
    *   captured state (`activeFrameKey` / `activeEntry`, falling back to
-   *   {@link deriveActiveFrame}) rather than projected and persisted here. That
-   *   also side-steps the unfenced read-modify-write the old `ensureActiveEntry`
-   *   performed: the coordinate is read from — and committed against — the
-   *   captured version.
-   * - Every store read of `resolvedCompletions` becomes the in-state twin, so
-   *   the pass classifies against the exact captured version rather than
-   *   whatever the store holds by the time each iteration runs.
-   * - {@link RunbookActorService.sendAndSync} (one transaction per completion)
-   *   becomes {@link RunbookActorService.prepareActorMutation}, whose
+   *   {@link deriveActiveFrame}) rather than projected and persisted here.
+   * - The commit becomes {@link RunbookActorService.prepareActorMutation}, whose
    *   `nextState` already folds in the consumed-completion patch and feeds the
    *   next iteration.
    *
-   * WHY NOT MAKE THE PERSISTED DRAIN ATOMIC IN PLACE. That drain is shared with
-   * the CLI execution loop and the delegation-completion adapters, and its
-   * per-completion commit is a deliberate decision (see the guard comment in
-   * {@link drainResolvedCompletionsUnlocked}): only the FIRST apply carries the
-   * parent-advance guard, because re-arming it on a follow-on apply would let an
-   * unrelated child claiming mid-drain abort a pass whose earlier applies had
-   * already committed, stranding them behind a bare refusal. That trade-off is a
-   * consequence of partial commits, and it does not transfer here: this seam
-   * commits once, so a refusal leaves NOTHING committed and there is no stranded
-   * prefix to protect. It accepts no guard for the same reason — its sole caller,
+   * It accepts no parent-advance guard: its sole caller,
    * `collectDelegationOutcomes`, passes none, and an aggregate guard belongs on
    * the commit rather than on an individual derivation.
    *
@@ -1333,63 +1307,30 @@ export class RunbookCompletionService {
     let state = args.capturedState;
     const applied: AppliedResolvedCompletion[] = [];
     for (;;) {
-      const currentStep = findStepOrThrow(args.steps, state.step);
-      if (!resolvedStepHasSubsteps(currentStep) || !state.substep) {
-        return { status: 'continue', state, unresolved: 0, applied };
-      }
-      const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
-      const requestedFrame = args.frameOverride;
-      if (requestedFrame && requestedFrame.frameKey !== activeFrameKey) {
-        // Same two cases the persisted drain distinguishes: an INITIAL mismatch
-        // is observation-only and reports `not_active`; a mismatch AFTER work
-        // means an apply advanced the cursor out of the override frame, and the
+      const selection = selectNextResolvedCompletionApply(state, args.steps, args.frameOverride);
+      if (selection.kind === 'not_active') {
+        // The persisted path has no equivalent of this branch, because it never
+        // carries a pass across calls. Here an INITIAL divergence is
+        // observation-only and reports `not_active`, while a divergence AFTER
+        // work means an apply advanced the cursor out of the override frame — the
         // derived entries must be kept so the caller can still observe them.
         if (applied.length > 0) {
           return { status: 'continue', state, unresolved: 0, applied };
         }
-        const overrideResolvedSubsteps = observedSubstepsForFrameInState(
-          state,
-          requestedFrame.frameKey,
-        );
-        const unresolved = currentStep.substeps.filter(
-          (substep) => !overrideResolvedSubsteps.has(substep.id),
-        ).length;
         return {
           status: 'not_active',
           state,
-          frameKey: requestedFrame.frameKey,
-          activeFrameKey,
-          unresolved,
+          frameKey: selection.frameKey,
+          activeFrameKey: selection.activeFrameKey,
+          unresolved: selection.unresolved,
           applied: [],
         };
       }
-
-      const entry = state.activeEntry ?? 1;
-      const activeTargetFrame = activeFrame(activeFrameKey, entry);
-      const resolved = listResolvedCompletionsInState(state, activeTargetFrame);
-      const resolvedBySubstep = new Map(
-        resolved
-          .filter(({ completion }) => completion.targetSubstep !== undefined)
-          .map(({ completion }) => [completion.targetSubstep, completion]),
-      );
-      const unresolved = currentStep.substeps.filter(
-        (substep) => !resolvedBySubstep.has(substep.id),
-      ).length;
-      const currentKey = buildCompletionKey(activeTargetFrame, state.substep);
-      const current =
-        resolved.find(({ key }) => key === currentKey) ??
-        resolved.find(
-          ({ key, completion }) =>
-            key === buildCompletionKey(inactiveFrame(activeFrameKey), state.substep) ||
-            completion.targetSubstep === state.substep,
-        );
-      if (!current) {
-        return { status: 'continue', state, unresolved, applied };
+      if (selection.kind === 'none') {
+        return { status: 'continue', state, unresolved: selection.unresolved, applied };
       }
-
-      const validated = this.resolveAgainstCurrentCursor(state, current.completion, { entry });
-      if (!(currentCursorValidatedBrand in validated)) {
-        return { ...validated, state, unresolved, applied };
+      if (selection.kind === 'mismatch') {
+        return { ...selection.mismatch, state, unresolved: selection.unresolved, applied };
       }
 
       const mutation = await this.actorService.prepareActorMutation(
@@ -1398,8 +1339,8 @@ export class RunbookCompletionService {
         args.steps,
         {
           type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
-          completionKey: current.key,
-          completion: validated,
+          completionKey: selection.key,
+          completion: selection.completion,
         },
         args.issueDelegationCredential === undefined
           ? undefined
@@ -1412,14 +1353,14 @@ export class RunbookCompletionService {
       // and growing `applied` without bound.
       const progress = classifyChainedDrainProgress(
         args.runbookId,
-        current.key,
+        selection.key,
         state,
         mutation.nextState,
       );
       if (progress.kind === 'stalled') throw Errors.delegationInvariantViolated(progress.reason);
       applied.push({
-        key: current.key,
-        completion: validated,
+        key: selection.key,
+        completion: selection.completion,
         stateBefore: state,
         stateAfter: mutation.nextState,
         snapshot: mutation.snapshot,
@@ -1431,168 +1372,156 @@ export class RunbookCompletionService {
   }
 
   /**
-   * Drain active-frame resolved completions into the runbook state machine.
+   * Apply the next resolved completion for the active frame, atomically.
    *
-   * Acquires the run {@link CompletionLock} for the duration of the drain
-   * pass. Callers that already hold the run's completion lock MUST use
-   * {@link drainResolvedCompletionsUnlocked} instead to avoid deadlock.
+   * ONE apply per call, and the unit this module is built around. Selection,
+   * cursor validation, the actor transition, and the commit all happen inside a
+   * single {@link RunbookStateManager.mutateStateReturning} cycle, so the row it
+   * applies is chosen against the exact version the write commits onto. An
+   * attempt that loses the compare-and-swap re-derives from the committed state
+   * rather than replaying a decision made against a version that has moved.
    *
-   * @param args - Drain target and current state
-   * @returns Drain outcome
-   * @throws {RundownError} RD-821 if an apply commits without consuming the row
-   *   it was handed or moving the cursor (see
-   *   {@link drainResolvedCompletionsUnlocked}).
+   * That fold is what retired the run's completion file lock here. The lock's job
+   * was to keep another writer out of the gap between the selection and the write
+   * that depended on it; running the selection inside the cycle closes the gap by
+   * construction instead of by exclusion. What the lock never prevented, and this
+   * does, is the stale derivation itself: the compare-and-swap always stopped a
+   * lost update, but the old drain selected against a caller-supplied state and
+   * let `sendAndSync` re-load a different one, so an apply could consume the row
+   * for the substep the caller captured while landing its PASS on the substep the
+   * machine had since advanced to.
+   *
+   * `currentState` is deliberately absent from the arguments. A caller-supplied
+   * state is stale by construction at this seam, and accepting one could only
+   * reintroduce the disagreement this method exists to remove.
+   *
+   * **Callers own the loop.** Draining a frame to exhaustion means calling this
+   * until it stops reporting `applied` — the CLI's job, because it must observe
+   * and emit each transition before the next apply (a Category A concern).
+   * Nothing here batches, and there is no `maxApplied`.
+   *
+   * @remarks
+   * The build callback re-runs per attempt, as {@link RunbookStore.mutateState}
+   * requires. It reaches {@link RunbookActorService.prepareActorMutation}, whose
+   * machine-invoked actors are effect-free for this event with ONE exception:
+   * entering a step that declares producer ARTIFACTS resolves them, creating a
+   * parent directory and appending a manifest row. Both are idempotent by
+   * identity — `appendArtifactManifestRecord` collapses an equivalent row rather
+   * than duplicating it — and the machine already re-runs that resolution on
+   * RETRY re-entry, so a repeated attempt adds nothing a legitimate retry would
+   * not. Command execution and output capture are NOT reachable: those states are
+   * entered only by `EXECUTE_COMMAND` and `COMMAND_RESULT`, and an apply raises
+   * neither.
+   *
+   * @param args - Run, steps, and the optional frame the caller is scoped to.
+   * @returns The apply outcome. `applied` carries the entry, the unresolved
+   *   count, and a `terminal` status when the transition ended the run; `none`,
+   *   `not_active` and `mismatch` each report why nothing was applied; `missing`
+   *   means the run is gone.
+   * @throws {Error} If the step named by the cursor is missing from `steps`, or
+   *   if {@link RunbookActorService.prepareActorMutation} rejects the derived
+   *   snapshot (invalid state, actor error state).
+   * @throws {ConcurrentStateModificationError} When sustained contention spends
+   *   the store's optimistic retry budget.
+   * @throws {RundownError} RD-821 if the applied transition neither consumes the
+   *   row it was handed nor moves the cursor. A caller looping on this method
+   *   would otherwise re-select the same row from the same position forever, so
+   *   the apply is refused before it commits rather than looped.
    */
-  async drainResolvedCompletions(
-    args: DrainResolvedCompletionsArgs,
-  ): Promise<DrainResolvedCompletionsResult> {
-    const lock = new CompletionLock(this.manager.cwd);
-    await using _guard = await lock.scope(args.runbookId);
-    return await this.drainResolvedCompletionsUnlocked(args);
-  }
-
-  /**
-   * Drain active-frame resolved completions while the caller holds the
-   * completion lock.
-   *
-   * Locking contract: this method performs no locking and MUST only be called
-   * by code paths that already hold the run's {@link CompletionLock} (the
-   * missing twin of {@link recordManualCompletionUnlocked} — #500). Callers
-   * without the lock must use {@link drainResolvedCompletions}.
-   *
-   * @param args - Drain target and current state
-   * @returns Drain outcome
-   * @throws {RundownError} RD-821 if an apply commits without consuming the row
-   *   it was handed or moving the cursor (see
-   *   {@link classifyDrainApplyProgress}). Unlike the prepared twin this pass
-   *   may already have committed applies, so the refusal reports a bug rather
-   *   than protecting an all-or-nothing commit — but a spin here would hang the
-   *   CLI outright.
-   */
-  async drainResolvedCompletionsUnlocked(
-    args: DrainResolvedCompletionsArgs,
-  ): Promise<DrainResolvedCompletionsResult> {
-    let state = args.currentState;
-    const applied: AppliedResolvedCompletion[] = [];
-    for (;;) {
-      const currentStep = findStepOrThrow(args.steps, state.step);
-      if (!resolvedStepHasSubsteps(currentStep) || !state.substep) {
-        return { status: 'continue', state, unresolved: 0, applied };
-      }
-      const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
-      const requestedFrame = args.frameOverride;
-      if (requestedFrame && requestedFrame.frameKey !== activeFrameKey) {
-        // The cursor has moved off the override frame. Two cases:
-        //
-        // 1. Initial mismatch (`applied.length === 0`): the override targets a
-        //    frame other than the current cursor — drain is observation-only.
-        //    Return `not_active` so the caller knows nothing was applied.
-        //
-        // 2. Subsequent mismatch (`applied.length > 0`): we already drained
-        //    the override frame, and the apply itself advanced the cursor to
-        //    a new frame (e.g., a FOR loop-back into the next iteration). We
-        //    must NOT discard the applied entries — the CLI still needs to
-        //    observe them so STEP_TRANSITIONED is emitted. Stop draining here
-        //    and return `continue` with what we have; the next iteration's
-        //    frame belongs to a different delegation/claim flow.
-        if (applied.length > 0) {
-          return { status: 'continue', state, unresolved: 0, applied };
-        }
-        const overrideResolvedSubsteps = await this.observedSubstepsForFrame(
-          args.runbookId,
-          requestedFrame.frameKey,
-        );
-        const unresolved = currentStep.substeps.filter(
-          (substep) => !overrideResolvedSubsteps.has(substep.id),
-        ).length;
-        return {
-          status: 'not_active',
-          frameKey: requestedFrame.frameKey,
-          activeFrameKey,
-          unresolved,
-          applied: [],
-        };
-      }
-
-      const entry = state.activeEntry ?? 1;
-      const activeTargetFrame = activeFrame(activeFrameKey, entry);
-      const resolved = await this.lifecycleService.listResolvedCompletions(
-        args.runbookId,
-        activeTargetFrame,
-      );
-      const resolvedBySubstep = new Map(
-        resolved
-          .filter(({ completion }) => completion.targetSubstep !== undefined)
-          .map(({ completion }) => [completion.targetSubstep, completion]),
-      );
-      const unresolved = currentStep.substeps.filter(
-        (substep) => !resolvedBySubstep.has(substep.id),
-      ).length;
-      const currentKey = buildCompletionKey(activeTargetFrame, state.substep);
-      const current =
-        resolved.find(({ key }) => key === currentKey) ??
-        resolved.find(
-          ({ key, completion }) =>
-            key === buildCompletionKey(inactiveFrame(activeFrameKey), state.substep) ||
-            completion.targetSubstep === state.substep,
-        );
-      if (!current) {
-        return { status: 'continue', state, unresolved, applied };
-      }
-
-      const validated = this.resolveAgainstCurrentCursor(state, current.completion, { entry });
-      if (!(currentCursorValidatedBrand in validated)) return { ...validated, unresolved, applied };
-
-      const result = await this.actorService.sendAndSync(
-        args.runbookId,
-        args.steps,
-        {
-          type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
-          completionKey: current.key,
-          completion: validated,
-        },
-        // Only the DECISIVE write carries the guard, and that is the first apply:
-        // it is the one that advances the parent past the point where a live
-        // delegated child matters. Every apply here is its own transaction, so
-        // re-arming the guard on a follow-on apply would let an unrelated child
-        // claiming mid-drain abort it and strand the already-committed first apply
-        // behind a bare refusal. This mirrors the recorded path, where the drain
-        // that follows a committed decisive write runs unguarded for the same
-        // reason (see LifecycleCommandService#driveSubstep).
-        {
-          ...guardOptions(applied.length === 0 ? args.guard : undefined),
-          ...(args.issueDelegationCredential === undefined
-            ? {}
-            : { runtime: { issueDelegationCredential: args.issueDelegationCredential } }),
-        },
-      );
-      if (!result) {
-        return { status: 'continue', state, unresolved, applied };
-      }
-      // Same missing post-condition as the prepared twin, checked against what
-      // the write actually committed. Only the shared half applies: this loop
-      // re-selects from the STORE, so a concurrent writer may legitimately add a
-      // row mid-drain and a no-growth assertion would refuse honest work.
-      const progress = classifyDrainApplyProgress(args.runbookId, current.key, state, result.state);
-      if (progress.kind === 'stalled') throw Errors.delegationInvariantViolated(progress.reason);
-      applied.push({
-        key: current.key,
-        completion: validated,
-        stateBefore: state,
-        stateAfter: result.state,
-        snapshot: result.snapshot,
-      });
-      const terminal = terminalStatus(result);
-      if (terminal) return { status: terminal, unresolved: 0, applied };
-      if (args.maxApplied !== undefined && applied.length >= args.maxApplied) {
-        const remaining = await this.countUnresolvedForState(
-          args.runbookId,
+  async applyNextResolvedCompletion(
+    args: ApplyNextResolvedCompletionArgs,
+  ): Promise<ApplyNextResolvedCompletionResult> {
+    const { value } = await this.manager.mutateStateReturning<ApplyNextResolvedCompletionResult>(
+      args.runbookId,
+      async (current) => {
+        const selection = selectNextResolvedCompletionApply(
+          current,
           args.steps,
-          result.state,
+          args.frameOverride,
         );
-        return { status: 'continue', state: result.state, unresolved: remaining, applied };
-      }
-      state = result.state;
-    }
+        switch (selection.kind) {
+          case 'none':
+            return {
+              next: null,
+              value: { kind: 'none', state: current, unresolved: selection.unresolved },
+            };
+          case 'not_active':
+            return {
+              next: null,
+              value: {
+                kind: 'not_active',
+                state: current,
+                frameKey: selection.frameKey,
+                activeFrameKey: selection.activeFrameKey,
+                unresolved: selection.unresolved,
+              },
+            };
+          case 'mismatch':
+            return {
+              next: null,
+              value: {
+                kind: 'mismatch',
+                state: current,
+                mismatch: selection.mismatch,
+                unresolved: selection.unresolved,
+              },
+            };
+          case 'apply': {
+            const mutation = await this.actorService.prepareActorMutation(
+              args.runbookId,
+              current,
+              args.steps,
+              {
+                type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
+                completionKey: selection.key,
+                completion: selection.completion,
+              },
+              args.issueDelegationCredential === undefined
+                ? undefined
+                : { issueDelegationCredential: args.issueDelegationCredential },
+            );
+            // The post-condition a looping caller depends on. Nothing above
+            // observes that the apply changed what the NEXT selection picks — in
+            // production that comes from `prepareActorMutation`'s
+            // consumed-completion patch, in another module — so assert it here,
+            // before the commit, where refusing costs the caller nothing.
+            const progress = classifyDrainApplyProgress(
+              args.runbookId,
+              selection.key,
+              current,
+              mutation.nextState,
+            );
+            if (progress.kind === 'stalled') {
+              throw Errors.delegationInvariantViolated(progress.reason);
+            }
+            const terminal = terminalLifecycleStatus(mutation.nextState);
+            return {
+              // `mutateStateReturning` commits this verbatim, so the state the
+              // entry reports is the state that was written.
+              next: mutation.nextState,
+              value: {
+                kind: 'applied',
+                // A terminal transition leaves nothing outstanding, whatever the
+                // selection counted before it ran.
+                unresolved: terminal === undefined ? selection.unresolved : 0,
+                entry: {
+                  key: selection.key,
+                  completion: selection.completion,
+                  stateBefore: current,
+                  stateAfter: mutation.nextState,
+                  snapshot: mutation.snapshot,
+                },
+                ...(terminal === undefined ? {} : { terminal }),
+              },
+            };
+          }
+        }
+      },
+    );
+
+    // `value` is null exactly when the callback never ran, which happens only for
+    // a missing run. A looping caller stops on it rather than throwing: a run
+    // that is gone has nothing left to apply.
+    return value ?? { kind: 'missing' };
   }
 }

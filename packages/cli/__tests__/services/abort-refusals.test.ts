@@ -118,9 +118,12 @@ describe('abort command transactional refusals', () => {
     // `needs_force`, which reports RD-811 "delegation already claimed" built
     // from fields the error outcome does not have — a confident, actionable,
     // and entirely wrong remediation for a failure with no claim involved.
+    // Any error works here — the arm is code-agnostic, it rethrows whatever it
+    // is handed. RD-821 is picked only because no refusal arm above emits it,
+    // so the assertion below cannot pass by coincidence.
     abortDelegation.mockResolvedValue({
       kind: 'error',
-      error: Errors.delegationLockTimeout(`rd_${'9'.repeat(32)}`),
+      error: Errors.delegationInvariantViolated('store write rejected'),
     });
     const program = new Command().exitOverride();
     registerAbortCommand(program);
@@ -132,7 +135,7 @@ describe('abort command transactional refusals', () => {
     );
 
     const envelope = JSON.parse(writer.getStdout()) as Record<string, unknown>;
-    expect(envelope).toMatchObject({ kind: 'error', code: 'RD-810' });
+    expect(envelope).toMatchObject({ kind: 'error', code: 'RD-821' });
     // The bearer the caller presented must not round-trip into the envelope.
     expect(writer.getStdout()).not.toContain(TOKEN);
   });

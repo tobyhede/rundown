@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { RunbookStateManager } from '@rundown-org/core';
 import {
   createTestWorkspace,
   createRunbook,
@@ -775,6 +776,76 @@ Check manually.
       result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('already resolved');
+    });
+
+    it('refuses when the target substep is resolved DURING the launch, and leaves no child', async () => {
+      // The "already resolved" refusals above are all decided by the pre-read in
+      // `buildInlineLinkage`, which runs before the runbook is prepared and the
+      // child run is created. This pins the window AFTER that read: a concurrent
+      // `pass` on the same substep lands while the launch is in flight, and the
+      // `afterInit` write that marks the substep `running` must not put a
+      // `running` row back over the committed `done` one.
+      //
+      // The row is the evidence, not a display field. Once a resolved completion
+      // has been drained, `substepStates[].status === 'done'` is the only
+      // persistent record of it (`isDuplicateChildCompletion` falls back to
+      // exactly that), so reverting it to `running` lets the same substep be
+      // resolved a second time.
+      await writeParentRunbook();
+      await writePassingChild();
+
+      let result = await runCliInProcess('run --prompted parent.runbook.md --text', workspace);
+      expect(result.exitCode).toBe(0);
+
+      const parentState = await getActiveState(workspace);
+      expect(parentState).not.toBeNull();
+      const parentRunId = parentState!.id;
+
+      // Inject a REAL concurrent writer inside the launch window. `manager.create`
+      // runs after the pre-read guard and before `afterInit`, so passing the
+      // substep here reproduces the interleaving without stubbing the write under
+      // test. `pass` goes through the state machine — the writer class the retired
+      // delegation lock never excluded.
+      /* eslint-disable-next-line @typescript-eslint/unbound-method -- captured to re-apply with the spy's `this` */
+      const originalCreate = RunbookStateManager.prototype.create;
+      let injected = false;
+      const createSpy = jest
+        .spyOn(RunbookStateManager.prototype, 'create')
+        .mockImplementation(async function (
+          this: RunbookStateManager,
+          ...args: Parameters<RunbookStateManager['create']>
+        ) {
+          const state = await originalCreate.apply(this, args);
+          if (!injected) {
+            injected = true;
+            const passed = await runCliInProcess('pass --step 1.1 --text', workspace);
+            expect(passed.exitCode).toBe(0);
+          }
+          return state;
+        });
+
+      try {
+        result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
+      } finally {
+        createSpy.mockRestore();
+      }
+
+      // The launch must refuse, naming the permanent condition rather than a
+      // generic launch failure.
+      expect(result.exitCode).toBe(1);
+      const refusal = result.stdout + result.stderr;
+      expect(refusal).toContain('already resolved');
+      expect(refusal).toContain('DELEGATION_ALREADY_RESOLVED');
+
+      // The concurrent writer's row survives intact.
+      const after = await readPersistedRunState(workspace.cwd, parentRunId);
+      const substeps = (after!.substepStates ?? []) as Array<Record<string, unknown>>;
+      const target = substeps.find((ss) => ss.id === '1');
+      expect(target).toMatchObject({ status: 'done', result: 'pass' });
+
+      // And the refused launch leaves no orphan child behind.
+      const runIds = await listPersistedRunIds(workspace.cwd);
+      expect(runIds).toEqual([parentRunId]);
     });
   });
 

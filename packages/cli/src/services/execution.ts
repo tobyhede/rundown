@@ -44,9 +44,6 @@ import {
   readPersistedReEntryFrontier,
   type ReEntryProjection,
   CLIErrorCodes,
-  DelegationLock,
-  DelegationLockTimeoutError,
-  type ScopedLock,
   reconstituteContextVars,
   extractInheritedUserVars,
   ErrorCodes,
@@ -665,21 +662,132 @@ async function consumeInlineLaunchIntent(args: {
   assertActorSyncSucceeded(consumed, 'Failed to consume inline launch after child start');
 }
 
-async function recordInlineChildStarted(args: {
+/**
+ * Outcome of the atomic inline-launch latch.
+ *
+ * Every arm is decided against the exact version the compare-and-swap commits
+ * onto, so a loser re-derives against the committed row instead of replaying a
+ * decision made against a version that has moved.
+ */
+type InlineLaunchLatch =
+  /** The parent run has ended; nothing may be launched under it. */
+  | { readonly kind: 'inactive' }
+  /** The persisted intent is gone or names a different launch. */
+  | { readonly kind: 'superseded' }
+  /** A run already exists under the intent's child id, but is not this launch's. */
+  | {
+      readonly kind: 'linkage-refused';
+      readonly mismatch: Exclude<InlineChildLinkageMatch, { kind: 'matched' }>;
+    }
+  /** Another observer already latched this exact launch. */
+  | { readonly kind: 'already-latched'; readonly existingChild: RunbookState | null }
+  /** This observer latched the launch and owns it. */
+  | { readonly kind: 'won'; readonly existingChild: RunbookState | null };
+
+/**
+ * Latch one inline launch, atomically, before any of it is performed.
+ *
+ * `inline.startedAt` is the durable "I am launching this child" record, and this
+ * is the single cycle that writes it. Reading the intent, testing the latch and
+ * committing `INLINE_CHILD_STARTED` all happen inside one
+ * {@link RunbookStateManager.mutateStateReturning} build callback, so the state
+ * the decision is derived from is the state the write commits onto. That is what
+ * makes the launch exactly-once: two observers of one intent cannot both reach
+ * `manager.create` for the intent's fixed `childRunId` and race the store's bare
+ * `INSERT INTO runs`.
+ *
+ * Every refusal is decided here too, ahead of the latch write, so a refused
+ * launch never records a start it did not perform. That is not tidiness: the
+ * machine's own `inlineLaunchIntentActor` carries `startedAt` forward into the
+ * next intent it prepares for the same substep, so a spurious latch would make
+ * every later re-entry of that frame report an already-started launch.
+ *
+ * The launch span itself stays OUTSIDE this callback. It resolves a runbook ref,
+ * reads files, imports modules and writes warnings — external effects, which a
+ * callback that re-runs once per compare-and-swap attempt must not perform.
+ *
+ * @remarks
+ * The callback re-runs per attempt (up to 8), so it must be safe to repeat. Its
+ * own work is two reads and a derivation. It reaches
+ * {@link RunbookActorService.prepareActorMutation}, and for this event nothing
+ * effectful is reachable: `INLINE_CHILD_STARTED` is a root-level handler with no
+ * `target`, so the transition is internal — no state is exited or entered, no
+ * `invoke` is started, and entry-time producer ARTIFACTS resolution (the drain's
+ * one effectful exception) cannot fire. Its single action,
+ * `storeInlineChildStarted`, is a pure `assign` over `substepStates`. The actor
+ * hydration that precedes the send restarts nothing either: a persisted parent
+ * sitting on a substep is asserted to be in the leaf's `idle` substate, which
+ * declares no `invoke`. Reading the child inside the callback is safe for the
+ * same reason it is correct: {@link RunbookStore.mutateState} holds no
+ * transaction open across the build, so this is an ordinary read.
+ *
+ * @param args - Everything the latch decides against.
+ * @param args.manager - State manager owning the parent's compare-and-swap cycle.
+ * @param args.actorService - Actor service used to derive the `INLINE_CHILD_STARTED` transition.
+ * @param args.parentRunId - Run whose state carries the intent and the latch.
+ * @param args.steps - Parsed steps the parent machine is compiled from.
+ * @param args.intent - Inline launch intent observed on step entry.
+ * @param args.childRunId - Fixed child run id the intent names.
+ * @param args.parentLinkage - Linkage the intent describes, for classifying an existing child.
+ * @returns The latch outcome, or `null` when the parent run does not exist.
+ * @throws {Error} If {@link RunbookActorService.prepareActorMutation} rejects the
+ *   derived snapshot (invalid state, actor error state).
+ * @throws {ConcurrentStateModificationError} When sustained contention on the
+ *   parent spends the store's optimistic retry budget. Transient: the CLI
+ *   wrapper reports it as RD-308 and the gesture is safe to repeat, because a
+ *   spent budget wrote nothing and left the intent unlatched.
+ */
+async function latchInlineLaunch(args: {
+  readonly manager: RunbookStateManager;
   readonly actorService: RunbookActorService;
   readonly parentRunId: RunId;
   readonly steps: readonly ResolvedStep[];
   readonly intent: InlineLaunchIntent;
   readonly childRunId: RunId;
-}): Promise<void> {
-  const started = await args.actorService.sendAndSync(args.parentRunId, args.steps, {
-    type: 'INLINE_CHILD_STARTED',
-    parentStepId: args.intent.parentStepId,
-    parentFrameKey: args.intent.parentFrameKey as FrameKey,
-    childRunId: args.childRunId,
-    startedAt: new Date().toISOString(),
-  });
-  assertActorSyncSucceeded(started, 'Failed to mark inline child as started');
+  readonly parentLinkage: InlineLinkage;
+}): Promise<InlineLaunchLatch | null> {
+  const { value } = await args.manager.mutateStateReturning<InlineLaunchLatch>(
+    args.parentRunId,
+    async (current) => {
+      if (current.lifecycle === 'completed' || current.lifecycle === 'stopped') {
+        return { next: null, value: { kind: 'inactive' } };
+      }
+      if (!persistedInlineLaunchIntentMatches(current, args.intent)) {
+        return { next: null, value: { kind: 'superseded' } };
+      }
+      const existingChild = await args.manager.load(args.childRunId);
+      if (existingChild) {
+        const linkageMatch = classifyInlineChildLinkage(
+          existingChild.parentLinkage,
+          args.parentLinkage,
+        );
+        if (linkageMatch.kind !== 'matched') {
+          return { next: null, value: { kind: 'linkage-refused', mismatch: linkageMatch } };
+        }
+      }
+      if (!parentInlineStartedAtMissing(current, args.intent)) {
+        return { next: null, value: { kind: 'already-latched', existingChild } };
+      }
+      const mutation = await args.actorService.prepareActorMutation(
+        args.parentRunId,
+        current,
+        args.steps,
+        {
+          type: 'INLINE_CHILD_STARTED',
+          parentStepId: args.intent.parentStepId,
+          parentFrameKey: args.intent.parentFrameKey as FrameKey,
+          childRunId: args.childRunId,
+          startedAt: new Date().toISOString(),
+        },
+      );
+      // Committed verbatim, so the latch this observer reads back is the latch
+      // that was written.
+      return { next: mutation.nextState, value: { kind: 'won', existingChild } };
+    },
+  );
+  // `value` is null exactly when the callback never ran, which happens only for
+  // a missing run.
+  return value;
 }
 
 function assertActorSyncSucceeded(
@@ -717,300 +825,273 @@ async function launchInlineChildFromIntent({
     parentEntry: intent.parentEntry,
   };
   const childRunId = assertRunId(intent.childRunId);
-  const lock = new DelegationLock(cwd);
-  // This site deliberately releases the lock *before* the child execution loop
-  // and from several branches, so a block-scoped `await using` is the wrong
-  // shape. Instead route the existing idempotent release closure through the
-  // best-effort `ScopedLock` guard: release runs at most once and never throws,
-  // so a failed unlink can never mask the committed result at the safety-net
-  // `finally` below (the RD-102 masking defect).
-  let guard: ScopedLock | undefined;
-  const releaseLock = async (): Promise<void> => {
-    await guard?.release();
-  };
 
-  try {
-    await lock.acquire(parentLinkage.parentRunId);
-    guard = lock.held(parentLinkage.parentRunId);
-  } catch (err) {
-    if (err instanceof DelegationLockTimeoutError) {
-      emitter.emit({
-        type: 'ERROR_OCCURRED',
-        payload: {
-          message: `Could not acquire delegation lock for inline parent ${parentLinkage.parentRunId}`,
-          code: ErrorCodes.DELEGATION_LOCK_TIMEOUT.code,
-        },
-      });
-      return 'stopped';
-    }
-    throw err;
+  // Latch the launch before performing any of it. This replaced the retired
+  // delegation file lock this site held across the read-derive-write span:
+  // the lock's job was to keep a second observer out of the gap between the
+  // decision and the write it depended on, and deriving the decision inside the
+  // compare-and-swap closes that gap by construction instead of by exclusion.
+  const latch = await latchInlineLaunch({
+    manager,
+    actorService,
+    parentRunId: parentLinkage.parentRunId,
+    steps,
+    intent,
+    childRunId,
+    parentLinkage,
+  });
+  if (latch === null || latch.kind === 'inactive') {
+    emitter.emit({
+      type: 'ERROR_OCCURRED',
+      payload: {
+        message: `Inline parent run ${parentLinkage.parentRunId} is not active`,
+        code: ErrorCodes.LAUNCH_FAILED.code,
+      },
+    });
+    return 'stopped';
+  }
+  if (latch.kind === 'superseded') {
+    return 'waiting';
+  }
+  if (latch.kind === 'linkage-refused') {
+    emitter.emit({
+      type: 'ERROR_OCCURRED',
+      payload: describeInlineChildLinkageRefusal(childRunId, parentLinkage, latch.mismatch),
+    });
+    return 'stopped';
   }
 
-  try {
-    const parent = await manager.load(parentLinkage.parentRunId);
-    if (!parent || parent.lifecycle === 'completed' || parent.lifecycle === 'stopped') {
+  const existingChild = latch.existingChild;
+  if (existingChild) {
+    // Reached from both surviving arms. `won` is the interrupted launch that got
+    // as far as creating the child but never recorded its start; `already-latched`
+    // is the fully-recorded launch whose process died before the child ran. Both
+    // finish here, and the latch has already written the `startedAt` the first of
+    // them was missing.
+    const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
+    const active = await sessionService.getActive();
+    let pushedExistingInlineChild = false;
+    if (active?.id !== childRunId) {
+      await sessionService.pushRunbook(childRunId);
+      pushedExistingInlineChild = true;
+    }
+
+    try {
+      await consumeInlineLaunchIntent({
+        actorService,
+        parentRunId: parentLinkage.parentRunId,
+        steps,
+      });
+    } catch (error) {
       emitter.emit({
         type: 'ERROR_OCCURRED',
         payload: {
-          message: `Inline parent run ${parentLinkage.parentRunId} is not active`,
+          message: `Inline child launch failed: ${getErrorMessage(error)}`,
           code: ErrorCodes.LAUNCH_FAILED.code,
         },
       });
+      if (pushedExistingInlineChild) {
+        try {
+          const activeAfterFailure = await sessionService.getActive();
+          if (activeAfterFailure?.id === childRunId) {
+            const pop = await sessionService.popRunbook();
+            // Best-effort cleanup behind a consume failure that is already the
+            // user-facing error; narrowed exhaustively rather than discarded.
+            switch (pop.kind) {
+              case 'committed':
+              case 'execution_in_progress':
+              case 'recovery_required':
+                break;
+              default: {
+                const _exhaustive: never = pop;
+                return _exhaustive;
+              }
+            }
+          }
+        } catch {
+          // Keep the consume failure as the user-facing launch error.
+        }
+      }
       return 'stopped';
     }
-    if (!persistedInlineLaunchIntentMatches(parent, intent)) {
-      return 'waiting';
+    // A resumed child's own bearer died with the process that launched it, so
+    // this continuation holds no authority for it. The composing parent's
+    // runtime is NOT a substitute — it belongs to another run, and
+    // `delegationRuntimeFor` refuses it by design — so core re-establishes the
+    // CHILD's own run-control authority. Core refuses that when the child
+    // already issued a credential the replacement could not reproduce; the
+    // continuation then runs unarmed and the machine's own
+    // `actor_context_required` refusal stands, exactly as it does today.
+    const childEmitter = createBridgedEmitter(existingChild, output);
+    const adoption = await sessionService.adoptRunControlClaim(existingChild);
+    if (adoption.kind === 'adopted') {
+      // Delivered through the single sanctioned credential channel — the
+      // `runbook_started.claim_id` field — so the orchestrator can still
+      // address the child it is about to watch run. The prior bearer is
+      // superseded by the adoption, so re-announcing is not optional. Lazily
+      // imported for the same reason the fresh branch below is: the launch
+      // pipeline is heavy and must not enter this module's static graph.
+      const { emitRunbookStarted } = await import('../helpers/runbook-pipeline.js');
+      emitRunbookStarted(
+        childEmitter,
+        existingChild,
+        !!existingChild.prompted,
+        adoption.runtime.claimId,
+      );
     }
+    const loopResult = await runExecutionLoop(
+      manager,
+      childRunId,
+      [...getRunbookFromState(existingChild, cwd)],
+      cwd,
+      !!existingChild.prompted,
+      childEmitter,
+      {
+        output,
+        commandStreamOptions,
+        ...(adoption.kind === 'adopted'
+          ? {
+              delegationRuntime: adoption.runtime.delegationRuntime,
+            }
+          : {}),
+      },
+    );
+    return await propagateInlineChildTerminalResult({
+      manager,
+      childRunId,
+      loopResult,
+      cwd,
+      output,
+      commandStreamOptions,
+      parentDelegationRuntime,
+    });
+  }
 
-    const existingChild = await manager.load(childRunId);
-    if (existingChild) {
-      const linkageMatch = classifyInlineChildLinkage(existingChild.parentLinkage, parentLinkage);
-      if (linkageMatch.kind !== 'matched') {
-        emitter.emit({
-          type: 'ERROR_OCCURRED',
-          payload: describeInlineChildLinkageRefusal(childRunId, parentLinkage, linkageMatch),
-        });
-        return 'stopped';
-      }
+  if (latch.kind === 'already-latched') {
+    // The latch is taken and the child does not exist yet, so another observer
+    // is inside the launch span right now. Only ONE of them may create the run
+    // the intent names, and it is not this one. `waiting` is the same answer a
+    // superseded observer gives: this turn has nothing to do, and the launch is
+    // someone else's to finish.
+    return 'waiting';
+  }
 
-      if (parentInlineStartedAtMissing(parent, intent)) {
-        await recordInlineChildStarted({
-          actorService,
-          parentRunId: parentLinkage.parentRunId,
-          steps,
-          intent,
-          childRunId,
-        });
-      }
+  const { resolveRunbookRef } = await import('../helpers/resolve-runbook.js');
+  const childResolution = await resolveRunbookRef(cwd, intent.childRunbookRef);
+  if (!childResolution.ok) {
+    const message =
+      childResolution.reason === 'plugin-context-missing'
+        ? `Plugin runbook context is unavailable for ${intent.childRunbookRef.source}:${intent.childRunbookRef.path}. Set CLAUDE_PLUGIN_ROOT or install the Rundown Claude Code plugin alongside the CLI.`
+        : `Runbook not found: ${intent.childRunbookRef.source}:${intent.childRunbookRef.path}`;
+    emitter.emit({
+      type: 'ERROR_OCCURRED',
+      payload: {
+        message,
+        code:
+          childResolution.reason === 'plugin-context-missing'
+            ? 'RUNBOOK_REF_RESOLUTION_ERROR'
+            : 'RUNBOOK_NOT_FOUND',
+      },
+    });
+    return 'stopped';
+  }
 
-      const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
-      const active = await sessionService.getActive();
-      let pushedExistingInlineChild = false;
-      if (active?.id !== childRunId) {
-        await sessionService.pushRunbook(childRunId);
-        pushedExistingInlineChild = true;
-      }
+  const inheritedContextVars = reconstituteContextVars(intent.contextSnapshot);
+  const inheritedUserVars = extractInheritedUserVars(intent.contextSnapshot);
+  const { prepareResolvedRunnableRunbook, startRunbook } = await import(
+    '../helpers/runbook-pipeline.js'
+  );
+  const prepared = await prepareResolvedRunnableRunbook(
+    {
+      resolved: childResolution.resolved,
+      runbookRef: intent.childRunbookRef,
+      displayName: intent.childRunbookPath,
+    },
+    {},
+    cwd,
+    {
+      runId: childRunId,
+      inheritedContextVars,
+      inheritedUserVars,
+      iterationBinding: intent.contextSnapshot.iterationBinding,
+    },
+  );
+  if (!prepared.ok) {
+    emitter.emit({
+      type: 'ERROR_OCCURRED',
+      payload: {
+        message: prepared.error,
+        code: prepared.code,
+      },
+    });
+    return 'stopped';
+  }
 
-      try {
+  if (prepared.warnings?.length) {
+    for (const msg of prepared.warnings) {
+      output.warning(msg);
+    }
+  }
+  for (const name of prepared.unresolved) {
+    output.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
+  }
+
+  const launchResult = await startRunbook(
+    {
+      output,
+      manager,
+      actorService,
+      sessionService,
+      lifecycleService: new ExecutionLifecycleService(manager),
+      cwd,
+      commandStreamOptions,
+    },
+    prepared.prepared,
+    {
+      file: intent.childRunbookPath,
+      prompted,
+      parentLinkage,
+      // The start is already recorded — the latch wrote it before this span
+      // began. What remains is the one-shot intent, and it must be consumed HERE
+      // rather than alongside the latch: the intent surviving until the child
+      // exists is what lets a crashed launch be re-observed and finished.
+      afterStarted: async () => {
         await consumeInlineLaunchIntent({
           actorService,
           parentRunId: parentLinkage.parentRunId,
           steps,
         });
-      } catch (error) {
-        emitter.emit({
-          type: 'ERROR_OCCURRED',
-          payload: {
-            message: `Inline child launch failed: ${getErrorMessage(error)}`,
-            code: ErrorCodes.LAUNCH_FAILED.code,
-          },
-        });
-        if (pushedExistingInlineChild) {
-          try {
-            const activeAfterFailure = await sessionService.getActive();
-            if (activeAfterFailure?.id === childRunId) {
-              const pop = await sessionService.popRunbook();
-              // Best-effort cleanup behind a consume failure that is already the
-              // user-facing error; narrowed exhaustively rather than discarded.
-              switch (pop.kind) {
-                case 'committed':
-                case 'execution_in_progress':
-                case 'recovery_required':
-                  break;
-                default: {
-                  const _exhaustive: never = pop;
-                  return _exhaustive;
-                }
-              }
+      },
+    },
+  );
+
+  if (!launchResult.ok) {
+    emitter.emit({
+      type: 'ERROR_OCCURRED',
+      payload:
+        launchResult.reason === 'session-refused'
+          ? {
+              message: launchResult.refusal.message,
+              code: sessionMutationRefusalCode(launchResult.refusal),
             }
-          } catch {
-            // Keep the consume failure as the user-facing launch error.
-          }
-        }
-        await releaseLock();
-        return 'stopped';
-      }
-      await releaseLock();
-      // A resumed child's own bearer died with the process that launched it, so
-      // this continuation holds no authority for it. The composing parent's
-      // runtime is NOT a substitute — it belongs to another run, and
-      // `delegationRuntimeFor` refuses it by design — so core re-establishes the
-      // CHILD's own run-control authority. Core refuses that when the child
-      // already issued a credential the replacement could not reproduce; the
-      // continuation then runs unarmed and the machine's own
-      // `actor_context_required` refusal stands, exactly as it does today.
-      const childEmitter = createBridgedEmitter(existingChild, output);
-      const adoption = await sessionService.adoptRunControlClaim(existingChild);
-      if (adoption.kind === 'adopted') {
-        // Delivered through the single sanctioned credential channel — the
-        // `runbook_started.claim_id` field — so the orchestrator can still
-        // address the child it is about to watch run. The prior bearer is
-        // superseded by the adoption, so re-announcing is not optional. Lazily
-        // imported for the same reason the fresh branch below is: the launch
-        // pipeline is heavy and must not enter this module's static graph.
-        const { emitRunbookStarted } = await import('../helpers/runbook-pipeline.js');
-        emitRunbookStarted(
-          childEmitter,
-          existingChild,
-          !!existingChild.prompted,
-          adoption.runtime.claimId,
-        );
-      }
-      const loopResult = await runExecutionLoop(
-        manager,
-        childRunId,
-        [...getRunbookFromState(existingChild, cwd)],
-        cwd,
-        !!existingChild.prompted,
-        childEmitter,
-        {
-          output,
-          commandStreamOptions,
-          ...(adoption.kind === 'adopted'
-            ? {
-                delegationRuntime: adoption.runtime.delegationRuntime,
-              }
-            : {}),
-        },
-      );
-      return await propagateInlineChildTerminalResult({
-        manager,
-        childRunId,
-        loopResult,
-        cwd,
-        output,
-        commandStreamOptions,
-        parentDelegationRuntime,
-      });
-    }
-
-    const { resolveRunbookRef } = await import('../helpers/resolve-runbook.js');
-    const childResolution = await resolveRunbookRef(cwd, intent.childRunbookRef);
-    if (!childResolution.ok) {
-      const message =
-        childResolution.reason === 'plugin-context-missing'
-          ? `Plugin runbook context is unavailable for ${intent.childRunbookRef.source}:${intent.childRunbookRef.path}. Set CLAUDE_PLUGIN_ROOT or install the Rundown Claude Code plugin alongside the CLI.`
-          : `Runbook not found: ${intent.childRunbookRef.source}:${intent.childRunbookRef.path}`;
-      emitter.emit({
-        type: 'ERROR_OCCURRED',
-        payload: {
-          message,
-          code:
-            childResolution.reason === 'plugin-context-missing'
-              ? 'RUNBOOK_REF_RESOLUTION_ERROR'
-              : 'RUNBOOK_NOT_FOUND',
-        },
-      });
-      return 'stopped';
-    }
-
-    const inheritedContextVars = reconstituteContextVars(intent.contextSnapshot);
-    const inheritedUserVars = extractInheritedUserVars(intent.contextSnapshot);
-    const { prepareResolvedRunnableRunbook, startRunbook } = await import(
-      '../helpers/runbook-pipeline.js'
-    );
-    const prepared = await prepareResolvedRunnableRunbook(
-      {
-        resolved: childResolution.resolved,
-        runbookRef: intent.childRunbookRef,
-        displayName: intent.childRunbookPath,
-      },
-      {},
-      cwd,
-      {
-        runId: childRunId,
-        inheritedContextVars,
-        inheritedUserVars,
-        iterationBinding: intent.contextSnapshot.iterationBinding,
-      },
-    );
-    if (!prepared.ok) {
-      emitter.emit({
-        type: 'ERROR_OCCURRED',
-        payload: {
-          message: prepared.error,
-          code: prepared.code,
-        },
-      });
-      return 'stopped';
-    }
-
-    if (prepared.warnings?.length) {
-      for (const msg of prepared.warnings) {
-        output.warning(msg);
-      }
-    }
-    for (const name of prepared.unresolved) {
-      output.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
-    }
-
-    const launchResult = await startRunbook(
-      {
-        output,
-        manager,
-        actorService,
-        sessionService,
-        lifecycleService: new ExecutionLifecycleService(manager),
-        cwd,
-        commandStreamOptions,
-      },
-      prepared.prepared,
-      {
-        file: intent.childRunbookPath,
-        prompted,
-        parentLinkage,
-        afterStarted: async () => {
-          try {
-            await recordInlineChildStarted({
-              actorService,
-              parentRunId: parentLinkage.parentRunId,
-              steps,
-              intent,
-              childRunId,
-            });
-            await consumeInlineLaunchIntent({
-              actorService,
-              parentRunId: parentLinkage.parentRunId,
-              steps,
-            });
-          } finally {
-            await releaseLock();
-          }
-        },
-      },
-    );
-
-    if (!launchResult.ok) {
-      emitter.emit({
-        type: 'ERROR_OCCURRED',
-        payload:
-          launchResult.reason === 'session-refused'
-            ? {
-                message: launchResult.refusal.message,
-                code: sessionMutationRefusalCode(launchResult.refusal),
-              }
-            : { message: launchResult.error, code: launchResult.code },
-      });
-      return 'stopped';
-    }
-
-    if (launchResult.loopResult === 'done' || launchResult.loopResult === 'stopped') {
-      await releaseLock();
-      return await propagateInlineChildTerminalResult({
-        manager,
-        childRunId,
-        loopResult: launchResult.loopResult,
-        cwd,
-        output,
-        commandStreamOptions,
-        parentDelegationRuntime,
-      });
-    }
-
-    return launchResult.loopResult;
-  } finally {
-    await releaseLock();
+          : { message: launchResult.error, code: launchResult.code },
+    });
+    return 'stopped';
   }
+
+  if (launchResult.loopResult === 'done' || launchResult.loopResult === 'stopped') {
+    return await propagateInlineChildTerminalResult({
+      manager,
+      childRunId,
+      loopResult: launchResult.loopResult,
+      cwd,
+      output,
+      commandStreamOptions,
+      parentDelegationRuntime,
+    });
+  }
+
+  return launchResult.loopResult;
 }
 
 async function observeAndOrchestrate({
@@ -1109,8 +1190,6 @@ export interface DrainResolvedCompletionsArgs {
   manager: RunbookStateManager;
   /** Session service for active runbook tracking. */
   sessionService: SessionService;
-  /** Lifecycle service for completion read/write operations. */
-  lifecycleService: ExecutionLifecycleService;
   /** Event emitter for execution progress notifications. */
   emitter: ExecutionEventEmitter;
   /** ID of the runbook being drained. */
@@ -1174,7 +1253,6 @@ export type DrainResolvedCompletionsResult =
  * @param args.actorService - Actor service for sending events to the runbook machine
  * @param args.manager - Runbook state manager used to construct the core completion service
  * @param args.sessionService - Session service for active runbook tracking
- * @param args.lifecycleService - Lifecycle service for completion read/write operations
  * @param args.emitter - Event emitter for execution progress notifications
  * @param args.runbookId - ID of the runbook being drained
  * @param args.steps - Parsed step definitions for the runbook
@@ -1191,7 +1269,6 @@ export async function drainResolvedCompletions({
   actorService,
   manager,
   sessionService,
-  lifecycleService,
   emitter,
   runbookId,
   steps,
@@ -1202,92 +1279,90 @@ export async function drainResolvedCompletions({
   frameOverride,
   issueDelegationCredential,
 }: DrainResolvedCompletionsArgs): Promise<DrainResolvedCompletionsResult> {
-  const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
-  let drainState = currentState;
+  const completionService = new RunbookCompletionService(manager, actorService);
+  // `currentState` seeds only the caller-visible return value. It is deliberately
+  // NOT threaded into the applies: the core primitive reads its own state inside
+  // the compare-and-swap that commits, so a state supplied from out here could
+  // only be staler than the one the decision is made against — and would see
+  // nothing another process committed between two applies.
   let observedState = currentState;
   let appliedCount = 0;
 
   for (;;) {
-    const drained = await completionService.drainResolvedCompletions({
+    const applied = await completionService.applyNextResolvedCompletion({
       runbookId,
       steps,
-      currentState: drainState,
-      maxApplied: 1,
       issueDelegationCredential,
       ...(frameOverride ? { frameOverride } : {}),
     });
 
-    if (drained.status === 'failed') {
+    if (applied.kind === 'mismatch') {
       return {
         status: 'failed',
-        reason: drained.reason,
-        message: drained.message,
-        unresolved: drained.unresolved,
+        reason: applied.mismatch.reason,
+        message: applied.mismatch.message,
+        unresolved: applied.unresolved,
         applied: 0,
       };
     }
-    if (drained.status === 'not_active') {
+    if (applied.kind === 'not_active') {
+      // An INITIAL divergence is observation-only. A divergence after work means
+      // an apply advanced the cursor out of the override frame, and the entries
+      // already observed must still be reported.
       if (appliedCount > 0) {
         return {
           status: 'continue',
           state: observedState,
-          unresolved: drained.unresolved,
+          unresolved: applied.unresolved,
           applied: appliedCount,
         };
       }
-      return { status: 'not_active', unresolved: drained.unresolved, applied: 0 };
+      return { status: 'not_active', unresolved: applied.unresolved, applied: 0 };
+    }
+    if (applied.kind === 'missing') {
+      return {
+        status: 'continue',
+        state: observedState,
+        unresolved: 0,
+        applied: appliedCount,
+      };
+    }
+    if (applied.kind === 'none') {
+      return {
+        status: 'continue',
+        state: appliedCount > 0 ? observedState : applied.state,
+        unresolved: applied.unresolved,
+        applied: appliedCount,
+      };
     }
 
-    for (const applied of drained.applied) {
-      const currentStep = findStepOrThrow(steps, applied.stateBefore.step);
-      const observed = await observeAndOrchestrate({
-        sessionService,
-        emitter,
-        runbookId,
-        steps,
-        currentState: applied.stateBefore,
-        currentStep,
-        result: applied.completion.result,
-        transitionPolicy,
-        computeActionResult,
-        command,
-        syncSnapshot: applied.snapshot,
-        postState: applied.stateAfter,
-      });
-      appliedCount += 1;
-      if (observed.status === 'done' || observed.status === 'stopped') {
-        return {
-          status: observed.status,
-          unresolved: drained.unresolved,
-          applied: appliedCount,
-        };
-      }
-      observedState = observed.state;
-      drainState = observed.state;
+    // Category A: rendering and event emission belong to the CLI, and must happen
+    // for each transition before the next apply is derived. That is why the loop
+    // lives here rather than in core.
+    const entry = applied.entry;
+    const currentStep = findStepOrThrow(steps, entry.stateBefore.step);
+    const observed = await observeAndOrchestrate({
+      sessionService,
+      emitter,
+      runbookId,
+      steps,
+      currentState: entry.stateBefore,
+      currentStep,
+      result: entry.completion.result,
+      transitionPolicy,
+      computeActionResult,
+      command,
+      syncSnapshot: entry.snapshot,
+      postState: entry.stateAfter,
+    });
+    appliedCount += 1;
+    if (observed.status === 'done' || observed.status === 'stopped') {
+      return { status: observed.status, unresolved: applied.unresolved, applied: appliedCount };
     }
+    observedState = observed.state;
 
-    switch (drained.status) {
-      case 'done':
-      case 'stopped':
-        return {
-          status: drained.status,
-          unresolved: drained.unresolved,
-          applied: appliedCount,
-        };
-      case 'continue':
-        if (drained.applied.length === 0) {
-          return {
-            status: 'continue',
-            state: appliedCount > 0 ? observedState : drained.state,
-            unresolved: drained.unresolved,
-            applied: appliedCount,
-          };
-        }
-        break;
-      default: {
-        const _exhaustive: never = drained;
-        return _exhaustive;
-      }
+    if (applied.terminal) {
+      return { status: applied.terminal, unresolved: applied.unresolved, applied: appliedCount };
     }
   }
 }
@@ -1352,7 +1427,6 @@ export async function runExecutionLoop(
   const actorMutationRunner =
     options.actorMutationRunner ?? createEffectfulActorMutationRunner(cwd);
   const sessionService = new SessionService(manager);
-  const lifecycleService = new ExecutionLifecycleService(manager);
   let currentState: RunbookState = state;
 
   if (currentState.lifecycle === 'stopped') {
@@ -1500,7 +1574,6 @@ export async function runExecutionLoop(
       actorService,
       manager,
       sessionService,
-      lifecycleService,
       emitter,
       runbookId,
       steps,

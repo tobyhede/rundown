@@ -86,8 +86,64 @@ export function assertExecutionPhase(value: string): ExecutionPhase {
   return value as ExecutionPhase;
 }
 
-/** Attempt budget for an optimistic {@link RunbookStore.mutateState} cycle. */
-const DEFAULT_MUTATE_ATTEMPTS = 8;
+/**
+ * Attempt budget for an optimistic {@link RunbookStore.mutateState} cycle.
+ *
+ * Public so a front end whose own read-derive-write span cannot be folded into
+ * a `build` callback re-derives on the *same* budget rather than mirroring the
+ * number. The only such span today is the CLI's delegated-child initial link,
+ * whose derivation is async and whose commit is a synchronous session
+ * transaction — no callback can hold it.
+ */
+export const DEFAULT_MUTATE_ATTEMPTS = 8;
+
+/**
+ * Backoff floor between contended {@link RunbookStore.mutateState} attempts,
+ * before attempt scaling. Mirrors the file lock's retry jitter
+ * (`file-lock.ts` `RETRY_MIN_MS`/`RETRY_MAX_MS`) at half its magnitude, since
+ * this budget is attempt-bounded rather than deadline-bounded.
+ */
+const MUTATE_RETRY_MIN_MS = 25;
+
+/** Backoff ceiling between contended attempts, before attempt scaling. */
+const MUTATE_RETRY_MAX_MS = 50;
+
+/**
+ * Jittered, attempt-scaled pause between contended `mutateState` cycles.
+ *
+ * Two properties matter, and both are load-bearing. **Jitter** decorrelates
+ * co-contending writers: without it every loser re-reads at the same instant
+ * and they replay in lockstep, so the writer at the back of an N-way queue
+ * burns one attempt per predecessor and exhausts the budget before its turn.
+ * **Attempt scaling** widens the spread as contention proves itself, following
+ * the native driver's `busyRetryBaseMs * (attempt + 1)`.
+ *
+ * The result stays bounded by the attempt budget: seven pauses under the
+ * default eight attempts cap the added wait at 1.4s, inside the 5s deadline the
+ * file lock this path replaced would have waited.
+ *
+ * Public alongside {@link DEFAULT_MUTATE_ATTEMPTS}, and for the same reason: an
+ * out-of-store re-derive loop must pace itself identically, and a mirrored
+ * constant is a second place for the pacing to drift.
+ *
+ * @param attempt - Zero-based index of the attempt that just went stale.
+ * @returns Milliseconds to pause before rebuilding from fresh state.
+ */
+export function mutateBackoffMs(attempt: number): number {
+  const span = MUTATE_RETRY_MAX_MS - MUTATE_RETRY_MIN_MS;
+  return (attempt + 1) * (MUTATE_RETRY_MIN_MS + Math.random() * span);
+}
+
+/**
+ * Resolve after `ms` milliseconds. Used only between optimistic retries, never
+ * inside an open transaction.
+ *
+ * @param ms - Delay in milliseconds.
+ * @returns A promise that resolves after the delay.
+ */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 /**
  * Outcome of a claim-free guarded state mutation.
@@ -1243,9 +1299,17 @@ export class RunbookStore {
    *
    * `build` is re-invoked from scratch on every retry, so it MUST be free of
    * external side effects: under contention it can run `attempts` times (default
-   * 8), and the retry loop applies NO backoff — all 8 invocations can land within
-   * a few milliseconds. Only the final, committed return value is persisted;
-   * anything a losing attempt did outside the returned state is unwound by nothing.
+   * 8). Only the final, committed return value is persisted; anything a losing
+   * attempt did outside the returned state is unwound by nothing.
+   *
+   * A stale attempt pauses for a jittered, attempt-scaled interval before
+   * rebuilding (see {@link mutateBackoffMs}), so co-contending writers spread out
+   * rather than replaying in lockstep. That makes the budget a depth bound rather
+   * than a queue-position bound — more concurrent writers than `attempts` can
+   * still all commit — but it does NOT make this a lock: sustained contention
+   * still ends in `concurrent_modification`, which callers on concurrently
+   * driven paths must handle or retry. There is no pause after the final
+   * attempt.
    *
    * Note the CAS asymmetry: {@link writeStateAtVersion} guards on `state_version`
    * only, NOT on `claim_generation` (unlike {@link applyStateUpdate}). A claim
@@ -1302,7 +1366,13 @@ export class RunbookStore {
           message: `Run ${runId} has an execution in progress.`,
         };
       }
-      // 'stale': a concurrent writer bumped state_version — rebuild from fresh state.
+      // 'stale': a concurrent writer bumped state_version — rebuild from fresh
+      // state after a jittered pause, so co-contending writers decorrelate
+      // instead of replaying in lockstep. No pause after the final attempt: the
+      // budget is spent and the refusal below is already decided.
+      if (attempt < attempts - 1) {
+        await delay(mutateBackoffMs(attempt));
+      }
     }
     return {
       kind: 'concurrent_modification',

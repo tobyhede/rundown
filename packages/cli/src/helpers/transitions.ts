@@ -578,8 +578,9 @@ async function renderApplied(
  * strings (step-id syntax, numeric `--index` validation, the AT-conflict
  * check), supplies typed caller evidence, renders the seam's typed outcome,
  * and runs the execution loop. The seam resolves the target exactly once and
- * derives the completion cursor from the raw target INSIDE its completion-lock
- * scope against a locked re-read (#500) — target resolution, policy gating,
+ * derives the completion cursor from the raw target INSIDE its guarded
+ * compute-and-commit cycle, against the state that cycle's compare-and-swap
+ * commits onto (#500) — target resolution, policy gating,
  * every state-dependent target validation, the inline-child reactivation
  * decision, record/drain, the machine dispatch, and terminal release all live
  * in the seam.
@@ -591,7 +592,7 @@ async function renderApplied(
  * @returns The bound state manager, the applied transition (when one occurred),
  *   and whether the transition itself requests a non-zero exit code
  * @throws {Error} if the seam refuses an explicit `--step` / `--index` target
- *   against the locked re-read (invalid/mismatched step, missing substep,
+ *   against the captured state (invalid/mismatched step, missing substep,
  *   template AT expression, out-of-bounds or non-FOR iteration)
  * @throws {IndexOptionError} if `--index` syntax validation fails
  */
@@ -610,8 +611,8 @@ export async function runSeamTransition(
     // Category-A string parsing only: numeric `--index` validation and the
     // AT-conflict check. All state-dependent validation (step match, substep
     // existence, FOR bounds, active-iteration default, frame construction)
-    // happens in core, inside the completion-lock scope, against the locked
-    // re-read (#500).
+    // happens in core, inside the guarded compute-and-commit cycle, against the
+    // captured state that cycle's compare-and-swap commits onto (#500).
     const parsedAt = parseStepIdFromString(options.step)?.at;
     const iteration = resolveIndexOption(options.index, parsedAt);
     explicitTarget = {

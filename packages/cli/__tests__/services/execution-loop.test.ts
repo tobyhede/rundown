@@ -111,22 +111,19 @@ const mockSessionService = {
   >().mockResolvedValue({ kind: 'refused_credential_issued' }),
 };
 
-const listResolvedCompletionsFn = mockFn<(id: string) => Promise<unknown[]>>();
-listResolvedCompletionsFn.mockResolvedValue([]);
 const consumeResolvedCompletionFn = mockFn<(id: string) => Promise<unknown>>();
 consumeResolvedCompletionFn.mockResolvedValue(null);
-const completionDrainResolvedCompletionsFn =
+const completionApplyNextFn =
   mockFn<(args: Record<string, unknown>) => Promise<Record<string, unknown>>>();
 const recordChildCompletionFn =
   mockFn<(args: Record<string, unknown>) => Promise<'recorded' | 'blocked'>>();
 const mockCompletionService = {
-  drainResolvedCompletions: completionDrainResolvedCompletionsFn,
+  applyNextResolvedCompletion: completionApplyNextFn,
   recordChildCompletion: recordChildCompletionFn,
 };
 
 const mockLifecycleService = {
   setLastResult: jest.fn() as any,
-  listResolvedCompletions: listResolvedCompletionsFn,
   consumeResolvedCompletion: consumeResolvedCompletionFn,
 };
 
@@ -213,6 +210,8 @@ const { getHelperRegistry, resetHelperRegistry, setHelperRegistry } = await impo
 const { runExecutionLoop, executeCommandWithPolicyCheck, drainResolvedCompletions } = await import(
   '../../src/services/execution.js'
 );
+const resolveRunbookModule = await import('../../src/helpers/resolve-runbook.js');
+const mockedResolveRunbookRef = jest.mocked(resolveRunbookModule.resolveRunbookRef);
 const mockedPolicyContext = jest.mocked(policyContext);
 
 // Production types — used solely for the `as unknown as` casts below.
@@ -227,11 +226,20 @@ type ResolvedStepType = ResolvedStep;
 type LoadFn = jest.Mock<(id: string) => Promise<Record<string, unknown> | null>>;
 type UpdateFn = jest.Mock<(id: string, patch: Record<string, unknown>) => Promise<void>>;
 type EmitFn = jest.Mock<(input: { type: string; payload?: unknown }) => void>;
+type MutateStateReturningSignature = (
+  id: string,
+  build: (
+    current: Record<string, unknown>,
+  ) => Promise<{ next: Record<string, unknown> | null; value: unknown }>,
+) => Promise<{ state: Record<string, unknown> | null; value: unknown }>;
+type MutateStateReturningFn = jest.Mock<MutateStateReturningSignature>;
 type MockManagerLike = {
   cwd: string;
   load: LoadFn;
   update: UpdateFn;
   delete: jest.Mock<(id: string) => Promise<void>>;
+  /** Whole-state compare-and-swap seam; the inline-launch latch runs on it. */
+  mutateStateReturning: MutateStateReturningFn;
 };
 type MockEmitterLike = {
   emit: EmitFn;
@@ -438,20 +446,29 @@ describe('runExecutionLoop', () => {
       load: mockFn<(id: string) => Promise<Record<string, unknown> | null>>(),
       update: mockFn<(id: string, patch: Record<string, unknown>) => Promise<void>>(),
       delete: mockFn<(id: string) => Promise<void>>(),
+      mutateStateReturning: mockFn<MutateStateReturningSignature>(),
     };
     mockManager.update.mockResolvedValue(undefined);
     mockManager.delete.mockResolvedValue(undefined);
+    // Stands in for the store's optimistic cycle: read the row, derive against
+    // it, report what the derivation decided. Reading through `load` keeps this
+    // double honest about the one read a real cycle performs — a test that
+    // sequences `load` sees the latch consume exactly one entry, as the pre-read
+    // it replaced did.
+    mockManager.mutateStateReturning.mockImplementation(async (id, build) => {
+      const current = await mockManager.load(id);
+      if (!current) return { state: null, value: null };
+      const { next, value } = await build(current);
+      return { state: next ?? current, value };
+    });
 
-    mockLifecycleService.listResolvedCompletions.mockReset();
-    mockLifecycleService.listResolvedCompletions.mockResolvedValue([]);
     mockLifecycleService.consumeResolvedCompletion.mockReset();
     mockLifecycleService.consumeResolvedCompletion.mockResolvedValue(null);
-    mockCompletionService.drainResolvedCompletions.mockReset();
-    mockCompletionService.drainResolvedCompletions.mockImplementation(async (args) => ({
-      status: 'continue',
-      state: args.currentState,
+    mockCompletionService.applyNextResolvedCompletion.mockReset();
+    mockCompletionService.applyNextResolvedCompletion.mockImplementation(async () => ({
+      kind: 'none',
+      state: makeLoopState(),
       unresolved: 0,
-      applied: [],
     }));
     mockCompletionService.recordChildCompletion.mockReset();
     mockCompletionService.recordChildCompletion.mockResolvedValue('recorded');
@@ -549,6 +566,17 @@ describe('runExecutionLoop', () => {
     mockSessionService.popRunbook.mockReset();
     mockSessionService.popRunbook.mockResolvedValue(committed(null));
 
+    // Re-seeded rather than left to the module factory: one test replaces this
+    // implementation to interleave a second observer inside the inline launch
+    // span, and `jest.clearAllMocks()` clears calls without restoring
+    // implementations.
+    mockedResolveRunbookRef.mockReset();
+    mockedResolveRunbookRef.mockResolvedValue({
+      ok: false,
+      reason: 'file-missing',
+      runbookRef: { source: 'project', path: 'child.runbook.md' },
+    });
+
     // Default evaluate behavior. ConditionResult requires `action`; the test
     // bodies only check the `message` field so we cast through `unknown` to
     // a partial — this asserts the test contract while still exercising the
@@ -644,52 +672,42 @@ describe('runExecutionLoop', () => {
       activeEntry: 1,
     });
 
-    mockCompletionService.drainResolvedCompletions
+    // No state is threaded in: the primitive reads its own, so the loop's only
+    // input per call is the run and its steps.
+    mockCompletionService.applyNextResolvedCompletion
       .mockImplementationOnce(async (args) => {
         order.push('apply-1');
-        expect(args).toEqual(expect.objectContaining({ currentState: beforeFirst, maxApplied: 1 }));
+        expect(args).not.toHaveProperty('currentState');
+        expect(args).not.toHaveProperty('maxApplied');
         return {
-          status: 'continue',
-          state: afterFirst,
+          kind: 'applied',
           unresolved: 1,
-          applied: [
-            {
-              key: '1|1|1',
-              completion: { result: 'pass', targetSubstep: '1' },
-              stateBefore: beforeFirst,
-              stateAfter: afterFirst,
-              snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
-            },
-          ],
+          entry: {
+            key: '1|1|1',
+            completion: { result: 'pass', targetSubstep: '1' },
+            stateBefore: beforeFirst,
+            stateAfter: afterFirst,
+            snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+          },
         };
       })
-      .mockImplementationOnce(async (args) => {
+      .mockImplementationOnce(async () => {
         order.push('apply-2');
-        expect(args).toEqual(expect.objectContaining({ currentState: afterFirst, maxApplied: 1 }));
         return {
-          status: 'continue',
-          state: afterSecond,
+          kind: 'applied',
           unresolved: 0,
-          applied: [
-            {
-              key: '1|1|2',
-              completion: { result: 'pass', targetSubstep: '2' },
-              stateBefore: afterFirst,
-              stateAfter: afterSecond,
-              snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
-            },
-          ],
+          entry: {
+            key: '1|1|2',
+            completion: { result: 'pass', targetSubstep: '2' },
+            stateBefore: afterFirst,
+            stateAfter: afterSecond,
+            snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+          },
         };
       })
-      .mockImplementationOnce(async (args) => {
+      .mockImplementationOnce(async () => {
         order.push('empty');
-        expect(args).toEqual(expect.objectContaining({ currentState: afterSecond, maxApplied: 1 }));
-        return {
-          status: 'continue',
-          state: afterSecond,
-          unresolved: 0,
-          applied: [],
-        };
+        return { kind: 'none', state: afterSecond, unresolved: 0 };
       });
     // The observation probe is the emitter, which is what "observes" actually
     // means here. It used to be the `ensureActiveEntry` projection call, but
@@ -702,7 +720,6 @@ describe('runExecutionLoop', () => {
       actorService: mockActorService as any,
       manager: asManager(mockManager),
       sessionService: mockSessionService as any,
-      lifecycleService: mockLifecycleService as any,
       emitter: asEmitter(mockEmitter),
       runbookId: runbookId,
       steps: asSteps(substepSteps),
@@ -740,19 +757,22 @@ describe('runExecutionLoop', () => {
       activeEntry: 1,
     });
 
-    mockCompletionService.drainResolvedCompletions.mockResolvedValueOnce({
-      status: 'failed',
-      reason: 'stale_state',
-      message: 'Runbook state is stale',
+    mockCompletionService.applyNextResolvedCompletion.mockResolvedValueOnce({
+      kind: 'mismatch',
+      state: currentState,
+      mismatch: {
+        status: 'failed',
+        reason: 'stale_state',
+        message: 'Runbook state is stale',
+        completion: { result: 'pass', targetSubstep: '1' },
+      },
       unresolved: 2,
-      applied: [],
     });
 
     const drained = await drainResolvedCompletions({
       actorService: mockActorService as any,
       manager: asManager(mockManager),
       sessionService: mockSessionService as any,
-      lifecycleService: mockLifecycleService as any,
       emitter: asEmitter(mockEmitter),
       runbookId: runbookId,
       steps: asSteps(steps),
@@ -770,6 +790,116 @@ describe('runExecutionLoop', () => {
       unresolved: 2,
       applied: 0,
     });
+  });
+
+  it('reports the terminating pass unresolved count and the observed state on the ordinary exit', async () => {
+    // The `none` arm is how the drain ordinarily stops, and both values it
+    // passes through there were unpinned: every other non-zero `unresolved`
+    // assertion in this file rides the `mismatch` refusal arm, and every `none`
+    // exercised here carries zero. A drain that reported a constant 0, or the
+    // count from the FIRST apply rather than the terminating one, or the idle
+    // pass's own state instead of the state it actually observed, would have
+    // been invisible. Both are load-bearing for the caller: `unresolved` is the
+    // remaining-work count `rundown collect` reports, and `state` is what the
+    // next stage continues from.
+    const substepSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent',
+        aggregation: { strategy: 'ALL' },
+        substeps: [
+          {
+            id: '1',
+            description: 'First',
+            transitions: {
+              pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: '1.2' },
+              fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+            },
+          },
+          {
+            id: '2',
+            description: 'Second',
+            transitions: {
+              pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: '1.3' },
+              fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+            },
+          },
+        ],
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' }, next: 'COMPLETE' },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+        },
+      },
+    ];
+    const beforeFirst = makeLoopState('1', {
+      substep: '1',
+      retryCount: 0,
+      lifecycle: 'running',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+    const afterFirst = makeLoopState('1', {
+      substep: '2',
+      retryCount: 0,
+      lifecycle: 'running',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+    // Deliberately NOT `afterFirst`. The drain must report the state it
+    // observed, and the idle pass's state is the plausible wrong answer.
+    const idlePassState = makeLoopState('1', {
+      substep: '9',
+      retryCount: 0,
+      lifecycle: 'running',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+
+    mockCompletionService.applyNextResolvedCompletion
+      // A count distinct from the terminating one, so reporting this apply's
+      // number instead of the last one's is a visible failure rather than a
+      // coincidence.
+      .mockImplementationOnce(async () => ({
+        kind: 'applied',
+        unresolved: 5,
+        entry: {
+          key: '1|1|1',
+          completion: { result: 'pass', targetSubstep: '1' },
+          stateBefore: beforeFirst,
+          stateAfter: afterFirst,
+          snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+        },
+      }))
+      .mockImplementationOnce(async () => ({
+        kind: 'none',
+        state: idlePassState,
+        unresolved: 2,
+      }));
+
+    const drained = await drainResolvedCompletions({
+      actorService: mockActorService as any,
+      manager: asManager(mockManager),
+      sessionService: mockSessionService as any,
+      emitter: asEmitter(mockEmitter),
+      runbookId: runbookId,
+      steps: asSteps(substepSteps),
+      currentState: beforeFirst as any,
+      transitionPolicy: {
+        onComplete: { releaseRunbook: false },
+        onStopped: { releaseRunbook: false },
+      },
+    });
+
+    expect(drained).toEqual({
+      status: 'continue',
+      state: afterFirst,
+      unresolved: 2,
+      applied: 1,
+    });
+    // One apply plus the idle pass that ends the loop. A drain that stopped
+    // after the first call never reaches the `none` arm these values come from.
+    expect(mockCompletionService.applyNextResolvedCompletion).toHaveBeenCalledTimes(2);
   });
 
   it('preserves observed progress when an override frame becomes inactive after a drain', async () => {
@@ -819,33 +949,29 @@ describe('runExecutionLoop', () => {
       activeEntry: 1,
     });
 
-    mockCompletionService.drainResolvedCompletions
+    mockCompletionService.applyNextResolvedCompletion
       .mockResolvedValueOnce({
-        status: 'continue',
-        state: after,
+        kind: 'applied',
         unresolved: 0,
-        applied: [
-          {
-            key: '1|1|1',
-            completion: { result: 'pass', targetSubstep: '1' },
-            stateBefore: before,
-            stateAfter: after,
-            snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
-          },
-        ],
+        entry: {
+          key: '1|1|1',
+          completion: { result: 'pass', targetSubstep: '1' },
+          stateBefore: before,
+          stateAfter: after,
+          snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+        },
       })
       .mockResolvedValueOnce({
-        status: 'not_active',
+        kind: 'not_active',
+        state: after,
         frameKey: '1|',
         activeFrameKey: '2|',
         unresolved: 0,
-        applied: [],
       });
     const drained = await drainResolvedCompletions({
       actorService: mockActorService as any,
       manager: asManager(mockManager),
       sessionService: mockSessionService as any,
-      lifecycleService: mockLifecycleService as any,
       emitter: asEmitter(mockEmitter),
       runbookId: runbookId,
       steps: asSteps(substepSteps),
@@ -1504,10 +1630,19 @@ describe('runExecutionLoop', () => {
         // The drain reaches its own terminal release site, distinct from the
         // command path. It was uncovered in `release-runbook` mode entirely.
         mockManager.load.mockResolvedValue(makeLoopState());
-        mockCompletionService.drainResolvedCompletions.mockResolvedValue({
-          status: 'done',
-          applied: [],
+        // Terminal rides on the applied arm: a run cannot reach terminal without
+        // an apply that carried it there, so the entry is part of the shape.
+        mockCompletionService.applyNextResolvedCompletion.mockResolvedValue({
+          kind: 'applied',
           unresolved: 0,
+          terminal: 'done',
+          entry: {
+            key: '1|1|1',
+            completion: { result: 'pass', targetSubstep: '1' },
+            stateBefore: makeLoopState(),
+            stateAfter: makeLoopState('1', { lifecycle: 'completed' }),
+            snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+          },
         });
         if (refuse) {
           mockSessionService.releaseRunbook.mockResolvedValue({
@@ -3300,6 +3435,160 @@ describe('runExecutionLoop', () => {
     expect(mockEmitter.emit).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'RUNBOOK_STARTED' }),
     );
+  });
+
+  // Two observers of ONE inline launch intent. The intent names a FIXED
+  // `childRunId`, and `startRunbook` → `launchRunbook` opens with an
+  // unconditional `manager.create` for it, whose `RunbookStateManager.save`
+  // reads-then-inserts — so two observers inside the launch span race a bare
+  // `INSERT INTO runs` and the loser gets an untyped SQLITE_CONSTRAINT throw.
+  // Exactly-once is therefore a property of the launch span's ENTRY, and
+  // `resolveRunbookRef` is its gate: nothing between it and `manager.create` can
+  // refuse, so one entry is one create.
+  //
+  // The contender is injected AT that gate rather than at the old pre-read
+  // precheck. A hook on the precheck would go vacuous the moment the decision
+  // moves inside the compare-and-swap; this one stays on live control flow
+  // either way. `injected` pins that the interleave actually happened.
+  it('latches an inline launch so a second observer of the same intent never enters the launch span', async () => {
+    const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
+    const inlineLaunch = {
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+      childRunId,
+      childRunbookPath: 'child.runbook.md',
+      childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+      contextSnapshot: {
+        RunId: runbookId,
+        ContextId: 'ctx-unit',
+        WorkPath: '.rundown/work',
+      },
+    };
+    const inlineSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent step',
+        substeps: [
+          {
+            id: '1',
+            description: 'Inline child',
+            runbooks: ['child.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+    const parentWith = (
+      startedAt: string | null,
+      intent: unknown = inlineLaunch,
+    ): Record<string, unknown> =>
+      makeLoopState('1', {
+        lifecycle: 'running',
+        substep: '1',
+        activeFrameKey: '1|',
+        activeEntry: 1,
+        substepStates: [
+          {
+            id: '1',
+            frameKey: '1|',
+            status: 'running',
+            inline: {
+              childRunbookPath: 'child.runbook.md',
+              childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+              contextSnapshot: inlineLaunch.contextSnapshot,
+              childRunId,
+              createdAt: '2026-05-30T00:00:00.000Z',
+              startedAt,
+            },
+          },
+        ],
+        snapshot: { context: { inlineLaunchIntent: intent } },
+      });
+
+    // The one persisted parent row both observers read and write. Every seam
+    // below reads it fresh, so a commit by one observer is visible to the other
+    // — which is the whole point of the interleave.
+    let parent = parentWith(null);
+    let latchedAt: string | null = null;
+    mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
+    mockManager.mutateStateReturning = mockFn<MutateStateReturningSignature>().mockImplementation(
+      async (_id, build) => {
+        const { next, value } = await build(parent);
+        if (next) parent = next;
+        return { state: next ?? parent, value };
+      },
+    );
+    // The machine events this path raises, applied to the shared row exactly as
+    // the real `sendAndSync` / `prepareActorMutation` pair would.
+    mockActorService.sendAndSync.mockImplementation(
+      async (_id: string, _steps: unknown, event: { type: string; startedAt?: string }) => {
+        if (event.type === 'INLINE_CHILD_STARTED') {
+          latchedAt = event.startedAt ?? '2026-05-30T00:00:01.000Z';
+          parent = parentWith(latchedAt);
+        }
+        if (event.type === 'INLINE_LAUNCH_CONSUMED') {
+          parent = parentWith(latchedAt, undefined);
+        }
+        return { state: parent, snapshot: {} };
+      },
+    );
+    mockActorService.observeExecutionUnitEntry.mockImplementation(async () => [
+      {
+        kind: 'execution_observation',
+        event: {
+          type: 'STEP_ENTERED',
+          payload: {
+            position: { current: '1.1', total: 1 },
+            stepName: '1',
+            description: 'Inline child',
+            isSubstep: true,
+            inlineLaunch,
+          },
+        },
+      },
+    ]);
+
+    const driveLoop = () =>
+      runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(inlineSteps),
+        mockManager.cwd,
+        false,
+        asEmitter(mockEmitter),
+        { output: { executionEvent: jest.fn() } as never },
+      );
+
+    let injected = false;
+    let contender: 'done' | 'stopped' | 'waiting' | undefined;
+    mockedResolveRunbookRef.mockImplementation(async () => {
+      if (!injected) {
+        injected = true;
+        contender = await driveLoop();
+      }
+      return {
+        ok: false,
+        reason: 'file-missing',
+        runbookRef: { source: 'project', path: 'child.runbook.md' },
+      };
+    });
+
+    const first = await driveLoop();
+
+    expect(injected).toBe(true);
+    // One entry into the launch span across both observers, so one
+    // `manager.create` for the fixed child run id.
+    expect(mockedResolveRunbookRef).toHaveBeenCalledTimes(1);
+    // The contender saw the latch already taken and stood down without
+    // launching. It reports `waiting`, exactly as an observer of a superseded
+    // intent does — the launch is someone else's, not this observer's failure.
+    expect(contender).toBe('waiting');
+    expect(first).toBe('stopped');
   });
 
   it('announces the adopted bearer when a resumed inline child re-establishes authority', async () => {

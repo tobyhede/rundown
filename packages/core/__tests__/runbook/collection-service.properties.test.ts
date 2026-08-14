@@ -101,7 +101,7 @@ describe('RunbookCollectionService properties', () => {
     const manager = new RunbookStateManager(tmp);
     const actorService = new RunbookActorService(manager);
     const lifecycleService = new ExecutionLifecycleService(manager);
-    const completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    const completionService = new RunbookCompletionService(manager, actorService);
     const sessionService = new SessionService(manager);
     // The run must exist before a claim can reference it (claims.controlled_run
     // FK). The properties themselves still drive the gate off in-memory states.

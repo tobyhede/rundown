@@ -23,7 +23,6 @@ import {
   activeFrame,
   assertClaimId,
   assertRunId,
-  brandCurrentCursorResolvedCompletionForTest,
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
@@ -232,8 +231,8 @@ function delegatePromptedForStep(
  * authority, positional runbook, claim-seen recording) and before the fence's
  * own `beforeEffect` re-read.
  *
- * This is the concurrent-writer seam the `DelegationLock` used to provide: a
- * document mutation landing here is invisible to any load hoisted out of
+ * This is the concurrent-writer seam the retired delegation file lock used to
+ * provide: a document mutation landing here is invisible to any load hoisted out of
  * `beforeEffect`, so a decision that observes it must have been made from the
  * in-fence re-read.
  *
@@ -304,7 +303,7 @@ describe('RunbookLifecycleCommandService', () => {
     manager = new RunbookStateManager(tmp);
     actorService = new RunbookActorService(manager);
     lifecycleService = new ExecutionLifecycleService(manager);
-    completionService = new RunbookCompletionService(manager, lifecycleService, actorService);
+    completionService = new RunbookCompletionService(manager, actorService);
     actorMutationRunner = createEffectfulActorMutationRunner(tmp);
     sessionService = new SessionService(manager);
     loadStepsImpl = () => [];
@@ -4748,10 +4747,9 @@ describe('RunbookLifecycleCommandService', () => {
 
     it('does not over-tighten: a deliberate non-active --index target records at an inactive frame', async () => {
       // A deliberate `--step`/`--index` target of a non-active FOR iteration
-      // resolves in-lock to an `inactive` frame (frame-only, sentinel entry) and
-      // records — live-frame identity only pins `active`-kind targets. Record and
-      // drain are mocked (the unlocked twins — the explicit span holds the
-      // CompletionLock) so this isolates the frame decision.
+      // resolves inside the guarded cycle to an `inactive` frame (frame-only,
+      // sentinel entry) and records — live-frame identity only pins `active`-kind
+      // targets. Record and drain are mocked so this isolates the frame decision.
       const forSteps: ResolvedStep[] = [
         {
           kind: 'for',
@@ -6684,15 +6682,15 @@ describe('RunbookLifecycleCommandService', () => {
       ]);
     });
 
-    it('emits a terminal event when the drain reaches terminal but the completion observation did not', async () => {
-      // Divergence the seam must handle: `drainResolvedCompletions` derives
-      // terminal from the applied completion's `state.lifecycle`, while
-      // `deriveTransitionObservation` derives it from the XState snapshot's
-      // top-level status/value. Force the drain to report `done` for an applied
-      // completion whose snapshot is still active — the per-completion
-      // observation returns `continue` (STEP_TRANSITIONED only), so the seam must
-      // emit RUNBOOK_COMPLETED from the drain's authoritative status. Without the
-      // fix the run is released but the outcome carries no terminal envelope.
+    it('emits a terminal event when the apply reaches terminal but the completion observation did not', async () => {
+      // Divergence the seam must handle: the fenced apply derives terminal from
+      // the prepared `state.lifecycle`, while `deriveTransitionObservation`
+      // derives it from the XState snapshot's top-level status/value. Force an
+      // apply that completes the run while its snapshot stays active — the
+      // per-completion observation returns `continue` (STEP_TRANSITIONED only),
+      // so the seam must emit RUNBOOK_COMPLETED from the prepared lifecycle.
+      // Without the fix the run is released but the outcome carries no terminal
+      // envelope.
       const steps: ResolvedStep[] = [
         {
           kind: 'substeps',
@@ -6712,41 +6710,27 @@ describe('RunbookLifecycleCommandService', () => {
       });
       await activate(activeState);
 
-      // Record succeeds; the divergence lives entirely in the drain result.
+      // The manual record is prepared for real; the divergence is injected at the
+      // apply, which is the seam's only terminal signal. `nextState` is terminal by
+      // `lifecycle` while the snapshot stays active, so `deriveTransitionObservation`
+      // reports `continue` and only `reconcileFencedTerminalObservation` can supply
+      // the terminal envelope.
       jest
-        .spyOn(completionService, 'recordManualCompletion')
-        .mockResolvedValue({ status: 'recorded', key: 'k' });
-
-      const built = buildResolvedCompletion({
-        agentId: 'manual',
-        result: 'pass',
-        targetStep: '1',
-        targetSubstep: '1',
-        targetFrame: activeFrame(buildFrameKey('1'), 1),
-        completedAt: '2026-06-28T00:00:00.000Z',
-      });
-      // `buildResolvedCompletion` widens `targetSubstep` to `string | undefined`;
-      // re-narrow it (the value is known) so the branded-current-cursor helper,
-      // which requires a concrete `targetSubstep`, accepts it without a cast.
-      const terminalCompletion = brandCurrentCursorResolvedCompletionForTest({
-        ...built,
-        targetSubstep: built.targetSubstep ?? '1',
-      });
-      jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
-        status: 'done',
-        unresolved: 0,
-        applied: [
-          {
-            key: 'k',
-            completion: terminalCompletion,
-            stateBefore: activeState,
-            // Terminal via `state.lifecycle` only — the snapshot stays active so
-            // `deriveTransitionObservation` reports `continue`.
-            stateAfter: { ...activeState, lifecycle: 'completed' },
-            snapshot: { status: 'active', value: '1' },
+        .spyOn(actorService, 'prepareActorMutation')
+        .mockImplementation(async (_id, previousState) => ({
+          previousState,
+          // Consume the row the apply was handed, exactly as the real mutation's
+          // consumed-completion patch does. Without it the seam's loop would have
+          // no exit but the reconciliation under test, so a regression would hang
+          // instead of failing an assertion.
+          nextState: {
+            ...previousState,
+            resolvedCompletions: {},
+            lifecycle: 'completed' as const,
           },
-        ],
-      });
+          snapshot: { status: 'active', value: '1' },
+          effects: [],
+        }));
 
       const outcome = await seam.runTransition({
         command: 'pass',
@@ -6760,19 +6744,17 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.status).toBe('done');
       expect(outcome.loop).toEqual({ kind: 'none' });
       // The STEP_TRANSITIONED from the continue observation AND the terminal
-      // envelope derived from the drain's authoritative status.
+      // envelope derived from the prepared lifecycle.
       expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
       expect(outcome.events.some((e) => e.type === 'RUNBOOK_COMPLETED')).toBe(true);
     });
 
-    it('emits a terminal stopped event when the drain reaches stopped but the completion observation did not', async () => {
-      // The `stopped` mirror of the `done` divergence above. The drain reports
-      // `stopped` (derived from the applied completion's `state.lifecycle`) for an
-      // applied completion whose snapshot is still active, so the per-completion
+    it('emits a terminal stopped event when the apply reaches stopped but the completion observation did not', async () => {
+      // The `stopped` mirror of the `done` divergence above. The apply prepares a
+      // `stopped` lifecycle while its snapshot stays active, so the per-completion
       // observation returns `continue` (STEP_TRANSITIONED only). The seam must emit
-      // RUNBOOK_STOPPED from the drain's authoritative status via
-      // `deriveTerminalDrainObservationEvent` and apply the seam-owned terminal
-      // release through the `onStopped` branch.
+      // RUNBOOK_STOPPED from the prepared lifecycle and apply the seam-owned
+      // terminal release through the `onStopped` branch.
       const steps: ResolvedStep[] = [
         {
           kind: 'substeps',
@@ -6792,41 +6774,27 @@ describe('RunbookLifecycleCommandService', () => {
       });
       await activate(activeState);
 
-      // Record succeeds; the divergence lives entirely in the drain result.
+      // The manual record is prepared for real; the divergence is injected at the
+      // apply, which is the seam's only terminal signal. `nextState` is terminal by
+      // `lifecycle` while the snapshot stays active, so `deriveTransitionObservation`
+      // reports `continue` and only `reconcileFencedTerminalObservation` can supply
+      // the terminal envelope.
       jest
-        .spyOn(completionService, 'recordManualCompletion')
-        .mockResolvedValue({ status: 'recorded', key: 'k' });
-
-      const built = buildResolvedCompletion({
-        agentId: 'manual',
-        result: 'fail',
-        targetStep: '1',
-        targetSubstep: '1',
-        targetFrame: activeFrame(buildFrameKey('1'), 1),
-        completedAt: '2026-06-28T00:00:00.000Z',
-      });
-      // `buildResolvedCompletion` widens `targetSubstep` to `string | undefined`;
-      // re-narrow it (the value is known) so the branded-current-cursor helper,
-      // which requires a concrete `targetSubstep`, accepts it without a cast.
-      const terminalCompletion = brandCurrentCursorResolvedCompletionForTest({
-        ...built,
-        targetSubstep: built.targetSubstep ?? '1',
-      });
-      jest.spyOn(completionService, 'drainResolvedCompletions').mockResolvedValue({
-        status: 'stopped',
-        unresolved: 0,
-        applied: [
-          {
-            key: 'k',
-            completion: terminalCompletion,
-            stateBefore: activeState,
-            // Terminal via `state.lifecycle` only — the snapshot stays active so
-            // `deriveTransitionObservation` reports `continue`.
-            stateAfter: { ...activeState, lifecycle: 'stopped' },
-            snapshot: { status: 'active', value: '1' },
+        .spyOn(actorService, 'prepareActorMutation')
+        .mockImplementation(async (_id, previousState) => ({
+          previousState,
+          // Consume the row the apply was handed, exactly as the real mutation's
+          // consumed-completion patch does. Without it the seam's loop would have
+          // no exit but the reconciliation under test, so a regression would hang
+          // instead of failing an assertion.
+          nextState: {
+            ...previousState,
+            resolvedCompletions: {},
+            lifecycle: 'stopped' as const,
           },
-        ],
-      });
+          snapshot: { status: 'active', value: '1' },
+          effects: [],
+        }));
 
       const outcome = await seam.runTransition({
         command: 'fail',
@@ -6840,7 +6808,7 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.status).toBe('stopped');
       expect(outcome.loop).toEqual({ kind: 'none' });
       // The STEP_TRANSITIONED from the continue observation AND the stopped
-      // terminal envelope derived from the drain's authoritative status.
+      // terminal envelope derived from the prepared lifecycle.
       expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
       expect(outcome.events.some((e) => e.type === 'RUNBOOK_STOPPED')).toBe(true);
       // Terminal state and session release are one owned-store commit.

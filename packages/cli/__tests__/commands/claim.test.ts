@@ -24,7 +24,7 @@ import {
 } from '@rundown-org/core/testing/session-fixtures';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
-import { delegationLockPath, ErrorResponseSchema, SessionService } from '@rundown-org/core';
+import { DEFAULT_MUTATE_ATTEMPTS, ErrorResponseSchema, SessionService } from '@rundown-org/core';
 import { Command } from 'commander';
 import { validateCommandOutput } from '../helpers/schema-validator.js';
 // Stryker static-import linkage (mutation testing): links this test file into
@@ -304,41 +304,6 @@ describe('claim command', () => {
       expect(validateCommandOutput('claim', claimOutput)).toEqual({ valid: true, errors: [] });
     });
 
-    it('keeps the parent delegation lock held through the atomic claim commit', async () => {
-      await writeParentRunbook();
-      await writeChildRunbook();
-
-      const started = await runCliInProcess('run --prompted parent.runbook.md', workspace);
-      expect(started.exitCode).toBe(0);
-      const parent = (await getActiveState(workspace))!;
-      const token = await getAutoIssuedToken();
-      let observedLockAtCommit = false;
-      const claimAndInitialLink = jest.spyOn(SessionService.prototype, 'claimAndInitialLink');
-      const originalClaimAndInitialLink = claimAndInitialLink.getMockImplementation();
-      if (!originalClaimAndInitialLink) {
-        throw new Error('Expected claimAndInitialLink to have an implementation.');
-      }
-      claimAndInitialLink.mockImplementation(async function (this: SessionService, input) {
-        try {
-          await access(delegationLockPath(workspace.cwd, parent.id));
-          observedLockAtCommit = true;
-        } catch {
-          observedLockAtCommit = false;
-        }
-        return originalClaimAndInitialLink.call(this, input);
-      });
-
-      try {
-        const result = await runCliInProcess(`claim ${token}`, workspace);
-
-        expect(result.exitCode).toBe(0);
-        expect(claimAndInitialLink).toHaveBeenCalledTimes(1);
-        expect(observedLockAtCommit).toBe(true);
-      } finally {
-        claimAndInitialLink.mockRestore();
-      }
-    });
-
     it('renders a concurrent atomic claim modification as a retryable error envelope', async () => {
       await writeParentRunbook();
       await writeChildRunbook();
@@ -394,7 +359,13 @@ describe('claim command', () => {
         const result = await runCliInProcess(`claim ${token}`, workspace);
 
         expect(result.exitCode).toBe(1);
-        expect(claimAndInitialLink).toHaveBeenCalledTimes(1);
+        // Sustained contention: every re-derive prepares cleanly and every
+        // commit still loses, so the claim spends the store's whole optimistic
+        // budget before reporting the race. Reporting it after one attempt was
+        // the defect — a single version mismatch says nothing about why the
+        // parent moved, and re-deriving is what distinguishes this genuine race
+        // from the permanent DELEGATION_ALREADY_CLAIMED.
+        expect(claimAndInitialLink).toHaveBeenCalledTimes(DEFAULT_MUTATE_ATTEMPTS);
         const envelope = parseCliJsonObject(result.stdout || result.stderr);
         expect(envelope).toEqual({
           kind: 'error',
@@ -962,9 +933,6 @@ while [ ! -f release-first-claim ]; do sleep 0.05; done
 
       expect(slowResult.exitCode).toBe(0);
       expect(fastResult.exitCode).toBe(0);
-      for (const result of [slowResult, fastResult]) {
-        expect(`${result.stdout}${result.stderr}`).not.toContain('DELEGATION_LOCK_TIMEOUT');
-      }
     }, 20_000);
 
     it('allows only one concurrent claim of the same token', async () => {

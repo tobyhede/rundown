@@ -136,12 +136,6 @@ function claimFailureToEnvelope(failure: Exclude<ClaimFailure, { reason: 'sessio
           childRunId: failure.childRunId,
         },
       };
-    case 'lock-timeout':
-      return {
-        code: 'DELEGATION_LOCK_TIMEOUT',
-        message: `Could not acquire delegation lock for run ${failure.parentRunId}. Another operation may be in progress.`,
-        details: { parentRunId: failure.parentRunId },
-      };
     case 'prepare-failed':
       return {
         code: failure.code,

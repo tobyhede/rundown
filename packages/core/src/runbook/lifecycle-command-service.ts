@@ -689,8 +689,9 @@ export interface LifecycleTransitionInput {
   /**
    * Raw explicit `--step` / `--index` target. Present for explicit-target
    * transitions; absent for a bare transition (the seam derives the active
-   * cursor). The seam resolves it to a cursor INSIDE its completion-lock
-   * scope against the locked re-read (derive-or-refuse), so no pre-resolved
+   * cursor). The seam resolves it to a cursor INSIDE its guarded
+   * compute-and-commit cycle, against the captured state that cycle's
+   * compare-and-swap commits onto (derive-or-refuse), so no pre-resolved
    * cursor can go stale between resolution and record — the #500 TOCTOU is
    * closed by construction.
    */

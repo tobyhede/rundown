@@ -15,7 +15,6 @@ import type {
   RunbookStateManager,
   RunnableTemplateVariables,
   RunbookState,
-  ScopedLock,
   SessionService,
   TemplateVarValue,
   StepDelegation,
@@ -45,10 +44,13 @@ import { committed } from './session-mutation-fixtures.js';
 // jest.unstable_mockModule does NOT hoist (unlike jest.mock), so this top-level
 // await executes first and always captures the real branded implementation.
 const {
-  classifyDelegationLiveness: realClassifyDelegationLiveness,
   inferFrameEntryFromState: realInferFrameEntryFromState,
   isDelegationToken: realIsDelegationToken,
   isJsonArrayStream: realIsJsonArrayStream,
+  // The initial-link re-derive loop paces itself on the store's own optimistic
+  // budget; both are captured real so this suite exercises the shipped loop.
+  DEFAULT_MUTATE_ATTEMPTS: realDefaultMutateAttempts,
+  mutateBackoffMs: realMutateBackoffMs,
 } = await import('@rundown-org/core');
 
 const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
@@ -138,10 +140,6 @@ function mockClaimAndInitialLinkSuccess(): jest.Mock<SessionService['claimAndIni
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
-  // The claim pipeline's diagnostic pre-check calls this; default it to `live`
-  // so these wiring tests are unaffected. The classifier itself is covered by
-  // the core targeting suite, and the superseded path by the core claim suite.
-  classifyDelegationLiveness: jest.fn(() => ({ kind: 'live' })),
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
@@ -186,25 +184,8 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   DelegationScanService: mockFn<() => { findByToken: jest.Mock }>().mockImplementation(() => ({
     findByToken: mockFn<() => Promise<TokenScanResult | null>>().mockResolvedValue(null),
   })),
-  DelegationLock: jest.fn(),
-  DelegationLockTimeoutError: class DelegationLockTimeoutError extends Error {
-    readonly parentRunId: string;
-    readonly lockFile: string;
-    constructor(parentRunId: string, lockFile = '/tmp/test.lock') {
-      super(`Delegation lock timeout for run ${parentRunId}: ${lockFile}.`);
-      this.name = 'DelegationLockTimeoutError';
-      this.parentRunId = parentRunId;
-      this.lockFile = lockFile;
-    }
-  },
-  FileLockTimeoutError: class FileLockTimeoutError extends Error {
-    readonly lockFile: string;
-    constructor(lockFile = '/tmp/test.lock') {
-      super(`File lock timeout: ${lockFile}.`);
-      this.name = 'FileLockTimeoutError';
-      this.lockFile = lockFile;
-    }
-  },
+  DEFAULT_MUTATE_ATTEMPTS: realDefaultMutateAttempts,
+  mutateBackoffMs: realMutateBackoffMs,
   reconstituteContextVars: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
   extractInheritedUserVars: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
   hashDelegationToken: mockFn<() => string>().mockReturnValue(MOCK_TOKEN_HASH),
@@ -219,7 +200,6 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     INVALID_TOKEN: { code: 'RD-807' },
     TOKEN_NOT_FOUND: { code: 'RD-808' },
     TOKEN_CANCELLED: { code: 'RD-809' },
-    DELEGATION_LOCK_TIMEOUT: { code: 'RD-810' },
     LAUNCH_FAILED: { code: 'RD-816' },
     CLAIM_INVARIANT_VIOLATED: { code: 'RD-820' },
   },
@@ -559,68 +539,9 @@ function mockScanService(result: FindByTokenResult, orphan?: FindOrphanedChildRe
   );
 }
 
-/**
- * Configure `core.DelegationLock` with the given acquire/release mocks.
- *
- * Production takes the lock via the disposable scope API (`scope`/`held`,
- * returning an `AsyncDisposable`), so the mock implements those too. Both
- * delegate disposal to the supplied `release` mock so `toHaveBeenCalledWith`
- * assertions on `release` still observe the scope-exit unlink. The cast
- * surfaces the full instance shape without forcing the private
- * `cwd` / `lockDir` / `lockPath` fields onto the literal.
- *
- * `release` accepts an optional `runId` argument in production (the lock
- * scopes per-parent-run) — the mock signature mirrors that so
- * `toHaveBeenCalledWith(RUN_ID)` type-checks.
- */
-function mockDelegationLock(
-  acquire: jest.Mock<(...args: unknown[]) => Promise<void>>,
-  release: jest.Mock<(...args: unknown[]) => Promise<void>>,
-): void {
-  const held = (runId?: string): ScopedLock => {
-    let released = false;
-    const run = async (): Promise<void> => {
-      if (released) return;
-      released = true;
-      await release(runId);
-    };
-    return { release: run, [Symbol.asyncDispose]: run };
-  };
-  const scope = async (runId?: string): Promise<ScopedLock> => {
-    await acquire(runId);
-    return held(runId);
-  };
-  jest
-    .mocked(core.DelegationLock)
-    .mockImplementation(
-      () =>
-        ({ acquire, release, held, scope }) as unknown as jest.MockedObject<
-          InstanceType<typeof core.DelegationLock>
-        >,
-    );
-}
-
-/** Convenience: build a default acquire/release pair that always succeeds. */
-function mockHappyDelegationLock(): {
-  acquire: jest.Mock<(...args: unknown[]) => Promise<void>>;
-  release: jest.Mock<(...args: unknown[]) => Promise<void>>;
-} {
-  const acquire = mockFn<(...args: unknown[]) => Promise<void>>();
-  acquire.mockResolvedValue(undefined);
-  const release = mockFn<(...args: unknown[]) => Promise<void>>();
-  release.mockResolvedValue(undefined);
-  mockDelegationLock(acquire, release);
-  return { acquire, release };
-}
-
 beforeEach(() => {
   jest.resetAllMocks();
   // Restore defaults after reset
-  // Default the durable-latch pre-check to `live` so it stays inert; individual
-  // tests override it to exercise the superseded path.
-  jest
-    .mocked(core.classifyDelegationLiveness)
-    .mockReturnValue({ kind: 'live' } as ReturnType<typeof core.classifyDelegationLiveness>);
   jest
     .mocked(core.inferFrameEntryFromState)
     .mockImplementation((state, frameKey) => realInferFrameEntryFromState(state, frameKey));
@@ -818,119 +739,6 @@ describe('claimAndLaunch', () => {
     }
   });
 
-  it('returns DELEGATION_LOCK_TIMEOUT when lock acquisition fails', async () => {
-    const ctx = makeCtx();
-
-    // Mock scan returning a result
-    mockScanService(
-      scanResult({
-        parentState: { id: RUN_ID, substepStates: [] },
-        stepId: '1',
-        substepId: '1',
-        delegation: { tokenHash: MOCK_TOKEN_HASH, childRunbookPath: 'child.md' },
-      }),
-    );
-
-    // Mock lock acquisition failure with a real DelegationLockTimeoutError
-    // (the production code now branches on `instanceof`, not on the message string).
-    const mockAcquire = mockFn<(...args: unknown[]) => Promise<void>>();
-    // `core` is the mocked module; the constructor is the mock-installed
-    // class, not the real export. Cast through unknown to surface the
-    // runtime constructor signature.
-    mockAcquire.mockRejectedValue(
-      new (
-        core as unknown as {
-          DelegationLockTimeoutError: new (id: string, lock: string) => Error;
-        }
-      ).DelegationLockTimeoutError(RUN_ID, '/tmp/test.lock'),
-    );
-    const mockRelease = mockFn<(...args: unknown[]) => Promise<void>>();
-    mockRelease.mockResolvedValue(undefined);
-    mockDelegationLock(mockAcquire, mockRelease);
-
-    // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      assertVariant(result, 'reason', 'lock-timeout');
-      expect(result.parentRunId).toBe(RUN_ID);
-    }
-  });
-
-  it('returns delegation-superseded before launch when the fresh parent cursor advanced', async () => {
-    const parentState = {
-      id: RUN_ID,
-      step: '2',
-      variables: {},
-      substepStates: [
-        {
-          id: 'delegate',
-          frameKey: '1|0',
-          status: 'pending',
-          delegation: {
-            tokenHash: MOCK_TOKEN_HASH,
-            credential: makeDelegationCredentialDescriptor(),
-            childRunbookPath: 'child.md',
-            childRunbookRef: { source: 'project', path: 'child.md' },
-            childRunId: null,
-            cancelledAt: null,
-            contextSnapshot: { vars: {}, ancestors: [] },
-            createdAt: '2026-02-27T10:00:00.000Z',
-          },
-        },
-      ],
-    };
-    const claimRunbook = mockClaimRunbookSuccess();
-    const create = mockFn<RunbookStateManager['create']>();
-    const ctx = makeCtx({
-      manager: {
-        load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
-          parentState as unknown as RunbookState,
-        ),
-        create,
-      },
-      sessionService: {
-        claimRunbook,
-      },
-    });
-
-    mockScanService(
-      scanResult({
-        parentState,
-        stepId: '1',
-        substepId: 'delegate',
-        delegation: parentState.substepStates[0].delegation,
-        frameKey: brandFrameKeyForTest('1', 0),
-      }),
-      null,
-    );
-    mockHappyDelegationLock();
-    jest.mocked(core.classifyDelegationLiveness).mockReturnValue({
-      kind: 'closed',
-      reason: 'cursor-advanced',
-    });
-
-    // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
-
-    expect(result).toEqual({
-      ok: false,
-      reason: 'delegation-superseded',
-      parentRunId: RUN_ID,
-      stepId: 'delegate',
-    });
-    expect(core.classifyDelegationLiveness).toHaveBeenCalledTimes(1);
-    const [classifiedParent, linkage] = jest.mocked(core.classifyDelegationLiveness).mock.calls[0];
-    expect(classifiedParent).toBe(parentState);
-    expect(linkage.parentStep).toBe('1');
-    expect(linkage.parentStepId).toBe('delegate');
-    expect(linkage.parentFrameKey).toBe('1|0');
-    expect(linkage.tokenHash).toBe(MOCK_TOKEN_HASH);
-    expect(create).not.toHaveBeenCalled();
-    expect(claimRunbook).not.toHaveBeenCalled();
-  });
-
   it('returns TOKEN_CANCELLED when delegation is cancelled', async () => {
     const ctx = makeCtx();
 
@@ -966,16 +774,9 @@ describe('claimAndLaunch', () => {
       null,
     );
 
-    // Mock lock
-    mockHappyDelegationLock();
-
     // Mock manager.load returning fresh state with cancelled delegation
     // (cast through unknown: tests use minimal fixtures rather than full RunbookState)
     jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
-    // Liveness stays at the `beforeEach` default of `live`: 4a′ early-returns
-    // only on `cursor-advanced`, so a cancelled-but-otherwise-live delegation
-    // reaches 4b either way, and `token-reissued` is unreachable here anyway —
-    // `freshSubstep` was matched on this exact token.
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -1021,9 +822,6 @@ describe('claimAndLaunch', () => {
       }),
     );
 
-    // Mock lock
-    mockHappyDelegationLock();
-
     // Mock manager.load returning fresh state with already-claimed delegation
     jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
 
@@ -1044,15 +842,14 @@ describe('claimAndLaunch', () => {
   // dropped. The entry now comes off the delegation row's credential, which is
   // written once at issuance and survives frame re-entry.
   //
-  // Liveness is left at the suite's `live` stub, and the title says so, because
-  // the pin cannot be stated any other way: the real classifier closes any frame
-  // whose recorded entry disagrees with issuance, so a fixture where the
-  // credential and the cursor differ never reaches 4c in production (the test
-  // below drives exactly that fixture through the real classifier and gets
-  // `delegation-superseded`). What this
-  // pins is the 4c linkage construction in isolation — that the entry it hands
-  // `claimRunbook` is read from the row and not recomputed from live state.
-  it('builds the 4c claim linkage entry from the credential, with liveness stubbed live', async () => {
+  // Nothing in the CLI classifies liveness on this path any more, so the linkage
+  // handed to `claimRunbook` is the only evidence core's in-transaction
+  // classifier has. The fixture makes the two coordinates disagree — live state
+  // is on the frame's third entry, the credential records the first — so an
+  // entry recomputed from `freshParent` would report 3, agree with whatever core
+  // re-derives from those same rows, and make the disagreement invisible at the
+  // one place left that can act on it.
+  it('builds the 3c claim linkage entry from the credential, not from live frame state', async () => {
     const ctx = makeCtx();
 
     const parentState = {
@@ -1074,6 +871,8 @@ describe('claimAndLaunch', () => {
             credential: makeDelegationCredentialDescriptor({ parentEntry: 1 }),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
+            // Routes the claim through 3c, where the hoisted linkage is handed
+            // straight to `claimRunbook`.
             childRunId: EXISTING_CHILD_RUN_ID,
             cancelledAt: null,
             contextSnapshot: { vars: {}, ancestors: [] },
@@ -1094,107 +893,24 @@ describe('claimAndLaunch', () => {
         frameKey: brandFrameKeyForTest('1', 0),
       }),
     );
-    mockHappyDelegationLock();
     jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
 
     // cspell:disable-next-line
     await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
-    const [, precheckLinkage] = jest.mocked(core.classifyDelegationLiveness).mock.calls[0];
-    expect(precheckLinkage.parentEntry).toBe(1);
     expect(claimRunbook).toHaveBeenCalledTimes(1);
     expect(claimRunbook.mock.calls[0][1]).toMatchObject({ parentEntry: 1 });
-  });
-
-  // The drift #738 is about, driven through the REAL liveness classifier rather
-  // than the `live` stub the rest of this suite installs. The stub makes the
-  // pre-check inert, which is what lets a wiring test observe the 4c linkage at
-  // all; it also means no stubbed test can say what production does with this
-  // fixture. Production supersedes it before 4c, so the envelope must name the
-  // child the delegation row already knows about — the 4c route via
-  // `claimResultToFailure` carries `childRunId`, and a diagnostic that
-  // preempts it must not silently drop the field.
-  it('supersedes an already-linked delegation when the frame re-entered past issuance', async () => {
-    const ctx = makeCtx();
-
-    const parentState = {
-      id: RUN_ID,
-      step: '1',
-      variables: {},
-      activeFrameKey: '1|0',
-      activeEntry: 3,
-      frameEntryCounts: { '1|0': 3 },
-      substepStates: [
-        {
-          id: '1',
-          frameKey: '1|0',
-          status: 'pending',
-          delegation: {
-            tokenHash: MOCK_TOKEN_HASH,
-            credential: makeDelegationCredentialDescriptor({ parentEntry: 1 }),
-            childRunbookPath: 'child.md',
-            childRunbookRef: { source: 'project', path: 'child.md' },
-            childRunId: EXISTING_CHILD_RUN_ID,
-            cancelledAt: null,
-            contextSnapshot: { vars: {}, ancestors: [] },
-            createdAt: '2026-02-27T10:00:00.000Z',
-          },
-        },
-      ],
-    };
-    const claimRunbook = mockClaimRunbookSuccess();
-    Object.assign(ctx.sessionService, { claimRunbook });
-
-    mockScanService(
-      scanResult({
-        parentState,
-        stepId: '1',
-        substepId: '1',
-        delegation: parentState.substepStates[0].delegation,
-        frameKey: brandFrameKeyForTest('1', 0),
-      }),
-    );
-    mockHappyDelegationLock();
-    jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
-    jest.mocked(core.classifyDelegationLiveness).mockImplementation(realClassifyDelegationLiveness);
-
-    // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
-
-    // `toEqual`, not `toMatchObject`: the child-named arm of 4a′'s conditional
-    // spread (`runbook-pipeline.ts`) is only observable as an EXACT envelope.
-    // This assertion is the sole killer of that line's `ConditionalExpression`
-    // → `true ? {} : …` and `ObjectLiteral` → `{}` mutants; the
-    // `childRunId: null` case earlier in this suite owns the other two
-    // (`false ? …` and `!==`). All four live HERE, not in
-    // `runbook-pipeline.test.ts`, which pins `classifyDelegationLiveness` to
-    // `live` by default and so never reaches 4a′ — which is why
-    // `test:mutate:changed`'s dedicated-test tier reports them as NoCoverage
-    // against that file. That is the documented reading of the tier ("this
-    // module's own unit test does not kill this mutant independently"), not a
-    // gap: `--related-tests` over the same scope kills all four.
-    expect(result).toEqual({
-      ok: false,
-      reason: 'delegation-superseded',
-      parentRunId: RUN_ID,
-      stepId: '1',
-      childRunId: EXISTING_CHILD_RUN_ID,
-    });
-    expect(claimRunbook).not.toHaveBeenCalled();
   });
 
   // The same pairing as above, for the step coordinate rather than the entry.
   // The parent's live cursor has moved to step "2"; the delegation was issued on
   // step "1". A linkage that read `freshParent.step` would name "2" — a
   // coordinate recomputed from live state, which is the drift class #738 exists
-  // to remove — while the claim's counterparty was stamped with "1".
-  //
-  // Liveness is stubbed `live` here so the wiring is observable at all. That
-  // stub is the ONLY reason this fixture reaches 4c: the companion test below
-  // drives the real classifier over the identical state and shows production
-  // refuses it first, which is why taking the step from the delegation is a
-  // no-op today rather than a behaviour change.
-  it('builds the 4c claim linkage step from the delegation, with liveness stubbed live', async () => {
+  // to remove — while the claim's counterparty was stamped with "1". Core
+  // compares its own read of the cursor against `linkage.parentStep` inside the
+  // claim transaction, so recomputing the field here would make that comparison
+  // self-fulfilling and an advanced cursor unobservable.
+  it('builds the 3c claim linkage step from the delegation, not from the parent cursor', async () => {
     const ctx = makeCtx();
 
     const parentState = {
@@ -1237,36 +953,31 @@ describe('claimAndLaunch', () => {
         frameKey: brandFrameKeyForTest('1', 0),
       }),
     );
-    mockHappyDelegationLock();
     jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
 
     // cspell:disable-next-line
     await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
 
-    // Both sides name the delegation's step, never the cursor's.
-    const [, precheckLinkage] = jest.mocked(core.classifyDelegationLiveness).mock.calls[0];
-    expect(precheckLinkage.parentStep).toBe('1');
     expect(claimRunbook).toHaveBeenCalledTimes(1);
     expect(claimRunbook.mock.calls[0][1]).toMatchObject({ parentStep: '1', parentStepId: '1' });
   });
 
-  // Companion to the stubbed test above: the same fixture through the REAL
-  // classifier. `classifyDelegationLiveness` compares `parent.step` against the
-  // linkage's `parentStep` before every other verdict it can return past the
-  // lifecycle guard `claimAndLaunch` already applied, so a moved cursor is
-  // `cursor-advanced` and the 4a′ pre-check refuses here. That is the invariant
-  // the linkage's `parentStep` relies on: no route that uses the linkage can be
-  // reached with `freshParent.step !== stepId`.
-  it('supersedes an already-linked delegation when the parent cursor left the delegating step', async () => {
+  // `claimResultToFailure`'s child-naming arm, on the one route that has a child
+  // to name. 3c hands core a delegation that already records a child, and core's
+  // in-transaction classifier — the sole owner of this verdict since the CLI
+  // stopped pre-classifying — refuses the claim as superseded. Core's own
+  // `delegation-superseded` result leaves `childRunId` unset, so an id in the
+  // envelope can only come from the pipeline substituting the child it was
+  // claiming: a bearer holder needs to know WHICH run holds the delegation it
+  // just lost. The fresh-launch arm deliberately carries none, because the only
+  // child it could name is the one launch cleanup is about to delete.
+  it('names the claimed child when core supersedes an already-linked claim', async () => {
     const ctx = makeCtx();
 
     const parentState = {
       id: RUN_ID,
-      step: '2',
+      step: '1',
       variables: {},
-      activeFrameKey: '1|0',
-      activeEntry: 1,
-      frameEntryCounts: { '1|0': 1 },
       substepStates: [
         {
           id: '1',
@@ -1274,7 +985,7 @@ describe('claimAndLaunch', () => {
           status: 'pending',
           delegation: {
             tokenHash: MOCK_TOKEN_HASH,
-            credential: makeDelegationCredentialDescriptor({ parentEntry: 1 }),
+            credential: makeDelegationCredentialDescriptor(),
             childRunbookPath: 'child.md',
             childRunbookRef: { source: 'project', path: 'child.md' },
             childRunId: EXISTING_CHILD_RUN_ID,
@@ -1285,7 +996,9 @@ describe('claimAndLaunch', () => {
         },
       ],
     };
-    const claimRunbook = mockClaimRunbookSuccess();
+    const claimRunbook = mockFn<SessionService['claimRunbook']>().mockResolvedValue(
+      committed({ status: 'delegation-superseded', parentRunId: RUN_ID, parentStepId: '1' }),
+    );
     Object.assign(ctx.sessionService, { claimRunbook });
 
     mockScanService(
@@ -1297,9 +1010,7 @@ describe('claimAndLaunch', () => {
         frameKey: brandFrameKeyForTest('1', 0),
       }),
     );
-    mockHappyDelegationLock();
     jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
-    jest.mocked(core.classifyDelegationLiveness).mockImplementation(realClassifyDelegationLiveness);
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -1311,7 +1022,7 @@ describe('claimAndLaunch', () => {
       stepId: '1',
       childRunId: EXISTING_CHILD_RUN_ID,
     });
-    expect(claimRunbook).not.toHaveBeenCalled();
+    expect(claimRunbook).toHaveBeenCalledTimes(1);
   });
 
   it('adopts orphaned child run when findOrphanedChild returns a match', async () => {
@@ -1353,9 +1064,6 @@ describe('claimAndLaunch', () => {
       }),
       orphanState as unknown as RunbookState,
     );
-
-    // Mock lock
-    mockHappyDelegationLock();
 
     // Mock manager.load returning fresh state with unclaimed delegation
     jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
@@ -1441,7 +1149,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-    mockHappyDelegationLock();
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -1552,7 +1259,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-    mockHappyDelegationLock();
 
     // cspell:disable-next-line
     const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
@@ -1613,7 +1319,6 @@ describe('claimAndLaunch', () => {
         delegation: parentState.substepStates[0].delegation,
       }),
     );
-    mockHappyDelegationLock();
     jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
 
     // cspell:disable-next-line
@@ -1692,7 +1397,6 @@ describe('claimAndLaunch', () => {
         delegation: parentState.substepStates[0].delegation,
       }),
     );
-    mockHappyDelegationLock();
     jest.mocked(ctx.manager).load.mockResolvedValue(parentState as unknown as RunbookState);
 
     // cspell:disable-next-line
@@ -1707,34 +1411,7 @@ describe('claimAndLaunch', () => {
     expect(mockClaimRunbook).toHaveBeenCalled();
   });
 
-  it('re-throws non-timeout lock errors instead of masking them', async () => {
-    const ctx = makeCtx();
-
-    // Mock scan returning a result
-    mockScanService(
-      scanResult({
-        parentState: { id: RUN_ID, substepStates: [] },
-        stepId: '1',
-        substepId: '1',
-        delegation: { tokenHash: MOCK_TOKEN_HASH, childRunbookPath: 'child.md' },
-      }),
-    );
-
-    // Mock lock throwing a non-timeout error (e.g. permission denied)
-    const permissionError = new Error('EACCES: permission denied');
-    const mockAcquire = mockFn<(...args: unknown[]) => Promise<void>>();
-    mockAcquire.mockRejectedValue(permissionError);
-    const mockRelease = mockFn<(...args: unknown[]) => Promise<void>>();
-    mockRelease.mockResolvedValue(undefined);
-    mockDelegationLock(mockAcquire, mockRelease);
-
-    // cspell:disable-next-line
-    await expect(claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {})).rejects.toThrow(
-      'EACCES: permission denied',
-    );
-  });
-
-  it('returns TOKEN_NOT_FOUND when parent state no longer exists after lock', async () => {
+  it('returns TOKEN_NOT_FOUND when parent state no longer exists at the freshness re-read', async () => {
     const ctx = makeCtx();
 
     const parentState = {
@@ -1767,9 +1444,6 @@ describe('claimAndLaunch', () => {
       }),
     );
 
-    // Mock lock
-    mockHappyDelegationLock();
-
     // Mock manager.load returning null (state was deleted)
     jest.mocked(ctx.manager).load.mockResolvedValue(null);
 
@@ -1784,7 +1458,7 @@ describe('claimAndLaunch', () => {
   });
 
   it.each(['completed', 'stopped'] as const)(
-    'returns parent-ended when parent is %s after lock',
+    'returns parent-ended when parent is %s at the freshness re-read',
     async (lifecycle) => {
       const ctx = makeCtx();
       const parentState = {
@@ -1816,7 +1490,6 @@ describe('claimAndLaunch', () => {
           delegation: parentState.substepStates[0].delegation,
         }),
       );
-      mockHappyDelegationLock();
       jest.mocked(ctx.manager).load.mockResolvedValue({
         ...parentState,
         lifecycle,
@@ -1834,7 +1507,7 @@ describe('claimAndLaunch', () => {
     },
   );
 
-  it('returns TOKEN_NOT_FOUND when delegation disappears after lock', async () => {
+  it('returns TOKEN_NOT_FOUND when delegation disappears before the freshness re-read', async () => {
     const ctx = makeCtx();
 
     const parentState = {
@@ -1866,9 +1539,6 @@ describe('claimAndLaunch', () => {
         delegation: parentState.substepStates[0].delegation,
       }),
     );
-
-    // Mock lock
-    mockHappyDelegationLock();
 
     // Mock manager.load returning state without delegation
     jest.mocked(ctx.manager).load.mockResolvedValue({
@@ -1919,9 +1589,6 @@ describe('claimAndLaunch', () => {
         delegation: parentState.substepStates[0].delegation,
       }),
     );
-
-    // Mock lock
-    mockHappyDelegationLock();
 
     // Mock manager.load returning state with different hash
     jest.mocked(ctx.manager).load.mockResolvedValue({
@@ -2026,9 +1693,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-
-    // Mock lock
-    mockHappyDelegationLock();
 
     // deriveActiveFrame returns the WRONG frame (parent has advanced to iteration 5)
     jest.mocked(core.deriveActiveFrame).mockReturnValue({
@@ -2145,7 +1809,137 @@ describe('claimAndLaunch', () => {
     expect(mockUpdate).not.toHaveBeenCalled();
   });
 
-  it('returns LAUNCH_FAILED (RD-816) when manager.create throws and releases the lock', async () => {
+  it('uses the delegating step for linkage, not the advanced parent cursor', async () => {
+    // Parent state: the delegation was issued on step '1'; the parent's cursor
+    // has since advanced to step '2'. The linkage must carry the DELEGATING
+    // step — it is the value `classifyDelegationLiveness` compares the
+    // in-transaction parent cursor against, and the value persisted onto the
+    // claim for the parent-side half of the same latch. Copying the parent's
+    // current cursor makes that comparison self-fulfilling.
+    const parentState = {
+      id: RUN_ID,
+      step: '2',
+      variables: {},
+      substepStates: [
+        {
+          id: 'delegate',
+          frameKey: '1|0',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [], step: '1' },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: 'delegate',
+        delegation: parentState.substepStates[0].delegation,
+        frameKey: brandFrameKeyForTest('1', 0),
+      }),
+      null,
+    );
+
+    jest.mocked(core.deriveActiveFrame).mockReturnValue({
+      step: '2',
+      iteration: undefined,
+      frameKey: brandFrameKeyForTest('2'),
+    });
+
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/work/test/child.md',
+      source: 'project',
+      sourceRoot: '/work/test',
+    });
+    // Cast through unknown: the parser fixture is a minimal stand-in
+    // (real Runbook type carries many more fields than this test reads).
+    jest.mocked(parser.parseRunbookDocument).mockReturnValue({
+      runbook: { steps: [{ kind: 'base', name: '1', description: 'Step' }] },
+      frontmatter: null,
+      diagnostics: [],
+    } as unknown as ReturnType<typeof parser.parseRunbookDocument>);
+    jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
+    // Cast through unknown: ResolvedVariables uses a branded vars map
+    // and tracks more fields than this fixture provides.
+    jest.mocked(resolveVariables).mockResolvedValue({
+      vars: {},
+      warnings: [],
+      providedKeys: new Set(),
+    } as unknown as Awaited<ReturnType<typeof resolveVariables>>);
+    // Cast through unknown: test impl identity-passes the AST, but
+    // resolveForBounds returns a `ResolvedRunbook` (post-FOR-resolution brand).
+    jest
+      .mocked(resolveForBounds)
+      .mockImplementation(
+        (runbook) => ({ runbook, warnings: [] }) as unknown as ReturnType<typeof resolveForBounds>,
+      );
+    jest.mocked(substituteRunbookVariables).mockImplementation((runbook) => runbook);
+    jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
+    // Cast through unknown: the bridged emitter exposes more methods than
+    // emit(); the test doesn't exercise them so a partial stub suffices.
+    jest
+      .mocked(createBridgedEmitter)
+      .mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<typeof createBridgedEmitter>);
+    jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+
+    const mockCreate = mockFn<(...args: unknown[]) => Promise<{ id: RunId; title: string }>>();
+    mockCreate.mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' });
+
+    const mockClaimAndInitialLink = mockClaimAndInitialLinkSuccess();
+
+    const ctx = makeCtx({
+      manager: {
+        load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
+          parentState as unknown as RunbookState,
+        ),
+        create: mockCreate,
+        update: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
+        initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+      },
+      actorService: {
+        initializeState: mockFn<() => Promise<RunbookState>>().mockResolvedValue({
+          id: NEW_CHILD_ID,
+          step: '1',
+        } as unknown as RunbookState),
+      },
+      sessionService: {
+        pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        claimAndInitialLink: mockClaimAndInitialLink,
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
+      },
+    });
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error(`Expected success, got ${result.reason}`);
+
+    // Assert on the linkage core RECEIVED, not on the command outcome: core is
+    // mocked here and its claim transaction — the only thing that classifies
+    // liveness — is stubbed to succeed, so the outcome cannot distinguish the
+    // two candidate values. The end-to-end consequence is pinned by
+    // `__tests__/integration/delegate-workflow.test.ts`.
+    expect(mockClaimAndInitialLink).toHaveBeenCalledTimes(1);
+    const linkage = mockClaimAndInitialLink.mock.calls[0][0].linkage;
+    expect(linkage.parentStep).toBe('1');
+    expect(linkage.parentStepId).toBe('delegate');
+    expect(linkage.parentFrameKey).toBe('1|0');
+  });
+
+  it('returns LAUNCH_FAILED (RD-816) when manager.create throws', async () => {
     const parentState = {
       id: RUN_ID,
       step: '1',
@@ -2179,8 +1973,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-
-    const { release: mockRelease } = mockHappyDelegationLock();
 
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
@@ -2240,8 +2032,6 @@ describe('claimAndLaunch', () => {
       expect(result.code).toBe('RD-816');
       expect(result.cause).toContain('disk full');
     }
-    // Lock must be released even on init failure
-    expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
 
   it('returns CLAIM_INVARIANT_VIOLATED (RD-820) when claimChildForPipeline fails after fresh launch and does not execute the loop', async () => {
@@ -2278,8 +2068,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-
-    const { release: mockRelease } = mockHappyDelegationLock();
 
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
@@ -2355,8 +2143,6 @@ describe('claimAndLaunch', () => {
     expect(mockClaimAndInitialLink).toHaveBeenCalledWith(
       expect.objectContaining({ childRunId: NEW_CHILD_ID }),
     );
-    // Lock must be released even on claim failure
-    expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
 
   it.each([
@@ -2425,7 +2211,6 @@ describe('claimAndLaunch', () => {
         }),
         null,
       );
-      mockHappyDelegationLock();
 
       jest.mocked(resolveRunbookFile).mockResolvedValue({
         path: '/tmp/test/child.md',
@@ -2537,8 +2322,6 @@ describe('claimAndLaunch', () => {
       null,
     );
 
-    const { release: mockRelease } = mockHappyDelegationLock();
-
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
       source: 'project',
@@ -2613,7 +2396,128 @@ describe('claimAndLaunch', () => {
     }
     expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
     expect(runExecutionLoop).not.toHaveBeenCalled();
-    expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
+  });
+
+  it('names the winning child when a second claimer loses the delegation, rather than RD-820', async () => {
+    const parentState = {
+      id: RUN_ID,
+      step: '1',
+      variables: {},
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|0',
+          status: 'pending',
+          delegation: {
+            tokenHash: MOCK_TOKEN_HASH,
+            credential: makeDelegationCredentialDescriptor(),
+            childRunbookPath: 'child.md',
+            childRunbookRef: { source: 'project', path: 'child.md' },
+            childRunId: null,
+            cancelledAt: null,
+            contextSnapshot: { vars: {}, ancestors: [] },
+            createdAt: '2026-02-27T10:00:00.000Z',
+          },
+        },
+      ],
+    };
+
+    mockScanService(
+      scanResult({
+        parentState,
+        stepId: '1',
+        substepId: '1',
+        delegation: parentState.substepStates[0].delegation,
+        frameKey: brandFrameKeyForTest('1', 0),
+      }),
+      null,
+    );
+
+    jest.mocked(resolveRunbookFile).mockResolvedValue({
+      path: '/tmp/test/child.md',
+      source: 'project',
+      sourceRoot: '/tmp/test',
+    });
+    // Cast through unknown: minimal parser fixture (see frameKey linkage test).
+    jest.mocked(parser.parseRunbookDocument).mockReturnValue({
+      runbook: { steps: [{ kind: 'base', name: '1', description: 'Step' }] },
+      frontmatter: null,
+      diagnostics: [],
+    } as unknown as ReturnType<typeof parser.parseRunbookDocument>);
+    jest.mocked(validateOutputsDeclarations).mockReturnValue([]);
+    jest.mocked(resolveVariables).mockResolvedValue({
+      vars: {},
+      warnings: [],
+      providedKeys: new Set(),
+    } as unknown as Awaited<ReturnType<typeof resolveVariables>>);
+    jest
+      .mocked(resolveForBounds)
+      .mockImplementation(
+        (runbook) => ({ runbook, warnings: [] }) as unknown as ReturnType<typeof resolveForBounds>,
+      );
+    jest.mocked(substituteRunbookVariables).mockImplementation((runbook) => runbook);
+    jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
+
+    // Two processes claim one token. This one got past the 4c replay check
+    // before the winner committed, launched its own child, and only learns the
+    // truth when it re-derives the link against the committed parent. That is a
+    // race Rundown handled correctly, not a broken invariant — and the fact the
+    // user needs is the WINNER's run id, not this claimer's child, which launch
+    // cleanup is about to delete.
+    const winningChildRunId = brandRunIdForTest('rd_77777777777777777777777777777777');
+    const mockPrepare = mockFn<
+      RunbookActorService['prepareDelegationChildLink']
+    >().mockResolvedValue({
+      kind: 'already_linked',
+      runId: RUN_ID,
+      message: `Delegation 1 is already linked to another child`,
+      occupyingChildRunId: winningChildRunId,
+    });
+    const mockClaimAndInitialLink = mockFn<SessionService['claimAndInitialLink']>();
+    const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
+
+    const ctx = makeCtx({
+      manager: {
+        load: mockFn<() => Promise<RunbookState>>().mockResolvedValue(
+          parentState as unknown as RunbookState,
+        ),
+        create: mockFn<
+          (...args: unknown[]) => Promise<{ id: RunId; title: string }>
+        >().mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' }),
+        update: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        delete: mockDelete,
+        list: mockFn<() => Promise<unknown[]>>().mockResolvedValue([]),
+        initializeSubsteps: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+      },
+      actorService: {
+        initializeState: mockFn<() => Promise<RunbookState>>().mockResolvedValue({
+          id: NEW_CHILD_ID,
+          step: '1',
+        } as unknown as RunbookState),
+        prepareDelegationChildLink: mockPrepare,
+      },
+      sessionService: {
+        pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
+        claimAndInitialLink: mockClaimAndInitialLink,
+        findClaimForDelegation:
+          mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
+      },
+    });
+
+    // cspell:disable-next-line
+    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      assertVariant(result, 'reason', 'delegation-already-claimed');
+      expect(result.parentRunId).toBe(RUN_ID);
+      expect(result.stepId).toBe('1');
+      expect(result.childRunId).toBe(winningChildRunId);
+    }
+    // The permanent refusal was decided before any commit was attempted.
+    expect(mockClaimAndInitialLink).not.toHaveBeenCalled();
+    expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
+    expect(runExecutionLoop).not.toHaveBeenCalled();
   });
 
   it('does not claim or link when fresh delegated launch initialization fails', async () => {
@@ -2650,8 +2554,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-
-    const { release: mockRelease } = mockHappyDelegationLock();
 
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
@@ -2736,7 +2638,6 @@ describe('claimAndLaunch', () => {
     expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
     expect(mockUpdate).not.toHaveBeenCalled();
     expect(runExecutionLoop).not.toHaveBeenCalled();
-    expect(mockRelease).toHaveBeenCalledWith(RUN_ID);
   });
 
   async function arrangeInitialLinkRollback() {
@@ -2781,7 +2682,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-    mockHappyDelegationLock();
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',
       source: 'project',
@@ -3011,8 +2911,6 @@ describe('claimAndLaunch', () => {
       }),
       null,
     );
-
-    mockHappyDelegationLock();
 
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/tmp/test/child.md',

@@ -1563,22 +1563,18 @@ export class SessionService {
    * callback is the authoritative, race-closing refusal.
    *
    * The `advance` callback MUST pass the supplied guard into the DECISIVE
-   * transition write (e.g. `RunbookCompletionService.recordManualCompletion` or
-   * `RunbookActorService.sendAndSync`) and into no other write.
+   * transition write (e.g. the commit behind `EffectfulActorMutationRunner.run`)
+   * and into no other write.
    *
-   * A callback may legitimately span more than one store write: a drain applies
-   * each queued completion in its own transaction. Only the first is decisive —
-   * the write that advances the parent past the point where a live delegated
-   * child matters. Re-arming the guard on a follow-on write would let an
-   * unrelated child claiming mid-callback abort it, stranding the
+   * Every callback here performs exactly ONE guarded write, and that is now a
+   * property of the callers rather than a rule they follow. The lifecycle seam's
+   * fenced paths prepare their transitions purely and commit them in ONE owned
+   * transaction; no surviving caller applies a sequence of separately-committed
+   * writes under a single guard. A future caller that does would need the
+   * first-write-only discipline back — re-arming the guard on a follow-on write
+   * lets an unrelated child claiming mid-callback abort it, stranding the
    * already-committed decisive write behind a bare `open_delegated_children`
    * refusal that reports none of the transitions it committed.
-   *
-   * `RunbookCompletionService.drainResolvedCompletionsUnlocked` — the remaining
-   * multi-write callback — enforces this by arming the guard on its first write
-   * only. The lifecycle seam's fenced substep path no longer needs the rule: it
-   * prepares every apply purely and commits them in ONE owned transaction, so
-   * its callback performs exactly one guarded write by construction.
    *
    * Release steps run after the callback returns.
    *

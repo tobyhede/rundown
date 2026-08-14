@@ -77,7 +77,6 @@ export const CLISymbolicErrorCodeValues = [
   'INVALID_TOKEN',
   'TOKEN_NOT_FOUND',
   'DELEGATION_CANCELLED',
-  'DELEGATION_LOCK_TIMEOUT',
   'INVALID_STEP',
   'INVALID_INDEX',
   'UNSUPPORTED_OPTION',
@@ -171,8 +170,6 @@ export const CLIErrorCodes = {
   TOKEN_NOT_FOUND: ErrorCodes.TOKEN_NOT_FOUND.code,
   /** Delegation token was cancelled */
   DELEGATION_CANCELLED: ErrorCodes.TOKEN_CANCELLED.code,
-  /** Delegation lock could not be acquired */
-  DELEGATION_LOCK_TIMEOUT: ErrorCodes.DELEGATION_LOCK_TIMEOUT.code,
   /** Nested delegation forbidden (claimed child cannot delegate further) */
   DELEGATION_NESTED_FORBIDDEN: ErrorCodes.DELEGATION_NESTED_FORBIDDEN.code,
   /** Targeted step has no substep marked DELEGATE */

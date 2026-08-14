@@ -175,16 +175,48 @@ interface SetInlineLaunchFailedParams {
 type InlineChildStartedEvent = Extract<RunbookEvent, { type: 'INLINE_CHILD_STARTED' }>;
 type DelegationChildLinkedEvent = Extract<RunbookEvent, { type: 'DELEGATION_CHILD_LINKED' }>;
 type DelegationChildUnlinkedEvent = Extract<RunbookEvent, { type: 'DELEGATION_CHILD_UNLINKED' }>;
+/**
+ * Stable refusal classes a delegated-child link derivation can raise.
+ *
+ * The three are distinct facts and must never collapse into one another:
+ *
+ * - `delegation_superseded` — the coordinate no longer names this delegation.
+ * - `already_linked` — the delegation is permanently occupied by a different
+ *   child. Re-reading cannot change it, so the caller must refuse rather than
+ *   retry.
+ * - `concurrent_modification` — a version race. Re-deriving against the
+ *   committed row can succeed, so the caller may retry.
+ */
+export type DelegationChildLinkRefusalReason = DelegationChildLinkRefusal['reason'];
+
+/**
+ * A delegated-child link refusal, carrying the facts that refusal is about.
+ *
+ * Only `already_linked` carries anything beyond its class, and it must: the
+ * refusal is permanent *because another child holds the coordinate*, so the
+ * caller reporting it to a user has to name that child rather than the one it
+ * failed to link — which, on the fresh-launch path, is a run its own launch
+ * cleanup is about to delete.
+ */
+export type DelegationChildLinkRefusal =
+  | { readonly reason: 'delegation_superseded' }
+  | {
+      readonly reason: 'already_linked';
+      /** The child that already holds the delegation; never the rejected one. */
+      readonly occupyingChildRunId: RunId;
+    }
+  | { readonly reason: 'concurrent_modification' };
+
 /** Typed refusal raised while deriving an exact delegated-child link transition. */
 export class DelegationChildLinkPreparationError extends Error {
   /**
    * Create a typed preparation refusal.
    *
-   * @param reason - Stable refusal class for the caller.
+   * @param refusal - Stable refusal class plus the facts it carries.
    * @param message - Diagnostic text.
    */
   constructor(
-    readonly reason: 'delegation_superseded' | 'concurrent_modification',
+    readonly refusal: DelegationChildLinkRefusal,
     message: string,
   ) {
     super(message);
@@ -198,7 +230,7 @@ export class DelegationChildLinkPreparationError extends Error {
  * @param substepStates - Current machine-owned substep state.
  * @param event - Typed link event.
  * @returns Updated substep state, or the original array for an idempotent replay.
- * @throws {DelegationChildLinkPreparationError} When the delegation was superseded or occupied.
+ * @throws {DelegationChildLinkPreparationError} `delegation_superseded` when the coordinate or token no longer names this delegation; `already_linked` when a different child already holds it.
  */
 export function deriveDelegationChildLinkedSubsteps(
   substepStates: readonly SubstepState[] | undefined,
@@ -206,7 +238,7 @@ export function deriveDelegationChildLinkedSubsteps(
 ): readonly SubstepState[] | undefined {
   if (substepStates === undefined) {
     throw new DelegationChildLinkPreparationError(
-      'delegation_superseded',
+      { reason: 'delegation_superseded' },
       `Delegation ${event.parentStepId} no longer names the captured frame entry`,
     );
   }
@@ -214,14 +246,18 @@ export function deriveDelegationChildLinkedSubsteps(
   const target = findSubstepState(substepStates, event.parentStepId, event.parentFrameKey);
   if (target?.delegation?.tokenHash !== event.tokenHash) {
     throw new DelegationChildLinkPreparationError(
-      'delegation_superseded',
+      { reason: 'delegation_superseded' },
       `Delegation ${event.parentStepId} no longer matches the presented token`,
     );
   }
   if (target.delegation.childRunId !== null) {
     if (target.delegation.childRunId === event.childRunId) return substepStates;
+    // Occupancy by another child is permanent, not a version race: this
+    // delegation names one child for the life of the entry, so no amount of
+    // re-reading frees it. Classifying it `concurrent_modification` told the
+    // caller to retry a link that can never succeed.
     throw new DelegationChildLinkPreparationError(
-      'concurrent_modification',
+      { reason: 'already_linked', occupyingChildRunId: target.delegation.childRunId },
       `Delegation ${event.parentStepId} is already linked to another child`,
     );
   }
@@ -251,7 +287,7 @@ export function deriveDelegationChildUnlinkedSubsteps(
 ): readonly SubstepState[] | undefined {
   if (substepStates === undefined) {
     throw new DelegationChildLinkPreparationError(
-      'delegation_superseded',
+      { reason: 'delegation_superseded' },
       `Delegation ${event.parentStepId} no longer names the captured frame entry`,
     );
   }
@@ -259,14 +295,14 @@ export function deriveDelegationChildUnlinkedSubsteps(
   const delegation = target?.delegation;
   if (delegation?.tokenHash !== event.tokenHash) {
     throw new DelegationChildLinkPreparationError(
-      'delegation_superseded',
+      { reason: 'delegation_superseded' },
       `Delegation ${event.parentStepId} no longer matches the rollback token`,
     );
   }
   if (delegation.childRunId === null) return substepStates;
   if (delegation.childRunId !== event.childRunId) {
     throw new DelegationChildLinkPreparationError(
-      'concurrent_modification',
+      { reason: 'concurrent_modification' },
       `Delegation ${event.parentStepId} is linked to a newer child`,
     );
   }
