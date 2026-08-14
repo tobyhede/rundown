@@ -1470,9 +1470,21 @@ exactly the state a crashed one does, so reclaiming on absence would send both
 into `manager.create` and reproduce the race the latch exists to prevent. The
 reclaiming observer overwrites the record with its own identity in the same
 commit, so a third observer finds the launch held rather than reclaimable, and
-reports the reclamation to the operator. A launch held by a **live** owner still
+reports the reclamation to the operator. A launch held by a **live** owner
 answers `waiting` — now naming the process, because that wait resolves itself
 and is not the same condition as a stranded one.
+
+`already-latched` therefore carries no child, and the adoption branch is reached
+only from `won`. A live owner that has reached `manager.create` and one that has
+not are the same launch at two moments, so adopting at the second would push a
+run its owner is about to execute onto this session, consume the one-shot intent
+out from under it, and rotate the bearer it still holds. The crashed launcher
+that got as far as creating the child — the case the adoption branch exists for
+— arrives through reclamation instead.
+
+One residual: a launch span that FAILS after latching leaves the latch set,
+because clearing it would need an inverse machine event. The owner is alive, so
+it reports as held until that process exits, and the next process reclaims it.
 
 The lock itself was no better than it looks: `acquireFileLock` is not reentrant,
 so a second observer reached from the same process blocked its own predecessor

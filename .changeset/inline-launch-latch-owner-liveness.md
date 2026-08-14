@@ -31,8 +31,18 @@ reclaiming on a guess.
 An observer that finds a dead owner takes the launch over, records **itself** as
 the new owner in the same commit — so a third observer finds it held rather than
 reclaiming a launch now in progress — and warns that it did so. An observer that
-finds a live owner still stands down with `waiting`, and now names the process
-holding the launch instead of waiting opaquely.
+finds a live owner stands down with `waiting`, and now names the process holding
+the launch instead of waiting opaquely.
+
+**A live owner's launch is now left entirely alone, including its child.**
+Previously an observer that found the latch taken still adopted the child run if
+one existed — which was the only sane reading before the owner's liveness was
+knowable, because that state was indistinguishable from a crashed launcher.
+Those are one process's launch at two moments, and taking the second over pushed
+a run its owner was about to execute onto the observer's session, consumed the
+one-shot intent out from under it, and rotated the bearer it still held. The
+crash case is now reached through reclamation instead, so the adoption branch
+runs only when this observer owns the latch.
 
 Absence of the child run row is deliberately not the signal, and the reasoning
 is worth recording because the cheap fix looks sound: an observer that has
@@ -40,6 +50,14 @@ latched and is still resolving the child runbook presents _exactly_ the state a
 crashed one does. Reclaiming on absence would send both into `manager.create`
 and reproduce the `SQLITE_CONSTRAINT` race the latch exists to prevent. Only
 liveness separates _dead_ from _not there yet_.
+
+One window is narrowed rather than closed, and is worth stating plainly: a
+launch span that FAILS after latching — an unresolvable child ref, a preparation
+error — still leaves the latch set, because clearing it needs an inverse machine
+event this change does not add. Its owner is alive, so it reports as held for
+the rest of that process's life; the next process reclaims it, where before this
+change no process ever would. A short-lived CLI invocation therefore self-heals
+on the next gesture.
 
 Persisted state carrying the old bare-timestamp `startedAt` no longer validates.
 Per the no-migration rule, finish, stop, or prune an affected run rather than
