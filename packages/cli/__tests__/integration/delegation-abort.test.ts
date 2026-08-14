@@ -170,12 +170,17 @@ describe('Delegation abort integration', () => {
     expect(aborted?.exitCode).toBe(0);
 
     expect(result.exitCode).toBe(1);
-    const envelope = parseCliJsonObject(result.stdout || result.stderr);
+    // Parsed from stdout alone, with no `|| result.stderr` fallback: the
+    // refusal is a JSON envelope on stdout like every other agent-facing
+    // outcome, and `parseCliJsonObject` is a bare `JSON.parse`, so this also
+    // pins that exactly one document is emitted — a second event would make it
+    // throw.
+    const envelope = parseCliJsonObject(result.stdout);
     // The timestamp is the committed one, read by the transaction that refused
     // — the CLI's own pre-check had none to report.
     const parentAfter = await getActiveState(workspace);
-    const cancelledAt = (parentAfter?.substepStates ?? []).find((ss) => ss.id === '1')?.delegation
-      ?.cancelledAt;
+    const substepAfter = (parentAfter?.substepStates ?? []).find((ss) => ss.id === '1');
+    const cancelledAt = substepAfter?.delegation?.cancelledAt;
     expect(cancelledAt).toEqual(expect.any(String));
     expect(envelope).toEqual(
       expect.objectContaining({
@@ -184,6 +189,22 @@ describe('Delegation abort integration', () => {
         details: expect.objectContaining({ cancelledAt }),
       }),
     );
+
+    // The abort closed the delegation and nothing else, and the refused claim
+    // committed nothing at all — so the parent is the same run, on the same
+    // step, still running. Without this the test would pass just as happily if
+    // the refusal had been reached by the parent moving, which is the very
+    // reading the new reason exists to rule out. The literals are asserted
+    // alongside the before/after equalities so neither comparison can pass
+    // vacuously on a pair of `undefined`s.
+    expect(parentBefore?.step).toBe('1');
+    expect(parentBefore?.lifecycle).toBe('running');
+    expect(parentAfter?.id).toBe(parentBefore?.id);
+    expect(parentAfter?.step).toBe('1');
+    expect(parentAfter?.lifecycle).toBe('running');
+    // And the substep still carries the delegation this claim named, so the
+    // cancellation asserted above is that delegation's and not a sibling's.
+    expect(substepAfter?.status).not.toBe('done');
   }, 30_000);
 
   it('ordinary abort (no --force) closes the delegation without a fail outcome or pending collection', async () => {
