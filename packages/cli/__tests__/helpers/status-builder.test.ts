@@ -365,6 +365,181 @@ describe('buildActiveStatus', () => {
   });
 });
 
+describe('reportedOutcomes projection (#766)', () => {
+  // Core owns the classification and the ordering; this pins the CLI's
+  // PROJECTION of it — field mapping and the remedy rule — with core doubled,
+  // which is the layer this suite tests. Agreement with the real scope rule is
+  // pinned separately in status-builder-scope.test.ts.
+  const fact = (overrides: Record<string, unknown> = {}) => ({
+    kind: 'delegation-outcome-reported',
+    completionKey: '1||2|1',
+    parentRunId: DEFAULT_RUN_ID,
+    targetStep: '1',
+    targetSubstep: '1',
+    targetFrameKey: brandFrameKeyForTest('1'),
+    targetEntry: 2,
+    outcome: 'pass',
+    reportedAt: '2026-01-01T00:00:00.000Z',
+    reachability: 'collectable',
+    ...overrides,
+  });
+
+  function reachabilityReturns(facts: ReturnType<typeof fact>[]): void {
+    (core.readDelegationOutcomeReachability as unknown as jest.Mock).mockReturnValue(facts);
+  }
+
+  beforeEach(() => {
+    jest.mocked(getRunbookFromState).mockReturnValue([makeStep({ name: '1' })]);
+    jest.mocked(buildMetadata).mockReturnValue({
+      file: 'test.runbook.md',
+      state: '.rundown/rundown.db',
+      runId: DEFAULT_RUN_ID,
+    });
+    jest.mocked(core.countNumberedSteps).mockReturnValue(1);
+  });
+
+  it('maps every fact field onto the status entry', () => {
+    reachabilityReturns([fact()]);
+
+    expect(buildActiveStatus(makeState(), '/test').reportedOutcomes).toEqual([
+      {
+        completionKey: '1||2|1',
+        step: '1',
+        substep: '1',
+        outcome: 'pass',
+        reportedAt: '2026-01-01T00:00:00.000Z',
+        reachability: 'collectable',
+      },
+    ]);
+  });
+
+  it('carries a loop-scoped iteration through and omits it otherwise', () => {
+    reachabilityReturns([fact({ targetIteration: 3 }), fact({ completionKey: '1||2|2' })]);
+
+    const entries = buildActiveStatus(makeState(), '/test').reportedOutcomes;
+
+    expect(entries?.[0]).toHaveProperty('iteration', 3);
+    expect(entries?.[1]).not.toHaveProperty('iteration');
+  });
+
+  it('attaches the retry remedy only to a superseded entry', () => {
+    reachabilityReturns([
+      fact({ reachability: 'collectable' }),
+      fact({ reachability: 'superseded', targetSubstep: '2' }),
+      fact({ reachability: 'out-of-scope' }),
+    ]);
+
+    expect(
+      buildActiveStatus(makeState(), '/test').reportedOutcomes?.map((entry) => entry.remedy),
+    ).toEqual([undefined, 'rundown delegate --retry --step 2', undefined]);
+  });
+
+  it('names the reporting substep in the remedy, not the step', () => {
+    reachabilityReturns([
+      fact({ reachability: 'superseded', targetStep: '4', targetSubstep: '7' }),
+    ]);
+
+    expect(buildActiveStatus(makeState(), '/test').reportedOutcomes?.[0]?.remedy).toBe(
+      'rundown delegate --retry --step 7',
+    );
+  });
+
+  it('carries the fail outcome through unchanged', () => {
+    reachabilityReturns([fact({ outcome: 'fail' })]);
+
+    expect(buildActiveStatus(makeState(), '/test').reportedOutcomes?.[0]?.outcome).toBe('fail');
+  });
+
+  it('preserves core ordering rather than regrouping by class', () => {
+    reachabilityReturns([
+      fact({ completionKey: 'b', reachability: 'superseded', targetSubstep: '2' }),
+      fact({ completionKey: 'a', reachability: 'collectable' }),
+    ]);
+
+    expect(
+      buildActiveStatus(makeState(), '/test').reportedOutcomes?.map((e) => e.completionKey),
+    ).toEqual(['b', 'a']);
+  });
+
+  it('omits the field entirely when core reports nothing', () => {
+    reachabilityReturns([]);
+
+    expect(buildActiveStatus(makeState(), '/test')).not.toHaveProperty('reportedOutcomes');
+  });
+});
+
+describe('position.unresolved counting (#766)', () => {
+  // The scope decision belongs to core's `resolvedSubstepIdsInFrame`; what the
+  // builder still owns is turning that set into a count over the step's declared
+  // substeps.
+  const substepStep = (): ResolvedStep => ({
+    kind: 'substeps',
+    name: '1',
+    description: 'Fan out',
+    transitions: {
+      pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+      fail: { kind: 'fail', retry: 0, action: { type: 'CONTINUE' } },
+    },
+    substeps: ['1', '2', '3'].map((id) => ({
+      id,
+      description: `Substep ${id}`,
+      transitions: {
+        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+        fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
+      },
+    })),
+  });
+
+  function resolvedIdsAre(ids: string[]): void {
+    (core.resolvedSubstepIdsInFrame as unknown as jest.Mock).mockReturnValue(new Set(ids));
+  }
+
+  beforeEach(() => {
+    jest.mocked(getRunbookFromState).mockReturnValue([substepStep()]);
+    jest.mocked(buildMetadata).mockReturnValue({
+      file: 'test.runbook.md',
+      state: '.rundown/rundown.db',
+      runId: DEFAULT_RUN_ID,
+    });
+    jest.mocked(core.countNumberedSteps).mockReturnValue(1);
+  });
+
+  const stateWithFrame = () =>
+    makeState({ step: '1', activeFrameKey: brandFrameKeyForTest('1'), activeEntry: 2 });
+
+  it('counts the substeps core did not report as resolved', () => {
+    resolvedIdsAre(['2']);
+
+    expect(buildActiveStatus(stateWithFrame(), '/test').position?.unresolved).toBe(2);
+  });
+
+  it('counts zero when core resolved every substep', () => {
+    resolvedIdsAre(['1', '2', '3']);
+
+    expect(buildActiveStatus(stateWithFrame(), '/test').position?.unresolved).toBe(0);
+  });
+
+  it('counts every substep when core resolved none', () => {
+    resolvedIdsAre([]);
+
+    expect(buildActiveStatus(stateWithFrame(), '/test').position?.unresolved).toBe(3);
+  });
+
+  it('ignores resolved ids that name no declared substep', () => {
+    resolvedIdsAre(['1', 'ghost']);
+
+    expect(buildActiveStatus(stateWithFrame(), '/test').position?.unresolved).toBe(2);
+  });
+
+  it('omits unresolved when the state names no active frame', () => {
+    resolvedIdsAre([]);
+
+    expect(
+      buildActiveStatus(makeState({ step: '1' }), '/test').position?.unresolved,
+    ).toBeUndefined();
+  });
+});
+
 describe('claimKey join (#531)', () => {
   const CHILD_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
   const CLAIM_ID = 'rdclm_AAAAAAAAAAAAAAAAAAAAAA';
