@@ -764,7 +764,7 @@ describe('RunbookStateSchema round-trip with inline child metadata', () => {
     contextSnapshot: validContextSnapshot,
     childRunId: 'rd_11111111111111111111111111111111',
     createdAt: '2026-05-30T00:00:00.000Z',
-    startedAt: null,
+    started: null,
   };
 
   it('preserves inline child metadata through parse', () => {
@@ -785,6 +785,69 @@ describe('RunbookStateSchema round-trip with inline child metadata', () => {
     if (result.success) {
       expect(result.data.substepStates?.[0]?.inline?.childRunId).toBe(validInline.childRunId);
     }
+  });
+
+  // The latch record is what a liveness decision is made against, so what it
+  // accepts decides what can be reclaimed. Both halves are load-bearing: an
+  // unaddressable pid would reach `kill(pid, 0)` — which errs towards "alive"
+  // and would strand the launch forever — and an unrecognised key means the
+  // record was written by something other than this version's latch.
+  it.each<{ readonly name: string; readonly started: unknown; readonly valid: boolean }>([
+    {
+      name: 'a full record for a live host',
+      started: { at: '2026-08-14T00:00:00.000Z', ownerPid: 4242, ownerStartId: 'start-id' },
+      valid: true,
+    },
+    {
+      name: 'a record from a host that supplies no start id',
+      started: { at: '2026-08-14T00:00:00.000Z', ownerPid: 4242, ownerStartId: null },
+      valid: true,
+    },
+    {
+      name: 'a bare timestamp, which is the pre-liveness shape',
+      started: '2026-08-14T00:00:00.000Z',
+      valid: false,
+    },
+    {
+      name: 'an owner pid of zero, which names a process group rather than a process',
+      started: { at: '2026-08-14T00:00:00.000Z', ownerPid: 0, ownerStartId: null },
+      valid: false,
+    },
+    {
+      name: 'a non-integer owner pid',
+      started: { at: '2026-08-14T00:00:00.000Z', ownerPid: 42.5, ownerStartId: null },
+      valid: false,
+    },
+    {
+      name: 'a record with no owner at all',
+      started: { at: '2026-08-14T00:00:00.000Z' },
+      valid: false,
+    },
+    {
+      name: 'a record carrying an unrecognised key',
+      started: {
+        at: '2026-08-14T00:00:00.000Z',
+        ownerPid: 4242,
+        ownerStartId: null,
+        ownerHost: 'elsewhere',
+      },
+      valid: false,
+    },
+  ])('parses inline launch latch $name as valid=$valid', ({ started, valid }) => {
+    const result = RunbookStateSchema.safeParse(
+      createMinimalRunbookState({
+        substepStates: [
+          {
+            id: '1',
+            frameKey: buildFrameKey('2'),
+            status: 'running',
+            inline: { ...validInline, started },
+          },
+        ],
+      }),
+    );
+
+    expect(result.success).toBe(valid);
   });
 
   it('rejects inline child metadata with invalid childRunId', () => {

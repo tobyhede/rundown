@@ -92,7 +92,10 @@ describe('inline child state properties', () => {
                 contextSnapshot: buildContextSnapshot(state, id),
                 childRunId: runIdFromDigit((index % 9) + 1),
                 createdAt: '2026-05-30T00:00:00.000Z',
-                startedAt: index % 2 === 0 ? null : '2026-05-30T00:00:01.000Z',
+                started:
+                  index % 2 === 0
+                    ? null
+                    : { at: '2026-05-30T00:00:01.000Z', ownerPid: 4242, ownerStartId: null },
               },
               ...(result !== undefined ? { result } : {}),
             };
@@ -165,6 +168,15 @@ describe('inline child state properties', () => {
     );
   }, 30_000);
 
+  // The latch the event carries: an instant AND the process that owns the
+  // launch, committed as one value so a record can never name a start with no
+  // owner to check the liveness of.
+  const LATCHED = {
+    at: '2026-05-30T00:00:01.000Z',
+    ownerPid: 4242,
+    ownerStartId: 'start-id-4242',
+  } as const;
+
   it('INLINE_CHILD_STARTED is a no-op without inline metadata and updates matching metadata', async () => {
     await fc.assert(
       fc.asyncProperty(fc.boolean(), async (withInline) => {
@@ -182,7 +194,7 @@ describe('inline child state properties', () => {
           },
           childRunId,
           createdAt: '2026-05-30T00:00:00.000Z',
-          startedAt: null,
+          started: null,
         };
         const substepStates: readonly SubstepState[] = [
           {
@@ -216,14 +228,14 @@ describe('inline child state properties', () => {
           parentStepId: '1',
           parentFrameKey: frameKey,
           childRunId,
-          startedAt: '2026-05-30T00:00:01.000Z',
+          started: LATCHED,
         });
         await waitForActorError();
 
         expect(errors).toEqual([]);
         const context = actor.getSnapshot().context;
         if (withInline) {
-          expect(context.substepStates?.[0]?.inline?.startedAt).toBe('2026-05-30T00:00:01.000Z');
+          expect(context.substepStates?.[0]?.inline?.started).toEqual(LATCHED);
         } else {
           expect(context.substepStates).toEqual(substepStates);
         }

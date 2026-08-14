@@ -688,6 +688,29 @@ export interface PersistedDelegateFrontierEntry {
   readonly tokenHash: DelegationTokenHash;
 }
 
+/**
+ * Durable "I am launching this child" record written by the inline-launch latch.
+ *
+ * The timestamp and the launching process's identity are ONE value because they
+ * are written in one commit and read as one fact. Two nullable fields would make
+ * "started at a time, owned by nobody" representable, and that state is exactly
+ * the one a later observer cannot classify: it could not tell a launch whose
+ * owner is still resolving the child runbook from a launch whose owner died.
+ *
+ * The owner is recorded as a pid AND a start id because a pid alone is not an
+ * identity — see `runbook/process-identity` for why a recycled pid otherwise
+ * reads as a live owner, and why `null` here means "this host supplies no start
+ * id" rather than "no owner".
+ */
+export interface InlineLaunchStart {
+  /** ISO 8601 timestamp when the launch was latched. */
+  readonly at: string;
+  /** Pid of the process that latched the launch. */
+  readonly ownerPid: number;
+  /** Start id of that pid at latch time; null when the host supplies none. */
+  readonly ownerStartId: string | null;
+}
+
 /** Durable inline child launch metadata attached to a parent substep. */
 export interface StepInlineChild {
   /** Resolved display/path string for the child runbook. */
@@ -700,8 +723,8 @@ export interface StepInlineChild {
   readonly childRunId: RunId;
   /** ISO 8601 timestamp when the inline launch intent was prepared. */
   readonly createdAt: string;
-  /** ISO 8601 timestamp when the child run started, or null until launch begins. */
-  readonly startedAt: string | null;
+  /** The launch latch: who started this child and when, or null until launch begins. */
+  readonly started: InlineLaunchStart | null;
 }
 
 /**

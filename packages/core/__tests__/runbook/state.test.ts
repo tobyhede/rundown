@@ -710,7 +710,7 @@ describe('RunbookStateManager', () => {
         contextSnapshot: buildContextSnapshot(state, '1'),
         childRunId: assertRunId('rd_11111111111111111111111111111111'),
         createdAt: '2026-05-30T00:00:00.000Z',
-        startedAt: null,
+        started: null,
       };
       const delegation = {
         credential: makeDelegationCredentialDescriptor(),

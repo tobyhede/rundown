@@ -11,6 +11,7 @@ import type {
   ResolvedStepHavingSubsteps,
   Lifecycle,
   SubstepState,
+  InlineLaunchStart,
   TemplateVarValue,
   RunId,
   ExecutionRecoveryReason,
@@ -339,7 +340,7 @@ function updateInlineStarted(
           ...substepState,
           inline: {
             ...inline,
-            startedAt: event.startedAt,
+            started: event.started,
           },
         }
       : substepState,
@@ -1009,7 +1010,8 @@ export type RunbookEvent =
       parentStepId: string;
       parentFrameKey: FrameKey;
       childRunId: RunId;
-      startedAt: string;
+      /** The latch: the instant AND the process that owns this launch. */
+      started: InlineLaunchStart;
     }
   | {
       type: 'DELEGATION_CHILD_LINKED';

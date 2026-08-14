@@ -6980,7 +6980,7 @@ describe('RunbookLifecycleCommandService', () => {
         contextSnapshot: buildContextSnapshot(parent, '1'),
         childRunId,
         createdAt: '2026-06-28T00:00:00.000Z',
-        startedAt: '2026-06-28T00:00:01.000Z',
+        started: { at: '2026-06-28T00:00:01.000Z', ownerPid: 4242, ownerStartId: null },
       };
       const substepState: SubstepState = {
         id: '1',

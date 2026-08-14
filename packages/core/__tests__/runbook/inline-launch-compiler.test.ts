@@ -16,6 +16,19 @@ type InlineLaunchCompilerOptions = NonNullable<Parameters<typeof compileRunbookT
   readonly now: () => string;
 };
 
+/**
+ * The latch an inline launcher commits: the instant and the owning process.
+ *
+ * One value rather than two fields, because a start with no owner cannot be
+ * checked for liveness — which is the whole basis on which a later observer
+ * decides whether the launch may be taken over.
+ */
+const LATCHED = {
+  at: '2026-05-30T00:00:01.000Z',
+  ownerPid: 4242,
+  ownerStartId: 'start-id-4242',
+} as const;
+
 function childResolver(): ResolveInlineRunbook {
   return async (runbookRef) => ({
     path: 'runbooks/child.runbook.md',
@@ -147,7 +160,7 @@ describe('inline launch compiler integration', () => {
       parentStepId: '1',
       parentFrameKey: buildFrameKey('1'),
       childRunId,
-      startedAt: '2026-05-30T00:00:01.000Z',
+      started: LATCHED,
     });
 
     const context = actor.getSnapshot().context;
@@ -162,7 +175,7 @@ describe('inline launch compiler integration', () => {
         frameKey: '1|',
         inline: expect.objectContaining({
           childRunId,
-          startedAt: '2026-05-30T00:00:01.000Z',
+          started: LATCHED,
         }),
       }),
     );
@@ -177,7 +190,7 @@ describe('inline launch compiler integration', () => {
         frameKey: '1|',
         inline: expect.objectContaining({
           childRunId,
-          startedAt: '2026-05-30T00:00:01.000Z',
+          started: LATCHED,
         }),
       }),
     );
@@ -206,7 +219,7 @@ describe('inline launch compiler integration', () => {
       parentStepId: '1',
       parentFrameKey: buildFrameKey('1'),
       childRunId,
-      startedAt: '2026-05-30T00:00:01.000Z',
+      started: LATCHED,
     });
 
     const after = actor.getSnapshot().context;
@@ -242,7 +255,7 @@ describe('inline launch compiler integration', () => {
       parentStepId: '1',
       parentFrameKey: buildFrameKey('1'),
       childRunId,
-      startedAt: '2026-05-30T00:00:01.000Z',
+      started: LATCHED,
     });
 
     const context = actor.getSnapshot().context;
@@ -289,7 +302,7 @@ describe('inline launch compiler integration', () => {
         parentStepId: '1',
         parentFrameKey: buildFrameKey('1'),
         childRunId: assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'),
-        startedAt: '2026-05-30T00:00:01.000Z',
+        started: LATCHED,
       });
     });
 
@@ -339,7 +352,7 @@ describe('inline launch compiler integration', () => {
         parentStepId: '1',
         parentFrameKey: buildFrameKey('1'),
         childRunId: assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'),
-        startedAt: '2026-05-30T00:00:01.000Z',
+        started: LATCHED,
       });
     });
 

@@ -156,7 +156,7 @@ function stateWithDoneInlineSubstep(): RunbookState {
           contextSnapshot: makeContextSnapshot(),
           childRunId,
           createdAt: '2026-07-03T00:00:00.000Z',
-          startedAt: '2026-07-03T00:00:01.000Z',
+          started: { at: '2026-07-03T00:00:01.000Z', ownerPid: 4242, ownerStartId: null },
         },
       },
     ],
