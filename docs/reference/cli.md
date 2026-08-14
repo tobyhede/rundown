@@ -885,14 +885,20 @@ Delegation semantics:
   advanced. **Do not retry the token; report the superseded delegation to the
   orchestrator.** The envelope carries `parentRunId` and `stepId` (and
   `childRunId` when an existing/orphaned child was identified).
+- `claim` refuses with RD-809 (`TOKEN_CANCELLED`) when the delegation was
+  cancelled with `rundown abort`, whether the cancellation was already committed
+  when the claim began or landed while it was in flight. The claim transaction
+  classifies a cancelled delegation as cancelled rather than as the parent
+  having moved on, so the timing of the abort does not change the code the
+  claimer is given.
 - Claim-targeted commands refuse with RD-825 the same way, not just `claim`.
   Once the parent has moved past the delegation, `pass`, `fail`, `goto`, `stop`,
   `complete`, `pop`, `stash`, `status`, `collect`, and `delegate` all report
   `DELEGATION_SUPERSEDED` naming the cause (`parent-ended`, `cursor-advanced`,
-  `resolved`, `token-reissued`) rather than reporting the bearer as unknown — a
-  superseded claim is a real claim whose authority ended, so **do not retry it;
-  report to the orchestrator.** A claim that was merely released, rotated, or
-  pruned, and one whose parent run no longer exists, report
+  `resolved`, `token-reissued`, `cancelled`) rather than reporting the bearer as
+  unknown — a superseded claim is a real claim whose authority ended, so **do
+  not retry it; report to the orchestrator.** A claim that was merely released,
+  rotated, or pruned, and one whose parent run no longer exists, report
   `CLAIMED_RUNBOOK_UNAVAILABLE` instead: neither is the parent outrunning the
   token, so neither carries the no-retry instruction. `abort` is the exception:
   its `--claim-id` is bearer authority over the _parent_ run rather than a

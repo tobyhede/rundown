@@ -1486,7 +1486,13 @@ prerequisites are worth naming because either one left undone makes it lossy:
   claim failure into `CLAIM_INVARIANT_VIOLATED`, so every reason a CONCURRENT
   claimer can cause has to be passed through as itself. Reserve RD-820 for
   failures about the child this process just created, which no rival can
-  explain.
+  explain. A refusal is spelled correctly only if the classifier can express it:
+  `classifyDelegationLiveness` folded a cancelled delegation into `resolved`, so
+  an `rd abort` landing inside the claim window reported RD-825
+  `DELEGATION_SUPERSEDED` where the pre-check reported RD-809 `TOKEN_CANCELLED`
+  — one cause, two codes, decided by timing. `cancelled` is now its own closed
+  reason carrying `cancelledAt`, and its own `ClaimRunbookResult` status, so
+  both sides of the window say the same thing (#752).
 
 **The fourth shape is for when the fold is unavailable**, which has to be
 established rather than assumed. `claimChildForPipeline`'s initial link derives

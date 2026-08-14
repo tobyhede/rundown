@@ -1311,6 +1311,21 @@ export class SessionService {
     }
 
     if (liveness.kind === 'closed') {
+      // Cancellation is reported as itself. This is the arm the race in #752
+      // lands on: the CLI's own pre-commit read saw an uncancelled delegation,
+      // the abort committed while this claim was in flight, and this
+      // transaction is the first reader to see it. Every other closed reason is
+      // the parent having moved past the delegation, which is what
+      // `delegation-superseded` says.
+      if (liveness.reason === 'cancelled') {
+        return {
+          status: 'delegation-cancelled',
+          parentRunId: linkage.parentRunId,
+          parentStepId: linkage.parentStepId,
+          cancelledAt: liveness.cancelledAt,
+          childRunId,
+        };
+      }
       return {
         status: 'delegation-superseded',
         parentRunId: linkage.parentRunId,

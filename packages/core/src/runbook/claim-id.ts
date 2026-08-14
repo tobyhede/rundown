@@ -182,6 +182,23 @@ export type ClaimRunbookResult =
     }
   | {
       /**
+       * The delegation was cancelled (`rd abort`) before the claim committed.
+       * Terminal and non-retryable exactly like `delegation-superseded`, and
+       * split out from it for the same reason the classifier splits the reason
+       * (#752): the parent has NOT moved past this delegation, so a refusal
+       * saying it did sends the claimer to the orchestrator with the wrong
+       * fact. `cancelledAt` is the abort's own timestamp, carried so the front
+       * end reports the same detail whether the cancellation was seen before
+       * the claim began or landed inside its window.
+       */
+      readonly status: 'delegation-cancelled';
+      readonly parentRunId: RunId;
+      readonly parentStepId: string;
+      readonly cancelledAt: string;
+      readonly childRunId?: RunId;
+    }
+  | {
+      /**
        * The claim's parent run cannot be read. Under one-database persistence a
        * delegated claim always names a live parent, so this is not reachable
        * through a supported delete — it is the same corruption class as
@@ -197,17 +214,24 @@ export type ClaimRunbookResult =
 /**
  * Why a presented claim is no longer mutation authority.
  *
- * The first four mirror {@link DelegationLiveness}'s closed reasons, classified
+ * The first five mirror {@link DelegationLiveness}'s closed reasons, classified
  * against the parent state read in the deciding transaction. `parent-unreadable`
  * is a delegated tombstone whose parent no longer exists; `claim-rotated` is a
  * non-delegated tombstone (a run-control claim replaced or released), which has
  * no parent to classify against.
+ *
+ * `cancelled` is carried as its own reason rather than collapsed into
+ * `resolved` so the refusal names the abort that actually caused it (#752).
+ * The classifier's `cancelledAt` is deliberately not carried here: this
+ * vocabulary answers *why the claim is not authority*, and every consumer of it
+ * renders a message from the reason alone.
  */
 export type ClaimSupersededReason =
   | 'parent-ended'
   | 'cursor-advanced'
   | 'resolved'
   | 'token-reissued'
+  | 'cancelled'
   | 'parent-unreadable'
   | 'claim-rotated';
 

@@ -911,13 +911,44 @@ describe('targeting helpers', () => {
       });
     });
 
-    it('closes as resolved when the delegation was cancelled', () => {
+    it('closes as cancelled — not resolved — when the delegation was aborted', () => {
+      // The two are different facts about the parent: `resolved` says it moved
+      // past the delegation, `cancelled` says someone ran `rd abort`. Folding
+      // the second into the first is what made a delegation cancelled inside
+      // the claim window report DELEGATION_SUPERSEDED (#752). The substep here
+      // is deliberately still `running` — a `done` row would close it
+      // `resolved` on the arm above and the test would pass either way.
       const state = parent({
         substepStates: [
           {
             id: '1',
             frameKey: FRAME,
             status: 'running',
+            delegation: makeStepDelegation({
+              tokenHash: TOKEN,
+              cancelledAt: '2026-07-20T00:00:00.000Z',
+            }),
+          },
+        ],
+      });
+      expect(classifyDelegationLiveness(state, linkage)).toEqual({
+        kind: 'closed',
+        reason: 'cancelled',
+        cancelledAt: '2026-07-20T00:00:00.000Z',
+      });
+    });
+
+    it('closes a cancelled-then-resolved substep as resolved', () => {
+      // Precedence, pinned: `rd abort` leaves the substep row's status alone, so
+      // a `done` row means the parent resolved the substep AFTER the abort. The
+      // later fact wins, and the cancelled arm must not reorder ahead of it.
+      const state = parent({
+        substepStates: [
+          {
+            id: '1',
+            frameKey: FRAME,
+            status: 'done',
+            result: 'pass',
             delegation: makeStepDelegation({
               tokenHash: TOKEN,
               cancelledAt: '2026-07-20T00:00:00.000Z',

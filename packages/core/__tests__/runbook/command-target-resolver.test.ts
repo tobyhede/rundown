@@ -699,6 +699,27 @@ describe('resolveTransitionTarget', () => {
     },
   );
 
+  it('keeps RD-825 for a cancelled delegation but names the abort as the cause', async () => {
+    // Its own test rather than a fifth row above: the code is the same — an
+    // aborted token must never be retried either — but the sentence is not, and
+    // the row's template asserts the parent-moved-on wording. Until #752 this
+    // bearer was told "(resolved)", which named a cause that had not happened.
+    const result = await resolveTransitionTarget(
+      fakeReader({
+        claimResolution: { status: 'superseded', claimId, reason: 'cancelled' },
+        expectedIncludeStashed: false,
+      }),
+      { command: 'pass', claimId },
+    );
+
+    expect(result).toEqual({
+      kind: 'stale_claim',
+      claimId,
+      message: `Claim id ${claimKeyFromBearer(claimId)} is superseded: the delegation was cancelled. Do not retry the token; report the cancelled delegation to the orchestrator.`,
+      code: 'DELEGATION_SUPERSEDED',
+    });
+  });
+
   it.each([
     {
       label: 'claim-rotated',

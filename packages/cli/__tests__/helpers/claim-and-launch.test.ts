@@ -2175,6 +2175,29 @@ describe('claimAndLaunch', () => {
         childRunId: NEW_CHILD_ID,
       },
     },
+    {
+      // #752. An `rd abort` that lands while the child is being created is the
+      // same class of race as the two above — the transaction refused before
+      // writing — so it must reach the caller as itself rather than through the
+      // `CLAIM_INVARIANT_VIOLATED` envelope this switch reserves for genuinely
+      // broken preconditions. The fixture's delegation is uncancelled, so the
+      // pre-commit check passed and only the transaction saw the abort. It
+      // names no child: the one this claim created is about to be deleted.
+      caseName: 'delegation-cancelled',
+      atomicResult: committed({
+        status: 'delegation-cancelled' as const,
+        parentRunId: RUN_ID,
+        parentStepId: 'delegate',
+        cancelledAt: '2026-08-14T04:05:06.000Z',
+      }),
+      expected: {
+        ok: false,
+        reason: 'delegation-cancelled',
+        parentRunId: RUN_ID,
+        stepId: 'delegate',
+        cancelledAt: '2026-08-14T04:05:06.000Z',
+      },
+    },
   ])(
     'returns $caseName and deletes the fresh child without unlinking when the claim race loses',
     async ({ atomicResult, expected }) => {

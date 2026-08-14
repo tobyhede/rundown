@@ -1229,6 +1229,17 @@ type ClaimChildResult =
         | 'linkage-mismatch';
       readonly childRunId: RunId;
     }
+  // The delegation was cancelled between the 3b check and the claim
+  // transaction's own read. Its own arm rather than a member of the group
+  // above: it carries the abort timestamp, which the `TOKEN_CANCELLED` envelope
+  // reports and no other refusal has. `childRunId` is kept for the diagnostic
+  // text alone — the envelope has no field for it.
+  | {
+      readonly ok: false;
+      readonly reason: 'delegation-cancelled';
+      readonly childRunId: RunId;
+      readonly cancelledAt: string;
+    }
   // The parent vanished between the 3a re-read and the claim transaction. Named
   // by the parent, not the child: no child fact explains it, and the existing
   // `parent-missing` envelope already says exactly this.
@@ -1410,6 +1421,18 @@ async function claimChildForPipeline(
       // known child id — core omits it on the fresh-launch path, where the
       // child it would name is the one this claim just created.
       return { ok: false, reason: 'delegation-superseded', childRunId };
+    case 'delegation-cancelled':
+      // The 3b pre-check reported this for a cancellation already committed
+      // when the claim began; core reports it for one that landed after that
+      // read. Same fact, same envelope — the window it lands in must not change
+      // which code the claimer is told (#752). The timestamp comes from core's
+      // in-transaction read, not from the CLI's stale one.
+      return {
+        ok: false,
+        reason: 'delegation-cancelled',
+        childRunId,
+        cancelledAt: claim.cancelledAt,
+      };
     case 'missing-parent':
       // Core refuses an unreadable parent with a typed result rather than
       // throwing; it maps onto the refusal 3a already emits for the same fact.
@@ -1461,6 +1484,18 @@ function claimResultToFailure(
     // The refusal already names its own run; parent/step context would add a
     // second, possibly different run id to a single-run fact.
     return result;
+  }
+  if (result.reason === 'delegation-cancelled') {
+    // The cancellation envelope reports when the abort landed and names no
+    // child — the same shape 3b emits, so a caller cannot tell which side of
+    // the window the cancellation fell on, which is the point.
+    return {
+      ok: false,
+      reason: 'delegation-cancelled',
+      parentRunId,
+      stepId,
+      cancelledAt: result.cancelledAt,
+    };
   }
   return {
     ok: false,
@@ -1996,9 +2031,15 @@ export async function claimAndLaunch(
       // Reporting CLAIM_INVARIANT_VIOLATED instead blamed Rundown for a race it
       // handled correctly, and named this claimer's own about-to-be-deleted
       // child.
+      //
+      // `delegation-cancelled` joins them for the same reason: 3b established
+      // only that the delegation was uncancelled when it looked, and an `rd
+      // abort` landing while the child was being created is a race the claim
+      // transaction refused correctly — not a broken precondition.
       case 'parent-missing':
       case 'concurrent-modification':
       case 'delegation-already-claimed':
+      case 'delegation-cancelled':
         return claimResultToFailure(violation, freshParent.id, substepId ?? stepId);
       // An ownership refusal is likewise a race, not a broken invariant: the
       // claim transaction refused before writing anything.

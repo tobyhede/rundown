@@ -119,6 +119,11 @@ describe("sharedClaimRefusal's superseded arm (RD-825)", () => {
     'cursor-advanced': 'DELEGATION_SUPERSEDED',
     resolved: 'DELEGATION_SUPERSEDED',
     'token-reissued': 'DELEGATION_SUPERSEDED',
+    // The parent did NOT move past this one — it was aborted — but RD-825's
+    // instruction ("do not retry the token") is exactly the advice an aborted
+    // token needs, so it keeps the code and states its own cause in the
+    // message.
+    cancelled: 'DELEGATION_SUPERSEDED',
     'claim-rotated': 'CLAIMED_RUNBOOK_UNAVAILABLE',
     'parent-unreadable': 'CLAIMED_RUNBOOK_UNAVAILABLE',
   };
@@ -155,6 +160,24 @@ describe("sharedClaimRefusal's superseded arm (RD-825)", () => {
     expect(envelope.message).toBe(
       `Claim id ${CLAIM_KEY} is superseded: the parent has moved past this delegation (parent-ended). Do not retry the token; report the superseded delegation to the orchestrator.`,
     );
+    expect(envelope.code).toBe('DELEGATION_SUPERSEDED');
+  });
+
+  it('names the abort rather than the parent for a cancelled delegation', () => {
+    // Same code, different sentence. Before #752 the classifier folded
+    // cancellation into `resolved`, so this bearer was told "the parent has
+    // moved past this delegation (resolved)" — a fact about a parent that was
+    // still sitting on the delegation when someone aborted it.
+    const envelope = sharedClaimRefusal(CLAIM_ID, {
+      status: 'superseded',
+      claimId: CLAIM_ID,
+      reason: 'cancelled',
+    });
+
+    expect(envelope.message).toBe(
+      `Claim id ${CLAIM_KEY} is superseded: the delegation was cancelled. Do not retry the token; report the cancelled delegation to the orchestrator.`,
+    );
+    expect(envelope.message).not.toContain('moved past');
     expect(envelope.code).toBe('DELEGATION_SUPERSEDED');
   });
 
