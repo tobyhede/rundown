@@ -119,7 +119,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
   };
 });
 
-import type { RunbookState } from '@rundown-org/core';
+import type { DelegationOutcomeReachabilityFact, RunbookState } from '@rundown-org/core';
 
 // Mock runbook-loader
 jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
@@ -370,7 +370,9 @@ describe('reportedOutcomes projection (#766)', () => {
   // PROJECTION of it — field mapping and the remedy rule — with core doubled,
   // which is the layer this suite tests. Agreement with the real scope rule is
   // pinned separately in status-builder-scope.test.ts.
-  const fact = (overrides: Record<string, unknown> = {}) => ({
+  const fact = (
+    overrides: Partial<DelegationOutcomeReachabilityFact> = {},
+  ): DelegationOutcomeReachabilityFact => ({
     kind: 'delegation-outcome-reported',
     completionKey: '1||2|1',
     parentRunId: DEFAULT_RUN_ID,
@@ -384,8 +386,8 @@ describe('reportedOutcomes projection (#766)', () => {
     ...overrides,
   });
 
-  function reachabilityReturns(facts: ReturnType<typeof fact>[]): void {
-    (core.readDelegationOutcomeReachability as unknown as jest.Mock).mockReturnValue(facts);
+  function reachabilityReturns(facts: readonly DelegationOutcomeReachabilityFact[]): void {
+    jest.mocked(core.readDelegationOutcomeReachability).mockReturnValue(facts);
   }
 
   beforeEach(() => {
@@ -491,7 +493,7 @@ describe('position.unresolved counting (#766)', () => {
   });
 
   function resolvedIdsAre(ids: string[]): void {
-    (core.resolvedSubstepIdsInFrame as unknown as jest.Mock).mockReturnValue(new Set(ids));
+    jest.mocked(core.resolvedSubstepIdsInFrame).mockReturnValue(new Set(ids));
   }
 
   beforeEach(() => {
