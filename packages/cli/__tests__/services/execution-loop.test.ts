@@ -3591,6 +3591,296 @@ describe('runExecutionLoop', () => {
     expect(first).toBe('stopped');
   });
 
+  // `InlineLaunchLatch` has five arms, all decided inside ONE compare-and-swap
+  // callback. `superseded` and `already-latched` are driven by the neighbouring
+  // tests (the stale-intent test above and the interleave test respectively);
+  // the three pinned HERE are the two refusals nothing reached — `inactive` and
+  // `linkage-refused`, both of which need a race to reach — plus the `won`
+  // discriminant itself, which no test asserted. The whole `if (existingChild)`
+  // block could be emptied with every test still green before this (#759).
+  //
+  // Each is pinned through the callback's own return value, because that is
+  // where the arm is decided: `next: null` is the assertion that a refusal wrote
+  // nothing, and no observable downstream of the latch distinguishes "refused
+  // without writing" from "refused after writing".
+  describe('inline-launch latch refusal arms', () => {
+    const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
+    const contextSnapshot = {
+      RunId: runbookId,
+      ContextId: 'ctx-unit',
+      WorkPath: '.rundown/work',
+    };
+    const inlineLaunch = {
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+      childRunId,
+      childRunbookPath: 'child.runbook.md',
+      childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+      contextSnapshot,
+    };
+    const inlineSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent step',
+        substeps: [
+          {
+            id: '1',
+            description: 'Inline child',
+            runbooks: ['child.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+    const parentWith = (
+      startedAt: string | null = null,
+      overrides: Record<string, unknown> = {},
+    ): Record<string, unknown> =>
+      makeLoopState('1', {
+        lifecycle: 'running',
+        substep: '1',
+        activeFrameKey: '1|',
+        activeEntry: 1,
+        substepStates: [
+          {
+            id: '1',
+            frameKey: '1|',
+            status: 'running',
+            inline: {
+              childRunbookPath: 'child.runbook.md',
+              childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+              contextSnapshot,
+              childRunId,
+              createdAt: '2026-05-30T00:00:00.000Z',
+              startedAt,
+            },
+          },
+        ],
+        snapshot: { context: { inlineLaunchIntent: inlineLaunch } },
+        ...overrides,
+      });
+
+    /**
+     * Linkage a persisted inline child carries when it belongs to this launch.
+     *
+     * Each refusal case below diverges from it in exactly one coordinate, so the
+     * classification under test is the only thing that differs between them.
+     */
+    const matchingChildLinkage = {
+      kind: 'inline',
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+    };
+    const childWithLinkage = (linkage: unknown): Record<string, unknown> => ({
+      ...makeLoopState('1', { id: childRunId, lifecycle: 'running', parentLinkage: linkage }),
+      runbookSrc: '## 1. Child\nDone',
+    });
+
+    /**
+     * Every `{ next, value }` the latch's build callback produced, in order.
+     *
+     * The latch is module-private and its outcome never reaches an observable
+     * verbatim, so the callback's return is the only place the decision can be
+     * read as itself. It is unambiguous: `mutateStateReturning` has exactly one
+     * caller in the whole execution service.
+     */
+    const latchOutcomes: { next: Record<string, unknown> | null; value: unknown }[] = [];
+
+    const stepEnteredWithInlineLaunch = () => [
+      {
+        kind: 'execution_observation',
+        event: {
+          type: 'STEP_ENTERED',
+          payload: {
+            position: { current: '1.1', total: 1 },
+            stepName: '1',
+            description: 'Inline child',
+            isSubstep: true,
+            inlineLaunch,
+          },
+        },
+      },
+    ];
+
+    const driveLoop = () =>
+      runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(inlineSteps),
+        mockManager.cwd,
+        false,
+        asEmitter(mockEmitter),
+        { output: { executionEvent: jest.fn() } as never },
+      );
+
+    beforeEach(() => {
+      latchOutcomes.length = 0;
+      mockManager.mutateStateReturning.mockImplementation(async (id, build) => {
+        const current = await mockManager.load(id);
+        if (!current) return { state: null, value: null };
+        const outcome = await build(current);
+        latchOutcomes.push(outcome);
+        return { state: outcome.next ?? current, value: outcome.value };
+      });
+      mockActorService.observeExecutionUnitEntry.mockResolvedValue(stepEnteredWithInlineLaunch());
+    });
+
+    // A parent that is ALREADY terminal never reaches the latch — the loop
+    // returns at its own opening read — so this arm exists for exactly one
+    // situation: the parent went terminal between that read and the latch's own,
+    // which is the gap the compare-and-swap exists to close. The fixture models
+    // it by serving the running row once and the terminal row from then on.
+    it.each(['completed', 'stopped'] as const)(
+      'refuses the launch as inactive when the parent turns %s between the loop read and the latch',
+      async (lifecycle) => {
+        let served = 0;
+        mockManager.load.mockImplementation(async (id: string) => {
+          if (id !== runbookId) return null;
+          served += 1;
+          return served === 1 ? parentWith() : parentWith(null, { lifecycle });
+        });
+
+        const result = await driveLoop();
+
+        expect(result).toBe('stopped');
+        // Refused, and refused before the latch write: a spurious `startedAt`
+        // would make every later re-entry of this frame report a launch that
+        // never happened.
+        expect(latchOutcomes).toEqual([{ next: null, value: { kind: 'inactive' } }]);
+        expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
+        // Never entered the launch span, so nothing created the child run.
+        // `resolveRunbookRef` is the span's gate and therefore the whole proof:
+        // an unreached `pushRunbook` would prove nothing here, because this
+        // fixture persists no existing child for the adoption branch to push.
+        expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
+        expect(mockEmitter.emit).toHaveBeenCalledWith({
+          type: 'ERROR_OCCURRED',
+          payload: {
+            message: `Inline parent run ${runbookId} is not active`,
+            code: actualCore.ErrorCodes.LAUNCH_FAILED.code,
+          },
+        });
+      },
+    );
+
+    // The refusal CodeRabbit blocked #746 on. `classifyInlineChildLinkage` is
+    // well covered as a pure function in `execution.test.ts` — every coordinate,
+    // and the absent-linkage case — so what is pinned here is the WIRING: that
+    // the latch consults it at all, and that a mismatch fails closed instead of
+    // adopting a child the parent does not claim. One case per REFUSAL VARIANT
+    // is what that needs, because the variants are what the latch and the
+    // emitted refusal branch on; a second shape landing on the same variant
+    // would re-test the classifier through a longer path.
+    it.each([
+      {
+        name: 'a child launched at a superseded frame entry',
+        linkage: { ...matchingChildLinkage, parentEntry: 2 },
+        mismatch: { kind: 'superseded-entry', recordedEntry: 2, currentEntry: 1 },
+        code: 'INLINE_CHILD_FRAME_SUPERSEDED',
+        message:
+          `Inline child ${childRunId} was launched at entry 2 of frame 1|, but the parent has ` +
+          `re-entered that frame as entry 1. A re-entered frame never adopts the previous ` +
+          `entry's child. Finish, stop, or prune run ${childRunId}, then re-enter.`,
+      },
+      {
+        // A delegated child under the intent's run id: linkage present, naming
+        // this same parent frame, but not an inline launch. Distinct from the
+        // absent-linkage shape in that a `kind` check is the only thing that
+        // separates it from a match.
+        name: 'a child linked by delegation rather than inline launch',
+        linkage: { ...matchingChildLinkage, kind: 'delegated' },
+        mismatch: { kind: 'conflicting-parent' },
+        code: 'INLINE_CHILD_LINKAGE_MISMATCH',
+        message: `Inline child ${childRunId} has conflicting parent linkage`,
+      },
+    ])(
+      'refuses $name rather than latching over it',
+      async ({ linkage, mismatch, code, message }) => {
+        const parent = parentWith();
+        const existingChild = childWithLinkage(linkage);
+        mockManager.load.mockImplementation(async (id: string) => {
+          if (id === runbookId) return parent;
+          return id === childRunId ? existingChild : null;
+        });
+
+        const result = await driveLoop();
+
+        expect(result).toBe('stopped');
+        // The parent's `startedAt` is null, so an absent linkage check would have
+        // reached `won` and written the latch. `next: null` is what proves the
+        // refusal is decided ahead of the write, and the untouched `sendAndSync`
+        // is what proves the parent was not advanced.
+        expect(latchOutcomes).toEqual([
+          { next: null, value: { kind: 'linkage-refused', mismatch } },
+        ]);
+        expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
+        // Neither adopted (the existing-child branch pushes and consumes) nor
+        // launched fresh (the launch span resolves the ref first).
+        expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
+        expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
+        // The symbolic name, not the `RD-830` / `RD-831` the registry assigns
+        // these two, is deliberate and specified: `docs/spec/cli-output.md`
+        // registers both codes for their title, remediation and doc slug — which
+        // is why the emitting switch is typed against `ErrorCodeKey` — while
+        // stating that "the emitted `code` value remains the symbolic name,
+        // which is what consumers match on". Asserted as such so a later
+        // "consistency" edit toward `RD-830` reads as the contract break it is.
+        expect(mockEmitter.emit).toHaveBeenCalledWith({
+          type: 'ERROR_OCCURRED',
+          payload: { message, code },
+        });
+      },
+    );
+
+    // The winning arm's own discriminant. `existingChild` travels on it because
+    // both surviving arms carry the child the callback read, and the launch span
+    // branches on it — a `won` that dropped it would re-launch a child that
+    // already exists.
+    it('records a won latch carrying the read-back child when the intent is unclaimed', async () => {
+      const parent = parentWith();
+      const latched = parentWith('2026-05-30T00:00:01.000Z');
+      mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
+      mockActorService.sendAndSync.mockResolvedValue({ state: latched, snapshot: {} });
+
+      const result = await driveLoop();
+
+      expect(latchOutcomes).toHaveLength(1);
+      expect(latchOutcomes[0]?.value).toEqual({ kind: 'won', existingChild: null });
+      // The one arm that writes, and it commits the derived state verbatim — so
+      // the latch this observer reads back is the latch that was written.
+      expect(latchOutcomes[0]?.next).toBe(latched);
+      expect(mockActorService.sendAndSync).toHaveBeenCalledWith(
+        runbookId,
+        inlineSteps,
+        expect.objectContaining({
+          type: 'INLINE_CHILD_STARTED',
+          parentStepId: '1',
+          parentFrameKey: '1|',
+          childRunId,
+          // The durable record itself, and the one field of this event whose
+          // VALUE nothing else constrains: the type requires a `string`, and
+          // `parentInlineStartedAtMissing` only compares it against `null`, so
+          // an empty or malformed stamp persists into
+          // `substepStates[].inline.startedAt` and out through status output
+          // with exactly-once still intact.
+          startedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
+        }),
+      );
+      // Entered the launch span exactly once; the ref resolution then fails, so
+      // this stops without creating a child.
+      expect(mockedResolveRunbookRef).toHaveBeenCalledTimes(1);
+      expect(result).toBe('stopped');
+    });
+  });
+
   it('announces the adopted bearer when a resumed inline child re-establishes authority', async () => {
     // The adopted bearer supersedes the one the dead process held, so the run
     // can no longer be addressed unless it is announced. `runbook_started.claim_id`
