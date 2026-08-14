@@ -2,7 +2,12 @@ import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type {
   DelegationRuntimeCapabilities,
   DelegationTokenDeriver,
+  DelegationTokenHash,
+  ErrorCodeKey,
   ExecutionEventEmitter,
+  FrameKey,
+  InlineLinkage,
+  ParentLinkage,
   ReleaseRunbookResult,
   RunbookActorService,
   RunbookStateManager,
@@ -3592,17 +3597,27 @@ describe('runExecutionLoop', () => {
   });
 
   // `InlineLaunchLatch` has five arms, all decided inside ONE compare-and-swap
-  // callback. `superseded` and `already-latched` are driven by the neighbouring
-  // tests (the stale-intent test above and the interleave test respectively);
-  // the three pinned HERE are the two refusals nothing reached — `inactive` and
-  // `linkage-refused`, both of which need a race to reach — plus the `won`
-  // discriminant itself, which no test asserted. The whole `if (existingChild)`
-  // block could be emptied with every test still green before this (#759).
+  // callback, and before #759 not one of the five had its DISCRIMINANT asserted
+  // anywhere. Neighbouring tests drive four of them through their downstream
+  // effects — the interleave test above reaches `already-latched`, the
+  // stale-intent test 650 lines BELOW reaches `superseded` — but the arm a run
+  // took was never itself observed, and the two arms that need a race to reach
+  // (`inactive`, `linkage-refused`) were not driven at all.
   //
-  // Each is pinned through the callback's own return value, because that is
-  // where the arm is decided: `next: null` is the assertion that a refusal wrote
-  // nothing, and no observable downstream of the latch distinguishes "refused
-  // without writing" from "refused after writing".
+  // Read the scoped mutation report that opened #759 the way CLAUDE.md says to:
+  // `if (existingChild) {}` surviving means "this module's own unit tests do not
+  // kill it independently", NOT "nothing in the suite covers this". The linkage
+  // refusal is in fact killed by `__tests__/integration/inline-child-launch.test.ts`
+  // ('refuses to adopt an inline child launched at a superseded frame entry'),
+  // which the Stryker sandbox excludes. The `inactive` arm had no such backstop.
+  //
+  // Every arm below is pinned through the callback's own return value, because
+  // that is where the arm is decided: `next: null` is the assertion that a
+  // refusal wrote nothing, and no observable downstream of the latch
+  // distinguishes "refused without writing" from "refused after writing", nor
+  // `superseded` from `already-latched` when no child exists — both return
+  // `waiting`, while only the latter carries the `existingChild` the adoption
+  // branch needs.
   describe('inline-launch latch refusal arms', () => {
     const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
     const contextSnapshot = {
@@ -3671,18 +3686,22 @@ describe('runExecutionLoop', () => {
      * Each refusal case below diverges from it in exactly one coordinate, so the
      * classification under test is the only thing that differs between them.
      */
-    const matchingChildLinkage = {
+    const matchingChildLinkage: InlineLinkage = {
       kind: 'inline',
       parentRunId: runbookId,
       parentStepId: '1',
       parentStep: '1',
-      parentFrameKey: '1|',
+      parentFrameKey: '1|' as FrameKey,
       parentEntry: 1,
     };
-    const childWithLinkage = (linkage: unknown): Record<string, unknown> => ({
-      ...makeLoopState('1', { id: childRunId, lifecycle: 'running', parentLinkage: linkage }),
-      runbookSrc: '## 1. Child\nDone',
-    });
+    // Typed `ParentLinkage`, not `unknown`: an unrepresentable linkage would
+    // refuse through the classifier's `kind !== 'inline'` arm and pass the test
+    // while proving nothing about the shape it claims to model. The type is what
+    // makes the delegated case below an actual delegation — `kind: 'delegation'`
+    // carrying a `tokenHash` — rather than a string the classifier merely fails
+    // to recognise.
+    const childWithLinkage = (linkage: ParentLinkage | undefined): Record<string, unknown> =>
+      makeLoopState('1', { id: childRunId, lifecycle: 'running', parentLinkage: linkage });
 
     /**
      * Every `{ next, value }` the latch's build callback produced, in order.
@@ -3721,32 +3740,51 @@ describe('runExecutionLoop', () => {
         { output: { executionEvent: jest.fn() } as never },
       );
 
-    beforeEach(() => {
-      latchOutcomes.length = 0;
+    /**
+     * Install the compare-and-swap double, recording every decision it commits.
+     *
+     * `row` is the state the latch's own read returns. It defaults to whatever
+     * `manager.load` serves — the ordinary case, where the loop and the latch
+     * read the same row — and is passed explicitly only to model a row that
+     * CHANGED between the two reads, which is the one thing the compare-and-swap
+     * exists to catch.
+     */
+    const captureLatch = (row?: Record<string, unknown>) => {
       mockManager.mutateStateReturning.mockImplementation(async (id, build) => {
-        const current = await mockManager.load(id);
+        const current = row ?? (await mockManager.load(id));
         if (!current) return { state: null, value: null };
         const outcome = await build(current);
         latchOutcomes.push(outcome);
         return { state: outcome.next ?? current, value: outcome.value };
       });
+    };
+
+    beforeEach(() => {
+      latchOutcomes.length = 0;
+      captureLatch();
       mockActorService.observeExecutionUnitEntry.mockResolvedValue(stepEnteredWithInlineLaunch());
+      // Armed by default so that a refusal arm broken by a future edit fails on
+      // its own assertion below. Left unarmed, `prepareActorMutation`'s double
+      // throws `Actor synchronization failed` the moment a refusal wrongly falls
+      // through to the latch write, which kills the mutant with an opaque
+      // message instead of naming the arm that stopped refusing.
+      mockActorService.sendAndSync.mockResolvedValue({ state: parentWith(), snapshot: {} });
     });
 
     // A parent that is ALREADY terminal never reaches the latch — the loop
     // returns at its own opening read — so this arm exists for exactly one
     // situation: the parent went terminal between that read and the latch's own,
-    // which is the gap the compare-and-swap exists to close. The fixture models
-    // it by serving the running row once and the terminal row from then on.
+    // which is the gap the compare-and-swap exists to close. The latch is
+    // therefore handed the terminal row directly, rather than the loop's `load`
+    // being counted to guess which reader is second — a count that would silently
+    // rebind to any parent read a later change adds ahead of the latch.
     it.each(['completed', 'stopped'] as const)(
       'refuses the launch as inactive when the parent turns %s between the loop read and the latch',
       async (lifecycle) => {
-        let served = 0;
-        mockManager.load.mockImplementation(async (id: string) => {
-          if (id !== runbookId) return null;
-          served += 1;
-          return served === 1 ? parentWith() : parentWith(null, { lifecycle });
-        });
+        mockManager.load.mockImplementation(async (id: string) =>
+          id === runbookId ? parentWith() : null,
+        );
+        captureLatch(parentWith(null, { lifecycle }));
 
         const result = await driveLoop();
 
@@ -3779,7 +3817,13 @@ describe('runExecutionLoop', () => {
     // is what that needs, because the variants are what the latch and the
     // emitted refusal branch on; a second shape landing on the same variant
     // would re-test the classifier through a longer path.
-    it.each([
+    it.each<{
+      readonly name: string;
+      readonly linkage: ParentLinkage;
+      readonly mismatch: Record<string, unknown>;
+      readonly code: ErrorCodeKey;
+      readonly message: string;
+    }>([
       {
         name: 'a child launched at a superseded frame entry',
         linkage: { ...matchingChildLinkage, parentEntry: 2 },
@@ -3791,12 +3835,19 @@ describe('runExecutionLoop', () => {
           `entry's child. Finish, stop, or prune run ${childRunId}, then re-enter.`,
       },
       {
-        // A delegated child under the intent's run id: linkage present, naming
-        // this same parent frame, but not an inline launch. Distinct from the
-        // absent-linkage shape in that a `kind` check is the only thing that
-        // separates it from a match.
+        // A genuinely delegated child under the intent's run id: a real
+        // `DelegationLinkage`, token hash and all, naming this same parent frame.
+        // The type is doing work here — `kind: 'delegated'` would be refused by
+        // the classifier's `kind !== 'inline'` arm exactly like an absent
+        // linkage, so the test would pass while modelling a state that cannot
+        // exist. Only a representable delegation proves the wiring refuses the
+        // child a `rundown delegate` would have persisted under this id.
         name: 'a child linked by delegation rather than inline launch',
-        linkage: { ...matchingChildLinkage, kind: 'delegated' },
+        linkage: {
+          ...matchingChildLinkage,
+          kind: 'delegation',
+          tokenHash: 'sha256:deadbeef' as DelegationTokenHash,
+        },
         mismatch: { kind: 'conflicting-parent' },
         code: 'INLINE_CHILD_LINKAGE_MISMATCH',
         message: `Inline child ${childRunId} has conflicting parent linkage`,
@@ -3822,10 +3873,13 @@ describe('runExecutionLoop', () => {
           { next: null, value: { kind: 'linkage-refused', mismatch } },
         ]);
         expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
-        // Neither adopted (the existing-child branch pushes and consumes) nor
-        // launched fresh (the launch span resolves the ref first).
+        // `pushRunbook` is the proof that matters HERE, and it is the mirror of
+        // the `inactive` case above: with a child persisted, an emptied linkage
+        // check lands on `won`/`already-latched` CARRYING that child, which
+        // routes into the adoption branch and activates it — the very "running
+        // child the parent does not claim" this refusal exists to prevent.
+        // `getActive` resolves null, so nothing else suppresses the push.
         expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
-        expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
         // The symbolic name, not the `RD-830` / `RD-831` the registry assigns
         // these two, is deliberate and specified: `docs/spec/cli-output.md`
         // registers both codes for their title, remediation and doc slug — which
@@ -3846,17 +3900,25 @@ describe('runExecutionLoop', () => {
     // already exists.
     it('records a won latch carrying the read-back child when the intent is unclaimed', async () => {
       const parent = parentWith();
-      const latched = parentWith('2026-05-30T00:00:01.000Z');
       mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
-      mockActorService.sendAndSync.mockResolvedValue({ state: latched, snapshot: {} });
+      // Stamps the state from the EVENT rather than returning a canned row, so
+      // the committed state below carries the `startedAt` the latch actually
+      // sent. A fixed row would make the identity assertion hold for any stamp
+      // whatsoever, including one unrelated to the event — pass-through proved,
+      // content unchecked.
+      mockActorService.sendAndSync.mockImplementation(
+        async (_id: string, _steps: unknown, event: { startedAt?: string }) => ({
+          state: parentWith(event.startedAt ?? null),
+          snapshot: {},
+        }),
+      );
 
+      const before = Date.now();
       const result = await driveLoop();
+      const after = Date.now();
 
       expect(latchOutcomes).toHaveLength(1);
       expect(latchOutcomes[0]?.value).toEqual({ kind: 'won', existingChild: null });
-      // The one arm that writes, and it commits the derived state verbatim — so
-      // the latch this observer reads back is the latch that was written.
-      expect(latchOutcomes[0]?.next).toBe(latched);
       expect(mockActorService.sendAndSync).toHaveBeenCalledWith(
         runbookId,
         inlineSteps,
@@ -3865,19 +3927,71 @@ describe('runExecutionLoop', () => {
           parentStepId: '1',
           parentFrameKey: '1|',
           childRunId,
-          // The durable record itself, and the one field of this event whose
-          // VALUE nothing else constrains: the type requires a `string`, and
-          // `parentInlineStartedAtMissing` only compares it against `null`, so
-          // an empty or malformed stamp persists into
-          // `substepStates[].inline.startedAt` and out through status output
-          // with exactly-once still intact.
-          startedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/),
         }),
       );
+      // The durable record itself, and the one field of this event whose VALUE
+      // nothing else constrains: the type requires a `string`, and
+      // `parentInlineStartedAtMissing` only compares it against `null`, so an
+      // empty, malformed or stale stamp persists into
+      // `substepStates[].inline.startedAt` and out through status output with
+      // exactly-once still intact. Pinned as a full ISO instant AND as a reading
+      // of this run's clock — a shape check alone accepts `new Date(0)`.
+      const sent = mockActorService.sendAndSync.mock.calls[0]?.[2] as { startedAt: string };
+      expect(sent.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      expect(Date.parse(sent.startedAt)).toBeGreaterThanOrEqual(before);
+      expect(Date.parse(sent.startedAt)).toBeLessThanOrEqual(after);
+      // The one arm that writes, and it commits the derived state verbatim, so
+      // the stamp the machine folded in is the stamp that reaches the store.
+      const committed = latchOutcomes[0]?.next as {
+        substepStates: { inline: { startedAt: string } }[];
+      } | null;
+      expect(committed?.substepStates[0]?.inline.startedAt).toBe(sent.startedAt);
       // Entered the launch span exactly once; the ref resolution then fails, so
       // this stops without creating a child.
       expect(mockedResolveRunbookRef).toHaveBeenCalledTimes(1);
       expect(result).toBe('stopped');
+    });
+
+    // The two stand-down arms, which differ only in what they carry. Swapping
+    // them IS caught where a child exists — `already-latched` carries the
+    // `existingChild` the adoption branch reads, so the two resumed-launch tests
+    // below fail if it is dropped. It is NOT caught in the no-child case: both
+    // arms then answer `waiting` with a null child through different returns
+    // (execution.ts:852 and :970), and the discriminant is the only place the
+    // difference survives. That is the case pinned here.
+    it('stands down as superseded when the persisted intent no longer names this launch', async () => {
+      // Intent consumed by whoever won the launch, exactly as
+      // `INLINE_LAUNCH_CONSUMED` leaves it — the observation this loop is
+      // acting on is now stale.
+      const parent = parentWith(null, { snapshot: { context: {} } });
+      mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
+
+      const result = await driveLoop();
+
+      expect(latchOutcomes).toEqual([{ next: null, value: { kind: 'superseded' } }]);
+      expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
+      expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
+      expect(result).toBe('waiting');
+    });
+
+    it('stands down as already-latched when the stamp is present but the child is not', async () => {
+      // Another observer is inside the launch span right now: it wrote the stamp
+      // and has not yet reached `manager.create`. This is the state where the
+      // two stand-down arms are indistinguishable downstream — both answer
+      // `waiting` with a null child — so the discriminant is the whole assertion.
+      const parent = parentWith('2026-05-30T00:00:01.000Z');
+      mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
+
+      const result = await driveLoop();
+
+      expect(latchOutcomes).toEqual([
+        { next: null, value: { kind: 'already-latched', existingChild: null } },
+      ]);
+      // Stood down without re-writing the stamp it found, and without entering
+      // the span the other observer owns — one `manager.create` for this intent.
+      expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
+      expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
+      expect(result).toBe('waiting');
     });
   });
 
