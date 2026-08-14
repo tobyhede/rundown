@@ -1,4 +1,8 @@
-import { advanceFrameEntry, inferFrameEntryFromState } from '../../src/runbook/frame-entry.js';
+import {
+  advanceFrameEntry,
+  deriveActiveCompletionFrame,
+  inferFrameEntryFromState,
+} from '../../src/runbook/frame-entry.js';
 import type { FrameEntryCoordinates } from '../../src/runbook/frame-entry.js';
 import type { RunbookState } from '../../src/runbook/types.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
@@ -71,6 +75,65 @@ describe('inferFrameEntryFromState', () => {
     } as RunbookState;
 
     expect(inferFrameEntryFromState(state, frameKey)).toBe(1);
+  });
+});
+
+describe('deriveActiveCompletionFrame', () => {
+  const frameKey = buildFrameKey('1');
+
+  it('names the persisted active frame and entry', () => {
+    const state = {
+      step: '1',
+      activeFrameKey: frameKey,
+      activeEntry: 2,
+      frameEntryCounts: { [frameKey]: 2 },
+    } as RunbookState;
+
+    expect(deriveActiveCompletionFrame(state)).toEqual({
+      kind: 'active',
+      frameKey,
+      entry: 2,
+    });
+  });
+
+  it('falls back to the frame entry counter when no active entry is persisted', () => {
+    const state = {
+      step: '1',
+      activeFrameKey: frameKey,
+      frameEntryCounts: { [frameKey]: 3 },
+    } as RunbookState;
+
+    expect(deriveActiveCompletionFrame(state)).toEqual({
+      kind: 'active',
+      frameKey,
+      entry: 3,
+    });
+  });
+
+  it('derives the frame key from the cursor when none is persisted', () => {
+    const state = { step: '1', forStack: [] } as unknown as RunbookState;
+
+    expect(deriveActiveCompletionFrame(state)).toEqual({
+      kind: 'active',
+      frameKey,
+      entry: 1,
+    });
+  });
+
+  it('derives the FOR-scoped frame key from the live stack', () => {
+    const state = {
+      step: '1',
+      forStack: [
+        { stepId: '1', iteration: 2, start: 1, end: 3, implicit: false, source: { kind: 'range' } },
+      ],
+      activeEntry: 4,
+    } as unknown as RunbookState;
+
+    expect(deriveActiveCompletionFrame(state)).toEqual({
+      kind: 'active',
+      frameKey: buildFrameKey('1', 2),
+      entry: 4,
+    });
   });
 });
 

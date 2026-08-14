@@ -9,11 +9,15 @@ import type { RunbookState } from './types.js';
  * requires named authority (`--run` / `--claim-id`) for mutations.
  *
  * `standalone` is the only exposure for which bare `direct_cli` evidence may
- * still map to run-controller trust. Exposure is sticky by construction for
- * every state-derived clause: delegation and inline substep-state records
- * (clauses d/f) never decay for the life of the run. The document-derived
- * static clauses (a and f's runbook-list signal) are re-parsed at decision
- * time — see the classifier TSDoc for the mid-run document-edit caveat.
+ * still map to run-controller trust. Exposure is sticky by construction:
+ * delegation and inline substep-state records (clauses d/f) never decay for the
+ * life of the run, and a run that ever issued a delegation carries one. Clause
+ * (c) is the exception and does not need to be sticky — it reports only
+ * outcomes the drain can still reach, so it decays once the cursor leaves their
+ * frame/entry (#749), by which point clause (d) is already holding the
+ * exposure. The document-derived static clauses (a and f's runbook-list signal)
+ * are re-parsed at decision time — see the classifier TSDoc for the mid-run
+ * document-edit caveat.
  */
 export type DelegationExposure = 'delegating' | 'standalone';
 
@@ -59,7 +63,10 @@ export interface DelegationExposureDetail {
  * document-derived static clauses ((a) DELEGATE substep and (f) runbook-list)
  * are re-parsed from `steps` at decision time, so a mid-run document edit can
  * flip a not-yet-issued run's static exposure. Every state-derived clause is
- * monotone and never decays.
+ * monotone and never decays, except (c): it reports only outcomes the drain can
+ * still reach, so it decays as the cursor moves (#749). That costs no exposure
+ * — issuing the delegation those outcomes came from wrote the (d) record, which
+ * does not decay.
  *
  * @param input - State, parsed steps, and open claims for one run
  * @returns The run's exposure split into delegation and inline-composition axes

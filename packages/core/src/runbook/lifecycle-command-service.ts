@@ -49,7 +49,7 @@ import {
   type DelegationIssuanceResolution,
   type RequestedRunbookArg,
 } from './delegation-inference.js';
-import { inferFrameEntryFromState } from './frame-entry.js';
+import { deriveActiveCompletionFrame, inferFrameEntryFromState } from './frame-entry.js';
 import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
@@ -3730,18 +3730,20 @@ export class RunbookLifecycleCommandService {
           for (;;) {
             const currentStep = this.#findStep(steps, state.step);
             if (!resolvedStepHasSubsteps(currentStep) || !state.substep) break;
-            const frameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
-            const entry = state.activeEntry ?? 1;
+            // One derivation of the live frame, shared with the drain and the
+            // collection-pending guard (#749), so the key this looks up and the
+            // cursor the validation narrows against cannot name different entries.
+            const frame = deriveActiveCompletionFrame(state);
             const completions = state.resolvedCompletions ?? {};
-            const exactKey = buildCompletionKey(activeFrame(frameKey, entry), state.substep);
-            const sentinelKey = buildCompletionKey(inactiveFrame(frameKey), state.substep);
+            const exactKey = buildCompletionKey(frame, state.substep);
+            const sentinelKey = buildCompletionKey(inactiveFrame(frame.frameKey), state.substep);
             const current = Object.hasOwn(completions, exactKey)
               ? ([exactKey, completions[exactKey]] as const)
               : Object.hasOwn(completions, sentinelKey)
                 ? ([sentinelKey, completions[sentinelKey]] as const)
                 : undefined;
             if (current === undefined) break;
-            const validated = completionService.validateCurrentCompletion(state, current[1], entry);
+            const validated = completionService.validateCurrentCompletion(state, current[1]);
             if ('status' in validated) throw new Error(validated.message);
             const prepared = await actorService.prepareActorMutation(
               state.id,

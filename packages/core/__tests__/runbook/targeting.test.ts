@@ -9,6 +9,7 @@ import {
   buildStepPosition,
   buildTargetKey,
   completionEntryForFrame,
+  completionTargetsFrame,
   deriveActiveFrame,
   deriveExecutionAt,
   deriveOpenFrames,
@@ -24,6 +25,7 @@ import {
   classifyDelegationLiveness,
   delegationAuthorityCoordinatesMatch,
   linkageMatchesClaim,
+  type FrameKey,
   type DelegationLivenessLinkage,
   type DelegationLivenessParent,
 } from '../../src/runbook/targeting.js';
@@ -490,6 +492,77 @@ describe('targeting helpers', () => {
       const open = deriveOpenFrames(state);
       expect(open.has(buildFrameKey('2'))).toBe(true);
       expect(open.has(buildFrameKey('1', 1))).toBe(false);
+    });
+  });
+
+  describe('completionTargetsFrame', () => {
+    const frameKey = buildFrameKey('1');
+    const row = (targetFrameKey: FrameKey, targetEntry: number) => ({
+      targetFrameKey,
+      targetEntry,
+    });
+
+    it('matches a row recorded at the active frame and entry', () => {
+      expect(completionTargetsFrame(activeFrame(frameKey, 2), row(frameKey, 2))).toBe(true);
+    });
+
+    it('matches a sentinel-entry row against an active frame', () => {
+      // The sentinel means "any visit to this frame", so it stays reachable
+      // whatever entry the cursor is on.
+      expect(completionTargetsFrame(activeFrame(frameKey, 3), row(frameKey, SENTINEL_ENTRY))).toBe(
+        true,
+      );
+    });
+
+    it('rejects a row left behind by an earlier entry on the same frame', () => {
+      // The GOTO/RETRY strand: re-entry bumps the run-global entry ordinal, so a
+      // row recorded on the previous visit names an entry the drain no longer
+      // matches — and, the ordinal being monotonic, never will again.
+      expect(completionTargetsFrame(activeFrame(frameKey, 2), row(frameKey, 1))).toBe(false);
+    });
+
+    it('rejects a row on a different frame key', () => {
+      expect(completionTargetsFrame(activeFrame(frameKey, 1), row(buildFrameKey('2'), 1))).toBe(
+        false,
+      );
+    });
+
+    it('rejects a sentinel-entry row against an exact frame', () => {
+      // An exact frame names a specific historical entry and admits no sentinel,
+      // mirroring the drain's exact-prefix-only rule for non-active frames.
+      expect(completionTargetsFrame(exactFrame(frameKey, 2), row(frameKey, SENTINEL_ENTRY))).toBe(
+        false,
+      );
+      expect(completionTargetsFrame(exactFrame(frameKey, 2), row(frameKey, 2))).toBe(true);
+    });
+
+    it('matches only sentinel rows against an inactive frame', () => {
+      expect(completionTargetsFrame(inactiveFrame(frameKey), row(frameKey, SENTINEL_ENTRY))).toBe(
+        true,
+      );
+      expect(completionTargetsFrame(inactiveFrame(frameKey), row(frameKey, 1))).toBe(false);
+    });
+
+    it('agrees with the completion-key prefix the same frame builds', () => {
+      // The rule the drain's key-prefix selection encodes, restated over the row
+      // fields both halves of the split read. They cannot drift while this holds.
+      const frame = activeFrame(frameKey, 2);
+      const rowFrames = [
+        inactiveFrame(frameKey),
+        exactFrame(frameKey, 1),
+        exactFrame(frameKey, 2),
+        exactFrame(frameKey, 3),
+        exactFrame(buildFrameKey('2'), 2),
+      ];
+      for (const rowFrame of rowFrames) {
+        const key = buildCompletionKey(rowFrame, '1');
+        const prefixMatches =
+          key.startsWith(`${frame.frameKey}|2|`) ||
+          key.startsWith(`${frame.frameKey}|${String(SENTINEL_ENTRY)}|`);
+        expect(
+          completionTargetsFrame(frame, row(rowFrame.frameKey, completionEntryForFrame(rowFrame))),
+        ).toBe(prefixMatches);
+      }
     });
   });
 

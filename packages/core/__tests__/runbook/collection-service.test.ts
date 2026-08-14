@@ -498,6 +498,7 @@ describe('RunbookCollectionService', () => {
       targetRunId: runId,
       step: '1',
       missingSubsteps: ['1.1', '1.2'],
+      supersededSubsteps: [],
     });
   });
 
@@ -1017,6 +1018,7 @@ describe('RunbookCollectionService', () => {
       targetRunId: controlledRunId,
       step: '1',
       missingSubsteps: ['1.1', '1.2'],
+      supersededSubsteps: [],
     });
   });
 
@@ -1107,6 +1109,7 @@ describe('RunbookCollectionService', () => {
       targetRunId: runId,
       step: '1',
       missingSubsteps: ['1.2'],
+      supersededSubsteps: [],
     });
   });
 
@@ -1161,6 +1164,106 @@ describe('RunbookCollectionService', () => {
     // rather than merely `not missing_outcomes`, which unrelated refusals like
     // `collection_failed` would also satisfy).
     expect(result.kind).toBe('collection_applied');
+  });
+
+  it('does not treat a row left at a superseded entry as ready (#749)', async () => {
+    // The mirror image of the test above, and the readiness half of #749: the
+    // outcome was reported at entry 1, then a GOTO/RETRY re-entry bumped the
+    // frame to entry 2. The drain resolves rows against the LIVE entry, so this
+    // row is unreachable — counting it as ready would report every substep
+    // resolved and then drain nothing.
+    const frameKey = buildFrameKey('1');
+    const target = state({
+      id: runId,
+      substep: '1',
+      activeEntry: 2,
+      frameEntryCounts: { [frameKey]: 2 },
+      substepStates: [{ id: '1', frameKey, status: 'pending' }],
+      resolvedCompletions: {
+        [buildCompletionKey(exactFrame(frameKey, 1), '1')]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: exactFrame(frameKey, 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+    await manager.save(target);
+
+    await expect(
+      collectionService.collectDelegationOutcomes({
+        targetState: target,
+        steps: oneSubstepSteps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(frameKey, 2),
+      }),
+    ).resolves.toEqual({
+      kind: 'missing_outcomes',
+      targetRunId: runId,
+      step: '1',
+      missingSubsteps: ['1.1'],
+      // Reported, then stranded — so the refusal must name it as the case
+      // `delegate --retry` fixes rather than leave the operator waiting on a
+      // child that already finished.
+      supersededSubsteps: ['1.1'],
+    });
+  });
+
+  it('separates a never-reported substep from a superseded one (#749)', async () => {
+    // Both substeps are missing, for different reasons: 1.1's outcome was
+    // reported at the entry the re-entry superseded, while 1.2's only row
+    // belongs to a different frame entirely (another FOR iteration) — that is
+    // not this scope's work at all, so it carries no remedy. Only a row on THIS
+    // frame at a superseded entry does.
+    const frameKey = buildFrameKey('1');
+    const otherFrameKey = buildFrameKey('1', 2);
+    const target = state({
+      id: runId,
+      substep: '1',
+      activeEntry: 2,
+      frameEntryCounts: { [frameKey]: 2 },
+      substepStates: [
+        { id: '1', frameKey, status: 'pending' },
+        { id: '2', frameKey, status: 'pending' },
+      ],
+      resolvedCompletions: {
+        [buildCompletionKey(exactFrame(frameKey, 1), '1')]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: exactFrame(frameKey, 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+        [buildCompletionKey(exactFrame(otherFrameKey, 3), '2')]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '2',
+          targetIteration: 2,
+          targetFrame: exactFrame(otherFrameKey, 3),
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+    await manager.save(target);
+
+    await expect(
+      collectionService.collectDelegationOutcomes({
+        targetState: target,
+        steps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(frameKey, 2),
+      }),
+    ).resolves.toEqual({
+      kind: 'missing_outcomes',
+      targetRunId: runId,
+      step: '1',
+      missingSubsteps: ['1.1', '1.2'],
+      supersededSubsteps: ['1.1'],
+    });
   });
 
   const delegationLinkage = {
@@ -1805,6 +1908,7 @@ describe('RunbookCollectionService', () => {
       targetRunId: runId,
       step: '1',
       missingSubsteps: ['1.1'],
+      supersededSubsteps: [],
     });
   });
 
@@ -1843,6 +1947,7 @@ describe('RunbookCollectionService', () => {
       targetRunId: runId,
       step: '1',
       missingSubsteps: ['1.1', '1.2'],
+      supersededSubsteps: [],
     });
   });
 

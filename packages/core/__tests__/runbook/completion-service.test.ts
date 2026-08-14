@@ -663,7 +663,14 @@ describe('RunbookCompletionService', () => {
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
     });
 
-    it('returns target_mismatch for wrong targetFrameKey', async () => {
+    // A wrong frame or entry is now refused one step earlier than a wrong step:
+    // selection and validation read the SAME frame coordinates off the row
+    // (`completionTargetsFrame`), so an out-of-scope row is never a candidate
+    // rather than being selected and then rejected. The `target_mismatch` arm
+    // stays reachable through the coordinates selection does not filter on —
+    // `targetStep` above, and `targetSubstep` in the sibling test that pairs a
+    // current-substep key with another substep's row.
+    it('does not select a row whose targetFrameKey is not the live frame', async () => {
       const current = state();
       const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
       await manager.save({
@@ -684,15 +691,12 @@ describe('RunbookCompletionService', () => {
 
       const result = await drainAll();
 
-      expect(result.last.kind).toBe('mismatch');
-      if (result.last.kind === 'mismatch') {
-        expect(result.last.mismatch.reason).toBe('target_mismatch');
-      }
+      expect(result.last.kind).toBe('none');
       expect(prepare).not.toHaveBeenCalled();
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
     });
 
-    it('returns target_mismatch for wrong targetEntry (non-sentinel)', async () => {
+    it('does not select a row whose targetEntry is not the live entry (non-sentinel)', async () => {
       const current = state();
       // Key matches current substep but targetEntry is different (and not SENTINEL_ENTRY)
       const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
@@ -713,10 +717,7 @@ describe('RunbookCompletionService', () => {
 
       const result = await drainAll();
 
-      expect(result.last.kind).toBe('mismatch');
-      if (result.last.kind === 'mismatch') {
-        expect(result.last.mismatch.reason).toBe('target_mismatch');
-      }
+      expect(result.last.kind).toBe('none');
       expect(prepare).not.toHaveBeenCalled();
       await expect(lifecycleService.getResolvedCompletion(runbookId, key)).resolves.not.toBeNull();
     });

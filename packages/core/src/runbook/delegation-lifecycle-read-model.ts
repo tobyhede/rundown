@@ -1,13 +1,7 @@
 import type { VariableValue } from './effective-vars.js';
+import { deriveActiveCompletionFrame } from './frame-entry.js';
 import type { RunId } from './run-id.js';
-import {
-  buildFrameKey,
-  deriveActiveFrame,
-  deriveOpenFrames,
-  SENTINEL_ENTRY,
-  type FrameKey,
-  type OpenFrames,
-} from './targeting.js';
+import { completionEntryForFrame, completionTargetsFrame, type FrameKey } from './targeting.js';
 import type { DelegationOutcome, RunbookState } from './types.js';
 
 const DELEGATION_AGENT_ID = 'delegation';
@@ -85,7 +79,7 @@ export type DelegationCollectionPendingPolicyReadModel =
   | {
       /** Read-model discriminant. */
       readonly kind: 'delegation-collection-pending-policy';
-      /** At least one unconsumed reported outcome exists in a still-open scope. */
+      /** At least one unconsumed reported outcome is reachable from the live cursor. */
       readonly pending: true;
       /** Delegating run that may need collection. */
       readonly parentRunId: RunId;
@@ -97,32 +91,13 @@ export type DelegationCollectionPendingPolicyReadModel =
   | {
       /** Read-model discriminant. */
       readonly kind: 'delegation-collection-pending-policy';
-      /** No unconsumed reported outcomes exist in still-open scopes. */
+      /** No unconsumed reported outcome is reachable from the live cursor. */
       readonly pending: false;
       /** Delegating run that was inspected. */
       readonly parentRunId: RunId;
       /** Empty when no collection is pending. */
       readonly outcomes: readonly [];
     };
-
-function belongsToStillOpenCollectionScope(
-  openFrames: OpenFrames,
-  fact: DelegationOutcomeReportedFact,
-): boolean {
-  const unscopedFrameKey = buildFrameKey(fact.targetStep);
-  if (fact.targetFrameKey === unscopedFrameKey) {
-    // An unscoped (non-FOR) outcome has no iteration frame to leave, so it stays
-    // pending until the orchestrator collects it. Collection removes the
-    // `resolvedCompletions` row this fact is derived from, which is what clears
-    // the pending state — a reported outcome is never dropped by cursor movement.
-    return true;
-  }
-  // A FOR-scoped outcome is open only while its iteration frame is on the live
-  // FOR stack. Openness flows from `deriveOpenFrames` (forStack) — never from the
-  // monotonic entry counter, whose keys persist after a loop advances or exits.
-  // Once the frame is no longer live, the outcome no longer blocks bare mutation.
-  return openFrames.has(fact.targetFrameKey);
-}
 
 /**
  * Read reported delegation outcomes from existing completion rows.
@@ -156,26 +131,15 @@ export function readDelegationOutcomeReportedFacts(
     }));
 }
 
-function activeEntryFor(state: RunbookState, activeFrameKey: FrameKey): number {
-  return state.activeEntry ?? state.frameEntryCounts?.[activeFrameKey] ?? 1;
-}
-
-function belongsToActiveCollectionScope(
-  fact: DelegationOutcomeReportedFact,
-  activeFrameKey: FrameKey,
-  activeEntry: number,
-): boolean {
-  // Provisional Plan 1 scope rule: report all delegation outcomes, but mark
-  // collection pending only for the active cursor frame/entry until the
-  // command-policy plan resolves wider enforcement semantics.
-  return (
-    fact.targetFrameKey === activeFrameKey &&
-    (fact.targetEntry === activeEntry || fact.targetEntry === SENTINEL_ENTRY)
-  );
-}
-
 /**
  * Derive collection-pending state for the delegating run's active scope.
+ *
+ * Scope is the frame the completion drain resolves against — the live cursor's
+ * frame at its live entry, plus the sentinel entry — decided by the drain's own
+ * rule (`completionTargetsFrame`) rather than a second hand-written test. A row
+ * outside it is one `rundown collect` cannot consume, now or ever: entry
+ * ordinals are monotonic, so a frame the cursor left is re-entered at a strictly
+ * greater entry.
  *
  * @param state - Delegating run state to inspect
  * @returns Collection-pending read model for the active frame and entry
@@ -183,11 +147,11 @@ function belongsToActiveCollectionScope(
 export function readDelegationCollectionPending(
   state: RunbookState,
 ): DelegationCollectionPendingReadModel {
-  const derived = deriveActiveFrame(state);
-  const activeFrameKey = state.activeFrameKey ?? derived.frameKey;
-  const activeEntry = activeEntryFor(state, activeFrameKey);
+  const frame = deriveActiveCompletionFrame(state);
+  const activeFrameKey = frame.frameKey;
+  const activeEntry = completionEntryForFrame(frame);
   const outcomes = readDelegationOutcomeReportedFacts(state).filter((fact) =>
-    belongsToActiveCollectionScope(fact, activeFrameKey, activeEntry),
+    completionTargetsFrame(frame, fact),
   );
 
   if (outcomes.length === 0) {
@@ -215,26 +179,34 @@ export function readDelegationCollectionPending(
 /**
  * Derive policy-level collection-pending state for bare mutation guards.
  *
- * This intentionally uses a broader scope than {@link readDelegationCollectionPending}:
- * any unconsumed delegation outcome in any still-open frame/scope blocks a bare
- * parent mutation, even when the current cursor has moved away from that frame.
+ * The projection of {@link readDelegationCollectionPending} the command-policy
+ * guards consume — same scope, different shape (the guards report the blocking
+ * completion keys, not the cursor they were derived from). Deriving it rather
+ * than re-testing scope is the fix for #749: the guard used to match on frame
+ * openness alone, so a row at a superseded entry — or on a frame the cursor had
+ * left — was reported as awaiting collection while the drain could never select
+ * it. `rundown pass` then named a completion key that `rundown collect` refused,
+ * and the run could neither advance nor collect. Blocking now implies the drain
+ * can reach the row, which is what makes "run rundown collect" a remedy that
+ * works.
+ *
+ * A row outside the scope is genuinely abandoned: it stays in
+ * `resolvedCompletions` and in {@link readDelegationOutcomeReportedFacts}, and
+ * `rundown delegate --retry` is what clears it before re-delegating the substep.
  *
  * @param state - Delegating run state to inspect
- * @returns Policy read model covering all still-open delegating scopes
+ * @returns Policy read model for the outcomes a bare mutation must yield to
  */
 export function readDelegationCollectionPendingForPolicy(
   state: RunbookState,
 ): DelegationCollectionPendingPolicyReadModel {
-  const openFrames = deriveOpenFrames(state);
-  const outcomes = readDelegationOutcomeReportedFacts(state).filter((fact) =>
-    belongsToStillOpenCollectionScope(openFrames, fact),
-  );
+  const active = readDelegationCollectionPending(state);
 
-  if (outcomes.length === 0) {
+  if (!active.pending) {
     return {
       kind: 'delegation-collection-pending-policy',
       pending: false,
-      parentRunId: state.id,
+      parentRunId: active.parentRunId,
       outcomes: [],
     };
   }
@@ -242,8 +214,8 @@ export function readDelegationCollectionPendingForPolicy(
   return {
     kind: 'delegation-collection-pending-policy',
     pending: true,
-    parentRunId: state.id,
-    outcomes,
-    message: DELEGATION_COLLECTION_PENDING_MESSAGE,
+    parentRunId: active.parentRunId,
+    outcomes: active.outcomes,
+    message: active.message,
   };
 }

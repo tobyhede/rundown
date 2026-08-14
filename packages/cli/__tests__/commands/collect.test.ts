@@ -1263,6 +1263,83 @@ describe('collect command', () => {
       );
       const details = json.details as Record<string, unknown> | undefined;
       expect(details?.missingSubsteps).toEqual(['1.2']);
+      // A substep that simply has not reported yet carries no remedy: the
+      // sentence naming `delegate --retry` must appear only for a superseded
+      // row, or it tells an operator to discard work still in flight.
+      expect(details?.supersededSubsteps).toEqual([]);
+      expect(String(json.error)).not.toContain('--retry');
+    });
+
+    it('names delegate --retry when a missing outcome was superseded by a re-entry (#749)', async () => {
+      // The end of the wedge's wall: substep 1.1 DID report, then a re-entry
+      // bumped the frame entry past its row. "Wait for the child" is wrong here
+      // — nothing will ever resolve it — so the refusal names the remedy that
+      // does work.
+      const childContent = createRunbook({
+        title: 'Child',
+        steps: [{ title: 'Do work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      });
+      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
+      await writeFile(
+        join(workspace.cwd, 'runbooks', 'parent.runbook.md'),
+        buildParentDelegateMarkdown(),
+      );
+
+      const startResult = await runCliInProcess(
+        'run --prompted runbooks/parent.runbook.md --text',
+        workspace,
+      );
+      expect(startResult.exitCode).toBe(0);
+
+      const runbookId = (await getActiveState(workspace))!.id;
+      await patchPersistedRunState(workspace.cwd, runbookId, (current) => {
+        const raw = current as MutableRunbookState;
+        const frameKey = raw.activeFrameKey ?? `${raw.step}|`;
+        const entry = raw.activeEntry ?? 1;
+        const reported = (substep: string) => ({
+          agentId: 'delegation',
+          result: 'pass' as const,
+          targetStep: raw.step,
+          targetSubstep: substep,
+          targetFrameKey: frameKey,
+          targetEntry: entry,
+          completedAt: '2026-01-01T00:00:00.000Z',
+        });
+        return {
+          ...raw,
+          // The re-entry: the frame is now on a later entry and both substeps
+          // are back to pending, but the rows reported under the earlier entry
+          // stay behind. Both substeps carry one, so the rendered list is a
+          // real list rather than a single id.
+          activeEntry: entry + 1,
+          frameEntryCounts: { ...(raw.frameEntryCounts ?? {}), [frameKey]: entry + 1 },
+          substepStates: [
+            { id: '1', frameKey, status: 'pending' },
+            { id: '2', frameKey, status: 'pending' },
+          ],
+          resolvedCompletions: {
+            ...(raw.resolvedCompletions ?? {}),
+            [`${frameKey}|${String(entry)}|1`]: reported('1'),
+            [`${frameKey}|${String(entry)}|2`]: reported('2'),
+          },
+        };
+      });
+
+      const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
+
+      expect(result.exitCode).not.toBe(0);
+      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
+      expect(json).toMatchObject({ kind: 'error', code: 'SUBSTEPS_NOT_RESOLVED' });
+      expect(String(json.error)).toBe(
+        'Cannot collect: not all substeps are resolved. Pending: 1.1, 1.2. Outcome(s) for ' +
+          '1.1, 1.2 were reported under a frame entry a RETRY/GOTO re-entry has superseded, so ' +
+          'they can no longer be collected — re-issue with ' +
+          '`rundown delegate --retry --step <substep>`.',
+      );
+      const details = json.details as Record<string, unknown> | undefined;
+      expect(details?.missingSubsteps).toEqual(['1.1', '1.2']);
+      expect(details?.supersededSubsteps).toEqual(['1.1', '1.2']);
     });
 
     it('errors when no active runbook', async () => {

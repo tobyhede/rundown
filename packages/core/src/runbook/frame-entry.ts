@@ -1,4 +1,4 @@
-import type { FrameKey } from './targeting.js';
+import { activeFrame, deriveActiveFrame, type Frame, type FrameKey } from './targeting.js';
 import type { RunbookState } from './types.js';
 
 /**
@@ -73,6 +73,29 @@ export function inferFrameEntryFromState(state: FrameEntryReadModel, frameKey: F
   return state.activeFrameKey === frameKey && state.activeEntry !== undefined
     ? state.activeEntry
     : (state.frameEntryCounts?.[frameKey] ?? 1);
+}
+
+/**
+ * The frame target a run's live cursor resolves completion rows against.
+ *
+ * The single derivation of "where the drain is standing", so the resolved-
+ * completion drain and the delegation collection-pending guard cannot disagree
+ * about it (#749). Pair it with `completionTargetsFrame` to decide whether a
+ * persisted row is reachable from here.
+ *
+ * The frame key is the persisted one, falling back to the cursor derivation for
+ * a state that carries none. The active entry is authoritative for it — the two
+ * name the same frame by construction — and {@link inferFrameEntryFromState}
+ * owns the fallback to the frame's recorded count.
+ *
+ * @param state - Runbook state whose live cursor is read
+ * @returns The active frame the cursor occupies, entry included
+ * @throws {RangeError} When the inferred entry is not a positive integer, which
+ *   persisted state cannot produce (the schema admits positive integers only).
+ */
+export function deriveActiveCompletionFrame(state: RunbookState): Frame {
+  const frameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
+  return activeFrame(frameKey, state.activeEntry ?? inferFrameEntryFromState(state, frameKey));
 }
 
 /**
