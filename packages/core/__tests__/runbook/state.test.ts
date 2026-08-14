@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import { isError } from '../../src/errors.js';
 import {
   applyRunbookStateUpdate,
-  type ConcurrentStateModificationError,
   generateRunId,
   InvalidRunbookStateError,
   isConcurrentStateModificationError,
@@ -60,6 +59,13 @@ describe('RunbookStateManager', () => {
   /**
    * Bump a run's persisted `state_version` out from under an in-flight cycle.
    *
+   * Bumping the version is the point — the `runs_bump_state_version` trigger
+   * fires on the `state_json` write — but the write is not a no-op: it also
+   * overwrites `stepName` with the literal `'churn'`. Callers that re-derive
+   * against the churned state observe that value, and the retry test asserts on
+   * it, so it is part of this helper's contract rather than an implementation
+   * detail.
+   *
    * @param runId - Run to churn.
    */
   async function churn(runId: string): Promise<void> {
@@ -110,19 +116,22 @@ describe('RunbookStateManager', () => {
    *
    * @param error - The value the losing call rejected with.
    * @param runId - Run the refusal must name.
+   * @throws {Error} When the value is not the typed refusal — narrowing through
+   *   the guard rather than casting past it, so the field assertions below
+   *   cannot read a shape the value never had.
    */
   function expectBudgetSpent(error: unknown, runId: string): void {
-    expect(isConcurrentStateModificationError(error)).toBe(true);
-    expect((error as ConcurrentStateModificationError).runId).toBe(runId);
+    if (!isConcurrentStateModificationError(error)) {
+      throw new Error(`Expected ConcurrentStateModificationError, received: ${String(error)}`);
+    }
+    expect(error.runId).toBe(runId);
     // `retryable` is the discriminant, not the class name: it is what separates
     // this from the refusals sharing the same throwing seam.
-    expect((error as ConcurrentStateModificationError).retryable).toBe(true);
+    expect(error.retryable).toBe(true);
     // The name is not the discriminant, but it is what a stack trace and any
     // structured log label the failure with, so it is pinned like its sibling
     // InvalidRunIdError rather than left free to drift.
-    expect((error as ConcurrentStateModificationError).name).toBe(
-      'ConcurrentStateModificationError',
-    );
+    expect(error.name).toBe('ConcurrentStateModificationError');
   }
 
   let testDir: string;
