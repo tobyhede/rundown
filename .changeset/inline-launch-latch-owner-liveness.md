@@ -17,11 +17,18 @@ holder, through PID-aware stale reclamation. The fix is to give the latch the
 same property, on the same terms the file locks state: reclamation is a liveness
 decision and **never** an age-based one.
 
-The latch therefore records who holds it. `substepStates[].inline.started` is
-now `{ at, ownerPid, ownerStartId }` — one value rather than a bare timestamp,
-so a start with no owner to check is unrepresentable — and
-`INLINE_CHILD_STARTED` carries the same. `classifyInlineLaunchOwnership` (new,
-exported from `@rundown-org/core`) reads it as `unlatched`, `held` or
+The latch therefore records who holds it, for exactly as long as it holds it.
+`substepStates[].inline.started` is now `{ at, ownerPid, ownerStartId }` — one
+value rather than a bare timestamp, so a start with no owner to check is
+unrepresentable — and `INLINE_CHILD_STARTED` carries the same. It is **released
+when the launch finishes**: `INLINE_LAUNCH_CONSUMED` clears it in the same
+commit that clears the one-shot intent, which is the lifetime the file lock had.
+A latch that outlived its span would be worse than none at all — every later
+visit to the frame would read a completed launch as one in progress, so a
+re-entry from the same process would find its own live pid on the latch and
+stand down against itself forever, and one from a later process would report
+"reclaiming" a launch nobody crashed out of. `classifyInlineLaunchOwnership`
+(new, exported from `@rundown-org/core`) reads it as `unlatched`, `held` or
 `reclaimable`, over the same `isOwnerAlive` probe the execution lease uses. A
 **start id**, not a bare pid: a recycled pid would otherwise read as a live
 owner and the latch would never be reclaimed. Every unknown answers "alive", so
@@ -53,11 +60,10 @@ liveness separates _dead_ from _not there yet_.
 
 One window is narrowed rather than closed, and is worth stating plainly: a
 launch span that FAILS after latching — an unresolvable child ref, a preparation
-error — still leaves the latch set, because clearing it needs an inverse machine
-event this change does not add. Its owner is alive, so it reports as held for
-the rest of that process's life; the next process reclaims it, where before this
-change no process ever would. A short-lived CLI invocation therefore self-heals
-on the next gesture.
+error — reaches no consume, so it leaves the latch set. Its owner is alive, so
+it reports as held for the rest of that process's life; the next process
+reclaims it, where before this change no process ever would. A short-lived CLI
+invocation therefore self-heals on the next gesture.
 
 Persisted state carrying the old bare-timestamp `startedAt` no longer validates.
 Per the no-migration rule, finish, stop, or prune an affected run rather than

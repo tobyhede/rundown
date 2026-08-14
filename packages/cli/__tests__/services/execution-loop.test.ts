@@ -3815,7 +3815,10 @@ describe('runExecutionLoop', () => {
 
     beforeEach(() => {
       latchOutcomes.length = 0;
+      // Both halves of the shared double, so no assertion on either can depend
+      // on which sibling test ran first.
       mockOutput.warning.mockClear();
+      mockOutput.executionEvent.mockClear();
       captureLatch();
       mockActorService.observeExecutionUnitEntry.mockResolvedValue(stepEnteredWithInlineLaunch());
       // Armed by default so that a refusal arm broken by a future edit fails on
@@ -4067,7 +4070,7 @@ describe('runExecutionLoop', () => {
       // The wait is named rather than opaque: the operator is told which process
       // holds the launch, so a launch that never finishes is diagnosable.
       expect(mockOutput.warning).toHaveBeenCalledWith(
-        `Inline child ${childRunId} is already being launched by process ${String(process.pid)}. Waiting for that launch to finish.`,
+        `Inline child ${childRunId} is already being launched by process ${String(process.pid)}. Re-run this command once that launch finishes.`,
       );
     });
 
@@ -4202,19 +4205,33 @@ describe('runExecutionLoop', () => {
       );
     });
 
-    // The two states that carry no latch FOR THIS INTENT, which are not the same
-    // as an empty latch: there is a record to read in the second, and it belongs
-    // to a different launch. Both must classify `unlatched`, and both are only
-    // distinguishable from `held` when the record they must not consult names a
-    // LIVE owner — otherwise a classifier that consulted it anyway would answer
-    // `reclaimable`, launch, and pass a test that proved nothing.
-    it.each<{ readonly name: string; readonly substepStates: readonly unknown[] }>([
+    // The two states where the parent's substep row does not record THIS launch.
+    // Reading them as `unlatched` is unsound rather than merely imprecise: the
+    // latch is written onto that row, so `updateInlineStarted` is a silent
+    // no-op for the first and throws an untyped `Inline child run mismatch` out
+    // of the compare-and-swap callback for the second. An observer that reported
+    // `won` from either would enter the launch span with nothing latched — and
+    // so would the next one, racing the bare `INSERT INTO runs`.
+    //
+    // The second case names a LIVE owner deliberately: a classifier that
+    // consulted the wrong row's record anyway would answer `held` and stand
+    // down, which is a different wrong answer and must not look like this one.
+    it.each<{
+      readonly name: string;
+      readonly reason: string;
+      readonly message: string;
+      readonly substepStates: readonly unknown[];
+    }>([
       {
         name: 'the substep carries no inline metadata',
+        reason: 'no-inline-metadata',
+        message: 'carries no inline child metadata',
         substepStates: [{ id: '1', frameKey: '1|', status: 'running' }],
       },
       {
         name: 'the recorded inline metadata names a different child run',
+        reason: 'other-child',
+        message: 'records a different inline child',
         substepStates: [
           {
             id: '1',
@@ -4231,8 +4248,80 @@ describe('runExecutionLoop', () => {
           },
         ],
       },
-    ])('latches the launch when $name', async ({ substepStates }) => {
-      const parent = parentWith(null, { substepStates });
+    ])(
+      'refuses the launch as unrecorded when $name',
+      async ({ reason, message, substepStates }) => {
+        const parent = parentWith(null, { substepStates });
+        mockManager.load.mockImplementation(async (id: string) =>
+          id === runbookId ? parent : null,
+        );
+
+        const result = await driveLoop();
+
+        expect(latchOutcomes).toEqual([{ next: null, value: { kind: 'unrecorded', reason } }]);
+        // Fails closed: nothing written, and the launch span — the only place a
+        // second `manager.create` could happen — is never entered.
+        expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
+        expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
+        expect(result).toBe('stopped');
+        // Named as inconsistent state with a remedy, not reported as a wait that
+        // would never end.
+        expect(mockEmitter.emit).toHaveBeenCalledWith({
+          type: 'ERROR_OCCURRED',
+          payload: {
+            message: expect.stringContaining(message),
+            code: actualCore.ErrorCodes.LAUNCH_FAILED.code,
+          },
+        });
+      },
+    );
+
+    // A parent with no substep rows at all, which is not the same as a parent
+    // whose row carries no inline: there is nothing to read the latch off, and
+    // the read itself must survive it.
+    it('refuses the launch as unrecorded when the parent carries no substep rows', async () => {
+      const parent = parentWith(null, { substepStates: undefined });
+      mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
+
+      const result = await driveLoop();
+
+      expect(latchOutcomes).toEqual([
+        { next: null, value: { kind: 'unrecorded', reason: 'no-inline-metadata' } },
+      ]);
+      expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
+      expect(result).toBe('stopped');
+    });
+
+    // The latch is read from the intent's OWN substep and frame. Every other
+    // fixture here persists exactly one row, so any lookup that finds a row at
+    // all passes them — this one persists three, and puts the two decoys first.
+    // Both decoys are latched by a live process, so a lookup that matches on the
+    // wrong half of the coordinate reads someone else's launch and stands this
+    // one down.
+    it('reads the latch from the intent coordinate, not from a neighbouring row', async () => {
+      const inlineRow = (id: string, frameKey: string, started: InlineLaunchStart | null) => ({
+        id,
+        frameKey,
+        status: 'running',
+        inline: {
+          childRunbookPath: 'child.runbook.md',
+          childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+          contextSnapshot,
+          childRunId,
+          createdAt: '2026-05-30T00:00:00.000Z',
+          started,
+        },
+      });
+      const parent = parentWith(null, {
+        substepStates: [
+          // Same frame, different substep.
+          inlineRow('9', '1|', heldByThisProcess()),
+          // Same substep, different frame.
+          inlineRow('1', '9|', heldByThisProcess()),
+          // The intent's own coordinate, unlatched.
+          inlineRow('1', '1|', null),
+        ],
+      });
       mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
 
       await driveLoop();
@@ -4242,8 +4331,6 @@ describe('runExecutionLoop', () => {
           value: { kind: 'won', existingChild: null, reclaimedFrom: null },
         }),
       ]);
-      // Not a reclamation: nothing was taken over, so nothing is reported as
-      // taken over. The launch simply had no latch of its own.
       expect(mockOutput.warning).not.toHaveBeenCalled();
     });
   });

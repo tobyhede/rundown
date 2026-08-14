@@ -692,10 +692,15 @@ export interface PersistedDelegateFrontierEntry {
  * Durable "I am launching this child" record written by the inline-launch latch.
  *
  * The timestamp and the launching process's identity are ONE value because they
- * are written in one commit and read as one fact. Two nullable fields would make
- * "started at a time, owned by nobody" representable, and that state is exactly
- * the one a later observer cannot classify: it could not tell a launch whose
- * owner is still resolving the child runbook from a launch whose owner died.
+ * are written and cleared in one commit each — taken when the launch is latched,
+ * released when the intent is consumed. Two nullable fields would make "started
+ * at a time, owned by nobody" representable, and that state is exactly the one a
+ * later observer cannot classify: it could not tell a launch whose owner is
+ * still resolving the child runbook from a launch whose owner died.
+ *
+ * Only the owner is read. `at` is carried for the operator — it is what a
+ * `started` record means to a human reading persisted state — and deliberately
+ * never decides anything: reclamation is a liveness question, never an age one.
  *
  * The owner is recorded as a pid AND a start id because a pid alone is not an
  * identity — see `runbook/process-identity` for why a recycled pid otherwise

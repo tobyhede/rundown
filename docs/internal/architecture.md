@@ -665,13 +665,19 @@ it.
 
    The seam also decides whether the reactivation needs the parent's execution
    loop, and returns that as the loop directive. An **interrupted** launch does:
-   the launcher records `startedAt`, consumes the one-shot launch intent and
-   re-establishes the child's run-control authority
-   (`SessionService.adoptRunControlClaim`) in one continuation, and a process
-   that died mid-launch leaves all three undone. Only the launch seam
-   (`launchInlineChildFromIntent`'s existing-child branch) performs them, and
-   only the parent's own loop reaches it, so the seam returns
-   `loop: { kind: 'run' }` there. A launch that already **finished** returns
+   the launcher takes the launch latch (`inline.started`), consumes the one-shot
+   launch intent — which releases that latch — and re-establishes the child's
+   run-control authority (`SessionService.adoptRunControlClaim`) in one
+   continuation, and a process that died mid-launch leaves all three undone.
+   Only the launch seam (`launchInlineChildFromIntent`'s existing-child branch)
+   performs them, and only the parent's own loop reaches it, so the seam returns
+   `loop: { kind: 'run' }` there.
+
+   The seam matches on a running child with matching linkage, which is also what
+   a **live** owner mid-launch looks like — it does not consult the latch. The
+   launch seam does, and when it stands down against a live owner it pops the
+   activation this seam performed, so a session is never left targeting a run
+   the process refused to execute. A launch that already **finished** returns
    `loop: { kind: 'none' }` — running the loop would re-enter an execution unit
    the parent never left, re-announcing the step and re-running any command it
    carries. The discriminant is the surviving intent itself
@@ -1458,21 +1464,24 @@ nothing was written before the create, so a dead process left no trace — but
 paid for it with the duplicate `INSERT`.
 
 The latch buys the recovery back rather than reverting the trade: the record
-names its **owner**, so it binds only while that owner runs. `inline.started` is
-`{ at, ownerPid, ownerStartId }`, and `classifyInlineLaunchOwnership`
-(`runbook/inline-launch-start.ts`) reads it as `unlatched`, `held` or
-`reclaimable` — the same PID-aware staleness the file locks use, on the same
-terms: **liveness, never age**. A start id rather than a bare pid, because a
-recycled pid would otherwise read as a live owner and the latch would never be
-reclaimed. Absence of the child run row is deliberately NOT the signal: an
-observer that has latched and is still resolving the child runbook presents
-exactly the state a crashed one does, so reclaiming on absence would send both
-into `manager.create` and reproduce the race the latch exists to prevent. The
-reclaiming observer overwrites the record with its own identity in the same
-commit, so a third observer finds the launch held rather than reclaimable, and
-reports the reclamation to the operator. A launch held by a **live** owner
-answers `waiting` — now naming the process, because that wait resolves itself
-and is not the same condition as a stranded one.
+names its **owner**, and is held for exactly the launch span — written by
+`INLINE_CHILD_STARTED`, released by `INLINE_LAUNCH_CONSUMED` in the same commit
+that clears the one-shot intent, which is the lifetime the file lock had. So it
+binds only while that owner runs, and only while the launch is unfinished.
+`inline.started` is `{ at, ownerPid, ownerStartId }`, and
+`classifyInlineLaunchOwnership` (`runbook/inline-launch-start.ts`) reads it as
+`unlatched`, `held` or `reclaimable` — the same PID-aware staleness the file
+locks use, on the same terms: **liveness, never age**. A start id rather than a
+bare pid, because a recycled pid would otherwise read as a live owner and the
+latch would never be reclaimed. Absence of the child run row is deliberately NOT
+the signal: an observer that has latched and is still resolving the child
+runbook presents exactly the state a crashed one does, so reclaiming on absence
+would send both into `manager.create` and reproduce the race the latch exists to
+prevent. The reclaiming observer overwrites the record with its own identity in
+the same commit, so a third observer finds the launch held rather than
+reclaimable, and reports the reclamation to the operator. A launch held by a
+**live** owner answers `waiting` — now naming the process, because that wait
+resolves itself and is not the same condition as a stranded one.
 
 `already-latched` therefore carries no child, and the adoption branch is reached
 only from `won`. A live owner that has reached `manager.create` and one that has

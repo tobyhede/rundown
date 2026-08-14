@@ -317,6 +317,51 @@ export function deriveDelegationChildUnlinkedSubsteps(
   );
 }
 
+/**
+ * Release the launch latch the consumed intent belongs to.
+ *
+ * The latch is held for exactly the launch span — written by
+ * `INLINE_CHILD_STARTED` before the child run is created, released here when the
+ * front end reports the launch consumed — which is the lifetime the file lock
+ * this mechanism replaced had, and the reason a latch left behind means a launch
+ * that did not finish.
+ *
+ * Holding it any longer would make every later visit to the frame read a
+ * completed launch as one in progress: a re-entry in the SAME process would find
+ * its own live pid on the latch and stand down forever, and one in a later
+ * process would "reclaim" a launch nobody crashed out of.
+ *
+ * Only the exact substep the intent names is touched, and only while it still
+ * records this launch — a row that has moved on belongs to a different launch
+ * and is not this event's to clear.
+ *
+ * @param substepStates - Current substep rows, if any.
+ * @param intent - The intent being consumed, or undefined when none is pending.
+ * @returns The rows with this launch's latch cleared; the input when nothing matches.
+ */
+function releaseInlineLatch(
+  substepStates: readonly SubstepState[] | undefined,
+  intent: InlineLaunchIntentWithoutParentEntry | undefined,
+): readonly SubstepState[] | undefined {
+  if (!substepStates || !intent) return substepStates;
+  // The persisted intent carries `parentFrameKey` as a plain string — it is
+  // reconstructed from a snapshot, where the brand does not survive — so the
+  // lookup takes it back as one rather than asserting a brand nothing verified.
+  const target = findSubstepState(
+    substepStates,
+    intent.parentStepId,
+    intent.parentFrameKey as FrameKey,
+  );
+  const inline = target?.inline;
+  if (!target || !inline) return substepStates;
+  if (inline.childRunId !== intent.childRunId || inline.started === null) return substepStates;
+  return substepStates.map((substepState) =>
+    substepState === target
+      ? { ...substepState, inline: { ...inline, started: null } }
+      : substepState,
+  );
+}
+
 function updateInlineStarted(
   substepStates: readonly SubstepState[] | undefined,
   event: InlineChildStartedEvent,
@@ -474,9 +519,18 @@ const baseRunbookSetup = setup({
       inlineLaunchIntent: (_, params: StoreInlineLaunchIntentParams) => params.intent,
       substepStates: (_, params: StoreInlineLaunchIntentParams) => params.substepStates,
     }),
-    /** Clear the one-shot inline launch intent after a front end consumes it. */
+    /**
+     * Clear the one-shot inline launch intent after a front end consumes it,
+     * releasing the launch latch in the same commit.
+     *
+     * The two belong together: the intent surviving is what makes a launch
+     * re-observable, and the latch is what makes it exactly-once while it runs.
+     * A launch that reaches here has finished, so it holds neither.
+     */
     clearInlineLaunchIntent: assign({
       inlineLaunchIntent: () => undefined,
+      substepStates: ({ context }) =>
+        releaseInlineLatch(context.substepStates, context.inlineLaunchIntent),
     }),
     /** Mark an inline child run as started on the matching substep state. */
     storeInlineChildStarted: assign({
