@@ -188,6 +188,19 @@ export type DelegationPolicyOutcome =
       readonly step: string;
       /** Delegated substep ids still lacking delegation outcomes. */
       readonly missingSubsteps: readonly string[];
+      /**
+       * The subset of `missingSubsteps` whose outcome WAS reported, under a
+       * frame entry the collection scope has since left.
+       *
+       * Missing splits into two situations with different remedies, and the
+       * refusal is a wall unless it says which one it is (#749): a substep that
+       * never reported is waiting on its child, while one stranded by a
+       * RETRY/GOTO re-entry will never resolve on its own — the row is
+       * unreachable for the drain, and `rundown delegate --retry` is what clears
+       * it and re-issues the substep. Empty when every missing substep is simply
+       * still in flight.
+       */
+      readonly supersededSubsteps: readonly string[];
     }
   | {
       /** Collection found no unapplied outcomes for the selected scope. */

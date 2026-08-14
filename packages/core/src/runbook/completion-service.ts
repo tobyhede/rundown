@@ -8,12 +8,13 @@ import {
   type RunbookStateManager,
   type RunbookStateUpdate,
 } from './state.js';
+import { deriveActiveCompletionFrame } from './frame-entry.js';
 import {
-  SENTINEL_ENTRY,
   activeFrame,
   buildCompletionKey,
   buildResolvedCompletion,
   completionEntryForFrame,
+  completionTargetsFrame,
   deriveActiveFrame,
   exactFrame,
   findSubstepState,
@@ -460,8 +461,9 @@ type ResolvedCompletionDrainProgress =
 /**
  * The coordinates a drain iteration's selection is computed from.
  *
- * Selection is `listResolvedCompletionsInState(state, activeFrame(activeFrameKey,
- * entry))` narrowed to `state.substep` on `state.step`. Holding all four fixed
+ * Selection is `listResolvedCompletionsInState(state,
+ * deriveActiveCompletionFrame(state))` narrowed to `state.substep` on
+ * `state.step`. Holding all four fixed
  * fixes the candidate row, which is why an apply that moves ANY of them has
  * made progress even if it consumed nothing.
  */
@@ -639,6 +641,10 @@ function findCompletionKeyInState(
  * already hold, so the twin outlived its counterpart.
  *
  * An `active` frame also admits the sentinel entry; an exact frame does not.
+ * That rule is {@link completionTargetsFrame}, shared with the collection-pending
+ * guard so the two cannot disagree about which rows this drain can reach (#749).
+ * It reads the row's own frame coordinates rather than its key prefix; the two
+ * are the same fact, written together from one `Frame` at every recording site.
  *
  * @param state - State whose `resolvedCompletions` map is read.
  * @param frame - Frame target to list.
@@ -648,15 +654,8 @@ function listResolvedCompletionsInState(
   state: RunbookState,
   frame: Frame,
 ): ReadonlyArray<{ readonly key: string; readonly completion: ResolvedCompletion }> {
-  const entry = completionEntryForFrame(frame);
-  const exactPrefix = `${frame.frameKey}|${String(entry)}|`;
-  const sentinelPrefix = `${frame.frameKey}|${String(SENTINEL_ENTRY)}|`;
   return Object.entries(state.resolvedCompletions ?? {})
-    .filter(([key]) =>
-      frame.kind === 'active'
-        ? key.startsWith(exactPrefix) || key.startsWith(sentinelPrefix)
-        : key.startsWith(exactPrefix),
-    )
+    .filter(([, completion]) => completionTargetsFrame(frame, completion))
     .map(([key, completion]) => ({ key, completion }));
 }
 
@@ -689,21 +688,21 @@ function observedSubstepsForFrameInState(
  *
  * On a match the returned value is normalised against the live cursor:
  * `targetSubstep` is set to `state.substep`, and `targetEntry` is rewritten
- * from {@link SENTINEL_ENTRY} (or any persisted entry) to the live active
- * entry so downstream consumers always see the resolved entry rather than
- * the sentinel.
+ * from the sentinel entry (or any persisted entry) to the live active entry so
+ * downstream consumers always see the resolved entry rather than the sentinel.
+ *
+ * The live frame is derived here rather than supplied: a caller-passed entry is
+ * stale by construction against the state it is validated with, and the two
+ * disagreeing is the shape of defect this narrowing exists to catch.
  *
  * @param state - Current runbook state.
  * @param completion - Resolved completion candidate.
- * @param ensured - Live active entry derived by the caller.
- * @param ensured.entry - Live active entry number.
  * @returns A branded {@link CurrentCursorResolvedCompletion} on match, or a
  *   {@link CompletionTargetMismatch} describing the rejection.
  */
 function resolveAgainstCurrentCursor(
   state: RunbookState,
   completion: ResolvedCompletion,
-  ensured: { readonly entry: number },
 ): CurrentCursorResolvedCompletion | CompletionTargetMismatch {
   if (!state.substep) {
     return {
@@ -713,13 +712,14 @@ function resolveAgainstCurrentCursor(
       completion,
     };
   }
-  const activeFrameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
-  const activeEntry = state.activeEntry ?? ensured.entry;
+  const frame = deriveActiveCompletionFrame(state);
+  const activeEntry = completionEntryForFrame(frame);
   const mismatch =
     completion.targetStep !== state.step ||
     completion.targetSubstep !== state.substep ||
-    completion.targetFrameKey !== activeFrameKey ||
-    (completion.targetEntry !== activeEntry && completion.targetEntry !== SENTINEL_ENTRY);
+    // Same frame/entry rule the selection listed by, and the one the
+    // collection-pending guard blocks on (#749).
+    !completionTargetsFrame(frame, completion);
   if (mismatch) {
     return {
       status: 'failed',
@@ -822,8 +822,7 @@ function selectNextResolvedCompletionApply(
     };
   }
 
-  const entry = state.activeEntry ?? 1;
-  const activeTargetFrame = activeFrame(activeFrameKey, entry);
+  const activeTargetFrame = deriveActiveCompletionFrame(state);
   const resolved = listResolvedCompletionsInState(state, activeTargetFrame);
   const resolvedBySubstep = new Map(
     resolved
@@ -844,7 +843,7 @@ function selectNextResolvedCompletionApply(
     );
   if (!current) return { kind: 'none', unresolved };
 
-  const validated = resolveAgainstCurrentCursor(state, current.completion, { entry });
+  const validated = resolveAgainstCurrentCursor(state, current.completion);
   if (!(currentCursorValidatedBrand in validated)) {
     return { kind: 'mismatch', mismatch: validated, unresolved };
   }
@@ -1194,17 +1193,18 @@ export class RunbookCompletionService {
   /**
    * Validate a completion against the live in-memory cursor.
    *
+   * The frame and entry are read from `state`, never supplied: a caller that
+   * passes its own is asserting a cursor the state may already have moved off.
+   *
    * @param state - Current prepared state.
    * @param completion - Completion candidate.
-   * @param entry - Live active entry.
    * @returns Branded current-cursor completion or mismatch.
    */
   validateCurrentCompletion(
     state: RunbookState,
     completion: ResolvedCompletion,
-    entry: number,
   ): CurrentCursorResolvedCompletion | CompletionTargetMismatch {
-    return resolveAgainstCurrentCursor(state, completion, { entry });
+    return resolveAgainstCurrentCursor(state, completion);
   }
 
   /**

@@ -165,6 +165,7 @@ describe('RunbookCollectionService properties', () => {
           targetRunId: runId,
           step: '1',
           missingSubsteps: expectedMissing,
+          supersededSubsteps: [],
         });
       }),
       { numRuns: 40 },
@@ -191,6 +192,7 @@ describe('RunbookCollectionService properties', () => {
           targetRunId: runId,
           step: '1',
           missingSubsteps: ['1.1', '1.2', '1.3'],
+          supersededSubsteps: [],
         });
       }),
       { numRuns: 40 },

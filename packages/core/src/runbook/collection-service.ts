@@ -26,14 +26,8 @@ import {
   type PreparedReEntryProjection,
 } from './re-entry-frontier.js';
 import type { Frame, FrameKey } from './targeting.js';
-import {
-  activeFrame,
-  buildStepPosition,
-  completionEntryForFrame,
-  deriveActiveFrame,
-  findSubstepState,
-  SENTINEL_ENTRY,
-} from './targeting.js';
+import { buildStepPosition, completionTargetsFrame, findSubstepState } from './targeting.js';
+import { deriveActiveCompletionFrame } from './frame-entry.js';
 import { countNumberedSteps } from './step-utils.js';
 import type { ClaimSeenRecordResult, ReleaseRunbookResult } from './session-service.js';
 import type { SessionMutationResult } from './storage/runbook-store.js';
@@ -211,52 +205,62 @@ function findStepOrThrow(steps: readonly ResolvedStep[], stepName: string): Reso
   return step;
 }
 
-function defaultCollectionFrame(state: RunbookState): Frame {
-  return activeFrame(activeFrameKeyOf(state), state.activeEntry ?? 1);
-}
-
-/**
- * Single fallback for the target run's active frame key. Factored out of the
- * two prior call sites (`defaultCollectionFrame` and the missing-outcome scan),
- * which both inlined `state.activeFrameKey ?? deriveActiveFrame(state).frameKey`.
- *
- * @param state - Target run state to read the active frame key from.
- * @returns The persisted active frame key, or the one derived from the cursor.
- */
-function activeFrameKeyOf(state: RunbookState): FrameKey {
-  return state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
-}
-
 // Set of delegate substep ids that have a LIVE resolved-completion row in the
-// target frame (active or sentinel entry). This is the authoritative
-// 'outcome available to collect' signal; `substepState.status` is only a
-// mirror and can go stale across a retry.
-function resolvedSubstepIdsInFrame(
-  state: RunbookState,
-  frameKey: FrameKey,
-  entry: number,
-): ReadonlySet<string> {
+// target frame. This is the authoritative 'outcome available to collect'
+// signal; `substepState.status` is only a mirror and can go stale across a
+// retry. Scope is `completionTargetsFrame` — the rule the drain this readiness
+// scan feeds selects by, and the one the collection-pending guard blocks on
+// (#749). Counting a row the drain will not apply is how a collect reports
+// everything resolved and then applies nothing.
+function resolvedSubstepIdsInFrame(state: RunbookState, frame: Frame): ReadonlySet<string> {
   const ids = new Set<string>();
   for (const completion of Object.values(state.resolvedCompletions ?? {})) {
-    if (
-      completion.targetSubstep !== undefined &&
-      completion.targetFrameKey === frameKey &&
-      (completion.targetEntry === entry || completion.targetEntry === SENTINEL_ENTRY)
-    ) {
-      ids.add(completion.targetSubstep);
-    }
+    const substep = completion.targetSubstep;
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: equivalent — a step-scoped row can only contribute an `undefined` member to a set queried solely with declared substep ids, so no membership answer changes; the guard is here to narrow the type
+    if (substep === undefined) continue;
+    if (completionTargetsFrame(frame, completion)) ids.add(substep);
   }
   return ids;
 }
 
-function missingDelegationOutcomeIds(args: {
+/**
+ * Whether a substep's outcome was reported under an entry this scope has left.
+ *
+ * The distinction that turns the missing-outcome refusal from a wall into an
+ * instruction (#749). A substep with no row anywhere is waiting on its child; a
+ * substep whose only rows sit on this frame at another entry was reported and
+ * then stranded by a RETRY/GOTO re-entry, and no amount of waiting resolves it —
+ * the drain cannot reach the row, so `rundown delegate --retry` is the remedy.
+ *
+ * @param state - Target run state whose completion rows are inspected.
+ * @param frame - Collection scope the readiness scan ran against.
+ * @param substepId - Delegate substep already established as missing.
+ * @returns Whether a row for this substep exists on the frame at another entry.
+ */
+function outcomeSupersededByReEntry(state: RunbookState, frame: Frame, substepId: string): boolean {
+  return Object.values(state.resolvedCompletions ?? {}).some(
+    (completion) =>
+      completion.targetSubstep === substepId &&
+      completion.targetFrameKey === frame.frameKey &&
+      !completionTargetsFrame(frame, completion),
+  );
+}
+
+/** The missing-outcome verdict for one collection scope, split by remedy. */
+interface MissingDelegationOutcomes {
+  /** Qualified ids (`step.substep`) of delegate substeps with no live outcome. */
+  readonly missingSubsteps: readonly string[];
+  /** The subset of those whose outcome was reported at a superseded entry. */
+  readonly supersededSubsteps: readonly string[];
+}
+
+function missingDelegationOutcomes(args: {
   readonly targetState: RunbookState;
   readonly stepName: string;
   readonly delegateSubsteps: readonly string[];
-  readonly frameKey: FrameKey;
-  readonly entry: number;
-}): readonly string[] {
-  const frameKey = args.frameKey;
+  readonly frame: Frame;
+}): MissingDelegationOutcomes {
+  const frameKey = args.frame.frameKey;
   // A live resolved-completion row is the authoritative 'outcome available to
   // collect' signal. `substepState.status` is only a mirror of a prior drain and
   // can go stale across a manual retry (which resets the substep to `pending` and
@@ -267,25 +271,30 @@ function missingDelegationOutcomeIds(args: {
   // a retry. Narrowing readiness onto live rows narrows but does not fully close
   // the collect race: a retry is not atomic against a concurrent `rd collect`
   // (full lock-span atomicity is deferred).
-  const resolved = resolvedSubstepIdsInFrame(args.targetState, frameKey, args.entry);
-  return args.delegateSubsteps
-    .filter((substepId) => {
-      if (resolved.has(substepId)) return false;
-      // Equivalent mutant: the `?? []` fallback is only reached when
-      // `substepStates` is nullish (no persisted states), and `findSubstepState`
-      // returns `undefined` for any element whose `id`/`frameKey` does not match —
-      // so an empty array and a non-empty garbage array are observationally
-      // identical here (both yield "not found" → not done).
-      // Stryker disable ArrayDeclaration: equivalent — empty vs garbage fallback both resolve "not found"
-      const substepState = findSubstepState(
-        args.targetState.substepStates ?? [],
-        substepId,
-        frameKey,
-      );
-      // Stryker restore ArrayDeclaration
-      return substepState?.status !== 'done';
-    })
-    .map((substepId) => `${args.stepName}.${substepId}`);
+  const resolved = resolvedSubstepIdsInFrame(args.targetState, args.frame);
+  const missing = args.delegateSubsteps.filter((substepId) => {
+    if (resolved.has(substepId)) return false;
+    // Equivalent mutant: the `?? []` fallback is only reached when
+    // `substepStates` is nullish (no persisted states), and `findSubstepState`
+    // returns `undefined` for any element whose `id`/`frameKey` does not match —
+    // so an empty array and a non-empty garbage array are observationally
+    // identical here (both yield "not found" → not done).
+    // Stryker disable ArrayDeclaration: equivalent — empty vs garbage fallback both resolve "not found"
+    const substepState = findSubstepState(
+      args.targetState.substepStates ?? [],
+      substepId,
+      frameKey,
+    );
+    // Stryker restore ArrayDeclaration
+    return substepState?.status !== 'done';
+  });
+  const qualify = (substepId: string): string => `${args.stepName}.${substepId}`;
+  return {
+    missingSubsteps: missing.map(qualify),
+    supersededSubsteps: missing
+      .filter((substepId) => outcomeSupersededByReEntry(args.targetState, args.frame, substepId))
+      .map(qualify),
+  };
 }
 
 /**
@@ -364,7 +373,7 @@ export async function collectDelegationOutcomes(
   }
 
   const delegateSubsteps = delegateSubstepIds(step);
-  const frame = input.frame ?? defaultCollectionFrame(input.targetState);
+  const frame = input.frame ?? deriveActiveCompletionFrame(input.targetState);
   const frameKey = frame.frameKey; // every Frame variant carries frameKey
 
   if (delegateSubsteps.length === 0) {
@@ -391,12 +400,11 @@ export async function collectDelegationOutcomes(
     };
   }
 
-  const missingSubsteps = missingDelegationOutcomeIds({
+  const { missingSubsteps, supersededSubsteps } = missingDelegationOutcomes({
     targetState: input.targetState,
     stepName,
     delegateSubsteps,
-    frameKey,
-    entry: completionEntryForFrame(frame),
+    frame,
   });
   if (missingSubsteps.length > 0) {
     return {
@@ -404,6 +412,7 @@ export async function collectDelegationOutcomes(
       targetRunId: input.targetState.id,
       step: stepName,
       missingSubsteps,
+      supersededSubsteps,
     };
   }
 

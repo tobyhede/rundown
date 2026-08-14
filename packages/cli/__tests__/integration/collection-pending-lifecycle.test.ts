@@ -145,6 +145,37 @@ describe('collection-pending lifecycle', () => {
     expect(emittedCodes(result.stdout)).toContain('DELEGATION_COLLECTION_PENDING');
   }, 30_000);
 
+  it('a GOTO that re-enters the delegated frame does not wedge the parent (#749)', async () => {
+    await reportChildOutcomeLeavingParentPending();
+
+    // Onset: the reported outcome is at the live entry, so it blocks — and
+    // `rundown collect` is a remedy that works.
+    const blocked = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
+    expect(blocked.exitCode).toBe(1);
+    expect(emittedCodes(blocked.stdout)).toContain('DELEGATION_COLLECTION_PENDING');
+
+    // Navigation is exempt from the guard, and re-entry bumps the frame's entry
+    // ordinal: the row stays at the entry it was reported under, so the drain's
+    // `<frame>|<newEntry>|` / `<frame>|0|` prefixes can never match it again.
+    const before = await getActiveState(workspace);
+    const reenter = await runCliInProcess(
+      await withRunTarget(['goto', '1.1'], workspace),
+      workspace,
+    );
+    expect(reenter.exitCode).toBe(0);
+    const after = await getActiveState(workspace);
+    expect(after?.activeEntry).toBeGreaterThan(before?.activeEntry ?? 1);
+    expect(Object.keys(after?.resolvedCompletions ?? {})).toEqual(
+      Object.keys(before?.resolvedCompletions ?? {}),
+    );
+
+    // The guard must not report a row the drain cannot reach: the parent stays
+    // drivable rather than refusing every bare mutation forever.
+    const advanced = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
+    expect(emittedCodes(advanced.stdout)).not.toContain('DELEGATION_COLLECTION_PENDING');
+    expect(advanced.exitCode).toBe(0);
+  }, 30_000);
+
   it('a subprocess front end withholds bare complete/stop but not their claim-evidenced forms (item 2 e2e)', () => {
     expect(bareRoleSpecificMutation(['complete'])).toBe('complete');
     expect(bareRoleSpecificMutation(['stop'])).toBe('stop');

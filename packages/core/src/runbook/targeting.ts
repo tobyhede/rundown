@@ -227,6 +227,56 @@ export function parseCompletionKey(
 }
 
 /**
+ * The frame coordinates a persisted completion row carries.
+ *
+ * Structural rather than nominal on purpose: `ResolvedCompletion` and the
+ * delegation read model's `DelegationOutcomeReportedFact` both satisfy it
+ * already, which is what lets one rule decide scope for both readers.
+ */
+export interface CompletionFrameTarget {
+  /** Frame key the row was recorded against. */
+  readonly targetFrameKey: FrameKey;
+  /** Entry the row was recorded against, or {@link SENTINEL_ENTRY}. */
+  readonly targetEntry: number;
+}
+
+/**
+ * Whether a persisted completion row falls inside a frame target.
+ *
+ * The SINGLE scope rule, shared by the resolved-completion drain and the
+ * delegation collection-pending guard. They were two hand-written tests before
+ * (#749): the drain matched `<frameKey>|<entry>|` and `<frameKey>|0|` key
+ * prefixes while the guard matched on frame openness alone, so a row the drain
+ * could never select was reported as awaiting collection forever — a run that
+ * could neither advance nor collect. A gate weaker than the check it feeds is a
+ * silent-failure generator; here it was a wedge.
+ *
+ * This restates the drain's key-prefix rule over the row's own fields, which is
+ * equivalent because every write site derives the key and the fields from one
+ * {@link Frame} ({@link buildCompletionKey} beside {@link buildResolvedCompletion}).
+ *
+ * A caller asking about the LIVE cursor passes the active frame from
+ * {@link deriveActiveCompletionFrame} (in `frame-entry.ts`, which imports this
+ * module — the pair is split by that import direction, not by concern).
+ * Reachability is then permanent in both directions: entry
+ * ordinals are run-global and monotonic (`advanceFrameEntry`), so a row named by
+ * an entry the cursor has left is never matched again, whatever the cursor does
+ * next.
+ *
+ * @param frame - Frame target being resolved against
+ * @param target - Frame coordinates persisted on the completion row
+ * @returns True when the row is in scope for that frame
+ */
+export function completionTargetsFrame(frame: Frame, target: CompletionFrameTarget): boolean {
+  if (target.targetFrameKey !== frame.frameKey) return false;
+  if (target.targetEntry === completionEntryForFrame(frame)) return true;
+  // Only an active frame admits the sentinel: an exact/inactive frame names one
+  // specific entry, which is the drain's exact-prefix-only rule for a frame the
+  // cursor is not on.
+  return frame.kind === 'active' && target.targetEntry === SENTINEL_ENTRY;
+}
+
+/**
  * Get the active FOR context for the current step, if present.
  *
  * Implicit synthetic contexts are not exposed as loop scope.

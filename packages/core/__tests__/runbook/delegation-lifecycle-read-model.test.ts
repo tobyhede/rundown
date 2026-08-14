@@ -10,9 +10,12 @@ import {
   buildCompletionKey,
   buildFrameKey,
   buildResolvedCompletion,
+  completionTargetsFrame,
   exactFrame,
   inactiveFrame,
+  type Frame,
 } from '../../src/runbook/targeting.js';
+import { deriveActiveCompletionFrame } from '../../src/runbook/frame-entry.js';
 import {
   brandRunIdForTest,
   brandStoredOutputsForTest,
@@ -234,7 +237,7 @@ describe('readDelegationCollectionPending', () => {
     expect(model.outcomes).toEqual([]);
   });
 
-  it('marks a reported outcome in a non-active still-open FOR frame as policy pending', () => {
+  it('does not mark a reported outcome in a non-active still-open FOR frame as policy pending', () => {
     const targetFrameKey = buildFrameKey('1', 2);
     const key = buildCompletionKey(exactFrame(targetFrameKey, 2), '1');
     const parent = state({
@@ -247,7 +250,11 @@ describe('readDelegationCollectionPending', () => {
         [targetFrameKey]: 2,
       },
       // Step 1's FOR loop is still live on the stack at iteration 2, so its frame
-      // `1|2` is open even though the cursor has moved to step 2.
+      // `1|2` is OPEN — and openness is still not enough. The drain resolves rows
+      // against the ACTIVE frame only, and the entry ordinal is run-global and
+      // monotonic (`advanceFrameEntry`), so a cursor that returns to `1|2` lands
+      // on an entry strictly greater than 2 and never matches this row. A guard
+      // that blocked here would name a row `rundown collect` can never consume.
       forStack: [
         {
           stepId: '1',
@@ -273,18 +280,46 @@ describe('readDelegationCollectionPending', () => {
     expect(readDelegationCollectionPending(parent).pending).toBe(false);
     expect(readDelegationCollectionPendingForPolicy(parent)).toEqual({
       kind: 'delegation-collection-pending-policy',
-      pending: true,
+      pending: false,
       parentRunId: runbookId,
-      outcomes: [
-        expect.objectContaining({
-          completionKey: key,
-          targetFrameKey,
-          targetEntry: 2,
-          outcome: 'pass',
+      outcomes: [],
+    });
+  });
+
+  it('does not mark a row stranded by GOTO/RETRY re-entry as policy pending (#749)', () => {
+    // The reproduced wedge. The child reported at entry 1 while `1|` was active;
+    // a `goto 1.1` then re-entered the frame, bumping `frameEntryCounts['1|']`
+    // and `activeEntry` to 2 and resetting the substep to pending. The drain
+    // builds the prefixes `1||2|` and `1||0|`, so the row at `1||1|1` is
+    // unreachable forever — `collect` refuses it as an unresolved substep. An
+    // entry-blind guard reported it pending anyway, refusing every bare
+    // pass/fail/complete/stop with a completion key nothing could consume.
+    const targetFrameKey = buildFrameKey('1');
+    const key = buildCompletionKey(activeFrame(targetFrameKey, 1), '1');
+    const parent = state({
+      step: '1',
+      substep: '1',
+      activeFrameKey: targetFrameKey,
+      activeEntry: 2,
+      frameEntryCounts: { [targetFrameKey]: 2 },
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'pass',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(targetFrameKey, 1),
+          completedAt: '2026-01-01T00:00:00.000Z',
         }),
-      ],
-      message:
-        'A delegated claim has reported an outcome that must be collected by the orchestrator.',
+      },
+    });
+
+    expect(readDelegationCollectionPending(parent).pending).toBe(false);
+    expect(readDelegationCollectionPendingForPolicy(parent)).toEqual({
+      kind: 'delegation-collection-pending-policy',
+      pending: false,
+      parentRunId: runbookId,
+      outcomes: [],
     });
   });
 
@@ -395,13 +430,15 @@ describe('readDelegationCollectionPending', () => {
     });
   });
 
-  it('marks an unscoped outcome as policy pending until it is collected, regardless of cursor', () => {
+  it('does not mark an unscoped outcome as policy pending once the cursor has left its frame', () => {
     const targetFrameKey = buildFrameKey('1');
     const key = buildCompletionKey(activeFrame(targetFrameKey, 1), '1');
     const parent = state({
-      // The cursor has moved on to step 2, but the unscoped step-1 outcome has
-      // not been collected. An uncollected unscoped outcome stays pending — it
-      // is never silently dropped by cursor movement.
+      // The cursor has moved on to step 2 and the unscoped step-1 outcome was
+      // never collected. It is not reachable from here: the drain resolves rows
+      // against the active frame, and returning to step 1 enters `1|` at a fresh
+      // (strictly greater) entry, so no future cursor matches this row either.
+      // Blocking on it would refuse every bare mutation with no remedy.
       step: '2',
       substep: undefined,
       activeFrameKey: buildFrameKey('2'),
@@ -424,18 +461,9 @@ describe('readDelegationCollectionPending', () => {
 
     expect(readDelegationCollectionPendingForPolicy(parent)).toEqual({
       kind: 'delegation-collection-pending-policy',
-      pending: true,
+      pending: false,
       parentRunId: runbookId,
-      outcomes: [
-        expect.objectContaining({
-          completionKey: key,
-          targetFrameKey,
-          targetEntry: 1,
-          outcome: 'pass',
-        }),
-      ],
-      message:
-        'A delegated claim has reported an outcome that must be collected by the orchestrator.',
+      outcomes: [],
     });
   });
 
@@ -461,5 +489,52 @@ describe('readDelegationCollectionPending', () => {
     });
 
     expect(readDelegationCollectionPendingForPolicy(parent).pending).toBe(true);
+  });
+
+  it('reports exactly the rows the drain resolves against the live cursor', () => {
+    // The agreement the two halves must not be able to drift out of: every row
+    // the guard blocks on is one `completionTargetsFrame` admits for the frame
+    // the drain selects against, and no other row is.
+    const frameKey = buildFrameKey('1');
+    const reachable = buildCompletionKey(activeFrame(frameKey, 2), '1');
+    const sentinel = buildCompletionKey(inactiveFrame(frameKey), '2');
+    const strandedEntry = buildCompletionKey(exactFrame(frameKey, 1), '3');
+    const otherFrame = buildCompletionKey(exactFrame(buildFrameKey('2'), 2), '1');
+    const row = (targetStep: string, targetSubstep: string, targetFrame: Frame) =>
+      buildResolvedCompletion({
+        agentId: 'delegation',
+        result: 'pass',
+        targetStep,
+        targetSubstep,
+        targetFrame,
+        completedAt: '2026-01-01T00:00:00.000Z',
+      });
+    const parent = state({
+      step: '1',
+      substep: '1',
+      activeFrameKey: frameKey,
+      activeEntry: 2,
+      frameEntryCounts: { [frameKey]: 2, [buildFrameKey('2')]: 2 },
+      resolvedCompletions: {
+        [reachable]: row('1', '1', activeFrame(frameKey, 2)),
+        [sentinel]: row('1', '2', inactiveFrame(frameKey)),
+        [strandedEntry]: row('1', '3', exactFrame(frameKey, 1)),
+        [otherFrame]: row('2', '1', exactFrame(buildFrameKey('2'), 2)),
+      },
+    });
+
+    const drainFrame = deriveActiveCompletionFrame(parent);
+    const drainReachable = readDelegationOutcomeReportedFacts(parent)
+      .filter((fact) => completionTargetsFrame(drainFrame, fact))
+      .map((fact) => fact.completionKey);
+
+    // Facts sort by persisted completion key: `1||0|2` precedes `1||2|1`.
+    expect(drainReachable).toEqual([sentinel, reachable]);
+    expect(
+      readDelegationCollectionPendingForPolicy(parent).outcomes.map((o) => o.completionKey),
+    ).toEqual(drainReachable);
+    expect(readDelegationCollectionPending(parent).outcomes.map((o) => o.completionKey)).toEqual(
+      drainReachable,
+    );
   });
 });

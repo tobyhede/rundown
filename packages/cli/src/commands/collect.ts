@@ -417,10 +417,22 @@ function renderCollectOutcome(
       return false;
     case 'missing_outcomes':
       // Map to the existing user-facing code (collect.test.ts asserts it).
+      //
+      // A superseded substep is the end of the wall #749 describes: bare `pass`
+      // sends the operator here, and "wait for the child" is wrong advice for a
+      // row a RETRY/GOTO re-entry stranded — nothing will ever resolve it. Name
+      // the remedy that does work, and only when core says this is that case.
       output.error(
-        `Cannot collect: not all substeps are resolved. Pending: ${outcome.missingSubsteps.join(', ')}.`,
+        `Cannot collect: not all substeps are resolved. Pending: ${outcome.missingSubsteps.join(', ')}.` +
+          (outcome.supersededSubsteps.length > 0
+            ? ` Outcome(s) for ${outcome.supersededSubsteps.join(', ')} were reported under a frame entry a RETRY/GOTO re-entry has superseded, so they can no longer be collected — re-issue with \`rundown delegate --retry --step <substep>\`.`
+            : ''),
         'SUBSTEPS_NOT_RESOLVED',
-        { parentRunId: outcome.targetRunId, missingSubsteps: outcome.missingSubsteps },
+        {
+          parentRunId: outcome.targetRunId,
+          missingSubsteps: outcome.missingSubsteps,
+          supersededSubsteps: outcome.supersededSubsteps,
+        },
       );
       output.flush();
       return true;
