@@ -1231,9 +1231,10 @@ type ClaimChildResult =
     }
   // The delegation was cancelled between the 3b check and the claim
   // transaction's own read. Its own arm rather than a member of the group
-  // above: it carries the abort timestamp, which the `TOKEN_CANCELLED` envelope
-  // reports and no other refusal has. `childRunId` is kept for the diagnostic
-  // text alone — the envelope has no field for it.
+  // above: it carries the abort timestamp, which the RD-809
+  // `DELEGATION_CANCELLED` envelope reports and no other refusal has.
+  // `childRunId` is kept for the diagnostic text alone — the envelope has no
+  // field for it.
   | {
       readonly ok: false;
       readonly reason: 'delegation-cancelled';

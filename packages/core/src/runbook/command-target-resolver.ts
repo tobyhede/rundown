@@ -69,8 +69,8 @@ export type StaleClaimRefusalCode = 'CLAIMED_RUNBOOK_UNAVAILABLE' | 'DELEGATION_
  * never be claimed again, so the instruction is right — but the parent may
  * still be sitting on the delegation, so the explanation is not (#752). The
  * claim path, which has a code for exactly this fact, reports RD-809
- * `TOKEN_CANCELLED` instead; this seam is a bearer presenting authority to a
- * mutating command, where that code's "cannot be claimed" would be the wrong
+ * `DELEGATION_CANCELLED` instead; this seam is a bearer presenting authority to
+ * a mutating command, where that code's "cannot be claimed" would be the wrong
  * sentence.
  *
  * @param claimKey - Already-redacted claim key for the message.

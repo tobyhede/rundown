@@ -1834,6 +1834,68 @@ describe('SessionService', () => {
       expect(await sessionService.findClaimForDelegation(linkage)).toBeNull();
     });
 
+    // The other two closed reasons at this seam. `cursor-advanced` and
+    // `token-reissued` are driven by the tests above and below; these two were
+    // classified but never claimed against, so nothing pinned that they reach
+    // the caller as `delegation-superseded` rather than as some other refusal.
+    // Splitting `cancelled` out of `resolved` is what made the gap visible —
+    // the arm now names each reason it supersedes instead of catching whatever
+    // falls through.
+    it.each([
+      {
+        caseName: 'the parent run has ended',
+        mutate: async (manager: RunbookStateManager, linkage: ReturnType<typeof linkageFor>) => {
+          await manager.update(linkage.parentRunId, { lifecycle: 'completed' });
+        },
+      },
+      {
+        caseName: 'the delegated substep is already resolved',
+        mutate: async (manager: RunbookStateManager, linkage: ReturnType<typeof linkageFor>) => {
+          const parent = await manager.load(linkage.parentRunId);
+          await manager.update(linkage.parentRunId, {
+            substepStates: (parent?.substepStates ?? []).map((substep) =>
+              substep.id === linkage.parentStepId && substep.frameKey === linkage.parentFrameKey
+                ? { ...substep, status: 'done' as const, result: 'pass' as const }
+                : substep,
+            ),
+          });
+        },
+      },
+    ])('refuses a claim as delegation-superseded when $caseName', async ({ mutate }) => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const linkage = linkageFor(parent.id, 'a');
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+        parentLinkage: linkage,
+      });
+      await seedLiveDelegation(manager, linkage);
+      await mutate(manager, linkage);
+
+      // The delegation itself is untouched: still uncancelled, still carrying
+      // this claim's token. Only the parent-side fact under test closed it, so
+      // the reason reported is that fact's and not a cancellation's.
+      const closedParent = await manager.load(parent.id);
+      const closedSubstep = findSubstepState(
+        closedParent?.substepStates ?? [],
+        linkage.parentStepId,
+        linkage.parentFrameKey,
+      );
+      expect(closedSubstep?.delegation?.cancelledAt).toBeNull();
+      expect(closedSubstep?.delegation?.tokenHash).toBe(linkage.tokenHash);
+
+      const result = unwrapSessionMutation(await sessionService.claimRunbook(child.id, linkage));
+
+      expect(result).toEqual({
+        status: 'delegation-superseded',
+        parentRunId: parent.id,
+        parentStepId: linkage.parentStepId,
+        childRunId: child.id,
+      });
+      expect(await sessionService.findClaimForDelegation(linkage)).toBeNull();
+    });
+
     it('refuses a reissued-token claim against an existing child delegation as superseded', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',

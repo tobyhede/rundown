@@ -133,7 +133,11 @@ describe('Delegation abort integration', () => {
     // Inject the abort inside the claim's own window. `manager.create` builds
     // the child run — after `claimAndLaunch`'s 3b cancellation check has passed
     // on an uncancelled delegation, and before the atomic claim commits — so
-    // the interleaving is real rather than stubbed. The abort needs no
+    // the abort is a real committed write landing at a point the claim cannot
+    // have seen, sequenced deterministically rather than raced. This is not
+    // evidence of transactional isolation (both writers share one in-process
+    // driver); what it pins is that the refusal is decided by the in-transaction
+    // classifier and spelled correctly on the way out. The abort needs no
     // `--force`: the delegation records no child until the commit this claim
     // never reaches.
     /* eslint-disable-next-line @typescript-eslint/unbound-method -- captured to re-apply with the spy's `this` */
