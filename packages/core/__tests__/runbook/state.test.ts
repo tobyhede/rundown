@@ -1710,8 +1710,10 @@ describe('RunbookStateManager', () => {
         );
 
       expectBudgetSpent(error, state.id);
-      // Nothing was written: a spent budget must not leave a losing derivation behind.
-      expect((await manager.load(state.id))?.stepName).not.toBe('never');
+      // Nothing was written: a spent budget must not leave a losing derivation
+      // behind. Pinned as the exact value the concurrent writer left rather than
+      // as `not 'never'`, which a corrupted or empty row would also satisfy.
+      expect((await manager.load(state.id))?.stepName).toBe('churn');
     });
   });
 
