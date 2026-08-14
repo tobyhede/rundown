@@ -304,7 +304,7 @@ either.
 mutation on: both are `completionTargetsFrame` against the run's active
 completion frame, so a status that reports a collectable outcome and a
 `rundown collect` that refuses it cannot disagree. Entries are ordered by
-persisted completion key, and `optional` `iteration` appears for loop-scoped
+persisted completion key, and an optional `iteration` is present on loop-scoped
 outcomes. The Zod `ReportedDelegationOutcomeEntrySchema` in `@rundown-org/core`
 is the single source of truth for the per-entry shape.
 
