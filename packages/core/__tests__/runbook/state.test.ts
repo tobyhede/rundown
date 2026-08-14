@@ -32,7 +32,13 @@ import {
 import { assertClaimGeneration } from '../../src/runbook/storage/mutation-result.js';
 import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 import { makeDelegationCredentialDescriptor } from '../../src/testing/delegation-fixtures.js';
-import type { Step, Runbook, RunId, DelegationLinkage } from '../../src/runbook/types.js';
+import type {
+  Step,
+  Runbook,
+  RunId,
+  RunbookState,
+  DelegationLinkage,
+} from '../../src/runbook/types.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import {
   brandTrustedArtifactArrayForTest,
@@ -49,6 +55,74 @@ describe('RunbookStateManager', () => {
         .prepare('UPDATE runs SET state_json = :json WHERE id = :id')
         .run({ json: JSON.stringify(raw), id: runId });
     });
+  }
+
+  /**
+   * Bump a run's persisted `state_version` out from under an in-flight cycle.
+   *
+   * @param runId - Run to churn.
+   */
+  async function churn(runId: string): Promise<void> {
+    const store = await getRunbookStore(testDir);
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare(
+          "UPDATE runs SET state_json = json_set(state_json, '$.stepName', 'churn') WHERE id = :id",
+        )
+        .run({ id: runId });
+    });
+  }
+
+  /**
+   * Read a run's persisted `state_version`.
+   *
+   * The `runs_bump_state_version` trigger fires on any `state_json` write, so an
+   * unmoved version is direct evidence that nothing was persisted — which
+   * comparing a field's value cannot show, since a real write of an identical
+   * value looks the same from the outside.
+   *
+   * @param runId - Run to read.
+   * @returns The current state version.
+   * @throws {Error} When the run has no row — a missing row must fail loudly
+   *   rather than resolve to a sentinel two comparisons would agree on.
+   */
+  async function stateVersionOf(runId: string): Promise<number> {
+    const store = await getRunbookStore(testDir);
+    return await store.transaction((txn) => {
+      const row = txn.tx
+        .prepare('SELECT state_version FROM runs WHERE id = :id')
+        .get<{ readonly state_version: number }>({ id: runId });
+      if (row === undefined) {
+        throw new Error(`No run row for ${runId}`);
+      }
+      return row.state_version;
+    });
+  }
+
+  /**
+   * Assert a spent optimistic budget surfaced as the typed, retryable refusal.
+   *
+   * CLAUDE.md instructs callers to "handle it or retry it", which is only
+   * implementable against a typed outcome: a bare `Error` forces message
+   * matching, and reaches the CLI wrapper as RD-999 "Unknown error". Shared by
+   * every seam that can spend the budget, so the contract is pinned once rather
+   * than re-spelled per method.
+   *
+   * @param error - The value the losing call rejected with.
+   * @param runId - Run the refusal must name.
+   */
+  function expectBudgetSpent(error: unknown, runId: string): void {
+    expect(isConcurrentStateModificationError(error)).toBe(true);
+    expect((error as ConcurrentStateModificationError).runId).toBe(runId);
+    // `retryable` is the discriminant, not the class name: it is what separates
+    // this from the refusals sharing the same throwing seam.
+    expect((error as ConcurrentStateModificationError).retryable).toBe(true);
+    // The name is not the discriminant, but it is what a stack trace and any
+    // structured log label the failure with, so it is pinned like its sibling
+    // InvalidRunIdError rather than left free to drift.
+    expect((error as ConcurrentStateModificationError).name).toBe(
+      'ConcurrentStateModificationError',
+    );
   }
 
   let testDir: string;
@@ -1460,6 +1534,178 @@ describe('RunbookStateManager', () => {
     });
   });
 
+  // The compare-and-swap primitive the lock retirement rests on: the inline-launch
+  // latch and the completion drain both route through it, and both depend on the
+  // reported value being the one derived from the state that actually committed.
+  describe('mutateStateReturning', () => {
+    /** Seed a run for a mutateStateReturning cycle. */
+    async function seedRun(): Promise<RunbookState> {
+      return await manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
+        runbookPath: 'test.runbook.md',
+      });
+    }
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it('commits the derived state verbatim and reports the value alongside it', async () => {
+      const state = await seedRun();
+      const versionBefore = await stateVersionOf(state.id);
+      const build = jest.fn((current: RunbookState) => ({
+        next: { ...current, step: '2', stepName: `derived from ${current.step}` },
+        value: `seen:${current.step}`,
+      }));
+
+      const result = await manager.mutateStateReturning(state.id, build);
+
+      expect(build).toHaveBeenCalledTimes(1);
+      expect(result.value).toBe('seen:1');
+      expect(result.state?.step).toBe('2');
+      expect(result.state?.stepName).toBe('derived from 1');
+      // Positive control for the version probe the `next: null` case reads as
+      // evidence of no write: a committed cycle must move it.
+      expect(await stateVersionOf(state.id)).toBeGreaterThan(versionBefore);
+
+      const reloaded = await manager.load(state.id);
+      expect(reloaded?.step).toBe('2');
+      expect(reloaded?.stepName).toBe('derived from 1');
+    });
+
+    // The distinguishing property against its patch-shaped sibling:
+    // `updateWithStateReturning` runs the derivation through
+    // `applyRunbookStateUpdate`, which stamps a fresh `updatedAt`. This one commits
+    // whatever the callback returns, untouched — so a callback that leaves
+    // `updatedAt` alone leaves the persisted row's timestamp alone too.
+    it('does not apply patch semantics over the callback-supplied state', async () => {
+      const state = await seedRun();
+      let observedUpdatedAt: string | undefined;
+
+      const result = await manager.mutateStateReturning(state.id, (current) => {
+        observedUpdatedAt = current.updatedAt;
+        return { next: { ...current, stepName: 'verbatim' }, value: null };
+      });
+
+      expect(observedUpdatedAt).toBeDefined();
+      expect(result.state?.updatedAt).toBe(observedUpdatedAt);
+
+      const reloaded = await manager.load(state.id);
+      expect(reloaded?.updatedAt).toBe(observedUpdatedAt);
+      expect(reloaded?.stepName).toBe('verbatim');
+    });
+
+    it('writes nothing but still reports the value when the callback returns next: null', async () => {
+      const state = await seedRun();
+      const versionBefore = await stateVersionOf(state.id);
+
+      const result = await manager.mutateStateReturning(state.id, () => ({
+        next: null,
+        value: 'reported',
+      }));
+
+      expect(result.value).toBe('reported');
+      expect(result.state?.id).toBe(state.id);
+      expect(result.state?.stepName).toBe(state.stepName);
+      // Field equality alone would also hold for a real write of an identical
+      // value; the unmoved version is what proves no write happened at all.
+      expect(await stateVersionOf(state.id)).toBe(versionBefore);
+      expect((await manager.load(state.id))?.stepName).toBe(state.stepName);
+    });
+
+    // Two distinct "no such run" arms reach the same result: an id that cannot name
+    // a run at all is refused before the store is asked, while a well-formed id with
+    // no row is refused by the store's own read.
+    //
+    // The result alone does not separate them — a non-canonical id can never match a
+    // row, so deleting the id guard entirely would still produce `{null, null}` via
+    // the store's missing arm. What the guard is FOR is that the store is never
+    // asked, so that is what this asserts.
+    it('refuses an id that cannot name a run before asking the store', async () => {
+      const state = await seedRun();
+      const build = jest.fn(() => ({ next: null, value: 'unused' }));
+      // Keyed on `manager.cwd`, not `testDir`: the registry hands back one store
+      // per project root, and this assertion is only meaningful if the spy sits on
+      // the very instance `mutateStateReturning` reaches for.
+      const store = await getRunbookStore(manager.cwd);
+      const mutateState = jest.spyOn(store, 'mutateState');
+
+      const result = await manager.mutateStateReturning('rd_missing', build);
+
+      expect(result.state).toBeNull();
+      expect(result.value).toBeNull();
+      expect(build).not.toHaveBeenCalled();
+      expect(mutateState).not.toHaveBeenCalled();
+
+      // Positive control: without it, a spy wired to the wrong instance would
+      // satisfy the assertion above for the wrong reason and never fail.
+      await manager.mutateStateReturning(state.id, () => ({ next: null, value: null }));
+      expect(mutateState).toHaveBeenCalledTimes(1);
+    });
+
+    it('returns null state and value without invoking the callback when the run does not exist', async () => {
+      const build = jest.fn(() => ({ next: null, value: 'unused' }));
+
+      const result = await manager.mutateStateReturning(generateRunId(), build);
+
+      expect(result.state).toBeNull();
+      expect(result.value).toBeNull();
+      expect(build).not.toHaveBeenCalled();
+    });
+
+    // The contract the docstring claims and the whole reason the value flows out
+    // through the result rather than a closure variable: a losing attempt's
+    // derivation is discarded along with its value, so the caller can never act on
+    // a decision made against a version that did not commit.
+    it('reports the value derived from the state that actually committed after a stale retry', async () => {
+      const state = await seedRun();
+      const observed: string[] = [];
+
+      const result = await manager.mutateStateReturning(state.id, async (current) => {
+        observed.push(current.stepName);
+        if (observed.length === 1) {
+          // Move the version out from under this attempt exactly once, so the
+          // first derivation is discarded and the second one commits.
+          await churn(state.id);
+        }
+        return {
+          next: { ...current, stepName: `committed:${current.stepName}` },
+          value: `derived:${current.stepName}`,
+        };
+      });
+
+      expect(observed).toEqual(['Initial step', 'churn']);
+      expect(result.value).toBe('derived:churn');
+      expect(result.state?.stepName).toBe('committed:churn');
+      expect((await manager.load(state.id))?.stepName).toBe('committed:churn');
+    });
+
+    // CLAUDE.md: `concurrent_modification` is a reachable arm on any concurrently
+    // driven path, not a theoretical one. The latch and the drain both sit on such
+    // a path, so the refusal has to arrive as the typed, retryable error they
+    // classify on rather than as a bare Error reaching the CLI as RD-999 — and,
+    // critically for a method that reports a value, as a REJECTION rather than a
+    // resolved `{ state: null, value: null }` a caller would read as "no run".
+    it('throws a typed retryable error when the retry budget is spent', async () => {
+      const state = await seedRun();
+
+      const error = await manager
+        .mutateStateReturning(state.id, async (current) => {
+          // Always move the version behind our back, so no attempt can land and
+          // the whole budget is spent.
+          await churn(state.id);
+          return { next: { ...current, stepName: 'never' }, value: 'never' };
+        })
+        .then(
+          (value) => value,
+          (reason: unknown) => reason,
+        );
+
+      expectBudgetSpent(error, state.id);
+      // Nothing was written: a spent budget must not leave a losing derivation behind.
+      expect((await manager.load(state.id))?.stepName).not.toBe('never');
+    });
+  });
+
   describe('frame entry ordinal persistence', () => {
     // The entry ordinal is a run-global monotonic counter, not a FOR bound. A
     // long-lived run — a bounded self-GOTO loop being the shortest path there —
@@ -1590,25 +1836,6 @@ describe('RunbookStateManager', () => {
   });
 
   describe('optimistic CAS exhaustion', () => {
-    /**
-     * Bump a run's persisted `state_version` out from under an in-flight cycle.
-     *
-     * @param runId - Run to churn.
-     */
-    async function churn(runId: string): Promise<void> {
-      const store = await getRunbookStore(testDir);
-      await store.transaction((txn) => {
-        txn.tx
-          .prepare(
-            "UPDATE runs SET state_json = json_set(state_json, '$.stepName', 'churn') WHERE id = :id",
-          )
-          .run({ id: runId });
-      });
-    }
-
-    // CLAUDE.md instructs callers to "handle it or retry it", which is only
-    // implementable against a typed outcome: a bare `Error` forces message
-    // matching, and reaches the CLI wrapper as RD-999 "Unknown error".
     it('surfaces a losing read-modify-write as a typed, retryable error', async () => {
       const state = await manager.create(
         { source: 'project', path: 'test.runbook.md' },
@@ -1628,17 +1855,7 @@ describe('RunbookStateManager', () => {
           (reason: unknown) => reason,
         );
 
-      expect(isConcurrentStateModificationError(error)).toBe(true);
-      expect((error as ConcurrentStateModificationError).runId).toBe(state.id);
-      // `retryable` is the discriminant, not the class name: it is what separates
-      // this from the refusals sharing the same throwing seam.
-      expect((error as ConcurrentStateModificationError).retryable).toBe(true);
-      // The name is not the discriminant, but it is what a stack trace and any
-      // structured log label the failure with, so it is pinned like its sibling
-      // InvalidRunIdError rather than left free to drift.
-      expect((error as ConcurrentStateModificationError).name).toBe(
-        'ConcurrentStateModificationError',
-      );
+      expectBudgetSpent(error, state.id);
       // Nothing was written: the losing cycle must not have persisted its patch.
       expect((await manager.load(state.id))?.stepName).not.toBe('never');
     });
