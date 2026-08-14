@@ -33,6 +33,18 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       total,
       ...(substep ? { substep } : {}),
     })),
+    // Scope doubles. This suite mocks the whole core module, so it can only pin
+    // that the builder ASKS core for scope, never what core answers — the real
+    // frame/entry rule (including the sentinel entry) is pinned against the
+    // unmocked module in status-builder-scope.test.ts.
+    deriveActiveCompletionFrame: jest.fn(
+      (state: { activeFrameKey?: string; activeEntry?: number }) => ({
+        kind: 'active',
+        frameKey: state.activeFrameKey,
+        entry: state.activeEntry,
+      }),
+    ),
+    resolvedSubstepIdsInFrame: jest.fn(() => new Set<string>()),
     deriveExecutionAt: jest.fn(
       (step: string, substep?: string, iteration?: number) =>
         `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,

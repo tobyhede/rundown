@@ -10,15 +10,16 @@
 import {
   buildStepPosition,
   countNumberedSteps,
+  deriveActiveCompletionFrame,
   isArtifactValue,
   mergeEffectiveVars,
   renderArtifactValue,
+  resolvedSubstepIdsInFrame,
   toPublicArtifactVarValue,
   WORK_DIR,
   type ActionBlockData,
   type ArtifactPathOptions,
   type PublicArtifactVarValue,
-  type ResolvedCompletion,
   type RunbookState,
 } from '@rundown-org/core';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
@@ -206,29 +207,23 @@ function buildParentLinkage(state: RunbookState): StatusOutputData['parentLinkag
 }
 
 /**
- * Count substeps that have no resolved completion for the active frame+entry.
+ * Count substeps with no resolved completion the drain could reach.
+ *
+ * Scope is core's — `resolvedSubstepIdsInFrame` against the frame
+ * `deriveActiveCompletionFrame` derives — never a CLI-local frame/entry test.
+ * The copy this replaced omitted the sentinel entry, so a substep resolved by a
+ * pre-recorded row was reported unresolved here while `rundown collect` would
+ * have applied it (#766).
+ *
  * @param substeps - Array of substeps to check for resolution
- * @param resolvedCompletions - Map of completion keys to resolved completions
- * @param activeFrameKey - Current active frame key for scoping lookups
- * @param activeEntry - Current active entry number for scoping lookups
+ * @param state - Run state supplying the live cursor and the completion rows
  * @returns Number of substeps without a resolved completion
  */
 function countUnresolvedSubsteps(
   substeps: ReadonlyArray<{ id: string }>,
-  resolvedCompletions: Record<string, ResolvedCompletion> | undefined,
-  activeFrameKey: string,
-  activeEntry: number,
+  state: RunbookState,
 ): number {
-  const resolvedSubsteps = new Set(
-    Object.values(resolvedCompletions ?? {})
-      .filter(
-        (completion): completion is typeof completion & { targetSubstep: string } =>
-          completion.targetFrameKey === activeFrameKey &&
-          completion.targetEntry === activeEntry &&
-          completion.targetSubstep !== undefined,
-      )
-      .map((completion) => completion.targetSubstep),
-  );
+  const resolvedSubsteps = resolvedSubstepIdsInFrame(state, deriveActiveCompletionFrame(state));
   return substeps.filter((substep) => !resolvedSubsteps.has(substep.id)).length;
 }
 
@@ -358,12 +353,7 @@ export function buildActiveStatus(
     currentStep.substeps.length &&
     activeFrameKey &&
     activeEntry !== undefined
-      ? countUnresolvedSubsteps(
-          currentStep.substeps,
-          activeState.resolvedCompletions,
-          activeFrameKey,
-          activeEntry,
-        )
+      ? countUnresolvedSubsteps(currentStep.substeps, activeState)
       : undefined;
 
   const parentLinkage = buildParentLinkage(activeState);

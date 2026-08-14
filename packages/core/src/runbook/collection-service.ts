@@ -26,7 +26,12 @@ import {
   type PreparedReEntryProjection,
 } from './re-entry-frontier.js';
 import type { Frame, FrameKey } from './targeting.js';
-import { buildStepPosition, completionTargetsFrame, findSubstepState } from './targeting.js';
+import {
+  buildStepPosition,
+  classifyCompletionReachability,
+  findSubstepState,
+  resolvedSubstepIdsInFrame,
+} from './targeting.js';
 import { deriveActiveCompletionFrame } from './frame-entry.js';
 import { countNumberedSteps } from './step-utils.js';
 import type { ClaimSeenRecordResult, ReleaseRunbookResult } from './session-service.js';
@@ -205,24 +210,6 @@ function findStepOrThrow(steps: readonly ResolvedStep[], stepName: string): Reso
   return step;
 }
 
-// Set of delegate substep ids that have a LIVE resolved-completion row in the
-// target frame. This is the authoritative 'outcome available to collect'
-// signal; `substepState.status` is only a mirror and can go stale across a
-// retry. Scope is `completionTargetsFrame` — the rule the drain this readiness
-// scan feeds selects by, and the one the collection-pending guard blocks on
-// (#749). Counting a row the drain will not apply is how a collect reports
-// everything resolved and then applies nothing.
-function resolvedSubstepIdsInFrame(state: RunbookState, frame: Frame): ReadonlySet<string> {
-  const ids = new Set<string>();
-  for (const completion of Object.values(state.resolvedCompletions ?? {})) {
-    const substep = completion.targetSubstep;
-    // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: equivalent — a step-scoped row can only contribute an `undefined` member to a set queried solely with declared substep ids, so no membership answer changes; the guard is here to narrow the type
-    if (substep === undefined) continue;
-    if (completionTargetsFrame(frame, completion)) ids.add(substep);
-  }
-  return ids;
-}
-
 /**
  * Whether a substep's outcome was reported under an entry this scope has left.
  *
@@ -231,6 +218,10 @@ function resolvedSubstepIdsInFrame(state: RunbookState, frame: Frame): ReadonlyS
  * substep whose only rows sit on this frame at another entry was reported and
  * then stranded by a RETRY/GOTO re-entry, and no amount of waiting resolves it —
  * the drain cannot reach the row, so `rundown delegate --retry` is the remedy.
+ *
+ * `superseded` is exactly `classifyCompletionReachability`'s middle arm, so this
+ * asks the shared classifier rather than restating the frame-and-entry test that
+ * defines it (#766).
  *
  * @param state - Target run state whose completion rows are inspected.
  * @param frame - Collection scope the readiness scan ran against.
@@ -241,8 +232,7 @@ function outcomeSupersededByReEntry(state: RunbookState, frame: Frame, substepId
   return Object.values(state.resolvedCompletions ?? {}).some(
     (completion) =>
       completion.targetSubstep === substepId &&
-      completion.targetFrameKey === frame.frameKey &&
-      !completionTargetsFrame(frame, completion),
+      classifyCompletionReachability(frame, completion) === 'superseded',
   );
 }
 
