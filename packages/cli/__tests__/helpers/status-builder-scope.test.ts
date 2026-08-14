@@ -131,3 +131,104 @@ describe('position.unresolved scope', () => {
     expect(status.position?.unresolved).toBe(2);
   });
 });
+
+describe('reportedOutcomes', () => {
+  it('is omitted when the run has reported no delegation outcomes', () => {
+    expect(buildActiveStatus(state(), '/test').reportedOutcomes).toBeUndefined();
+  });
+
+  it('reports a collectable outcome with no remedy', () => {
+    const status = buildActiveStatus(
+      state({ resolvedCompletions: delegationRow(activeFrame(FRAME, 2), '1') }),
+      '/test',
+    );
+
+    expect(status.reportedOutcomes).toEqual([
+      {
+        completionKey: buildCompletionKey(activeFrame(FRAME, 2), '1'),
+        step: '1',
+        substep: '1',
+        outcome: 'pass',
+        reportedAt: '2026-01-01T00:00:00.000Z',
+        reachability: 'collectable',
+      },
+    ]);
+  });
+
+  it('names delegate --retry as the remedy for a superseded outcome', () => {
+    // The abandoned row #766 is about: reported, then stranded by a RETRY/GOTO
+    // re-entry. Nothing will ever collect it, so `status` must say what does
+    // clear it rather than leaving the operator to wait.
+    const status = buildActiveStatus(
+      state({ resolvedCompletions: delegationRow(exactFrame(FRAME, 1), '2') }),
+      '/test',
+    );
+
+    expect(status.reportedOutcomes).toEqual([
+      {
+        completionKey: buildCompletionKey(exactFrame(FRAME, 1), '2'),
+        step: '1',
+        substep: '2',
+        outcome: 'pass',
+        reportedAt: '2026-01-01T00:00:00.000Z',
+        reachability: 'superseded',
+        remedy: 'rundown delegate --retry --step 2',
+      },
+    ]);
+  });
+
+  it('reports an out-of-scope outcome with its iteration and no remedy', () => {
+    // A closed FOR iteration: the cursor is not on that frame at all, so
+    // `delegate --retry --step` — which targets the CURRENT step — is not the
+    // remedy and must not be advertised as one.
+    const closedIteration = buildFrameKey('1', 2);
+    const frame = exactFrame(closedIteration, 1);
+    const status = buildActiveStatus(
+      state({
+        resolvedCompletions: {
+          [buildCompletionKey(frame, '1')]: buildResolvedCompletion({
+            agentId: 'delegation',
+            result: 'fail',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetIteration: 2,
+            targetFrame: frame,
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      }),
+      '/test',
+    );
+
+    expect(status.reportedOutcomes).toEqual([
+      {
+        completionKey: buildCompletionKey(frame, '1'),
+        step: '1',
+        substep: '1',
+        iteration: 2,
+        outcome: 'fail',
+        reportedAt: '2026-01-01T00:00:00.000Z',
+        reachability: 'out-of-scope',
+      },
+    ]);
+  });
+
+  it('reports all three classes together in persisted completion-key order', () => {
+    const status = buildActiveStatus(
+      state({
+        resolvedCompletions: {
+          ...delegationRow(activeFrame(FRAME, 2), '2'),
+          ...delegationRow(exactFrame(FRAME, 1), '1'),
+          ...delegationRow(activeFrame(buildFrameKey('2'), 2), '1'),
+        },
+      }),
+      '/test',
+    );
+
+    expect(status.reportedOutcomes?.map((entry) => [entry.substep, entry.reachability])).toEqual([
+      ['1', 'superseded'],
+      ['2', 'collectable'],
+      ['1', 'out-of-scope'],
+    ]);
+  });
+});

@@ -17,6 +17,7 @@ import {
   type Substep,
   type CheckResponse,
   type ResolveResponse,
+  deriveExecutionAt,
   getWriter,
   printMetadata,
   printActionBlock,
@@ -69,6 +70,16 @@ interface StatusDetailData {
     childRunId?: string;
     /** Non-secret claim lookup key for claimed delegation correlation. */
     claimKey?: string;
+  }[];
+  /** Reported delegation outcomes and what the live cursor can do with each. */
+  reportedOutcomes?: {
+    step: string;
+    substep: string;
+    iteration?: number;
+    outcome: 'pass' | 'fail';
+    reachability: string;
+    /** Command that clears the outcome; present for superseded rows only. */
+    remedy?: string;
   }[];
 }
 
@@ -245,6 +256,7 @@ export class TextRenderer implements OutputRenderer {
       vars,
       pending,
       delegations,
+      reportedOutcomes,
     } = data as StatusDetailData;
 
     // No active runbook
@@ -316,6 +328,20 @@ export class TextRenderer implements OutputRenderer {
           stateLabel = '(pending claim)';
         }
         this.writer.writeLine(`  ${d.substep}  ${d.runbook}  DELEGATED  ${stateLabel}`);
+      }
+    }
+
+    // Show reported delegation outcomes. `deriveExecutionAt` builds the location
+    // so a loop-scoped row reads `STEP.INDEX.SUBSTEP`, the same notation every
+    // other surface uses for one.
+    if (reportedOutcomes && reportedOutcomes.length > 0) {
+      this.writer.writeLine('\nReported outcomes:');
+      for (const o of reportedOutcomes) {
+        const at = deriveExecutionAt(o.step, o.substep, o.iteration);
+        const result = o.outcome === 'pass' ? 'PASS' : 'FAIL';
+        this.writer.writeLine(
+          `  ${at}  ${result}  ${o.reachability}${o.remedy ? ` — ${o.remedy}` : ''}`,
+        );
       }
     }
   }

@@ -45,6 +45,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
       }),
     ),
     resolvedSubstepIdsInFrame: jest.fn(() => new Set<string>()),
+    readDelegationOutcomeReachability: jest.fn(() => []),
     deriveExecutionAt: jest.fn(
       (step: string, substep?: string, iteration?: number) =>
         `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,

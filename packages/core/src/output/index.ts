@@ -94,12 +94,14 @@ export {
   ArtifactUriResponseSchema,
   ArtifactInspectResponseSchema,
   DelegationStatusEntrySchema,
+  ReportedDelegationOutcomeEntrySchema,
   type ActionResponse,
   type ArtifactLsResponse,
   type ArtifactPathResponse,
   type ArtifactUriResponse,
   type ArtifactInspectResponse,
   type DelegationStatusEntry,
+  type ReportedDelegationOutcomeEntry,
   type StatusResponse as SchemaStatusResponse,
 } from './schema.js';
 

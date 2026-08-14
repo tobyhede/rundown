@@ -489,6 +489,52 @@ export const DelegationStatusEntrySchema = z
   })
   .describe('Delegation status entry');
 
+/**
+ * One delegation outcome a child reported, plus what the live cursor can do
+ * with it.
+ *
+ * The reporting counterpart to {@link DelegationStatusEntrySchema}, which
+ * describes issuance. Two of the three `reachability` classes name a row the run
+ * has abandoned — since #749 the pending guard agrees with the drain, so a row
+ * the drain cannot reach is simply never collected — and this entry is what
+ * makes one visible (#766).
+ *
+ * `remedy` is bound to `superseded` in both directions. `rundown delegate
+ * --retry --step <substep>` targets the CURRENT step, which is precisely the
+ * shape of a superseded row (same frame key, left entry) and precisely not the
+ * shape of an `out-of-scope` one; a `collectable` row needs no remedy because
+ * the ordinary `rundown collect` flow consumes it. Advertising a command that
+ * cannot work is worse than advertising none, so the schema refuses both the
+ * missing remedy and the misplaced one.
+ */
+export const ReportedDelegationOutcomeEntrySchema = z
+  .object({
+    /** Completion key the outcome is persisted under. */
+    completionKey: z.string().describe('Completion key the reported outcome is persisted under'),
+    /** Step owning the delegated substep. */
+    step: z.string().describe('Step that owns the delegated substep'),
+    /** Delegated substep that reported the outcome. */
+    substep: z.string().describe('Delegated substep that reported the outcome'),
+    /** FOR iteration for a loop-scoped outcome. */
+    iteration: z.number().int().describe('FOR iteration for a loop-scoped outcome').optional(),
+    /** Outcome the delegated run reported. */
+    outcome: z.enum(['pass', 'fail']).describe('Outcome the delegated run reported'),
+    /** ISO 8601 timestamp the outcome was reported at. */
+    reportedAt: z.string().describe('ISO 8601 timestamp the outcome was reported at'),
+    /** Whether the completion drain can still reach the row, and if not, why not. */
+    reachability: z
+      .enum(['collectable', 'superseded', 'out-of-scope'])
+      .describe('Whether rundown collect can still consume the outcome, and if not, why not'),
+    /** Command that clears the outcome; present for `superseded` only. */
+    remedy: z.string().describe('Command that clears a superseded outcome').optional(),
+  })
+  .strict()
+  .refine((entry) => (entry.reachability === 'superseded') === (entry.remedy !== undefined), {
+    message: 'remedy is present exactly when reachability is superseded',
+    path: ['remedy'],
+  })
+  .describe('Reported delegation outcome with its reachability from the live cursor');
+
 // ============================================================================
 // Status Command Schema
 // ============================================================================
@@ -547,6 +593,11 @@ export const StatusResponseSchema = z
       .array(DelegationStatusEntrySchema)
       .optional()
       .describe('Active delegations on the current step'),
+    /** Delegation outcomes children have reported, with their reachability */
+    reportedOutcomes: z
+      .array(ReportedDelegationOutcomeEntrySchema)
+      .optional()
+      .describe('Reported delegation outcomes and whether each is still collectable'),
     /**
      * Parent linkage when the runbook was launched as a child.
      *
@@ -1563,6 +1614,9 @@ export type ActionResponse = z.infer<typeof ActionResponseSchema>;
 
 /** Delegation status entry */
 export type DelegationStatusEntry = z.infer<typeof DelegationStatusEntrySchema>;
+
+/** Reported delegation outcome entry, with its reachability from the live cursor */
+export type ReportedDelegationOutcomeEntry = z.infer<typeof ReportedDelegationOutcomeEntrySchema>;
 
 /** Status response */
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;

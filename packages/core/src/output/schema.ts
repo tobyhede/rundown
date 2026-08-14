@@ -44,6 +44,7 @@ export {
   ArtifactUriResponseSchema,
   ArtifactInspectResponseSchema,
   DelegationStatusEntrySchema,
+  ReportedDelegationOutcomeEntrySchema,
   // List schemas
   ActiveRunbookEntrySchema,
   AvailableRunbookEntrySchema,
@@ -106,6 +107,7 @@ export {
   type ArtifactUriResponse,
   type ArtifactInspectResponse,
   type DelegationStatusEntry,
+  type ReportedDelegationOutcomeEntry,
   type ActiveRunbookEntry,
   type AvailableRunbookEntry,
   type ListResponse,
