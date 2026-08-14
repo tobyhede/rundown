@@ -57,12 +57,21 @@ export type StaleClaimRefusalCode = 'CLAIMED_RUNBOOK_UNAVAILABLE' | 'DELEGATION_
  * target resolution here, and `rd pop`'s unstash refusal, which does not route
  * through it — renders one wording and one code per cause.
  *
- * RD-825 is reserved for the reasons where the *parent* moved past the
- * delegation — those are the ones carrying the no-retry instruction. A claim
+ * RD-825 is reserved for the reasons whose no-retry instruction is true — the
+ * parent moved past the delegation, or the delegation was cancelled. A claim
  * retired on the claim side (released, rotated, pruned) and a claim whose parent
  * row is gone are not that, and say what they are instead: over-broadening the
  * superseded code would make "do not retry the token" advice for cases where the
  * token was never the problem.
+ *
+ * `cancelled` keeps RD-825 and gets its own sentence, rather than joining the
+ * parent-moved-on wording or claiming a code of its own. An aborted token can
+ * never be claimed again, so the instruction is right — but the parent may
+ * still be sitting on the delegation, so the explanation is not (#752). The
+ * claim path, which has a code for exactly this fact, reports RD-809
+ * `DELEGATION_CANCELLED` instead; this seam is a bearer presenting authority to
+ * a mutating command, where that code's "cannot be claimed" would be the wrong
+ * sentence.
  *
  * @param claimKey - Already-redacted claim key for the message.
  * @param reason - Why the claim stopped being authority.
@@ -79,6 +88,16 @@ export function describeSupersededClaim(
     case 'token-reissued':
       return {
         message: `Claim id ${claimKey} is superseded: the parent has moved past this delegation (${reason}). Do not retry the token; report the superseded delegation to the orchestrator.`,
+        code: 'DELEGATION_SUPERSEDED',
+      };
+    case 'cancelled':
+      // RD-825's no-retry instruction is exactly right for an aborted
+      // delegation — the token can never be claimed again — so the code stays,
+      // and only the sentence changes. Before #752 this arm did not exist and a
+      // cancelled delegation rendered the `resolved` wording, telling the
+      // holder the parent had moved past a delegation it was still sitting on.
+      return {
+        message: `Claim id ${claimKey} is superseded: the delegation was cancelled. Do not retry the token; report the cancelled delegation to the orchestrator.`,
         code: 'DELEGATION_SUPERSEDED',
       };
     case 'claim-rotated':

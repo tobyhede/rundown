@@ -2858,6 +2858,44 @@ describe('claimAndLaunch', () => {
     expect(result).toMatchObject({ reason: 'delegation-cancelled', stepId: '1' });
   });
 
+  // #752, at the seam. The window is the one the CLI cannot see: 3b read an
+  // UNCANCELLED delegation (the fixture's default), the abort committed while
+  // this claim was in flight, and core's in-transaction classifier is the first
+  // reader to see it. Whichever side of that window the cancellation lands on,
+  // the caller must be told the same thing — before the fix core reported this
+  // as `delegation-superseded`, so the same abort produced two different codes
+  // depending on timing.
+  it('reports a cancellation that lands after the pre-commit check as delegation-cancelled', async () => {
+    const cancelledAt = '2026-08-14T04:05:06.000Z';
+    const orphanState = makeState(ORPHAN_RUN_ID, {
+      delegation: { parentRunId: PARENT_RUN_ID, parentStepId: '1', tokenHash: MOCK_TOKEN_HASH },
+    });
+
+    const { result, initialLinkSpy } = await runSubstepClaimFailureWithSpies({
+      findOrphanedChild: orphanState,
+      initialLinkResult: committed({
+        status: 'delegation-cancelled',
+        parentRunId: PARENT_RUN_ID,
+        parentStepId: '1',
+        cancelledAt,
+        childRunId: ORPHAN_RUN_ID,
+      }),
+    });
+
+    // The claim reached the transaction, which is what makes this the window
+    // case and not the 3b pre-check firing on a fixture that was already
+    // cancelled. `cancelledAt` is core's in-transaction value, not the CLI's —
+    // the CLI's own read had none to report.
+    expect(initialLinkSpy).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({
+      ok: false,
+      reason: 'delegation-cancelled',
+      parentRunId: PARENT_RUN_ID,
+      stepId: '1',
+      cancelledAt,
+    });
+  });
+
   it('reports substepId (not stepId) on an orphan-branch claim failure', async () => {
     const orphanState = makeState(ORPHAN_RUN_ID, {
       delegation: { parentRunId: PARENT_RUN_ID, parentStepId: '1', tokenHash: MOCK_TOKEN_HASH },

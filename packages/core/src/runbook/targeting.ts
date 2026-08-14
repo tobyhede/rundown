@@ -663,12 +663,26 @@ export type DelegationLivenessParent = Pick<
  * `parent-unreadable` is a hard database-integrity signal — a delegated claim
  * naming a parent that cannot be read is invalid state, never a routine
  * closed outcome. Callers must not treat it as live or fall through.
+ *
+ * `cancelled` is a closed outcome like the rest, but its own arm rather than a
+ * fifth reason string: it is the only one carrying a fact beyond its own name
+ * (`cancelledAt`), and the only one that did not come from the parent moving
+ * past the delegation. Folding it into `resolved` — which is what this union
+ * did until #752 — told a claimer the parent had moved on when in fact someone
+ * ran `rd abort`, and lost the timestamp that says when. A caller reading
+ * `cancelledAt` must narrow on `reason` to reach it.
  */
 export type DelegationLiveness =
   | { readonly kind: 'live'; readonly substep: SubstepState }
   | {
       readonly kind: 'closed';
       readonly reason: 'parent-ended' | 'cursor-advanced' | 'resolved' | 'token-reissued';
+    }
+  | {
+      readonly kind: 'closed';
+      readonly reason: 'cancelled';
+      /** ISO timestamp `abortDelegation` stamped on the delegation. */
+      readonly cancelledAt: string;
     }
   | { readonly kind: 'parent-unreadable' };
 
@@ -726,8 +740,15 @@ export function classifyDelegationLiveness(
   if (delegation.tokenHash !== linkage.tokenHash) {
     return { kind: 'closed', reason: 'token-reissued' };
   }
+  // Reported as itself, not folded into `resolved` (#752). Both are terminal
+  // and neither is retryable, so the distinction is diagnostic — but it is the
+  // difference between "the parent moved past this delegation" and "someone
+  // aborted it", and only one of those is true. It sits after the `done` arm
+  // deliberately: `abortDelegation` leaves the substep's own status untouched,
+  // so a `done` row means the parent resolved the substep after the abort, and
+  // the later fact is the one to report.
   if (delegation.cancelledAt !== null) {
-    return { kind: 'closed', reason: 'resolved' };
+    return { kind: 'closed', reason: 'cancelled', cancelledAt: delegation.cancelledAt };
   }
   // Entry identity, decided against the ISSUANCE entry on the substep's
   // credential — never against the caller's `linkage.parentEntry` (#738). The

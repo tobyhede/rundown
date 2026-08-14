@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { RunbookStateManager } from '@rundown-org/core';
 import {
   createTestWorkspace,
   createRunbook,
@@ -116,6 +117,95 @@ describe('Delegation abort integration', () => {
       expect.objectContaining({ kind: 'error', code: 'DELEGATION_CANCELLED' }),
     );
   });
+
+  // The same refusal, from the other side of the claim's own pre-commit read
+  // (#752). `rd claim` re-reads the parent and refuses a delegation it finds
+  // cancelled — that is the test above. This one lands the abort AFTER that
+  // read, so the only reader that can see it is core's in-transaction
+  // classifier, and the code the claimer gets must not change with the timing.
+  // Before the fix the classifier folded cancellation into `resolved`, and this
+  // path reported RD-825 DELEGATION_SUPERSEDED — "the parent has moved past
+  // this delegation" — about a parent still sitting on it.
+  it('claim racing an abort fails with RD-809, not the superseded code', async () => {
+    const { token, parentClaimId } = await setupDelegation();
+    const parentBefore = await getActiveState(workspace);
+
+    // Inject the abort inside the claim's own window. `manager.create` builds
+    // the child run — after `claimAndLaunch`'s 3b cancellation check has passed
+    // on an uncancelled delegation, and before the atomic claim commits — so
+    // the abort is a real committed write landing at a point the claim cannot
+    // have seen, sequenced deterministically rather than raced. This is not
+    // evidence of transactional isolation (both writers share one in-process
+    // driver); what it pins is that the refusal is decided by the in-transaction
+    // classifier and spelled correctly on the way out. The abort needs no
+    // `--force`: the delegation records no child until the commit this claim
+    // never reaches.
+    /* eslint-disable-next-line @typescript-eslint/unbound-method -- captured to re-apply with the spy's `this` */
+    const originalCreate = RunbookStateManager.prototype.create;
+    let aborted: Awaited<ReturnType<typeof runCliInProcess>> | undefined;
+    const createSpy = jest
+      .spyOn(RunbookStateManager.prototype, 'create')
+      .mockImplementation(async function (
+        this: RunbookStateManager,
+        ...args: Parameters<RunbookStateManager['create']>
+      ) {
+        const state = await originalCreate.apply(this, args);
+        aborted ??= await runCliInProcess(['abort', token, '--claim-id', parentClaimId], workspace);
+        return state;
+      });
+
+    let result: Awaited<ReturnType<typeof runCliInProcess>>;
+    try {
+      result = await runCliInProcess(`claim ${token}`, workspace);
+    } finally {
+      createSpy.mockRestore();
+    }
+
+    // Preconditions. The delegation was uncancelled when the claim started, so
+    // the 3b pre-check passed on it, and the abort committed from inside the
+    // window (`create` runs only during the claim). Without these the test
+    // would still pass by taking the pre-check path it exists to sit past.
+    const substepBefore = (parentBefore?.substepStates ?? []).find((ss) => ss.id === '1');
+    expect(substepBefore?.delegation?.cancelledAt).toBeNull();
+    expect(aborted?.exitCode).toBe(0);
+
+    expect(result.exitCode).toBe(1);
+    // Parsed from stdout alone, with no `|| result.stderr` fallback: the
+    // refusal is a JSON envelope on stdout like every other agent-facing
+    // outcome, and `parseCliJsonObject` is a bare `JSON.parse`, so this also
+    // pins that exactly one document is emitted — a second event would make it
+    // throw.
+    const envelope = parseCliJsonObject(result.stdout);
+    // The timestamp is the committed one, read by the transaction that refused
+    // — the CLI's own pre-check had none to report.
+    const parentAfter = await getActiveState(workspace);
+    const substepAfter = (parentAfter?.substepStates ?? []).find((ss) => ss.id === '1');
+    const cancelledAt = substepAfter?.delegation?.cancelledAt;
+    expect(cancelledAt).toEqual(expect.any(String));
+    expect(envelope).toEqual(
+      expect.objectContaining({
+        kind: 'error',
+        code: 'DELEGATION_CANCELLED',
+        details: expect.objectContaining({ cancelledAt }),
+      }),
+    );
+
+    // The abort closed the delegation and nothing else, and the refused claim
+    // committed nothing at all — so the parent is the same run, on the same
+    // step, still running. Without this the test would pass just as happily if
+    // the refusal had been reached by the parent moving, which is the very
+    // reading the new reason exists to rule out. The literals are asserted
+    // alongside the before/after equalities so neither comparison can pass
+    // vacuously on a pair of `undefined`s.
+    expect(parentBefore?.step).toBe('1');
+    expect(parentBefore?.lifecycle).toBe('running');
+    expect(parentAfter?.id).toBe(parentBefore?.id);
+    expect(parentAfter?.step).toBe('1');
+    expect(parentAfter?.lifecycle).toBe('running');
+    // And the substep still carries the delegation this claim named, so the
+    // cancellation asserted above is that delegation's and not a sibling's.
+    expect(substepAfter?.status).not.toBe('done');
+  }, 30_000);
 
   it('ordinary abort (no --force) closes the delegation without a fail outcome or pending collection', async () => {
     const { token, parentClaimId } = await setupDelegation();

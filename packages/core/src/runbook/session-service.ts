@@ -1311,12 +1311,45 @@ export class SessionService {
     }
 
     if (liveness.kind === 'closed') {
-      return {
-        status: 'delegation-superseded',
-        parentRunId: linkage.parentRunId,
-        parentStepId: linkage.parentStepId,
-        childRunId,
-      };
+      // Exhaustive, not an `if` with a superseded fall-through. Cancellation is
+      // reported as itself — this is the arm the race in #752 lands on: the
+      // CLI's own pre-commit read saw an uncancelled delegation, the abort
+      // committed while this claim was in flight, and this transaction is the
+      // first reader to see it. The other four ARE the parent having moved past
+      // the delegation, which is what `delegation-superseded` says. Naming them
+      // makes a fifth closed reason a compile error here rather than something
+      // this seam silently reports as a supersession that did not happen —
+      // which is the defect #752 fixed, one layer down.
+      switch (liveness.reason) {
+        case 'cancelled':
+          return {
+            status: 'delegation-cancelled',
+            parentRunId: linkage.parentRunId,
+            parentStepId: linkage.parentStepId,
+            cancelledAt: liveness.cancelledAt,
+            childRunId,
+          };
+        case 'parent-ended':
+        case 'cursor-advanced':
+        case 'resolved':
+        case 'token-reissued':
+          return {
+            status: 'delegation-superseded',
+            parentRunId: linkage.parentRunId,
+            parentStepId: linkage.parentStepId,
+            childRunId,
+          };
+        // Unreachable by construction — its whole job is to be a compile error
+        // the day a sixth closed reason appears. Mutation testing reports this
+        // arm as NoCoverage for that reason, and no test can kill it; the
+        // codebase's other exhaustiveness guards escape that report only by
+        // sitting outside a changed line range. Deleting it to green the gate
+        // would restore the silent fall-through this switch replaced.
+        default: {
+          const _exhaustive: never = liveness;
+          return _exhaustive;
+        }
+      }
     }
 
     if (existingLiveClaim !== undefined) {
