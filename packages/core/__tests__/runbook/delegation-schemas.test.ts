@@ -998,6 +998,86 @@ describe('StatusResponseSchema with delegations', () => {
     expect(() => StatusResponseSchema.parse(status)).not.toThrow();
   });
 
+  describe('reportedOutcomes', () => {
+    const entry = (overrides: Record<string, unknown> = {}) => ({
+      completionKey: '1||2|1',
+      step: '1',
+      substep: '1',
+      outcome: 'pass',
+      reportedAt: '2026-02-27T10:00:00.000Z',
+      reachability: 'collectable',
+      ...overrides,
+    });
+    const statusWith = (reportedOutcomes: unknown) => ({
+      kind: 'status',
+      active: true,
+      stashed: false,
+      reportedOutcomes,
+    });
+
+    it.each([
+      ['collectable', {}],
+      ['superseded', { remedy: 'rundown delegate --retry --step 1' }],
+      ['out-of-scope', {}],
+    ])('accepts a %s reported outcome', (reachability, extra) => {
+      expect(() =>
+        StatusResponseSchema.parse(statusWith([entry({ reachability, ...extra })])),
+      ).not.toThrow();
+    });
+
+    it('accepts an iteration on a loop-scoped outcome', () => {
+      expect(() => StatusResponseSchema.parse(statusWith([entry({ iteration: 2 })]))).not.toThrow();
+    });
+
+    it('accepts an empty list', () => {
+      expect(() => StatusResponseSchema.parse(statusWith([]))).not.toThrow();
+    });
+
+    it('validates without reportedOutcomes (backward compat)', () => {
+      expect(() =>
+        StatusResponseSchema.parse({ kind: 'status', active: true, stashed: false }),
+      ).not.toThrow();
+    });
+
+    it('rejects an unknown reachability class', () => {
+      expect(() =>
+        StatusResponseSchema.parse(statusWith([entry({ reachability: 'abandoned' })])),
+      ).toThrow();
+    });
+
+    it('rejects an outcome that is neither pass nor fail', () => {
+      expect(() =>
+        StatusResponseSchema.parse(statusWith([entry({ outcome: 'skipped' })])),
+      ).toThrow();
+    });
+
+    it.each(['completionKey', 'step', 'substep', 'outcome', 'reportedAt', 'reachability'])(
+      'rejects a reported outcome missing %s',
+      (field) => {
+        const incomplete = entry();
+        delete (incomplete as Record<string, unknown>)[field];
+        expect(() => StatusResponseSchema.parse(statusWith([incomplete]))).toThrow();
+      },
+    );
+
+    it('rejects a remedy on a class that has none', () => {
+      // A remedy that cannot work is worse than no remedy: `delegate --retry
+      // --step` targets the current step, so it is meaningless for a row on a
+      // frame the cursor has left, and the schema refuses to carry one there.
+      expect(() =>
+        StatusResponseSchema.parse(
+          statusWith([entry({ reachability: 'collectable', remedy: 'rundown collect' })]),
+        ),
+      ).toThrow();
+    });
+
+    it('rejects a superseded outcome with no remedy', () => {
+      expect(() =>
+        StatusResponseSchema.parse(statusWith([entry({ reachability: 'superseded' })])),
+      ).toThrow();
+    });
+  });
+
   it.each(['parentStep', 'parentFrameKey', 'parentEntry'])(
     'rejects delegation parentLinkage missing %s',
     (field) => {

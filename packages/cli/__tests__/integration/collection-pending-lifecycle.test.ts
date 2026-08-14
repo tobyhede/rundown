@@ -176,6 +176,49 @@ describe('collection-pending lifecycle', () => {
     expect(advanced.exitCode).toBe(0);
   }, 30_000);
 
+  it('rundown status reports the outcome a GOTO re-entry abandoned (#766)', async () => {
+    await reportChildOutcomeLeavingParentPending();
+
+    // Before the re-entry the outcome is collectable, and status says so.
+    const pending = await runCliInProcess(['status'], workspace);
+    expect(pending.exitCode).toBe(0);
+    expect(JSON.parse(pending.stdout)).toMatchObject({
+      reportedOutcomes: [
+        expect.objectContaining({ substep: '1', outcome: 'pass', reachability: 'collectable' }),
+      ],
+    });
+
+    const reenter = await runCliInProcess(
+      await withRunTarget(['goto', '1.1'], workspace),
+      workspace,
+    );
+    expect(reenter.exitCode).toBe(0);
+
+    // #749 made the guard stop blocking on this row, which is correct and which
+    // left it silently abandoned. This is the report that #766 adds: the run
+    // still holds the outcome, nothing will collect it, and status names the one
+    // command that clears it.
+    const abandoned = await runCliInProcess(['status'], workspace);
+    expect(abandoned.exitCode).toBe(0);
+    expect(JSON.parse(abandoned.stdout)).toMatchObject({
+      reportedOutcomes: [
+        expect.objectContaining({
+          step: '1',
+          substep: '1',
+          outcome: 'pass',
+          reachability: 'superseded',
+          remedy: 'rundown delegate --retry --step 1',
+        }),
+      ],
+    });
+
+    const abandonedText = await runCliInProcess(['status', '--text'], workspace);
+    expect(abandonedText.exitCode).toBe(0);
+    expect(abandonedText.stdout).toContain('Reported outcomes:');
+    expect(abandonedText.stdout).toContain('superseded');
+    expect(abandonedText.stdout).toContain('rundown delegate --retry --step 1');
+  }, 30_000);
+
   it('a subprocess front end withholds bare complete/stop but not their claim-evidenced forms (item 2 e2e)', () => {
     expect(bareRoleSpecificMutation(['complete'])).toBe('complete');
     expect(bareRoleSpecificMutation(['stop'])).toBe('stop');

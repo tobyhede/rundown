@@ -506,6 +506,16 @@ At:       3.2.1
 Execute batch...
 ```
 
+JSON status additionally carries `reportedOutcomes` when a delegated child has
+reported an outcome the run has not yet consumed. Each entry classifies the row
+against the live cursor as `collectable` (`rundown collect` will consume it),
+`superseded` (reported at a frame entry a RETRY/GOTO re-entry has left — the
+entry carries `remedy`, which names
+`rundown delegate --retry --step <substep>`), or `out-of-scope` (a frame the
+cursor is no longer on, such as a closed FOR iteration). The last two can never
+be collected; see [cli-output.md](../spec/cli-output.md#status) for the full
+shape.
+
 #### `rundown ls` - List Runbooks
 
 List active or available runbooks.

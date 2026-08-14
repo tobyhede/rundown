@@ -892,6 +892,84 @@ describe('TextRenderer', () => {
     });
   });
 
+  describe('reported delegation outcomes in status detail', () => {
+    const statusWith = (reportedOutcomes: unknown): DetailOutput =>
+      ({
+        type: 'detail',
+        data: {
+          active: true,
+          stashed: false,
+          file: 'parent.md',
+          state: 'running',
+          position: { current: '1', total: 2 },
+          step: { name: '1', description: 'Review' },
+          reportedOutcomes,
+        },
+        format: 'status',
+      }) as unknown as DetailOutput;
+
+    it('renders each class, and the remedy only for a superseded outcome', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      renderer.render(
+        statusWith([
+          {
+            completionKey: '1||2|1',
+            step: '1',
+            substep: '1',
+            outcome: 'pass',
+            reportedAt: '2026-01-01T00:00:00.000Z',
+            reachability: 'collectable',
+          },
+          {
+            completionKey: '1||1|2',
+            step: '1',
+            substep: '2',
+            outcome: 'fail',
+            reportedAt: '2026-01-01T00:00:01.000Z',
+            reachability: 'superseded',
+            remedy: 'rundown delegate --retry --step 2',
+          },
+          {
+            completionKey: '1|2|1|3',
+            step: '1',
+            substep: '3',
+            iteration: 2,
+            outcome: 'pass',
+            reportedAt: '2026-01-01T00:00:02.000Z',
+            reachability: 'out-of-scope',
+          },
+        ]),
+      );
+      const output = writer.lines.join('\n');
+
+      expect(output).toContain('Reported outcomes:');
+      expect(output).toContain('1.1  PASS  collectable');
+      expect(output).toContain('1.2  FAIL  superseded');
+      expect(output).toContain('rundown delegate --retry --step 2');
+      expect(output).toContain('1.2.3  PASS  out-of-scope');
+    });
+
+    it('does not render the section when absent', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      renderer.render(statusWith(undefined));
+
+      expect(writer.lines.join('\n')).not.toContain('Reported outcomes:');
+    });
+
+    it('does not render the section when empty', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+
+      renderer.render(statusWith([]));
+
+      expect(writer.lines.join('\n')).not.toContain('Reported outcomes:');
+    });
+  });
+
   describe('flush', () => {
     it('is a no-op', () => {
       const writer = createMockWriter();

@@ -236,9 +236,10 @@ Step description here.
 
 Active status responses always include `lastAction`. They include `vars` when
 scalar variables are present (it is omitted when there are none), and
-additionally include `delegations` and `parentLinkage` when present. Accumulated
-artifact records live in the unified `state.variables` map alongside other
-variables and are surfaced through `vars` rather than a separate field.
+additionally include `delegations`, `reportedOutcomes`, and `parentLinkage` when
+present. Accumulated artifact records live in the unified `state.variables` map
+alongside other variables and are surfaced through `vars` rather than a separate
+field.
 
 `state` names the SQLite authority and is the same constant for every run, so
 `runId` is what identifies which run the response describes. It is not
@@ -249,6 +250,63 @@ withholds variable _contents_ — `vars` and `artifacts` — not identity, and a
 id cannot be exchanged for them because no read command accepts one as a
 selector. `runId` appears on successful responses only; refusal envelopes never
 echo the target run id (see [Actor context required](#actor-context-required)).
+
+#### Reported delegation outcomes
+
+`reportedOutcomes` is the reporting counterpart to `delegations` (which covers
+issuance): every delegation outcome a child has reported into this run that the
+run has not consumed, each classified against the live cursor. It is present
+only when at least one such outcome exists.
+
+```json
+{
+  "kind": "status",
+  "active": true,
+  "stashed": false,
+  "position": { "current": "1", "total": 3, "frameKey": "1|", "entry": 2 },
+  "reportedOutcomes": [
+    {
+      "completionKey": "1||2|1",
+      "step": "1",
+      "substep": "1",
+      "outcome": "pass",
+      "reportedAt": "2026-01-01T00:00:00.000Z",
+      "reachability": "collectable"
+    },
+    {
+      "completionKey": "1||1|2",
+      "step": "1",
+      "substep": "2",
+      "outcome": "fail",
+      "reportedAt": "2026-01-01T00:00:01.000Z",
+      "reachability": "superseded",
+      "remedy": "rundown delegate --retry --step 2"
+    }
+  ]
+}
+```
+
+`reachability` is the whole point of the field:
+
+| Value          | Meaning                                                                                     | What clears it                              |
+| -------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| `collectable`  | The completion drain can still select the row.                                              | `rundown collect`                           |
+| `superseded`   | Same frame, at an entry a RETRY/GOTO re-entry has left. Never reachable again.              | `rundown delegate --retry --step <substep>` |
+| `out-of-scope` | A different frame entirely (a closed FOR iteration, another step). The cursor is not there. | Nothing at the current cursor               |
+
+`remedy` is present exactly when `reachability` is `superseded`. A `collectable`
+row is cleared by the ordinary collect flow, and
+`rundown delegate --retry --step` targets the CURRENT step, so it is not a
+remedy for an `out-of-scope` row — the schema refuses to carry a `remedy` on
+either.
+
+`collectable` is exactly the set the collection-pending guard blocks a bare
+mutation on: both are `completionTargetsFrame` against the run's active
+completion frame, so a status that reports a collectable outcome and a
+`rundown collect` that refuses it cannot disagree. Entries are ordered by
+persisted completion key, and an optional `iteration` is present on loop-scoped
+outcomes. The Zod `ReportedDelegationOutcomeEntrySchema` in `@rundown-org/core`
+is the single source of truth for the per-entry shape.
 
 Claimed `delegations` entries MAY carry an optional non-secret `claimKey`
 (pattern `rdclk_...`, present only when the entry's `state` is `claimed`) for

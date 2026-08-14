@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import {
   readDelegationCollectionPending,
   readDelegationCollectionPendingForPolicy,
+  readDelegationOutcomeReachability,
   readDelegationOutcomeReportedFacts,
   type RunbookState,
 } from '../../src/runbook/index.js';
@@ -536,5 +537,113 @@ describe('readDelegationCollectionPending', () => {
     expect(readDelegationCollectionPending(parent).outcomes.map((o) => o.completionKey)).toEqual(
       drainReachable,
     );
+  });
+});
+
+describe('readDelegationOutcomeReachability', () => {
+  const reachabilityFrameKey = buildFrameKey('1');
+  const reachabilityRow = (targetStep: string, targetSubstep: string, targetFrame: Frame) =>
+    buildResolvedCompletion({
+      agentId: 'delegation',
+      result: 'pass',
+      targetStep,
+      targetSubstep,
+      targetFrame,
+      completedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+  it('classifies every reported outcome against the frame the drain stands on', () => {
+    // One row per class, so the three arms are pinned in a single state rather
+    // than by three fixtures that could each drift alone.
+    const liveEntry = buildCompletionKey(activeFrame(reachabilityFrameKey, 2), '1');
+    const sentinel = buildCompletionKey(inactiveFrame(reachabilityFrameKey), '2');
+    const strandedEntry = buildCompletionKey(exactFrame(reachabilityFrameKey, 1), '3');
+    const closedFrame = buildCompletionKey(exactFrame(buildFrameKey('2'), 2), '1');
+    const parent = state({
+      activeFrameKey: reachabilityFrameKey,
+      activeEntry: 2,
+      frameEntryCounts: { [reachabilityFrameKey]: 2, [buildFrameKey('2')]: 2 },
+      resolvedCompletions: {
+        [liveEntry]: reachabilityRow('1', '1', activeFrame(reachabilityFrameKey, 2)),
+        [sentinel]: reachabilityRow('1', '2', inactiveFrame(reachabilityFrameKey)),
+        [strandedEntry]: reachabilityRow('1', '3', exactFrame(reachabilityFrameKey, 1)),
+        [closedFrame]: reachabilityRow('2', '1', exactFrame(buildFrameKey('2'), 2)),
+      },
+    });
+
+    expect(
+      readDelegationOutcomeReachability(parent).map((fact) => [
+        fact.completionKey,
+        fact.reachability,
+      ]),
+    ).toEqual([
+      [sentinel, 'collectable'],
+      [strandedEntry, 'superseded'],
+      [liveEntry, 'collectable'],
+      [closedFrame, 'out-of-scope'],
+    ]);
+  });
+
+  it('carries every reported fact field through beside the classification', () => {
+    const key = buildCompletionKey(activeFrame(reachabilityFrameKey, 1), '1');
+    const parent = state({
+      resolvedCompletions: {
+        [key]: buildResolvedCompletion({
+          agentId: 'delegation',
+          result: 'fail',
+          targetStep: '1',
+          targetSubstep: '1',
+          targetFrame: activeFrame(reachabilityFrameKey, 1),
+          finalVars: { ChildValue: 'ready' },
+          completedAt: '2026-01-01T00:00:00.000Z',
+        }),
+      },
+    });
+
+    expect(readDelegationOutcomeReachability(parent)).toEqual([
+      {
+        kind: 'delegation-outcome-reported',
+        completionKey: key,
+        parentRunId: runbookId,
+        targetStep: '1',
+        targetSubstep: '1',
+        targetFrameKey: reachabilityFrameKey,
+        targetEntry: 1,
+        outcome: 'fail',
+        reportedAt: '2026-01-01T00:00:00.000Z',
+        finalVars: { ChildValue: 'ready' },
+        reachability: 'collectable',
+      },
+    ]);
+  });
+
+  it('agrees with the collection-pending guard on which rows are collectable', () => {
+    // The invariant that keeps `status` honest: `collectable` is exactly the set
+    // the pending guard blocks on, both being `completionTargetsFrame` against
+    // `deriveActiveCompletionFrame`. If they can disagree, `status` advertises a
+    // `rundown collect` that refuses.
+    const liveEntry = buildCompletionKey(activeFrame(reachabilityFrameKey, 2), '1');
+    const strandedEntry = buildCompletionKey(exactFrame(reachabilityFrameKey, 1), '3');
+    const parent = state({
+      activeFrameKey: reachabilityFrameKey,
+      activeEntry: 2,
+      frameEntryCounts: { [reachabilityFrameKey]: 2 },
+      resolvedCompletions: {
+        [liveEntry]: reachabilityRow('1', '1', activeFrame(reachabilityFrameKey, 2)),
+        [strandedEntry]: reachabilityRow('1', '3', exactFrame(reachabilityFrameKey, 1)),
+      },
+    });
+
+    expect(
+      readDelegationOutcomeReachability(parent)
+        .filter((fact) => fact.reachability === 'collectable')
+        .map((fact) => fact.completionKey),
+    ).toEqual(
+      readDelegationCollectionPendingForPolicy(parent).outcomes.map((fact) => fact.completionKey),
+    );
+  });
+
+  it('returns no facts when the run has no delegation outcomes', () => {
+    expect(readDelegationOutcomeReachability(state())).toEqual([]);
   });
 });

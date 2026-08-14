@@ -277,6 +277,88 @@ export function completionTargetsFrame(frame: Frame, target: CompletionFrameTarg
 }
 
 /**
+ * How a persisted completion row stands relative to a frame target.
+ *
+ * Three-way rather than the boolean {@link completionTargetsFrame} returns,
+ * because the two `false` arms carry different operator meaning and different
+ * remedies:
+ *
+ * - `collectable` — the drain can select this row from `frame`.
+ * - `superseded` — the row names `frame`'s own frame key at an entry the cursor
+ *   has left (a RETRY/GOTO re-entry). Entry ordinals are run-global and
+ *   monotonic, so no later cursor reaches it either; re-issuing the delegation
+ *   (`rundown delegate --retry`) is what clears it.
+ * - `out-of-scope` — the row names a different frame key entirely (a closed FOR
+ *   iteration, another step). The cursor is not on that frame at all.
+ */
+export type CompletionFrameReachability = 'collectable' | 'superseded' | 'out-of-scope';
+
+/**
+ * Classify a persisted completion row's reachability from a frame target.
+ *
+ * The single owner of the `superseded` / `out-of-scope` split, layered on top of
+ * {@link completionTargetsFrame} rather than restating its entry rule — the
+ * frame-key comparison here decides only WHICH kind of unreachable a row is,
+ * never whether it is reachable. Restating the entry test alongside it is the
+ * defect #749 removed.
+ *
+ * @param frame - Frame target being resolved against
+ * @param target - Frame coordinates persisted on the completion row
+ * @returns Which of the three reachability classes the row falls into
+ */
+export function classifyCompletionReachability(
+  frame: Frame,
+  target: CompletionFrameTarget,
+): CompletionFrameReachability {
+  if (completionTargetsFrame(frame, target)) return 'collectable';
+  return target.targetFrameKey === frame.frameKey ? 'superseded' : 'out-of-scope';
+}
+
+/**
+ * The exact persisted field {@link resolvedSubstepIdsInFrame} reads.
+ *
+ * Structural, and narrower than `RunbookState`, so a caller holding only a
+ * completion map (or a fixture) satisfies it without inventing the ~30 fields a
+ * run state requires.
+ */
+export interface ResolvedCompletionReadModel {
+  /** Persisted completion rows, keyed by completion key. */
+  readonly resolvedCompletions?: Readonly<Record<string, ResolvedCompletion>>;
+}
+
+/**
+ * Substep ids with a live resolved-completion row in a frame.
+ *
+ * The single 'this substep's outcome is available here' scan, shared by the
+ * collect readiness check and `rundown status`'s unresolved count. Scope is
+ * {@link completionTargetsFrame} — the rule the drain selects by — so a reader
+ * cannot count a row the drain will not apply. `status` had its own copy that
+ * omitted the sentinel entry and therefore reported a substep the drain would
+ * resolve as still unresolved (#766).
+ *
+ * A `substepState.status` of `done` is deliberately NOT consulted: it is only a
+ * mirror of a prior drain and goes stale across a manual retry. Callers that
+ * need the already-collected case (collect's readiness scan) add it themselves.
+ *
+ * @param state - Run state (or any reader) carrying the completion rows.
+ * @param frame - Frame target the rows are resolved against.
+ * @returns Set of substep ids with a row in scope for `frame`.
+ */
+export function resolvedSubstepIdsInFrame(
+  state: ResolvedCompletionReadModel,
+  frame: Frame,
+): ReadonlySet<string> {
+  const ids = new Set<string>();
+  for (const completion of Object.values(state.resolvedCompletions ?? {})) {
+    const substep = completion.targetSubstep;
+    // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: equivalent — a step-scoped row can only contribute an `undefined` member to a set queried solely with declared substep ids, so no membership answer changes; the guard is here to narrow the type
+    if (substep === undefined) continue;
+    if (completionTargetsFrame(frame, completion)) ids.add(substep);
+  }
+  return ids;
+}
+
+/**
  * Get the active FOR context for the current step, if present.
  *
  * Implicit synthetic contexts are not exposed as loop scope.

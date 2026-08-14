@@ -422,7 +422,10 @@ export type {
   DelegationRuntimeCapabilities,
   DelegationTokenDeriver,
 } from './delegation-credential.js';
-export { inferFrameEntryFromState } from './frame-entry.js';
+// `deriveActiveCompletionFrame` is public because it is half of the shared scope
+// rule: a reader outside core (`rundown status`) that must agree with the drain
+// pairs it with `completionTargetsFrame` rather than deriving a frame of its own.
+export { deriveActiveCompletionFrame, inferFrameEntryFromState } from './frame-entry.js';
 export type { RunbookEvent } from './compiler.js';
 export {
   createDelegation,
@@ -457,9 +460,11 @@ export {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPending,
   readDelegationCollectionPendingForPolicy,
+  readDelegationOutcomeReachability,
   readDelegationOutcomeReportedFacts,
   type DelegationCollectionPendingPolicyReadModel,
   type DelegationCollectionPendingReadModel,
+  type DelegationOutcomeReachabilityFact,
   type DelegationOutcomeReportedFact,
 } from './delegation-lifecycle-read-model.js';
 // Credential *derivation* is not public. `deriveDelegationToken` and the nonce

@@ -10,15 +10,18 @@
 import {
   buildStepPosition,
   countNumberedSteps,
+  deriveActiveCompletionFrame,
   isArtifactValue,
   mergeEffectiveVars,
+  readDelegationOutcomeReachability,
   renderArtifactValue,
+  resolvedSubstepIdsInFrame,
   toPublicArtifactVarValue,
   WORK_DIR,
   type ActionBlockData,
   type ArtifactPathOptions,
+  type CompletionFrameReachability,
   type PublicArtifactVarValue,
-  type ResolvedCompletion,
   type RunbookState,
 } from '@rundown-org/core';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
@@ -93,6 +96,34 @@ export interface StatusOutputData {
     claimKey?: string;
     /** SHA-256 hash of the delegation token for cross-system correlation. */
     tokenHash: string;
+  }>;
+  /**
+   * Delegation outcomes a child has reported, and what the cursor can do with
+   * each.
+   *
+   * The reporting side of `delegations` (which is the issuance side). A row the
+   * live cursor has moved past can never be collected — #749 made the pending
+   * guard agree with the drain about that, which turned a wedged run into one
+   * that silently abandoned the outcome — so this is where an abandoned row
+   * becomes visible (#766). Classification is core's; this projects it.
+   */
+  reportedOutcomes?: Array<{
+    /** Completion key the outcome is persisted under; the identity refusals name. */
+    completionKey: string;
+    /** Step that owns the delegated substep. */
+    step: string;
+    /** Delegated substep that reported the outcome. */
+    substep: string;
+    /** FOR iteration for a loop-scoped outcome. */
+    iteration?: number;
+    /** Outcome the delegated run reported. */
+    outcome: 'pass' | 'fail';
+    /** ISO 8601 timestamp the outcome was reported at. */
+    reportedAt: string;
+    /** Whether `rundown collect` can still consume the outcome, and if not, why not. */
+    reachability: CompletionFrameReachability;
+    /** Command that clears the outcome. Present for `superseded` only. */
+    remedy?: string;
   }>;
   /**
    * Parent linkage projection when this runbook was launched as a child.
@@ -206,30 +237,54 @@ function buildParentLinkage(state: RunbookState): StatusOutputData['parentLinkag
 }
 
 /**
- * Count substeps that have no resolved completion for the active frame+entry.
+ * Count substeps with no resolved completion the drain could reach.
+ *
+ * Scope is core's — `resolvedSubstepIdsInFrame` against the frame
+ * `deriveActiveCompletionFrame` derives — never a CLI-local frame/entry test.
+ * The copy this replaced omitted the sentinel entry, so a substep resolved by a
+ * pre-recorded row was reported unresolved here while `rundown collect` would
+ * have applied it (#766).
+ *
  * @param substeps - Array of substeps to check for resolution
- * @param resolvedCompletions - Map of completion keys to resolved completions
- * @param activeFrameKey - Current active frame key for scoping lookups
- * @param activeEntry - Current active entry number for scoping lookups
+ * @param state - Run state supplying the live cursor and the completion rows
  * @returns Number of substeps without a resolved completion
  */
 function countUnresolvedSubsteps(
   substeps: ReadonlyArray<{ id: string }>,
-  resolvedCompletions: Record<string, ResolvedCompletion> | undefined,
-  activeFrameKey: string,
-  activeEntry: number,
+  state: RunbookState,
 ): number {
-  const resolvedSubsteps = new Set(
-    Object.values(resolvedCompletions ?? {})
-      .filter(
-        (completion): completion is typeof completion & { targetSubstep: string } =>
-          completion.targetFrameKey === activeFrameKey &&
-          completion.targetEntry === activeEntry &&
-          completion.targetSubstep !== undefined,
-      )
-      .map((completion) => completion.targetSubstep),
-  );
+  const resolvedSubsteps = resolvedSubstepIdsInFrame(state, deriveActiveCompletionFrame(state));
   return substeps.filter((substep) => !resolvedSubsteps.has(substep.id)).length;
+}
+
+/**
+ * Project core's reported-outcome classification into status output.
+ *
+ * Rendering only: the classification, its scope rule, and the ordering are all
+ * core's (`readDelegationOutcomeReachability`). The one thing decided here is
+ * the operator-facing remedy string, and it is attached to `superseded` alone —
+ * `collectable` is cleared by the normal `rundown collect` flow, and an
+ * `out-of-scope` row sits on a frame the cursor is not on, where
+ * `delegate --retry --step` (which targets the current step) would not apply.
+ * Naming a command that cannot work is worse than naming none.
+ *
+ * @param state - Run state whose reported delegation outcomes are projected
+ * @returns Status entries, or undefined when nothing has been reported
+ */
+function buildReportedOutcomes(state: RunbookState): StatusOutputData['reportedOutcomes'] {
+  const entries = readDelegationOutcomeReachability(state).map((fact) => ({
+    completionKey: fact.completionKey,
+    step: fact.targetStep,
+    substep: fact.targetSubstep,
+    ...(fact.targetIteration !== undefined ? { iteration: fact.targetIteration } : {}),
+    outcome: fact.outcome,
+    reportedAt: fact.reportedAt,
+    reachability: fact.reachability,
+    ...(fact.reachability === 'superseded'
+      ? { remedy: `rundown delegate --retry --step ${fact.targetSubstep}` }
+      : {}),
+  }));
+  return entries.length > 0 ? entries : undefined;
 }
 
 /**
@@ -358,15 +413,11 @@ export function buildActiveStatus(
     currentStep.substeps.length &&
     activeFrameKey &&
     activeEntry !== undefined
-      ? countUnresolvedSubsteps(
-          currentStep.substeps,
-          activeState.resolvedCompletions,
-          activeFrameKey,
-          activeEntry,
-        )
+      ? countUnresolvedSubsteps(currentStep.substeps, activeState)
       : undefined;
 
   const parentLinkage = buildParentLinkage(activeState);
+  const reportedOutcomes = buildReportedOutcomes(activeState);
 
   const delegations = (activeState.substepStates ?? [])
     .filter((ss) => ss.delegation != null)
@@ -425,6 +476,7 @@ export function buildActiveStatus(
     }),
     lastAction: actionBlockData,
     ...(delegations.length > 0 ? { delegations } : {}),
+    ...(reportedOutcomes ? { reportedOutcomes } : {}),
     ...(parentLinkage ? { parentLinkage } : {}),
     ...(vars ? { vars } : {}),
     ...(artifacts ? { artifacts } : {}),

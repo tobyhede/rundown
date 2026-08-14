@@ -1,5 +1,4 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import { mockErrorHelpers } from './mock-error-helpers.js';
 import {
   brandDelegationTokenHashForTest,
   brandFrameKeyForTest,
@@ -12,7 +11,7 @@ import {
 import { mockFn } from './typed-mocks.js';
 
 import type * as CoreModule from '@rundown-org/core';
-import type { BaseStep, ResolvedStep } from '@rundown-org/parser';
+import type { BaseStep, ResolvedStep, Substep, Transitions } from '@rundown-org/parser';
 import type * as ExecutionModule from '../../src/services/execution.js';
 
 const PARENT_RUN_ID = brandRunIdForTest(`rd_${'9'.repeat(32)}`);
@@ -20,93 +19,27 @@ const SECOND_PARENT_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
 const DEFAULT_RUN_ID = brandRunIdForTest(`rd_${'b'.repeat(32)}`);
 const ARTIFACT_RUN_ID = brandRunIdForTest(`rd_${'c'.repeat(32)}`);
 
-// Mock @rundown-org/core
-jest.unstable_mockModule('@rundown-org/core', () => {
+// PARTIAL mock of @rundown-org/core. Everything spread from `actual` is the
+// real implementation — in particular the frame/entry scope rule
+// (`deriveActiveCompletionFrame`, `resolvedSubstepIdsInFrame`,
+// `classifyCompletionReachability` behind `readDelegationOutcomeReachability`),
+// which this suite exists to hold the builder against. Doubling that boundary
+// is the shape CLAUDE.md calls a BLIND check: with the answer stubbed, an
+// assertion can only pin that the builder ASKED core for scope, never that the
+// answer is right — and the mutation gate scopes `status-builder.ts` to THIS
+// file, so a stubbed boundary means the gate scores mutants nothing constrains.
+//
+// `countNumberedSteps` stays doubled because the step total is an input this
+// suite varies per test rather than behaviour it is testing, and `steps` here
+// are hand-built fixtures, not parsed runbooks.
+jest.unstable_mockModule('@rundown-org/core', async () => {
+  const actual = jest.requireActual<typeof CoreModule>('@rundown-org/core');
   const countNumberedSteps = mockFn<typeof CoreModule.countNumberedSteps>();
   countNumberedSteps.mockReturnValue(5);
-  return {
-    stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
-      id.substep ? `${id.step}.${id.substep}` : id.step,
-    ),
-    buildStepPosition: jest.fn((current: string, total: number, substep?: string) => ({
-      current,
-      total,
-      ...(substep ? { substep } : {}),
-    })),
-    deriveExecutionAt: jest.fn(
-      (step: string, substep?: string, iteration?: number) =>
-        `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
-    ),
-    countNumberedSteps,
-    isArtifactRecord: jest.fn(
-      (value: unknown) =>
-        value !== null &&
-        typeof value === 'object' &&
-        'kind' in value &&
-        ((value as { kind?: unknown }).kind === 'artifact-record' ||
-          (value as { kind?: unknown }).kind === 'file-artifact-record'),
-    ),
-    isArtifactValue: jest.fn((value: unknown) => {
-      const isRecord = (candidate: unknown): boolean =>
-        candidate !== null &&
-        typeof candidate === 'object' &&
-        'kind' in candidate &&
-        ((candidate as { kind?: unknown }).kind === 'artifact-record' ||
-          (candidate as { kind?: unknown }).kind === 'file-artifact-record');
-      return (
-        isRecord(value) ||
-        (Array.isArray(value) && value.length > 0 && value.every((item) => isRecord(item)))
-      );
-    }),
-    WORK_DIR: '.rundown/work',
-    renderArtifactValue: jest.fn((value: unknown, options?: { cwd: string; workPath: string }) => {
-      const renderOne = (record: {
-        key: string;
-        kind: string;
-        contextId?: string;
-        runId?: string;
-      }) =>
-        record.kind === 'file-artifact-record'
-          ? '/tmp/project/schemas/review.schema.json'
-          : `${options?.cwd ?? '/test'}/${options?.workPath ?? '.rundown/work'}/.rd-${String(
-              record.contextId,
-            )}/${String(record.runId)}/${record.key}`;
-      if (Array.isArray(value)) {
-        return JSON.stringify(value.map(renderOne));
-      }
-      return renderOne(value as { key: string; kind: string });
-    }),
-    toPublicArtifactVarValue: jest.fn(
-      (value: unknown, options: { cwd: string; workPath: string }) => {
-        const renderOne = (record: Record<string, unknown>) => ({
-          ...record,
-          path:
-            record.kind === 'file-artifact-record'
-              ? '/tmp/project/schemas/review.schema.json'
-              : `${options.cwd}/${options.workPath}/.rd-${String(record.contextId)}/${String(
-                  record.runId,
-                )}/${String(record.key)}`,
-        });
-        return Array.isArray(value)
-          ? value.map(renderOne)
-          : renderOne(value as Record<string, unknown>);
-      },
-    ),
-    mergeEffectiveVars: jest.fn(
-      (
-        state: { templateVars?: Record<string, unknown>; variables?: Record<string, unknown> },
-        extraVars?: Record<string, unknown>,
-      ) => ({
-        ...(state.templateVars ?? {}),
-        ...(state.variables ?? {}),
-        ...(extraVars ?? {}),
-      }),
-    ),
-    ...mockErrorHelpers,
-  };
+  return { ...actual, countNumberedSteps };
 });
 
-import type { RunbookState } from '@rundown-org/core';
+import type { Frame, ResolvedCompletion, RunbookState } from '@rundown-org/core';
 
 // Mock runbook-loader
 jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
@@ -980,27 +913,317 @@ describe('vars field', () => {
   });
 });
 
-describe('mergeEffectiveVars mock contract', () => {
-  // Direct gate against mock drift: the mock must match production's
-  // (state, extraVars?) signature with precedence templateVars < variables < extraVars.
-  // See packages/core/src/runbook/effective-vars.ts:mergeEffectiveVars.
-  it('applies precedence extraVars > variables > templateVars', () => {
-    const state = {
-      templateVars: { key: 'from-templateVars', tOnly: 't' },
-      variables: { key: 'from-variables', vOnly: 'v' },
-    };
-    const extraVars = { key: 'from-extraVars', eOnly: 'e' };
-    const merged = (
-      core.mergeEffectiveVars as unknown as (
-        s: typeof state,
-        e?: typeof extraVars,
-      ) => Record<string, unknown>
-    )(state, extraVars);
-    expect(merged).toEqual({
-      key: 'from-extraVars',
-      tOnly: 't',
-      vOnly: 'v',
-      eOnly: 'e',
+// ---------------------------------------------------------------------------
+// Scope agreement with core (#749, #766).
+//
+// These run against the REAL `deriveActiveCompletionFrame` /
+// `resolvedSubstepIdsInFrame` / `readDelegationOutcomeReachability` — the whole
+// reason this suite partial-mocks core rather than replacing it. Every
+// expectation below is a claim about what the completion drain would do, so a
+// double here would make them claims about the double.
+// ---------------------------------------------------------------------------
+
+const SCOPE_FRAME = core.buildFrameKey('1');
+
+const SCOPE_TRANSITIONS: Transitions = {
+  pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+  fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+};
+
+function scopeSubstep(id: string): Substep {
+  return { id, description: `Substep ${id}`, transitions: SCOPE_TRANSITIONS, delegate: true };
+}
+
+const SCOPE_STEP: ResolvedStep = {
+  kind: 'substeps',
+  name: '1',
+  description: 'Fan out',
+  transitions: SCOPE_TRANSITIONS,
+  substeps: [scopeSubstep('1'), scopeSubstep('2')],
+};
+
+/** A state whose cursor sits on frame `1|` at entry 2 — one re-entry in. */
+function scopeState(overrides: Partial<RunbookState> = {}): RunbookState {
+  return makeState({
+    step: '1',
+    stepName: 'Fan out',
+    resolvedCompletions: {},
+    frameEntryCounts: { [SCOPE_FRAME]: 2 },
+    activeFrameKey: SCOPE_FRAME,
+    activeEntry: 2,
+    ...overrides,
+  });
+}
+
+function delegationRow(
+  frame: Frame,
+  targetSubstep: string,
+  extra: { result?: 'pass' | 'fail'; targetIteration?: number } = {},
+): Record<string, ResolvedCompletion> {
+  return {
+    [core.buildCompletionKey(frame, targetSubstep)]: core.buildResolvedCompletion({
+      agentId: 'delegation',
+      result: extra.result ?? 'pass',
+      targetStep: '1',
+      targetSubstep,
+      ...(extra.targetIteration !== undefined ? { targetIteration: extra.targetIteration } : {}),
+      targetFrame: frame,
+      completedAt: '2026-01-01T00:00:00.000Z',
+    }),
+  };
+}
+
+function scopeFixtures(): void {
+  jest.mocked(getRunbookFromState).mockReturnValue([SCOPE_STEP]);
+  jest.mocked(buildMetadata).mockReturnValue({
+    file: 'test.runbook.md',
+    state: '.rundown/rundown.db',
+    runId: DEFAULT_RUN_ID,
+  });
+  jest.mocked(core.countNumberedSteps).mockReturnValue(1);
+}
+
+describe('position.unresolved agrees with the completion drain (#766)', () => {
+  beforeEach(scopeFixtures);
+
+  it('counts a sentinel-entry completion as resolved', () => {
+    // A pre-recorded completion persists at SENTINEL_ENTRY and the drain applies
+    // it to ANY visit of its frame — `completionTargetsFrame` admits it for an
+    // active frame. The CLI-local copy this replaced compared
+    // `targetEntry === activeEntry`, so it called the substep unresolved while
+    // `rundown collect` would have applied the row.
+    const status = buildActiveStatus(
+      scopeState({ resolvedCompletions: delegationRow(core.inactiveFrame(SCOPE_FRAME), '1') }),
+      '/test',
+    );
+
+    expect(status.position?.unresolved).toBe(1);
+  });
+
+  it('counts a live-entry completion as resolved', () => {
+    const status = buildActiveStatus(
+      scopeState({ resolvedCompletions: delegationRow(core.activeFrame(SCOPE_FRAME, 2), '1') }),
+      '/test',
+    );
+
+    expect(status.position?.unresolved).toBe(1);
+  });
+
+  it('counts a superseded-entry completion as unresolved', () => {
+    const status = buildActiveStatus(
+      scopeState({ resolvedCompletions: delegationRow(core.exactFrame(SCOPE_FRAME, 1), '1') }),
+      '/test',
+    );
+
+    expect(status.position?.unresolved).toBe(2);
+  });
+
+  it('counts a foreign-frame completion as unresolved', () => {
+    const status = buildActiveStatus(
+      scopeState({
+        resolvedCompletions: delegationRow(core.activeFrame(core.buildFrameKey('2'), 2), '1'),
+      }),
+      '/test',
+    );
+
+    expect(status.position?.unresolved).toBe(2);
+  });
+
+  it('counts every substep when nothing has been reported', () => {
+    expect(buildActiveStatus(scopeState(), '/test').position?.unresolved).toBe(2);
+  });
+
+  it('counts zero when every substep has a reachable row', () => {
+    const status = buildActiveStatus(
+      scopeState({
+        resolvedCompletions: {
+          ...delegationRow(core.activeFrame(SCOPE_FRAME, 2), '1'),
+          ...delegationRow(core.inactiveFrame(SCOPE_FRAME), '2'),
+        },
+      }),
+      '/test',
+    );
+
+    expect(status.position?.unresolved).toBe(0);
+  });
+
+  it('ignores a reachable row naming a substep this step does not declare', () => {
+    const status = buildActiveStatus(
+      scopeState({ resolvedCompletions: delegationRow(core.activeFrame(SCOPE_FRAME, 2), 'ghost') }),
+      '/test',
+    );
+
+    expect(status.position?.unresolved).toBe(2);
+  });
+
+  it('omits unresolved when the state names no active frame', () => {
+    const status = buildActiveStatus(
+      makeState({ step: '1', activeFrameKey: undefined, activeEntry: undefined }),
+      '/test',
+    );
+
+    expect(status.position?.unresolved).toBeUndefined();
+  });
+});
+
+describe('reportedOutcomes (#766)', () => {
+  beforeEach(scopeFixtures);
+
+  it('is omitted when the run has reported no delegation outcomes', () => {
+    expect(buildActiveStatus(scopeState(), '/test')).not.toHaveProperty('reportedOutcomes');
+  });
+
+  it('reports a collectable outcome with no remedy', () => {
+    const status = buildActiveStatus(
+      scopeState({ resolvedCompletions: delegationRow(core.activeFrame(SCOPE_FRAME, 2), '1') }),
+      '/test',
+    );
+
+    expect(status.reportedOutcomes).toEqual([
+      {
+        completionKey: core.buildCompletionKey(core.activeFrame(SCOPE_FRAME, 2), '1'),
+        step: '1',
+        substep: '1',
+        outcome: 'pass',
+        reportedAt: '2026-01-01T00:00:00.000Z',
+        reachability: 'collectable',
+      },
+    ]);
+  });
+
+  it('carries a fail outcome through unchanged', () => {
+    const status = buildActiveStatus(
+      scopeState({
+        resolvedCompletions: delegationRow(core.activeFrame(SCOPE_FRAME, 2), '1', {
+          result: 'fail',
+        }),
+      }),
+      '/test',
+    );
+
+    expect(status.reportedOutcomes?.[0]?.outcome).toBe('fail');
+  });
+
+  it('names delegate --retry on the reporting substep for a superseded outcome', () => {
+    // The abandoned row #766 is about: reported, then stranded by a RETRY/GOTO
+    // re-entry. Nothing will ever collect it, so `status` must say what does
+    // clear it — and must name the SUBSTEP, which is what `--step` takes here.
+    const status = buildActiveStatus(
+      scopeState({ resolvedCompletions: delegationRow(core.exactFrame(SCOPE_FRAME, 1), '2') }),
+      '/test',
+    );
+
+    expect(status.reportedOutcomes).toEqual([
+      {
+        completionKey: core.buildCompletionKey(core.exactFrame(SCOPE_FRAME, 1), '2'),
+        step: '1',
+        substep: '2',
+        outcome: 'pass',
+        reportedAt: '2026-01-01T00:00:00.000Z',
+        reachability: 'superseded',
+        remedy: 'rundown delegate --retry --step 2',
+      },
+    ]);
+  });
+
+  it('reports an out-of-scope outcome with its iteration and no remedy', () => {
+    // A closed FOR iteration: the cursor is not on that frame at all, so
+    // `delegate --retry --step` — which targets the CURRENT step — is not the
+    // remedy and must not be advertised as one.
+    const closedIteration = core.buildFrameKey('1', 2);
+    const status = buildActiveStatus(
+      scopeState({
+        resolvedCompletions: delegationRow(core.exactFrame(closedIteration, 1), '1', {
+          result: 'fail',
+          targetIteration: 2,
+        }),
+      }),
+      '/test',
+    );
+
+    expect(status.reportedOutcomes).toEqual([
+      {
+        completionKey: core.buildCompletionKey(core.exactFrame(closedIteration, 1), '1'),
+        step: '1',
+        substep: '1',
+        iteration: 2,
+        outcome: 'fail',
+        reportedAt: '2026-01-01T00:00:00.000Z',
+        reachability: 'out-of-scope',
+      },
+    ]);
+  });
+
+  it('omits iteration for a completion that carries none', () => {
+    const status = buildActiveStatus(
+      scopeState({ resolvedCompletions: delegationRow(core.activeFrame(SCOPE_FRAME, 2), '1') }),
+      '/test',
+    );
+
+    expect(status.reportedOutcomes?.[0]).not.toHaveProperty('iteration');
+  });
+
+  it('reports all three classes together in persisted completion-key order', () => {
+    const status = buildActiveStatus(
+      scopeState({
+        resolvedCompletions: {
+          ...delegationRow(core.activeFrame(SCOPE_FRAME, 2), '2'),
+          ...delegationRow(core.exactFrame(SCOPE_FRAME, 1), '1'),
+          ...delegationRow(core.activeFrame(core.buildFrameKey('2'), 2), '1'),
+        },
+      }),
+      '/test',
+    );
+
+    expect(status.reportedOutcomes?.map((entry) => [entry.substep, entry.reachability])).toEqual([
+      ['1', 'superseded'],
+      ['2', 'collectable'],
+      ['1', 'out-of-scope'],
+    ]);
+  });
+
+  it('agrees with the collection-pending guard on which outcomes are collectable', () => {
+    // The invariant that keeps `status` honest end to end: what status calls
+    // `collectable` is what a bare mutation is blocked on and what
+    // `rundown collect` consumes. Asserting it here, against real core, is what
+    // makes the reachability label a claim about the run rather than about a
+    // fixture.
+    const state = scopeState({
+      resolvedCompletions: {
+        ...delegationRow(core.activeFrame(SCOPE_FRAME, 2), '1'),
+        ...delegationRow(core.exactFrame(SCOPE_FRAME, 1), '2'),
+      },
     });
+
+    const collectable = buildActiveStatus(state, '/test')
+      .reportedOutcomes?.filter((entry) => entry.reachability === 'collectable')
+      .map((entry) => entry.completionKey);
+
+    expect(collectable).toEqual(
+      core
+        .readDelegationCollectionPendingForPolicy(state)
+        .outcomes.map((outcome) => outcome.completionKey),
+    );
+  });
+
+  it('ignores manual completions, reporting only delegation rows', () => {
+    const manual = core.buildCompletionKey(core.activeFrame(SCOPE_FRAME, 2), '1');
+    const status = buildActiveStatus(
+      scopeState({
+        resolvedCompletions: {
+          [manual]: core.buildResolvedCompletion({
+            agentId: 'manual',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: core.activeFrame(SCOPE_FRAME, 2),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      }),
+      '/test',
+    );
+
+    expect(status).not.toHaveProperty('reportedOutcomes');
   });
 });
