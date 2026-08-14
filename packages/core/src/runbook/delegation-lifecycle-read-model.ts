@@ -1,7 +1,13 @@
 import type { VariableValue } from './effective-vars.js';
 import { deriveActiveCompletionFrame } from './frame-entry.js';
 import type { RunId } from './run-id.js';
-import { completionEntryForFrame, completionTargetsFrame, type FrameKey } from './targeting.js';
+import {
+  classifyCompletionReachability,
+  completionEntryForFrame,
+  completionTargetsFrame,
+  type CompletionFrameReachability,
+  type FrameKey,
+} from './targeting.js';
 import type { DelegationOutcome, RunbookState } from './types.js';
 
 const DELEGATION_AGENT_ID = 'delegation';
@@ -39,6 +45,19 @@ export interface DelegationOutcomeReportedFact {
   readonly reportedAt: string;
   /** Final variables produced by the delegated run. */
   readonly finalVars?: Readonly<Record<string, VariableValue>>;
+}
+
+/**
+ * A reported delegation outcome plus whether the drain can still reach it.
+ *
+ * Two of the three classes are rows the run has silently abandoned: #749 made
+ * the pending guard agree with the drain, which was correct and which turned a
+ * wedged run into a run that quietly drops a child's reported outcome. This is
+ * the fact that lets a reader see one (#766).
+ */
+export interface DelegationOutcomeReachabilityFact extends DelegationOutcomeReportedFact {
+  /** Whether `rundown collect` can still consume this row, and if not, why not. */
+  readonly reachability: CompletionFrameReachability;
 }
 
 /** Pure read model for collection-pending state at the delegating run's active scope. */
@@ -129,6 +148,38 @@ export function readDelegationOutcomeReportedFacts(
       reportedAt: completion.completedAt,
       ...(completion.finalVars ? { finalVars: completion.finalVars } : {}),
     }));
+}
+
+/**
+ * Classify every reported delegation outcome by what the live cursor can do
+ * with it.
+ *
+ * The core-owned answer to "what happened to the outcomes this run was told
+ * about", so a front end renders a classification rather than deriving one.
+ * Scope comes from the shared pair — `classifyCompletionReachability` over
+ * `deriveActiveCompletionFrame` — which is the same rule
+ * {@link readDelegationCollectionPending} filters by, so `collectable` is
+ * exactly the set a bare mutation is asked to yield to and `rundown collect`
+ * will consume. The other two classes are permanent: entry ordinals are
+ * run-global and monotonic, so a superseded row is never reachable again, and
+ * `rundown delegate --retry --step <substep>` is the remedy that clears it.
+ *
+ * Ordering is {@link readDelegationOutcomeReportedFacts}'s — by persisted
+ * completion key — and is deliberately NOT re-sorted by class: a caller
+ * grouping by `reachability` does so itself, and a stable key order is what
+ * makes two readings of an unchanged run comparable.
+ *
+ * @param state - Delegating run state to inspect
+ * @returns Every reported outcome fact, each tagged with its reachability
+ */
+export function readDelegationOutcomeReachability(
+  state: RunbookState,
+): readonly DelegationOutcomeReachabilityFact[] {
+  const frame = deriveActiveCompletionFrame(state);
+  return readDelegationOutcomeReportedFacts(state).map((fact) => ({
+    ...fact,
+    reachability: classifyCompletionReachability(frame, fact),
+  }));
 }
 
 /**

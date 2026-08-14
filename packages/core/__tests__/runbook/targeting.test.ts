@@ -22,9 +22,12 @@ import {
   inactiveFrame,
   parseCompletionKey,
   upsertSubstepState,
+  classifyCompletionReachability,
   classifyDelegationLiveness,
   delegationAuthorityCoordinatesMatch,
   linkageMatchesClaim,
+  resolvedSubstepIdsInFrame,
+  type Frame,
   type FrameKey,
   type DelegationLivenessLinkage,
   type DelegationLivenessParent,
@@ -1158,5 +1161,96 @@ describe('frameKeyForCursor', () => {
       };
       expect(input({ context }).frameKey).toBe(frameKeyForCursor('1', [foreignTop()]));
     });
+  });
+});
+
+describe('classifyCompletionReachability', () => {
+  const frameKey = buildFrameKey('1');
+  const target = (targetFrameKey: FrameKey, targetEntry: number) => ({
+    targetFrameKey,
+    targetEntry,
+  });
+
+  it('classifies a row the frame admits as collectable', () => {
+    expect(classifyCompletionReachability(activeFrame(frameKey, 2), target(frameKey, 2))).toBe(
+      'collectable',
+    );
+  });
+
+  it('classifies a sentinel row on an active frame as collectable', () => {
+    expect(
+      classifyCompletionReachability(activeFrame(frameKey, 2), target(frameKey, SENTINEL_ENTRY)),
+    ).toBe('collectable');
+  });
+
+  it('classifies a same-frame row at a left entry as superseded', () => {
+    expect(classifyCompletionReachability(activeFrame(frameKey, 2), target(frameKey, 1))).toBe(
+      'superseded',
+    );
+  });
+
+  it('classifies a sentinel row on a non-active frame as superseded', () => {
+    // An exact frame names one entry, so `completionTargetsFrame` refuses the
+    // sentinel there — and the row is still on this frame key, which is what
+    // separates `superseded` from `out-of-scope`.
+    expect(
+      classifyCompletionReachability(exactFrame(frameKey, 2), target(frameKey, SENTINEL_ENTRY)),
+    ).toBe('superseded');
+  });
+
+  it('classifies a row on another frame key as out-of-scope', () => {
+    expect(
+      classifyCompletionReachability(activeFrame(frameKey, 2), target(buildFrameKey('1', 2), 2)),
+    ).toBe('out-of-scope');
+  });
+
+  it('classifies a matching entry on another frame key as out-of-scope, not collectable', () => {
+    // The frame key is decided first: an equal entry on a different frame is
+    // never reachable, so entry equality alone must not admit a row.
+    expect(
+      classifyCompletionReachability(activeFrame(frameKey, 2), target(buildFrameKey('2'), 2)),
+    ).toBe('out-of-scope');
+  });
+});
+
+describe('resolvedSubstepIdsInFrame', () => {
+  const frameKey = buildFrameKey('1');
+  const row = (targetSubstep: string | undefined, targetFrame: Frame) =>
+    buildResolvedCompletion({
+      agentId: 'delegation',
+      result: 'pass',
+      targetStep: '1',
+      ...(targetSubstep !== undefined ? { targetSubstep } : {}),
+      targetFrame,
+      completedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+  it('collects only substep ids the frame admits', () => {
+    const resolved = resolvedSubstepIdsInFrame(
+      {
+        resolvedCompletions: {
+          live: row('1', activeFrame(frameKey, 2)),
+          sentinel: row('2', inactiveFrame(frameKey)),
+          superseded: row('3', exactFrame(frameKey, 1)),
+          foreign: row('4', activeFrame(buildFrameKey('2'), 2)),
+        },
+      },
+      activeFrame(frameKey, 2),
+    );
+
+    expect([...resolved].sort()).toEqual(['1', '2']);
+  });
+
+  it('ignores step-scoped rows that name no substep', () => {
+    const resolved = resolvedSubstepIdsInFrame(
+      { resolvedCompletions: { step: row(undefined, activeFrame(frameKey, 2)) } },
+      activeFrame(frameKey, 2),
+    );
+
+    expect(resolved.size).toBe(0);
+  });
+
+  it('returns an empty set for a run with no completion rows', () => {
+    expect(resolvedSubstepIdsInFrame({}, activeFrame(frameKey, 2)).size).toBe(0);
   });
 });

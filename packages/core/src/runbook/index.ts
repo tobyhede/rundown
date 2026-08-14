@@ -460,9 +460,11 @@ export {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPending,
   readDelegationCollectionPendingForPolicy,
+  readDelegationOutcomeReachability,
   readDelegationOutcomeReportedFacts,
   type DelegationCollectionPendingPolicyReadModel,
   type DelegationCollectionPendingReadModel,
+  type DelegationOutcomeReachabilityFact,
   type DelegationOutcomeReportedFact,
 } from './delegation-lifecycle-read-model.js';
 // Credential *derivation* is not public. `deriveDelegationToken` and the nonce
