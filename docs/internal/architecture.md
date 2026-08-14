@@ -1683,6 +1683,18 @@ prerequisites are worth naming because either one left undone makes it lossy:
   is now its own closed reason carrying `cancelledAt`, and its own
   `ClaimRunbookResult` status, so both sides of the window say the same thing
   (#752).
+- **Fix the classification on every derivation that shares the vocabulary, not
+  only the one whose output a user reads.** The link path was corrected first,
+  and `deriveDelegationChildUnlinkedSubsteps` went on calling the same permanent
+  occupancy `concurrent_modification` — invisible, because its only consumer,
+  the launch-rollback warning in `afterInitRollback`, reads `.message` and never
+  `.reason`. An inert discriminant is still wrong, and it stops being inert the
+  moment someone routes the refusal to an error code, which is exactly how the
+  link-path defect came to matter. Both derivations now raise `already_linked`
+  with `occupyingChildRunId`, and the rollback warning narrows on it: another
+  child holding the delegation means this child's link is already gone, so the
+  warning says there is nothing to unlink rather than reporting a failed
+  rollback.
 
 **The fourth shape is for when the fold is unavailable**, which has to be
 established rather than assumed. `claimChildForPipeline`'s initial link derives
@@ -1694,7 +1706,11 @@ closes it from outside with a bounded re-derive loop, paced by the store's
 exported `DEFAULT_MUTATE_ATTEMPTS` / `mutateBackoffMs` rather than a mirrored
 constant. Only the commit's `concurrent_modification` is retried: every
 preparation refusal is already permanent, and re-deriving is exactly what tells
-"someone took this delegation" apart from "the parent happened to move". The
+"someone took this delegation" apart from "the parent happened to move". That
+permanence is a property of the type rather than of the loop's comment —
+`DelegationChildLinkRefusal` carries no race arm at all, because a derivation is
+a pure function of one captured `substepStates` array and sees no row version to
+race against. Detecting the race is the commit's job, and only the commit's. The
 cycle re-runs capture, preparation, and commit — never the child creation the
 caller already performed — and an exhausted budget reports
 `concurrent_modification` rather than a permanent cause it never observed. A

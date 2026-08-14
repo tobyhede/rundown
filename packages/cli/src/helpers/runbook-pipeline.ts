@@ -1273,10 +1273,12 @@ type InitialLinkOutcome =
  * the permanent `already_linked` the parent state now actually shows.
  *
  * Only the commit's `concurrent_modification` is retried. Every preparation
- * refusal is permanent: re-reading cannot free an occupied delegation or
+ * refusal is permanent — re-reading cannot free an occupied delegation or
  * un-supersede a moved one, so retrying those would only spend the budget
- * before reporting the same fact. Exhausting the budget returns the genuine
- * `concurrent_modification` rather than guessing at a permanent cause.
+ * before reporting the same fact — and that is now a property of the type
+ * rather than of this comment: the refusal union carries no race arm at all.
+ * Exhausting the budget returns the genuine `concurrent_modification` rather
+ * than guessing at a permanent cause.
  *
  * The cycle re-runs capture, preparation, and commit — never child creation,
  * which the caller performed before invoking this and must not repeat.
@@ -1328,9 +1330,10 @@ async function deriveAndCommitInitialLink(
         },
       };
     }
-    if (prepared.kind === 'concurrent_modification') {
-      return { refused: { ok: false, reason: 'concurrent-modification', childRunId } };
-    }
+    // No preparation arm remains: `PrepareDelegationChildLinkRefusal` is
+    // exactly the two permanent refusals above, so `prepared` has narrowed to
+    // the prepared mutation. A race is only observable at the commit below,
+    // and that is the one this loop retries.
     const committed = await ctx.sessionService.claimAndInitialLink({
       childRunId,
       linkage,
@@ -1968,6 +1971,18 @@ export async function claimAndLaunch(
           delegationLinkage,
         );
         if (prepared.kind !== 'prepared') {
+          // `already_linked` is not a failed rollback. Another child now holds
+          // this delegation, which means this child's link is already gone —
+          // the only claim the linkage can carry is the occupant's, and
+          // deleting it is precisely what rollback must not do. Wording it as
+          // "could not unlink" would send a reader hunting for a dangling link
+          // that no longer exists.
+          if (prepared.kind === 'already_linked') {
+            output.warning(
+              `Delegated child ${childStateId} no longer holds parent ${delegationLinkage.parentRunId}'s delegation, which now names ${prepared.occupyingChildRunId}: nothing to unlink.`,
+            );
+            return;
+          }
           warnUnlinkRefusal(prepared.message);
           return;
         }
