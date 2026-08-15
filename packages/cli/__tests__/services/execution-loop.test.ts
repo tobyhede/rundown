@@ -3450,20 +3450,28 @@ describe('runExecutionLoop', () => {
     );
   });
 
-  // Two observers of ONE inline launch intent. The intent names a FIXED
+  // A second observer of ONE inline launch intent, re-entering SEQUENTIALLY
+  // from inside the first observer's launch span. This is not a contention
+  // test and must not be read as one: the second loop is driven by re-entry
+  // from inside the `resolveRunbookRef` mock, the compare-and-swap seam beneath
+  // it is a hand-written double with no SQLite, no `state_version` and no
+  // retry, and a sequential implementation of the latch passes it. Real
+  // contention — two observers holding the same version against a real store —
+  // is pinned in `__tests__/services/inline-launch-latch.test.ts`.
+  //
+  // What it does pin is the launch span's ENTRY. The intent names a FIXED
   // `childRunId`, and `startRunbook` → `launchRunbook` opens with an
   // unconditional `manager.create` for it, whose `RunbookStateManager.save`
-  // reads-then-inserts — so two observers inside the launch span race a bare
+  // reads-then-inserts — so two observers inside the span race a bare
   // `INSERT INTO runs` and the loser gets an untyped SQLITE_CONSTRAINT throw.
-  // Exactly-once is therefore a property of the launch span's ENTRY, and
-  // `resolveRunbookRef` is its gate: nothing between it and `manager.create` can
-  // refuse, so one entry is one create.
+  // `resolveRunbookRef` is the span's gate: nothing between it and
+  // `manager.create` can refuse, so one entry is one create.
   //
   // The contender is injected AT that gate rather than at the old pre-read
   // precheck. A hook on the precheck would go vacuous the moment the decision
   // moves inside the compare-and-swap; this one stays on live control flow
-  // either way. `injected` pins that the interleave actually happened.
-  it('latches an inline launch so a second observer of the same intent never enters the launch span', async () => {
+  // either way. `injected` pins that the re-entry actually happened.
+  it('stands a re-entrant second observer of the same intent down outside the launch span', async () => {
     const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
     const inlineLaunch = {
       parentRunId: runbookId,
@@ -3614,13 +3622,20 @@ describe('runExecutionLoop', () => {
     expect(first).toBe('stopped');
   });
 
-  // `InlineLaunchLatch` has five arms, all decided inside ONE compare-and-swap
-  // callback, and before #759 not one of the five had its DISCRIMINANT asserted
-  // anywhere. Neighbouring tests drive four of them through their downstream
-  // effects — the interleave test above reaches `already-latched`, the
-  // stale-intent test 650 lines BELOW reaches `superseded` — but the arm a run
-  // took was never itself observed, and the two arms that need a race to reach
-  // (`inactive`, `linkage-refused`) were not driven at all.
+  // The latch's own decisions now have a home of their own: every arm is
+  // decided and asserted against a real store in
+  // `__tests__/services/inline-launch-latch.test.ts`. What remains here is the
+  // other half — the WIRING each arm reaches through: which error this loop
+  // emits for a refusal, what it returns, and what it declines to do next.
+  // Deleting these would leave the arms proven and their consequences unpinned.
+  //
+  // The `{ next, value }` assertions are kept alongside the loop-level ones
+  // because they are what identifies the arm a run took: no observable
+  // downstream of the latch distinguishes `superseded` from `already-latched`
+  // when no child exists — both return `waiting`, while only the latter carries
+  // the `existingChild` the adoption branch needs — and `next: null` is the
+  // only place "refused without writing" separates from "refused after
+  // writing".
   //
   // Read the scoped mutation report that opened #759 the way CLAUDE.md says to:
   // `if (existingChild) {}` surviving means "this module's own unit tests do not
@@ -3628,14 +3643,6 @@ describe('runExecutionLoop', () => {
   // refusal is in fact killed by `__tests__/integration/inline-child-launch.test.ts`
   // ('refuses to adopt an inline child launched at a superseded frame entry'),
   // which the Stryker sandbox excludes. The `inactive` arm had no such backstop.
-  //
-  // Every arm below is pinned through the callback's own return value, because
-  // that is where the arm is decided: `next: null` is the assertion that a
-  // refusal wrote nothing, and no observable downstream of the latch
-  // distinguishes "refused without writing" from "refused after writing", nor
-  // `superseded` from `already-latched` when no child exists — both return
-  // `waiting`, while only the latter carries the `existingChild` the adoption
-  // branch needs.
   describe('inline-launch latch refusal arms', () => {
     const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
     const contextSnapshot = {
@@ -3747,10 +3754,10 @@ describe('runExecutionLoop', () => {
     /**
      * Every `{ next, value }` the latch's build callback produced, in order.
      *
-     * The latch is module-private and its outcome never reaches an observable
-     * verbatim, so the callback's return is the only place the decision can be
-     * read as itself. It is unambiguous: `mutateStateReturning` has exactly one
-     * caller in the whole execution service.
+     * The latch's outcome never reaches an observable of this LOOP verbatim, so
+     * the callback's return is the only place the decision this loop then acts
+     * on can be read as itself. It is unambiguous: `mutateStateReturning` has
+     * exactly one caller reachable from the execution service.
      */
     const latchOutcomes: { next: Record<string, unknown> | null; value: unknown }[] = [];
 
@@ -3827,6 +3834,39 @@ describe('runExecutionLoop', () => {
       // through to the latch write, which kills the mutant with an opaque
       // message instead of naming the arm that stopped refusing.
       mockActorService.sendAndSync.mockResolvedValue({ state: parentWith(), snapshot: {} });
+    });
+
+    // The one outcome the compare-and-swap does not decide: `mutateStateReturning`
+    // never runs the callback for a run that does not exist. It reaches the loop
+    // as its own arm rather than as a `null` beside the union, and lands on the
+    // same refusal a terminal parent does — a run that vanished mid-launch is no
+    // more launchable than one that ended, and both leave nothing to launch
+    // under. Pinned here because the union's own tests cannot see which of the
+    // two refusals the loop then emits.
+    it('refuses the launch when the parent run has vanished before the latch', async () => {
+      mockManager.load.mockImplementation(async (id: string) =>
+        id === runbookId ? parentWith() : null,
+      );
+      // The shape `mutateStateReturning` returns for a missing run, verbatim.
+      mockManager.mutateStateReturning.mockImplementation(async () => ({
+        state: null,
+        value: null,
+      }));
+
+      const result = await driveLoop();
+
+      expect(result).toBe('stopped');
+      // The callback never ran, so no arm was decided and nothing was written.
+      expect(latchOutcomes).toEqual([]);
+      expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
+      expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'ERROR_OCCURRED',
+        payload: {
+          message: `Inline parent run ${runbookId} is not active`,
+          code: actualCore.ErrorCodes.LAUNCH_FAILED.code,
+        },
+      });
     });
 
     // A parent that is ALREADY terminal never reaches the latch — the loop
@@ -4031,9 +4071,9 @@ describe('runExecutionLoop', () => {
     // them IS caught where a child exists — `already-latched` carries the
     // `existingChild` the adoption branch reads, so the two resumed-launch tests
     // below fail if it is dropped. It is NOT caught in the no-child case: both
-    // arms then answer `waiting` with a null child through different returns
-    // (execution.ts:852 and :970), and the discriminant is the only place the
-    // difference survives. That is the case pinned here.
+    // arms then answer `waiting` with a null child through two different returns
+    // in `launchInlineChildFromIntent`, and the discriminant is the only place
+    // the difference survives. That is the case pinned here.
     it('stands down as superseded when the persisted intent no longer names this launch', async () => {
       // Intent consumed by whoever won the launch, exactly as
       // `INLINE_LAUNCH_CONSUMED` leaves it — the observation this loop is

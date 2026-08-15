@@ -396,6 +396,10 @@ export {
   type ForResolutionFailureCode,
 } from './actors/for-iterate-actor.js';
 export {
+  isInlineLaunchIntentWithoutParentEntry,
+  type InlineLaunchIntentWithoutParentEntry,
+} from './actors/inline-launch-intent-actor.js';
+export {
   commandExecActor,
   type CommandExecutionInput,
   type CommandExecutionOutput,
