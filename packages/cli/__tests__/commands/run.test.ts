@@ -8,6 +8,7 @@ import {
   deriveActiveFrame,
   RunbookStateManager,
   upsertSubstepState,
+  type FrameKey,
   type RunbookState,
 } from '@rundown-org/core';
 import {
@@ -767,18 +768,25 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       await writePassingChild();
 
       let injected = false;
+      // The frame the sideband row lands on, captured so the assertions can
+      // address that exact row. `substepStates` is keyed by (id, frameKey), so
+      // an id-only lookup would be satisfied by a row for the same substep at a
+      // different frame entry — vacuous the moment this fixture gains a FOR
+      // step. Assigned inside the builder, which may re-run on a retry, but the
+      // derivation is the same every time.
+      let injectedFrameKey: FrameKey | undefined;
       const injectSiblingSubstepWrite = async (): Promise<void> => {
         if (injected) return;
         injected = true;
         const sideband = new RunbookStateManager(workspace.cwd);
-        await sideband.updateWithState(parentRunId, (current) => ({
-          substepStates: upsertSubstepState(
-            current.substepStates ?? [],
-            '2',
-            current.activeFrameKey ?? deriveActiveFrame(current).frameKey,
-            { status: 'running' as const },
-          ),
-        }));
+        await sideband.updateWithState(parentRunId, (current) => {
+          injectedFrameKey = current.activeFrameKey ?? deriveActiveFrame(current).frameKey;
+          return {
+            substepStates: upsertSubstepState(current.substepStates ?? [], '2', injectedFrameKey, {
+              status: 'running' as const,
+            }),
+          };
+        });
       };
 
       // Counts the LAUNCH's derivations specifically, keyed on the decision it
@@ -823,13 +831,19 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
 
       const parent = await readRunbookState(workspace, parentRunId);
       const substeps = parent!.substepStates ?? [];
+      // Addressed by the full (id, frameKey) coordinate, so no row can stand in
+      // for another. `injectedFrameKey` is the frame the sideband wrote to, and
+      // the launch targets 1.1 in that same active frame.
+      expect(injectedFrameKey).toBeDefined();
+      const rowAt = (id: string) =>
+        substeps.find((row) => row.id === id && row.frameKey === injectedFrameKey);
       // The losing attempt wrote nothing, and the winning one carries the launch
       // through to its own resolution.
-      expect(substeps.find((s) => s.id === '1')?.status).toBe('done');
-      expect(substeps.find((s) => s.id === '1')?.result).toBe('pass');
+      expect(rowAt('1')?.status).toBe('done');
+      expect(rowAt('1')?.result).toBe('pass');
       // The row that invalidated the first attempt survives verbatim: the
       // re-derivation ran against the committed array, not the stale one.
-      expect(substeps.find((s) => s.id === '2')?.status).toBe('running');
+      expect(rowAt('2')?.status).toBe('running');
     });
 
     it('refuses the launch when the TARGET substep resolves inside the same window', async () => {

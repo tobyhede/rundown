@@ -17,11 +17,11 @@ against a real store.
 
 `latchInlineLaunch` now lives in `services/inline-launch-latch.ts` with the
 linkage classification, the ownership read and the compare-and-swap cycle behind
-it: the intent and its two seams in, one outcome union out. Contention is driven
-through that interface — two state managers over one real SQLite store, each
-held inside its build callback until both have read, so the commit that lands
-second is genuinely stale. Exactly one observer wins, the loser stands down
-naming the live owner, and one child run is created.
+it: the semantic intent plus its injected dependencies in, one outcome union
+out. Contention is driven through that interface — two state managers over one
+real SQLite store, each held inside its build callback until both have read, so
+the commit that lands second is genuinely stale. Exactly one observer wins, the
+loser stands down naming the live owner, and one child run is created.
 
 Three changes to the interface itself, none of them behavioural:
 
@@ -31,10 +31,12 @@ Three changes to the interface itself, none of them behavioural:
   nullable second channel. The caller still routes `missing` and `inactive` to
   the same refusal, deliberately — a run that vanished mid-launch is no more
   launchable than one that ended.
-- The only argument is the intent. The parent run, the child run id and the
-  linkage are all projections of it, so accepting them alongside made "an intent
-  and a child id that disagree" representable. Both call sites derive through
-  one exported `inlineLinkageFromIntent`.
+- The intent is the only semantic argument. `latchInlineLaunch` still receives
+  its injected dependencies — `manager`, `actorService` and `steps` — but the
+  parent run, the child run id and the linkage no longer travel beside the
+  intent, because all three are projections of it and accepting them separately
+  made "an intent and a child id that disagree" representable. Both call sites
+  derive the linkage through one exported `inlineLinkageFromIntent`.
 - The persisted-intent shape check is core's, not a CLI copy.
   `isInlineLaunchIntentWithoutParentEntry` is now re-exported from
   `@rundown-org/core`; core drives it from a field-guard map keyed by
