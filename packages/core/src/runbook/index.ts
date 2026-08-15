@@ -395,6 +395,16 @@ export {
   type ForIterateOutput,
   type ForResolutionFailureCode,
 } from './actors/for-iterate-actor.js';
+// The persisted-intent SHAPE guard is public so the CLI's inline-launch latch
+// narrows an opaque snapshot through core rather than a local `&&` chain. Core
+// drives it from a field-guard map keyed by
+// `keyof InlineLaunchIntentWithoutParentEntry`, so adding a field to the intent
+// breaks compilation here until the runtime check catches up — a property a copy
+// in the CLI would lose the first time the intent grew a field.
+export {
+  isInlineLaunchIntentWithoutParentEntry,
+  type InlineLaunchIntentWithoutParentEntry,
+} from './actors/inline-launch-intent-actor.js';
 export {
   commandExecActor,
   type CommandExecutionInput,

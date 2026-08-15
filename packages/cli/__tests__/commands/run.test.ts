@@ -8,6 +8,7 @@ import {
   deriveActiveFrame,
   RunbookStateManager,
   upsertSubstepState,
+  type FrameKey,
   type RunbookState,
 } from '@rundown-org/core';
 import {
@@ -746,6 +747,103 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       // ...and it does not carry a pre-read snapshot of the array over the top
       // of the sibling row that committed in between.
       expect(substeps.find((s) => s.id === '2')?.status).toBe('running');
+    });
+
+    it('re-derives the launch row when a sibling write invalidates the version it read', async () => {
+      // The sibling test above hooks the OUTSIDE of the write seam, so its
+      // interleaved row lands before the compare-and-swap opens: the launch then
+      // reads a version that already carries it, commits first time, and no
+      // losing attempt is ever created. Transaction ownership is covered there;
+      // contention and rollback are not.
+      //
+      // This variant lands the same write INSIDE the cycle — after the build
+      // callback has been handed the row it derives from, before the commit that
+      // depends on it — which is the only placement that produces a stale
+      // version. The compare-and-swap must then discard the first derivation and
+      // re-run the callback against the committed row. What that pins is the rule
+      // CLAUDE.md states for every `build` callback: it runs once per attempt and
+      // must be free of external side effects, because a first attempt's work is
+      // thrown away.
+      const parentRunId = await startSubstepParent();
+      await writePassingChild();
+
+      let injected = false;
+      // The frame the sideband row lands on, captured so the assertions can
+      // address that exact row. `substepStates` is keyed by (id, frameKey), so
+      // an id-only lookup would be satisfied by a row for the same substep at a
+      // different frame entry — vacuous the moment this fixture gains a FOR
+      // step. Assigned inside the builder, which may re-run on a retry, but the
+      // derivation is the same every time.
+      let injectedFrameKey: FrameKey | undefined;
+      const injectSiblingSubstepWrite = async (): Promise<void> => {
+        if (injected) return;
+        injected = true;
+        const sideband = new RunbookStateManager(workspace.cwd);
+        await sideband.updateWithState(parentRunId, (current) => {
+          injectedFrameKey = current.activeFrameKey ?? deriveActiveFrame(current).frameKey;
+          return {
+            substepStates: upsertSubstepState(current.substepStates ?? [], '2', injectedFrameKey, {
+              status: 'running' as const,
+            }),
+          };
+        });
+      };
+
+      // Counts the LAUNCH's derivations specifically, keyed on the decision it
+      // reports rather than on call ordering: the parent is written through this
+      // seam more than once across a run, so a positional guess would rebind
+      // silently to whichever write a later change happens to put first. The
+      // sideband cannot inflate the count either — that write goes through
+      // `updateWithState` → `updateWithStateIfExists`, a different seam from the
+      // one wrapped here.
+      const launchDecisions: unknown[] = [];
+      /* eslint-disable-next-line @typescript-eslint/unbound-method -- captured to re-apply with the spy's `this` */
+      const realUpdateWithStateReturning = RunbookStateManager.prototype.updateWithStateReturning;
+      jest
+        .spyOn(RunbookStateManager.prototype, 'updateWithStateReturning')
+        .mockImplementation(async function (this: RunbookStateManager, ...args) {
+          const [id, build] = args;
+          if (id !== parentRunId) return await realUpdateWithStateReturning.apply(this, args);
+          return await realUpdateWithStateReturning.call(this, id, async (current) => {
+            const built = await build(current);
+            if (built.value !== 'marked' && built.value !== 'already-resolved') return built;
+            launchDecisions.push(built.value);
+            // Land the sibling write inside the window: this attempt has read its
+            // row and derived from it, and the commit has not happened yet. Only
+            // the first attempt is invalidated — injecting on every one would
+            // spend the store's retry budget and report `concurrent_modification`
+            // instead of the re-derivation under test.
+            if (launchDecisions.length === 1) await injectSiblingSubstepWrite();
+            return built;
+          });
+        });
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(result.exitCode).toBe(0);
+      expect(injected).toBe(true);
+      // Two derivations for one commit: the first lost the compare-and-swap to
+      // the sideband write and was discarded, the second committed. One would
+      // mean the write landed outside the cycle and this test degenerated into
+      // the sibling case above. Both derivations reached the same decision —
+      // the re-derivation is a repeat of the same judgement against a newer
+      // row, not a different launch.
+      expect(launchDecisions).toEqual(['marked', 'marked']);
+
+      const parent = await readRunbookState(workspace, parentRunId);
+      const substeps = parent!.substepStates ?? [];
+      // Addressed by the full (id, frameKey) coordinate, so no row can stand in
+      // for another. `injectedFrameKey` is the frame the sideband wrote to, and
+      // the launch targets 1.1 in that same active frame.
+      expect(injectedFrameKey).toBeDefined();
+      const rowAt = (id: string) =>
+        substeps.find((row) => row.id === id && row.frameKey === injectedFrameKey);
+      // The losing attempt wrote nothing, and the winning one carries the launch
+      // through to its own resolution.
+      expect(rowAt('1')?.status).toBe('done');
+      expect(rowAt('1')?.result).toBe('pass');
+      // The row that invalidated the first attempt survives verbatim: the
+      // re-derivation ran against the committed array, not the stale one.
+      expect(rowAt('2')?.status).toBe('running');
     });
 
     it('refuses the launch when the TARGET substep resolves inside the same window', async () => {

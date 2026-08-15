@@ -1438,12 +1438,38 @@ rather than a typed refusal.
 The replacement is an atomic **compare-and-latch** — a separate, prior
 `mutateStateReturning` cycle (`latchInlineLaunch`) whose build callback decides
 the whole question against the version the compare-and-swap commits onto:
-inactive parent, superseded intent, linkage refusal, already latched, or won.
+inactive parent, superseded intent, linkage refusal, unrecorded row, already
+latched, or won — plus a `missing` arm for a parent run that no longer exists,
+the one outcome the callback does not decide because it never runs.
 `inline.started` is the latch, and only the `won` arm proceeds into the launch
 span. The span itself must stay outside the callback — it resolves runbook refs,
 reads files, dynamically imports the pipeline and writes warnings, and a build
 callback re-runs up to eight times, so those are exactly the external effects it
 may not perform.
+
+The latch is its own module, `services/inline-launch-latch.ts`, rather than a
+private function inside the execution service. The seam is not justified by
+variation — it has exactly one caller — but by testability and locality: the
+decision, the linkage classification, the ownership read and the
+compare-and-swap cycle are one cohesive unit, and reaching them through the
+execution loop meant reaching them through a mocked `@rundown-org/core`, which
+is precisely the blind spot that hides the race the latch exists to prevent.
+Contention is now driven through the interface itself — two observers holding
+the same version against a real store — in
+`__tests__/services/inline-launch-latch.test.ts`.
+
+Two constraints on what the module may own. Its only argument is the intent
+(plus its two seams): the parent run, the child run id and the linkage are all
+projections of the intent, so taking them as parameters would make "an intent
+and a child id that disagree" representable, and being exactly-once for the
+child the intent names is the whole job. And the persisted-intent **shape**
+check is core's `isInlineLaunchIntentWithoutParentEntry`, not a CLI copy — core
+drives it from a field-guard map keyed by
+`keyof InlineLaunchIntentWithoutParentEntry`, so the runtime check cannot drift
+from the type, a property a hand-rolled `&&` chain in the CLI would have lost
+the first time the intent grew a field. What the module decides for itself is
+the comparison core cannot make: whether the intent that validated names _this_
+launch.
 
 Three things the fold demands here. Every refusal is decided **ahead of** the
 latch write, because `inlineLaunchIntentActor` carries `started` forward into

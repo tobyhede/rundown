@@ -125,6 +125,8 @@ killall
 landlock
 landrun
 lastaction
+latchable
+launchable
 lcov
 licence
 lifecycles
