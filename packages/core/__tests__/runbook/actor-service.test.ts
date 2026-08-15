@@ -118,6 +118,17 @@ const ARTIFACT_RECORD = {
   timestamp: '2026-05-07T00:00:00.000Z',
 } satisfies ArtifactRecord;
 
+/**
+ * The inline-launch latch: the instant a launch was taken AND the process that
+ * took it, persisted as one value so a later observer can ask whether the owner
+ * is still running.
+ */
+const INLINE_LATCH = {
+  at: '2026-05-30T00:00:01.000Z',
+  ownerPid: 4242,
+  ownerStartId: 'start-id-4242',
+} as const;
+
 describe('RunbookActorService', () => {
   let testDir: string;
   let manager: RunbookStateManager;
@@ -1239,7 +1250,7 @@ echo ok
         parentStepId: '1',
         parentFrameKey: buildFrameKey('1'),
         childRunId: assertRunId('rd_dddddddddddddddddddddddddddddddd'),
-        startedAt: '2026-05-30T00:00:01.000Z',
+        started: INLINE_LATCH,
       });
 
       if (!result) throw new Error('expected sendAndSync result');
@@ -1247,7 +1258,7 @@ echo ok
       expect((await manager.load(state.id))?.substepStates).toEqual(before);
     });
 
-    it('persists startedAt without consuming inline launch intent through sendAndSync', async () => {
+    it('persists the launch latch without consuming inline launch intent through sendAndSync', async () => {
       const frameKey = buildFrameKey('1');
       const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
       const steps = createRunbook(`# Parent
@@ -1292,7 +1303,7 @@ echo ok
         parentStepId: '1',
         parentFrameKey: frameKey,
         childRunId,
-        startedAt: '2026-05-30T00:00:01.000Z',
+        started: INLINE_LATCH,
       });
 
       if (!result) throw new Error('expected sendAndSync result');
@@ -1312,7 +1323,7 @@ echo ok
           frameKey: '1|',
           inline: expect.objectContaining({
             childRunId,
-            startedAt: '2026-05-30T00:00:01.000Z',
+            started: INLINE_LATCH,
           }),
         }),
       );

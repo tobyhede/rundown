@@ -16,7 +16,7 @@ The decision now happens in an atomic compare-and-latch — one prior
 `RunbookStateManager.mutateStateReturning` cycle that, against the exact version
 it commits onto, refuses an ended parent, stands down on a superseded intent,
 refuses a child whose parent linkage does not match, reports an already-latched
-launch, or commits `INLINE_CHILD_STARTED` and wins. `inline.startedAt` is the
+launch, or commits `INLINE_CHILD_STARTED` and wins. `inline.started` is the
 latch, and only the winner resolves the runbook, prepares it, and creates the
 run. An observer that finds the latch taken with no child yet reports `waiting`,
 the same answer it gives for a superseded intent.
@@ -29,18 +29,18 @@ the transition is internal, no state is entered or exited, no actor is invoked,
 and entry-time producer ARTIFACTS resolution cannot fire.
 
 Two behaviours are deliberately preserved. Every refusal is decided ahead of the
-latch write, because the machine's `inlineLaunchIntentActor` carries `startedAt`
+latch write, because the machine's `inlineLaunchIntentActor` carries `started`
 forward into the next intent it prepares for the same substep — a start recorded
 for a refused launch would make every later re-entry of that frame report an
 already-started launch. And `INLINE_LAUNCH_CONSUMED` still fires after the child
 exists, because the one-shot intent surviving that long is what lets an
 interrupted launch be re-observed and finished.
 
-One failure moves. A process that dies between the latch and the create leaves
-the launch latched with no child; a later observer reports `waiting` rather than
-relaunching, and the recovery is to finish, stop, or prune the parent. The
-previous ordering recovered that window automatically and paid for it with the
-duplicate insert.
+One failure moves: a process that dies between the latch and the create leaves
+the launch latched with no child, where the previous ordering recovered that
+window automatically and paid for it with the duplicate insert. The latch record
+names its owner so that window is recoverable too — see the separate note on
+reclaiming a latch whose owner is gone, which ships in this same release.
 
 The `DelegationLock` acquisition is removed rather than replaced, taking a
 `DELEGATION_LOCK_TIMEOUT` (RD-810) failure off the launch path with it — a

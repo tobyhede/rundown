@@ -6,6 +6,7 @@ import type {
   ErrorCodeKey,
   ExecutionEventEmitter,
   FrameKey,
+  InlineLaunchStart,
   InlineLinkage,
   ParentLinkage,
   ReleaseRunbookResult,
@@ -294,6 +295,13 @@ const asSteps = (s: readonly LooseStep[]): ResolvedStepType[] => s as unknown as
 // The third, `deriveActiveEntry(..., true)`, is gone with the projection it
 // belonged to: the machine owns the entry bump (#680), so the CLI no longer
 // projects one.
+
+/**
+ * A pid that can never be alive: above every platform's pid_max (Linux 4194304,
+ * macOS 99998), so `kill(pid, 0)` is always ESRCH. The same constant is used by
+ * core's process-identity, lease and file-lock suites.
+ */
+const DEAD_PID = 999999999;
 
 describe('runExecutionLoop', () => {
   let mockManager: MockManagerLike;
@@ -3237,7 +3245,7 @@ describe('runExecutionLoop', () => {
             contextSnapshot: inlineLaunch.contextSnapshot,
             childRunId,
             createdAt: '2026-05-30T00:00:00.000Z',
-            startedAt: null,
+            started: null,
           },
         },
       ],
@@ -3312,7 +3320,7 @@ describe('runExecutionLoop', () => {
     expect(mockActorService.observeExecutionUnitEntry).toHaveBeenCalledTimes(1);
   });
 
-  it('repairs existing inline child startedAt, activates child, then consumes intent', async () => {
+  it("repairs an existing inline child's missing latch, activates child, then consumes intent", async () => {
     const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
     const inlineLaunch = {
       parentRunId: runbookId,
@@ -3369,7 +3377,7 @@ describe('runExecutionLoop', () => {
             contextSnapshot: inlineLaunch.contextSnapshot,
             childRunId,
             createdAt: '2026-05-30T00:00:00.000Z',
-            startedAt: null,
+            started: null,
           },
         },
       ],
@@ -3489,7 +3497,7 @@ describe('runExecutionLoop', () => {
       },
     ];
     const parentWith = (
-      startedAt: string | null,
+      started: InlineLaunchStart | null,
       intent: unknown = inlineLaunch,
     ): Record<string, unknown> =>
       makeLoopState('1', {
@@ -3508,7 +3516,7 @@ describe('runExecutionLoop', () => {
               contextSnapshot: inlineLaunch.contextSnapshot,
               childRunId,
               createdAt: '2026-05-30T00:00:00.000Z',
-              startedAt,
+              started,
             },
           },
         ],
@@ -3519,7 +3527,7 @@ describe('runExecutionLoop', () => {
     // below reads it fresh, so a commit by one observer is visible to the other
     // — which is the whole point of the interleave.
     let parent = parentWith(null);
-    let latchedAt: string | null = null;
+    let latched: InlineLaunchStart | null = null;
     mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
     mockManager.mutateStateReturning = mockFn<MutateStateReturningSignature>().mockImplementation(
       async (_id, build) => {
@@ -3531,13 +3539,21 @@ describe('runExecutionLoop', () => {
     // The machine events this path raises, applied to the shared row exactly as
     // the real `sendAndSync` / `prepareActorMutation` pair would.
     mockActorService.sendAndSync.mockImplementation(
-      async (_id: string, _steps: unknown, event: { type: string; startedAt?: string }) => {
+      async (
+        _id: string,
+        _steps: unknown,
+        event: { type: string; started?: InlineLaunchStart },
+      ) => {
         if (event.type === 'INLINE_CHILD_STARTED') {
-          latchedAt = event.startedAt ?? '2026-05-30T00:00:01.000Z';
-          parent = parentWith(latchedAt);
+          // The contender must read back the winner's OWN latch record, owner
+          // and all: both observers are this process here, so the liveness probe
+          // the contender runs finds a live owner and it stands down. A canned
+          // record would decide that question in the fixture instead.
+          latched = event.started ?? null;
+          parent = parentWith(latched);
         }
         if (event.type === 'INLINE_LAUNCH_CONSUMED') {
-          parent = parentWith(latchedAt, undefined);
+          parent = parentWith(latched, undefined);
         }
         return { state: parent, snapshot: {} };
       },
@@ -3566,7 +3582,9 @@ describe('runExecutionLoop', () => {
         mockManager.cwd,
         false,
         asEmitter(mockEmitter),
-        { output: { executionEvent: jest.fn() } as never },
+        // `warning` is part of the double because the contender stands down
+        // through the arm that names the process holding the launch.
+        { output: { executionEvent: jest.fn(), warning: jest.fn() } as never },
       );
 
     let injected = false;
@@ -3653,7 +3671,7 @@ describe('runExecutionLoop', () => {
       },
     ];
     const parentWith = (
-      startedAt: string | null = null,
+      started: InlineLaunchStart | null = null,
       overrides: Record<string, unknown> = {},
     ): Record<string, unknown> =>
       makeLoopState('1', {
@@ -3672,13 +3690,36 @@ describe('runExecutionLoop', () => {
               contextSnapshot,
               childRunId,
               createdAt: '2026-05-30T00:00:00.000Z',
-              startedAt,
+              started,
             },
           },
         ],
         snapshot: { context: { inlineLaunchIntent: inlineLaunch } },
         ...overrides,
       });
+
+    /**
+     * A latch held by a process that is definitely running: this one.
+     *
+     * Built through the production recorder rather than by hand, so the recorded
+     * start id is the one THIS host reads and the liveness probe cannot answer
+     * "dead" on a mismatch the fixture invented.
+     */
+    const heldByThisProcess = (): InlineLaunchStart =>
+      actualCore.recordInlineLaunchStart('2026-05-30T00:00:01.000Z');
+
+    /**
+     * A latch left behind by a process that is provably gone.
+     *
+     * `DEAD_PID` is above every platform's pid_max (Linux 4194304, macOS 99998),
+     * so `kill(pid, 0)` is always ESRCH — unlike a spawned-and-reaped pid, which
+     * is only dead until the OS recycles it.
+     */
+    const heldByDeadProcess = (): InlineLaunchStart => ({
+      at: '2026-05-30T00:00:01.000Z',
+      ownerPid: DEAD_PID,
+      ownerStartId: null,
+    });
 
     /**
      * Linkage a persisted inline child carries when it belongs to this launch.
@@ -3729,6 +3770,19 @@ describe('runExecutionLoop', () => {
       },
     ];
 
+    /**
+     * The launch path's operator channel, which two arms below write to.
+     *
+     * A shared double rather than a per-call literal: the diagnostics are the
+     * observable difference between "stood down because someone else owns this"
+     * and "took over a launch whose owner died", and both otherwise leave the
+     * same trace.
+     */
+    const mockOutput = {
+      executionEvent: mockFn<(event: unknown) => void>(),
+      warning: mockFn<(text: string) => void>(),
+    };
+
     const driveLoop = () =>
       runExecutionLoop(
         asManager(mockManager),
@@ -3737,7 +3791,7 @@ describe('runExecutionLoop', () => {
         mockManager.cwd,
         false,
         asEmitter(mockEmitter),
-        { output: { executionEvent: jest.fn() } as never },
+        { output: mockOutput as never },
       );
 
     /**
@@ -3761,6 +3815,10 @@ describe('runExecutionLoop', () => {
 
     beforeEach(() => {
       latchOutcomes.length = 0;
+      // Both halves of the shared double, so no assertion on either can depend
+      // on which sibling test ran first.
+      mockOutput.warning.mockClear();
+      mockOutput.executionEvent.mockClear();
       captureLatch();
       mockActorService.observeExecutionUnitEntry.mockResolvedValue(stepEnteredWithInlineLaunch());
       // Armed by default so that a refusal arm broken by a future edit fails on
@@ -3789,7 +3847,7 @@ describe('runExecutionLoop', () => {
         const result = await driveLoop();
 
         expect(result).toBe('stopped');
-        // Refused, and refused before the latch write: a spurious `startedAt`
+        // Refused, and refused before the latch write: a spurious `started`
         // would make every later re-entry of this frame report a launch that
         // never happened.
         expect(latchOutcomes).toEqual([{ next: null, value: { kind: 'inactive' } }]);
@@ -3865,7 +3923,7 @@ describe('runExecutionLoop', () => {
         const result = await driveLoop();
 
         expect(result).toBe('stopped');
-        // The parent's `startedAt` is null, so an absent linkage check would have
+        // The parent's `started` is null, so an absent linkage check would have
         // reached `won` and written the latch. `next: null` is what proves the
         // refusal is decided ahead of the write, and the untouched `sendAndSync`
         // is what proves the parent was not advanced.
@@ -3902,13 +3960,13 @@ describe('runExecutionLoop', () => {
       const parent = parentWith();
       mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
       // Stamps the state from the EVENT rather than returning a canned row, so
-      // the committed state below carries the `startedAt` the latch actually
-      // sent. A fixed row would make the identity assertion hold for any stamp
+      // the committed state below carries the `started` record the latch actually
+      // sent. A fixed row would make the identity assertion hold for any record
       // whatsoever, including one unrelated to the event — pass-through proved,
       // content unchecked.
       mockActorService.sendAndSync.mockImplementation(
-        async (_id: string, _steps: unknown, event: { startedAt?: string }) => ({
-          state: parentWith(event.startedAt ?? null),
+        async (_id: string, _steps: unknown, event: { started?: InlineLaunchStart }) => ({
+          state: parentWith(event.started ?? null),
           snapshot: {},
         }),
       );
@@ -3918,7 +3976,15 @@ describe('runExecutionLoop', () => {
       const after = Date.now();
 
       expect(latchOutcomes).toHaveLength(1);
-      expect(latchOutcomes[0]?.value).toEqual({ kind: 'won', existingChild: null });
+      // `reclaimedFrom: null` is the assertion that this launch took a FREE
+      // latch. The same arm carries a pid when it took one over from a dead
+      // owner, and the two must not be confused: only the second reports a
+      // reclamation to the operator.
+      expect(latchOutcomes[0]?.value).toEqual({
+        kind: 'won',
+        existingChild: null,
+        reclaimedFrom: null,
+      });
       expect(mockActorService.sendAndSync).toHaveBeenCalledWith(
         runbookId,
         inlineSteps,
@@ -3930,22 +3996,31 @@ describe('runExecutionLoop', () => {
         }),
       );
       // The durable record itself, and the one field of this event whose VALUE
-      // nothing else constrains: the type requires a `string`, and
-      // `parentInlineStartedAtMissing` only compares it against `null`, so an
-      // empty, malformed or stale stamp persists into
-      // `substepStates[].inline.startedAt` and out through status output with
-      // exactly-once still intact. Pinned as a full ISO instant AND as a reading
-      // of this run's clock — a shape check alone accepts `new Date(0)`.
-      const sent = mockActorService.sendAndSync.mock.calls[0]?.[2] as { startedAt: string };
-      expect(sent.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
-      expect(Date.parse(sent.startedAt)).toBeGreaterThanOrEqual(before);
-      expect(Date.parse(sent.startedAt)).toBeLessThanOrEqual(after);
+      // nothing else constrains: the type requires a `string`, and the
+      // classification only asks whether the record is present, so an empty,
+      // malformed or stale stamp persists into `substepStates[].inline.started`
+      // with exactly-once still intact. Pinned as a full ISO instant AND as a
+      // reading of this run's clock — a shape check alone accepts `new Date(0)`.
+      const sent = mockActorService.sendAndSync.mock.calls[0]?.[2] as {
+        started: InlineLaunchStart;
+      };
+      expect(sent.started.at).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      expect(Date.parse(sent.started.at)).toBeGreaterThanOrEqual(before);
+      expect(Date.parse(sent.started.at)).toBeLessThanOrEqual(after);
+      // The launcher records ITSELF as the owner. That is what makes the record
+      // reclaimable later: a record naming any other process would either stall
+      // this launch forever or hand it to a second observer while it runs.
+      expect(sent.started).toEqual({
+        at: sent.started.at,
+        ownerPid: process.pid,
+        ownerStartId: actualCore.recordInlineLaunchStart(sent.started.at).ownerStartId,
+      });
       // The one arm that writes, and it commits the derived state verbatim, so
-      // the stamp the machine folded in is the stamp that reaches the store.
+      // the record the machine folded in is the record that reaches the store.
       const committed = latchOutcomes[0]?.next as {
-        substepStates: { inline: { startedAt: string } }[];
+        substepStates: { inline: { started: InlineLaunchStart } }[];
       } | null;
-      expect(committed?.substepStates[0]?.inline.startedAt).toBe(sent.startedAt);
+      expect(committed?.substepStates[0]?.inline.started).toEqual(sent.started);
       // Entered the launch span exactly once; the ref resolution then fails, so
       // this stops without creating a child.
       expect(mockedResolveRunbookRef).toHaveBeenCalledTimes(1);
@@ -3974,24 +4049,289 @@ describe('runExecutionLoop', () => {
       expect(result).toBe('waiting');
     });
 
-    it('stands down as already-latched when the stamp is present but the child is not', async () => {
-      // Another observer is inside the launch span right now: it wrote the stamp
-      // and has not yet reached `manager.create`. This is the state where the
-      // two stand-down arms are indistinguishable downstream — both answer
-      // `waiting` with a null child — so the discriminant is the whole assertion.
-      const parent = parentWith('2026-05-30T00:00:01.000Z');
+    it('stands down as already-latched when a LIVE owner holds the latch and the child is not there yet', async () => {
+      // Another observer is inside the launch span right now: it wrote the latch
+      // and has not yet reached `manager.create`. Absence of the child run is
+      // therefore NOT evidence its owner died — the two states are identical on
+      // disk — which is why the owner's liveness, and nothing else, decides this.
+      const parent = parentWith(heldByThisProcess());
       mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
 
       const result = await driveLoop();
 
       expect(latchOutcomes).toEqual([
-        { next: null, value: { kind: 'already-latched', existingChild: null } },
+        { next: null, value: { kind: 'already-latched', ownerPid: process.pid } },
       ]);
-      // Stood down without re-writing the stamp it found, and without entering
+      // Stood down without re-writing the latch it found, and without entering
       // the span the other observer owns — one `manager.create` for this intent.
       expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
       expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
       expect(result).toBe('waiting');
+      // The wait is named rather than opaque: the operator is told which process
+      // holds the launch, so a launch that never finishes is diagnosable.
+      expect(mockOutput.warning).toHaveBeenCalledWith(
+        `Inline child ${childRunId} is already being launched by process ${String(process.pid)}. Re-run this command once that launch finishes.`,
+      );
+    });
+
+    // The same live owner, one moment later: it has reached `manager.create`, so
+    // the child now exists. That must not change the answer. Finishing another
+    // process's launch is not this observer's to do — activating the child would
+    // push a run its owner is about to execute onto THIS session, consume the
+    // one-shot intent out from under it, and rotate the bearer it still holds.
+    // The dead-owner case is what the adoption branch is for, and it arrives
+    // through `won` after reclamation, not through this arm.
+    it('stands down without adopting the child a LIVE owner has already created', async () => {
+      const parent = parentWith(heldByThisProcess());
+      const existingChild = makeLoopState('1', {
+        id: childRunId,
+        lifecycle: 'running',
+        parentLinkage: matchingChildLinkage,
+      });
+      mockManager.load.mockImplementation(async (id: string) => {
+        if (id === runbookId) return parent;
+        return id === childRunId ? existingChild : null;
+      });
+
+      const result = await driveLoop();
+
+      // The arm carries no child at all, which is what makes the adoption
+      // unreachable rather than merely unreached.
+      expect(latchOutcomes).toEqual([
+        { next: null, value: { kind: 'already-latched', ownerPid: process.pid } },
+      ]);
+      expect(result).toBe('waiting');
+      // The three things adoption would have done to a run this observer does
+      // not own, none of which are undone by standing down afterwards.
+      expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
+      expect(mockSessionService.adoptRunControlClaim).not.toHaveBeenCalled();
+      expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
+    });
+
+    // The property the compare-and-latch dropped when it replaced the file lock,
+    // which reclaimed a crashed holder through exactly this check. Without it
+    // the state staged here — latched, no child, owner gone — answers `waiting`
+    // on every later observation, forever, with no diagnostic naming why.
+    it('reclaims a latch whose owner is gone and enters the launch span', async () => {
+      const parent = parentWith(heldByDeadProcess());
+      mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
+      mockActorService.sendAndSync.mockImplementation(
+        async (_id: string, _steps: unknown, event: { started?: InlineLaunchStart }) => ({
+          state: parentWith(event.started ?? null),
+          snapshot: {},
+        }),
+      );
+
+      const result = await driveLoop();
+
+      // Reclaimed, and the arm SAYS so: `won` alone would not distinguish taking
+      // a free latch from taking one over, and only the second is worth telling
+      // the operator about.
+      expect(latchOutcomes).toHaveLength(1);
+      expect(latchOutcomes[0]?.value).toEqual({
+        kind: 'won',
+        existingChild: null,
+        reclaimedFrom: DEAD_PID,
+      });
+      // The reclaiming observer records ITSELF as the new owner. Leaving the dead
+      // owner in place would let a third observer reclaim the launch this one is
+      // now performing — the duplicate `manager.create` the latch exists to
+      // prevent, reintroduced by the recovery.
+      const sent = mockActorService.sendAndSync.mock.calls[0]?.[2] as {
+        readonly type: string;
+        readonly started: InlineLaunchStart;
+      };
+      expect(sent.type).toBe('INLINE_CHILD_STARTED');
+      expect(sent.started.ownerPid).toBe(process.pid);
+      // Entered the launch span, which is the whole point: the stranded launch
+      // is performed rather than waited on. The default ref resolution then
+      // fails, so this stops without creating a child.
+      expect(mockedResolveRunbookRef).toHaveBeenCalledTimes(1);
+      expect(result).toBe('stopped');
+      expect(mockOutput.warning).toHaveBeenCalledWith(
+        `Reclaimed the inline launch of ${childRunId} from process ${String(DEAD_PID)}, which is no longer running.`,
+      );
+    });
+
+    // The other half of the crash window: the dead process got as far as
+    // creating the child, then died. The reclaimed launch must be FINISHED —
+    // the child activated, not launched a second time — which is what carrying
+    // `existingChild` on the `won` arm is for. This is the state that separates
+    // reclamation from a fresh launch, and the only arm that reaches the
+    // adoption branch now that a live owner's child is left alone.
+    it('reclaims a dead owner and finishes the child that launch already created', async () => {
+      const parent = parentWith(heldByDeadProcess());
+      const existingChild = {
+        ...makeLoopState('1', {
+          id: childRunId,
+          lifecycle: 'running',
+          parentLinkage: matchingChildLinkage,
+        }),
+        // The adoption branch runs the child's own loop, which compiles it from
+        // its persisted source.
+        runbookSrc: '## 1. Child\nDone',
+      };
+      mockManager.load.mockImplementation(async (id: string) => {
+        if (id === runbookId) return parent;
+        return id === childRunId ? existingChild : null;
+      });
+      // The launch is finished up to the point this test is about, then cut
+      // short at the intent consumption. Running the adopted child's own loop
+      // would re-enter this block's inline-launch observation forever, and the
+      // child's execution is not what the reclamation decides.
+      mockActorService.sendAndSync.mockImplementation(
+        async (_id: string, _steps: unknown, event: { type: string }) => {
+          if (event.type === 'INLINE_LAUNCH_CONSUMED') throw new Error('consume failed');
+          return { state: parent, snapshot: {} };
+        },
+      );
+
+      const result = await driveLoop();
+
+      expect(latchOutcomes).toEqual([
+        expect.objectContaining({
+          value: { kind: 'won', existingChild, reclaimedFrom: DEAD_PID },
+        }),
+      ]);
+      // Finished rather than relaunched: the child the dead process created is
+      // activated, and the launch span is never entered — a second
+      // `manager.create` for this intent is exactly what the latch prevents, and
+      // recovering the latch must not reintroduce it.
+      expect(mockSessionService.pushRunbook).toHaveBeenCalledWith(childRunId);
+      expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
+      expect(result).toBe('stopped');
+      expect(mockOutput.warning).toHaveBeenCalledWith(
+        `Reclaimed the inline launch of ${childRunId} from process ${String(DEAD_PID)}, which is no longer running.`,
+      );
+    });
+
+    // The two states where the parent's substep row does not record THIS launch.
+    // Reading them as `unlatched` is unsound rather than merely imprecise: the
+    // latch is written onto that row, so `updateInlineStarted` is a silent
+    // no-op for the first and throws an untyped `Inline child run mismatch` out
+    // of the compare-and-swap callback for the second. An observer that reported
+    // `won` from either would enter the launch span with nothing latched — and
+    // so would the next one, racing the bare `INSERT INTO runs`.
+    //
+    // The second case names a LIVE owner deliberately: a classifier that
+    // consulted the wrong row's record anyway would answer `held` and stand
+    // down, which is a different wrong answer and must not look like this one.
+    it.each<{
+      readonly name: string;
+      readonly reason: string;
+      readonly message: string;
+      readonly substepStates: readonly unknown[];
+    }>([
+      {
+        name: 'the substep carries no inline metadata',
+        reason: 'no-inline-metadata',
+        message: 'carries no inline child metadata',
+        substepStates: [{ id: '1', frameKey: '1|', status: 'running' }],
+      },
+      {
+        name: 'the recorded inline metadata names a different child run',
+        reason: 'other-child',
+        message: 'records a different inline child',
+        substepStates: [
+          {
+            id: '1',
+            frameKey: '1|',
+            status: 'running',
+            inline: {
+              childRunbookPath: 'child.runbook.md',
+              childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+              contextSnapshot,
+              childRunId: actualCore.assertRunId(`rd_${'9'.repeat(32)}`),
+              createdAt: '2026-05-30T00:00:00.000Z',
+              started: heldByThisProcess(),
+            },
+          },
+        ],
+      },
+    ])(
+      'refuses the launch as unrecorded when $name',
+      async ({ reason, message, substepStates }) => {
+        const parent = parentWith(null, { substepStates });
+        mockManager.load.mockImplementation(async (id: string) =>
+          id === runbookId ? parent : null,
+        );
+
+        const result = await driveLoop();
+
+        expect(latchOutcomes).toEqual([{ next: null, value: { kind: 'unrecorded', reason } }]);
+        // Fails closed: nothing written, and the launch span — the only place a
+        // second `manager.create` could happen — is never entered.
+        expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
+        expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
+        expect(result).toBe('stopped');
+        // Named as inconsistent state with a remedy, not reported as a wait that
+        // would never end.
+        expect(mockEmitter.emit).toHaveBeenCalledWith({
+          type: 'ERROR_OCCURRED',
+          payload: {
+            message: expect.stringContaining(message),
+            code: actualCore.ErrorCodes.LAUNCH_FAILED.code,
+          },
+        });
+      },
+    );
+
+    // A parent with no substep rows at all, which is not the same as a parent
+    // whose row carries no inline: there is nothing to read the latch off, and
+    // the read itself must survive it.
+    it('refuses the launch as unrecorded when the parent carries no substep rows', async () => {
+      const parent = parentWith(null, { substepStates: undefined });
+      mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
+
+      const result = await driveLoop();
+
+      expect(latchOutcomes).toEqual([
+        { next: null, value: { kind: 'unrecorded', reason: 'no-inline-metadata' } },
+      ]);
+      expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
+      expect(result).toBe('stopped');
+    });
+
+    // The latch is read from the intent's OWN substep and frame. Every other
+    // fixture here persists exactly one row, so any lookup that finds a row at
+    // all passes them — this one persists three, and puts the two decoys first.
+    // Both decoys are latched by a live process, so a lookup that matches on the
+    // wrong half of the coordinate reads someone else's launch and stands this
+    // one down.
+    it('reads the latch from the intent coordinate, not from a neighbouring row', async () => {
+      const inlineRow = (id: string, frameKey: string, started: InlineLaunchStart | null) => ({
+        id,
+        frameKey,
+        status: 'running',
+        inline: {
+          childRunbookPath: 'child.runbook.md',
+          childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+          contextSnapshot,
+          childRunId,
+          createdAt: '2026-05-30T00:00:00.000Z',
+          started,
+        },
+      });
+      const parent = parentWith(null, {
+        substepStates: [
+          // Same frame, different substep.
+          inlineRow('9', '1|', heldByThisProcess()),
+          // Same substep, different frame.
+          inlineRow('1', '9|', heldByThisProcess()),
+          // The intent's own coordinate, unlatched.
+          inlineRow('1', '1|', null),
+        ],
+      });
+      mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
+
+      await driveLoop();
+
+      expect(latchOutcomes).toEqual([
+        expect.objectContaining({
+          value: { kind: 'won', existingChild: null, reclaimedFrom: null },
+        }),
+      ]);
+      expect(mockOutput.warning).not.toHaveBeenCalled();
     });
   });
 
@@ -4049,7 +4389,7 @@ describe('runExecutionLoop', () => {
             contextSnapshot: inlineLaunch.contextSnapshot,
             childRunId,
             createdAt: '2026-05-30T00:00:00.000Z',
-            startedAt: null,
+            started: null,
           },
         },
       ],
@@ -4193,7 +4533,12 @@ describe('runExecutionLoop', () => {
             contextSnapshot: inlineLaunch.contextSnapshot,
             childRunId,
             createdAt: '2026-05-30T00:00:00.000Z',
-            startedAt: '2026-05-30T00:00:01.000Z',
+            // The interrupted launch that got as far as creating the child and
+            // never recorded its latch — the state the adoption branch below
+            // exists for. Held unlatched rather than dead-owned so this test
+            // stays about what it is about; reclaiming a dead owner into the
+            // same branch has its own test above.
+            started: null,
           },
         },
       ],
@@ -4229,7 +4574,9 @@ describe('runExecutionLoop', () => {
         },
       },
     ]);
-    mockActorService.sendAndSync.mockResolvedValueOnce({ state: parentState, snapshot: {} });
+    // Twice: the latch write this observer now performs (it took an unlatched
+    // launch), then the intent consumption after the child is activated.
+    mockActorService.sendAndSync.mockResolvedValue({ state: parentState, snapshot: {} });
     mockCompletionService.recordChildCompletion.mockResolvedValueOnce('blocked');
     const output = {
       executionEvent: jest.fn(),
@@ -4311,7 +4658,12 @@ describe('runExecutionLoop', () => {
             contextSnapshot: inlineLaunch.contextSnapshot,
             childRunId,
             createdAt: '2026-05-30T00:00:00.000Z',
-            startedAt: '2026-05-30T00:00:01.000Z',
+            // The interrupted launch that got as far as creating the child and
+            // never recorded its latch — the state the adoption branch below
+            // exists for. Held unlatched rather than dead-owned so this test
+            // stays about what it is about; reclaiming a dead owner into the
+            // same branch has its own test above.
+            started: null,
           },
         },
       ],
@@ -4332,6 +4684,8 @@ describe('runExecutionLoop', () => {
       .mockResolvedValueOnce(existingChild);
     mockSessionService.getActive.mockResolvedValueOnce({ id: runbookId });
     mockSessionService.pushRunbook.mockRejectedValueOnce(new Error('session push failed'));
+    // The latch write, which precedes the activation this test fails.
+    mockActorService.sendAndSync.mockResolvedValue({ state: parentState, snapshot: {} });
     mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
       {
         kind: 'execution_observation',

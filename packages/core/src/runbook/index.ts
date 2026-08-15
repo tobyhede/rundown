@@ -295,6 +295,15 @@ export {
   type TerminalUpwardPropagationResult,
 } from './inline-parent-advance.js';
 export {
+  classifyInlineLaunchOwnership,
+  recordInlineLaunchStart,
+  type InlineLaunchOwnership,
+} from './inline-launch-start.js';
+// The DI seam of the two above. Type-only, and exported so their signatures are
+// nameable by the CLI that calls them; the liveness readers behind it stay
+// internal to core.
+export type { ProcessIdentity } from './process-identity.js';
+export {
   RunbookLifecycleCommandService,
   type AttributedTerminalObservation,
   type DelegationIssuanceInput,

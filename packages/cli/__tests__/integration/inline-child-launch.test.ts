@@ -1,7 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { patchPersistedRunState } from '@rundown-org/core/testing/session-fixtures';
+import {
+  deletePersistedRunState,
+  patchPersistedRunState,
+} from '@rundown-org/core/testing/session-fixtures';
+import { recordInlineLaunchStart, type InlineLaunchStart } from '@rundown-org/core';
 import {
   createTestWorkspace,
   parseConcatenatedJson,
@@ -240,7 +244,11 @@ Child prompt.
         frameKey: expect.any(String),
         inline: expect.objectContaining({
           childRunId: expect.stringMatching(/^rd_[a-f0-9]{32}$/),
-          startedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
+          // Released, not retained: the latch is held for the launch span and
+          // dropped when the intent is consumed. A completed launch that kept
+          // it would read as one still in progress on every later visit to this
+          // frame.
+          started: null,
         }),
       }),
     );
@@ -253,7 +261,7 @@ Child prompt.
   });
 
   // Stage the state a process that died mid-inline-launch leaves behind: the
-  // child run exists, but the parent never recorded `startedAt` and never
+  // child run exists, but the parent never recorded the launch latch and never
   // consumed the launch intent, and the session stack was never advanced onto
   // the child. Written through the persisted-state fixture seam (state lives in
   // SQLite — a `writeFile` into `.rundown/runs/` is read by nothing).
@@ -314,7 +322,7 @@ Child prompt.
           current.substepStates as { inline?: { childRunId?: string } }[] | undefined
         )?.map((entry) =>
           entry.inline?.childRunId === childRunId
-            ? { ...entry, inline: { ...entry.inline, startedAt: null } }
+            ? { ...entry, inline: { ...entry.inline, started: null } }
             : entry,
         ),
         snapshot: {
@@ -326,6 +334,184 @@ Child prompt.
 
     return { parentRunId, childRunId };
   }
+
+  /**
+   * Stage the OTHER thing a process that died mid-inline-launch can leave: the
+   * latch committed, and no child run at all.
+   *
+   * This is the window the compare-and-latch opened by writing `inline.started`
+   * before `manager.create`, and it is indistinguishable on disk from a live
+   * observer that has latched and is still resolving the child runbook — which
+   * is exactly why the recorded owner's liveness, and not the child's absence,
+   * is what decides whether it may be taken over.
+   *
+   * Built by letting the real launch run and then removing what the crash would
+   * have prevented, so everything else about the parent is what production
+   * wrote.
+   *
+   * @param started - The latch record to leave behind, naming its owner.
+   * @returns The staged parent and the child run id the intent still names.
+   */
+  async function stageStrandedInlineLaunch(
+    started: InlineLaunchStart,
+  ): Promise<{ readonly parentRunId: string; readonly childRunId: string }> {
+    const { parentRunId, childRunId } = await stageInterruptedInlineLaunch();
+    await deletePersistedRunState(workspace.cwd, childRunId);
+    await patchPersistedRunState(workspace.cwd, parentRunId, (current) => ({
+      ...current,
+      substepStates: (
+        current.substepStates as { inline?: { childRunId?: string } }[] | undefined
+      )?.map((entry) =>
+        entry.inline?.childRunId === childRunId
+          ? { ...entry, inline: { ...entry.inline, started } }
+          : entry,
+      ),
+    }));
+    return { parentRunId, childRunId };
+  }
+
+  // The recovery the file lock had and the latch that replaced it did not. The
+  // lock reclaimed a crashed holder through a PID-aware staleness check; the
+  // latch, until this, had no notion of an owner at all, so a launch stranded
+  // here reported `waiting` on every later observation — forever, with no
+  // diagnostic naming the condition.
+  it('reclaims an inline launch latched by a dead process and performs it', async () => {
+    await writeInlineParentAndChild();
+    // Above every platform's pid_max (Linux 4194304, macOS 99998), so this owner
+    // is dead on any host — unlike a spawned-and-reaped pid, which is only dead
+    // until the OS recycles it. Reclamation is a liveness decision and NEVER an
+    // age-based one, so the recorded instant is deliberately recent.
+    const { parentRunId, childRunId } = await stageStrandedInlineLaunch({
+      at: new Date().toISOString(),
+      ownerPid: 999999999,
+      ownerStartId: null,
+    });
+
+    // Frame re-entry is the gesture that re-observes a stranded launch. A bare
+    // transition cannot: core's reactivation seam resumes a RUNNING child, and
+    // here there is none, so `pass` would fall through and pass the substep. Only
+    // re-entering the execution unit re-projects the intent, which is the
+    // observation the latch is consulted on.
+    const recover = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
+    expect(recover.exitCode).toBe(0);
+
+    // The stranded launch was performed: the child the intent names now exists,
+    // is running, and is the active run.
+    expect((await readSession(workspace)).active).toBe(childRunId);
+    expect(await readRunbookState(workspace, childRunId)).toEqual(
+      expect.objectContaining({ id: childRunId, lifecycle: 'running' }),
+    );
+
+    // The latch now names THIS process. A reclamation that left the dead owner
+    // in place would leave the launch reclaimable while it runs, which is the
+    // duplicate `manager.create` the latch exists to prevent — reintroduced by
+    // the recovery itself.
+    const parentAfter = await readRunbookState(workspace, parentRunId);
+    const inlineAfter = parentAfter?.substepStates?.find((entry) => entry.inline)?.inline;
+    // The reclaimed launch ran to completion, so the latch it took is released
+    // again. That THIS process was recorded as the new owner while the span ran
+    // is pinned on the event in the unit suite, where the mid-flight state is
+    // observable; here the durable outcome is what matters, and a latch left
+    // behind would strand the next visit to this frame.
+    expect(inlineAfter?.started).toBeNull();
+
+    // Recovery is reported rather than silent, and on stderr so JSON stdout
+    // stays a clean event stream.
+    expect(recover.stderr).toContain(
+      `Reclaimed the inline launch of ${childRunId} from process 999999999`,
+    );
+  });
+
+  // The safety half, and the reason absence of the child run cannot be the
+  // signal: this state is byte-identical to the reclaimable one apart from who
+  // owns it. A false reclamation here would send a second process into a launch
+  // span the first is still executing and race the store's bare
+  // `INSERT INTO runs` on the intent's fixed child id.
+  it('never reclaims an inline launch whose owner is alive, and names the wait', async () => {
+    await writeInlineParentAndChild();
+    // Recorded through production's own recorder for the process actually
+    // running this test, so the start id is one this host can read back and the
+    // liveness probe cannot answer "dead" on a mismatch the fixture invented.
+    const started = recordInlineLaunchStart(new Date().toISOString());
+    const { parentRunId, childRunId } = await stageStrandedInlineLaunch(started);
+
+    const observe = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
+    expect(observe.exitCode).toBe(0);
+
+    // Stood down: no child run was created, and the session was not advanced
+    // onto one. The launch belongs to the live owner.
+    expect(await readRunbookState(workspace, childRunId)).toBeNull();
+    expect((await readSession(workspace)).active).toBe(parentRunId);
+
+    // And the latch it found is the latch it left — an observer that rewrote it
+    // would be claiming a launch it is not performing.
+    const parentAfter = await readRunbookState(workspace, parentRunId);
+    expect(parentAfter?.substepStates?.find((entry) => entry.inline)?.inline?.started).toEqual(
+      started,
+    );
+
+    expect(observe.stderr).toContain(
+      `Inline child ${childRunId} is already being launched by process ${String(process.pid)}`,
+    );
+  });
+
+  // The counterpart, and the reason the latch is RELEASED when the launch is
+  // consumed rather than left as a record of a launch that happened. A latch
+  // outlives its span only if nothing clears it, and a retained one names a pid
+  // that is very much alive — this process — so a later visit to the same frame
+  // from the same process would classify its own completed launch as `held` and
+  // stand down against itself, forever, with a diagnostic naming its own pid.
+  // Nothing about the state distinguishes that from a genuine concurrent
+  // observer, so the fix is at the other end: a launch that finishes holds
+  // nothing.
+  it('re-enters a frame in the same process after a completed launch instead of standing down', async () => {
+    await writeInlineParentAndChild();
+    const start = await runCliInProcess(
+      'run runbooks/parent.runbook.md --input PlanPath=/placeholder/input.txt',
+      workspace,
+    );
+    expect(start.exitCode).toBe(0);
+    const parentRunId = (await readSession(workspace)).active;
+    if (!parentRunId) throw new Error('expected active parent runbook');
+
+    // A complete, ordinary launch: this process latches, creates the child, runs
+    // it to completion, and the parent advances past the frame.
+    expect(
+      (await runCliInProcess(await withRunTarget(['pass'], workspace), workspace)).exitCode,
+    ).toBe(0);
+    const launched = await readRunbookState(workspace, parentRunId);
+    const firstChildRunId = launched?.substepStates?.find((entry) => entry.inline)?.inline
+      ?.childRunId;
+    if (typeof firstChildRunId !== 'string') throw new Error('expected inline child run id');
+    expect(launched?.substepStates?.find((entry) => entry.inline)?.inline?.started).toBeNull();
+    expect(
+      (await runCliInProcess(await withRunTarget(['pass'], workspace), workspace)).exitCode,
+    ).toBe(0);
+
+    // Remove the finished child so the re-entry is decided by the latch rather
+    // than refused earlier as a superseded-entry child — that refusal has its
+    // own test, and its stated remedy is exactly this removal.
+    await deletePersistedRunState(workspace.cwd, firstChildRunId);
+
+    const reenter = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
+
+    // Launched again rather than blocked. `runCliInProcess` shares this test's
+    // pid, so a retained latch would name a live owner and this would be
+    // `waiting` with `already being launched by process <this pid>`.
+    expect(reenter.exitCode).toBe(0);
+    expect(reenter.stderr).not.toContain('already being launched by process');
+    const relaunched = await readRunbookState(workspace, parentRunId);
+    const relaunchedChildId = relaunched?.substepStates?.find((entry) => entry.inline)?.inline
+      ?.childRunId;
+    expect((await readSession(workspace)).active).toBe(relaunchedChildId);
+    expect(await readRunbookState(workspace, String(relaunchedChildId))).toEqual(
+      expect.objectContaining({ lifecycle: 'running' }),
+    );
+    // Nothing was reclaimed: the previous launch finished and released, so this
+    // one took a free latch. A "reclaimed from process N" here would be
+    // reporting a crash that never happened.
+    expect(reenter.stderr).not.toContain('Reclaimed the inline launch');
+  });
 
   // Crash recovery is a RESUME, not a frame re-entry. The gesture is the bare
   // transition core already routes through its inline-child reactivation seam
@@ -368,7 +554,7 @@ Child prompt.
   });
 
   // The resume does not merely re-activate the child: it FINISHES the launch the
-  // dead process abandoned. Recording `startedAt`, consuming the one-shot intent
+  // dead process abandoned. Recording the launch latch, consuming the one-shot intent
   // and re-establishing the child's own run-control authority all live in
   // `launchInlineChildFromIntent`'s existing-child branch, which nothing reaches
   // unless the parent's own execution loop runs. Leaving the reactivation seam
@@ -400,7 +586,9 @@ Child prompt.
     const parentAfter = await readRunbookState(workspace, parentRunId);
     const inlineAfter = parentAfter?.substepStates?.find((entry) => entry.inline)?.inline;
     expect(inlineAfter?.childRunId).toBe(childRunId);
-    expect(inlineAfter?.startedAt).toEqual(expect.any(String));
+    // Took the latch to finish the interrupted launch, then released it with the
+    // intent — the launch is over, and the row says so.
+    expect(inlineAfter?.started).toBeNull();
     expect(
       (parentAfter?.snapshot as { context?: { inlineLaunchIntent?: unknown } } | undefined)?.context
         ?.inlineLaunchIntent,
@@ -441,7 +629,7 @@ Child prompt.
     if (typeof childRunId !== 'string') throw new Error('expected inline child run id');
 
     // Rewind the session so the next bare transition targets the parent, whose
-    // launch is complete: `startedAt` recorded and the intent already consumed.
+    // launch is complete: the latch recorded and the intent already consumed.
     const sessionBeforeRewind = await readSession(workspace);
     await writeSession(workspace, {
       defaultStack: [parentRunId],

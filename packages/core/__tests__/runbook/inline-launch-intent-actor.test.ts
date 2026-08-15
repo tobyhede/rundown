@@ -144,7 +144,7 @@ describe('inlineLaunchIntentActor', () => {
           inline: expect.objectContaining({
             childRunId: `rd_${'c'.repeat(32)}`,
             createdAt: '2026-05-30T00:00:00.000Z',
-            startedAt: null,
+            started: null,
           }),
         }),
       ],
@@ -296,7 +296,10 @@ describe('inlineLaunchIntentActor', () => {
       contextSnapshot: existingContextSnapshot,
       childRunId: brandRunIdForTest(`rd_${'d'.repeat(32)}`),
       createdAt: '2026-05-29T00:00:00.000Z',
-      startedAt: '2026-05-29T00:01:00.000Z',
+      // Carried forward verbatim by the re-projection below: the latch names the
+      // process that owns the launch, and re-deriving the intent must not lose
+      // the owner a later observer checks the liveness of.
+      started: { at: '2026-05-29T00:01:00.000Z', ownerPid: 4242, ownerStartId: 'start-id-4242' },
     };
     const existingSubstep: SubstepState = {
       id: '1',
@@ -334,7 +337,11 @@ describe('inlineLaunchIntentActor', () => {
             childRunId: `rd_${'d'.repeat(32)}`,
             createdAt: '2026-05-29T00:00:00.000Z',
             contextSnapshot: existingContextSnapshot,
-            startedAt: '2026-05-29T00:01:00.000Z',
+            started: {
+              at: '2026-05-29T00:01:00.000Z',
+              ownerPid: 4242,
+              ownerStartId: 'start-id-4242',
+            },
           }),
         }),
       ],

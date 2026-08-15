@@ -180,7 +180,7 @@ export const inlineLaunchIntentActor = fromPromise<
   const createdAt = existing?.inline?.createdAt ?? input.now();
   const contextSnapshot =
     existing?.inline?.contextSnapshot ?? buildContextSnapshot(parentState, input.substepId);
-  const startedAt = existing?.inline?.startedAt ?? null;
+  const started = existing?.inline?.started ?? null;
 
   const inline = {
     childRunbookPath: resolved.path,
@@ -188,7 +188,7 @@ export const inlineLaunchIntentActor = fromPromise<
     contextSnapshot,
     childRunId,
     createdAt,
-    startedAt,
+    started,
   };
 
   const substepStates = upsertSubstepState(

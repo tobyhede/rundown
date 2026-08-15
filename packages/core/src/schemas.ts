@@ -536,6 +536,22 @@ export const StepDelegationSchema = z
   })
   .strict();
 
+/**
+ * Zod schema for the inline-launch latch record.
+ *
+ * `.strict()` because this is the value a liveness decision is made against: an
+ * unrecognised key here is a record written by something other than the latch,
+ * and reclaiming — or refusing to reclaim — on it would be a decision made about
+ * a shape this version does not understand.
+ */
+export const InlineLaunchStartSchema = z
+  .object({
+    at: z.string(),
+    ownerPid: z.number().int().positive(),
+    ownerStartId: z.string().nullable(),
+  })
+  .strict();
+
 /** Zod schema for durable inline child launch metadata attached to a substep. */
 export const StepInlineChildSchema = z.object({
   childRunbookPath: z.string(),
@@ -543,7 +559,7 @@ export const StepInlineChildSchema = z.object({
   contextSnapshot: ContextSnapshotSchema,
   childRunId: RunIdSchema,
   createdAt: z.string(),
-  startedAt: z.string().nullable(),
+  started: InlineLaunchStartSchema.nullable(),
 });
 
 /**
@@ -1175,7 +1191,7 @@ function makeStepInlineChildSchema(projectRoot: string): z.ZodType {
     contextSnapshot: makeContextSnapshotSchema(projectRoot),
     childRunId: RunIdSchema,
     createdAt: z.string(),
-    startedAt: z.string().nullable(),
+    started: InlineLaunchStartSchema.nullable(),
   });
 }
 

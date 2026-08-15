@@ -4091,9 +4091,9 @@ export class RunbookLifecycleCommandService {
   }
 
   // Does the parent still carry the one-shot launch intent that named this
-  // child? Only an interrupted launch does: the launcher records `startedAt` and
-  // consumes the intent in the same continuation, so a launch that ran to
-  // completion leaves neither behind. That makes the surviving intent the exact
+  // child? Only an interrupted launch does: the launcher writes the latch
+  // (`inline.started`) and consumes the intent in the same continuation, so a
+  // launch that ran to completion leaves neither behind. That makes the surviving intent the exact
   // discriminant for "this launch is unfinished", and it is the same value the
   // launch seam re-projects, so the two agree by construction rather than by a
   // second rule about what "interrupted" means.
@@ -4135,8 +4135,9 @@ export class RunbookLifecycleCommandService {
     if (active?.id !== childRunId) {
       await this.#deps.sessionService.pushRunbook(childRunId);
     }
-    // An unfinished launch needs the parent's own loop to finish it: recording
-    // `startedAt`, consuming the intent and re-establishing the child's
+    // An unfinished launch needs the parent's own loop to finish it: taking the
+    // latch — writing `inline.started`, or reclaiming it from an owner that
+    // died holding it — consuming the intent and re-establishing the child's
     // run-control authority are Category-A continuation work the launch seam
     // owns, and nothing else reaches it. A launch that already finished has
     // none of that left to do, so running the loop there would only re-enter an

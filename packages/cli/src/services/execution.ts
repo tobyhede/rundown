@@ -32,6 +32,10 @@ import {
   countNumberedSteps,
   extractDisplayCommand,
   type ExecutionEventEmitter,
+  classifyInlineLaunchOwnership,
+  recordInlineLaunchStart,
+  type InlineLaunchOwnership,
+  type InlineLaunchStart,
   type InlineLaunchIntent,
   type InlineLinkage,
   type ParentLinkage,
@@ -593,14 +597,89 @@ function persistedInlineLaunchIntentMatches(
   );
 }
 
-function parentInlineStartedAtMissing(state: RunbookState, intent: InlineLaunchIntent): boolean {
+/**
+ * What the parent's substep row says about this intent's launch.
+ *
+ * `unrecorded` is NOT a kind of `unlatched`, and conflating the two is a
+ * soundness bug rather than a naming choice. The latch lives on the substep
+ * row's `inline`, and `updateInlineStarted` writes it only when that row records
+ * THIS child: a row with no inline at all makes the write a silent no-op, so an
+ * observer that read it as `unlatched` would report `won`, enter the launch span
+ * and reach `manager.create` with nothing latched — and so would the next
+ * observer, racing the store's bare `INSERT INTO runs`. A row naming a different
+ * child is worse: the machine throws `Inline child run mismatch` out of the
+ * compare-and-swap callback, bypassing every typed refusal.
+ */
+type ParentInlineLatch =
+  /** The substep row does not record this launch; nothing here can be latched. */
+  | { readonly kind: 'unrecorded'; readonly reason: 'no-inline-metadata' | 'other-child' }
+  | InlineLaunchOwnership;
+
+/**
+ * Read the parent's latch for this intent and classify what it says.
+ *
+ * @param state - Parent state the compare-and-swap captured for this attempt.
+ * @param intent - Inline launch intent being latched.
+ * @returns Whether this launch is recorded at all and, if so, who owns its latch.
+ */
+function classifyParentInlineLatch(
+  state: RunbookState,
+  intent: InlineLaunchIntent,
+): ParentInlineLatch {
   const substepState = state.substepStates?.find(
     (entry) => entry.id === intent.parentStepId && entry.frameKey === intent.parentFrameKey,
   );
   const inline = substepState?.inline;
-  if (!inline) return true;
-  if (inline.childRunId !== intent.childRunId) return true;
-  return inline.startedAt === null;
+  if (!inline) return { kind: 'unrecorded', reason: 'no-inline-metadata' };
+  if (inline.childRunId !== intent.childRunId) {
+    return { kind: 'unrecorded', reason: 'other-child' };
+  }
+  return classifyInlineLaunchOwnership(inline.started);
+}
+
+/**
+ * Undo a session activation of an inline child this observer will not execute.
+ *
+ * Core's `#reactivateRunningInlineChild` pushes the child before returning the
+ * parent for this loop to drive, because a running child with matching linkage
+ * is what an interrupted launch looks like — and it is also what a live owner
+ * mid-launch looks like. When the latch says the launch is someone else's, the
+ * push has to come back off, or the session is left targeting a run this process
+ * refuses to touch.
+ *
+ * Best-effort by design: the stand-down is already the outcome, and every
+ * refusal the session can answer with is a reason to leave the stack alone
+ * rather than to fail the turn. Narrowed to the exact child, so a stack that has
+ * moved on is never popped.
+ *
+ * @param sessionService - Session owning the default stack.
+ * @param childRunId - The intent's child, and the only run this may pop.
+ * @returns Nothing; every outcome, including a refused pop, leaves the
+ *   stand-down as the result.
+ */
+async function releaseStoodDownInlineChild(
+  sessionService: SessionService,
+  childRunId: RunId,
+): Promise<void> {
+  try {
+    const active = await sessionService.getActive();
+    if (active?.id !== childRunId) return;
+    const pop = await sessionService.popRunbook();
+    switch (pop.kind) {
+      case 'committed':
+      case 'execution_in_progress':
+      case 'recovery_required':
+        return;
+      default: {
+        const _exhaustive: never = pop;
+        return _exhaustive;
+      }
+    }
+  } catch {
+    // The stand-down stands whatever the session says. A leaked activation is
+    // visible and correctable; turning it into a thrown launch failure is not.
+    return;
+  }
 }
 
 async function propagateInlineChildTerminalResult(args: {
@@ -679,15 +758,47 @@ type InlineLaunchLatch =
       readonly kind: 'linkage-refused';
       readonly mismatch: Exclude<InlineChildLinkageMatch, { kind: 'matched' }>;
     }
-  /** Another observer already latched this exact launch. */
-  | { readonly kind: 'already-latched'; readonly existingChild: RunbookState | null }
+  /**
+   * The parent's substep row does not record this launch, so it cannot be
+   * latched — see {@link ParentInlineLatch} for why launching anyway would
+   * reintroduce the duplicate `INSERT INTO runs` the latch exists to prevent.
+   */
+  | {
+      readonly kind: 'unrecorded';
+      readonly reason: 'no-inline-metadata' | 'other-child';
+    }
+  /**
+   * A LIVE process already latched this exact launch.
+   *
+   * Carries no child, deliberately. Whether the owner has reached
+   * `manager.create` yet does not change the answer — the launch is its owner's
+   * to finish either way — and an `existingChild` here would only invite a
+   * caller to adopt a run another process is executing.
+   */
+  | {
+      readonly kind: 'already-latched';
+      /** Process holding the launch, so the wait can be named rather than opaque. */
+      readonly ownerPid: number;
+    }
   /** This observer latched the launch and owns it. */
-  | { readonly kind: 'won'; readonly existingChild: RunbookState | null };
+  | {
+      readonly kind: 'won';
+      readonly existingChild: RunbookState | null;
+      /**
+       * Pid of the dead owner this launch was taken over from, or null when the
+       * latch was free.
+       *
+       * Carried because the two are not the same event: taking a free latch is
+       * ordinary, while taking one over means a previous process died mid-launch
+       * and the operator should be told so.
+       */
+      readonly reclaimedFrom: number | null;
+    };
 
 /**
  * Latch one inline launch, atomically, before any of it is performed.
  *
- * `inline.startedAt` is the durable "I am launching this child" record, and this
+ * `inline.started` is the durable "I am launching this child" record, and this
  * is the single cycle that writes it. Reading the intent, testing the latch and
  * committing `INLINE_CHILD_STARTED` all happen inside one
  * {@link RunbookStateManager.mutateStateReturning} build callback, so the state
@@ -696,9 +807,17 @@ type InlineLaunchLatch =
  * `manager.create` for the intent's fixed `childRunId` and race the store's bare
  * `INSERT INTO runs`.
  *
+ * The record names its owner, so a latch is only binding while that owner runs.
+ * Committing before the create is what makes the launch exactly-once, and it is
+ * also what strands a launch whose process dies inside the span — the file lock
+ * this replaced recovered that case through PID-aware staleness, and
+ * {@link classifyInlineLaunchOwnership} is where the latch gets it back. A
+ * provably dead owner is taken over; a live one is never touched, whether or not
+ * the child run exists yet.
+ *
  * Every refusal is decided here too, ahead of the latch write, so a refused
  * launch never records a start it did not perform. That is not tidiness: the
- * machine's own `inlineLaunchIntentActor` carries `startedAt` forward into the
+ * machine's own `inlineLaunchIntentActor` carries `started` forward into the
  * next intent it prepares for the same substep, so a spurious latch would make
  * every later re-entry of that frame report an already-started launch.
  *
@@ -708,7 +827,19 @@ type InlineLaunchLatch =
  *
  * @remarks
  * The callback re-runs per attempt (up to 8), so it must be safe to repeat. Its
- * own work is two reads and a derivation. It reaches
+ * own work is three reads and a derivation — the liveness probe is the third.
+ * The probe is a pure read, which is what makes it admissible here, but it is
+ * not uniformly as cheap as the `kill(pid, 0)` it starts with: a LIVE foreign
+ * owner with a recorded start id also costs one `identity.of(pid)`, and on BSD
+ * hosts that is a synchronous `/bin/ps` spawn (2s ceiling) that
+ * {@link ProcessIdentity} deliberately does not memoize for foreign pids. The
+ * repeat exposure is bounded by which arm pays it: `unlatched` never probes,
+ * `reclaimable` on a dead pid short-circuits before the spawn, and `held`
+ * commits nothing — a `null` next ends the cycle with no retry. Only the rare
+ * recycled-pid reclaim (live pid, start ids disagree) can pay it more than once.
+ * The record this observer would write is built ONCE, outside the callback, so a
+ * retried attempt commits the identity the caller reasoned about rather than
+ * re-probing the host per attempt. It reaches
  * {@link RunbookActorService.prepareActorMutation}, and for this event nothing
  * effectful is reachable: `INLINE_CHILD_STARTED` is a root-level handler with no
  * `target`, so the transition is internal — no state is exited or entered, no
@@ -746,6 +877,14 @@ async function latchInlineLaunch(args: {
   readonly childRunId: RunId;
   readonly parentLinkage: InlineLinkage;
 }): Promise<InlineLaunchLatch | null> {
+  // Memoized rather than eager: the refusal arms below never write, so they must
+  // not pay the process-identity probe (a `/bin/ps` spawn on BSD hosts the first
+  // time a process asks). Memoized rather than per-attempt because every attempt
+  // must offer the identical record, so the one that commits is the one this call
+  // reasoned about.
+  let startedRecord: InlineLaunchStart | undefined;
+  const started = (): InlineLaunchStart =>
+    (startedRecord ??= recordInlineLaunchStart(new Date().toISOString()));
   const { value } = await args.manager.mutateStateReturning<InlineLaunchLatch>(
     args.parentRunId,
     async (current) => {
@@ -754,6 +893,19 @@ async function latchInlineLaunch(args: {
       }
       if (!persistedInlineLaunchIntentMatches(current, args.intent)) {
         return { next: null, value: { kind: 'superseded' } };
+      }
+      // Ownership first, and before the child load: a launch held by a live
+      // process is refused whatever the child looks like, so loading and
+      // classifying that child would be a round-trip per attempt for a decision
+      // this arm discards. Liveness, never age, and never the child run's
+      // absence — an observer that has latched and is still resolving the child
+      // runbook leaves exactly the state a crashed one leaves.
+      const ownership = classifyParentInlineLatch(current, args.intent);
+      if (ownership.kind === 'held') {
+        return { next: null, value: { kind: 'already-latched', ownerPid: ownership.ownerPid } };
+      }
+      if (ownership.kind === 'unrecorded') {
+        return { next: null, value: { kind: 'unrecorded', reason: ownership.reason } };
       }
       const existingChild = await args.manager.load(args.childRunId);
       if (existingChild) {
@@ -765,24 +917,43 @@ async function latchInlineLaunch(args: {
           return { next: null, value: { kind: 'linkage-refused', mismatch: linkageMatch } };
         }
       }
-      if (!parentInlineStartedAtMissing(current, args.intent)) {
-        return { next: null, value: { kind: 'already-latched', existingChild } };
+      switch (ownership.kind) {
+        case 'unlatched':
+        case 'reclaimable': {
+          // The two arms that launch, and they differ only in what they report:
+          // one takes a free latch, the other takes over a dead owner's.
+          const mutation = await args.actorService.prepareActorMutation(
+            args.parentRunId,
+            current,
+            args.steps,
+            {
+              type: 'INLINE_CHILD_STARTED',
+              parentStepId: args.intent.parentStepId,
+              parentFrameKey: args.intent.parentFrameKey as FrameKey,
+              childRunId: args.childRunId,
+              // Overwrites a dead owner's record with this process's own, so the
+              // launch this observer is about to perform is the one a third
+              // observer finds held. Leaving the dead pid there would let the
+              // reclamation be reclaimed again, mid-span.
+              started: started(),
+            },
+          );
+          // Committed verbatim, so the latch this observer reads back is the
+          // latch that was written.
+          return {
+            next: mutation.nextState,
+            value: {
+              kind: 'won',
+              existingChild,
+              reclaimedFrom: ownership.kind === 'reclaimable' ? ownership.ownerPid : null,
+            },
+          };
+        }
+        default: {
+          const _exhaustive: never = ownership;
+          return _exhaustive;
+        }
       }
-      const mutation = await args.actorService.prepareActorMutation(
-        args.parentRunId,
-        current,
-        args.steps,
-        {
-          type: 'INLINE_CHILD_STARTED',
-          parentStepId: args.intent.parentStepId,
-          parentFrameKey: args.intent.parentFrameKey as FrameKey,
-          childRunId: args.childRunId,
-          startedAt: new Date().toISOString(),
-        },
-      );
-      // Committed verbatim, so the latch this observer reads back is the latch
-      // that was written.
-      return { next: mutation.nextState, value: { kind: 'won', existingChild } };
     },
   );
   // `value` is null exactly when the callback never ran, which happens only for
@@ -860,14 +1031,70 @@ async function launchInlineChildFromIntent({
     });
     return 'stopped';
   }
+  if (latch.kind === 'unrecorded') {
+    // Fail closed. The intent says to launch this child and the parent's substep
+    // row does not record that launch, so nothing can hold the latch — and a
+    // launch nobody can latch is a launch two observers can both perform. The
+    // row is what the machine writes the latch onto, so this is inconsistent
+    // state rather than a race that resolves itself, and it is named as such
+    // rather than reported as a wait that will never end.
+    emitter.emit({
+      type: 'ERROR_OCCURRED',
+      payload: {
+        message:
+          latch.reason === 'no-inline-metadata'
+            ? `Inline launch of ${childRunId} cannot be recorded: substep ${intent.parentStep}.${intent.parentStepId} carries no inline child metadata. Finish, stop, or prune run ${parentLinkage.parentRunId}.`
+            : `Inline launch of ${childRunId} cannot be recorded: substep ${intent.parentStep}.${intent.parentStepId} records a different inline child. Finish, stop, or prune run ${parentLinkage.parentRunId}.`,
+        code: ErrorCodes.LAUNCH_FAILED.code,
+      },
+    });
+    return 'stopped';
+  }
+  if (latch.kind === 'already-latched') {
+    // A LIVE process owns this launch, so nothing here is this observer's to do
+    // — including finishing it. Whether the owner has created the child yet is
+    // not the question: the two states are one process's launch at two moments,
+    // and adopting the child at the second would push a run its owner is about
+    // to execute onto this session, consume the one-shot intent out from under
+    // it, and rotate the bearer it is still holding. `waiting` is the same
+    // answer a superseded observer gives: the launch is someone else's to
+    // finish, and a live owner does finish it.
+    //
+    // Core's inline-child reactivation seam may have pushed the child onto the
+    // session before handing this loop the parent to drive: it matches on a
+    // running child with matching linkage, which is exactly the state a live
+    // owner mid-launch presents. Standing down without undoing that push would
+    // leave THIS session pointing at a run this process refuses to execute and
+    // another process owns — the hazard this arm exists to prevent, arrived at
+    // by a different route. Best-effort and narrowed to the intent's own child.
+    await releaseStoodDownInlineChild(sessionService, childRunId);
+    // Named rather than opaque, because this is the one arm that can look like
+    // nothing happening: only an operator who is told which process holds the
+    // launch can tell a wait that resolves itself from one that never will. A
+    // dead owner never reaches here — it is reclaimed into `won` above. The
+    // remedy is stated because nothing here retries: this turn ends, and the
+    // gesture has to be repeated once the owner is done.
+    output.warning(
+      `Inline child ${childRunId} is already being launched by process ${String(latch.ownerPid)}. Re-run this command once that launch finishes.`,
+    );
+    return 'waiting';
+  }
+  if (latch.reclaimedFrom !== null) {
+    // Recovery, not routine. Reported before the span runs, because what follows
+    // is this process performing work another process began, and an operator
+    // looking at a duplicated launch announcement needs the reason in the log.
+    output.warning(
+      `Reclaimed the inline launch of ${childRunId} from process ${String(latch.reclaimedFrom)}, which is no longer running.`,
+    );
+  }
 
   const existingChild = latch.existingChild;
   if (existingChild) {
-    // Reached from both surviving arms. `won` is the interrupted launch that got
-    // as far as creating the child but never recorded its start; `already-latched`
-    // is the fully-recorded launch whose process died before the child ran. Both
-    // finish here, and the latch has already written the `startedAt` the first of
-    // them was missing.
+    // Only `won` reaches here, and only as an interrupted launch: either it
+    // never recorded a start at all, or it recorded one whose owner has since
+    // died and this observer took the latch over. Either way the latch now names
+    // THIS process, so finishing the launch — activating the child, consuming
+    // the intent, re-arming the child's authority — is this observer's to do.
     const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
     const active = await sessionService.getActive();
     let pushedExistingInlineChild = false;
@@ -965,15 +1192,6 @@ async function launchInlineChildFromIntent({
       commandStreamOptions,
       parentDelegationRuntime,
     });
-  }
-
-  if (latch.kind === 'already-latched') {
-    // The latch is taken and the child does not exist yet, so another observer
-    // is inside the launch span right now. Only ONE of them may create the run
-    // the intent names, and it is not this one. `waiting` is the same answer a
-    // superseded observer gives: this turn has nothing to do, and the launch is
-    // someone else's to finish.
-    return 'waiting';
   }
 
   const { resolveRunbookRef } = await import('../helpers/resolve-runbook.js');
