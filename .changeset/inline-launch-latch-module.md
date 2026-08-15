@@ -1,6 +1,6 @@
 ---
-'@rundown-org/core': patch
-'@rundown-org/cli': patch
+'@rundown-org/core': minor
+'@rundown-org/cli': minor
 ---
 
 # Give the inline-launch latch its own interface

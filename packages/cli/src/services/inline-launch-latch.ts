@@ -104,10 +104,16 @@ function persistedInlineLaunchIntentMatches(
   state: RunbookState,
   observed: InlineLaunchIntent,
 ): boolean {
-  const snapshot = state.snapshot as {
-    readonly context?: { readonly inlineLaunchIntent?: unknown };
-  };
-  const candidate = snapshot.context?.inlineLaunchIntent;
+  // Optional at every hop, because `RunbookState.snapshot` is genuinely
+  // optional: a run created but never initialised carries none. The cast used to
+  // assert it away while still guarding `context`, so a parent with no snapshot threw
+  // a TypeError out of the compare-and-swap callback instead of refusing. Absent
+  // means "no intent I can read", which is `superseded` — the fail-closed answer,
+  // and the same one an intent that names another launch gets.
+  const snapshot = state.snapshot as
+    | { readonly context?: { readonly inlineLaunchIntent?: unknown } }
+    | undefined;
+  const candidate = snapshot?.context?.inlineLaunchIntent;
   if (!isInlineLaunchIntentWithoutParentEntry(candidate)) return false;
   return (
     candidate.parentRunId === observed.parentRunId &&

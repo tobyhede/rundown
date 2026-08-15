@@ -34,19 +34,26 @@ import {
 //     exec stryker run --mutate src/services/inline-launch-latch.ts \
 //     --testFiles __tests__/services/inline-launch-latch.test.ts --force
 //
-// 96.99% — 160 killed, 3 survived, 2 no-coverage. All five are unreachable by
-// construction rather than untested behaviour:
+// 97.01% — 162 killed, 3 SURVIVED and 2 NO-COVERAGE. The five reconcile as
+// 3 + 2, and every one is unreachable by construction rather than untested:
 //
-//  - Three `?.` guards (`snapshot.context?.`, `state.substepStates?.`,
-//    `substepState?.`). Each guards a shape that cannot coexist with a persisted
-//    intent — the intent and the substep row are written by the same machine
-//    transition, so a run carrying one carries the other.
-//  - The launch switch's `default:` arm, whose body is
-//    `const _exhaustive: never = ownership`. It is the compile-time
-//    exhaustiveness check the repo uses everywhere; reaching it at runtime would
-//    require an ownership kind the type forbids.
+// Survived (3), all optional-chaining guards over a shape that cannot coexist
+// with a persisted intent — the intent and the substep row are written by the
+// same machine transition, so a run carrying one carries the other:
+//  - `snapshot?.context.` — a snapshot object with no `context` key.
+//    Note the OUTER `snapshot?.` is killed, by the absent-snapshot case below:
+//    `state.snapshot` really is optional, and dropping that guard throws a
+//    TypeError out of the compare-and-swap instead of refusing.
+//  - `state.substepStates.find` — a parent with no substep rows at all.
+//  - `substepState.inline` — no row at the intent's own coordinate.
 //
-// Worth recording because the earlier revision of this module scored 69% over
+// No-coverage (2), both on ONE line: the launch switch's `default:` arm, whose
+// body is `const _exhaustive: never = ownership`. Stryker mutates the arm twice
+// (ConditionalExpression and BlockStatement), and neither is reachable at
+// runtime — it is the compile-time exhaustiveness check the repo uses
+// everywhere, and getting there would need an ownership kind the type forbids.
+//
+// Worth recording because an earlier revision of this module scored 69% over
 // 203 mutants, with 24 survivors in a hand-rolled `isPersistedInlineLaunchIntent`
 // `&&` chain it used to own. They were unkillable at this interface: forcing a
 // conjunct true let a malformed intent past the guard, and the coordinate
@@ -441,6 +448,18 @@ describe('latchInlineLaunch', () => {
     expect(await readLatch(parent)).toBeNull();
   });
 
+  it('refuses a parent that carries no machine snapshot at all', async () => {
+    // `RunbookState.snapshot` is optional: a run created but never initialised
+    // has none. There is no intent to read, so the answer is `superseded` — the
+    // same fail-closed answer an intent naming another launch gets, and not the
+    // TypeError an unguarded read would throw out of the compare-and-swap.
+    const parent = await seedLatchableParent();
+    await patchPersistedRunState(cwd, parent.parentRunId, ({ snapshot: _drop, ...rest }) => rest);
+
+    await expect(latch(parent)).resolves.toEqual({ kind: 'superseded' });
+    expect(await readLatch(parent)).toBeNull();
+  });
+
   it('stands down when the persisted intent names a different parent than the run holding it', async () => {
     // The remaining reachable divergence, and it can only be planted: a row whose
     // stored intent claims another parent is state this code did not write, and
@@ -805,9 +824,19 @@ describe('latchInlineLaunch', () => {
       // below is what would catch it if they ever serialised anyway.
       let builds = 0;
       let releaseFirstReader: (() => void) | undefined;
+      // Bounded, so a run in which the second observer never reaches its build
+      // fails on `builds` below rather than hanging the first observer until
+      // Jest's timeout with no diagnostic. The bound is a failure path only: the
+      // successful interleave clears it at the rendezvous.
+      let rendezvousTimer: ReturnType<typeof setTimeout> | undefined;
       const bothRead = new Promise<void>((resolve) => {
         releaseFirstReader = resolve;
+        rendezvousTimer = setTimeout(resolve, 2000);
       });
+      const releaseRendezvous = (): void => {
+        clearTimeout(rendezvousTimer);
+        releaseFirstReader?.();
+      };
       const gateBuild = (manager: RunbookStateManager): void => {
         const real = manager.mutateStateReturning.bind(manager);
         // Assigned without a cast, so the wrapper is checked against the real
@@ -820,7 +849,7 @@ describe('latchInlineLaunch', () => {
           await real<R>(id, async (current) => {
             builds += 1;
             if (builds === 1) await bothRead;
-            if (builds === 2) releaseFirstReader?.();
+            if (builds === 2) releaseRendezvous();
             return await build(current);
           });
       };
@@ -858,10 +887,17 @@ describe('latchInlineLaunch', () => {
         return outcome;
       };
 
-      const outcomes = await Promise.all([
-        observe(parent),
-        observe({ manager: contender, actorService: contenderActors }),
-      ]);
+      let outcomes: InlineLaunchLatch[];
+      try {
+        outcomes = await Promise.all([
+          observe(parent),
+          observe({ manager: contender, actorService: contenderActors }),
+        ]);
+      } finally {
+        // Never leave the bound pending: a rejected observer would otherwise
+        // hold the worker open for the rest of the timeout.
+        clearTimeout(rendezvousTimer);
+      }
 
       // The interleave happened: three build runs for two calls is the loser
       // re-deriving against the row the winner committed. Two would mean the
