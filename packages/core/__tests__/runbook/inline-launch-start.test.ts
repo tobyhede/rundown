@@ -1,6 +1,7 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   classifyInlineLaunchOwnership,
+  isSameInlineLaunchStart,
   recordInlineLaunchStart,
 } from '../../src/runbook/inline-launch-start.js';
 import { createProcessIdentity, readProcessStartId } from '../../src/runbook/process-identity.js';
@@ -120,5 +121,47 @@ describe('recordInlineLaunchStart', () => {
       ownerPid: DEAD_PID,
       ownerStartId: 'synthetic-start-id',
     });
+  });
+});
+
+// The gate on releasing a latch: an abandoning sender names the record it wrote,
+// and the machine applies the release only while the row still holds it. Every
+// field is part of the identity, so each is pinned by a case that differs in
+// that field alone.
+describe('isSameInlineLaunchStart', () => {
+  const held = startedBy(4242, 'start-id-4242');
+
+  it('accepts the record it was written from', () => {
+    expect(isSameInlineLaunchStart(held, { ...held })).toBe(true);
+  });
+
+  it('rejects a record naming a different owner pid', () => {
+    expect(isSameInlineLaunchStart(held, { ...held, ownerPid: 7777 })).toBe(false);
+  });
+
+  // The reason the comparison is not `ownerPid` alone, and the same reason
+  // `classifyInlineLaunchOwnership` reads a start id rather than trusting
+  // `kill(pid, 0)`: a recycled pid is a different process.
+  it('rejects a record whose owner pid was recycled by a new process', () => {
+    expect(
+      isSameInlineLaunchStart(held, { ...held, ownerStartId: 'start-id-4242-restarted' }),
+    ).toBe(false);
+  });
+
+  // Two successive holds by ONE process on one launch, which a span that
+  // releases and later wins the launch again produces. `at` is what separates
+  // them, so a release from the first must not reach the second.
+  it('rejects the same owner holding the launch at a different instant', () => {
+    expect(isSameInlineLaunchStart(held, { ...held, at: '2026-08-14T00:00:01.000Z' })).toBe(false);
+  });
+
+  // A host that supplies no start id records `null`, and two `null`s are the
+  // pid-only decision this degrades to — not a mismatch. The bias matches
+  // `isOwnerAlive`: an unknown identity must not stop a real owner from matching
+  // its own latch, or the span could never release it on such a host.
+  it('accepts two records from a host that supplies no start ids', () => {
+    const withoutStartId = startedBy(4242, null);
+
+    expect(isSameInlineLaunchStart(withoutStartId, { ...withoutStartId })).toBe(true);
   });
 });

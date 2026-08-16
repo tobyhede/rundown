@@ -80,6 +80,35 @@ export function classifyInlineLaunchOwnership(
 }
 
 /**
+ * Whether two latch records name the same held launch.
+ *
+ * Identity, not equality of convenience: a latch is one process's hold on one
+ * launch at one instant, so all three fields are compared. `ownerStartId` is
+ * what separates the owner from a new process that inherited its pid — the same
+ * reason {@link classifyInlineLaunchOwnership} reads it rather than trusting
+ * `kill(pid, 0)` alone — and `at` separates two successive holds by the same
+ * process on the same launch, which is reachable whenever a span releases and a
+ * later observation in that process wins the launch again.
+ *
+ * Used to gate a release against the record the releaser wrote, so a sender
+ * that has fallen behind cannot clear a latch that has since been reclaimed.
+ *
+ * @param held - The latch record currently persisted on the substep row.
+ * @param claimed - The record the releaser says it wrote.
+ * @returns `true` when the persisted latch is the claimed one.
+ */
+export function isSameInlineLaunchStart(
+  held: InlineLaunchStart,
+  claimed: InlineLaunchStart,
+): boolean {
+  return (
+    held.ownerPid === claimed.ownerPid &&
+    held.ownerStartId === claimed.ownerStartId &&
+    held.at === claimed.at
+  );
+}
+
+/**
  * Build the latch record this process writes when it wins a launch.
  *
  * The start id is read HERE, through the same {@link ProcessIdentity} that
