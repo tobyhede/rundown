@@ -599,7 +599,16 @@ describe('latchInlineLaunch', () => {
     // `reclaimedFrom: null` is the assertion that this took a FREE latch. The
     // arm that takes one over from a dead owner reports the same `kind`, and
     // only this field separates routine from recovery.
-    expect(outcome).toEqual({ kind: 'won', existingChild: null, reclaimedFrom: null });
+    expect(outcome).toEqual({
+      kind: 'won',
+      existingChild: null,
+      reclaimedFrom: null,
+      // The release scope, built by the arm that TOOK the latch rather than by
+      // the caller: a `won` that could be received without a scope is a `won`
+      // the caller can forget to release, which is the shape that left a failed
+      // span holding the latch against its own live pid.
+      held: { keep: expect.any(Function), [Symbol.asyncDispose]: expect.any(Function) },
+    });
     const record = await readLatch(parent);
     // The one field of the record whose VALUE nothing else constrains: the type
     // requires a `string`, and the ownership classifier only reads the pid and
@@ -684,6 +693,7 @@ describe('latchInlineLaunch', () => {
         kind: 'won',
         existingChild: null,
         reclaimedFrom: DEAD_PID,
+        held: { keep: expect.any(Function), [Symbol.asyncDispose]: expect.any(Function) },
       });
       // The reclaiming observer records ITSELF as the new owner. Leaving the
       // dead pid in place would let a third observer reclaim the launch this one
@@ -760,6 +770,7 @@ describe('latchInlineLaunch', () => {
       kind: 'won',
       existingChild: null,
       reclaimedFrom: null,
+      held: { keep: expect.any(Function), [Symbol.asyncDispose]: expect.any(Function) },
     });
   });
 
@@ -915,6 +926,7 @@ describe('latchInlineLaunch', () => {
         kind: 'won',
         existingChild: null,
         reclaimedFrom: null,
+        held: { keep: expect.any(Function), [Symbol.asyncDispose]: expect.any(Function) },
       });
       // One entry into the launch span, so one `INSERT INTO runs` for the fixed
       // child id — the SQLITE_CONSTRAINT the latch exists to prevent never had a

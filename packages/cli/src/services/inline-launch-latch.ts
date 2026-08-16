@@ -1,7 +1,9 @@
 import {
   assertRunId,
   classifyInlineLaunchOwnership,
+  getErrorMessage,
   isInlineLaunchIntentWithoutParentEntry,
+  logger,
   recordInlineLaunchStart,
   type FrameKey,
   type InlineLaunchIntent,
@@ -168,6 +170,88 @@ function classifyParentInlineLatch(
 }
 
 /**
+ * The inline launch latch, held for the duration of one launch span.
+ *
+ * The latch is written before the child run is created, which is what makes the
+ * launch exactly-once, and released when the front end reports the launch
+ * consumed. Between those two points it names a LIVE process, and
+ * {@link classifyInlineLaunchOwnership} deliberately has no self-pid exemption —
+ * a nested observer inside a live span is also "self" and must stand down. So a
+ * span that took the latch and then failed out of it without releasing leaves
+ * every later observation, including its own process's, standing down against a
+ * pid that is still running. That is not a crash the liveness probe can recover;
+ * it is a live owner that will never finish.
+ *
+ * `await using` is what closes that. The span has a genuine acquire/release
+ * lifetime with an owner and liveness-based reclamation — the same shape
+ * {@link ScopedLock} exists for — and scope-exit disposal covers the failure
+ * exits a hand-rolled release would have to enumerate, including the ones a
+ * later change adds.
+ *
+ * Disposal is best-effort, mirroring `heldLock`: a failed release only leaves a
+ * latch a later observer reclaims once this process exits, so it must never
+ * escape the disposer and mask the outcome of the span it wrapped (RD-102).
+ */
+export interface ScopedInlineLatch extends AsyncDisposable {
+  /**
+   * Disarm the scope-exit release, for a span that finished the launch.
+   *
+   * Called after a successful `INLINE_LAUNCH_CONSUMED`, which releases the latch
+   * as part of clearing the intent — so the disposer has nothing left to do and
+   * firing it would send a second, redundant release for a launch that is over.
+   *
+   * Idempotent, and one-way: there is no re-arm. A span that has consumed the
+   * intent has no way back to holding the launch.
+   */
+  keep(): void;
+}
+
+/**
+ * Wrap the release of an already-taken latch as a best-effort
+ * {@link ScopedInlineLatch}.
+ *
+ * The release runs at most once, and not at all after {@link
+ * ScopedInlineLatch.keep}. A thrown release is logged and swallowed rather than
+ * propagated, so it cannot mask the result of the launch span it wrapped.
+ *
+ * Releasing on failure does not reopen the exactly-once hazard the latch exists
+ * to close. Either the span failed before creating the child — `startRunbook`
+ * deletes a run it created on every failure path through `afterStarted`, so
+ * there is nothing to collide with — or the child exists with matching linkage
+ * and the surviving intent still names it, in which case the next observer reads
+ * `unlatched` with an `existingChild`, wins, and ADOPTS rather than creating a
+ * second run. The latch is still taken inside the compare-and-swap either way,
+ * so two observers cannot both win it.
+ *
+ * @param release - Thunk sending the abandonment to the machine (may reject).
+ * @param describe - Returns structured log context identifying the launch.
+ * @returns A best-effort, idempotent latch scope.
+ */
+export function heldInlineLatch(
+  release: () => Promise<void>,
+  describe: () => Record<string, unknown>,
+): ScopedInlineLatch {
+  let settled = false;
+  return {
+    keep(): void {
+      settled = true;
+    },
+    async [Symbol.asyncDispose](): Promise<void> {
+      if (settled) return;
+      settled = true;
+      try {
+        await release();
+      } catch (err) {
+        void logger.warn('inline launch latch release failed (leaked, self-healing)', {
+          ...describe(),
+          error: getErrorMessage(err),
+        });
+      }
+    },
+  };
+}
+
+/**
  * Outcome of the atomic inline-launch latch.
  *
  * Every arm is decided against the exact version the compare-and-swap commits
@@ -221,6 +305,15 @@ export type InlineLaunchLatch =
   | {
       readonly kind: 'won';
       readonly existingChild: RunbookState | null;
+      /**
+       * The latch this observer now holds, scoped to the launch span.
+       *
+       * Carried on `won` alone because `won` is the only arm that took it. Used
+       * with `await using`, so every exit from the span — an early `return`, a
+       * `throw`, a refusal three imports deep — releases it, and the span cannot
+       * grow a new failure path that forgets to.
+       */
+      readonly held: ScopedInlineLatch;
       /**
        * Pid of the dead owner this launch was taken over from, or null when the
        * latch was free.
@@ -411,6 +504,24 @@ export async function latchInlineLaunch(args: InlineLaunchLatchArgs): Promise<In
               kind: 'won',
               existingChild,
               reclaimedFrom: ownership.kind === 'reclaimable' ? ownership.ownerPid : null,
+              // Built here rather than by the caller so that taking the latch
+              // and owning its release are one act: a `won` the caller could
+              // receive without a scope is a `won` the caller can forget to
+              // release. The thunk is not invoked inside this callback — it is
+              // stored for scope exit, which is outside the compare-and-swap
+              // and therefore free to send its own event.
+              held: heldInlineLatch(
+                async () => {
+                  await args.actorService.sendAndSync(parentLinkage.parentRunId, args.steps, {
+                    type: 'INLINE_LAUNCH_ABANDONED',
+                  });
+                },
+                () => ({
+                  parentRunId: parentLinkage.parentRunId,
+                  parentStepId: args.intent.parentStepId,
+                  childRunId,
+                }),
+              ),
             },
           };
         }
