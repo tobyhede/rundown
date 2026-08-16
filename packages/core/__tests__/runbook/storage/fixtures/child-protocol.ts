@@ -37,6 +37,14 @@ export type ChildOp =
   | { readonly kind: 'recordClaimSeen'; readonly claimId: string }
   | { readonly kind: 'releaseRunbook'; readonly runId: string }
   | { readonly kind: 'popRunbook' }
+  /**
+   * The conditional pop, which names the run it may remove.
+   *
+   * Distinct from `popRunbook` in exactly the way the race cares about: the
+   * positional form pops whatever the transaction finds on top, so a contender
+   * that pushed first has its own run removed instead.
+   */
+  | { readonly kind: 'popRunbookIfActive'; readonly runId: string }
   | {
       readonly kind: 'guardedParentAdvance';
       readonly parentRunId: string;

@@ -193,6 +193,8 @@ async function run(service: SessionService): Promise<unknown> {
       return unwrapSessionMutation(await service.releaseRunbook(assertRunId(op.runId)));
     case 'popRunbook':
       return unwrapSessionMutation(await service.popRunbook());
+    case 'popRunbookIfActive':
+      return unwrapSessionMutation(await service.popRunbookIfActive(assertRunId(op.runId)));
     case 'guardedParentAdvance': {
       const parentRunId = assertRunId(op.parentRunId);
       // Second-stage barrier INSIDE the advance callback: signal that the fast
