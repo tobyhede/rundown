@@ -381,7 +381,6 @@ function wireMocks(
   MockSession.mockImplementation(
     () =>
       ({
-        popRunbook: mockFn<() => Promise<string | null>>().mockResolvedValue(null),
         releaseRunbook: mockFn<() => Promise<unknown>>().mockResolvedValue({
           status: 'released',
         }),
