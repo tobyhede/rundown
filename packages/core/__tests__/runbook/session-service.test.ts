@@ -193,6 +193,16 @@ describe('SessionService', () => {
       expect(active?.id).toBe(parent.id);
     });
 
+    // The empty-stack arm, which the positional pop's own callers never reach:
+    // every one of them unwinds a stack it seeded. Pinned here because the arm
+    // decides whether the guarded transaction runs a release at all, and a
+    // fixture that released against an empty session would fail somewhere far
+    // from the cause.
+    it('the positional pop reports null for an empty stack', async () => {
+      expect(unwrapSessionMutation(await popTopOfStackUnverified(manager))).toBeNull();
+      expect((await manager.loadSession()).defaultStack).toEqual([]);
+    });
+
     it('popRunbookIfActive pops the expected run and returns the new top', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',

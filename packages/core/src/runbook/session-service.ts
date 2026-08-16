@@ -553,7 +553,7 @@ function linkageMatchesLinkage(
  * @param session - Session snapshot read at the start of the guarded transaction.
  * @returns The top-of-stack run id, or null when the stack is empty.
  */
-function topOfStackId(session: SessionData): RunId | null {
+export function topOfStackId(session: SessionData): RunId | null {
   return session.defaultStack.at(-1) ?? null;
 }
 
@@ -572,7 +572,7 @@ function topOfStackId(session: SessionData): RunId | null {
  * @param session - Session snapshot read at the start of the guarded transaction.
  * @returns The top-of-stack run id, or an empty list when the stack is empty.
  */
-function topOfStack(session: SessionData): readonly RunId[] {
+export function topOfStack(session: SessionData): readonly RunId[] {
   const topId = topOfStackId(session);
   return topId ? [topId] : [];
 }
