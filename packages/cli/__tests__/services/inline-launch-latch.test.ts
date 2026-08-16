@@ -23,6 +23,7 @@ import { patchPersistedRunState } from '@rundown-org/core/testing/session-fixtur
 import { createCliRunbookActorService } from '../../src/helpers/actor-service-factory.js';
 import {
   classifyInlineChildLinkage,
+  heldInlineLatch,
   inlineLinkageFromIntent,
   latchInlineLaunch,
   type InlineLaunchLatch,
@@ -52,6 +53,24 @@ import {
 // (ConditionalExpression and BlockStatement), and neither is reachable at
 // runtime — it is the compile-time exhaustiveness check the repo uses
 // everywhere, and getting there would need an ownership kind the type forbids.
+//
+// The scope added alongside `INLINE_LAUNCH_ABANDONED` contributes five more
+// accepted survivors, ALL of them logging-only, in a scoped run over its own
+// changed ranges:
+//  - the `catch` body in `heldInlineLatch` (emptying it still swallows, which is
+//    the behaviour; the log is the only difference),
+//  - the warn message string and the `...describe()` spread into its context,
+//  - the `describe` closure the `won` arm passes, whose sole consumer is that
+//    warn call.
+// Asserting on them would mean pinning log text, which this repo does not do —
+// core's `heldLock` owns the identical best-effort policy and its own test
+// (`file-lock.test.ts`, "disposal is best-effort") asserts the swallow and the
+// release count, not the message. The behavioural mutants around them — release
+// once, release not at all after `keep()`, release at most once across repeated
+// disposal, and never propagate — are killed by the `heldInlineLatch` describe
+// below, which counts releases; driving that through the latch alone cannot,
+// because a second release lands on an already-cleared row and is
+// indistinguishable from none.
 //
 // Worth recording because an earlier revision of this module scored 69% over
 // 203 mutants, with 24 survivors in a hand-rolled `isPersistedInlineLaunchIntent`
@@ -587,6 +606,135 @@ describe('latchInlineLaunch', () => {
     // `won` and written it. Its absence is what proves the refusal is decided
     // ahead of the write.
     expect(await readLatch(parent)).toBeNull();
+  });
+
+  describe('the scope the won arm hands back', () => {
+    // What the disposer actually does, against a real store rather than the
+    // shape assertions above. Everything here is the behaviour that used not to
+    // exist: before the scope, a span that failed after latching left the record
+    // set, held by a pid that is still running, and no later observation in any
+    // process could get past it.
+    it('releases the latch on scope exit, keeping the intent', async () => {
+      const parent = await seedLatchableParent();
+      const outcome = await latch(parent);
+      if (outcome.kind !== 'won') throw new Error(`expected won, got ${outcome.kind}`);
+      expect(await readLatch(parent)).not.toBeNull();
+
+      await outcome.held[Symbol.asyncDispose]();
+
+      expect(await readLatch(parent)).toBeNull();
+      // The intent SURVIVES, which is what separates abandonment from
+      // consumption. A released latch with no intent left would be a launch
+      // nothing can re-observe — the opposite failure, equally terminal.
+      const after = await parent.manager.load(parent.parentRunId);
+      const context = (
+        after?.snapshot as { readonly context?: Record<string, unknown> } | undefined
+      )?.context;
+      expect(context?.inlineLaunchIntent).toEqual(
+        expect.objectContaining({ childRunId: parent.childRunId }),
+      );
+    });
+
+    it('leaves the latch alone after keep()', async () => {
+      const parent = await seedLatchableParent();
+      const outcome = await latch(parent);
+      if (outcome.kind !== 'won') throw new Error(`expected won, got ${outcome.kind}`);
+      const latched = await readLatch(parent);
+
+      outcome.held.keep();
+      await outcome.held[Symbol.asyncDispose]();
+
+      // Untouched, not merely still present: a span that consumed the intent has
+      // already released the latch, and a disposer that fired anyway would send a
+      // second release for a launch that is over.
+      expect(await readLatch(parent)).toEqual(latched);
+    });
+
+    it('releases at most once across repeated disposal', async () => {
+      const parent = await seedLatchableParent();
+      const outcome = await latch(parent);
+      if (outcome.kind !== 'won') throw new Error(`expected won, got ${outcome.kind}`);
+
+      await outcome.held[Symbol.asyncDispose]();
+      // The second disposal must be inert rather than merely harmless. It lands
+      // on a row that has moved on, and the release event is scoped to the exact
+      // launch the intent names, so a second send would be deciding against
+      // state this scope no longer describes.
+      await expect(outcome.held[Symbol.asyncDispose]()).resolves.toBeUndefined();
+      expect(await readLatch(parent)).toBeNull();
+    });
+  });
+
+  // The scope's own policy, tested at the seam that owns it rather than through
+  // a store. Counting releases is the only way to state "at most once" — driven
+  // through the latch above, a second release lands on an already-cleared row
+  // and is indistinguishable from none.
+  describe('heldInlineLatch', () => {
+    it('releases once on scope exit', async () => {
+      let releases = 0;
+      const run = async (): Promise<string> => {
+        await using _held = heldInlineLatch(
+          async () => {
+            releases += 1;
+          },
+          () => ({}),
+        );
+        return 'span-result';
+      };
+
+      await expect(run()).resolves.toBe('span-result');
+      expect(releases).toBe(1);
+    });
+
+    it('releases at most once across keep, explicit disposal and scope exit', async () => {
+      let releases = 0;
+      const held = heldInlineLatch(
+        async () => {
+          releases += 1;
+        },
+        () => ({}),
+      );
+
+      await held[Symbol.asyncDispose]();
+      await held[Symbol.asyncDispose]();
+      held.keep();
+      await held[Symbol.asyncDispose]();
+
+      expect(releases).toBe(1);
+    });
+
+    it('does not release after keep()', async () => {
+      let releases = 0;
+      const held = heldInlineLatch(
+        async () => {
+          releases += 1;
+        },
+        () => ({}),
+      );
+
+      held.keep();
+      await held[Symbol.asyncDispose]();
+
+      expect(releases).toBe(0);
+    });
+
+    it('disposal is best-effort: a throwing release neither propagates nor masks the result', async () => {
+      // The RD-102 policy `heldLock` owns for file locks, on the same terms: a
+      // failed release leaves a latch the next observer reclaims once this
+      // process exits, so letting it escape would replace the span's real
+      // outcome — the launch error the operator needs — with a cleanup error.
+      const run = async (): Promise<string> => {
+        await using _held = heldInlineLatch(
+          async () => {
+            throw new Error('abandon send failed');
+          },
+          () => ({}),
+        );
+        return 'span-result';
+      };
+
+      await expect(run()).resolves.toBe('span-result');
+    });
   });
 
   it('wins a free latch, recording this process as its owner at this run of the clock', async () => {

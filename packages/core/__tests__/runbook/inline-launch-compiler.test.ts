@@ -11,6 +11,26 @@ import { brandFlattenedTemplateVarsForTest } from '../../src/testing/effective-v
 import { makeDelegationCredentialIssuer } from '../../src/testing/delegation-fixtures.js';
 import { createRunbook } from './fixtures.js';
 
+// ACCEPTED MUTATION SURVIVORS for the latch actions in compiler.ts.
+//
+// A scoped run over `releaseInlineLaunchLatch` reports two survivors — the
+// `assign({...})` object literal and the assigner arrow — while the machine
+// transition that dispatches it (`INLINE_LAUNCH_ABANDONED: { actions: ... }`)
+// has both of its mutants killed. That split is a Stryker limitation, not a
+// coverage gap: `baseRunbookSetup = setup({ actions: { ... } })` is evaluated at
+// MODULE LOAD, so the mutant switch inside each action definition runs once, on
+// first import, before Stryker activates a mutant for any test. The behaviour is
+// covered — applying `assign({})` by hand fails the abandonment test below.
+//
+// It is also pre-existing rather than new: the identical pair is reported for
+// `clearInlineLaunchIntent`, the sibling action this one mirrors, which has had
+// a dedicated behavioural test for as long as it has existed. Both were verified
+// with:
+//
+//   STRYKER_SCOPED=true STRYKER_CONCURRENCY=1 pnpm --filter @rundown-org/core \
+//     exec stryker run --mutate src/runbook/compiler.ts:<action-lines> \
+//     --testFiles __tests__/runbook/inline-launch-compiler.test.ts --force
+
 type InlineLaunchCompilerOptions = NonNullable<Parameters<typeof compileRunbookToMachine>[1]> & {
   readonly resolveInlineRunbook: ResolveInlineRunbook;
   readonly generateChildRunId: () => RunId;
