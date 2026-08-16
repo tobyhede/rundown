@@ -479,59 +479,6 @@ function describeInlineChildLinkageRefusal(
   }
 }
 
-/**
- * Undo a session activation of an inline child this observer will not execute.
- *
- * Core's `#reactivateRunningInlineChild` pushes the child before returning the
- * parent for this loop to drive, because a running child with matching linkage
- * is what an interrupted launch looks like — and it is also what a live owner
- * mid-launch looks like. When the latch says the launch is someone else's, the
- * push has to come back off, or the session is left targeting a run this process
- * refuses to touch.
- *
- * Best-effort by design: the stand-down is already the outcome, and every
- * refusal the session can answer with is a reason to leave the stack alone
- * rather than to fail the turn. Narrowed to the exact child, so a stack that has
- * moved on is never popped.
- *
- * That narrowing is `popRunbookIfActive`'s and not this function's, and the
- * distinction is the whole point. This arm's precondition is that ANOTHER live
- * process owns the launch, so a concurrent stack write is guaranteed rather than
- * hypothetical; resolving the top with `getActive` and then calling the
- * positional `popRunbook` would pop whatever is on top when that transaction
- * opens, and the release deletes every claim controlling the run it removes. A
- * foreign run pushed-and-claimed by `rundown run` would lose the run-control
- * bearer its orchestrator still holds — which is not the "visible and
- * correctable" leak the swallow below is licensed for.
- *
- * @param sessionService - Session owning the default stack.
- * @param childRunId - The intent's child, and the only run this may pop.
- * @returns Nothing; every outcome, including a refused pop, leaves the
- *   stand-down as the result.
- */
-async function releaseStoodDownInlineChild(
-  sessionService: SessionService,
-  childRunId: RunId,
-): Promise<void> {
-  try {
-    const pop = await sessionService.popRunbookIfActive(childRunId);
-    switch (pop.kind) {
-      case 'committed':
-      case 'execution_in_progress':
-      case 'recovery_required':
-        return;
-      default: {
-        const _exhaustive: never = pop;
-        return _exhaustive;
-      }
-    }
-  } catch {
-    // The stand-down stands whatever the session says. A leaked activation is
-    // visible and correctable; turning it into a thrown launch failure is not.
-    return;
-  }
-}
-
 async function propagateInlineChildTerminalResult(args: {
   readonly manager: RunbookStateManager;
   readonly childRunId: RunId;
@@ -640,6 +587,17 @@ async function launchInlineChildFromIntent({
     return 'stopped';
   }
   if (latch.kind === 'superseded') {
+    // Diagnosable for the same reason `already-latched` is: this arm returns
+    // `waiting` and writes nothing, so without a line here the turn ends
+    // looking like nothing happened. The remedy differs from that arm's "wait
+    // for the owner", because nothing here is waiting on a process: the intent
+    // this span was handed is gone or names a different launch, so the parent
+    // has moved on and a re-run observes wherever it moved to. Both causes get
+    // one wording — the span cannot distinguish them, and does not need to,
+    // since the answer to each is the same gesture.
+    output.warning(
+      `Inline launch of ${childRunId} was superseded: run ${parentLinkage.parentRunId} no longer carries that launch. Re-run this command to observe its current state.`,
+    );
     return 'waiting';
   }
   if (latch.kind === 'linkage-refused') {
@@ -678,14 +636,13 @@ async function launchInlineChildFromIntent({
     // answer a superseded observer gives: the launch is someone else's to
     // finish, and a live owner does finish it.
     //
-    // Core's inline-child reactivation seam may have pushed the child onto the
-    // session before handing this loop the parent to drive: it matches on a
-    // running child with matching linkage, which is exactly the state a live
-    // owner mid-launch presents. Standing down without undoing that push would
-    // leave THIS session pointing at a run this process refuses to execute and
-    // another process owns — the hazard this arm exists to prevent, arrived at
-    // by a different route. Best-effort and narrowed to the intent's own child.
-    await releaseStoodDownInlineChild(sessionService, childRunId);
+    // Nothing to undo. Core's reactivation seam hands this loop the parent to
+    // drive WITHOUT activating the child, precisely because its linkage match
+    // cannot tell an interrupted launch from a live owner mid-launch — the two
+    // are one process's launch at two moments. The activation happens below,
+    // after the latch has said the launch is this process's, so a stand-down
+    // inherits no push to take back and a new stand-down arm inherits none
+    // either. That is the property four more undo calls would not have given.
     // Named rather than opaque, because this is the one arm that can look like
     // nothing happening: only an operator who is told which process holds the
     // launch can tell a wait that resolves itself from one that never will. A
@@ -714,12 +671,13 @@ async function launchInlineChildFromIntent({
     // THIS process, so finishing the launch — activating the child, consuming
     // the intent, re-arming the child's authority — is this observer's to do.
     const { getRunbookFromState } = await import('../helpers/runbook-loader.js');
-    const active = await sessionService.getActive();
-    let pushedExistingInlineChild = false;
-    if (active?.id !== childRunId) {
-      await sessionService.pushRunbook(childRunId);
-      pushedExistingInlineChild = true;
-    }
+    // The activation, and the only one this child gets: core's reactivation
+    // seam leaves the `run` arm alone so that the span which WINS the latch is
+    // the one that targets the session at the child. Conditional in the
+    // store, so the status below is the decision the write was made under
+    // rather than a local mirroring an unlocked `getActive` that a concurrent
+    // push can invalidate before the undo reads it.
+    const activation = await sessionService.pushRunbookIfNotActive(childRunId);
 
     try {
       await consumeInlineLaunchIntent({
@@ -735,7 +693,7 @@ async function launchInlineChildFromIntent({
           code: ErrorCodes.LAUNCH_FAILED.code,
         },
       });
-      if (pushedExistingInlineChild) {
+      if (activation.status === 'pushed') {
         try {
           // Conditional in the store, never here: an unlocked `getActive` ahead
           // of the positional `popRunbook` pops whatever the top is by the time
