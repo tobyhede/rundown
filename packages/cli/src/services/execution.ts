@@ -654,6 +654,25 @@ async function launchInlineChildFromIntent({
     );
     return 'waiting';
   }
+  // Scoped from the first statement after `won`, so every exit below releases
+  // the latch: the four `return 'stopped'` refusals, a throw out of any import
+  // or helper, and any exit a later change adds. Before this, the latch was
+  // released only by `INLINE_LAUNCH_CONSUMED`, so each of those exits left it
+  // held by a pid that is still running — and since the ownership classifier
+  // has no self-pid exemption, the next observation in ANY process, including
+  // this one, stood down against it forever.
+  //
+  // `keep()` disarms it after each successful consume, which has already
+  // released the latch as part of clearing the intent.
+  //
+  // This is the one place in the launch path `await using` belongs. The latch
+  // has an owner, an acquire/release lifetime and liveness-based reclamation.
+  // The session activation has none of those: its undo is right on failure
+  // only, so a forgotten `keep()` there would pop a running child on the
+  // COMMON path — the failure modes invert, which is why that one stays an
+  // explicit conditional rollback.
+  await using _latchScope = latch.held;
+
   if (latch.reclaimedFrom !== null) {
     // Recovery, not routine. Reported before the span runs, because what follows
     // is this process performing work another process began, and an operator
@@ -685,6 +704,10 @@ async function launchInlineChildFromIntent({
         parentRunId: parentLinkage.parentRunId,
         steps,
       });
+      // The launch is finished. What follows is the child's own execution loop,
+      // which can run for the rest of the turn, and the latch must not be held
+      // across it — nor released again at the end of it.
+      latch.held.keep();
     } catch (error) {
       emitter.emit({
         type: 'ERROR_OCCURRED',
@@ -856,6 +879,14 @@ async function launchInlineChildFromIntent({
           parentRunId: parentLinkage.parentRunId,
           steps,
         });
+        // Inside the callback, not after `startRunbook` returns: the child's
+        // execution loop runs before that return, so disarming afterwards would
+        // hold the latch across the whole child run. A throw from the consume
+        // above skips this and leaves the scope armed, which is correct —
+        // `startRunbook` deletes the run it created on that path, so the next
+        // observer relaunches from an unlatched intent with no child to collide
+        // with.
+        latch.held.keep();
       },
     },
   );

@@ -3350,6 +3350,14 @@ describe('runExecutionLoop', () => {
     // The launch span asks the session nothing: both of its writes carry their
     // own condition, so there is no read left whose answer could go stale.
     expect(mockSessionService.getActive).not.toHaveBeenCalled();
+    // A consume that threw is a launch span that failed past the latch, so the
+    // latch comes off. This is the arm that made the stand-down reachable
+    // single-process: the intent survives the failure, so without the release
+    // the next observer finds it latched by a live pid and waits on a launch
+    // nobody is performing.
+    expect(mockActorService.sendAndSync).toHaveBeenCalledWith(runbookId, inlineSteps, {
+      type: 'INLINE_LAUNCH_ABANDONED',
+    });
     expect(mockSessionService.releaseRunbook).not.toHaveBeenCalledWith(childRunId);
     expect(mockManager.delete).not.toHaveBeenCalledWith(childRunId);
     expect(mockEmitter.emit).toHaveBeenCalledWith({
@@ -3772,6 +3780,13 @@ describe('runExecutionLoop', () => {
     expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
     expect(mockActorService.sendAndSync).toHaveBeenNthCalledWith(2, runbookId, inlineSteps, {
       type: 'INLINE_LAUNCH_CONSUMED',
+    });
+    // The consume released the latch as part of clearing the intent, so the
+    // scope is disarmed rather than firing a second, redundant release for a
+    // launch that is over. `keep()` is what makes that a decision rather than an
+    // accident of ordering.
+    expect(mockActorService.sendAndSync).not.toHaveBeenCalledWith(runbookId, inlineSteps, {
+      type: 'INLINE_LAUNCH_ABANDONED',
     });
     // Adoption was refused here, so no bearer is announced for the resumed child.
     expect(mockEmitter.emit).not.toHaveBeenCalledWith(
@@ -4353,6 +4368,11 @@ describe('runExecutionLoop', () => {
         kind: 'won',
         existingChild: null,
         reclaimedFrom: null,
+        // The scope the span releases through, built by the arm that TOOK the
+        // latch. Carried on `won` alone and constructed there rather than by the
+        // caller, so a `won` that could be received without a scope — and
+        // therefore forgotten — is unrepresentable.
+        held: { keep: expect.any(Function), [Symbol.asyncDispose]: expect.any(Function) },
       });
       expect(mockActorService.sendAndSync).toHaveBeenCalledWith(
         runbookId,
@@ -4669,6 +4689,7 @@ describe('runExecutionLoop', () => {
         kind: 'won',
         existingChild: null,
         reclaimedFrom: DEAD_PID,
+        held: { keep: expect.any(Function), [Symbol.asyncDispose]: expect.any(Function) },
       });
       // The reclaiming observer records ITSELF as the new owner. Leaving the dead
       // owner in place would let a third observer reclaim the launch this one is
@@ -4685,6 +4706,13 @@ describe('runExecutionLoop', () => {
       // fails, so this stops without creating a child.
       expect(mockedResolveRunbookRef).toHaveBeenCalledTimes(1);
       expect(result).toBe('stopped');
+      // And the latch this span took is released on the way out. Without it the
+      // record would name THIS process — alive, and with no self-pid exemption
+      // in the ownership classifier — so the next observation, in this process
+      // or any other, would stand down against it forever.
+      expect(mockActorService.sendAndSync).toHaveBeenCalledWith(runbookId, inlineSteps, {
+        type: 'INLINE_LAUNCH_ABANDONED',
+      });
       expect(mockOutput.warning).toHaveBeenCalledWith(
         `Reclaimed the inline launch of ${childRunId} from process ${String(DEAD_PID)}, which is no longer running.`,
       );
@@ -4727,7 +4755,11 @@ describe('runExecutionLoop', () => {
 
       expect(latchOutcomes).toEqual([
         expect.objectContaining({
-          value: { kind: 'won', existingChild, reclaimedFrom: DEAD_PID },
+          value: expect.objectContaining({
+            kind: 'won',
+            existingChild,
+            reclaimedFrom: DEAD_PID,
+          }),
         }),
       ]);
       // Finished rather than relaunched: the child the dead process created is
@@ -4875,7 +4907,11 @@ describe('runExecutionLoop', () => {
 
       expect(latchOutcomes).toEqual([
         expect.objectContaining({
-          value: { kind: 'won', existingChild: null, reclaimedFrom: null },
+          value: expect.objectContaining({
+            kind: 'won',
+            existingChild: null,
+            reclaimedFrom: null,
+          }),
         }),
       ]);
       expect(mockOutput.warning).not.toHaveBeenCalled();
