@@ -109,6 +109,7 @@ import {
   makeAggregationLastAction,
   makeDirectLastAction,
 } from './last-action.js';
+import { isSameInlineLaunchStart } from './inline-launch-start.js';
 
 export { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
 
@@ -174,6 +175,7 @@ interface SetInlineLaunchFailedParams {
 }
 
 type InlineChildStartedEvent = Extract<RunbookEvent, { type: 'INLINE_CHILD_STARTED' }>;
+type InlineLaunchAbandonedEvent = Extract<RunbookEvent, { type: 'INLINE_LAUNCH_ABANDONED' }>;
 type DelegationChildLinkedEvent = Extract<RunbookEvent, { type: 'DELEGATION_CHILD_LINKED' }>;
 type DelegationChildUnlinkedEvent = Extract<RunbookEvent, { type: 'DELEGATION_CHILD_UNLINKED' }>;
 /**
@@ -360,6 +362,49 @@ function releaseInlineLatch(
       ? { ...substepState, inline: { ...inline, started: null } }
       : substepState,
   );
+}
+
+/**
+ * Release a launch latch, but only while the releaser still holds it.
+ *
+ * The owner-gated form of {@link releaseInlineLatch}, for the abandonment event.
+ * Both find the same row the same way; this one adds the question the consume
+ * path does not have to ask, because the two events reach the machine from
+ * different kinds of caller. A consume is sent by the launch span itself, in its
+ * own control flow, having just succeeded. An abandonment is sent from a
+ * DISPOSER — best-effort, fire-and-forget, running after an arbitrary failure —
+ * which is exactly the shape of a sender that may have fallen behind the state
+ * it is acting on. So the abandoning sender names the record it wrote, and the
+ * release applies only while the row still holds that record.
+ *
+ * Without the gate the machine would be relying on a caller-side invariant it
+ * cannot see: that only the process which won the latch ever abandons it. The
+ * CLI does satisfy it — the scope is built by, and carried only on, the `won`
+ * arm — but "the one caller today gets this right" is not a property of the
+ * runbook program, and a second front end (MCP, the plugin, a later recovery
+ * path) would have to rediscover it. Here it is checked where the write happens.
+ *
+ * @param substepStates - Current substep rows, if any.
+ * @param intent - The intent whose launch is being abandoned, if one is pending.
+ * @param owner - The latch record the releaser wrote when it won the launch.
+ * @returns The rows with this launch's latch cleared; the input when the row
+ *   holds a different latch, or nothing matches.
+ */
+function releaseInlineLatchHeldBy(
+  substepStates: readonly SubstepState[] | undefined,
+  intent: InlineLaunchIntentWithoutParentEntry | undefined,
+  owner: InlineLaunchStart,
+): readonly SubstepState[] | undefined {
+  if (!substepStates || !intent) return substepStates;
+  const held = findSubstepState(
+    substepStates,
+    intent.parentStepId,
+    intent.parentFrameKey as FrameKey,
+  )?.inline?.started;
+  if (!held || !isSameInlineLaunchStart(held, owner)) return substepStates;
+  // Delegated rather than inlined, so the two events cannot drift over which
+  // row they touch or what they leave behind on it.
+  return releaseInlineLatch(substepStates, intent);
 }
 
 function updateInlineStarted(
@@ -549,10 +594,14 @@ const baseRunbookSetup = setup({
      * design, since a nested observer inside a live span is also "self" and must
      * stand down — so a long-lived host that latched and failed stood down
      * against its own pid on every later attempt, permanently.
+     *
+     * Gated on the sender still holding the latch it names, which is what makes
+     * the exactly-once launch a property of the machine rather than of the CLI's
+     * scope discipline — see {@link releaseInlineLatchHeldBy}.
      */
     releaseInlineLaunchLatch: assign({
-      substepStates: ({ context }) =>
-        releaseInlineLatch(context.substepStates, context.inlineLaunchIntent),
+      substepStates: ({ context }, params: InlineLaunchAbandonedEvent) =>
+        releaseInlineLatchHeldBy(context.substepStates, context.inlineLaunchIntent, params.started),
     }),
     /** Mark an inline child run as started on the matching substep state. */
     storeInlineChildStarted: assign({
@@ -1070,6 +1119,21 @@ export interface RunbookContext {
  *   which invokes `outputCaptureActor`. Channels may be empty; the actor
  *   resolves with an empty `variables` record and still fires the result-driven
  *   `PASS` or `FAIL` event.
+ *
+ * The three inline-launch events are one mechanism and are documented together,
+ * because each is only correct in terms of the other two. They span one launch:
+ *
+ * - INLINE_CHILD_STARTED: Take the launch latch, BEFORE the child run is
+ *   created. Committing first is what makes the launch exactly-once, and is why
+ *   the record names its owner — a process that dies inside the span leaves a
+ *   latch that `classifyInlineLaunchOwnership` reclaims on proof of death.
+ * - INLINE_LAUNCH_CONSUMED: The launch FINISHED. Drops the latch and the
+ *   one-shot intent in one commit, because there is nothing left to re-observe.
+ * - INLINE_LAUNCH_ABANDONED: The launch span FAILED past the latch. Drops the
+ *   latch and KEEPS the intent, because the launch is not over and the
+ *   surviving intent is what lets the next observer win it and finish. Applies
+ *   only while the row still holds the latch record the sender names, so a
+ *   stale sender cannot release a reclaimer's launch.
  */
 export type RunbookEvent =
   | { type: 'PASS' }
@@ -1081,7 +1145,20 @@ export type RunbookEvent =
   | { type: 'SET_VARIABLES'; vars: Record<string, VariableValue> }
   | { type: 'DELEGATE_FRONTIER_CONSUMED' }
   | { type: 'INLINE_LAUNCH_CONSUMED' }
-  | { type: 'INLINE_LAUNCH_ABANDONED' }
+  | {
+      type: 'INLINE_LAUNCH_ABANDONED';
+      /**
+       * The latch record the abandoning sender wrote when it won the launch.
+       *
+       * Required, and the only payload: the release applies only while the
+       * substep row still holds this exact record, so a sender that has fallen
+       * behind cannot clear a latch another owner has since reclaimed. The
+       * launch coordinates are NOT repeated here — the row is found through the
+       * surviving intent, exactly as `INLINE_LAUNCH_CONSUMED` finds it, so the
+       * two events cannot disagree about which launch they refer to.
+       */
+      started: InlineLaunchStart;
+    }
   | {
       type: 'INLINE_CHILD_STARTED';
       parentStepId: string;
@@ -5188,7 +5265,10 @@ export function compileRunbookToMachine(
         actions: 'clearInlineLaunchIntent',
       },
       INLINE_LAUNCH_ABANDONED: {
-        actions: 'releaseInlineLaunchLatch',
+        actions: {
+          type: 'releaseInlineLaunchLatch',
+          params: ({ event }) => event,
+        },
       },
       INLINE_CHILD_STARTED: {
         actions: {
