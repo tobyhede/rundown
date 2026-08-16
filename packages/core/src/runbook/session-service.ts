@@ -426,6 +426,33 @@ export type PopIfActiveResult =
     };
 
 /**
+ * Result of an activation that must not re-push a run already on top.
+ *
+ * Discriminated rather than `void` for the reason {@link PopIfActiveResult} is,
+ * inverted: the caller needs to know whether IT performed the activation, so
+ * that a failure later in the launch span undoes only an activation it owns.
+ * The alternative is an unlocked `getActive` ahead of `pushRunbook` with the
+ * answer remembered in a local — which is the check-then-act window in one
+ * direction and a mirror of a store decision that can go stale in the other.
+ *
+ * Neither arm is a failure. `already-active` is the ordinary outcome of a
+ * caller re-entering a session that already targets its run.
+ *
+ * There is deliberately no payload. The caller named the run, so echoing it
+ * back tells it nothing it did not supply; the discriminant carries the whole
+ * result, which is *who wrote the stack*.
+ */
+export type PushIfNotActiveResult =
+  | {
+      /** The run was not the top and has been pushed by this call. */
+      readonly status: 'pushed';
+    }
+  | {
+      /** The run already held the top; nothing was written. */
+      readonly status: 'already-active';
+    };
+
+/**
  * Result of stashing whatever runbook is currently active.
  *
  * The bare (unclaimed) counterpart of {@link StashForClaimIdResult}, and
@@ -1160,6 +1187,43 @@ export class SessionService {
   async pushRunbook(id: RunId): Promise<void> {
     await this.mutate((ctx) => {
       ctx.session.defaultStack.push(id);
+    });
+  }
+
+  /**
+   * Push a runbook onto the stack, but only while it is not already the top.
+   *
+   * The conditional form of {@link pushRunbook}, for a caller activating a run
+   * it may later have to deactivate. Asking `getActive` first and remembering
+   * the answer is the shape this replaces: the read is unlocked, so the stack
+   * can move between it and the push, and the remembered boolean is a local
+   * mirror of a store decision that nothing keeps in step with the store. The
+   * returned status IS that decision, taken inside the transaction that acted
+   * on it, so the two cannot diverge.
+   *
+   * Deliberately unguarded — {@link mutate}, matching {@link pushRunbook},
+   * rather than {@link mutateGuarded}. The ownership preflight refuses on
+   * `runs.exec_token IS NOT NULL` alone, with no liveness probe: the
+   * dead-owner probe that reclaims a SIGKILLed owner's lease lives in the
+   * execution-lease acquisition path and is never reached from a session
+   * mutation. The caller this method exists for is finishing a launch whose
+   * owner died, and a child abandoned mid-execution is precisely the run that
+   * still holds a lease naming a dead pid — so guarding here would refuse
+   * `execution_in_progress` on exactly the crash-recovery path the activation
+   * is part of. Adding an entry to the stack also takes nothing away from a
+   * run under execution, which is what the guard protects against.
+   *
+   * @param id - The runbook state ID to activate.
+   * @returns `pushed` when this call wrote the stack, or `already-active` when
+   *   the run already held the top and nothing was written.
+   */
+  async pushRunbookIfNotActive(id: RunId): Promise<PushIfNotActiveResult> {
+    return this.mutate((ctx): PushIfNotActiveResult => {
+      if (topOfStackId(ctx.session) === id) {
+        return { status: 'already-active' };
+      }
+      ctx.session.defaultStack.push(id);
+      return { status: 'pushed' };
     });
   }
 

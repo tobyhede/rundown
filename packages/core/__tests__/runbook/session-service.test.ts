@@ -387,6 +387,121 @@ describe('SessionService', () => {
       });
     });
 
+    it('pushRunbookIfNotActive activates a run the session is not targeting', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+      });
+      await sessionService.pushRunbook(parent.id);
+
+      const result = await sessionService.pushRunbookIfNotActive(child.id);
+
+      expect(result).toEqual({ status: 'pushed' });
+      // Pushed ON TOP of the parent rather than replacing it: the caller is
+      // entering a nested run, and the entry underneath is what it returns to.
+      expect((await manager.loadSession()).defaultStack).toEqual([parent.id, child.id]);
+    });
+
+    it('pushRunbookIfNotActive reports already-active without writing when the run holds the top', async () => {
+      const state = await manager.create({ source: 'project', path: 'active.md' }, mockRunbook, {
+        runbookPath: 'active.md',
+      });
+      const below = await manager.create({ source: 'project', path: 'below.md' }, mockRunbook, {
+        runbookPath: 'below.md',
+      });
+      await sessionService.pushRunbook(below.id);
+      await sessionService.pushRunbook(state.id);
+
+      const result = await sessionService.pushRunbookIfNotActive(state.id);
+
+      expect(result).toEqual({ status: 'already-active' });
+      // The assertion that matters is the absence of a DUPLICATE entry, not
+      // merely that the top is unchanged: an unconditional push leaves the same
+      // run active while stacking it twice, so the run would need popping twice
+      // to be released and the entry below would never be reached.
+      expect((await manager.loadSession()).defaultStack).toEqual([below.id, state.id]);
+    });
+
+    // Buried, not absent. The condition is "is this run the TOP", not "is it on
+    // the stack anywhere" — a run the session has since pushed past is not what
+    // the caller's next bare command addresses, so re-activating it is the
+    // point. A membership test would answer `already-active` here and leave the
+    // caller running a child the session never targets.
+    it('pushRunbookIfNotActive re-activates a run that is on the stack but buried', async () => {
+      const buried = await manager.create({ source: 'project', path: 'buried.md' }, mockRunbook, {
+        runbookPath: 'buried.md',
+      });
+      const above = await manager.create({ source: 'project', path: 'above.md' }, mockRunbook, {
+        runbookPath: 'above.md',
+      });
+      await sessionService.pushRunbook(buried.id);
+      await sessionService.pushRunbook(above.id);
+
+      const result = await sessionService.pushRunbookIfNotActive(buried.id);
+
+      expect(result).toEqual({ status: 'pushed' });
+      expect((await manager.loadSession()).defaultStack).toEqual([buried.id, above.id, buried.id]);
+    });
+
+    // The posture assertion, and the one that would break the crash-recovery
+    // path if it flipped. `mutateSessionGuarded`'s ownership preflight refuses
+    // on `runs.exec_token IS NOT NULL` alone — the dead-owner probe that
+    // reclaims a SIGKILLed owner's lease lives on the lease-acquisition path and
+    // is never reached from a session mutation. The caller this method exists
+    // for is a launch span finishing a launch whose owner died, and a child
+    // abandoned mid-execution is exactly the run still holding a lease naming a
+    // dead pid. A guarded push would refuse `execution_in_progress` there
+    // forever, so the lease is held here and the activation must still commit.
+    it('pushRunbookIfNotActive activates a run holding an execution lease', async () => {
+      const state = await manager.create({ source: 'project', path: 'leased.md' }, mockRunbook, {
+        runbookPath: 'leased.md',
+      });
+      holdExecutionLease(state.id);
+
+      const result = await sessionService.pushRunbookIfNotActive(state.id);
+
+      expect(result).toEqual({ status: 'pushed' });
+      expect((await manager.loadSession()).defaultStack).toEqual([state.id]);
+    });
+
+    it('pushRunbookIfNotActive decides and writes in exactly one unguarded transaction', async () => {
+      // Structural guard, and the shape here differs from the conditional pop's
+      // by design: one SEPARATE transaction rather than one guarded one, because
+      // adding a stack entry takes nothing away from a run under execution and
+      // guarding it would refuse the recovery above. What both assert is the
+      // same property — that the condition is decided inside the transaction
+      // that acts on it, so no unlocked `getActive` pre-read can go stale
+      // between the decision and the write.
+      const state = await manager.create(
+        { source: 'project', path: 'atomic-push.md' },
+        mockRunbook,
+        {
+          runbookPath: 'atomic-push.md',
+        },
+      );
+      const loadSession = jest.spyOn(manager, 'loadSession');
+      const load = jest.spyOn(manager, 'load');
+      const mutateSession = jest.spyOn(manager, 'mutateSession');
+      const mutateSessionGuarded = jest.spyOn(manager, 'mutateSessionGuarded');
+
+      const result = await sessionService.pushRunbookIfNotActive(state.id);
+
+      expect(result).toEqual({ status: 'pushed' });
+      expect({
+        guardedTransactions: mutateSessionGuarded.mock.calls.length,
+        separateTransactions: mutateSession.mock.calls.length,
+        unlockedSessionReads: loadSession.mock.calls.length,
+        unlockedStateReads: load.mock.calls.length,
+      }).toEqual({
+        guardedTransactions: 0,
+        separateTransactions: 1,
+        unlockedSessionReads: 0,
+        unlockedStateReads: 0,
+      });
+    });
+
     // The property the execution loop's terminal release depends on, and the
     // one that separates it from a pop: a loop reaching terminal must release
     // the run it drove, wherever that run now sits. A positional pop would take
