@@ -376,7 +376,26 @@ async function applyExecutionTerminalRelease(
       released = await sessionService.releaseRunbook(runbookId, { retainClaimsAsTerminal: true });
       break;
     case 'stack-pop':
-      released = await sessionService.popRunbook();
+      // Named, not positional. This loop is releasing the run it just drove to
+      // terminal, and `runbookId` is that run — so asking the session to pop
+      // "whatever is on top" is a strictly weaker statement of the same intent.
+      // It is weaker in two directions: a stale child left above this run gets
+      // popped instead (taking ITS claims with it, since a release deletes
+      // every claim controlling what it removes), and this run is then left on
+      // the stack it was supposed to leave.
+      //
+      // Claims are still deleted here, exactly as the positional pop deleted
+      // them. `release-runbook` retains a terminal tombstone and this mode does
+      // not; that divergence is real and is tracked separately, but changing it
+      // in the same commit that changes the addressing would make a claim-
+      // disposition regression untraceable to either.
+      //
+      // `releaseRunbook` rather than the conditional pop, because the two want
+      // opposite things from a stack that has moved on: an undo must reach its
+      // run only while still active, while a terminal release must reach its
+      // run wherever it now sits. Its `not-found` arm makes a run already
+      // released — by the fence, or by another process — a clean no-op.
+      released = await sessionService.releaseRunbook(runbookId);
       break;
     default: {
       const _exhaustive: never = mode;

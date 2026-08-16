@@ -387,6 +387,67 @@ describe('SessionService', () => {
       });
     });
 
+    // The property the execution loop's terminal release depends on, and the
+    // one that separates it from a pop: a loop reaching terminal must release
+    // the run it drove, wherever that run now sits. A positional pop would take
+    // the entry above it instead — deleting THAT run's claims, since a release
+    // removes every claim controlling what it removes — and leave the run that
+    // actually ended still targeted by the session.
+    it('releaseRunbook removes a buried run and leaves the entry above it alone', async () => {
+      const ended = await manager.create({ source: 'project', path: 'ended.md' }, mockRunbook, {
+        runbookPath: 'ended.md',
+      });
+      const above = await manager.create({ source: 'project', path: 'above.md' }, mockRunbook, {
+        runbookPath: 'above.md',
+      });
+      // Both claimed, so the assertion is selectivity rather than survival: a
+      // release deletes the claims of what it removes, which is exactly what
+      // makes reaching the wrong run unrecoverable. Claiming only the entry
+      // above would show that one intact without showing the deletion landed
+      // on the run that was named.
+      const endedClaim = unwrapSessionMutation(
+        await sessionService.pushRunbookWithRunControlClaim(ended.id),
+      );
+      const aboveClaim = unwrapSessionMutation(
+        await sessionService.pushRunbookWithRunControlClaim(above.id),
+      );
+
+      const released = unwrapSessionMutation(await sessionService.releaseRunbook(ended.id));
+
+      expect(released.status).toBe('released');
+      const session = await manager.loadSession();
+      expect(session.defaultStack).toEqual([above.id]);
+      expect(session.claims[endedClaim.claim.claimKey]).toBeUndefined();
+      expect(session.claims[aboveClaim.claim.claimKey]).toBeDefined();
+      expect((await sessionService.getActive())?.id).toBe(above.id);
+    });
+
+    // Releasing a run the session no longer targets is a no-op rather than a
+    // refusal, which is what lets the loop release unconditionally at terminal
+    // without first asking whether the fence or another process got there.
+    it('releaseRunbook reports not-found for a run that is not on the stack', async () => {
+      const absent = await manager.create({ source: 'project', path: 'absent.md' }, mockRunbook, {
+        runbookPath: 'absent.md',
+      });
+      // Asserted against a populated session, not an empty one: "nothing
+      // changed" is trivially true of an empty stack, and the property the loop
+      // relies on is that releasing an already-released run disturbs neither
+      // the run currently targeted nor its authority.
+      const stacked = await manager.create({ source: 'project', path: 'stacked.md' }, mockRunbook, {
+        runbookPath: 'stacked.md',
+      });
+      const minted = unwrapSessionMutation(
+        await sessionService.pushRunbookWithRunControlClaim(stacked.id),
+      );
+
+      const released = unwrapSessionMutation(await sessionService.releaseRunbook(absent.id));
+
+      expect(released).toEqual({ status: 'not-found', runbookId: absent.id });
+      const session = await manager.loadSession();
+      expect(session.defaultStack).toEqual([stacked.id]);
+      expect(session.claims[minted.claim.claimKey]).toBeDefined();
+    });
+
     it('supports arbitrary nesting depth', async () => {
       const wf1 = await manager.create({ source: 'project', path: 'level1.md' }, mockRunbook, {
         runbookPath: 'level1.md',
