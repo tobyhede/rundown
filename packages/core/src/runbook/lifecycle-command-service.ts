@@ -4105,9 +4105,28 @@ export class RunbookLifecycleCommandService {
   }
 
   // Resume the active substep's running inline child when its linkage matches the
-  // parent cursor, pushing it onto the session if it is not already active.
-  // Returns the seam's loop directive for the parent, or `undefined` when there
-  // was no child to reactivate (caller then records the completion as usual).
+  // parent cursor. Returns the seam's loop directive for the parent, or
+  // `undefined` when there was no child to reactivate (caller then records the
+  // completion as usual).
+  //
+  // INVARIANT: a child is activated only by the launch span that WINS it.
+  //
+  // The linkage match this seam performs cannot tell an interrupted launch from
+  // a live owner mid-launch — both present as a running child whose linkage
+  // names the parent's current frame, and the seam does not consult the latch.
+  // Only the launch span does, so only the launch span knows whether THIS
+  // process may execute the child, and activating before it decides is
+  // activating on behalf of a process that may be about to stand down. This
+  // seam therefore pushes on exactly one arm: `none`, where the launch is
+  // already finished, the child is genuinely this session's to target, and
+  // there is no span left to win. On the `run` arm the launch span owns the
+  // activation, and performs it only after the latch says the launch is its
+  // own.
+  //
+  // Stated as an invariant because it is load-bearing in the other direction
+  // too: a `won` arm that executes a child without pushing leaves the child
+  // running with no session targeting it, and the operator's next bare command
+  // addresses the parent instead.
   async #reactivateRunningInlineChild(
     parentState: RunbookState,
   ): Promise<LifecycleLoopDirective | undefined> {
@@ -4131,10 +4150,6 @@ export class RunbookLifecycleCommandService {
       return undefined;
     }
 
-    const active = await this.#deps.sessionService.getActive();
-    if (active?.id !== childRunId) {
-      await this.#deps.sessionService.pushRunbook(childRunId);
-    }
     // An unfinished launch needs the parent's own loop to finish it: taking the
     // latch — writing `inline.started`, or reclaiming it from an owner that
     // died holding it — consuming the intent and re-establishing the child's
@@ -4143,9 +4158,16 @@ export class RunbookLifecycleCommandService {
     // none of that left to do, so running the loop there would only re-enter an
     // execution unit the parent never left — re-announcing the step and
     // re-running any command it carries.
-    return this.#hasUnconsumedInlineLaunchIntent(parentState, childRunId)
-      ? { kind: 'run', prompted: Boolean(parentState.prompted) }
-      : { kind: 'none' };
+    if (this.#hasUnconsumedInlineLaunchIntent(parentState, childRunId)) {
+      return { kind: 'run', prompted: Boolean(parentState.prompted) };
+    }
+
+    // The finished-launch arm, and the only one that activates. Conditional in
+    // the store rather than behind a `getActive` pre-read: the answer is only
+    // used to decide the write it is read for, so resolving it in a separate
+    // unlocked read is the check-then-act shape with nothing gained.
+    await this.#deps.sessionService.pushRunbookIfNotActive(childRunId);
+    return { kind: 'none' };
   }
 
   // Per-run step memo shared by both aggregate terminal paths. The map is what

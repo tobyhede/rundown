@@ -6991,6 +6991,40 @@ describe('RunbookLifecycleCommandService', () => {
       return { ...parent, substepStates: [substepState] };
     }
 
+    /**
+     * The parent above, still carrying the one-shot launch intent.
+     *
+     * That surviving intent is the seam's whole discriminant for "this launch
+     * never finished": the launcher writes the latch and consumes the intent in
+     * one continuation, so a completed launch leaves neither behind. Persisted
+     * through `snapshot.context` rather than passed as a flag, because that is
+     * where the seam reads it from and it must satisfy the same runtime field
+     * guard the actor service applies — a hand-shaped stand-in that failed the
+     * guard would silently land on the finished-launch arm and prove nothing.
+     */
+    function parentWithUnconsumedIntent(): RunbookState {
+      const parent = parentAtSubstep();
+      return {
+        ...parent,
+        snapshot: {
+          status: 'active',
+          value: 'step::1::1',
+          context: {
+            inlineLaunchIntent: {
+              parentRunId: runId,
+              parentStepId: '1',
+              parentStep: '1',
+              parentFrameKey: buildFrameKey('1'),
+              childRunId,
+              childRunbookPath: 'child.runbook.md',
+              childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+              contextSnapshot: buildContextSnapshot(parent, '1'),
+            },
+          },
+        },
+      };
+    }
+
     // Running inline child whose linkage matches the parent cursor by default.
     function childState(linkage: Partial<InlineLinkage> = {}): RunbookState {
       return baseState({
@@ -7014,7 +7048,7 @@ describe('RunbookLifecycleCommandService', () => {
       await manager.save(childState());
       await activate(parentAtSubstep());
 
-      const pushSpy = jest.spyOn(sessionService, 'pushRunbook');
+      const pushSpy = jest.spyOn(sessionService, 'pushRunbookIfNotActive');
       const recordSpy = jest.spyOn(completionService, 'prepareManualCompletion');
 
       const outcome = await seam.runTransition({
@@ -7040,6 +7074,49 @@ describe('RunbookLifecycleCommandService', () => {
       expect(pushSpy).toHaveBeenCalledTimes(1);
       expect(pushSpy).toHaveBeenCalledWith(childRunId);
       expect(recordSpy).not.toHaveBeenCalled();
+    });
+
+    // The counterpart arm, and the one this seam must NOT activate on.
+    //
+    // The linkage match above cannot tell an interrupted launch from a live
+    // owner mid-launch: both present as a running child stamped at the parent's
+    // current frame entry, and this seam never consults the launch latch. Only
+    // the launch span does. So an activation here is an activation performed on
+    // behalf of a process that may be about to discover the launch is not its
+    // own and stand down — and the run it would leave the session targeting is
+    // one THIS process has refused to execute while another owns it.
+    //
+    // Pinned in core rather than only through the CLI's integration suite,
+    // which is where this arm's only coverage used to live. A push on the `run`
+    // arm is invisible from there: the launch span pushes the same child
+    // moments later on the winning path, so the sequential integration test
+    // ends in the same session state either way and the leak only appears when
+    // a second process owns the launch.
+    it('does not activate the child on the arm that hands the launch to the loop', async () => {
+      await manager.save(childState());
+      await activate(parentWithUnconsumedIntent());
+
+      const pushSpy = jest.spyOn(sessionService, 'pushRunbookIfNotActive');
+      const legacyPushSpy = jest.spyOn(sessionService, 'pushRunbook');
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      // The surviving intent is what selects this arm, so asserting the
+      // directive is what proves the fixture reached the branch under test
+      // rather than falling back to the finished-launch one, where a push is
+      // correct and the absence below would be trivially true.
+      expect(outcome).toMatchObject({ loop: { kind: 'run' } });
+      expect(pushSpy).not.toHaveBeenCalled();
+      expect(legacyPushSpy).not.toHaveBeenCalled();
+      // And the session still targets the PARENT, which is the observable form
+      // of the same fact: the loop this directive hands back runs the parent,
+      // and the child becomes active only once a launch span wins it.
+      expect((await sessionService.getActive())?.id).toBe(runId);
     });
 
     it('records a completion when there is no running inline child', async () => {
