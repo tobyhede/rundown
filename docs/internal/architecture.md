@@ -656,12 +656,11 @@ it.
 
 5. **Bare inline-child reactivation.** When a bare (no `manualTarget`) substep
    transition lands on a substep whose inline child is still running and whose
-   parent linkage matches, the seam resumes the child via
-   `SessionService.pushRunbook` rather than recording a completion. This
-   decision ("is the child still open?") is runbook logic, so it lives in core
-   (`#reactivateRunningInlineChild`), not in the CLI. The explicit `--step` /
-   `--index` path never reactivates — it is a deliberate completion against a
-   named substep.
+   parent linkage matches, the seam resumes the child rather than recording a
+   completion. This decision ("is the child still open?") is runbook logic, so
+   it lives in core (`#reactivateRunningInlineChild`), not in the CLI. The
+   explicit `--step` / `--index` path never reactivates — it is a deliberate
+   completion against a named substep.
 
    The seam also decides whether the reactivation needs the parent's execution
    loop, and returns that as the loop directive. An **interrupted** launch does:
@@ -673,17 +672,40 @@ it.
    performs them, and only the parent's own loop reaches it, so the seam returns
    `loop: { kind: 'run' }` there.
 
-   The seam matches on a running child with matching linkage, which is also what
-   a **live** owner mid-launch looks like — it does not consult the latch. The
-   launch seam does, and when it stands down against a live owner it pops the
-   activation this seam performed, so a session is never left targeting a run
-   the process refused to execute. A launch that already **finished** returns
-   `loop: { kind: 'none' }` — running the loop would re-enter an execution unit
-   the parent never left, re-announcing the step and re-running any command it
-   carries. The discriminant is the surviving intent itself
+   A launch that already **finished** returns `loop: { kind: 'none' }` — running
+   the loop would re-enter an execution unit the parent never left,
+   re-announcing the step and re-running any command it carries. The
+   discriminant is the surviving intent itself
    (`#hasUnconsumedInlineLaunchIntent`), which is the same value
    `observeExecutionUnitEntry` re-projects, so the seam's decision and the
    loop's behaviour agree by construction.
+
+   **A child is activated only by the launch span that wins it.** The seam
+   matches on a running child with matching linkage, which is also what a
+   **live** owner mid-launch looks like — the two are one process's launch at
+   two moments, and this seam does not consult the latch. So the `none` arm is
+   the only one it activates on: there the launch is over, and the child is
+   genuinely this session's to target. On the `run` arm a push would target the
+   session at a run this process may be about to stand down from, and standing
+   down would then have to take that push back on every refusal arm the launch
+   span has or later grows. `launchInlineChildFromIntent` performs the
+   activation instead — once the latch has said the launch is its own — and
+   every stand-down arm consequently writes nothing to the session.
+
+   The invariant is load-bearing in both directions: a `won` arm that executed a
+   child without pushing would leave it running with the session never targeting
+   it, and the operator's next bare command would address the parent.
+
+   Both activations go through `SessionService.pushRunbookIfNotActive`, which
+   decides "is this run already the top?" inside the transaction that acts on
+   the answer, and reports which way it went so the launch span rolls back only
+   an activation it performed itself. It is deliberately unguarded
+   (`mutateSession`, like `pushRunbook`): the ownership preflight refuses on
+   `runs.exec_token IS NOT NULL` alone, and the dead-owner probe that reclaims a
+   SIGKILLed owner's lease lives on the execution-lease acquisition path, never
+   on a session mutation — so guarding this write would refuse
+   `execution_in_progress` on exactly the crash-recovery launch it exists to
+   finish.
 
 The seam returns transition-observation events plus a loop-continuation
 directive (`LifecycleLoopDirective`) as **data**. It does not spawn processes or
