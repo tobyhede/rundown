@@ -1,5 +1,5 @@
 ---
-'@rundown-org/core': patch
+'@rundown-org/core': minor
 '@rundown-org/cli': patch
 ---
 
@@ -26,6 +26,19 @@ latch **and** the intent, because the launch is over; abandonment drops only the
 latch and keeps the intent, because the launch is not over and the surviving
 intent is exactly what makes it re-observable. Clearing it here would trade a
 permanently-latched launch for a permanently-lost one.
+
+The event carries the latch record its sender wrote, and the machine releases
+only while the substep row still holds that exact record — owner pid, owner
+start id and instant. `INLINE_LAUNCH_CONSUMED` needs no such gate, because it is
+sent by the launch span itself, in its own control flow, having just succeeded.
+Abandonment is sent from a disposer: best-effort, fire-and-forget, running after
+an arbitrary failure, which is the shape of a sender that may have fallen behind
+the state it is acting on. Ungated, the machine would be trusting a rule only
+the CLI enforces — that nothing but the winner abandons a launch — and a second
+front end would have to rediscover it. The reclaim the gate refuses is not one
+the CLI can reach today (a reclaimer must first prove the previous owner dead,
+and a dead process runs no disposer), which is the point: the exactly-once
+launch stops depending on that being true.
 
 The CLI holds the latch with `await using`. `latchInlineLaunch`'s `won` arm now
 carries a `ScopedInlineLatch` — an `AsyncDisposable` with `keep()` — built by
