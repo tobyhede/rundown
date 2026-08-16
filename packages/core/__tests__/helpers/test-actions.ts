@@ -124,6 +124,7 @@ export const defaultActionStubs: RunbookActionImpls = {
   storeDelegateFrontier: () => {},
   storeInlineLaunchIntent: () => {},
   clearInlineLaunchIntent: () => {},
+  releaseInlineLaunchLatch: () => {},
   storeInlineChildStarted: () => {},
   storeDelegationChildLinked: () => {},
   storeDelegationChildUnlinked: () => {},

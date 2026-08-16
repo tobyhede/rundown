@@ -419,6 +419,7 @@ function lastResultSyncForEvent(
     case 'SET_VARIABLES':
     case 'DELEGATE_FRONTIER_CONSUMED':
     case 'INLINE_LAUNCH_CONSUMED':
+    case 'INLINE_LAUNCH_ABANDONED':
     case 'INLINE_CHILD_STARTED':
     case 'DELEGATION_CHILD_LINKED':
     case 'DELEGATION_CHILD_UNLINKED':

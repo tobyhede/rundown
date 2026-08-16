@@ -206,6 +206,109 @@ describe('inline launch compiler integration', () => {
     actor.stop();
   });
 
+  // The failure counterpart of the event above, and the asymmetry is the whole
+  // reason it is a separate event rather than a second caller of the same one.
+  //
+  // `INLINE_LAUNCH_CONSUMED` drops both the latch and the intent, because the
+  // launch is over. A span that took the latch and then FAILED out of it must
+  // drop only the latch: the launch is not over, and the surviving intent is
+  // exactly what makes it re-observable. Clearing the intent here would trade a
+  // permanently-latched launch for a permanently-lost one.
+  it('releases the latch without clearing the intent when a launch span is abandoned', async () => {
+    const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+    const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
+    const actor = createActor(
+      compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest({
+          RunId: 'rd_cccccccccccccccccccccccccccccccc',
+        }),
+        resolveInlineRunbook: childResolver(),
+        generateChildRunId: () => childRunId,
+        now: () => '2026-05-30T00:00:00.000Z',
+      }),
+    );
+    actor.start();
+
+    await waitFor(actor, (candidate) => !candidate.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+      timeout: 500,
+    });
+    actor.send({
+      type: 'INLINE_CHILD_STARTED',
+      parentStepId: '1',
+      parentFrameKey: buildFrameKey('1'),
+      childRunId,
+      started: LATCHED,
+    });
+
+    actor.send({ type: 'INLINE_LAUNCH_ABANDONED' });
+
+    const abandoned = actor.getSnapshot().context;
+    // The intent stays, still naming the same child, so the next observer reads
+    // an unlatched launch it can win and finish.
+    expect(abandoned.inlineLaunchIntent).toMatchObject({
+      parentStepId: '1',
+      parentFrameKey: '1|',
+      childRunId,
+    });
+    expect(abandoned.substepStates).toContainEqual(
+      expect.objectContaining({
+        id: '1',
+        frameKey: '1|',
+        inline: expect.objectContaining({ childRunId, started: null }),
+      }),
+    );
+
+    actor.stop();
+  });
+
+  // Root-level and idempotent, like every other latch event: the CLI releases
+  // through a scope disposer, and a disposer that fires against a launch which
+  // has already been consumed — or abandoned twice by a retried send — must not
+  // corrupt the row it lands on.
+  it('is a no-op when the launch it abandons holds no latch', async () => {
+    const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+    const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
+    const actor = createActor(
+      compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest({
+          RunId: 'rd_cccccccccccccccccccccccccccccccc',
+        }),
+        resolveInlineRunbook: childResolver(),
+        generateChildRunId: () => childRunId,
+        now: () => '2026-05-30T00:00:00.000Z',
+      }),
+    );
+    actor.start();
+
+    await waitFor(actor, (candidate) => !candidate.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+      timeout: 500,
+    });
+    const before = actor.getSnapshot().context;
+
+    // Never latched, so there is nothing to release.
+    actor.send({ type: 'INLINE_LAUNCH_ABANDONED' });
+
+    const after = actor.getSnapshot().context;
+    expect(after.substepStates).toEqual(before.substepStates);
+    expect(after.inlineLaunchIntent).toEqual(before.inlineLaunchIntent);
+
+    actor.stop();
+  });
+
   // The release is scoped to the launch the consumed intent names, not to
   // "whatever inline row is at that coordinate". A row that has moved on to a
   // different child belongs to a different launch, whose latch is not this

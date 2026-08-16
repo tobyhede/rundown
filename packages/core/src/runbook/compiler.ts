@@ -532,6 +532,28 @@ const baseRunbookSetup = setup({
       substepStates: ({ context }) =>
         releaseInlineLatch(context.substepStates, context.inlineLaunchIntent),
     }),
+    /**
+     * Release the launch latch of a launch span that failed, keeping the intent.
+     *
+     * The mirror of {@link clearInlineLaunchIntent}, and the asymmetry is the
+     * point. That action is for a launch that FINISHED, so it drops both: the
+     * latch, because nothing is running, and the intent, because the launch is
+     * done. This one is for a span that took the latch and then failed out of
+     * it — a ref that would not resolve, a preparation error, a consume that
+     * threw — where the launch is not done and must stay re-observable. So the
+     * latch goes and the intent stays, and the next observer reads `unlatched`
+     * with the intent still naming its child, wins, and finishes it.
+     *
+     * Without this, every post-`won` failure exit left the latch held by a LIVE
+     * pid. `classifyInlineLaunchOwnership` has no self-pid exemption — by
+     * design, since a nested observer inside a live span is also "self" and must
+     * stand down — so a long-lived host that latched and failed stood down
+     * against its own pid on every later attempt, permanently.
+     */
+    releaseInlineLaunchLatch: assign({
+      substepStates: ({ context }) =>
+        releaseInlineLatch(context.substepStates, context.inlineLaunchIntent),
+    }),
     /** Mark an inline child run as started on the matching substep state. */
     storeInlineChildStarted: assign({
       substepStates: ({ context }, params: InlineChildStartedEvent) =>
@@ -1059,6 +1081,7 @@ export type RunbookEvent =
   | { type: 'SET_VARIABLES'; vars: Record<string, VariableValue> }
   | { type: 'DELEGATE_FRONTIER_CONSUMED' }
   | { type: 'INLINE_LAUNCH_CONSUMED' }
+  | { type: 'INLINE_LAUNCH_ABANDONED' }
   | {
       type: 'INLINE_CHILD_STARTED';
       parentStepId: string;
@@ -5163,6 +5186,9 @@ export function compileRunbookToMachine(
       },
       INLINE_LAUNCH_CONSUMED: {
         actions: 'clearInlineLaunchIntent',
+      },
+      INLINE_LAUNCH_ABANDONED: {
+        actions: 'releaseInlineLaunchLatch',
       },
       INLINE_CHILD_STARTED: {
         actions: {
