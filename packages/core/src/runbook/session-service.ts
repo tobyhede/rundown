@@ -1954,7 +1954,13 @@ export class SessionService {
    */
   async popRunbookIfActive(expected: RunId): Promise<SessionMutationResult<PopIfActiveResult>> {
     return this.mutateGuarded(
-      (session) => (topOfStackId(session) === expected ? [expected] : []),
+      // Filtered from the top rather than branched into `[expected]` or `[]`:
+      // the empty arm of that conditional is unobservable, because an id naming
+      // no run is inert in the ownership preflight, so no test can tell it from
+      // a wrong one. Narrowing `topOfStack` instead states the same rule —
+      // guard the top only when it is the run this call would remove — with
+      // both directions of the predicate reachable from the outside.
+      (session) => topOfStack(session).filter((id) => id === expected),
       (ctx): PopIfActiveResult => {
         // The same accessor the selector used, so "is `expected` the top?" has
         // one spelling: a selector that named `expected` and a body that then
