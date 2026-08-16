@@ -1060,7 +1060,9 @@ describe('runExecutionLoop', () => {
     expect(emittedEvents).not.toContain('COMMAND_STARTED');
     expect(emittedEvents).not.toContain('COMMAND_COMPLETED');
     expect(core.executeCommand).not.toHaveBeenCalled();
-    expect(mockSessionService.popRunbook).toHaveBeenCalledWith();
+    // Bare `runbookId`, asserted by exact arguments: the retaining form belongs
+    // to `release-runbook`, and the two modes must stay distinguishable here.
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
   });
 
   it('returns waiting if prompted mode is on', async () => {
@@ -1562,7 +1564,7 @@ describe('runExecutionLoop', () => {
         runId: runbookId,
         message: `Run ${runbookId} has an execution in progress.`,
       };
-      mockSessionService.popRunbook.mockResolvedValue(refusal);
+      mockSessionService.releaseRunbook.mockResolvedValue(refusal);
 
       const result = await runExecutionLoop(
         asManager(mockManager),
@@ -1574,7 +1576,7 @@ describe('runExecutionLoop', () => {
       );
 
       expect(result).toBe('stopped');
-      expect(mockSessionService.popRunbook).toHaveBeenCalledWith();
+      expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
       expect(mockEmitter.emit).toHaveBeenCalledWith({
         type: 'ERROR_OCCURRED',
         payload: { message: refusal.message, code: 'EXECUTION_IN_PROGRESS' },
@@ -1721,7 +1723,7 @@ describe('runExecutionLoop', () => {
         runId: runbookId,
         message: `Run ${runbookId} has an execution in progress.`,
       };
-      mockSessionService.popRunbook.mockResolvedValue(refusal);
+      mockSessionService.releaseRunbook.mockResolvedValue(refusal);
 
       const result = await runExecutionLoop(
         asManager(mockManager),
@@ -2958,9 +2960,13 @@ describe('runExecutionLoop', () => {
     );
 
     // The stranding assertion: the default 'stack-pop' release must have run,
-    // so the refused run no longer sits at the top of the session stack.
-    expect(mockSessionService.popRunbook).toHaveBeenCalledTimes(1);
-    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+    // so the refused run is no longer targeted by the session. Asserted by
+    // exact arguments — the bare form deletes claims, the retaining form is
+    // `release-runbook`'s, and a mode that silently swapped them would still
+    // satisfy a bare call-count check.
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledTimes(1);
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
+    expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
   });
 
   it('releases a claimed child through releaseRunbook when the frontier refusal fires', async () => {
@@ -3097,9 +3103,13 @@ describe('runExecutionLoop', () => {
     );
 
     // The stranding assertion: the default 'stack-pop' release must have run,
-    // so the refused run no longer sits at the top of the session stack.
-    expect(mockSessionService.popRunbook).toHaveBeenCalledTimes(1);
-    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+    // so the refused run is no longer targeted by the session. Asserted by
+    // exact arguments — the bare form deletes claims, the retaining form is
+    // `release-runbook`'s, and a mode that silently swapped them would still
+    // satisfy a bare call-count check.
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledTimes(1);
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
+    expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
   });
 
   it('releases a claimed child through releaseRunbook when the frontier projection is refused', async () => {
@@ -3184,7 +3194,8 @@ describe('runExecutionLoop', () => {
     expect(mockEmitter.emit).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'STEP_ENTERED' }),
     );
-    expect(mockSessionService.popRunbook).toHaveBeenCalledTimes(1);
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledTimes(1);
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
   });
 
   it('rejects a structurally malformed persisted frontier rather than projecting it', async () => {
