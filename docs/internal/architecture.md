@@ -224,9 +224,11 @@ The actor does not start the child process or write child state. Those external
 effects remain in the CLI boundary: the execution loop consumes the persisted
 intent, creates or resumes the child run with the preallocated id, records
 `INLINE_CHILD_STARTED` on the parent, and sends `INLINE_LAUNCH_CONSUMED` after
-the one-shot intent has been handled. If preparation fails, the machine records
-`INLINE_LAUNCH_FAILED` and stops the active runbook; the CLI must not fall back
-to local substep execution.
+the one-shot intent has been handled — or `INLINE_LAUNCH_ABANDONED` when the
+launch span fails after latching, which releases the latch while keeping the
+intent so the unfinished launch stays re-observable. If preparation fails, the
+machine records `INLINE_LAUNCH_FAILED` and stops the active runbook; the CLI
+must not fall back to local substep execution.
 
 The leaf also invokes `commandExecActor` directly to execute the step's command;
 that actor's completion produces the `COMMAND_RESULT` event the capture flow
@@ -528,7 +530,8 @@ translating snapshot transitions.
 | `SET_VARIABLES { vars }`                                                     | Delegation completion                                           | Used when a child runbook reports back.                                                                                               |
 | `DELEGATE_FRONTIER_CONSUMED`                                                 | Delegation issuance                                             | Acknowledges the front end emitted the auto-issued delegation frontier.                                                               |
 | `INLINE_CHILD_STARTED { parentStepId, parentFrameKey, childRunId, started }` | Inline launch side effect                                       | Latches the launch for the machine-owned intent. `started` carries the instant AND the launching process's identity.                  |
-| `INLINE_LAUNCH_CONSUMED`                                                     | Inline launch side effect                                       | Clears the one-shot `inlineLaunchIntent` after the front end has consumed it.                                                         |
+| `INLINE_LAUNCH_CONSUMED`                                                     | Inline launch side effect                                       | Clears the one-shot `inlineLaunchIntent` after the front end has consumed it, releasing the launch latch in the same commit.          |
+| `INLINE_LAUNCH_ABANDONED`                                                    | Inline launch side effect                                       | Releases the launch latch of a span that failed, KEEPING the intent so the unfinished launch stays re-observable.                     |
 | `DELEGATION_CHILD_LINKED` / `DELEGATION_CHILD_UNLINKED`                      | `RunbookActorService` (core-internal)                           | Records or clears the parent-side link to a claimed child run. Not front-end reachable.                                               |
 | `MANUAL_DELEGATION_ABORT_PREPARED { substepStates }`                         | `RunbookActorService` (core-internal)                           | Commits a machine-prepared manual `abort` back into the compiled machine. Root-level `assign` only — no target, guard, or derivation. |
 
@@ -1514,22 +1517,23 @@ paid for it with the duplicate `INSERT`.
 The latch buys the recovery back rather than reverting the trade: the record
 names its **owner**, and is held for exactly the launch span — written by
 `INLINE_CHILD_STARTED`, released by `INLINE_LAUNCH_CONSUMED` in the same commit
-that clears the one-shot intent, which is the lifetime the file lock had. So it
-binds only while that owner runs, and only while the launch is unfinished.
-`inline.started` is `{ at, ownerPid, ownerStartId }`, and
-`classifyInlineLaunchOwnership` (`runbook/inline-launch-start.ts`) reads it as
-`unlatched`, `held` or `reclaimable` — the same PID-aware staleness the file
-locks use, on the same terms: **liveness, never age**. A start id rather than a
-bare pid, because a recycled pid would otherwise read as a live owner and the
-latch would never be reclaimed. Absence of the child run row is deliberately NOT
-the signal: an observer that has latched and is still resolving the child
-runbook presents exactly the state a crashed one does, so reclaiming on absence
-would send both into `manager.create` and reproduce the race the latch exists to
-prevent. The reclaiming observer overwrites the record with its own identity in
-the same commit, so a third observer finds the launch held rather than
-reclaimable, and reports the reclamation to the operator. A launch held by a
-**live** owner answers `waiting` — now naming the process, because that wait
-resolves itself and is not the same condition as a stranded one.
+that clears the one-shot intent, or by `INLINE_LAUNCH_ABANDONED` when the span
+fails out of it, which is the lifetime the file lock had. So it binds only while
+that owner runs, and only while the launch is unfinished. `inline.started` is
+`{ at, ownerPid, ownerStartId }`, and `classifyInlineLaunchOwnership`
+(`runbook/inline-launch-start.ts`) reads it as `unlatched`, `held` or
+`reclaimable` — the same PID-aware staleness the file locks use, on the same
+terms: **liveness, never age**. A start id rather than a bare pid, because a
+recycled pid would otherwise read as a live owner and the latch would never be
+reclaimed. Absence of the child run row is deliberately NOT the signal: an
+observer that has latched and is still resolving the child runbook presents
+exactly the state a crashed one does, so reclaiming on absence would send both
+into `manager.create` and reproduce the race the latch exists to prevent. The
+reclaiming observer overwrites the record with its own identity in the same
+commit, so a third observer finds the launch held rather than reclaimable, and
+reports the reclamation to the operator. A launch held by a **live** owner
+answers `waiting` — now naming the process, because that wait resolves itself
+and is not the same condition as a stranded one.
 
 `already-latched` therefore carries no child, and the adoption branch is reached
 only from `won`. A live owner that has reached `manager.create` and one that has
@@ -1539,9 +1543,41 @@ out from under it, and rotate the bearer it still holds. The crashed launcher
 that got as far as creating the child — the case the adoption branch exists for
 — arrives through reclamation instead.
 
-One residual: a launch span that FAILS after latching leaves the latch set,
-because clearing it would need an inverse machine event. The owner is alive, so
-it reports as held until that process exits, and the next process reclaims it.
+A launch span that FAILS after latching releases the latch through the inverse
+event, `INLINE_LAUNCH_ABANDONED`. It is the mirror of `INLINE_LAUNCH_CONSUMED`
+and the asymmetry is the point: consumption drops the latch AND the intent,
+because the launch is over, while abandonment drops only the latch and keeps the
+intent, because the launch is not over and the surviving intent is what makes it
+re-observable.
+
+Without it the latch stayed set on every post-`won` failure exit, held by a pid
+that is still running — which is not a crash the liveness probe can recover.
+`classifyInlineLaunchOwnership` has no self-pid exemption (a nested observer
+inside a live span is also "self" and must stand down), so the same process
+re-observing its own failed launch stood down against itself, permanently, with
+a diagnostic naming the operator's own pid as the process to wait for. That is
+what made the stand-down reachable **single-process**, and it is why a
+long-lived host — the MCP server, the plugin, the integration harness's own
+`runCliInProcess` — could strand itself on one bad launch.
+
+The CLI holds the latch with `await using` (`ScopedInlineLatch`, built by the
+`won` arm itself so a `won` that could be received without a scope is
+unrepresentable), and disarms it with `keep()` after a successful consume. This
+is the one place in the launch path a disposer belongs: the latch has an owner,
+an acquire/release lifetime and liveness-based reclamation, and scope exit
+covers the failure paths a hand-rolled release would have to enumerate —
+including the ones a later change adds. The session activation deliberately does
+NOT use one: its undo is right on failure only, so a forgotten `keep()` there
+would pop a running child on the common path.
+
+Releasing on failure does not reopen the exactly-once hazard. The latch is still
+taken inside the compare-and-swap, so two observers cannot both win it; and
+either the span failed before creating the child — `startRunbook` deletes a run
+it created on every failure path through `afterStarted` — or the child exists
+with matching linkage and the surviving intent still names it, so the next
+observer reads `unlatched` with an `existingChild`, wins, and adopts. The loser
+of a genuine race still reports `already-latched`, which is permanent and
+answers `waiting`; it never reports `concurrent_modification`.
 
 The lock itself was no better than it looks: `acquireFileLock` is not reentrant,
 so a second observer reached from the same process blocked its own predecessor
