@@ -408,9 +408,11 @@ Child prompt.
     // the recovery itself.
     const parentAfter = await readRunbookState(workspace, parentRunId);
     const inlineAfter = parentAfter?.substepStates?.find((entry) => entry.inline)?.inline;
-    // The reclaimed launch ran to completion, so the latch it took is released
-    // again. That THIS process was recorded as the new owner while the span ran
-    // is pinned on the event in the unit suite, where the mid-flight state is
+    // Released at the child's START, not at its finish: the launch span ends
+    // when `afterStarted` consumes the intent, which is why the child asserted
+    // `running` above is still running here while the latch is already free.
+    // That THIS process was recorded as the new owner while the span ran is
+    // pinned on the event in the unit suite, where the mid-flight state is
     // observable; here the durable outcome is what matters, and a latch left
     // behind would strand the next visit to this frame.
     expect(inlineAfter?.started).toBeNull();
