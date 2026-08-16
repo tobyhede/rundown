@@ -650,6 +650,44 @@ describe('latchInlineLaunch', () => {
       expect(await readLatch(parent)).toEqual(latched);
     });
 
+    // The disposer is fire-and-forget, so it must not be able to release a latch
+    // that is no longer this span's. It names the record it wrote and the
+    // machine applies the release only while the row still holds that record —
+    // the gate lives there rather than here precisely so it does not depend on
+    // this caller's discipline.
+    //
+    // The reclaim is staged rather than raced: producing it for real needs the
+    // previous owner to be provably DEAD, and a dead process runs no disposer,
+    // so the sequence this pins is not one the CLI can reach today. What it
+    // pins is that the release stays scoped to its own latch if a second sender
+    // ever does — which is the difference between the exactly-once launch being
+    // a property of the machine and a property of this file.
+    it('leaves a latch another owner reclaimed alone on scope exit', async () => {
+      const parent = await seedLatchableParent();
+      const outcome = await latch(parent);
+      if (outcome.kind !== 'won') throw new Error(`expected won, got ${outcome.kind}`);
+      const reclaimed: InlineLaunchStart = {
+        at: '2026-05-30T00:00:09.000Z',
+        ownerPid: 7777,
+        ownerStartId: 'start-id-7777',
+      };
+      // Exactly what a reclaiming observer commits: the same launch, at the same
+      // coordinates, with the record overwritten by its own identity.
+      await parent.actorService.sendAndSync(parent.parentRunId, parent.steps, {
+        type: 'INLINE_CHILD_STARTED',
+        parentStepId: parent.intent.parentStepId,
+        parentFrameKey: parent.intent.parentFrameKey as FrameKey,
+        childRunId: parent.childRunId,
+        started: reclaimed,
+      });
+
+      await outcome.held[Symbol.asyncDispose]();
+
+      // Untouched. Clearing it would hand a third observer an unlatched launch
+      // while the reclaimer is still inside its span.
+      expect(await readLatch(parent)).toEqual(reclaimed);
+    });
+
     it('releases at most once across repeated disposal', async () => {
       const parent = await seedLatchableParent();
       const outcome = await latch(parent);
@@ -686,7 +724,7 @@ describe('latchInlineLaunch', () => {
       expect(releases).toBe(1);
     });
 
-    it('releases at most once across keep, explicit disposal and scope exit', async () => {
+    it('releases at most once across repeated explicit disposal and a later keep', async () => {
       let releases = 0;
       const held = heldInlineLatch(
         async () => {

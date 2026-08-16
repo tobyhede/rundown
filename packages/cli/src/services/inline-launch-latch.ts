@@ -223,6 +223,13 @@ export interface ScopedInlineLatch extends AsyncDisposable {
  * second run. The latch is still taken inside the compare-and-swap either way,
  * so two observers cannot both win it.
  *
+ * Nor can a disposer release a latch this span no longer holds: the event it
+ * sends names the record the span wrote, and `releaseInlineLatchHeldBy` applies
+ * the release only while the row still carries it. That check is the machine's,
+ * deliberately — a caller-side rule that only the winner abandons is not a
+ * property of the runbook program, and this is a fire-and-forget path where a
+ * sender falling behind the state it acts on is the expected shape.
+ *
  * @param release - Thunk sending the abandonment to the machine (may reject).
  * @param describe - Returns structured log context identifying the launch.
  * @returns A best-effort, idempotent latch scope.
@@ -514,6 +521,11 @@ export async function latchInlineLaunch(args: InlineLaunchLatchArgs): Promise<In
                 async () => {
                   await args.actorService.sendAndSync(parentLinkage.parentRunId, args.steps, {
                     type: 'INLINE_LAUNCH_ABANDONED',
+                    // The record this attempt committed, not a fresh one: the
+                    // machine releases only while the row still holds it, so a
+                    // re-probed identity would name a latch nobody wrote and
+                    // release nothing. `started()` is memoized for that reason.
+                    started: started(),
                   });
                 },
                 () => ({
