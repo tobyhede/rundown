@@ -192,6 +192,201 @@ describe('SessionService', () => {
       expect(active?.id).toBe(parent.id);
     });
 
+    it('popRunbookIfActive pops the expected run and returns the new top', async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+      });
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.pushRunbook(child.id);
+
+      const result = unwrapSessionMutation(await sessionService.popRunbookIfActive(child.id));
+
+      expect(result).toEqual({
+        status: 'popped',
+        runbookId: child.id,
+        nextDefaultRunbookId: parent.id,
+      });
+      expect((await sessionService.getActive())?.id).toBe(parent.id);
+    });
+
+    // The case above leaves a single-entry tail, where reading the new top by a
+    // positive index would answer `undefined`. This one leaves a multi-entry
+    // tail, so "the new top" is asserted as an actual position rather than as
+    // the coincidence of an exhausted stack.
+    it('popRunbookIfActive returns the new top when the tail is more than one deep', async () => {
+      const grandparent = await manager.create(
+        { source: 'project', path: 'grandparent.md' },
+        mockRunbook,
+        { runbookPath: 'grandparent.md' },
+      );
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+      });
+      await sessionService.pushRunbook(grandparent.id);
+      await sessionService.pushRunbook(parent.id);
+      await sessionService.pushRunbook(child.id);
+
+      const result = unwrapSessionMutation(await sessionService.popRunbookIfActive(child.id));
+
+      expect(result).toEqual({
+        status: 'popped',
+        runbookId: child.id,
+        nextDefaultRunbookId: parent.id,
+      });
+      expect((await manager.loadSession()).defaultStack).toEqual([grandparent.id, parent.id]);
+    });
+
+    // The defect this method exists to remove. A caller that resolved its target
+    // with an unlocked `getActive` and then called the positional `popRunbook`
+    // pops whatever the top is when the transaction opens — and
+    // `projectRunbookRelease` deletes every claim controlling that run, so a
+    // freshly started foreign run loses the run-control bearer `rundown run`
+    // minted with its push. Nothing about that is correctable.
+    it('popRunbookIfActive refuses a foreign top and leaves its stack entry and claims intact', async () => {
+      const mine = await manager.create({ source: 'project', path: 'mine.md' }, mockRunbook, {
+        runbookPath: 'mine.md',
+      });
+      const mid = await manager.create({ source: 'project', path: 'mid.md' }, mockRunbook, {
+        runbookPath: 'mid.md',
+      });
+      const foreign = await manager.create({ source: 'project', path: 'foreign.md' }, mockRunbook, {
+        runbookPath: 'foreign.md',
+      });
+      await sessionService.pushRunbook(mine.id);
+      // Buried under more than one entry, so the refusal is depth-independent
+      // rather than "not immediately underneath". `releaseRunbook` is the method
+      // that would violate this: it filters the id out at ANY depth, which is
+      // why it is not the fix for an undo meant as "only if still active".
+      await sessionService.pushRunbook(mid.id);
+      // Pushed and claimed the way `rundown run` does it, so the claim the wrong
+      // pop would delete is a real run-control bearer rather than a fixture.
+      const minted = unwrapSessionMutation(
+        await sessionService.pushRunbookWithRunControlClaim(foreign.id),
+      );
+
+      const result = unwrapSessionMutation(await sessionService.popRunbookIfActive(mine.id));
+
+      expect(result).toEqual({ status: 'not-active', activeRunbookId: foreign.id });
+      const session = await manager.loadSession();
+      expect(session.defaultStack).toEqual([mine.id, mid.id, foreign.id]);
+      expect(session.claims[minted.claim.claimKey]).toBeDefined();
+    });
+
+    it('popRunbookIfActive reports an empty stack as not-active', async () => {
+      const state = await manager.create({ source: 'project', path: 'gone.md' }, mockRunbook, {
+        runbookPath: 'gone.md',
+      });
+
+      const result = unwrapSessionMutation(await sessionService.popRunbookIfActive(state.id));
+
+      expect(result).toEqual({ status: 'not-active', activeRunbookId: null });
+    });
+
+    // What the refusal DEGRADES to, which is a separate question from whether
+    // the pop is correct. The affected-run selector names `expected` only while
+    // `expected` is the top, so a foreign top's execution lease is not this
+    // call's business: reusing the positional `topOfStack` selector would refuse
+    // `execution_in_progress` and name a run the call was never going to touch,
+    // telling the caller to retry something that will never succeed for it.
+    it('popRunbookIfActive reports not-active for an execution-owned FOREIGN top', async () => {
+      const mine = await manager.create({ source: 'project', path: 'mine.md' }, mockRunbook, {
+        runbookPath: 'mine.md',
+      });
+      const foreign = await manager.create({ source: 'project', path: 'foreign.md' }, mockRunbook, {
+        runbookPath: 'foreign.md',
+      });
+      await sessionService.pushRunbook(mine.id);
+      await sessionService.pushRunbook(foreign.id);
+      holdExecutionLease(foreign.id);
+
+      const outcome = await sessionService.popRunbookIfActive(mine.id);
+
+      expect(outcome.kind).toBe('committed');
+      expect(unwrapSessionMutation(outcome)).toEqual({
+        status: 'not-active',
+        activeRunbookId: foreign.id,
+      });
+      expect((await manager.loadSession()).defaultStack).toEqual([mine.id, foreign.id]);
+    });
+
+    // The selector's empty arm, which only this shape reaches: `expected` is
+    // execution-owned AND buried, so a selector that named it unconditionally
+    // would refuse `execution_in_progress` — telling the caller to retry a pop
+    // that can never succeed for it, since `expected` is no longer the top and
+    // will not become it. Nothing is being popped, so nothing is being guarded.
+    it('popRunbookIfActive reports not-active for an execution-owned expected run that is buried', async () => {
+      const mine = await manager.create({ source: 'project', path: 'mine.md' }, mockRunbook, {
+        runbookPath: 'mine.md',
+      });
+      const foreign = await manager.create({ source: 'project', path: 'foreign.md' }, mockRunbook, {
+        runbookPath: 'foreign.md',
+      });
+      await sessionService.pushRunbook(mine.id);
+      await sessionService.pushRunbook(foreign.id);
+      holdExecutionLease(mine.id);
+
+      const outcome = await sessionService.popRunbookIfActive(mine.id);
+
+      expect(outcome.kind).toBe('committed');
+      expect(unwrapSessionMutation(outcome)).toEqual({
+        status: 'not-active',
+        activeRunbookId: foreign.id,
+      });
+      expect((await manager.loadSession()).defaultStack).toEqual([mine.id, foreign.id]);
+    });
+
+    // The other half of the same selector: when the run this call WOULD pop is
+    // execution-owned, the guard is exactly what must fire. Losing this arm
+    // would let the pop remove a run mid-command.
+    it('popRunbookIfActive refuses execution_in_progress when the expected top is owned', async () => {
+      const state = await manager.create({ source: 'project', path: 'owned.md' }, mockRunbook, {
+        runbookPath: 'owned.md',
+      });
+      await sessionService.pushRunbook(state.id);
+      holdExecutionLease(state.id);
+
+      const outcome = await sessionService.popRunbookIfActive(state.id);
+
+      expect(outcome.kind).toBe('execution_in_progress');
+      expect((await manager.loadSession()).defaultStack).toEqual([state.id]);
+    });
+
+    it('popRunbookIfActive resolves the top and pops it in exactly one transaction', async () => {
+      // Structural guard, matching the one `stash` carries. Every behavioural
+      // test above is sequential, so reintroducing the `getActive()` pre-read
+      // this method replaced would leave them green while restoring the #666
+      // check-then-act window that loses a foreign run's claims.
+      const state = await manager.create({ source: 'project', path: 'atomic.md' }, mockRunbook, {
+        runbookPath: 'atomic.md',
+      });
+      await sessionService.pushRunbook(state.id);
+      const loadSession = jest.spyOn(manager, 'loadSession');
+      const load = jest.spyOn(manager, 'load');
+      const mutateSession = jest.spyOn(manager, 'mutateSession');
+      const mutateSessionGuarded = jest.spyOn(manager, 'mutateSessionGuarded');
+
+      const result = unwrapSessionMutation(await sessionService.popRunbookIfActive(state.id));
+
+      expect(result.status).toBe('popped');
+      expect({
+        guardedTransactions: mutateSessionGuarded.mock.calls.length,
+        separateTransactions: mutateSession.mock.calls.length,
+        unlockedSessionReads: loadSession.mock.calls.length,
+        unlockedStateReads: load.mock.calls.length,
+      }).toEqual({
+        guardedTransactions: 1,
+        separateTransactions: 0,
+        unlockedSessionReads: 0,
+        unlockedStateReads: 0,
+      });
+    });
+
     it('supports arbitrary nesting depth', async () => {
       const wf1 = await manager.create({ source: 'project', path: 'level1.md' }, mockRunbook, {
         runbookPath: 'level1.md',
