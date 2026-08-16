@@ -157,6 +157,7 @@ export {
   type InlineForceTerminalKind,
   type PopIfActiveResult,
   type PreparedRunControlClaim,
+  type PushIfNotActiveResult,
   type ReleaseRunbookResult,
   type ReleaseRunbooksResult,
   type RunningStackMemberResolution,

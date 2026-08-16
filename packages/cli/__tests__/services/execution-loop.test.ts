@@ -10,6 +10,7 @@ import type {
   InlineLinkage,
   ParentLinkage,
   PopIfActiveResult,
+  PushIfNotActiveResult,
   ReleaseRunbookResult,
   RunbookActorService,
   RunbookStateManager,
@@ -111,6 +112,13 @@ const mockSessionService = {
   popRunbookIfActive: mockFn<
     (id: RunId) => Promise<SessionMutationResult<PopIfActiveResult>>
   >().mockResolvedValue(committed({ status: 'not-active', activeRunbookId: null })),
+  // The conditional activation the launch span performs once it has won the
+  // latch. `pushed` is the default because it is the arm that arms the undo:
+  // defaulting to `already-active` would make every rollback assertion below
+  // vacuous, since the span only pops back what it pushed.
+  pushRunbookIfNotActive: mockFn<(id: RunId) => Promise<PushIfNotActiveResult>>().mockResolvedValue(
+    { status: 'pushed' },
+  ),
   releaseRunbook:
     mockFn<
       (
@@ -597,6 +605,8 @@ describe('runExecutionLoop', () => {
     mockSessionService.popRunbookIfActive.mockResolvedValue(
       committed({ status: 'not-active', activeRunbookId: null }),
     );
+    mockSessionService.pushRunbookIfNotActive.mockReset();
+    mockSessionService.pushRunbookIfNotActive.mockResolvedValue({ status: 'pushed' });
 
     // Re-seeded rather than left to the module factory: one test replaces this
     // implementation to interleave a second observer inside the inline launch
@@ -3293,9 +3303,6 @@ describe('runExecutionLoop', () => {
       .mockResolvedValueOnce(parentState)
       .mockResolvedValueOnce(parentState)
       .mockResolvedValueOnce(existingChild);
-    mockSessionService.getActive
-      .mockResolvedValueOnce({ id: runbookId })
-      .mockResolvedValueOnce({ id: childRunId });
     mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
       {
         kind: 'execution_observation',
@@ -3326,7 +3333,13 @@ describe('runExecutionLoop', () => {
     );
 
     expect(result).toBe('stopped');
-    expect(mockSessionService.pushRunbook).toHaveBeenCalledWith(childRunId);
+    // Activated conditionally in the store. The positional `pushRunbook` behind
+    // an unlocked `getActive` is the shape this replaced: its answer decided
+    // whether the rollback below would fire, and a concurrent push between the
+    // read and the write left that decision describing a stack it no longer
+    // matched.
+    expect(mockSessionService.pushRunbookIfNotActive).toHaveBeenCalledWith(childRunId);
+    expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
     // The rollback names the child it pushed and lets the store decide whether
     // that child is still the top. A `getActive` pre-read followed by the
     // positional `popRunbook` would pop whatever the top is by then, and the
@@ -3334,7 +3347,9 @@ describe('runExecutionLoop', () => {
     // the assertion, not an incidental refactor detail.
     expect(mockSessionService.popRunbookIfActive).toHaveBeenCalledWith(childRunId);
     expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
-    expect(mockSessionService.getActive).toHaveBeenCalledTimes(1);
+    // The launch span asks the session nothing: both of its writes carry their
+    // own condition, so there is no read left whose answer could go stale.
+    expect(mockSessionService.getActive).not.toHaveBeenCalled();
     expect(mockSessionService.releaseRunbook).not.toHaveBeenCalledWith(childRunId);
     expect(mockManager.delete).not.toHaveBeenCalledWith(childRunId);
     expect(mockEmitter.emit).toHaveBeenCalledWith({
@@ -3454,9 +3469,6 @@ describe('runExecutionLoop', () => {
         .mockResolvedValueOnce(parentState)
         .mockResolvedValueOnce(parentState)
         .mockResolvedValueOnce(existingChild);
-      mockSessionService.getActive
-        .mockResolvedValueOnce({ id: runbookId })
-        .mockResolvedValueOnce({ id: childRunId });
       mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
         {
           kind: 'execution_observation',
@@ -3500,6 +3512,138 @@ describe('runExecutionLoop', () => {
       });
     },
   );
+
+  // The other half of the rollback's condition: it undoes an activation this
+  // span PERFORMED, not whatever the session happens to be targeting.
+  //
+  // The distinction only exists because the activation is conditional. When the
+  // child already held the top, this span wrote nothing — something else
+  // activated it, for a reason this span does not know — and popping it because
+  // a consume failed here would remove a run on someone else's behalf, taking
+  // every claim controlling it along with it. That is the same
+  // unrecoverable-bearer-loss shape the conditional pop exists to prevent,
+  // reached by treating "the child is active" as "I made it active".
+  //
+  // Pinned as its own case because the failure is invisible from the sibling
+  // above: both end with the consume failure as the outcome and `stopped` as the
+  // result, and they differ only in whether the session was written on the way
+  // out.
+  it('does not roll back an activation it did not perform when the consume fails', async () => {
+    const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
+    const inlineLaunch = {
+      parentRunId: runbookId,
+      parentStepId: '1',
+      parentStep: '1',
+      parentFrameKey: '1|',
+      parentEntry: 1,
+      childRunId,
+      childRunbookPath: 'child.runbook.md',
+      childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+      contextSnapshot: { RunId: runbookId, ContextId: 'ctx-unit', WorkPath: '.rundown/work' },
+    };
+    const inlineSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent step',
+        substeps: [
+          {
+            id: '1',
+            description: 'Inline child',
+            runbooks: ['child.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+    const parentState = makeLoopState('1', {
+      lifecycle: 'running',
+      substep: '1',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+      substepStates: [
+        {
+          id: '1',
+          frameKey: '1|',
+          status: 'running',
+          inline: {
+            childRunbookPath: 'child.runbook.md',
+            childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+            contextSnapshot: inlineLaunch.contextSnapshot,
+            childRunId,
+            createdAt: '2026-05-30T00:00:00.000Z',
+            started: null,
+          },
+        },
+      ],
+      snapshot: { context: { inlineLaunchIntent: inlineLaunch } },
+    });
+    const existingChild = {
+      ...makeLoopState('1', {
+        id: childRunId,
+        lifecycle: 'running',
+        parentLinkage: {
+          kind: 'inline',
+          parentRunId: runbookId,
+          parentStepId: '1',
+          parentStep: '1',
+          parentFrameKey: '1|',
+          parentEntry: 1,
+        },
+      }),
+      runbookSrc: '## 1. Child\nDone',
+    };
+
+    mockManager.load
+      .mockResolvedValueOnce(parentState)
+      .mockResolvedValueOnce(parentState)
+      .mockResolvedValueOnce(existingChild);
+    // The child already holds the top, so the conditional activation writes
+    // nothing and reports as much.
+    mockSessionService.pushRunbookIfNotActive.mockResolvedValue({ status: 'already-active' });
+    mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
+      {
+        kind: 'execution_observation',
+        event: {
+          type: 'STEP_ENTERED',
+          payload: {
+            position: { current: '1.1', total: 1 },
+            stepName: '1',
+            description: 'Inline child',
+            isSubstep: true,
+            inlineLaunch,
+          },
+        },
+      },
+    ]);
+    mockActorService.sendAndSync
+      .mockResolvedValueOnce({ state: parentState, snapshot: {} })
+      .mockRejectedValueOnce(new Error('consume failed'));
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(inlineSteps),
+      mockManager.cwd,
+      false,
+      asEmitter(mockEmitter),
+      { output: { executionEvent: jest.fn() } as never },
+    );
+
+    // The consume failure is still the outcome; only the session is spared.
+    expect(result).toBe('stopped');
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'ERROR_OCCURRED',
+      payload: expect.objectContaining({
+        code: core.ErrorCodes.LAUNCH_FAILED.code,
+        message: expect.stringContaining('consume failed'),
+      }),
+    });
+    expect(mockSessionService.popRunbookIfActive).not.toHaveBeenCalled();
+    expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+  });
 
   it("repairs an existing inline child's missing latch, activates child, then consumes intent", async () => {
     const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
@@ -3578,8 +3722,6 @@ describe('runExecutionLoop', () => {
       .mockResolvedValueOnce(parentState)
       .mockResolvedValueOnce(existingChild)
       .mockResolvedValue(existingChild);
-    mockSessionService.getActive.mockResolvedValueOnce({ id: runbookId });
-    mockSessionService.pushRunbook.mockResolvedValueOnce(undefined);
     mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
       {
         kind: 'execution_observation',
@@ -3621,7 +3763,13 @@ describe('runExecutionLoop', () => {
         childRunId,
       }),
     );
-    expect(mockSessionService.pushRunbook).toHaveBeenCalledWith(childRunId);
+    // The repair ACTIVATES the child, and does so only here — core's
+    // reactivation seam handed this loop the parent without touching the
+    // session, precisely because at that point the launch might have belonged
+    // to a live owner. Winning the latch above is what made it this process's
+    // to activate.
+    expect(mockSessionService.pushRunbookIfNotActive).toHaveBeenCalledWith(childRunId);
+    expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
     expect(mockActorService.sendAndSync).toHaveBeenNthCalledWith(2, runbookId, inlineSteps, {
       type: 'INLINE_LAUNCH_CONSUMED',
     });
@@ -4329,81 +4477,172 @@ describe('runExecutionLoop', () => {
       expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
     });
 
-    // The stand-down undoes a push core's reactivation seam may have made, and
-    // this arm's precondition is that ANOTHER LIVE PROCESS owns the launch — so
-    // a concurrent stack write is guaranteed here, not hypothetical. Resolving
-    // the top with `getActive` and then calling the positional `popRunbook` pops
-    // whatever is on top when that second transaction opens, and the release
-    // deletes every claim controlling the run it removes: a foreign run that
-    // `rundown run` pushed-and-claimed would lose the run-control bearer its
-    // orchestrator still holds. Structural, because every test here is
-    // sequential — the two-call shape stays green under all of them while the
-    // window is wide open.
-    it('undoes a stood-down activation with a conditional pop, never a pre-read', async () => {
-      const parent = parentWith(heldByThisProcess());
-      const existingChild = makeLoopState('1', {
-        id: childRunId,
-        lifecycle: 'running',
-        parentLinkage: matchingChildLinkage,
-      });
-      mockManager.load.mockImplementation(async (id: string) => {
-        if (id === runbookId) return parent;
-        return id === childRunId ? existingChild : null;
-      });
-
-      const result = await driveLoop();
-
-      expect(result).toBe('waiting');
-      expect(mockSessionService.popRunbookIfActive).toHaveBeenCalledWith(childRunId);
-      // The two halves of the check-then-act shape, asserted absent by name so a
-      // reintroduction fails here rather than only under a real race.
-      expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
-      expect(mockSessionService.getActive).not.toHaveBeenCalled();
-      // `releaseRunbook` is the other wrong tool: it removes the id from
-      // anywhere in the stack, so an undo narrowed to "only if still active"
-      // would still reach a child a concurrent push has since buried.
-      expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
-    });
-
-    // Best-effort means the stand-down survives every answer the pop can give;
-    // it does not mean the pop may reach the wrong run. All three arms leave the
-    // stack alone and the turn's outcome unchanged.
+    // Every stand-down arm, asserted to write NOTHING to the session.
     //
-    // Driven as a table over all three rather than the committed one alone: the
-    // previous single case fed a committed `not-active` under a title claiming a
-    // refusal, so the two refusal labels were never entered and reported as
-    // NoCoverage. Unlike the rollback site's table, this closes a reporting gap
-    // rather than a survivor — the three labels here share one `return;`, so a
-    // mutant that merged them leaves no behavioural trace from outside.
-    it.each([
-      ['a displaced target', committed({ status: 'not-active' as const, activeRunbookId: null })],
-      [
-        'execution_in_progress',
-        {
-          kind: 'execution_in_progress' as const,
-          runId: childRunId,
-          message: 'Run has an execution in progress.',
+    // This replaces a pair of tests that asserted the opposite for one arm —
+    // that `already-latched` undid an activation with a conditional pop. The
+    // undo is gone because the activation it undid is gone: core's reactivation
+    // seam no longer pushes the child ahead of the latch, so the launch span
+    // activates only once it has WON, and a stand-down has nothing of its own to
+    // take back.
+    //
+    // Driven over every arm rather than the one that used to undo, because the
+    // property is now uniform and its whole value is that it stays that way.
+    // Four of these arms leaked the old speculative activation and were fixed by
+    // deleting the push rather than by adding four undo calls; the guarantee
+    // worth pinning is the one only deletion buys — that an arm added later
+    // inherits it without doing anything. Per-arm undo calls would have produced
+    // the same green suite and none of that.
+    //
+    // `getActive` resolves the CHILD deliberately. Every one of these arms left
+    // it resolving `null` before, which is why the undo this suite claimed to
+    // cover was barely exercised: the fixture modelled a session that was not
+    // targeting the child at all. Pointing it at the child models the state a
+    // stand-down must leave untouched, and makes the absent `getActive` call an
+    // assertion about the check-then-act shape rather than a coincidence of the
+    // fixture.
+    it.each<{
+      readonly name: string;
+      readonly expected: 'stopped' | 'waiting';
+      readonly stage: () => void;
+    }>([
+      {
+        name: 'missing (the parent run vanished before the latch)',
+        expected: 'stopped',
+        stage: () => {
+          mockManager.load.mockImplementation(async (id: string) =>
+            id === runbookId ? parentWith() : null,
+          );
+          mockManager.mutateStateReturning.mockImplementation(async () => ({
+            state: null,
+            value: null,
+          }));
         },
-      ],
-      [
-        'recovery_required',
-        {
-          kind: 'recovery_required' as const,
-          runId: childRunId,
-          epoch: actualCore.assertExecutionEpoch(1),
-          message: 'Run ended execution with an unknown outcome.',
+      },
+      {
+        name: 'inactive (the parent turned terminal between the two reads)',
+        expected: 'stopped',
+        stage: () => {
+          mockManager.load.mockImplementation(async (id: string) =>
+            id === runbookId ? parentWith() : null,
+          );
+          captureLatch(parentWith(null, { lifecycle: 'completed' }));
         },
-      ],
-    ])('keeps the stand-down when the conditional pop answers %s', async (_label, answer) => {
-      const parent = parentWith(heldByThisProcess());
-      mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
-      mockSessionService.popRunbookIfActive.mockResolvedValue(answer);
+      },
+      {
+        name: 'superseded (the persisted intent no longer names this launch)',
+        expected: 'waiting',
+        stage: () => {
+          const parent = parentWith(null, { snapshot: { context: {} } });
+          mockManager.load.mockImplementation(async (id: string) =>
+            id === runbookId ? parent : null,
+          );
+        },
+      },
+      {
+        name: 'linkage-refused (a persisted child the parent does not claim)',
+        expected: 'stopped',
+        stage: () => {
+          const parent = parentWith();
+          const existingChild = childWithLinkage({ ...matchingChildLinkage, parentEntry: 2 });
+          mockManager.load.mockImplementation(async (id: string) => {
+            if (id === runbookId) return parent;
+            return id === childRunId ? existingChild : null;
+          });
+        },
+      },
+      {
+        name: 'unrecorded (the substep row records no launch to latch)',
+        expected: 'stopped',
+        stage: () => {
+          const parent = parentWith(null, {
+            substepStates: [{ id: '1', frameKey: '1|', status: 'running' }],
+          });
+          mockManager.load.mockImplementation(async (id: string) =>
+            id === runbookId ? parent : null,
+          );
+        },
+      },
+      {
+        // The arm that used to undo, and the only one whose precondition
+        // GUARANTEES a concurrent stack writer rather than merely allowing one:
+        // another live process is inside the launch span right now. A session
+        // write from here would land beside that process's writes.
+        name: 'already-latched (a live process owns the launch)',
+        expected: 'waiting',
+        stage: () => {
+          const parent = parentWith(heldByThisProcess());
+          const existingChild = makeLoopState('1', {
+            id: childRunId,
+            lifecycle: 'running',
+            parentLinkage: matchingChildLinkage,
+          });
+          mockManager.load.mockImplementation(async (id: string) => {
+            if (id === runbookId) return parent;
+            return id === childRunId ? existingChild : null;
+          });
+        },
+      },
+    ])(
+      'leaves the session untouched when the launch stands down as $name',
+      async ({ expected, stage }) => {
+        // The session already targets the child, so every write below would have
+        // something real to reach.
+        mockSessionService.getActive.mockResolvedValue({ id: childRunId });
+        stage();
+
+        expect(await driveLoop()).toBe(expected);
+
+        // Named individually rather than counted, so a failure says which write
+        // came back. `pushRunbookIfNotActive` is the activation this arm must not
+        // perform; the three pops are the undo calls it must no longer need, and
+        // `getActive` is the pre-read that would mean a check-then-act shape had
+        // returned by another route.
+        expect(mockSessionService.pushRunbookIfNotActive).not.toHaveBeenCalled();
+        expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
+        expect(mockSessionService.popRunbookIfActive).not.toHaveBeenCalled();
+        expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+        expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+        expect(mockSessionService.getActive).not.toHaveBeenCalled();
+      },
+    );
+
+    // The two arms that end the turn without an error event, so a line on the
+    // operator channel is the only trace they leave. Asserted together because
+    // the requirement is one requirement — a `waiting` that writes nothing must
+    // say why — and because the two remedies are genuinely different: one waits
+    // for a named process, the other re-runs against a parent that moved on.
+    it.each<{ readonly name: string; readonly stage: () => void; readonly message: string }>([
+      {
+        name: 'already-latched names the process to wait for',
+        stage: () => {
+          const parent = parentWith(heldByThisProcess());
+          mockManager.load.mockImplementation(async (id: string) =>
+            id === runbookId ? parent : null,
+          );
+        },
+        message:
+          `Inline child ${childRunId} is already being launched by process ` +
+          `${String(process.pid)}. Re-run this command once that launch finishes.`,
+      },
+      {
+        name: 'superseded names the run that moved on',
+        stage: () => {
+          const parent = parentWith(null, { snapshot: { context: {} } });
+          mockManager.load.mockImplementation(async (id: string) =>
+            id === runbookId ? parent : null,
+          );
+        },
+        message:
+          `Inline launch of ${childRunId} was superseded: run ${runbookId} no longer carries ` +
+          `that launch. Re-run this command to observe its current state.`,
+      },
+    ])('reports the wait when $name', async ({ stage, message }) => {
+      stage();
 
       expect(await driveLoop()).toBe('waiting');
-      expect(mockSessionService.popRunbookIfActive).toHaveBeenCalledWith(childRunId);
-      expect(mockOutput.warning).toHaveBeenCalledWith(
-        `Inline child ${childRunId} is already being launched by process ${String(process.pid)}. Re-run this command once that launch finishes.`,
-      );
+
+      expect(mockOutput.warning).toHaveBeenCalledWith(message);
     });
 
     // The property the compare-and-latch dropped when it replaced the file lock,
@@ -4495,7 +4734,17 @@ describe('runExecutionLoop', () => {
       // activated, and the launch span is never entered — a second
       // `manager.create` for this intent is exactly what the latch prevents, and
       // recovering the latch must not reintroduce it.
-      expect(mockSessionService.pushRunbook).toHaveBeenCalledWith(childRunId);
+      //
+      // Also the case that decides the activation's transaction posture. The
+      // child here was abandoned mid-execution by a process that is gone, so it
+      // can still hold an execution lease naming a dead pid — and the session
+      // ownership preflight refuses on `exec_token IS NOT NULL` alone, with the
+      // dead-owner probe living only on the lease-acquisition path. A guarded
+      // push would therefore refuse `execution_in_progress` on exactly this
+      // recovery, which is why `pushRunbookIfNotActive` uses the unguarded
+      // `mutate` that `pushRunbook` does.
+      expect(mockSessionService.pushRunbookIfNotActive).toHaveBeenCalledWith(childRunId);
+      expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
       expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
       expect(result).toBe('stopped');
       expect(mockOutput.warning).toHaveBeenCalledWith(
@@ -4980,8 +5229,9 @@ describe('runExecutionLoop', () => {
       .mockResolvedValueOnce(parentState)
       .mockResolvedValueOnce(parentState)
       .mockResolvedValueOnce(existingChild);
-    mockSessionService.getActive.mockResolvedValueOnce({ id: runbookId });
-    mockSessionService.pushRunbook.mockRejectedValueOnce(new Error('session push failed'));
+    mockSessionService.pushRunbookIfNotActive.mockRejectedValueOnce(
+      new Error('session push failed'),
+    );
     // The latch write, which precedes the activation this test fails.
     mockActorService.sendAndSync.mockResolvedValue({ state: parentState, snapshot: {} });
     mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
@@ -5074,6 +5324,11 @@ describe('runExecutionLoop', () => {
       },
     ]);
 
+    // The superseded arm writes to the operator channel now, so the double has
+    // to carry one: a stand-down that returns `waiting` and touches nothing else
+    // is otherwise indistinguishable from the turn doing nothing at all.
+    const warning = mockFn<(text: string) => void>();
+
     const result = await runExecutionLoop(
       asManager(mockManager),
       runbookId,
@@ -5081,13 +5336,18 @@ describe('runExecutionLoop', () => {
       mockManager.cwd,
       false,
       asEmitter(mockEmitter),
-      { output: {} as never },
+      { output: { warning } as never },
     );
 
     expect(result).toBe('waiting');
     expect(mockActorService.sendAndSync).not.toHaveBeenCalledWith(runbookId, inlineSteps, {
       type: 'INLINE_LAUNCH_CONSUMED',
     });
+    expect(warning).toHaveBeenCalledWith(
+      `Inline launch of ${childRunId} was superseded: run ${runbookId} no longer carries that ` +
+        `launch. Re-run this command to observe its current state.`,
+    );
+    expect(mockSessionService.pushRunbookIfNotActive).not.toHaveBeenCalled();
     expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
   });
 
