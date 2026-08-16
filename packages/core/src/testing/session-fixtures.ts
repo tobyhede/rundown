@@ -24,7 +24,7 @@
 
 import { parseRunbookDocument, type Runbook } from '@rundown-org/parser';
 import { RunbookStateManager } from '../runbook/state.js';
-import { SessionService } from '../runbook/session-service.js';
+import { projectRunbookRelease, SessionService } from '../runbook/session-service.js';
 import { assertRunId, type RunId } from '../runbook/run-id.js';
 import type { ClaimId } from '../runbook/claim-id.js';
 import type { SessionMutationResult } from '../runbook/storage/runbook-store.js';
@@ -270,6 +270,60 @@ export async function stashRunbookUnverified(
     session.stashedRunbookId = runbookId;
     return runbookId;
   });
+}
+
+/**
+ * Remove whatever run is on top of the default stack, WITHOUT naming it.
+ *
+ * **Test-only, and it must never become the basis of a product code path.** It
+ * authorizes on **position** rather than identity: it re-reads the stack inside
+ * its own transaction and releases whatever is on top by then, so a run pushed
+ * between the caller's decision and this write is the run that gets removed.
+ * That is not a recoverable slip — the release deletes every claim controlling
+ * what it removes, so a foreign run pushed-and-claimed by `rundown run` loses
+ * the run-control bearer its orchestrator still holds, and re-minting is refused
+ * once the run has issued a delegation. This is the #774 defect, and living here
+ * rather than on `SessionService` is what makes it unreachable from product
+ * code.
+ *
+ * The two production shapes both name their run. An undo of an activation the
+ * caller performed uses {@link SessionService.popRunbookIfActive}, which removes
+ * the run only while it is still the top and reports `not-active` otherwise. A
+ * terminal release uses {@link SessionService.releaseRunbook}, which removes the
+ * named run wherever it now sits — a loop reaching terminal must release the run
+ * it drove, not whatever is above it.
+ *
+ * It exists because several core tests legitimately need multi-level stack
+ * setup — unwinding a seeded stack to a known depth, where the whole point is
+ * that no id is named. Deleting it outright would push those onto
+ * `releaseRunbook` and quietly change what they assert; a `@deprecated` tag
+ * would leave it callable from product code, which is the one thing this move
+ * is for.
+ *
+ * @param manager - State manager whose store holds the runs and the session;
+ *   take the caller's own instance so the fixture shares one store with the
+ *   test.
+ * @returns The new top-of-stack run id, or null when the stack was empty or the
+ *   release removed nothing. Refused `execution_in_progress` or
+ *   `recovery_required` instead when the popped run is execution-owned or
+ *   awaiting recovery; the value is absent then.
+ */
+export async function popTopOfStackUnverified(
+  manager: RunbookStateManager,
+): Promise<SessionMutationResult<RunId | null>> {
+  return manager.mutateSessionGuarded(
+    (session) => {
+      const topId = session.defaultStack.at(-1);
+      return topId ? [topId] : [];
+    },
+    (ctx) => {
+      const { defaultStack } = ctx.session;
+      const topId = defaultStack[defaultStack.length - 1];
+      if (!topId) return null;
+      const released = projectRunbookRelease(ctx.session, topId, {});
+      return released.status === 'released' ? released.nextDefaultRunbookId : null;
+    },
+  );
 }
 
 /**

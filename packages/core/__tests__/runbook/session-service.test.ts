@@ -32,6 +32,7 @@ import {
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { abortDelegation } from '../../src/runbook/delegation-service.js';
 import {
+  popTopOfStackUnverified,
   stashRunbookUnverified,
   unwrapSessionMutation,
 } from '../../src/testing/session-fixtures.js';
@@ -174,7 +175,7 @@ describe('SessionService', () => {
       expect(active?.id).toBe(state.id);
     });
 
-    it('popRunbook removes from stack and returns new top', async () => {
+    it('the positional pop removes from stack and returns new top', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -185,7 +186,7 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(parent.id);
       await sessionService.pushRunbook(child.id);
 
-      const newTopId = unwrapSessionMutation(await sessionService.popRunbook());
+      const newTopId = unwrapSessionMutation(await popTopOfStackUnverified(manager));
       expect(newTopId).toBe(parent.id);
 
       const active = await sessionService.getActive();
@@ -243,7 +244,7 @@ describe('SessionService', () => {
     });
 
     // The defect this method exists to remove. A caller that resolved its target
-    // with an unlocked `getActive` and then called the positional `popRunbook`
+    // with an unlocked `getActive` and then called the positional pop
     // pops whatever the top is when the transaction opens — and
     // `projectRunbookRelease` deletes every claim controlling that run, so a
     // freshly started foreign run loses the run-control bearer `rundown run`
@@ -579,11 +580,11 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(wf3.id);
 
       expect((await sessionService.getActive())?.id).toBe(wf3.id);
-      unwrapSessionMutation(await sessionService.popRunbook());
+      unwrapSessionMutation(await popTopOfStackUnverified(manager));
       expect((await sessionService.getActive())?.id).toBe(wf2.id);
-      unwrapSessionMutation(await sessionService.popRunbook());
+      unwrapSessionMutation(await popTopOfStackUnverified(manager));
       expect((await sessionService.getActive())?.id).toBe(wf1.id);
-      unwrapSessionMutation(await sessionService.popRunbook());
+      unwrapSessionMutation(await popTopOfStackUnverified(manager));
       expect(await sessionService.getActive()).toBeNull();
     });
   });
@@ -4356,7 +4357,7 @@ describe('SessionService', () => {
       }
 
       expect((await sessionService.getActive())?.id).toBe(sibling.id);
-      unwrapSessionMutation(await sessionService.popRunbook());
+      unwrapSessionMutation(await popTopOfStackUnverified(manager));
       expect((await sessionService.getActive())?.id).toBe(parent.id);
     });
 
