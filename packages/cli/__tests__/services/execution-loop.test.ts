@@ -9,6 +9,7 @@ import type {
   InlineLaunchStart,
   InlineLinkage,
   ParentLinkage,
+  PopIfActiveResult,
   ReleaseRunbookResult,
   RunbookActorService,
   RunbookStateManager,
@@ -96,6 +97,20 @@ const mockSessionService = {
   getActive: mockFn<() => Promise<{ id: string } | null>>().mockResolvedValue(null),
   pushRunbook: mockFn<(id: string) => Promise<void>>().mockResolvedValue(undefined),
   popRunbook: mockFn<() => Promise<unknown>>().mockResolvedValue(committed(null)),
+  // The conditional pop every inline stand-down/rollback path uses. Declared on
+  // the double deliberately: those callers swallow every throw, so a missing
+  // method would make each of their tests pass without the pop ever being
+  // attempted — the blind check, not a green one.
+  // Typed against core's own union rather than `unknown`, so a change to the
+  // result shape is a compile error here instead of a double that silently
+  // stops resembling the method it stands in for. `not-active` is the default
+  // because it is the one arm needing no fabricated `RunId`: both callers
+  // switch on `pop.kind` and discard the value, so the arm is inert, and a
+  // `popped` default would have to brand an id this module cannot mint at
+  // declaration time.
+  popRunbookIfActive: mockFn<
+    (id: RunId) => Promise<SessionMutationResult<PopIfActiveResult>>
+  >().mockResolvedValue(committed({ status: 'not-active', activeRunbookId: null })),
   releaseRunbook:
     mockFn<
       (
@@ -578,6 +593,10 @@ describe('runExecutionLoop', () => {
     );
     mockSessionService.popRunbook.mockReset();
     mockSessionService.popRunbook.mockResolvedValue(committed(null));
+    mockSessionService.popRunbookIfActive.mockReset();
+    mockSessionService.popRunbookIfActive.mockResolvedValue(
+      committed({ status: 'not-active', activeRunbookId: null }),
+    );
 
     // Re-seeded rather than left to the module factory: one test replaces this
     // implementation to interleave a second observer inside the inline launch
@@ -3297,8 +3316,14 @@ describe('runExecutionLoop', () => {
 
     expect(result).toBe('stopped');
     expect(mockSessionService.pushRunbook).toHaveBeenCalledWith(childRunId);
-    expect(mockSessionService.getActive).toHaveBeenCalledTimes(2);
-    expect(mockSessionService.popRunbook).toHaveBeenCalledWith();
+    // The rollback names the child it pushed and lets the store decide whether
+    // that child is still the top. A `getActive` pre-read followed by the
+    // positional `popRunbook` would pop whatever the top is by then, and the
+    // release deletes the popped run's claims — so the absence of both calls is
+    // the assertion, not an incidental refactor detail.
+    expect(mockSessionService.popRunbookIfActive).toHaveBeenCalledWith(childRunId);
+    expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+    expect(mockSessionService.getActive).toHaveBeenCalledTimes(1);
     expect(mockSessionService.releaseRunbook).not.toHaveBeenCalledWith(childRunId);
     expect(mockManager.delete).not.toHaveBeenCalledWith(childRunId);
     expect(mockEmitter.emit).toHaveBeenCalledWith({
@@ -3319,6 +3344,151 @@ describe('runExecutionLoop', () => {
     });
     expect(mockActorService.observeExecutionUnitEntry).toHaveBeenCalledTimes(1);
   });
+
+  // The rollback's refusal arms, which no test reached: a `switch` jumps
+  // straight to its matching label, so the cases it skips were never executed
+  // and mutating them reported as NoCoverage rather than a survivor. Not
+  // decoration — the `default` arm `return`s `_exhaustive` OUT of
+  // `launchInlineChildFromIntent`, so a refusal that fell through would answer
+  // the loop with the session-result object in place of `'stopped'`. Both
+  // refusals are reachable here for the same reason the conditional pop exists:
+  // this rollback runs while another process may own the child.
+  it.each([
+    [
+      'execution_in_progress',
+      {
+        kind: 'execution_in_progress' as const,
+        runId: actualCore.assertRunId(`rd_${'2'.repeat(32)}`),
+        message: 'Run has an execution in progress.',
+      },
+    ],
+    [
+      'recovery_required',
+      {
+        kind: 'recovery_required' as const,
+        runId: actualCore.assertRunId(`rd_${'2'.repeat(32)}`),
+        epoch: actualCore.assertExecutionEpoch(1),
+        message: 'Run ended execution with an unknown outcome.',
+      },
+    ],
+  ])(
+    'keeps the consume failure as the outcome when the rollback pop refuses %s',
+    async (_label, refusal) => {
+      const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
+      const inlineLaunch = {
+        parentRunId: runbookId,
+        parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: '1|',
+        parentEntry: 1,
+        childRunId,
+        childRunbookPath: 'child.runbook.md',
+        childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+        contextSnapshot: { RunId: runbookId, ContextId: 'ctx-unit', WorkPath: '.rundown/work' },
+      };
+      const inlineSteps: LooseStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Parent step',
+          substeps: [
+            {
+              id: '1',
+              description: 'Inline child',
+              runbooks: ['child.runbook.md'],
+              transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+            },
+          ],
+          transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+        },
+      ];
+      const parentState = makeLoopState('1', {
+        lifecycle: 'running',
+        substep: '1',
+        activeFrameKey: '1|',
+        activeEntry: 1,
+        substepStates: [
+          {
+            id: '1',
+            frameKey: '1|',
+            status: 'running',
+            inline: {
+              childRunbookPath: 'child.runbook.md',
+              childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+              contextSnapshot: inlineLaunch.contextSnapshot,
+              childRunId,
+              createdAt: '2026-05-30T00:00:00.000Z',
+              started: null,
+            },
+          },
+        ],
+        snapshot: { context: { inlineLaunchIntent: inlineLaunch } },
+      });
+      const existingChild = {
+        ...makeLoopState('1', {
+          id: childRunId,
+          lifecycle: 'running',
+          parentLinkage: {
+            kind: 'inline',
+            parentRunId: runbookId,
+            parentStepId: '1',
+            parentStep: '1',
+            parentFrameKey: '1|',
+            parentEntry: 1,
+          },
+        }),
+        runbookSrc: '## 1. Child\nDone',
+      };
+      mockManager.load
+        .mockResolvedValueOnce(parentState)
+        .mockResolvedValueOnce(parentState)
+        .mockResolvedValueOnce(existingChild);
+      mockSessionService.getActive
+        .mockResolvedValueOnce({ id: runbookId })
+        .mockResolvedValueOnce({ id: childRunId });
+      mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
+        {
+          kind: 'execution_observation',
+          event: {
+            type: 'STEP_ENTERED',
+            payload: {
+              position: { current: '1.1', total: 1 },
+              stepName: '1',
+              description: 'Inline child',
+              isSubstep: true,
+              inlineLaunch,
+            },
+          },
+        },
+      ]);
+      mockActorService.sendAndSync
+        .mockResolvedValueOnce({ state: parentState, snapshot: {} })
+        .mockRejectedValueOnce(new Error('consume failed'));
+      mockSessionService.popRunbookIfActive.mockResolvedValue(refusal);
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(inlineSteps),
+        mockManager.cwd,
+        false,
+        asEmitter(mockEmitter),
+        { output: { executionEvent: jest.fn() } as never },
+      );
+
+      // The refused pop is absorbed: the consume failure stays the outcome, and
+      // the loop is answered with a loop result rather than a session envelope.
+      expect(result).toBe('stopped');
+      expect(mockSessionService.popRunbookIfActive).toHaveBeenCalledWith(childRunId);
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'ERROR_OCCURRED',
+        payload: expect.objectContaining({
+          code: core.ErrorCodes.LAUNCH_FAILED.code,
+          message: expect.stringContaining('consume failed'),
+        }),
+      });
+    },
+  );
 
   it("repairs an existing inline child's missing latch, activates child, then consumes intent", async () => {
     const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
@@ -4146,6 +4316,83 @@ describe('runExecutionLoop', () => {
       expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
       expect(mockSessionService.adoptRunControlClaim).not.toHaveBeenCalled();
       expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
+    });
+
+    // The stand-down undoes a push core's reactivation seam may have made, and
+    // this arm's precondition is that ANOTHER LIVE PROCESS owns the launch — so
+    // a concurrent stack write is guaranteed here, not hypothetical. Resolving
+    // the top with `getActive` and then calling the positional `popRunbook` pops
+    // whatever is on top when that second transaction opens, and the release
+    // deletes every claim controlling the run it removes: a foreign run that
+    // `rundown run` pushed-and-claimed would lose the run-control bearer its
+    // orchestrator still holds. Structural, because every test here is
+    // sequential — the two-call shape stays green under all of them while the
+    // window is wide open.
+    it('undoes a stood-down activation with a conditional pop, never a pre-read', async () => {
+      const parent = parentWith(heldByThisProcess());
+      const existingChild = makeLoopState('1', {
+        id: childRunId,
+        lifecycle: 'running',
+        parentLinkage: matchingChildLinkage,
+      });
+      mockManager.load.mockImplementation(async (id: string) => {
+        if (id === runbookId) return parent;
+        return id === childRunId ? existingChild : null;
+      });
+
+      const result = await driveLoop();
+
+      expect(result).toBe('waiting');
+      expect(mockSessionService.popRunbookIfActive).toHaveBeenCalledWith(childRunId);
+      // The two halves of the check-then-act shape, asserted absent by name so a
+      // reintroduction fails here rather than only under a real race.
+      expect(mockSessionService.popRunbook).not.toHaveBeenCalled();
+      expect(mockSessionService.getActive).not.toHaveBeenCalled();
+      // `releaseRunbook` is the other wrong tool: it removes the id from
+      // anywhere in the stack, so an undo narrowed to "only if still active"
+      // would still reach a child a concurrent push has since buried.
+      expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+    });
+
+    // Best-effort means the stand-down survives every answer the pop can give;
+    // it does not mean the pop may reach the wrong run. All three arms leave the
+    // stack alone and the turn's outcome unchanged.
+    //
+    // Driven as a table over all three rather than the committed one alone: the
+    // previous single case fed a committed `not-active` under a title claiming a
+    // refusal, so the two refusal labels were never entered and reported as
+    // NoCoverage. Unlike the rollback site's table, this closes a reporting gap
+    // rather than a survivor — the three labels here share one `return;`, so a
+    // mutant that merged them leaves no behavioural trace from outside.
+    it.each([
+      ['a displaced target', committed({ status: 'not-active' as const, activeRunbookId: null })],
+      [
+        'execution_in_progress',
+        {
+          kind: 'execution_in_progress' as const,
+          runId: childRunId,
+          message: 'Run has an execution in progress.',
+        },
+      ],
+      [
+        'recovery_required',
+        {
+          kind: 'recovery_required' as const,
+          runId: childRunId,
+          epoch: actualCore.assertExecutionEpoch(1),
+          message: 'Run ended execution with an unknown outcome.',
+        },
+      ],
+    ])('keeps the stand-down when the conditional pop answers %s', async (_label, answer) => {
+      const parent = parentWith(heldByThisProcess());
+      mockManager.load.mockImplementation(async (id: string) => (id === runbookId ? parent : null));
+      mockSessionService.popRunbookIfActive.mockResolvedValue(answer);
+
+      expect(await driveLoop()).toBe('waiting');
+      expect(mockSessionService.popRunbookIfActive).toHaveBeenCalledWith(childRunId);
+      expect(mockOutput.warning).toHaveBeenCalledWith(
+        `Inline child ${childRunId} is already being launched by process ${String(process.pid)}. Re-run this command once that launch finishes.`,
+      );
     });
 
     // The property the compare-and-latch dropped when it replaced the file lock,

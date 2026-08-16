@@ -397,6 +397,35 @@ export type StashForClaimIdResult =
     };
 
 /**
+ * Result of a conditional pop that may only remove a named run.
+ *
+ * Discriminated rather than `RunId | null` for the reason
+ * {@link StashActiveResult} is: the alternative is for the caller to read the
+ * stack top *before* the mutation to decide whether to attempt it, which is the
+ * check-then-act window this shape exists to close.
+ *
+ * `not-active` is a domain outcome, not a failure. It is the answer a caller
+ * undoing its own activation wants — the stack has moved on, so there is
+ * nothing here to undo — and it deliberately carries the run that holds the top
+ * instead, so a caller that must report the divergence can name it.
+ */
+export type PopIfActiveResult =
+  | {
+      /** The expected run was still the top and has been removed. */
+      readonly status: 'popped';
+      /** The run that was popped; always the one the caller named. */
+      readonly runbookId: RunId;
+      /** New top of the stack, or null when the pop emptied it. */
+      readonly nextDefaultRunbookId: RunId | null;
+    }
+  | {
+      /** The expected run is not the stack top; nothing was written. */
+      readonly status: 'not-active';
+      /** Whatever holds the top instead, or null for an empty stack. */
+      readonly activeRunbookId: RunId | null;
+    };
+
+/**
  * Result of stashing whatever runbook is currently active.
  *
  * The bare (unclaimed) counterpart of {@link StashForClaimIdResult}, and
@@ -482,6 +511,26 @@ function linkageMatchesLinkage(
 }
 
 /**
+ * The run on top of the default stack, or null when the stack is empty.
+ *
+ * The single expression of "what is active" for every guarded session mutation
+ * that reasons about the top, so a selector and the work callback it guards
+ * cannot drift into two spellings of the same predicate that agree only by
+ * inspection.
+ *
+ * `.at(-1)`, not `[length - 1]`: the index signature resolves to `RunId` even on
+ * an empty stack, so the empty case would be an `undefined` under a type denying
+ * it — and a caller's declared `null` arm would read as dead code to the typed
+ * lint.
+ *
+ * @param session - Session snapshot read at the start of the guarded transaction.
+ * @returns The top-of-stack run id, or null when the stack is empty.
+ */
+function topOfStackId(session: SessionData): RunId | null {
+  return session.defaultStack.at(-1) ?? null;
+}
+
+/**
  * The affected-run selector for a mutation that acts on whatever is on top.
  *
  * `popRunbook` and `stash` name their target only by position, so the run whose
@@ -493,7 +542,7 @@ function linkageMatchesLinkage(
  * @returns The top-of-stack run id, or an empty list when the stack is empty.
  */
 function topOfStack(session: SessionData): readonly RunId[] {
-  const topId = session.defaultStack[session.defaultStack.length - 1];
+  const topId = topOfStackId(session);
   return topId ? [topId] : [];
 }
 
@@ -1873,6 +1922,66 @@ export class SessionService {
       const released = this.releaseFromSession(ctx.session, topId);
       return released.status === 'released' ? released.nextDefaultRunbookId : null;
     });
+  }
+
+  /**
+   * Pop a runbook from the stack, but only while it is still the top.
+   *
+   * The conditional form of {@link popRunbook}, for a caller undoing an
+   * activation it performed itself. Resolving the target with `getActive` and
+   * then calling the positional `popRunbook` is the #666 check-then-act shape:
+   * `popRunbook` re-reads the stack inside its own transaction and pops whatever
+   * is on top by then, so a concurrent push means the run that gets popped is no
+   * longer the one the caller resolved. That is not a recoverable slip —
+   * {@link projectRunbookRelease} deletes every claim controlling the run it
+   * removes, so a foreign run pushed-and-claimed by `rundown run` loses the
+   * run-control bearer its orchestrator still holds.
+   *
+   * {@link releaseRunbook} is not the answer either: it removes the id from
+   * anywhere in the stack, so an undo narrowed to "only if still active" would
+   * silently reach a run that a concurrent push has since buried.
+   *
+   * The selector names the expected run only when it is already the top, so a
+   * mismatch degrades to the domain `not-active` rather than to an
+   * `execution_in_progress` refusal naming a foreign run this call was never
+   * going to touch.
+   *
+   * @param expected - The only run this may pop.
+   * @returns `popped` with the new top when `expected` was still active, or
+   *   `not-active` naming whatever holds the top instead. Refused
+   *   `execution_in_progress` or `recovery_required` instead when `expected` is
+   *   execution-owned or awaiting recovery; the value is absent then.
+   */
+  async popRunbookIfActive(expected: RunId): Promise<SessionMutationResult<PopIfActiveResult>> {
+    return this.mutateGuarded(
+      // Filtered from the top rather than branched into `[expected]` or `[]`:
+      // the empty arm of that conditional is unobservable, because an id naming
+      // no run is inert in the ownership preflight, so no test can tell it from
+      // a wrong one. Narrowing `topOfStack` instead states the same rule —
+      // guard the top only when it is the run this call would remove — with
+      // both directions of the predicate reachable from the outside.
+      (session) => topOfStack(session).filter((id) => id === expected),
+      (ctx): PopIfActiveResult => {
+        // The same accessor the selector used, so "is `expected` the top?" has
+        // one spelling: a selector that named `expected` and a body that then
+        // disagreed would guard a run it did not write.
+        const topId = topOfStackId(ctx.session);
+        if (topId !== expected) {
+          return { status: 'not-active', activeRunbookId: topId };
+        }
+        // The release mutates `ctx.session` in place, and `expected` is provably
+        // on the stack here, so the new top is read back rather than taken from
+        // the result's `released` arm — the `not-found` arm that branch would
+        // guard against cannot be reached from inside this `if`, and an
+        // unreachable guard is dead code, not defence.
+        this.releaseFromSession(ctx.session, expected);
+        return {
+          status: 'popped',
+          runbookId: expected,
+          nextDefaultRunbookId: topOfStackId(ctx.session),
+        };
+      },
+    );
   }
 
   /**

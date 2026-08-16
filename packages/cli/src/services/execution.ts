@@ -475,6 +475,16 @@ function describeInlineChildLinkageRefusal(
  * rather than to fail the turn. Narrowed to the exact child, so a stack that has
  * moved on is never popped.
  *
+ * That narrowing is `popRunbookIfActive`'s and not this function's, and the
+ * distinction is the whole point. This arm's precondition is that ANOTHER live
+ * process owns the launch, so a concurrent stack write is guaranteed rather than
+ * hypothetical; resolving the top with `getActive` and then calling the
+ * positional `popRunbook` would pop whatever is on top when that transaction
+ * opens, and the release deletes every claim controlling the run it removes. A
+ * foreign run pushed-and-claimed by `rundown run` would lose the run-control
+ * bearer its orchestrator still holds — which is not the "visible and
+ * correctable" leak the swallow below is licensed for.
+ *
  * @param sessionService - Session owning the default stack.
  * @param childRunId - The intent's child, and the only run this may pop.
  * @returns Nothing; every outcome, including a refused pop, leaves the
@@ -485,9 +495,7 @@ async function releaseStoodDownInlineChild(
   childRunId: RunId,
 ): Promise<void> {
   try {
-    const active = await sessionService.getActive();
-    if (active?.id !== childRunId) return;
-    const pop = await sessionService.popRunbook();
+    const pop = await sessionService.popRunbookIfActive(childRunId);
     switch (pop.kind) {
       case 'committed':
       case 'execution_in_progress':
@@ -710,20 +718,21 @@ async function launchInlineChildFromIntent({
       });
       if (pushedExistingInlineChild) {
         try {
-          const activeAfterFailure = await sessionService.getActive();
-          if (activeAfterFailure?.id === childRunId) {
-            const pop = await sessionService.popRunbook();
-            // Best-effort cleanup behind a consume failure that is already the
-            // user-facing error; narrowed exhaustively rather than discarded.
-            switch (pop.kind) {
-              case 'committed':
-              case 'execution_in_progress':
-              case 'recovery_required':
-                break;
-              default: {
-                const _exhaustive: never = pop;
-                return _exhaustive;
-              }
+          // Conditional in the store, never here: an unlocked `getActive` ahead
+          // of the positional `popRunbook` pops whatever the top is by the time
+          // that transaction opens, and the release takes the popped run's
+          // claims with it.
+          const pop = await sessionService.popRunbookIfActive(childRunId);
+          // Best-effort cleanup behind a consume failure that is already the
+          // user-facing error; narrowed exhaustively rather than discarded.
+          switch (pop.kind) {
+            case 'committed':
+            case 'execution_in_progress':
+            case 'recovery_required':
+              break;
+            default: {
+              const _exhaustive: never = pop;
+              return _exhaustive;
             }
           }
         } catch {

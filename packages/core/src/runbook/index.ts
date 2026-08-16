@@ -155,6 +155,7 @@ export {
   type RollbackInitialLinkInput,
   type ClaimSeenRecordResult,
   type InlineForceTerminalKind,
+  type PopIfActiveResult,
   type PreparedRunControlClaim,
   type ReleaseRunbookResult,
   type ReleaseRunbooksResult,

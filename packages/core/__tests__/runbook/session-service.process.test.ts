@@ -642,6 +642,52 @@ describe('cross-process session write contention (transaction replaces SessionLo
     expect(defaultStack).toEqual([]);
   }, 120_000);
 
+  it('never pops a run pushed by another process between a conditional pop and its commit', async () => {
+    // The race the pop above cannot observe: it pins only that the stack
+    // converges, never WHICH run each pop removed, so a pop that took the wrong
+    // entry is green there. Here the two racers are distinguishable — one
+    // process undoes its own activation of `mine`, another starts `foreign` the
+    // way `rundown run` does — and the loser's identity is the assertion.
+    //
+    // Under the `getActive` + positional `popRunbook` shape this replaced, the
+    // push-lands-first interleaving pops `foreign` instead: the pre-read
+    // resolved `mine` as the top, and by the time the pop's own transaction
+    // opened the top had moved. `projectRunbookRelease` deletes every claim
+    // controlling the run it removes, so `foreign` loses the run-control bearer
+    // its orchestrator is still holding — an unrecoverable authority failure,
+    // not a leaked stack entry.
+    // Op order is the whole experiment, not a style choice. `race` makes the
+    // FIRST op the transaction holder and releases the contenders only once it
+    // is inside its transaction, so putting the push first pins the one
+    // interleaving that breaks the old shape: the pop's `getActive` pre-read
+    // ran before the push committed and resolved `mine`, and by the time its
+    // own transaction opened the top had become `foreign`. Reversing these two
+    // lines makes the pop win the lock and the test proves nothing.
+    const mine = await newRun();
+    const foreign = await newRun();
+    await sessionService.pushRunbook(mine);
+    const { claim } = unwrapSessionMutation(await sessionService.issueRunControlClaim(foreign));
+
+    const results = await race([
+      { kind: 'pushRunbook', runId: foreign },
+      { kind: 'popRunbookIfActive', runId: mine },
+    ]);
+    const [, popped] = values(results);
+    expectActualMutationOverlap(results);
+
+    // Decided against the version the pop's own transaction reads, so the
+    // displaced target is declined rather than swapped for whatever is on top.
+    expect(popped).toEqual({ status: 'not-active', activeRunbookId: foreign });
+
+    const session = await manager.loadSession();
+    // The invariant the old shape broke: the foreign run keeps both its stack
+    // entry and the run-control bearer its orchestrator is still holding.
+    expect(session.defaultStack).toEqual([mine, foreign]);
+    expect(Object.values(session.claims).filter((c) => c.controlledRunId === foreign)).toEqual([
+      expect.objectContaining({ claimKey: claim.claimKey }),
+    ]);
+  }, 120_000);
+
   it('refuses after a claim commits between the fast check and guarded parent write', async () => {
     // Forces the exact defective ordering across TWO OS processes: the advance
     // worker completes its fast pre-check ([] open children) and parks inside its
