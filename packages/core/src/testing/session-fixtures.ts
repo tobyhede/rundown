@@ -308,10 +308,11 @@ export async function stashRunbookUnverified(
  * @param manager - State manager whose store holds the runs and the session;
  *   take the caller's own instance so the fixture shares one store with the
  *   test.
- * @returns The new top-of-stack run id, or null when the stack was empty or the
- *   release removed nothing. Refused `execution_in_progress` or
- *   `recovery_required` instead when the popped run is execution-owned or
- *   awaiting recovery; the value is absent then.
+ * @returns The new top-of-stack run id, or null when no run remains on the
+ *   stack — either because it was already empty and nothing was released, or
+ *   because the run just popped was the last entry. Refused
+ *   `execution_in_progress` or `recovery_required` instead when the popped run
+ *   is execution-owned or awaiting recovery; the value is absent then.
  */
 export async function popTopOfStackUnverified(
   manager: RunbookStateManager,

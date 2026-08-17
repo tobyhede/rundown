@@ -1,5 +1,5 @@
 ---
-'@rundown-org/core': patch
+'@rundown-org/core': major
 ---
 
 # Move the positional pop out of product reach
