@@ -1953,9 +1953,11 @@ export class SessionService {
   /**
    * Release a runbook from an in-memory session (no IO, no transaction).
    *
-   * Pure in-place mutation so composite operations — {@link releaseRunbooks},
-   * {@link popRunbookIfActive} — can release several runbooks against one
-   * session snapshot and commit once, instead of round-tripping per runbook.
+   * Pure in-place mutation so a caller can release against a session snapshot
+   * it already holds and commit once, instead of round-tripping per release.
+   * {@link releaseRunbooks} needs that to put several runbooks under a single
+   * commit; {@link popRunbookIfActive} releases exactly one, folded into the
+   * same transaction that decides whether the run is still the top.
    *
    * @param session - Session to mutate in place.
    * @param runbookId - Runbook id to release from session targeting structures
