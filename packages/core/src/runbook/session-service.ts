@@ -553,22 +553,26 @@ function linkageMatchesLinkage(
  * @param session - Session snapshot read at the start of the guarded transaction.
  * @returns The top-of-stack run id, or null when the stack is empty.
  */
-function topOfStackId(session: SessionData): RunId | null {
+export function topOfStackId(session: SessionData): RunId | null {
   return session.defaultStack.at(-1) ?? null;
 }
 
 /**
  * The affected-run selector for a mutation that acts on whatever is on top.
  *
- * `popRunbook` and `stash` name their target only by position, so the run whose
- * ownership must be checked is not knowable until the guarded transaction has
- * read the session. An empty stack selects nothing: those mutations then return
- * their domain `null` without a refusal to make.
+ * `stash` names its target only by position, so the run whose ownership must be
+ * checked is not knowable until the guarded transaction has read the session. An
+ * empty stack selects nothing: the mutation then returns its domain `null`
+ * without a refusal to make.
+ *
+ * {@link SessionService.popRunbookIfActive} narrows this rather than using it
+ * whole — it names a run, so guarding the top is right only when the top IS that
+ * run.
  *
  * @param session - Session snapshot read at the start of the guarded transaction.
  * @returns The top-of-stack run id, or an empty list when the stack is empty.
  */
-function topOfStack(session: SessionData): readonly RunId[] {
+export function topOfStack(session: SessionData): readonly RunId[] {
   const topId = topOfStackId(session);
   return topId ? [topId] : [];
 }
@@ -1950,8 +1954,8 @@ export class SessionService {
    * Release a runbook from an in-memory session (no IO, no transaction).
    *
    * Pure in-place mutation so composite operations — {@link releaseRunbooks},
-   * {@link popRunbook} — can release several runbooks against one session
-   * snapshot and commit once, instead of round-tripping per runbook.
+   * {@link popRunbookIfActive} — can release several runbooks against one
+   * session snapshot and commit once, instead of round-tripping per runbook.
    *
    * @param session - Session to mutate in place.
    * @param runbookId - Runbook id to release from session targeting structures
@@ -1969,37 +1973,21 @@ export class SessionService {
   }
 
   /**
-   * Pop a runbook from the active runbook stack.
-   *
-   * Used when completing or stopping a runbook. Removes the top runbook
-   * and returns the new top (parent runbook) ID if one exists.
-   *
-   * @returns The new active runbook ID (parent), or null if the stack is empty
-   *   Refused `execution_in_progress` or `recovery_required` instead when the
-   *   run is execution-owned or awaiting recovery; the value is absent then.
-   */
-  async popRunbook(): Promise<SessionMutationResult<RunId | null>> {
-    return this.mutateGuarded(topOfStack, (ctx) => {
-      const { defaultStack } = ctx.session;
-      const topId = defaultStack[defaultStack.length - 1];
-      if (!topId) return null;
-      const released = this.releaseFromSession(ctx.session, topId);
-      return released.status === 'released' ? released.nextDefaultRunbookId : null;
-    });
-  }
-
-  /**
    * Pop a runbook from the stack, but only while it is still the top.
    *
-   * The conditional form of {@link popRunbook}, for a caller undoing an
-   * activation it performed itself. Resolving the target with `getActive` and
-   * then calling the positional `popRunbook` is the #666 check-then-act shape:
-   * `popRunbook` re-reads the stack inside its own transaction and pops whatever
-   * is on top by then, so a concurrent push means the run that gets popped is no
-   * longer the one the caller resolved. That is not a recoverable slip —
-   * {@link projectRunbookRelease} deletes every claim controlling the run it
-   * removes, so a foreign run pushed-and-claimed by `rundown run` loses the
-   * run-control bearer its orchestrator still holds.
+   * For a caller undoing an activation it performed itself. Resolving the target
+   * with `getActive` and then popping by POSITION is the #666 check-then-act
+   * shape: a positional pop re-reads the stack inside its own transaction and
+   * removes whatever is on top by then, so a concurrent push means the run that
+   * gets popped is no longer the one the caller resolved. That is not a
+   * recoverable slip — {@link projectRunbookRelease} deletes every claim
+   * controlling the run it removes, so a foreign run pushed-and-claimed by
+   * `rundown run` loses the run-control bearer its orchestrator still holds.
+   *
+   * That positional form no longer exists on this service. It lives in the
+   * testing fixtures as `popTopOfStackUnverified`, where product code cannot
+   * reach it, because the multi-level stack setup a few core tests need is the
+   * only remaining legitimate use.
    *
    * {@link releaseRunbook} is not the answer either: it removes the id from
    * anywhere in the stack, so an undo narrowed to "only if still active" would

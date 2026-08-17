@@ -36,13 +36,21 @@ export type ChildOp =
   | { readonly kind: 'pushRunbook'; readonly runId: string }
   | { readonly kind: 'recordClaimSeen'; readonly claimId: string }
   | { readonly kind: 'releaseRunbook'; readonly runId: string }
-  | { readonly kind: 'popRunbook' }
+  /**
+   * The positional pop, which names nothing and removes whatever is on top.
+   *
+   * Test-only — it lives in the session fixtures as `popTopOfStackUnverified`
+   * rather than on `SessionService`, so no product path can reach it. Kept as a
+   * harness op because the race below is precisely about what a positional pop
+   * does under a concurrent push.
+   */
+  | { readonly kind: 'popTopOfStack' }
   /**
    * The conditional pop, which names the run it may remove.
    *
-   * Distinct from `popRunbook` in exactly the way the race cares about: the
-   * positional form pops whatever the transaction finds on top, so a contender
-   * that pushed first has its own run removed instead.
+   * Distinct from the positional form in exactly the way the race cares about:
+   * that one removes whatever the transaction finds on top, so a contender that
+   * pushed first has its own run removed instead.
    */
   | { readonly kind: 'popRunbookIfActive'; readonly runId: string }
   | {

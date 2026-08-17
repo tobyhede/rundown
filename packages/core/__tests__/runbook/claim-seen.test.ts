@@ -23,7 +23,11 @@ import {
 import type { Runbook, RunId, Step } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { linkageFor, assertClaimed, claimLiveDelegation } from './claim-test-helpers.js';
-import { patchPersistedClaim, unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
+import {
+  patchPersistedClaim,
+  popTopOfStackUnverified,
+  unwrapSessionMutation,
+} from '../../src/testing/session-fixtures.js';
 
 const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
 const mockRunbook: Runbook = {
@@ -482,7 +486,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
 
   it('does not attempt recording when a valid bearer has no default target', async () => {
     const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(runId));
-    unwrapSessionMutation(await sessionService.popRunbook());
+    unwrapSessionMutation(await popTopOfStackUnverified(manager));
     const recordSpy = jest.spyOn(sessionService, 'recordClaimSeen');
 
     const outcome = await seam.runTransition({
@@ -651,8 +655,8 @@ describe('claim-seen recording across mutating seams (#519)', () => {
     });
     expect(stale.kind).toBe('stale_claim');
 
-    unwrapSessionMutation(await sessionService.popRunbook());
-    unwrapSessionMutation(await sessionService.popRunbook());
+    unwrapSessionMutation(await popTopOfStackUnverified(manager));
+    unwrapSessionMutation(await popTopOfStackUnverified(manager));
     const none = await seam.resolveRunNavigation({
       command: 'goto',
       callerEvidence: { kind: 'claim_bearer', claimId },

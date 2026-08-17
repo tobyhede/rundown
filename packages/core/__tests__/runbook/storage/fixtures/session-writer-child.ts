@@ -48,7 +48,10 @@ import type { SyncWork } from '../../../../src/runbook/storage/sql-driver.js';
 import { assertClaimId } from '../../../../src/runbook/claim-id.js';
 import { assertRunId, type RunId } from '../../../../src/runbook/run-id.js';
 import { getErrorMessage } from '../../../../src/errors.js';
-import { unwrapSessionMutation } from '../../../../src/testing/session-fixtures.js';
+import {
+  popTopOfStackUnverified,
+  unwrapSessionMutation,
+} from '../../../../src/testing/session-fixtures.js';
 import type { ChildOp, ChildResult } from './child-protocol.js';
 
 /** Upper bound on any barrier wait, so a lost signal fails loudly, not silently. */
@@ -191,8 +194,8 @@ async function run(service: SessionService): Promise<unknown> {
       return service.recordClaimSeen(assertClaimId(op.claimId));
     case 'releaseRunbook':
       return unwrapSessionMutation(await service.releaseRunbook(assertRunId(op.runId)));
-    case 'popRunbook':
-      return unwrapSessionMutation(await service.popRunbook());
+    case 'popTopOfStack':
+      return unwrapSessionMutation(await popTopOfStackUnverified(manager));
     case 'popRunbookIfActive':
       return unwrapSessionMutation(await service.popRunbookIfActive(assertRunId(op.runId)));
     case 'guardedParentAdvance': {

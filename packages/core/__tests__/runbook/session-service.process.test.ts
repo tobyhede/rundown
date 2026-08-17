@@ -616,7 +616,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
 
   it('converges with no duplicate or resurrected entries when releases and pops race', async () => {
     // Stack teardown from several processes at once. Each `releaseRunbook`
-    // filters one id out; each `popRunbook` removes the current top. Whatever
+    // filters one id out; each positional pop removes the current top. Whatever
     // the interleaving, the survivors must be a subset of the originals with no
     // duplicates, and exactly (initial - removals) entries must remain: a lost
     // update would resurrect a removed id.
@@ -627,8 +627,8 @@ describe('cross-process session write contention (transaction replaces SessionLo
     const results = await race([
       { kind: 'releaseRunbook', runId: runIds[0] },
       { kind: 'releaseRunbook', runId: runIds[1] },
-      { kind: 'popRunbook' },
-      { kind: 'popRunbook' },
+      { kind: 'popTopOfStack' },
+      { kind: 'popTopOfStack' },
     ]);
     values(results);
     expectActualMutationOverlap(results);
@@ -649,7 +649,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
     // process undoes its own activation of `mine`, another starts `foreign` the
     // way `rundown run` does — and the loser's identity is the assertion.
     //
-    // Under the `getActive` + positional `popRunbook` shape this replaced, the
+    // Under the `getActive` + positional-pop shape this replaced, the
     // push-lands-first interleaving pops `foreign` instead: the pre-read
     // resolved `mine` as the top, and by the time the pop's own transaction
     // opened the top had moved. `projectRunbookRelease` deletes every claim
@@ -871,7 +871,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
   }, 120_000);
 
   it('refuses an actual-overlap race without a holder and contender', async () => {
-    await expect(race([{ kind: 'popRunbook' }])).rejects.toThrow(
+    await expect(race([{ kind: 'popTopOfStack' }])).rejects.toThrow(
       'actual-overlap race requires a holder and at least one contender',
     );
   });
@@ -886,7 +886,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
     await expect(
       park(
         path.join(dir, 'unused-go'),
-        { kind: 'popRunbook' },
+        { kind: 'popTopOfStack' },
         {
           executable: path.join(dir, 'no-such-node-binary'),
         },

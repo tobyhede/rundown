@@ -719,7 +719,7 @@ async function launchInlineChildFromIntent({
       if (activation.status === 'pushed') {
         try {
           // Conditional in the store, never here: an unlocked `getActive` ahead
-          // of the positional `popRunbook` pops whatever the top is by the time
+          // of a positional pop removes whatever the top is by the time
           // that transaction opens, and the release takes the popped run's
           // claims with it.
           const pop = await sessionService.popRunbookIfActive(childRunId);
