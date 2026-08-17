@@ -457,6 +457,132 @@ Child prompt.
     );
   });
 
+  // The failure end of the same lifetime, and the one the latch had no answer
+  // for. `INLINE_LAUNCH_CONSUMED` was the ONLY release, so every exit between
+  // winning the latch and consuming the intent — a child that will not prepare,
+  // a ref that resolves at intent time and not at launch time, a consume that
+  // throws — left the latch held by a pid that is still running.
+  //
+  // That is not a crash the liveness probe can recover. The owner is alive, and
+  // `classifyInlineLaunchOwnership` deliberately has no self-pid exemption
+  // (a nested observer inside a live span is also "self" and must stand down),
+  // so the SAME process re-observing its own failed launch stood down against
+  // itself. Permanently: nothing ever cleared the record, and the diagnostic
+  // named the operator's own pid as the process to wait for.
+  //
+  // Driven through the CLI in one process, which is what makes it a regression
+  // test rather than a demonstration — `runCliInProcess` shares this pid, so the
+  // second gesture below is exactly the self-stand-down.
+  //
+  // The failure is staged as a child that cannot PREPARE, not one that cannot
+  // RESOLVE. A missing child runbook fails earlier and elsewhere: core refuses
+  // to prepare an intent whose ref will not resolve, and re-derives that intent
+  // on every frame re-entry, so the launch span — and the latch — is never
+  // reached and the test would pass while exercising nothing. A required
+  // variable the parent does not carry resolves fine and fails where this needs
+  // it to: inside the span, past the latch write.
+  it('recovers a failed inline launch in the same process instead of standing down on its own latch', async () => {
+    await writeFile(
+      join(workspace.rootRunbooksDir(), 'parent.runbook.md'),
+      `---
+name: parent
+---
+# Parent
+
+## 1. Start
+- PASS CONTINUE
+
+Ready.
+
+## 2. Write
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- needy.runbook.md
+
+## 3. Review
+- PASS COMPLETE
+
+Reviewing.
+`,
+    );
+    const needyChild = `---
+name: needy
+inputs:
+  - Needed
+required:
+  - Needed
+---
+# Needy
+
+## 1. Create
+- PASS COMPLETE
+
+Needs {{Needed}}.
+`;
+    await writeFile(join(workspace.rootRunbooksDir(), 'needy.runbook.md'), needyChild);
+    await writeFile(join(workspace.runbooksDir(), 'needy.runbook.md'), needyChild);
+
+    const start = await runCliInProcess('run runbooks/parent.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+    const parentRunId = (await readSession(workspace)).active;
+    if (!parentRunId) throw new Error('expected active parent runbook');
+
+    // Reaches the span — the latch is written before the child is prepared — and
+    // exits on the variable the child requires and the parent does not carry.
+    const failed = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
+    expect(flattenEvents(parseConcatenatedJson(failed.stdout))).toContainEqual(
+      expect.objectContaining({ code: 'MISSING_REQUIRED_VARS' }),
+    );
+
+    // The latch is not held after a span that failed out of it. This is the
+    // durable form of the whole fix, asserted before the recovery below so a
+    // failure here names the cause rather than the symptom.
+    const parentAfterFailure = await readRunbookState(workspace, parentRunId);
+    expect(
+      parentAfterFailure?.substepStates?.find((entry) => entry.inline)?.inline?.started,
+    ).toBeNull();
+
+    // The intent SURVIVES, which is the other half: the launch is unfinished, so
+    // it must stay re-observable. Releasing the latch and clearing the intent —
+    // what `INLINE_LAUNCH_CONSUMED` does — would make the failure unrecoverable
+    // in the opposite direction.
+    const contextAfterFailure = (
+      parentAfterFailure?.snapshot as { readonly context?: Record<string, unknown> } | undefined
+    )?.context;
+    expect(contextAfterFailure?.inlineLaunchIntent).toEqual(
+      expect.objectContaining({ parentRunId }),
+    );
+
+    // Re-observing in the SAME process. Before the release this reported
+    // "already being launched by process <this pid>", and did so forever.
+    // Frame re-entry is the gesture that re-observes a pending launch; a bare
+    // transition cannot, because core's reactivation seam resumes a RUNNING
+    // child and this launch never created one.
+    const retry = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
+    expect(retry.stderr).not.toContain('is already being launched by process');
+    // It re-attempted the launch rather than waiting on it, and failed the same
+    // way because the variable is still missing. The SAME failure is the point:
+    // the launch is reachable again rather than replaced by a permanent wait.
+    expect(flattenEvents(parseConcatenatedJson(retry.stdout))).toContainEqual(
+      expect.objectContaining({ code: 'MISSING_REQUIRED_VARS' }),
+    );
+
+    // And the recovery is real rather than a better error message: supply what
+    // the child needs and the next re-entry performs the launch.
+    await writeFile(join(workspace.cwd, '.rundown', 'config.yaml'), 'Needed: supplied\n');
+    const recovered = await runCliInProcess(
+      await withRunTarget(['goto', '2'], workspace),
+      workspace,
+    );
+    const activeAfter = (await readSession(workspace)).active;
+    expect(activeAfter).not.toBe(parentRunId);
+    expect(await readRunbookState(workspace, activeAfter ?? '')).toEqual(
+      expect.objectContaining({ lifecycle: 'running' }),
+    );
+    expect(recovered.exitCode).toBe(0);
+  });
+
   // The counterpart, and the reason the latch is RELEASED when the launch is
   // consumed rather than left as a record of a launch that happened. A latch
   // outlives its span only if nothing clears it, and a retained one names a pid

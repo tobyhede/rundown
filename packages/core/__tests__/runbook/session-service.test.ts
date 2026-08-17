@@ -442,6 +442,14 @@ describe('SessionService', () => {
       const result = await sessionService.pushRunbookIfNotActive(buried.id);
 
       expect(result).toEqual({ status: 'pushed' });
+      // The duplicate entry is intended here, and is the opposite of the hazard
+      // the `already-active` case above prevents. There the second entry would
+      // be a push onto a run the session already targets — pure surplus, needing
+      // two pops to release. Here the buried entry is a real earlier visit the
+      // session should return to once this activation ends, and the single
+      // conditional pop the pushing caller performs on failure
+      // (`launchInlineChildFromIntent`'s rollback) restores exactly the stack
+      // this call found.
       expect((await manager.loadSession()).defaultStack).toEqual([buried.id, above.id, buried.id]);
     });
 

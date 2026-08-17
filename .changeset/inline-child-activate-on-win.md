@@ -1,5 +1,5 @@
 ---
-'@rundown-org/core': patch
+'@rundown-org/core': minor
 '@rundown-org/cli': patch
 ---
 

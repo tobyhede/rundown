@@ -3350,6 +3350,19 @@ describe('runExecutionLoop', () => {
     // The launch span asks the session nothing: both of its writes carry their
     // own condition, so there is no read left whose answer could go stale.
     expect(mockSessionService.getActive).not.toHaveBeenCalled();
+    // A consume that threw is a launch span that failed past the latch, so the
+    // latch comes off. This is the arm that made the stand-down reachable
+    // single-process: the intent survives the failure, so without the release
+    // the next observer finds it latched by a live pid and waits on a launch
+    // nobody is performing.
+    //
+    // Carrying the latch record this span wrote, which is what the machine
+    // gates the release on — the same record the `INLINE_CHILD_STARTED` above
+    // committed, so a release built from a re-probe would clear nothing.
+    expect(mockActorService.sendAndSync).toHaveBeenCalledWith(runbookId, inlineSteps, {
+      type: 'INLINE_LAUNCH_ABANDONED',
+      started: expect.objectContaining({ ownerPid: process.pid }),
+    });
     expect(mockSessionService.releaseRunbook).not.toHaveBeenCalledWith(childRunId);
     expect(mockManager.delete).not.toHaveBeenCalledWith(childRunId);
     expect(mockEmitter.emit).toHaveBeenCalledWith({
@@ -3773,6 +3786,19 @@ describe('runExecutionLoop', () => {
     expect(mockActorService.sendAndSync).toHaveBeenNthCalledWith(2, runbookId, inlineSteps, {
       type: 'INLINE_LAUNCH_CONSUMED',
     });
+    // The consume released the latch as part of clearing the intent, so the
+    // scope is disarmed rather than firing a second, redundant release for a
+    // launch that is over. `keep()` is what makes that a decision rather than an
+    // accident of ordering.
+    //
+    // Matched on the type alone. An exact-literal negative would also pass if a
+    // release were sent carrying a different payload, which is the one way this
+    // assertion could go quietly stale.
+    expect(mockActorService.sendAndSync).not.toHaveBeenCalledWith(
+      runbookId,
+      inlineSteps,
+      expect.objectContaining({ type: 'INLINE_LAUNCH_ABANDONED' }),
+    );
     // Adoption was refused here, so no bearer is announced for the resumed child.
     expect(mockEmitter.emit).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'RUNBOOK_STARTED' }),
@@ -4353,6 +4379,11 @@ describe('runExecutionLoop', () => {
         kind: 'won',
         existingChild: null,
         reclaimedFrom: null,
+        // The scope the span releases through, built by the arm that TOOK the
+        // latch. Carried on `won` alone and constructed there rather than by the
+        // caller, so a `won` that could be received without a scope — and
+        // therefore forgotten — is unrepresentable.
+        held: { keep: expect.any(Function), [Symbol.asyncDispose]: expect.any(Function) },
       });
       expect(mockActorService.sendAndSync).toHaveBeenCalledWith(
         runbookId,
@@ -4501,14 +4532,24 @@ describe('runExecutionLoop', () => {
     // stand-down must leave untouched, and makes the absent `getActive` call an
     // assertion about the check-then-act shape rather than a coincidence of the
     // fixture.
+    //
+    // Each row also names the latch arm it must land on. Four of the six answer
+    // `stopped`, so the loop result alone cannot tell "this fixture reached the
+    // arm in its name" from "this fixture reached SOME refusal" — a staged
+    // precondition that stopped modelling its arm would keep passing under its
+    // old name, which is the way a table like this rots. `arm` is `null` for the
+    // one outcome the compare-and-swap never decides: a run that does not exist
+    // never runs the callback, so nothing is recorded.
     it.each<{
       readonly name: string;
       readonly expected: 'stopped' | 'waiting';
+      readonly arm: string | null;
       readonly stage: () => void;
     }>([
       {
         name: 'missing (the parent run vanished before the latch)',
         expected: 'stopped',
+        arm: null,
         stage: () => {
           mockManager.load.mockImplementation(async (id: string) =>
             id === runbookId ? parentWith() : null,
@@ -4522,6 +4563,7 @@ describe('runExecutionLoop', () => {
       {
         name: 'inactive (the parent turned terminal between the two reads)',
         expected: 'stopped',
+        arm: 'inactive',
         stage: () => {
           mockManager.load.mockImplementation(async (id: string) =>
             id === runbookId ? parentWith() : null,
@@ -4532,6 +4574,7 @@ describe('runExecutionLoop', () => {
       {
         name: 'superseded (the persisted intent no longer names this launch)',
         expected: 'waiting',
+        arm: 'superseded',
         stage: () => {
           const parent = parentWith(null, { snapshot: { context: {} } });
           mockManager.load.mockImplementation(async (id: string) =>
@@ -4542,6 +4585,7 @@ describe('runExecutionLoop', () => {
       {
         name: 'linkage-refused (a persisted child the parent does not claim)',
         expected: 'stopped',
+        arm: 'linkage-refused',
         stage: () => {
           const parent = parentWith();
           const existingChild = childWithLinkage({ ...matchingChildLinkage, parentEntry: 2 });
@@ -4554,6 +4598,7 @@ describe('runExecutionLoop', () => {
       {
         name: 'unrecorded (the substep row records no launch to latch)',
         expected: 'stopped',
+        arm: 'unrecorded',
         stage: () => {
           const parent = parentWith(null, {
             substepStates: [{ id: '1', frameKey: '1|', status: 'running' }],
@@ -4570,6 +4615,7 @@ describe('runExecutionLoop', () => {
         // write from here would land beside that process's writes.
         name: 'already-latched (a live process owns the launch)',
         expected: 'waiting',
+        arm: 'already-latched',
         stage: () => {
           const parent = parentWith(heldByThisProcess());
           const existingChild = makeLoopState('1', {
@@ -4585,13 +4631,20 @@ describe('runExecutionLoop', () => {
       },
     ])(
       'leaves the session untouched when the launch stands down as $name',
-      async ({ expected, stage }) => {
+      async ({ expected, arm, stage }) => {
         // The session already targets the child, so every write below would have
         // something real to reach.
         mockSessionService.getActive.mockResolvedValue({ id: childRunId });
         stage();
 
         expect(await driveLoop()).toBe(expected);
+
+        // The arm this row is named for, before the property it is here to
+        // assert: the session assertions below are only about a stand-down if
+        // the stand-down was this one.
+        expect(
+          latchOutcomes.map((outcome) => (outcome.value as { readonly kind: string } | null)?.kind),
+        ).toEqual(arm === null ? [] : [arm]);
 
         // Named individually rather than counted, so a failure says which write
         // came back. `pushRunbookIfNotActive` is the activation this arm must not
@@ -4669,6 +4722,7 @@ describe('runExecutionLoop', () => {
         kind: 'won',
         existingChild: null,
         reclaimedFrom: DEAD_PID,
+        held: { keep: expect.any(Function), [Symbol.asyncDispose]: expect.any(Function) },
       });
       // The reclaiming observer records ITSELF as the new owner. Leaving the dead
       // owner in place would let a third observer reclaim the launch this one is
@@ -4685,6 +4739,19 @@ describe('runExecutionLoop', () => {
       // fails, so this stops without creating a child.
       expect(mockedResolveRunbookRef).toHaveBeenCalledTimes(1);
       expect(result).toBe('stopped');
+      // And the latch this span took is released on the way out. Without it the
+      // record would name THIS process — alive, and with no self-pid exemption
+      // in the ownership classifier — so the next observation, in this process
+      // or any other, would stand down against it forever.
+      //
+      // The release names the record the reclaim above committed, byte for byte.
+      // That identity is what the machine gates on, so a release carrying a
+      // freshly-probed record — same process, later instant — would name a latch
+      // nobody wrote and clear nothing.
+      expect(mockActorService.sendAndSync).toHaveBeenCalledWith(runbookId, inlineSteps, {
+        type: 'INLINE_LAUNCH_ABANDONED',
+        started: sent.started,
+      });
       expect(mockOutput.warning).toHaveBeenCalledWith(
         `Reclaimed the inline launch of ${childRunId} from process ${String(DEAD_PID)}, which is no longer running.`,
       );
@@ -4727,7 +4794,11 @@ describe('runExecutionLoop', () => {
 
       expect(latchOutcomes).toEqual([
         expect.objectContaining({
-          value: { kind: 'won', existingChild, reclaimedFrom: DEAD_PID },
+          value: expect.objectContaining({
+            kind: 'won',
+            existingChild,
+            reclaimedFrom: DEAD_PID,
+          }),
         }),
       ]);
       // Finished rather than relaunched: the child the dead process created is
@@ -4875,7 +4946,11 @@ describe('runExecutionLoop', () => {
 
       expect(latchOutcomes).toEqual([
         expect.objectContaining({
-          value: { kind: 'won', existingChild: null, reclaimedFrom: null },
+          value: expect.objectContaining({
+            kind: 'won',
+            existingChild: null,
+            reclaimedFrom: null,
+          }),
         }),
       ]);
       expect(mockOutput.warning).not.toHaveBeenCalled();
