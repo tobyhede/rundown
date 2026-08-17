@@ -484,6 +484,32 @@ model, flag reference, and discovery rules.
 - `NO_COLOR=1` - Disable colored output (standard convention)
 - `FORCE_COLOR=1` - Force colored output even in non-TTY environments
 
+## Versioning and changesets
+
+**Rundown is unreleased. Nothing is published, and there are no downstream
+consumers.** The same reasoning that retires persisted-state migrations (see
+[State Persistence](#state-persistence)) applies to package versions: there is
+no one to break.
+
+Therefore **do not spend effort on semver correctness**, and never raise it as a
+review finding. Specifically, none of the following is a defect worth reporting,
+a reason to open a PR, or a reason to block one:
+
+- A `patch` bump on a changeset that removes or changes public API.
+- A bump that disagrees with what another changeset chose for a similar change.
+- Any argument of the form "a consumer on `^1.0.0` would break" — that consumer
+  does not exist.
+
+Write a changeset because it is the release note: it explains **what changed and
+why** to the next person reading the history. That prose is worth getting right.
+The `major`/`minor`/`patch` field on it is not — pick one and move on. When the
+project ships for real, versions start mattering and this section gets deleted.
+
+The corollary for reviewers, human or agent: **a finding whose only consequence
+lands on a hypothetical consumer is out of scope.** Rank findings by whether
+they can affect this repo's behaviour, its tests, or a reader's understanding of
+the code. Version metadata affects none of the three.
+
 ## CI / Workflow Conventions
 
 - **SHA-pinned actions**: GitHub Actions are pinned by commit SHA with a version
