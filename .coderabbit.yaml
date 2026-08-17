@@ -4,6 +4,10 @@ tone_instructions: >-
   Focus on type safety, state machine correctness, security policy correctness,
   persisted state no-migration, CLI output stability, and design principles
   from CLAUDE.md. Be direct and specific. Flag action-type mapping violations.
+  This project is unreleased with no downstream consumers: never comment on
+  semver bump levels, changeset major/minor/patch choices, or breaking-change
+  impact on hypothetical consumers. A finding whose only consequence lands on a
+  consumer that does not exist is out of scope.
 
 reviews:
   profile: "assertive"
@@ -42,6 +46,17 @@ reviews:
     - "!**/reports/**"
 
   path_instructions:
+    - path: ".changeset/**/*.md"
+      instructions: |
+        Changesets here are release notes, not version metadata. This project is
+        unreleased and has no downstream consumers.
+        - NEVER comment on the major/minor/patch bump level. Do not suggest
+          raising a bump for a breaking change, do not flag a bump as
+          inconsistent with other changesets, and do not reason about semver
+          impact on consumers — there are none.
+        - DO review the prose: is the described change accurate, does it explain
+          why rather than only what, does it name the defect or behaviour it
+          affects, and does it match the diff in the same PR.
     - path: "packages/parser/**/*.ts"
       instructions: |
         This is a Markdown runbook parser. Focus on:
