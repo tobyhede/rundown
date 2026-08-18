@@ -145,6 +145,18 @@ describe('projectRunRelease', () => {
     expect(projectRunRelease(session, { runId: runId(9), role: 'addressed' })).toBe(false);
   });
 
+  it('reports true when only the default stack matched', () => {
+    // Stack membership alone is enough to have "found" the run. Without this
+    // the other cases all carry a claim or a stash entry as well, so the stack
+    // arm of the answer is never the one deciding it.
+    const a = runId(1);
+    const session: SessionData = { defaultStack: [a], claims: {} };
+
+    expect(projectRunRelease(session, { runId: a, role: 'addressed' })).toBe(true);
+
+    expect(session.defaultStack).toEqual([]);
+  });
+
   it('reports true when only a retained claim matched', () => {
     // The retained claim still counts as "found". Preserved deliberately from
     // the primitive this replaces: a repeated `addressed` release reports

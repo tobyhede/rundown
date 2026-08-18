@@ -71,6 +71,7 @@ export function claimDisposition(role: ReleaseRole): ClaimDisposition {
     case 'collateral':
     case 'discarded':
       return 'revoke';
+    // Stryker disable next-line ConditionalExpression,BlockStatement: unreachable — exhaustive `never` arm
     default: {
       const _exhaustive: never = role;
       return _exhaustive;
