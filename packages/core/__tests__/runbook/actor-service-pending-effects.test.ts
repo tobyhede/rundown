@@ -215,8 +215,6 @@ describe('RunbookActorService pending machine effects', () => {
       type: 'EXECUTE_COMMAND',
       command: 'true',
       displayCommand: 'true',
-      outputScope: { stepId: '1' },
-      nakedOutputs: [],
       rdInjected: { RD_RUN_ID: state.id },
     });
     await waitUntil(() => effectStarted === 1);

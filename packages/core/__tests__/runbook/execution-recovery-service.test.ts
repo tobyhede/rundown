@@ -201,8 +201,6 @@ describe('ExecutionRecoveryService', () => {
       command: 'npm test',
       displayCommand: 'npm test',
       runbookPath: 'command.runbook.md',
-      outputScope: { stepId: '1' },
-      nakedOutputs: [],
       rdInjected: { RD_RUN_ID: persistedTemplateVars.RunId },
     });
     await commandStarted;

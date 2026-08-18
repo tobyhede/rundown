@@ -75,7 +75,7 @@ export {
   type ExecutionEpoch,
   type GuardedMutationResult,
 } from './storage/mutation-result.js';
-export { resolveCurrentExecutionUnit } from './execution-units.js';
+export { extractUnitOutputs, resolveCurrentExecutionUnit } from './execution-units.js';
 export {
   buildContextVars,
   buildStepVariables,
@@ -689,6 +689,7 @@ export {
   type VariableValue,
 } from './effective-vars.js';
 export {
+  deriveOutputScope,
   partitionOutputDeclarations,
   outputsDirForRun,
   outputChannelPath,

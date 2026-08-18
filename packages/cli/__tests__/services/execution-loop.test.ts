@@ -2709,10 +2709,10 @@ describe('runExecutionLoop', () => {
       expect(result).not.toBe('stopped');
       const events = mockActorService.sendAndSync.mock.calls.map((call: unknown[]) => call[2]);
       expect(events).toEqual([
-        expect.objectContaining({
-          type: 'EXECUTE_COMMAND',
-          nakedOutputs: [{ name: 'Version' }],
-        }),
+        // The event names the command only. Which OUTPUTS this unit captures
+        // is derived inside the machine from the leaf's own declarations, so
+        // the CLI has nothing to assert about them here.
+        expect.objectContaining({ type: 'EXECUTE_COMMAND' }),
       ]);
       expect(events).not.toContainEqual(expect.objectContaining({ type: 'SET_VARIABLES' }));
       expect(events).not.toContainEqual(expect.objectContaining({ type: 'PASS' }));

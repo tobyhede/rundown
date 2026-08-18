@@ -7,6 +7,7 @@ import { RUNDOWN_DIR, assertSafeId } from '../paths.js';
 import { logger } from '../logger.js';
 import { isNodeError } from '../errors.js';
 import type { VariableValue } from './effective-vars.js';
+import type { ForContext } from './types.js';
 import { parseRuntimeVariableValue } from './runtime-variable-value.js';
 import { openVerifiedRegularFile, UnsafeFileError } from './safe-fs.js';
 
@@ -57,6 +58,44 @@ export interface OutputScope {
     /** Optional FOR-loop iteration index for the nested substep. */
     readonly iteration?: number;
   };
+}
+
+/**
+ * Derive the output-channel scope for one execution unit.
+ *
+ * Produces one of the three tier compositions {@link OutputScope} allows:
+ * - `{ stepId }` — step-level (no substep, no iteration)
+ * - `{ stepId, substep: { id } }` — substep-level, outside a FOR loop
+ * - `{ stepId, substep: { id, iteration } }` — substep inside a FOR loop
+ *
+ * The iteration tier is set from the top FOR frame only when that frame is
+ * non-implicit and names this step. Implicit frames contribute no iteration
+ * tier — they have no user-visible counter to segment the path with.
+ *
+ * `substepId` is the sole substep discriminant: a defined id IS the substep
+ * tier, so the impossible iteration-without-substep shape stays
+ * unrepresentable without a second boolean to keep in agreement.
+ *
+ * @param stepId - Owning step identifier for the unit being executed
+ * @param substepId - Substep identifier, or undefined for a step-level unit
+ * @param forStack - FOR frames active at the moment of execution, innermost last.
+ *   Always present: `RunbookContext.forStack` is non-optional, so an absent
+ *   stack is an empty one.
+ * @returns OutputScope suitable for `outputChannelPath` / `prepareOutputChannels`
+ */
+export function deriveOutputScope(
+  stepId: string,
+  substepId: string | undefined,
+  forStack: readonly ForContext[],
+): OutputScope {
+  if (substepId === undefined) {
+    return { stepId };
+  }
+  const top = forStack.at(-1);
+  if (top && !top.implicit && top.stepId === stepId) {
+    return { stepId, substep: { id: substepId, iteration: top.iteration } };
+  }
+  return { stepId, substep: { id: substepId } };
 }
 
 /**
