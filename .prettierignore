@@ -7,10 +7,12 @@
 # Skills are functional LLM-facing instructions, content-pinned by tests —
 # reflowing their prose breaks substring assertions (skills/*.test.ts).
 packages/claude-code-plugin/skills/**
-# Vendored skills installed from upstream repos and pinned by content hash in
-# skills-lock.json — reformatting them invalidates the lock. (.claude/skills/*
-# are symlinks into this tree; Prettier does not follow them.)
-.agents/skills/**
+# Vendored agent tooling installed from upstream repos and pinned by content
+# hash in skills-lock.json — reformatting it invalidates the lock. Scoped to the
+# whole install root, not just skills/, so a plugin shipping Markdown does not
+# reintroduce the blocker. (.claude/skills/* are symlinks into this tree;
+# Prettier does not follow them.)
+.agents/**
 **/dist/**
 **/coverage/**
 packages/parser/fixtures/**
