@@ -17,10 +17,17 @@ function runId(n: number): RunId {
   return assertRunId(`rd_${n.toString(16).repeat(32)}`);
 }
 
-/** A claim controlling `run`, keyed distinctly so several can coexist. */
-function claimFor(run: RunId, key: string) {
+/**
+ * A claim controlling `run`, keyed distinctly so several can coexist.
+ *
+ * The index is zero-padded rather than repeated: `key.repeat(32).slice(0, 32)`
+ * collides for any two indices whose hex digits repeat to the same 32 characters
+ * (1 and 17, say), which would silently overwrite one claim with another and
+ * leave a larger session asserting against fewer claims than it created.
+ */
+function claimFor(run: RunId, index: number) {
   return makeClaimRecord({
-    claimKey: assertClaimLookupKey(`rdclk_${key.repeat(32).slice(0, 32)}`),
+    claimKey: assertClaimLookupKey(`rdclk_${index.toString(16).padStart(32, '0')}`),
     controlledRunId: run,
   });
 }
@@ -29,7 +36,7 @@ function claimFor(run: RunId, key: string) {
 function sessionOver(runs: readonly RunId[]): SessionData {
   const claims: SessionData['claims'] = {};
   runs.forEach((run, index) => {
-    const record = claimFor(run, index.toString(16));
+    const record = claimFor(run, index);
     claims[record.claimKey] = record;
   });
   return { defaultStack: [...runs], claims };
@@ -198,8 +205,26 @@ describe('projectRunRelease', () => {
   });
 });
 
+/**
+ * Permute `items` by a seed array, Fisher-Yates.
+ *
+ * Reversal alone is two of up to 120 orderings, and cross-talk that depends on
+ * an interior ordering rather than a full reversal survives it. Driving the
+ * shuffle from generated seeds tests the invariant the properties actually
+ * state.
+ */
+function permute<T>(items: readonly T[], seeds: readonly number[]): T[] {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = seeds[i % seeds.length] % (i + 1);
+    [out[i], out[j]] = [out[j], out[i]];
+  }
+  return out;
+}
+
 describe('projectRunRelease order-independence (property)', () => {
   const role = fc.constantFrom<ReleaseRole>('addressed', 'collateral', 'discarded');
+  const seeds = fc.array(fc.nat(), { minLength: 5, maxLength: 5 });
 
   it('gives a member the same outcome under any permutation of the others', () => {
     // The invariant that lets `claimDisposition(role)` widen to
@@ -211,7 +236,8 @@ describe('projectRunRelease order-independence (property)', () => {
         fc.uniqueArray(fc.integer({ min: 1, max: 8 }), { minLength: 2, maxLength: 5 }),
         fc.array(role, { minLength: 5, maxLength: 5 }),
         fc.nat(),
-        (ids, roles, pick) => {
+        seeds,
+        (ids, roles, pick, order) => {
           const runs = ids.map(runId);
           const releases: RunRelease[] = runs.map((run, index) => ({
             runId: run,
@@ -227,12 +253,14 @@ describe('projectRunRelease order-independence (property)', () => {
 
           const forward = apply(releases);
           const reversed = apply([...releases].reverse());
+          const shuffled = apply(permute(releases, order));
 
           // The subject's own claim survives, or does not, identically.
           const survives = (session: SessionData): boolean =>
             Object.values(session.claims).some((c) => c.controlledRunId === subject.runId);
 
           expect(survives(reversed)).toBe(survives(forward));
+          expect(survives(shuffled)).toBe(survives(forward));
           expect(survives(forward)).toBe(
             claimDisposition(subject.role) === 'retain-as-terminal-evidence',
           );
@@ -246,7 +274,8 @@ describe('projectRunRelease order-independence (property)', () => {
       fc.property(
         fc.uniqueArray(fc.integer({ min: 1, max: 8 }), { minLength: 2, maxLength: 5 }),
         fc.array(role, { minLength: 5, maxLength: 5 }),
-        (ids, roles) => {
+        seeds,
+        (ids, roles, order) => {
           const runs = ids.map(runId);
           const releases: RunRelease[] = runs.map((run, index) => ({
             runId: run,
@@ -260,6 +289,7 @@ describe('projectRunRelease order-independence (property)', () => {
           };
 
           expect(apply([...releases].reverse())).toEqual(apply(releases));
+          expect(apply(permute(releases, order))).toEqual(apply(releases));
         },
       ),
     );

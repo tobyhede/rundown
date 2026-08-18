@@ -37,6 +37,15 @@ import {
  * A delegation whose child runbook is not discoverable is the cheapest trigger:
  * it stops the run during initialization and re-enters the loop already
  * terminal.
+ *
+ * Both tests discharge #790's multi-process requirement inline rather than in a
+ * third case: the run is one subprocess, `resolveClaim` reads the database from
+ * this one, and the `rundown status --claim-id` assertion is a further
+ * subprocess sharing nothing with the run but the database. A unit suite that
+ * mocks the session boundary observes neither the retained claim nor the
+ * tombstone surviving persistence; these do. A separate combined test was
+ * removed as a strictly weaker restatement of the two below — it duplicated the
+ * assertion #793 has to flip, in a place a reader would not think to look.
  */
 describe('Terminal claim disposition at the resolution seam (#781 characterisation)', () => {
   let workspace: TestWorkspace;
@@ -157,36 +166,6 @@ describe('Terminal claim disposition at the resolution seam (#781 characterisati
       status: 'completed',
       active: false,
       runId: started.runId,
-    });
-  });
-
-  it('carries both dispositions across a process boundary', async () => {
-    // Every assertion above already crosses one boundary (the run is a
-    // subprocess, the resolution is in-process), but the resolution itself must
-    // also work from a *third* process that shares nothing but the database:
-    // a unit suite mocking the session boundary cannot observe either the
-    // retained claim or the tombstone surviving persistence.
-    await writeUnresolvableDelegation();
-    await writeFencedCompletion();
-
-    const revoked = requireStartedRun(runCli('run parent.runbook.md', workspace).stdout);
-    const retained = requireStartedRun(
-      runCli('run control.runbook.md --allow-all', workspace).stdout,
-    );
-
-    // Separate process, separate connection, no shared memory with either run.
-    const revokedStatus = runCli(`status --claim-id ${revoked.claimId}`, workspace);
-    expect(revokedStatus.exitCode).toBe(1);
-    expect(parseCliJsonObject(revokedStatus.stdout || revokedStatus.stderr)).toMatchObject({
-      kind: 'error',
-      code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
-    });
-
-    const retainedStatus = runCli(`status --claim-id ${retained.claimId}`, workspace);
-    expect(retainedStatus.exitCode).toBe(0);
-    expect(parseCliJsonObject(retainedStatus.stdout)).toMatchObject({
-      status: 'completed',
-      runId: retained.runId,
     });
   });
 });

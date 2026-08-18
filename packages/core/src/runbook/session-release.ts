@@ -22,15 +22,29 @@ export type ReleaseRole = 'addressed' | 'collateral' | 'discarded';
 /**
  * Every {@link ReleaseRole}, for exhaustive iteration in tests and callers.
  *
- * Declared `as const` and typed by its own members, so adding an arm to
- * `ReleaseRole` without adding it here is a compile error rather than a silently
- * shorter loop.
+ * `satisfies readonly ReleaseRole[]` checks only that the members listed are
+ * *assignable* to the union, not that they *exhaust* it. The coverage half is
+ * asserted by {@link UnlistedReleaseRole} below; without it, an arm added to
+ * `ReleaseRole` and not to this constant would leave the constant silently
+ * short and every test iterating it silently partial.
  */
 export const RELEASE_ROLES = [
   'addressed',
   'collateral',
   'discarded',
 ] as const satisfies readonly ReleaseRole[];
+
+/** Resolves to `T` only while `T` is `never`; a compile error otherwise. */
+type AssertNever<T extends never> = T;
+
+/**
+ * Compile-time proof that {@link RELEASE_ROLES} names every {@link ReleaseRole}.
+ *
+ * `never` while the constant is complete. Add an arm to `ReleaseRole` without
+ * adding it here and this alias stops satisfying {@link AssertNever}, so the
+ * omission fails the type check instead of silently shortening a loop.
+ */
+export type UnlistedReleaseRole = AssertNever<Exclude<ReleaseRole, (typeof RELEASE_ROLES)[number]>>;
 
 /**
  * What a release does to the claims a run controls.
