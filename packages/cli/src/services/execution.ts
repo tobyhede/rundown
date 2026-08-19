@@ -706,7 +706,6 @@ async function launchInlineChildFromIntent({
       childRunId,
       [...getRunbookFromState(existingChild, cwd)],
       cwd,
-      !!existingChild.prompted,
       childEmitter,
       {
         output,
@@ -1134,11 +1133,14 @@ export async function drainResolvedCompletions({
  * - A prompt-only step is reached (no command)
  * - In prompted mode (no auto-execution)
  *
+ * Prompted mode is read from the run's own persisted `prompted` flag rather
+ * than supplied by the caller: it is a fact the run state owns, fixed at
+ * creation, and a parameter is only a way for a caller to disagree with it.
+ *
  * @param manager - Runbook state manager instance
  * @param runbookId - Branded run id
  * @param steps - Array of runbook steps
  * @param cwd - Current working directory for command execution
- * @param prompted - Whether to run in prompted mode (no auto-execution)
  * @param emitter - Event emitter for execution events
  * @param options - Optional execution loop behavior overrides
  * @returns 'done' if completed, 'stopped' if stopped, 'waiting' if prompt-only
@@ -1167,12 +1169,16 @@ export async function runExecutionLoop(
   runbookId: RunId,
   steps: ResolvedStep[],
   cwd: string,
-  prompted: boolean,
   emitter: ExecutionEventEmitter,
   options: ExecutionLoopOptions = {},
 ): Promise<'done' | 'stopped' | 'waiting'> {
   const state = await manager.load(runbookId);
   if (!state) return 'stopped';
+
+  // The run owns this fact. It is written once at creation and never varies
+  // across the loop, so it is read once here rather than re-derived per
+  // iteration from a `currentState` that can only carry the same value.
+  const prompted = state.prompted ?? false;
 
   const terminalReleaseMode = options.terminalReleaseMode ?? 'stack-pop';
   // Unconditional, in every release mode: the terminal session release is now

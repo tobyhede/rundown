@@ -639,10 +639,12 @@ export type LifecycleTerminalReleaseMode = 'release-runbook' | 'stack-pop';
  * seam applied a transition. The loop spawns command-step subprocesses, which is
  * inherently a CLI side effect (Category A); the seam decides whether it should
  * run and the frontend runs it.
+ *
+ * Whether that loop runs prompted is deliberately NOT carried here: the flag is
+ * persisted on the run, the loop reads it there, and a directive field would only
+ * let this seam and the run disagree about it.
  */
-export type LifecycleLoopDirective =
-  | { readonly kind: 'none' }
-  | { readonly kind: 'run'; readonly prompted: boolean };
+export type LifecycleLoopDirective = { readonly kind: 'none' } | { readonly kind: 'run' };
 
 /**
  * Refusal: the caller named a claim-shaped target without presenting that
@@ -3853,10 +3855,7 @@ export class RunbookLifecycleCommandService {
       };
     }
 
-    const loop: LifecycleLoopDirective =
-      drained.applied > 0
-        ? { kind: 'run', prompted: Boolean(drained.observedState.prompted) }
-        : { kind: 'none' };
+    const loop: LifecycleLoopDirective = drained.applied > 0 ? { kind: 'run' } : { kind: 'none' };
     return {
       kind: 'applied',
       runId,
@@ -3987,7 +3986,7 @@ export class RunbookLifecycleCommandService {
       terminalReleaseMode,
       status: 'continue',
       events: reconciled.events,
-      loop: { kind: 'run', prompted: Boolean(updatedState.prompted) },
+      loop: { kind: 'run' },
       updatedState,
     };
   }
@@ -4159,7 +4158,7 @@ export class RunbookLifecycleCommandService {
     // execution unit the parent never left — re-announcing the step and
     // re-running any command it carries.
     if (this.#hasUnconsumedInlineLaunchIntent(parentState, childRunId)) {
-      return { kind: 'run', prompted: Boolean(parentState.prompted) };
+      return { kind: 'run' };
     }
 
     // The finished-launch arm, and the only one that activates. Conditional in

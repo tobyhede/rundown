@@ -5858,7 +5858,7 @@ describe('RunbookLifecycleCommandService', () => {
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('continue');
       expect(outcome.terminalReleaseMode).toBe('stack-pop');
-      expect(outcome.loop).toEqual({ kind: 'run', prompted: false });
+      expect(outcome.loop).toEqual({ kind: 'run' });
       expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
       expect(outcome.updatedState?.step).toBe('2');
       expect(fenced).toHaveBeenCalledTimes(1);
@@ -5907,7 +5907,7 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('continue');
-      expect(outcome.loop).toEqual({ kind: 'run', prompted: false });
+      expect(outcome.loop).toEqual({ kind: 'run' });
       expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
       expect(outcome.updatedState?.step).toBe('2');
 

@@ -950,7 +950,7 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
     mockRunExecutionLoop.mockResolvedValue('stopped');
     mockRunTransition.mockResolvedValue(
       appliedOutcome({
-        loop: { kind: 'run', prompted: false },
+        loop: { kind: 'run' },
         terminalReleaseMode: 'release-runbook',
       }),
     );
@@ -960,11 +960,11 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
     expect(mockRunExecutionLoop).toHaveBeenCalledTimes(1);
     const loopArgs = mockRunExecutionLoop.mock.calls[0];
     // The seam directive's terminalReleaseMode + output are forwarded verbatim.
-    expect(loopArgs[6]).toEqual({ terminalReleaseMode: 'release-runbook', output });
+    expect(loopArgs[5]).toEqual({ terminalReleaseMode: 'release-runbook', output });
     // A bare caller presented no bearer, so the key must be ABSENT rather than
     // present-and-undefined: the loop spreads this object into the fence input,
     // where an explicit `claimKey: undefined` is a different request from no key.
-    expect(Object.hasOwn(loopArgs[6] as object, 'claimKey')).toBe(false);
+    expect(Object.hasOwn(loopArgs[5] as object, 'claimKey')).toBe(false);
     expect(result.applied).toEqual({ status: 'stopped', runId: PARENT_RUN_ID });
     expect(result.exitError).toBe(true);
   });
@@ -976,7 +976,7 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
     const output = makeOutput();
     mockRunTransition.mockResolvedValue(
       appliedOutcome({
-        loop: { kind: 'run', prompted: false },
+        loop: { kind: 'run' },
         terminalReleaseMode: 'release-runbook',
       }),
     );
@@ -986,7 +986,7 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
     });
 
     const loopArgs = mockRunExecutionLoop.mock.calls[0];
-    expect(loopArgs[6]).toEqual({
+    expect(loopArgs[5]).toEqual({
       terminalReleaseMode: 'release-runbook',
       claimKey: TEST_CLAIM_KEY,
       output,

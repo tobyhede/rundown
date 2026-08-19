@@ -651,7 +651,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
     expect(result).toBe('stopped');
@@ -1050,7 +1049,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -1073,14 +1071,13 @@ describe('runExecutionLoop', () => {
   });
 
   it('returns waiting if prompted mode is on', async () => {
-    mockManager.load.mockResolvedValue(makeLoopState());
+    mockManager.load.mockResolvedValue(makeLoopState('1', { prompted: true }));
 
     const result = await runExecutionLoop(
       asManager(mockManager),
       runbookId,
       asSteps(steps),
       '/tmp',
-      true,
       asEmitter(mockEmitter),
     );
 
@@ -1104,7 +1101,7 @@ describe('runExecutionLoop', () => {
       key: 'plan.json',
       timestamp: '2026-05-12T00:00:00.000Z',
     };
-    mockManager.load.mockResolvedValue(makeLoopState());
+    mockManager.load.mockResolvedValue(makeLoopState('1', { prompted: true }));
     mockActorService.getContextSnapshot.mockResolvedValue({
       enteredArtifacts: { PlanPath: artifact },
     });
@@ -1114,7 +1111,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      true,
       asEmitter(mockEmitter),
     );
 
@@ -1135,7 +1131,7 @@ describe('runExecutionLoop', () => {
   });
 
   it('emits STEP_ENTERED.artifacts as an empty object when no ARTIFACTS resolved', async () => {
-    mockManager.load.mockResolvedValue(makeLoopState());
+    mockManager.load.mockResolvedValue(makeLoopState('1', { prompted: true }));
     mockActorService.getContextSnapshot.mockResolvedValue({
       enteredArtifacts: undefined,
     });
@@ -1145,7 +1141,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      true,
       asEmitter(mockEmitter),
     );
 
@@ -1169,7 +1164,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(stepsNoCmd),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -1232,16 +1226,15 @@ describe('runExecutionLoop', () => {
           },
         },
       ];
-      mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1' }));
+      // The run's persisted prompted flag, left unset and therefore FALSE.
+      // Everything below is about the second term.
+      mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1', prompted: false }));
 
       const result = await runExecutionLoop(
         asManager(mockManager),
         runbookId,
         asSteps(promptedForSteps),
         '/tmp',
-        // The persisted/CLI prompted flag, explicitly FALSE. Everything below
-        // is about the second term.
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -1292,7 +1285,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(substepSteps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -1348,7 +1340,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(testSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -1406,7 +1397,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps([steps[0]]),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -1466,7 +1456,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps([steps[0]]),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -1500,7 +1489,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -1537,7 +1525,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps([steps[0]]),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -1582,7 +1569,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -1680,7 +1666,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -1718,7 +1703,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -1758,7 +1742,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
         { terminalReleaseMode: 'release-runbook' },
       );
@@ -1782,7 +1765,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
         { terminalReleaseMode: 'release-runbook' },
       );
@@ -1837,7 +1819,6 @@ describe('runExecutionLoop', () => {
           runbookId,
           asSteps(steps),
           '/tmp',
-          false,
           asEmitter(mockEmitter),
           { terminalReleaseMode: 'release-runbook' },
         );
@@ -1876,7 +1857,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -1909,7 +1889,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -1940,7 +1919,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -1984,7 +1962,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
         { terminalReleaseMode: 'defer-to-caller' },
       );
@@ -2026,7 +2003,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
         { terminalReleaseMode: 'defer-to-caller' },
       );
@@ -2059,7 +2035,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
         { terminalReleaseMode: 'release-runbook' },
       );
@@ -2096,7 +2071,6 @@ describe('runExecutionLoop', () => {
           runbookId,
           asSteps(steps),
           '/tmp',
-          false,
           asEmitter(mockEmitter),
           { terminalReleaseMode: 'future-mode' as ExecutionTerminalReleaseMode },
         ),
@@ -2134,7 +2108,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
         options,
       );
@@ -2199,7 +2172,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(commandSteps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -2251,7 +2223,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2326,7 +2297,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2384,7 +2354,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2437,7 +2406,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2485,7 +2453,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2517,7 +2484,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2558,8 +2524,7 @@ describe('runExecutionLoop', () => {
       asManager(mockManager),
       runbookId,
       asSteps(promptedForSteps),
-      '/tmp',
-      false, // prompted=false — step itself gates execution
+      '/tmp', // prompted=false — step itself gates execution
       asEmitter(mockEmitter),
     );
 
@@ -2592,7 +2557,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(promptedForSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2631,7 +2595,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(promptedForSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2669,7 +2632,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(promptedForSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2702,14 +2664,13 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1' }));
+    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1', prompted: true }));
 
     const result = await runExecutionLoop(
       asManager(mockManager),
       runbookId,
       asSteps(forSteps),
       '/tmp',
-      true,
       asEmitter(mockEmitter),
     );
 
@@ -2775,7 +2736,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(stepsWithOutputs),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -2844,7 +2804,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(stepsWithOutputsForCommandResult),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -2905,7 +2864,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       {
         delegationRuntime: frontierProjectionRuntime((credential) =>
@@ -2991,7 +2949,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       {
         delegationRuntime: frontierProjectionRuntime((credential) =>
@@ -3052,7 +3009,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -3097,7 +3053,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(singleDelegateFrontierSteps()),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -3120,7 +3075,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(singleDelegateFrontierSteps()),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       { terminalReleaseMode: 'release-runbook' },
     );
@@ -3160,7 +3114,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       // Derives a well-formed bearer that is not the one the frontier recorded.
       { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_other') },
@@ -3202,7 +3155,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       { delegationRuntime: frontierProjectionRuntime(rotatedIssuerDeriver) },
     );
@@ -3237,7 +3189,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(singleDelegateFrontierSteps()),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_other') },
     );
@@ -3263,7 +3214,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(singleDelegateFrontierSteps()),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       {
         terminalReleaseMode: 'release-runbook',
@@ -3303,7 +3253,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a') },
     );
@@ -3349,7 +3298,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(singleDelegateFrontierSteps()),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
         { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a') },
       ),
@@ -3455,7 +3403,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(inlineSteps),
       mockManager.cwd,
-      false,
       asEmitter(mockEmitter),
       { output: { executionEvent: jest.fn() } as never },
     );
@@ -3634,7 +3581,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(inlineSteps),
         mockManager.cwd,
-        false,
         asEmitter(mockEmitter),
         { output: { executionEvent: jest.fn() } as never },
       );
@@ -3766,7 +3712,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(inlineSteps),
       mockManager.cwd,
-      false,
       asEmitter(mockEmitter),
       { output: { executionEvent: jest.fn() } as never },
     );
@@ -3885,7 +3830,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(inlineSteps),
       mockManager.cwd,
-      false,
       asEmitter(mockEmitter),
       { output: { executionEvent: jest.fn() } as never },
     );
@@ -4069,7 +4013,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(inlineSteps),
         mockManager.cwd,
-        false,
         asEmitter(mockEmitter),
         // `warning` is part of the double because the contender stands down
         // through the arm that names the process holding the launch.
@@ -4277,7 +4220,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(inlineSteps),
         mockManager.cwd,
-        false,
         asEmitter(mockEmitter),
         { output: mockOutput as never },
       );
@@ -5202,7 +5144,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(inlineSteps),
       mockManager.cwd,
-      false,
       asEmitter(mockEmitter),
       { output: { executionEvent } as never },
     );
@@ -5335,7 +5276,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(inlineSteps),
       mockManager.cwd,
-      false,
       asEmitter(mockEmitter),
       { output: output as never },
     );
@@ -5456,7 +5396,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(inlineSteps),
         mockManager.cwd,
-        false,
         asEmitter(mockEmitter),
         { output: {} as never },
       ),
@@ -5534,7 +5473,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(inlineSteps),
       mockManager.cwd,
-      false,
       asEmitter(mockEmitter),
       { output: { warning } as never },
     );
@@ -5581,7 +5519,9 @@ describe('runExecutionLoop', () => {
     ];
 
     mockManager.load.mockResolvedValue(
-      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_retry_a')]),
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_retry_a')], {
+        prompted: true,
+      }),
     );
     mockActorService.sendAndSync.mockResolvedValue({
       state: { id: runbookId, step: '1', substep: '1', status: 'running' },
@@ -5593,7 +5533,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      true,
       asEmitter(mockEmitter),
       { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a') },
     );
@@ -5640,7 +5579,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -5697,7 +5635,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 

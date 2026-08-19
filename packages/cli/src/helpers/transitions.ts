@@ -549,21 +549,13 @@ async function renderApplied(
     if (state) {
       const steps = getRunbookFromState(state, cwd);
       emitter ??= createBridgedEmitter(state, output);
-      const loopResult = await runExecutionLoop(
-        manager,
-        outcome.runId,
-        [...steps],
-        cwd,
-        outcome.loop.prompted,
-        emitter,
-        {
-          terminalReleaseMode: outcome.terminalReleaseMode,
-          ...(claimKey === undefined ? {} : { claimKey }),
-          output,
-          commandStreamOptions,
-          delegationRuntime: outcome.delegationRuntime,
-        },
-      );
+      const loopResult = await runExecutionLoop(manager, outcome.runId, [...steps], cwd, emitter, {
+        terminalReleaseMode: outcome.terminalReleaseMode,
+        ...(claimKey === undefined ? {} : { claimKey }),
+        output,
+        commandStreamOptions,
+        delegationRuntime: outcome.delegationRuntime,
+      });
       if (loopResult === 'stopped') status = 'stopped';
     }
   }

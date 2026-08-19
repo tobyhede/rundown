@@ -2175,7 +2175,7 @@ describe('startRunbook', () => {
     // token deriver, so it receives the branded pair whole. Pinned by REFERENCE:
     // a structural matcher also passes against a pair rebuilt from the same two
     // halves further down, which is precisely the forwarding defect this guards.
-    expect(jest.mocked(runExecutionLoop).mock.calls.at(-1)?.[6]?.delegationRuntime).toBe(
+    expect(jest.mocked(runExecutionLoop).mock.calls.at(-1)?.[5]?.delegationRuntime).toBe(
       delegationRuntime,
     );
     // Hand-off 3 — the caller. `run --prompted --step` reads `delegationRuntime`

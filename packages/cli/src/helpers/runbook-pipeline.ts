@@ -1147,25 +1147,17 @@ async function launchRunbook(
     }
   }
 
-  const loopResult = await runExecutionLoop(
-    manager,
-    launchedStateId,
-    runbookSteps,
-    cwd,
-    options.prompted,
-    emitter,
-    {
-      terminalReleaseMode:
-        options.sessionActivation?.kind === 'none' ? 'release-runbook' : 'stack-pop',
-      output,
-      commandStreamOptions: ctx.commandStreamOptions,
-      ...(preparedRunControlClaim === undefined
-        ? {}
-        : {
-            delegationRuntime: preparedRunControlClaim.delegationRuntime,
-          }),
-    },
-  );
+  const loopResult = await runExecutionLoop(manager, launchedStateId, runbookSteps, cwd, emitter, {
+    terminalReleaseMode:
+      options.sessionActivation?.kind === 'none' ? 'release-runbook' : 'stack-pop',
+    output,
+    commandStreamOptions: ctx.commandStreamOptions,
+    ...(preparedRunControlClaim === undefined
+      ? {}
+      : {
+          delegationRuntime: preparedRunControlClaim.delegationRuntime,
+        }),
+  });
 
   return {
     ok: true,

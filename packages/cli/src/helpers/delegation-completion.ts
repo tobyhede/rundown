@@ -230,7 +230,6 @@ export function buildAdvanceInlineParent(
         parentRunId,
         loopSteps,
         cwd,
-        !!loopState.prompted,
         emitter,
         // 'defer-to-caller': the loop does NOT release parentRunId — the core seam
         // is the sole release owner and releases once (with retain) on terminal.
