@@ -97,6 +97,14 @@ export const Errors = {
   concurrentStateModification: (runId: string, detail: string): RundownError =>
     new RundownError('CONCURRENT_STATE_MODIFICATION', { runId, message: detail }),
 
+  // The one post-commit failure a collect can suffer. Spelled with the run id in
+  // context so an operator can name the run whose bearers were lost without
+  // parsing the message, and with the render failure's own text as `message` so
+  // the cause (usually a `--helpers` helper raising) is not swallowed by the
+  // envelope.
+  frontierDisclosureFailed: (runId: string, detail: string): RundownError =>
+    new RundownError('DELEGATION_FRONTIER_DISCLOSURE_FAILED', { runId, message: detail }),
+
   // The recovery is spelled into the MESSAGE, not left to the code's
   // `description`, for the same reason `walJournalModeUnavailable` spells its
   // candidate causes there: the description reaches an operator only through

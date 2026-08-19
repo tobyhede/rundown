@@ -12,29 +12,24 @@ import {
 } from '../helpers/test-utils.js';
 
 /**
- * Characterisation of today's `STEP_ENTERED` divergence between `rundown run`
- * and `rundown collect` (#816, part of #799).
+ * `rundown run` and `rundown collect` emit the SAME `STEP_ENTERED` for the same
+ * execution unit (#816 characterised the divergence; #820 closed it).
  *
- * These tests pin CURRENT behaviour, including the defect. Two functions build
- * the `StepEntryMetadata` that becomes a `STEP_ENTERED` payload and they
- * disagree: the CLI execution loop renders `description`, `prompt`,
- * `commandCode` and `commandLang`; core's collection service fills ids,
- * position, name and flags and leaves every rendered field absent. All four are
- * optional on the type, which is what lets the disagreement compile.
+ * Two functions used to build the `StepEntryMetadata` behind this payload and
+ * they disagreed: the CLI execution loop rendered `description`, `prompt`,
+ * `commandCode` and `commandLang`; core's collection service filled ids,
+ * position, name and flags and left every rendered field absent. All four are
+ * optional on the type, which is what let the disagreement compile.
  *
- * The divergence is asserted end to end, on ONE substep of ONE runbook entered
- * twice — first by `rundown run`, then by the RETRY re-entry that `rundown
- * collect` drives — because that is the level at which an orchestrator observes
- * it. Everything except the rendered fields is asserted to AGREE, which is what
- * makes the missing description a divergence rather than a different event.
- *
- * CORRECT VALUE: the run payload. A substep's description and prompt do not
- * depend on which command entered it, so `rundown collect` under-fills. When
- * #799 moves the rendering behind the machine, the two `toBeUndefined()`
- * assertions below become the run payload's values and this reads as a
- * one-line diff.
+ * There is one builder now — the core entry seam both paths enter through — so
+ * this file's job flipped from pinning the gap to pinning its absence. The
+ * assertion is still end to end, on ONE substep of ONE runbook entered twice:
+ * first by `rundown run`, then by the RETRY re-entry that `rundown collect`
+ * drives. That is the level at which an orchestrator observes it, and it is the
+ * only level at which "the same unit, entered two ways" is a statement about the
+ * product rather than about a function.
  */
-describe('STEP_ENTERED divergence between run and collect (#816 characterisation)', () => {
+describe('STEP_ENTERED agreement between run and collect (#816 / #820)', () => {
   let workspace: TestWorkspace;
 
   beforeEach(async () => {
@@ -148,7 +143,7 @@ describe('STEP_ENTERED divergence between run and collect (#816 characterisation
     await runCliInProcess([result, '--claim-id', claimId], workspace);
   }
 
-  it('drops the rendered description and prompt on the collect path and keeps every other field', async () => {
+  it('renders the same description and prompt whichever command entered the substep', async () => {
     await writeRunbooks();
 
     // ---- Path 1: `rundown run` enters substep 1.1 for the first time. -------
@@ -173,15 +168,16 @@ describe('STEP_ENTERED divergence between run and collect (#816 characterisation
     expect(collectEntries).toHaveLength(1);
     const collectEntry = collectEntries[0];
 
-    // THE DIVERGENCE. Same substep, same runbook, same cursor — and core's
-    // builder carries neither rendered field.
-    expect(collectEntry.description).toBeUndefined();
-    expect(collectEntry.prompt).toBeUndefined();
+    // THE FLIP. Both of these were `toBeUndefined()` before #820: same substep,
+    // same runbook, same cursor, and core's builder carried neither rendered
+    // field.
+    expect(collectEntry.description).toBe(SUBSTEP_DESCRIPTION);
+    expect(collectEntry.prompt).toBe(SUBSTEP_PROMPT);
 
-    // ...and everything the two builders both fill agrees, which is what makes
-    // the two payloads comparable at all. Asserted field by field rather than
-    // by diffing the objects, because the frontier tokens are freshly minted on
-    // re-entry (that is the RETRY working) and the envelope carries a `seq`.
+    // ...and everything else agrees too, which is what makes the two payloads
+    // comparable at all. Asserted field by field rather than by diffing the
+    // objects, because the frontier tokens are freshly minted on re-entry (that
+    // is the RETRY working) and the envelope carries a `seq`.
     expect(collectEntry.position).toEqual(runEntry.position);
     expect(collectEntry.stepName).toBe(runEntry.stepName);
     expect(collectEntry.isSubstep).toBe(runEntry.isSubstep);

@@ -543,6 +543,22 @@ export const ErrorCodes = {
       `loop to advance and delegate then.`,
     docSlug: 'delegation-index-not-active',
   },
+  DELEGATION_FRONTIER_DISCLOSURE_FAILED: {
+    code: 'RD-833',
+    category: ErrorCategory.DELEGATION,
+    title: 'Delegation frontier disclosure could not be rendered',
+    description:
+      `A collect committed its aggregate and consumed the persisted re-entry ` +
+      `frontier, and then could not render the STEP_ENTERED entry the freshly ` +
+      `derived bearers ride on. The collection LANDED: the outcomes are drained ` +
+      `and the frontier is gone, so retrying answers the idempotent no-op rather ` +
+      `than re-deriving the bearers. Distinct from RD-829, where the consume ` +
+      `never committed and a retry does recover. The usual cause is a ` +
+      `\`--helpers\` helper raising while expanding the unit's description, ` +
+      `prompt, or command. Fix the helper, then re-delegate the step: the ` +
+      `delegations the lost bearers addressed must be re-issued.`,
+    docSlug: 'delegation-frontier-disclosure-failed',
+  },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
   // canonical-at requirements). Kept as EXECUTION rather than a dedicated

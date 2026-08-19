@@ -259,48 +259,14 @@ describe('execution observation projection', () => {
     expect(effect.event.payload.inlineLaunch).toEqual(inlineLaunch);
   });
 
-  it('rejects STEP_ENTERED when entry metadata does not match the current snapshot step', () => {
-    expect(() =>
-      deriveStepEnteredEffect({
-        artifactPathOptions: ARTIFACT_PATH_OPTIONS,
-        snapshot: { context: { step: '2', enteredArtifacts: {} } },
-        entry: {
-          stepId: '1',
-          position: { current: '1', total: 1 },
-          stepName: 'Build',
-          hasCommand: false,
-          isSubstep: false,
-          prompted: false,
-        },
-      }),
-    ).toThrow('Cannot observe STEP_ENTERED for step 1 while machine snapshot is at 2');
-  });
-
-  it('rejects STEP_ENTERED when entry substepId does not match the snapshot substep (regression: deriveStepEnteredEffect missing substep identity guard)', () => {
-    // Regression coverage: stale/mismatched substep metadata must fail closed
-    // instead of emitting STEP_ENTERED for the wrong substep.
-    expect(() =>
-      deriveStepEnteredEffect({
-        artifactPathOptions: ARTIFACT_PATH_OPTIONS,
-        snapshot: {
-          context: {
-            step: 'step::1',
-            substep: 'step::1::__parent-entry::1',
-            enteredArtifacts: {},
-          },
-        },
-        entry: {
-          stepId: 'step::1',
-          substepId: 'step::1::__parent-entry::2',
-          position: { current: '1.1', total: 2 },
-          stepName: 'Sub A',
-          hasCommand: false,
-          isSubstep: true,
-          prompted: false,
-        },
-      }),
-    ).toThrow(/substep/i);
-  });
+  // The two cursor-mismatch guards that lived here are gone (#820). They refused
+  // an entry whose `stepId` / `substepId` disagreed with the snapshot, which was
+  // reachable only because the entry was a PARAMETER — any caller could supply
+  // one describing a different cursor. It now has a single producer,
+  // `deriveExecutionUnitEntry`, which reads the cursor and the snapshot off the
+  // same `RunbookState`, so the mismatch is unrepresentable rather than merely
+  // untested. `execution-unit-entry.test.ts` pins the derivation that replaced
+  // them.
 
   it('collects command output and failure observations in memory only', () => {
     const collector = createExecutionEffectCollector();

@@ -53,7 +53,6 @@ import { inferFrameEntryFromState } from './frame-entry.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { ResolvedStep, RunbookState } from './types.js';
 import type { RunId } from './run-id.js';
-import { WORK_DIR } from '../paths.js';
 
 /**
  * Module-private nominal brand on {@link RenderedUnitCommand}.
@@ -193,25 +192,22 @@ function buildRunnableRenderContext(
   runId: RunId,
   cwd: string,
   vars: Readonly<Record<string, unknown>>,
-): TemplateRenderContext {
-  const contextId = vars[BUILTIN_VARIABLES.ContextId];
-  const workPath = vars[BUILTIN_VARIABLES.WorkPath];
-  for (const [name, value] of [
-    [BUILTIN_VARIABLES.ContextId, contextId],
-    [BUILTIN_VARIABLES.WorkPath, workPath],
-  ] as const) {
+): Extract<TemplateRenderContext, { kind: 'runnable' }> {
+  const read = (name: (typeof BUILTIN_VARIABLES)['ContextId' | 'WorkPath']): string => {
+    const value = vars[name];
     if (typeof value !== 'string') {
       throw new InvalidRunbookStateError(
         `Runbook state ${runId} is missing ${name}. Delete state and re-run the runbook.`,
         { runId, reason: 'missing_render_context' },
       );
     }
-  }
+    return value;
+  };
   return {
     kind: 'runnable',
     cwd,
-    workPath: workPath as string,
-    contextId: contextId as string,
+    workPath: read(BUILTIN_VARIABLES.WorkPath),
+    contextId: read(BUILTIN_VARIABLES.ContextId),
     runId,
   };
 }
@@ -362,10 +358,10 @@ export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): 
     forClause: currentStep.kind === 'for' ? currentStep.forClause : undefined,
     templateVars: effectiveVars,
   });
-  const renderOptions: TemplateRenderOptions = {
+  const renderOptions = {
     helpers: input.helpers,
     context: buildRunnableRenderContext(state.id, input.cwd, effectiveVars),
-  };
+  } satisfies TemplateRenderOptions;
 
   // A prompted-FOR substep carries no prompt of its own; the step-level prompt
   // is the reconstructed FOR text, and it is what the operator needs to see.
@@ -380,7 +376,12 @@ export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): 
 
   const entry: StepEntryMetadata = {
     stepId: state.step,
-    substepId: state.substep,
+    // Off the RESOLVED unit, not off the raw cursor. `substepId` and
+    // `isSubstep` answer one question — is the unit being entered a substep? —
+    // so a cursor naming no live substep must not yield a populated `substepId`
+    // beside `isSubstep: false`. `position` still reports the raw cursor,
+    // because position describes where the run IS rather than what it entered.
+    substepId: 'id' in unit ? unit.id : undefined,
     position: buildStepPosition(
       state.step,
       countNumberedSteps(steps),
@@ -402,14 +403,16 @@ export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): 
   };
 
   const snapshot = snapshotForEntry(state);
-  const workPath =
-    typeof state.templateVars.WorkPath === 'string' ? state.templateVars.WorkPath : WORK_DIR;
   const observed = withInlineLaunchIntent(state, snapshot, entry);
   const effects = [
     deriveStepEnteredEffect({
       snapshot,
       entry: observed,
-      artifactPathOptions: { cwd: input.cwd, workPath },
+      // The SAME `workPath` the helper context renders against. It used to fall
+      // back to `WORK_DIR` here while the render context refused without it, so
+      // an entry could project artifact paths under one root and expand helper
+      // paths against another. One read, one refusal, one root.
+      artifactPathOptions: { cwd: input.cwd, workPath: renderOptions.context.workPath },
     }),
   ];
 

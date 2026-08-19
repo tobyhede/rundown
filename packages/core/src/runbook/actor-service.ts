@@ -26,11 +26,7 @@ import type {
   CommandExecutionOutput,
   CommandExecutionServices,
 } from './actors/command-exec-actor.js';
-import type {
-  InlineLaunchIntentWithoutParentEntry,
-  ResolveInlineRunbook,
-} from './actors/inline-launch-intent-actor.js';
-import { isInlineLaunchIntentWithoutParentEntry } from './actors/inline-launch-intent-actor.js';
+import type { ResolveInlineRunbook } from './actors/inline-launch-intent-actor.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
 import type { DelegationCredentialIssuer } from './delegation-credential.js';
 import {
@@ -64,28 +60,19 @@ import {
 import type { RecoveryActor } from './execution-recovery-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
 import { merge, replace, type ResolvedCompletionsOp } from './state-update-ops.js';
-import {
-  deriveActiveFrame,
-  deriveOpenFrames,
-  frameKeyForCursor,
-  type FrameKey,
-} from './targeting.js';
+import { deriveActiveFrame, frameKeyForCursor } from './targeting.js';
 import { inferFrameEntryFromState, type FrameEntryCoordinates } from './frame-entry.js';
-import { rebrandContextSnapshotArtifacts } from './delegation-context.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
-import { WORK_DIR } from '../paths.js';
 import { isArtifactRecord } from './artifact-schema.js';
 import { isForResolutionFailureCode } from './actors/for-iterate-actor.js';
 import {
   commandCompletedEffect,
   commandStartedEffect,
   createExecutionEffectCollector,
-  deriveStepEnteredEffect,
   policyDeniedEffect,
   type ExecutionObservationEffect,
   type MachineExecutionObserver,
-  type StepEntryMetadata,
 } from '../events/execution-observation.js';
 import { deriveExecutionUnitEntry, type ExecutionUnitEntry } from './execution-unit-entry.js';
 import type { DelegateFrontierEntry } from '../events/types.js';
@@ -98,25 +85,6 @@ import type { StepPosition } from '../events/types.js';
  * depending on `xstate` directly.
  */
 export type { AnyActorRef } from 'xstate';
-
-function shouldProjectInlineLaunchIntent(
-  state: RunbookState,
-  entry: StepEntryMetadata,
-  intent: InlineLaunchIntentWithoutParentEntry,
-): boolean {
-  if (state.id !== intent.parentRunId) return false;
-  if (state.step !== intent.parentStep) return false;
-  if (entry.stepId !== intent.parentStep) return false;
-  if (state.substep !== intent.parentStepId) return false;
-  if (entry.substepId !== intent.parentStepId) return false;
-
-  // Project the one-shot intent only when its authored frame is still live (the
-  // active frame or an open FOR context). Openness flows from `deriveOpenFrames`
-  // (forStack) — never from the monotonic entry counter, whose keys persist after
-  // a loop advances and would otherwise re-project a stale prior-iteration intent
-  // onto the current frame.
-  return deriveOpenFrames(state).has(intent.parentFrameKey as FrameKey);
-}
 
 /**
  * Result of a {@link RunbookActorService.sendAndSync} operation.
@@ -1695,78 +1663,6 @@ export class RunbookActorService {
         ...(this.options.helpers === undefined ? {} : { helpers: this.options.helpers }),
       }),
     );
-  }
-
-  /**
-   * Project STEP_ENTERED observation effects from persisted machine state.
-   *
-   * This method is read-only: it hydrates a snapshot without starting an actor,
-   * derives observation payloads, and does not persist.
-   *
-   * @param id - Runbook state ID
-   * @param steps - Parsed runbook steps
-   * @param entry - Frontend-supplied rendered execution-unit metadata
-   * @returns Non-persisted STEP_ENTERED effects, or an empty array when state is missing
-   * @throws {Error} When persisted state is invalid or incompatible, or when the entry step
-   *   or substep metadata does not match the machine snapshot cursor.
-   */
-  async observeExecutionUnitEntry(
-    id: string,
-    steps: readonly ResolvedStep[],
-    entry: StepEntryMetadata,
-  ): Promise<readonly ExecutionObservationEffect[]> {
-    const state = await this.manager.load(id);
-    if (!state) return [];
-    if (state.snapshot) {
-      this.assertFreshSnapshotValue(id, state.snapshot as PersistedRunbookSnapshot, steps);
-    }
-    this.compileMachineFromState(id, state, steps);
-    const snapshot =
-      state.snapshot && typeof state.snapshot === 'object'
-        ? {
-            ...(state.snapshot as Record<string, unknown>),
-            context: {
-              ...((state.snapshot as { readonly context?: Record<string, unknown> }).context ?? {}),
-              step: state.step,
-              substepStates:
-                state.substepStates ??
-                (state.snapshot as { readonly context?: Record<string, unknown> }).context
-                  ?.substepStates,
-              substep:
-                state.substep ??
-                (state.snapshot as { readonly context?: Record<string, unknown> }).context?.substep,
-            },
-          }
-        : { context: { step: state.step, substep: state.substep } };
-    const inlineLaunchIntent = (snapshot.context as Partial<RunbookContext>).inlineLaunchIntent;
-    const intent = isInlineLaunchIntentWithoutParentEntry(inlineLaunchIntent)
-      ? {
-          ...inlineLaunchIntent,
-          contextSnapshot: rebrandContextSnapshotArtifacts(inlineLaunchIntent.contextSnapshot),
-        }
-      : undefined;
-    const observedEntry =
-      intent !== undefined && shouldProjectInlineLaunchIntent(state, entry, intent)
-        ? {
-            ...entry,
-            inlineLaunch: {
-              ...intent,
-              parentEntry: inferFrameEntryFromState(state, intent.parentFrameKey as FrameKey),
-            },
-          }
-        : entry;
-    const workPath =
-      typeof state.templateVars.WorkPath === 'string' ? state.templateVars.WorkPath : WORK_DIR;
-    return [
-      deriveStepEnteredEffect({
-        snapshot,
-        entry: observedEntry,
-        artifactPathOptions: {
-          cwd: this.manager.cwd,
-          workPath,
-        },
-      }),
-    ];
   }
 
   /**

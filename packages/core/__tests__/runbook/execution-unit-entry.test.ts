@@ -196,7 +196,7 @@ describe('deriveExecutionUnitEntry', () => {
   // when the loop stopped rendering (#819). They assert the SAME values on the
   // same fixtures; only the subject changed, from a mocked loop to the real
   // derivation. The end-to-end contrast against `rundown collect` lives in
-  // `packages/cli/__tests__/integration/step-entered-divergence-characterisation.test.ts`.
+  // `packages/cli/__tests__/integration/step-entered-run-collect-agreement.test.ts`.
   // ---------------------------------------------------------------------------
   describe('STEP_ENTERED entry metadata (#816 characterisation)', () => {
     it('composes prompted from the run flag OR the prompted-FOR step kind', () => {

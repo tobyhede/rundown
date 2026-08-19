@@ -1,8 +1,6 @@
 import { getErrorMessage } from '../errors.js';
-import {
-  projectDelegateFrontier,
-  type StepEntryMetadata,
-} from '../events/execution-observation.js';
+import { projectDelegateFrontier } from '../events/execution-observation.js';
+import type { DelegateFrontierEntry } from '../events/types.js';
 import { PersistedDelegateFrontierEntrySchema } from '../schemas.js';
 import type { RunbookActorService } from './actor-service.js';
 import type { DelegationTokenDeriver } from './delegation-credential.js';
@@ -97,12 +95,13 @@ export type PreparedReEntryProjection =
       /** Prepared state after `DELEGATE_FRONTIER_CONSUMED`, for the owned commit. */
       readonly nextState: RunbookState;
       /**
-       * Entry metadata carrying the reconstructed bearers, to be observed ONLY
-       * after the commit lands. Held as data rather than as rendered
-       * observations because observation reads committed state — deriving it
-       * here would disclose bearers a refused commit never consumed.
+       * The reconstructed bearers, to be disclosed ONLY after the commit lands.
+       *
+       * Held as data rather than as a rendered entry because entering the unit
+       * reads committed state — doing it here would disclose bearers a refused
+       * commit never consumed.
        */
-      readonly entry: StepEntryMetadata;
+      readonly frontier: readonly DelegateFrontierEntry[];
     }
   | {
       /** A disclosure boundary refused the projection. */
@@ -124,8 +123,6 @@ export interface PrepareReEntryFrontierConsumeInput {
   readonly state: RunbookState;
   /** Verified same-issuer deriver, bound to the exact issuing claim. */
   readonly deriveToken: DelegationTokenDeriver;
-  /** Frontend-rendered entry metadata for the execution unit being re-entered. */
-  readonly entry: Omit<StepEntryMetadata, 'delegateFrontier'>;
 }
 
 /**
@@ -144,8 +141,10 @@ export interface PrepareReEntryFrontierConsumeInput {
  * surrounding work does not. Here the caller cannot observe until its ONE commit
  * has landed, so a refused transaction discloses nothing and consumes nothing.
  *
- * @param input - Actor service, steps, captured state, verified deriver, and entry metadata.
+ * @param input - Actor service, steps, captured state, and verified deriver.
  * @returns The prepared re-entry outcome.
+ * @throws {Error} When the run's cursor names a step the parsed runbook does not
+ *   define.
  * @throws {InvalidRunbookStateError} When the persisted snapshot carries a
  *   `delegateFrontier` that is not an array of structurally valid entries. Per
  *   the no-migration rule this is corrupt/incompatible persisted state, and the
@@ -157,7 +156,7 @@ export async function prepareReEntryFrontierConsume(
   input: PrepareReEntryFrontierConsumeInput,
 ): Promise<PreparedReEntryProjection> {
   const persistedFrontier = readPersistedReEntryFrontier(input.state);
-  if (persistedFrontier.length === 0 || !input.entry.isSubstep) {
+  if (persistedFrontier.length === 0 || !cursorIsOnSubstep(input.state, input.steps)) {
     return { status: 'none' };
   }
 
@@ -174,11 +173,7 @@ export async function prepareReEntryFrontierConsume(
     input.steps,
     { type: 'DELEGATE_FRONTIER_CONSUMED' },
   );
-  return {
-    status: 'projected',
-    nextState: mutation.nextState,
-    entry: { ...input.entry, delegateFrontier: frontier },
-  };
+  return { status: 'projected', nextState: mutation.nextState, frontier };
 }
 
 /** Inputs for {@link projectAndConsumeReEntryFrontier}. */
