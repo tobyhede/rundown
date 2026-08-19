@@ -1176,6 +1176,148 @@ describe('runExecutionLoop', () => {
     expect(result).toBe('waiting');
   });
 
+  // ---------------------------------------------------------------------------
+  // #816 characterisation — the LOOP half of the STEP_ENTERED divergence.
+  //
+  // Two builders produce the `StepEntryMetadata` behind a STEP_ENTERED payload:
+  // this loop's (`execution.ts`, every field filled) and core's collect-side one
+  // (`collection-service.ts`, ids/position/name/flags only). These pin what the
+  // loop builder does TODAY on the two axes the end-to-end contrast in
+  // `integration/step-entered-divergence-characterisation.test.ts` cannot reach,
+  // so #799's move reads as an assertion flipping rather than as a new test.
+  //
+  // The entry is captured off `observeExecutionUnitEntry` rather than off the
+  // emitted event, because that argument IS the builder's output and the payload
+  // is a lossy projection of it — `substepId` never reaches the event at all.
+  // ---------------------------------------------------------------------------
+  describe('STEP_ENTERED entry metadata (#816 characterisation)', () => {
+    type ObserveEntryMock = jest.Mock<
+      (id: string, steps: unknown, entry: Record<string, unknown>) => Promise<unknown[]>
+    >;
+
+    /**
+     * The entry metadata the loop handed core for the unit it entered.
+     *
+     * @returns The single captured `StepEntryMetadata`-shaped argument.
+     */
+    function capturedEntry(): Record<string, unknown> {
+      const { calls } = (mockActorService.observeExecutionUnitEntry as ObserveEntryMock).mock;
+      expect(calls).toHaveLength(1);
+      return calls[0][2];
+    }
+
+    it('composes prompted from the loop flag OR the prompted-FOR step kind', async () => {
+      // A FOR step whose bounds did not resolve is demoted to `prompted-for`:
+      // substeps, no iteration machinery, the original FOR text kept as the
+      // step prompt.
+      const promptedForSteps: LooseStep[] = [
+        {
+          kind: 'prompted-for',
+          name: '1',
+          description: 'Fan out over an unresolved source',
+          prompt: 'FOR item IN {{ items }}',
+          substeps: [
+            {
+              id: '1',
+              description: 'Handle one item',
+              transitions: {
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: 'CONTINUE' },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+              },
+            },
+          ],
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: 'CONTINUE' },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+          },
+        },
+      ];
+      mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1' }));
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(promptedForSteps),
+        '/tmp',
+        // The persisted/CLI prompted flag, explicitly FALSE. Everything below
+        // is about the second term.
+        false,
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toBe('waiting');
+      // THE DIVERGENCE. The loop ORs `currentStep.kind === 'prompted-for'` into
+      // the flag it was called with; core's collect-side builder reads
+      // `!!advanced.prompted` alone and would report `false` for this same
+      // cursor on this same step.
+      //
+      // CORRECT VALUE: `true`. The payload field documents whether execution is
+      // prompted rather than automatic, and a prompted-FOR step IS prompted —
+      // the loop returns 'waiting' on exactly this term, as asserted above. So
+      // the collect path under-reports, and #799's move makes the composed
+      // value the one both paths derive.
+      expect(capturedEntry().prompted).toBe(true);
+    });
+
+    it('takes substepId from the raw cursor and isSubstep from the resolved unit', async () => {
+      // A cursor naming a substep the current step does not define.
+      // `resolveCurrentExecutionUnit` falls back to the parent step for it, so
+      // the two fields are derived from different sources and disagree.
+      const substepSteps: LooseStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Fan out',
+          aggregation: { strategy: 'ALL' },
+          substeps: [
+            {
+              id: '1',
+              description: 'The only live substep',
+              transitions: {
+                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: 'CONTINUE' },
+                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+              },
+            },
+          ],
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: 'CONTINUE' },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
+          },
+        },
+      ];
+      mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '9' }));
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(substepSteps),
+        '/tmp',
+        false,
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toBe('waiting');
+      const entry = capturedEntry();
+      // THE DIVERGENCE, inside one builder rather than between two: `substepId`
+      // comes straight off the raw cursor while `isSubstep` comes off the
+      // resolved execution unit, so a cursor naming no live substep yields a
+      // populated `substepId` alongside `isSubstep: false`.
+      //
+      // CORRECT VALUE: `substepId: undefined` with `isSubstep: false`. Both
+      // describe the same question — is the unit being entered a substep? — so
+      // both must come from the resolved unit. This matters beyond tidiness:
+      // the frontier seams gate credential disclosure on `isSubstep`, and
+      // `deriveStepEnteredEffect`'s cursor guard fires on `substepId`, so the
+      // two fields answering differently splits one decision across two seams.
+      expect(entry.substepId).toBe('9');
+      expect(entry.isSubstep).toBe(false);
+      // The name confirms the fallback landed on the parent step: the substep
+      // arm would have used the substep's own id.
+      expect(entry.stepName).toBe('1');
+      expect(entry.description).toBe('Fan out');
+    });
+  });
+
   it('executes command and advances to next step', async () => {
     mockManager.load
       .mockResolvedValueOnce(makeLoopState('1'))
