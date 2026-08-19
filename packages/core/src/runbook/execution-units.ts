@@ -3,6 +3,26 @@ import type { OutputDeclaration } from '@rundown-org/parser';
 import type { ResolvedStep, Substep } from './types.js';
 
 /**
+ * Look up a step by name, refusing a cursor the parsed runbook does not define.
+ *
+ * A run's `step` column and its compiled steps are written together, so a miss
+ * means the two have diverged — a corrupt cursor, or steps parsed from a
+ * different document than the one the run was started against. Every caller
+ * that resolves an execution unit needs the same refusal, so it lives beside
+ * {@link resolveCurrentExecutionUnit} rather than being re-declared per module.
+ *
+ * @param steps - Parsed steps for the run.
+ * @param stepName - Step name from the run's cursor.
+ * @returns The matching step.
+ * @throws {Error} When no step carries that name.
+ */
+export function findStepOrThrow(steps: readonly ResolvedStep[], stepName: string): ResolvedStep {
+  const step = steps.find((candidate) => candidate.name === stepName);
+  if (!step) throw new Error(`Step "${stepName}" not found`);
+  return step;
+}
+
+/**
  * Resolve the currently executing unit for the active runbook cursor.
  *
  * Falls back to the parent step if the state references a substep that is not

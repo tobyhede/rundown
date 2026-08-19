@@ -57,6 +57,7 @@ bisectable
 callsite
 callsites
 canonicalise
+canonicalised
 canonicalises
 categorisation
 categorises
@@ -141,6 +142,7 @@ misattributes
 miscomputation
 microstep
 minimatch
+mintable
 Misordered
 mjs
 monorepo

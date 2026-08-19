@@ -415,9 +415,6 @@ jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => {
 
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => ({
-  buildStepVariables: mockFn<(...args: unknown[]) => Record<string, unknown>>().mockReturnValue({
-    Step: '1.1',
-  }),
   runExecutionLoop: mockFn<(...args: unknown[]) => Promise<string>>().mockResolvedValue('done'),
 }));
 
@@ -509,7 +506,7 @@ const parser = await import('@rundown-org/parser');
 const { resolveRunbookFile, resolveRunbookRef, buildRunbookRef } = await import(
   '../../src/helpers/resolve-runbook.js'
 );
-const { runExecutionLoop, buildStepVariables } = await import('../../src/services/execution.js');
+const { runExecutionLoop } = await import('../../src/services/execution.js');
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
 const { FileSourcePolicyError, ArtifactChannelError, resolveVariables } = await import(
   '../../src/services/variable-discovery.js'
@@ -656,7 +653,6 @@ beforeEach(() => {
     warnings: [],
     providedKeys: new Set(),
   });
-  jest.mocked(buildStepVariables).mockReturnValue({ Step: '1.1' });
   jest
     .mocked(substituteRunbookVariables)
     .mockImplementation(

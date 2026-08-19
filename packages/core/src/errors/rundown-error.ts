@@ -58,7 +58,9 @@ export type InvalidRunStateReason =
   /** The persisted snapshot's `delegateFrontier` is not a valid entry array. */
   | 'malformed_delegate_frontier'
   /** A persisted `execution_attempts.reason` is not a recognized reason. */
-  | 'unrecognized_recovery_reason';
+  | 'unrecognized_recovery_reason'
+  /** The run carries no `ContextId` / `WorkPath` to render its frame against. */
+  | 'missing_render_context';
 
 /**
  * Structured facts about one run's refused persisted state (RD-309).

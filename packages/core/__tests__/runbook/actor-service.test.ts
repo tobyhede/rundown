@@ -1036,6 +1036,7 @@ echo ok
         stepId: '1',
         position: { current: '1', total: 1 },
         stepName: 'Build',
+        hasCommand: false,
         isSubstep: false,
         prompted: false,
       });
@@ -1094,6 +1095,7 @@ echo ok
         stepId: '1',
         position: { current: '1', total: 1 },
         stepName: 'Build',
+        hasCommand: false,
         isSubstep: false,
         prompted: false,
       });
@@ -1373,6 +1375,7 @@ echo ok
         position: { current: '1.1', total: 1 },
         stepName: 'Parent',
         description: '',
+        hasCommand: false,
         isSubstep: true,
         prompted: false,
       });
@@ -1446,6 +1449,7 @@ echo ok
         position: { current: '1.1', total: 1 },
         stepName: '1',
         description: 'Runbook: child.runbook.md',
+        hasCommand: false,
         isSubstep: true,
         prompted: false,
       });
@@ -1525,6 +1529,7 @@ echo ok
         position: { current: '1.1', total: 1 },
         stepName: 'Parent',
         description: '',
+        hasCommand: false,
         isSubstep: true,
         prompted: false,
       });
@@ -1597,6 +1602,7 @@ echo ok
         position: { current: '1.2', total: 1 },
         stepName: 'Parent',
         description: '',
+        hasCommand: false,
         isSubstep: true,
         prompted: false,
       });
@@ -1681,6 +1687,7 @@ echo ok
         position: { current: '1.1', total: 1 },
         stepName: 'Parent',
         description: '',
+        hasCommand: false,
         isSubstep: true,
         prompted: false,
       });
@@ -1766,6 +1773,7 @@ echo ok
         position: { current: '1.1', total: 1 },
         stepName: 'Parent',
         description: '',
+        hasCommand: false,
         isSubstep: true,
         prompted: false,
       });
@@ -1803,6 +1811,7 @@ echo ok
           stepId: '1',
           position: { current: '1', total: 1 },
           stepName: 'Build',
+          hasCommand: false,
           isSubstep: false,
           prompted: false,
         }),

@@ -40,6 +40,7 @@ import { ErrorCodes } from '../errors/codes.js';
 import { getErrorMessage } from '../errors.js';
 import { logger } from '../logger.js';
 import type { StepEntryMetadata } from '../events/execution-observation.js';
+import { resolveCurrentExecutionUnit } from './execution-units.js';
 import {
   deriveTransitionObservation,
   type TransitionObservationEvent,
@@ -458,6 +459,32 @@ function deriveCollectionTransitionObservations(
  * @returns The prepared re-entry outcome.
  * @throws {InvalidRunbookStateError} When the persisted `delegateFrontier` is malformed.
  */
+/**
+ * Whether the unit a collect cursor names declares a command.
+ *
+ * The only field of this hand-built entry that cannot be read straight off the
+ * state. It exists here because `hasCommand` is now derived from the parsed unit
+ * rather than from whether a rendered command happens to be present — this
+ * builder renders nothing, so without it every collect entry would report `false`
+ * for a unit that does carry a command.
+ *
+ * @param steps - Parsed steps for the collect target.
+ * @param stepName - The target's current step.
+ * @param substepId - The target's current substep.
+ * @returns True when the resolved unit declares a command.
+ */
+function unitHasCommand(
+  steps: readonly ResolvedStep[],
+  stepName: string,
+  substepId: string,
+): boolean {
+  const step = findStepOrThrow(steps, stepName);
+  const unit = resolveCurrentExecutionUnit(step, substepId);
+  return (
+    ('id' in unit ? unit.command : step.kind === 'command' ? step.command : undefined) !== undefined
+  );
+}
+
 async function prepareCollectReEntryFrontier(
   input: CollectDelegationOutcomesOperationInput,
   advanced: RunbookState,
@@ -492,6 +519,8 @@ async function prepareCollectReEntryFrontier(
           stepName: advanced.step,
           isSubstep: false,
           // Stryker disable next-line BooleanLiteral: equivalent — never observed (see above)
+          hasCommand: false,
+          // Stryker disable next-line BooleanLiteral: equivalent — never observed (see above)
           prompted: !!advanced.prompted,
         }
       : // Stryker restore ObjectLiteral,StringLiteral
@@ -501,6 +530,7 @@ async function prepareCollectReEntryFrontier(
           position,
           stepName: substep,
           isSubstep: true,
+          hasCommand: unitHasCommand(input.steps, advanced.step, substep),
           prompted: !!advanced.prompted,
         };
 

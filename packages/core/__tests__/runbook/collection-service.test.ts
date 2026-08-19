@@ -3094,6 +3094,7 @@ describe('RunbookCollectionService', () => {
         substepId: '1',
         position: { current: '1', total: 2, substep: '1' },
         stepName: '1',
+        hasCommand: false,
         isSubstep: true,
         prompted: false,
       },

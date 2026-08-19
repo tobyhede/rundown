@@ -87,6 +87,8 @@ import {
   type MachineExecutionObserver,
   type StepEntryMetadata,
 } from '../events/execution-observation.js';
+import { deriveExecutionUnitEntry, type ExecutionUnitEntry } from './execution-unit-entry.js';
+import type { DelegateFrontierEntry } from '../events/types.js';
 import type { StepPosition } from '../events/types.js';
 
 /**
@@ -199,6 +201,27 @@ export type PreparedManualDelegationMutation =
       readonly nextState: RunbookState;
     }
   | Exclude<ManualDelegationPreparationResult, { readonly status: 'prepared' }>;
+
+/** Inputs to {@link RunbookActorService.enterExecutionUnit}. */
+export interface EnterExecutionUnitInput {
+  /**
+   * Run whose cursor names the unit being entered.
+   *
+   * Taken as a value rather than looked up by id, so the entry is derived
+   * against the EXACT state the caller decided on — including a prepared state
+   * a fenced caller has not committed yet.
+   */
+  readonly state: RunbookState;
+  /** Parsed steps for that run. */
+  readonly steps: readonly ResolvedStep[];
+  /**
+   * Reconstructed delegation bearers to disclose with this entry.
+   *
+   * Supplied only by the re-entry frontier seam, which verifies each token
+   * against its persisted hash before handing it here.
+   */
+  readonly delegateFrontier?: readonly DelegateFrontierEntry[];
+}
 
 /** Runtime dependencies for {@link RunbookActorService}. */
 export interface RunbookActorServiceOptions {
@@ -1625,6 +1648,53 @@ export class RunbookActorService {
   ): Promise<{ state: RunbookState; snapshot: unknown }> {
     await this.waitForMachineEffects(actor);
     return this.updateFromActor(id, actor, steps, lastResultSync, options);
+  }
+
+  /**
+   * Enter the execution unit the run's cursor names.
+   *
+   * The single seam for entering a unit: it renders the unit's description,
+   * prompt and command against the run's own frame, observes the entry, and
+   * classifies what the caller must do next. Read-only — it hydrates nothing,
+   * starts no actor, and persists nothing.
+   *
+   * Two dependencies are bound here rather than passed by the caller, because
+   * both are process-scoped and neither is the caller's to choose: the
+   * canonicalised project directory (`manager.cwd`) and the runtime helper
+   * registry (`options.helpers`), which is the DI seam the CLI already fills
+   * through `createCliRunbookActorService`.
+   *
+   * @param input - Run state, parsed steps, and any verified frontier bearers.
+   * @returns The classified entry: `awaiting`, `runnable`, or `inline-launch`.
+   * @throws {Error} When the persisted snapshot names a state the compiled
+   *   machine does not have, when the run's `frontmatterOutputs` are missing,
+   *   when the cursor names a step the runbook does not define, or when a
+   *   `--helpers` helper throws while expanding a field.
+   * @throws {InvalidRunbookStateError} When the run carries no `ContextId` or
+   *   `WorkPath` to render its frame against.
+   */
+  enterExecutionUnit(input: EnterExecutionUnitInput): Promise<ExecutionUnitEntry> {
+    const { state, steps } = input;
+    if (state.snapshot) {
+      this.assertFreshSnapshotValue(state.id, state.snapshot as PersistedRunbookSnapshot, steps);
+    }
+    // Compiled for its refusals alone — a run whose frontmatter OUTPUTS are
+    // missing cannot be entered — which is why the machine is discarded.
+    this.compileMachineFromState(state.id, state, steps);
+    // Promise-returning though the derivation is synchronous today: this is a
+    // service seam whose siblings are all async, and callers must not come to
+    // depend on it settling in the same tick.
+    return Promise.resolve(
+      deriveExecutionUnitEntry({
+        state,
+        steps,
+        ...(input.delegateFrontier === undefined
+          ? {}
+          : { delegateFrontier: input.delegateFrontier }),
+        cwd: this.manager.cwd,
+        ...(this.options.helpers === undefined ? {} : { helpers: this.options.helpers }),
+      }),
+    );
   }
 
   /**

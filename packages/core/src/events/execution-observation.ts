@@ -105,6 +105,14 @@ export interface StepEntryMetadata {
   readonly description?: string;
   /** Rendered prompt text. */
   readonly prompt?: string;
+  /**
+   * Whether the parsed execution unit declares a command.
+   *
+   * Derived from the unit, never from whether {@link commandCode} happens to be
+   * present: the two answered differently depending on which builder produced
+   * the entry, which made a payload flag an accident of the caller.
+   */
+  readonly hasCommand: boolean;
   /** Rendered command code, when the execution unit has a command. */
   readonly commandCode?: string;
   /** Command language info string. */
@@ -243,7 +251,7 @@ export function deriveStepEnteredEffect(
         stepName: input.entry.stepName,
         description: input.entry.description,
         prompt: input.entry.prompt,
-        hasCommand: input.entry.commandCode !== undefined,
+        hasCommand: input.entry.hasCommand,
         commandCode: input.entry.commandCode,
         commandLang: input.entry.commandLang,
         isSubstep: input.entry.isSubstep,

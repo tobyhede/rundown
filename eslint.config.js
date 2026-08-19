@@ -37,6 +37,18 @@ const trustedArtifactCastSelectors = [
   },
 ];
 
+// Ban `as RenderedUnitCommand` casts. The brand witnesses that a command string
+// came from the sanctioned expander inside `deriveExecutionUnitEntry`, so a cast
+// anywhere else asserts a provenance the value does not have. Tier 1 (a
+// `declare const` unique symbol) means there is no runtime check to fall back on
+// — the cast IS the mint — which is exactly why it has to be confined to the
+// producer. `execution-unit-entry.ts` is exempted below.
+const renderedUnitCommandCastSelector = {
+  selector: "TSAsExpression[typeAnnotation.typeName.name='RenderedUnitCommand']",
+  message:
+    'A RenderedUnitCommand is minted only by deriveExecutionUnitEntry. Reach it through RunbookActorService.enterExecutionUnit; a direct `as RenderedUnitCommand` cast asserts provenance the value does not have.',
+};
+
 // Closes the dynamic-import gap left by the front-end no-restricted-imports
 // boundary (below): no-restricted-imports vets static named/aliased/namespace
 // imports of parser template-syntax APIs, but not `await import('@rundown-org/parser')`.
@@ -202,6 +214,7 @@ export default tseslint.config(
         'error',
         errorIsErrorSelector,
         ...trustedArtifactCastSelectors,
+        renderedUnitCommandCastSelector,
         ...parserDynamicImportSelectors,
       ],
     },
@@ -234,6 +247,16 @@ export default tseslint.config(
     ],
     rules: {
       '@typescript-eslint/no-unnecessary-type-parameters': 'off',
+    },
+  },
+
+  // The rendered-command brand producer: the one place `as RenderedUnitCommand`
+  // is allowed, because the cast IS the mint. Scoped to the module that owns the
+  // brand symbol, so the exemption cannot travel with the type.
+  {
+    files: ['packages/core/src/runbook/execution-unit-entry.ts'],
+    rules: {
+      'no-restricted-syntax': ['error', errorIsErrorSelector, ...trustedArtifactCastSelectors],
     },
   },
 
@@ -271,6 +294,43 @@ export default tseslint.config(
       'packages/mcp/src/**/*.ts',
       'packages/claude-code-plugin/src/**/*.ts',
     ],
+    rules: {
+      '@typescript-eslint/no-restricted-imports': [
+        'error',
+        {
+          paths: [
+            {
+              name: '@rundown-org/parser',
+              importNames: ['tokenizeTemplate', 'parseTemplateExpression', 'parseOutputExpression'],
+              message:
+                'Front-end packages must not import parser template-syntax APIs. Template tokenization and expression parsing are core-internal; consume the rendered/evaluated result via @rundown-org/core instead.',
+            },
+            {
+              name: '@rundown-org/core',
+              importNames: [
+                'buildStepVariables',
+                'deriveExecutionUnitEntry',
+                'expandLoopVariables',
+                'expandLoopVariablesForCommand',
+              ],
+              message:
+                'Rendering an execution unit is core-owned (#799). Enter the unit through RunbookActorService.enterExecutionUnit and read back the classified entry; a front end that builds its own frame or expands its own fields is the divergence that seam exists to remove.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
+  // `packages/cli/src/services/template-renderer.ts` is a CLI-helper-defaulting
+  // re-export shim over core's expanders with ZERO production importers — it is
+  // reached only by its own test suites, and is scheduled for deletion once those
+  // move to core (#799 design record). It predates the render boundary above and
+  // is not a front end re-implementing rendering, so the core-import ban is lifted
+  // here and the parser ban is re-declared so it keeps applying. Delete this block
+  // with the file.
+  {
+    files: ['packages/cli/src/services/template-renderer.ts'],
     rules: {
       '@typescript-eslint/no-restricted-imports': [
         'error',
@@ -348,7 +408,12 @@ export default tseslint.config(
     files: ['**/__tests__/**/*.ts', '**/*.test.ts', '**/*.spec.ts'],
     ignores: ['packages/cli/__tests__/helpers/brand-helpers.ts'],
     rules: {
-      'no-restricted-syntax': ['error', errorIsErrorSelector, ...trustedArtifactCastSelectors],
+      'no-restricted-syntax': [
+        'error',
+        errorIsErrorSelector,
+        ...trustedArtifactCastSelectors,
+        renderedUnitCommandCastSelector,
+      ],
     },
   },
 );
