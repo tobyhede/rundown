@@ -29,6 +29,7 @@ import {
   type SessionMutationResult,
 } from '../../src/runbook/index.js';
 import { ErrorCodes } from '../../src/errors/codes.js';
+import { logger } from '../../src/logger.js';
 import { RundownError } from '../../src/errors/rundown-error.js';
 import { getErrorMessage } from '../../src/errors.js';
 import {
@@ -3464,6 +3465,8 @@ describe('RunbookCollectionService', () => {
         .spyOn(actorService, 'enterExecutionUnit')
         .mockRejectedValue(new Error('entry rendering exploded'));
 
+      const logged = jest.spyOn(logger, 'error').mockResolvedValue(undefined);
+
       const rejection = await collectionService
         .collectDelegationOutcomes({
           targetState: target,
@@ -3477,6 +3480,15 @@ describe('RunbookCollectionService', () => {
           },
           (error: unknown) => error,
         );
+
+      // The log line is not decoration. The rejection carries the render cause
+      // but cannot say the collection COMMITTED — which is the fact that decides
+      // whether an operator retries or re-delegates — so this is the only place
+      // that fact is recorded, and it must name the run it is about.
+      expect(logged).toHaveBeenCalledWith(
+        'collection committed but its re-entry disclosure could not be rendered',
+        { runId, error: 'entry rendering exploded' },
+      );
 
       // Typed, not bare. #820 made rendering part of the collect path, so this
       // is a NEW way for a collect to fail — it used to emit a thinner event
@@ -3516,6 +3528,41 @@ describe('RunbookCollectionService', () => {
           frame: activeFrame(buildFrameKey('1'), 1),
         }),
       ).rejects.toBeInstanceOf(InvalidRunbookStateError);
+    });
+
+    it('keeps the REAL persisted-snapshot guards on the RD-309 path, through the unmocked seam', async () => {
+      // The class check above is only as good as what the seam actually raises.
+      // `enterExecutionUnit` runs `assertFreshSnapshotValue` and
+      // `compileMachineFromState` BEFORE it renders anything, and both used to
+      // throw a bare `Error` — which this catch would have relabelled RD-833,
+      // telling an operator to fix a helper when the run's snapshot is corrupt
+      // and the recovery is prune/restart. Driven through the real seam, with no
+      // `enterExecutionUnit` spy, so the classification is pinned end to end.
+      // The prepared consume this fixture commits carries `{ context: {} }` and
+      // therefore no `snapshot.value`, which is exactly the shape the freshness
+      // guard refuses — so the entry never reaches rendering at all.
+      const { target } = await seedFrontierReadyToProject();
+
+      const rejection = await collectionService
+        .collectDelegationOutcomes({
+          targetState: target,
+          steps,
+          callerEvidence: ORCHESTRATOR_EVIDENCE,
+          frame: activeFrame(buildFrameKey('1'), 1),
+        })
+        .then(
+          () => {
+            throw new Error('expected the committed collect to reject');
+          },
+          (error: unknown) => error,
+        );
+
+      expect(rejection).toBeInstanceOf(InvalidRunbookStateError);
+      // NOT the RD-833 envelope: the classes are disjoint, so a guard that
+      // regressed to a bare `Error` would be caught here rather than quietly
+      // relabelled with the wrong recovery.
+      expect(rejection).not.toBeInstanceOf(RundownError);
+      expect(getErrorMessage(rejection)).toMatch(/Unsupported snapshot\.value shape/);
     });
 
     it('answers a retry of that committed collection as an idempotent no-op', async () => {

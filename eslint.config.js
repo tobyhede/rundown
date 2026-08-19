@@ -256,7 +256,16 @@ export default tseslint.config(
   {
     files: ['packages/core/src/runbook/execution-unit-entry.ts'],
     rules: {
-      'no-restricted-syntax': ['error', errorIsErrorSelector, ...trustedArtifactCastSelectors],
+      // Every selector the base block applies, minus the one this file produces.
+      // Re-declaring replaces the whole list, so omitting the parser spread here
+      // would make this the only source file where a dynamic parser import goes
+      // unflagged.
+      'no-restricted-syntax': [
+        'error',
+        errorIsErrorSelector,
+        ...trustedArtifactCastSelectors,
+        ...parserDynamicImportSelectors,
+      ],
     },
   },
 

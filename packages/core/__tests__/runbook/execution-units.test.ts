@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   extractUnitOutputs,
+  findStepOrThrow,
   resolveCurrentExecutionUnit,
 } from '../../src/runbook/execution-units.js';
 import type { OutputDeclaration } from '@rundown-org/parser';
@@ -17,6 +18,29 @@ function makeSubstep(id: string): Substep {
     },
   };
 }
+
+describe('findStepOrThrow', () => {
+  const first = makeBaseStep({ name: '1', description: 'First' });
+  const second = makeBaseStep({ name: 'RECOVER', description: 'Named step' });
+
+  it('returns the step whose name matches the cursor', () => {
+    expect(findStepOrThrow([first, second], '1')).toBe(first);
+    // Named (non-numeric) steps resolve the same way — the cursor carries the
+    // step's `name`, not its ordinal.
+    expect(findStepOrThrow([first, second], 'RECOVER')).toBe(second);
+  });
+
+  it('refuses a cursor no step carries, naming the step it looked for', () => {
+    // A run's `step` column and its compiled steps are written together, so a
+    // miss means they have diverged. The message names the cursor because that
+    // is the only fact distinguishing this from any other lookup failure.
+    expect(() => findStepOrThrow([first, second], 'Gone')).toThrow('Step "Gone" not found');
+  });
+
+  it('refuses against an empty step list', () => {
+    expect(() => findStepOrThrow([], '1')).toThrow('Step "1" not found');
+  });
+});
 
 describe('resolveCurrentExecutionUnit', () => {
   it('returns the parent step when no substep id is active', () => {

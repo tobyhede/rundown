@@ -60,7 +60,13 @@ export type InvalidRunStateReason =
   /** A persisted `execution_attempts.reason` is not a recognized reason. */
   | 'unrecognized_recovery_reason'
   /** The run carries no `ContextId` / `WorkPath` to render its frame against. */
-  | 'missing_render_context';
+  | 'missing_render_context'
+  /** The persisted `snapshot.value` is not a shape this build can read. */
+  | 'unsupported_snapshot_state_value'
+  /** The persisted `snapshot.value` names a step the parsed runbook does not declare. */
+  | 'snapshot_step_not_in_runbook'
+  /** A current-schema row is missing the required `frontmatterOutputs` field. */
+  | 'missing_frontmatter_outputs';
 
 /**
  * Structured facts about one run's refused persisted state (RD-309).

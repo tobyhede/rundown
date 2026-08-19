@@ -12,8 +12,10 @@ import {
 } from '../../src/runbook/delegation-token.js';
 import { assertClaimId, assertClaimLookupKey, assertRunId } from '../../src/runbook/index.js';
 import {
+  prepareReEntryFrontierConsume,
   projectAndConsumeReEntryFrontier,
   readPersistedReEntryFrontier,
+  type PrepareReEntryFrontierActorService,
   type ReEntryFrontierActorService,
 } from '../../src/runbook/re-entry-frontier.js';
 import type { ExecutionUnitEntry } from '../../src/runbook/execution-unit-entry.js';
@@ -206,6 +208,174 @@ function makeActorService(
   const service: ReEntryFrontierActorService = { enterExecutionUnit, sendAndSync };
   return { service, enterExecutionUnit, sendAndSync, calls, entered, observations, consumed };
 }
+
+/**
+ * Build a structural {@link PrepareReEntryFrontierActorService} double.
+ *
+ * Narrower than the unfenced one by design: the fenced twin DERIVES its consume
+ * and never commits, so a double that could commit would let a regression reach
+ * the store unnoticed.
+ *
+ * @param nextState - State the derived consume produces.
+ * @returns The double plus the spy the assertions read.
+ */
+function makePrepareActorService(nextState: RunbookState = state({ substep: '2' })) {
+  const prepareActorMutation = jest
+    .fn<PrepareReEntryFrontierActorService['prepareActorMutation']>()
+    .mockImplementation(async (_id, previousState) => ({
+      previousState,
+      nextState,
+      snapshot: { context: {} },
+      effects: [],
+    }));
+  return { service: { prepareActorMutation }, prepareActorMutation, nextState };
+}
+
+describe('prepareReEntryFrontierConsume', () => {
+  /** A deriver that fails the test if the seam reaches it. */
+  function neverDerives(): DelegationTokenDeriver {
+    return jest.fn<DelegationTokenDeriver>().mockImplementation(() => {
+      throw new Error('deriveToken must not be called on the none arm');
+    });
+  }
+
+  it('returns none when the run carries no persisted frontier', async () => {
+    const actor = makePrepareActorService();
+
+    await expect(
+      prepareReEntryFrontierConsume({
+        actorService: actor.service,
+        steps,
+        state: state(),
+        deriveToken: neverDerives(),
+      }),
+    ).resolves.toEqual({ status: 'none' });
+    expect(actor.prepareActorMutation).not.toHaveBeenCalled();
+  });
+
+  it('returns none for an empty persisted frontier without deriving a consume', async () => {
+    const actor = makePrepareActorService();
+
+    await expect(
+      prepareReEntryFrontierConsume({
+        actorService: actor.service,
+        steps,
+        state: stateWithFrontier([]),
+        deriveToken: neverDerives(),
+      }),
+    ).resolves.toEqual({ status: 'none' });
+    expect(actor.prepareActorMutation).not.toHaveBeenCalled();
+  });
+
+  it('returns none for a cursor off the substeps even when a frontier is persisted', async () => {
+    // A step-level execution unit can never carry a frontier, so the seam must
+    // not disclose one to it. The frontier stays persisted for the substep entry
+    // that can legitimately receive it.
+    const actor = makePrepareActorService();
+
+    await expect(
+      prepareReEntryFrontierConsume({
+        actorService: actor.service,
+        steps,
+        state: stepCursorWithFrontier([frontierEntry().persisted]),
+        deriveToken: neverDerives(),
+      }),
+    ).resolves.toEqual({ status: 'none' });
+    expect(actor.prepareActorMutation).not.toHaveBeenCalled();
+  });
+
+  it('validates the persisted blob before the non-substep short-circuit', async () => {
+    // Read-then-gate, not gate-then-read, exactly as the unfenced twin does.
+    const actor = makePrepareActorService();
+
+    await expect(
+      prepareReEntryFrontierConsume({
+        actorService: actor.service,
+        steps,
+        state: stepCursorWithFrontier('oops'),
+        deriveToken: neverDerives(),
+      }),
+    ).rejects.toBeInstanceOf(InvalidRunbookStateError);
+    expect(actor.prepareActorMutation).not.toHaveBeenCalled();
+  });
+
+  it('projects the bearers and derives the consume against the captured state', async () => {
+    const entry = frontierEntry();
+    const actor = makePrepareActorService();
+    const captured = stateWithFrontier([entry.persisted]);
+
+    const prepared = await prepareReEntryFrontierConsume({
+      actorService: actor.service,
+      steps,
+      state: captured,
+      deriveToken,
+    });
+
+    expect(prepared).toEqual({
+      status: 'projected',
+      nextState: actor.nextState,
+      frontier: [entry.public],
+    });
+    // The EXACT captured state, and the consume event the machine retires the
+    // frontier with — derived, never committed.
+    const [id, previousState, forwardedSteps, event] = actor.prepareActorMutation.mock.calls[0];
+    expect(id).toBe(runId);
+    expect(previousState).toBe(captured);
+    expect(forwardedSteps).toEqual(steps);
+    expect(event).toEqual({ type: 'DELEGATE_FRONTIER_CONSUMED' });
+  });
+
+  it('preserves persisted frontier order in the projected bearers', async () => {
+    const first = frontierEntry('1.1', 'child-a.md', 'A');
+    const second = frontierEntry('1.2', 'child-b.md', 'B');
+
+    const prepared = await prepareReEntryFrontierConsume({
+      actorService: makePrepareActorService().service,
+      steps,
+      state: stateWithFrontier([first.persisted, second.persisted]),
+      deriveToken,
+    });
+
+    if (prepared.status !== 'projected') throw new Error('expected projected');
+    expect(prepared.frontier).toEqual([first.public, second.public]);
+  });
+
+  it('refuses projection when the deriver is not the frontier issuer, without deriving a consume', async () => {
+    // The disclosure boundary, shared verbatim with the unfenced twin: refuse
+    // rather than prepare a consume that would retire bearers this authority
+    // cannot vouch for.
+    const actor = makePrepareActorService();
+
+    await expect(
+      prepareReEntryFrontierConsume({
+        actorService: actor.service,
+        steps,
+        state: stateWithFrontier([frontierEntry().persisted]),
+        deriveToken: deriveForeignToken,
+      }),
+    ).resolves.toEqual({
+      status: 'projection_refused',
+      message: 'Delegation credential belongs to a different issuer claim',
+    });
+    expect(actor.prepareActorMutation).not.toHaveBeenCalled();
+  });
+
+  it('never leaks a bearer through the refusal message', async () => {
+    const base = frontierEntry();
+
+    const prepared = await prepareReEntryFrontierConsume({
+      actorService: makePrepareActorService().service,
+      steps,
+      state: stateWithFrontier([
+        { ...base.persisted, tokenHash: assertDelegationTokenHash(`sha256:${'0'.repeat(64)}`) },
+      ]),
+      deriveToken,
+    });
+
+    expect(prepared).toMatchObject({ status: 'projection_refused' });
+    expect(JSON.stringify(prepared)).not.toMatch(/rdtk_/);
+  });
+});
 
 describe('readPersistedReEntryFrontier', () => {
   it('returns empty when the run carries no persisted snapshot', () => {

@@ -375,6 +375,104 @@ Child prompt.
   // latch, until this, had no notion of an owner at all, so a launch stranded
   // here reported `waiting` on every later observation — forever, with no
   // diagnostic naming the condition.
+  it("starts an inline child in the parent run's prompted mode", async () => {
+    // The composing parent's `prompted` flag is INHERITED by the child it
+    // launches: the child run does not exist yet, so it has no persisted flag of
+    // its own to read, and this is the one place the loop still needs the value.
+    // A prompted parent still performs the launch — the classification puts
+    // inline-launch ahead of awaiting — which is what makes the inheritance
+    // observable at all.
+    await writeFile(
+      join(workspace.rootRunbooksDir(), 'parent.runbook.md'),
+      `# Parent
+
+## 1. Start
+- PASS CONTINUE
+
+Ready.
+
+## 2. Compose
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`,
+    );
+    const childRunbook = `# Child
+
+## 1. Create
+- PASS COMPLETE
+
+\`\`\`bash
+echo child-ran
+\`\`\`
+`;
+    await writeFile(join(workspace.rootRunbooksDir(), 'child.runbook.md'), childRunbook);
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
+
+    const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+
+    const advance = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
+    const events = flattenEvents(parseConcatenatedJson(advance.stdout));
+
+    const inlineStepIndex = events.findIndex(
+      (event) => event.type === 'step_entered' && event.inlineLaunch !== undefined,
+    );
+    expect(inlineStepIndex).toBeGreaterThanOrEqual(0);
+    const childStarted = events.find(
+      (event, index) => index > inlineStepIndex && event.type === 'runbook_started',
+    );
+    expect(childStarted).toBeDefined();
+    // Inherited, not defaulted: a parent started WITHOUT `--prompted` yields
+    // `false` here, which is what makes this assertion about the flag rather
+    // than about the field existing.
+    expect(childStarted?.prompted).toBe(true);
+  });
+
+  it('starts an inline child in automatic mode when the parent is not prompted', async () => {
+    await writeFile(
+      join(workspace.rootRunbooksDir(), 'parent.runbook.md'),
+      `# Parent
+
+## 1. Start
+- PASS CONTINUE
+
+Ready.
+
+## 2. Compose
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`,
+    );
+    const childRunbook = `# Child
+
+## 1. Create
+- PASS COMPLETE
+
+Child prompt.
+`;
+    await writeFile(join(workspace.rootRunbooksDir(), 'child.runbook.md'), childRunbook);
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
+
+    const start = await runCliInProcess('run runbooks/parent.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+
+    const advance = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
+    const events = flattenEvents(parseConcatenatedJson(advance.stdout));
+
+    const inlineStepIndex = events.findIndex(
+      (event) => event.type === 'step_entered' && event.inlineLaunch !== undefined,
+    );
+    expect(inlineStepIndex).toBeGreaterThanOrEqual(0);
+    const childStarted = events.find(
+      (event, index) => index > inlineStepIndex && event.type === 'runbook_started',
+    );
+    expect(childStarted?.prompted).toBe(false);
+  });
+
   it('reclaims an inline launch latched by a dead process and performs it', async () => {
     await writeInlineParentAndChild();
     // Above every platform's pid_max (Linux 4194304, macOS 99998), so this owner

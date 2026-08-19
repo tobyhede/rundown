@@ -163,13 +163,14 @@ export interface DeriveExecutionUnitEntryInput {
    *
    * Supplied only by the re-entry frontier seam, which verifies each token
    * against its persisted hash before handing it here. Absent on every ordinary
-   * entry.
+   * entry, and `| undefined` because absent and explicitly-undefined are the
+   * same fact to this function.
    */
-  readonly delegateFrontier?: readonly DelegateFrontierEntry[];
+  readonly delegateFrontier?: readonly DelegateFrontierEntry[] | undefined;
   /** Canonicalised project directory used as the helper containment boundary. */
   readonly cwd: string;
-  /** Runtime template helpers loaded for this process. */
-  readonly helpers?: TemplateHelperRegistry;
+  /** Runtime template helpers loaded for this process, if any were declared. */
+  readonly helpers?: TemplateHelperRegistry | undefined;
 }
 
 /**
@@ -178,6 +179,13 @@ export interface DeriveExecutionUnitEntryInput {
  * Moved here from the CLI (`helpers/render-context.ts`) with the rest of the
  * rendering: helper containment is a language-level concern, and a front end
  * assembling it was the same inversion #799 names.
+ *
+ * The CLI's copy survives for `getRunbookFromState`, whose reload path is not
+ * part of entering a unit. The two differ only in the error class, and merging
+ * them means deciding whether `rundown stop` should treat a run with no
+ * `WorkPath` as unusable — a question about `stop`, not about rendering. Its
+ * docstring records the same, so neither side can be collapsed into the other by
+ * accident.
  *
  * @param runId - Run whose frame is being rendered.
  * @param cwd - Canonicalised project directory used as the containment boundary.
@@ -215,27 +223,33 @@ function buildRunnableRenderContext(
 /**
  * Rundown-injected environment for a command subprocess.
  *
- * Lookup keys come from {@link BUILTIN_VARIABLES} so renaming a built-in is a
- * typecheck error here rather than a silently empty injection. The `RD_*` names
- * themselves are the published subprocess contract and are spelled literally.
+ * `RD_WORK_PATH` / `RD_CONTEXT_ID` are read off the render context rather than
+ * off the rendered frame, which is both simpler and stricter. The frame is
+ * `effectiveVars` plus the loop's own bindings, so a `FOR WorkPath IN …` step
+ * shadows the run's work directory there — and the CLI's version of this
+ * function, which read the frame, then guarded each value with a
+ * `typeof === 'string'` check and silently dropped it. The context is validated
+ * once, cannot be shadowed, and is the same value the entry's artifact paths are
+ * projected against, so the env and the payload name one work directory.
+ *
+ * The `RD_*` names are the published subprocess contract and are spelled
+ * literally.
  *
  * @param state - Run the command belongs to.
- * @param stepVars - Rendered frame the command was expanded against.
+ * @param context - Validated render context for the run's frame.
  * @returns Environment overlay merged into the child process.
  */
 function buildRdInjectedEnv(
   state: RunbookState,
-  stepVars: Readonly<Record<string, unknown>>,
+  context: Extract<TemplateRenderContext, { kind: 'runnable' }>,
 ): Readonly<Record<string, string>> {
-  const rdInjected: Record<string, string> = {};
-  const workPath = stepVars[BUILTIN_VARIABLES.WorkPath];
-  const contextId = stepVars[BUILTIN_VARIABLES.ContextId];
-  if (typeof workPath === 'string') rdInjected.RD_WORK_PATH = workPath;
-  if (typeof contextId === 'string') rdInjected.RD_CONTEXT_ID = contextId;
-  rdInjected.RD_RUN_ID = state.id;
-  rdInjected.RD_RUNBOOK_REF = state.runbook.path;
-  rdInjected.RD_RUNBOOK_SOURCE = state.runbook.source;
-  return rdInjected;
+  return {
+    RD_WORK_PATH: context.workPath,
+    RD_CONTEXT_ID: context.contextId,
+    RD_RUN_ID: state.id,
+    RD_RUNBOOK_REF: state.runbook.path,
+    RD_RUNBOOK_SOURCE: state.runbook.source,
+  };
 }
 
 /**
@@ -256,8 +270,11 @@ function shouldProjectInlineLaunchIntent(
 ): boolean {
   if (state.id !== intent.parentRunId) return false;
   if (state.step !== intent.parentStep) return false;
-  if (entry.stepId !== intent.parentStep) return false;
-  if (state.substep !== intent.parentStepId) return false;
+  // The RESOLVED substep, not the raw cursor. Two checks used to stand here —
+  // one on `state.substep` and one on the entry — and the entry's subsumes the
+  // cursor's: they agree whenever the cursor names a live substep, and where
+  // they differ the entry carries `undefined`, which rejects any real intent.
+  // A cursor naming no live substep is not the substep an intent addresses.
   if (entry.substepId !== intent.parentStepId) return false;
 
   // Project the one-shot intent only when its authored frame is still live (the
@@ -272,17 +289,16 @@ function shouldProjectInlineLaunchIntent(
  * Attach the run's live inline-launch intent to an entry, when it has one.
  *
  * @param state - Run being entered.
- * @param snapshot - Snapshot the entry is observed against.
+ * @param context - The run's persisted machine context.
  * @param entry - Entry metadata for the unit the cursor names.
  * @returns The entry, carrying `inlineLaunch` when a live intent names it.
  */
 function withInlineLaunchIntent(
   state: RunbookState,
-  snapshot: Record<string, unknown>,
+  context: Readonly<Record<string, unknown>>,
   entry: StepEntryMetadata,
 ): StepEntryMetadata {
-  const persisted = (snapshot.context as { readonly inlineLaunchIntent?: unknown })
-    .inlineLaunchIntent;
+  const persisted = context.inlineLaunchIntent;
   if (!isInlineLaunchIntentWithoutParentEntry(persisted)) return entry;
   const intent: InlineLaunchIntentWithoutParentEntry = {
     ...persisted,
@@ -299,31 +315,28 @@ function withInlineLaunchIntent(
 }
 
 /**
- * Overlay a run's persisted snapshot with its own committed cursor.
+ * The persisted machine context a run carries, if it has synced one.
  *
- * `RunbookState` and `state.snapshot` are written together, but the structured
- * columns are the authority on where the run is; the snapshot is the machine's
- * opaque blob. Reading the cursor off the columns and the rest off the blob is
- * what lets an entry be observed without starting an actor.
+ * `RunbookState.snapshot` is `unknown` and may be absent entirely (a run that has
+ * never synced), so every read of it goes through here.
+ *
+ * This used to OVERLAY the run's committed cursor onto that context, because
+ * `deriveStepEnteredEffect` validated the entry's `stepId` / `substepId` against
+ * it. Those guards are gone (#820) — the entry has one producer, which reads the
+ * cursor off the same state — and with them the only fields the overlay existed
+ * to supply. What remains reads two keys, both of which are the machine's own.
  *
  * @param state - Run being entered.
- * @returns Snapshot shape `deriveStepEnteredEffect` reads.
+ * @returns The persisted context, or an empty one.
  */
-function snapshotForEntry(state: RunbookState): Record<string, unknown> {
-  if (!state.snapshot || typeof state.snapshot !== 'object') {
-    return { context: { step: state.step, substep: state.substep } };
-  }
-  const raw = state.snapshot as Record<string, unknown>;
-  const context = (raw.context ?? {}) as Record<string, unknown>;
-  return {
-    ...raw,
-    context: {
-      ...context,
-      step: state.step,
-      substepStates: state.substepStates ?? context.substepStates,
-      substep: state.substep ?? context.substep,
-    },
-  };
+function persistedContext(state: RunbookState): Record<string, unknown> {
+  // One guard, on the value actually used. An outer `typeof state.snapshot`
+  // check would be unreachable: the snapshot is JSON, so anything that is not an
+  // object has no `context` to read, and the optional chain already answers that.
+  const context = (state.snapshot as { readonly context?: unknown } | undefined)?.context;
+  return context !== null && typeof context === 'object'
+    ? (context as Record<string, unknown>)
+    : {};
 }
 
 /**
@@ -355,7 +368,10 @@ export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): 
     stepId: state.step,
     substepId: state.substep,
     forStack: state.forStack,
-    forClause: currentStep.kind === 'for' ? currentStep.forClause : undefined,
+    // Structural, for the same reason the command lookup below is: `forClause` is
+    // declared on `ResolvedStepWithFor` and nowhere else, so keying on the step
+    // kind would be a second spelling of the same fact with a dead arm.
+    forClause: 'forClause' in currentStep ? currentStep.forClause : undefined,
     templateVars: effectiveVars,
   });
   const renderOptions = {
@@ -367,8 +383,12 @@ export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): 
   // is the reconstructed FOR text, and it is what the operator needs to see.
   const rawPrompt =
     unit.prompt ?? (currentStep.kind === 'prompted-for' ? currentStep.prompt : undefined);
-  const unitCommand =
-    'id' in unit ? unit.command : currentStep.kind === 'command' ? currentStep.command : undefined;
+  // One structural check covers both tiers: `command` is declared on `Substep`
+  // and on `StepWithCommand` and nowhere else, so a substeps / FOR / prompted-FOR
+  // step can never carry one and needs no separate arm. (The parser's own
+  // `hasCommand` guard says the same thing but is typed over `Step`, which a
+  // `ResolvedStep` is not.)
+  const unitCommand = 'command' in unit ? unit.command : undefined;
   const code =
     unitCommand === undefined
       ? undefined
@@ -402,11 +422,11 @@ export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): 
     delegateFrontier: input.delegateFrontier,
   };
 
-  const snapshot = snapshotForEntry(state);
-  const observed = withInlineLaunchIntent(state, snapshot, entry);
+  const context = persistedContext(state);
+  const observed = withInlineLaunchIntent(state, context, entry);
   const effects = [
     deriveStepEnteredEffect({
-      snapshot,
+      snapshot: context,
       entry: observed,
       // The SAME `workPath` the helper context renders against. It used to fall
       // back to `WORK_DIR` here while the render context refused without it, so
@@ -436,7 +456,7 @@ export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): 
     command: {
       code,
       displayCommand: extractDisplayCommand(code) || code,
-      rdInjected: buildRdInjectedEnv(state, stepVars),
+      rdInjected: buildRdInjectedEnv(state, renderOptions.context),
     } as RenderedUnitCommand,
   };
 }

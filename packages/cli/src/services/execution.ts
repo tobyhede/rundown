@@ -1172,6 +1172,27 @@ export async function runExecutionLoop(
   // The run owns this fact. It is written once at creation and never varies
   // across the loop, so it is read once here rather than re-derived per
   // iteration from a `currentState` that can only carry the same value.
+  //
+  // Since #819 it has exactly ONE consumer: the value a composing parent
+  // inherits DOWN into a fresh inline child, which has no persisted flag of its
+  // own to read yet. Every other use — the `awaiting` classification, the
+  // `STEP_ENTERED` payload — moved into the entry seam, which reads the run
+  // directly.
+  //
+  // Stryker disable next-line BooleanLiteral: equivalent — the fallback is
+  // unreachable from any run this codebase creates. `RunbookStateManager.create`
+  // has one production call site (`runbook-pipeline.ts`, in `startRunbook`),
+  // whose `options.prompted` is a required boolean, so a persisted row always
+  // carries one. A row without it is invalid state by the no-migration rule, and
+  // `false` versus `true` there is not a behaviour this suite can pin.
+  //
+  // The sibling `&& false` mutation on this line is NOT equivalent and IS
+  // killed — by the inline-child prompted-inheritance pair in
+  // `integration/inline-child-launch.test.ts`, verified by hand-applying it.
+  // The scoped mutation gate still reports it as a survivor, because it runs
+  // this file against its dedicated UNIT suite alone: the one consumer is a
+  // child-run launch, which no unit suite can reach without stubbing out the
+  // launch pipeline it is trying to observe.
   const prompted = state.prompted ?? false;
 
   const terminalReleaseMode = options.terminalReleaseMode ?? 'stack-pop';

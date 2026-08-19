@@ -74,11 +74,26 @@ caller-supplied entry and is unchanged here.
 **Two behaviour notes.** Helper path containment now resolves against
 `manager.cwd` rather than the `cwd` argument threaded into the loop — the
 canonicalised directory the actor service already used for artifact path
-projection, so the two can no longer disagree. And a run whose `templateVars`
-carry no string `ContextId` or `WorkPath` is now refused with a typed
-`InvalidRunbookStateError` (`reason: 'missing_render_context'`) rather than a
-bare `Error`, which routes it onto the CLI's existing finish/stop/prune recovery
-path.
+projection, so the two can no longer disagree. (The CLI always passes
+`process.cwd()`, which Node returns already resolved, so the two values are
+identical in production; the canonicalisation only bites a caller that supplies
+a symlinked path, and containment wants the resolved one anyway.) And a run
+whose `templateVars` carry no string `ContextId` or `WorkPath` is now refused
+with a typed `InvalidRunbookStateError` (`reason: 'missing_render_context'`)
+rather than a bare `Error`, which routes it onto the CLI's existing
+finish/stop/prune recovery path.
+
+**Five branches came out as provably dead** while mutation-testing the new
+module to 100%, and each was a second spelling of a fact the types already
+carried: `currentStep.kind === 'command'` and `currentStep.kind === 'for'`
+(`command` is declared on `Substep` and `StepWithCommand` only, `forClause` on
+`ResolvedStepWithFor` only — both are now structural `in` checks); two of the
+five identity checks in the inline-intent projection (`entry.stepId` IS
+`state.step` by construction, and the entry's `substepId` check subsumes the raw
+cursor's); and an outer `typeof state.snapshot` guard the optional chain already
+answered. The cursor overlay that used to sit in `snapshotForEntry` went with
+them — it existed to satisfy `deriveStepEnteredEffect`'s guards, which this work
+deletes, so nothing read it any more.
 
 Behaviour is otherwise unchanged, and the #816 characterisation of the
 `run`-vs-`collect` `STEP_ENTERED` divergence is still green: `rundown collect`

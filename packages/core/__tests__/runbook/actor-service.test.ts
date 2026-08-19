@@ -3,7 +3,7 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createActor, waitFor, type Snapshot } from 'xstate';
-import { RunbookStateManager } from '../../src/runbook/state.js';
+import { InvalidRunbookStateError, RunbookStateManager } from '../../src/runbook/state.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import {
   extractEnteredArtifacts,
@@ -1091,6 +1091,134 @@ echo ok
 
       await expect(enterEffects(service, state.id, stepsWithOneCommand)).rejects.toThrow(
         /is missing WorkPath/,
+      );
+    });
+
+    // The freshness gate is CONDITIONAL on a snapshot existing, and both halves
+    // of that condition are load-bearing. These two tests are the pair: a run
+    // with no snapshot must enter (a gate that always ran would hand
+    // `assertFreshSnapshotValue` an `undefined` value and refuse every fresh
+    // run), and a run whose snapshot names a step the runbook no longer defines
+    // must be refused (a gate that never ran would enter it).
+    it('enters a run that has never synced a snapshot', async () => {
+      const runId = assertRunId('rd_88888888888888888888888888888889');
+      const service = new RunbookActorService(manager);
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+
+      const effects = await enterEffects(service, state.id, stepsWithOneCommand);
+
+      expect(effects).toHaveLength(1);
+      expect(effects[0]?.event.type).toBe('STEP_ENTERED');
+    });
+
+    // The guards raise `InvalidRunbookStateError` rather than a bare `Error`, and
+    // the DEFECT is the machine-readable half of that: RD-309's envelope reports
+    // `runId` and `reason` in FIELDS so a consumer never parses the prose. It is
+    // also what `finishCollection` reads to decide whether a committed collect
+    // reports RD-309 (prune/restart) or RD-833 (fix the helper), so a blanked
+    // reason would send an operator to the wrong recovery.
+    it('names the run and the reason in the defect of each persisted-snapshot refusal', async () => {
+      const service = new RunbookActorService(manager);
+      const seed = async (runId: string, snapshot: unknown) => {
+        const created = await manager.create(
+          { source: 'project', path: 'workflow.runbook.md' },
+          { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+          {
+            runId: assertRunId(runId),
+            runbookPath: 'workflow.runbook.md',
+            frontmatterOutputs: [],
+            templateVars: commandTemplateVars(runId),
+          },
+        );
+        await manager.update(created.id, { snapshot });
+        return created.id;
+      };
+      const defectOf = async (id: string) => {
+        try {
+          await enterEffects(service, id, stepsWithOneCommand);
+          throw new Error(`expected ${id} to be refused`);
+        } catch (error) {
+          expect(error).toBeInstanceOf(InvalidRunbookStateError);
+          return (error as InvalidRunbookStateError).defect;
+        }
+      };
+
+      const unreadable = await seed('rd_8888888888888888888888888888888b', { value: 42 });
+      expect(await defectOf(unreadable)).toEqual({
+        runId: unreadable,
+        reason: 'unsupported_snapshot_state_value',
+      });
+
+      const transient = await seed('rd_8888888888888888888888888888888c', {
+        value: 'step::1::__parent-entry::1',
+      });
+      expect(await defectOf(transient)).toEqual({
+        runId: transient,
+        reason: 'unsupported_snapshot_state_value',
+      });
+
+      const missingStep = await seed('rd_8888888888888888888888888888888d', {
+        value: 'step::Gone',
+      });
+      expect(await defectOf(missingStep)).toEqual({
+        runId: missingStep,
+        reason: 'snapshot_step_not_in_runbook',
+      });
+    });
+
+    it('names the run and the reason when the run carries no frontmatter outputs', async () => {
+      const runId = assertRunId('rd_8888888888888888888888888888888e');
+      const service = new RunbookActorService(manager);
+      const created = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      await manager.save({ ...created, frontmatterOutputs: undefined });
+
+      try {
+        await enterEffects(service, created.id, stepsWithOneCommand);
+        throw new Error('expected the run to be refused');
+      } catch (error) {
+        expect(error).toBeInstanceOf(InvalidRunbookStateError);
+        expect((error as InvalidRunbookStateError).defect).toEqual({
+          runId,
+          reason: 'missing_frontmatter_outputs',
+        });
+      }
+    });
+
+    it('refuses to enter a run whose persisted snapshot names a step the runbook no longer defines', async () => {
+      const runId = assertRunId('rd_8888888888888888888888888888888a');
+      const service = new RunbookActorService(manager);
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      await manager.update(state.id, { snapshot: { value: 'step::Gone', context: {} } });
+
+      await expect(enterEffects(service, state.id, stepsWithOneCommand)).rejects.toThrow(
+        /references missing step "Gone"/,
       );
     });
 

@@ -60,6 +60,19 @@ Bearer-disclosure ordering is unchanged and still asserted: the commit lands
 before the entry is derived, so a refused transaction consumes nothing and
 discloses nothing.
 
+**The persisted-snapshot guards are now typed too, and RD-833 depends on it.**
+`assertFreshSnapshotValue` and `compileMachineFromState` refuse an unreadable
+`snapshot.value`, a transient parent-entry state, a cursor naming a step the
+runbook no longer declares, and a missing `frontmatterOutputs` — all one run's
+corrupt persisted state, and every message already spelled RD-309's remediation
+("Prune invalid runbook state and restart execution"). They threw a bare
+`Error`, which reached the CLI as RD-999. They now raise
+`InvalidRunbookStateError` with a typed reason, which is what keeps them off
+RD-833: without it, a collect whose committed target carried an unparseable
+`stateValue` would have told the operator to fix a helper and re-issue
+delegations when the real recovery is prune/restart. Every other caller of those
+guards gains the RD-309 envelope with them.
+
 One narrowing worth knowing. The artifact-path projection used to fall back to
 `WORK_DIR` when a run carried no `WorkPath`, while the render context the same
 entry expands helper paths against refused a missing `WorkPath` outright — so

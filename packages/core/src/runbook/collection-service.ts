@@ -843,6 +843,12 @@ async function prepareCollection(
   return {
     target: reentry.status === 'projected' ? reentry.nextState : drained.state,
     reportedTerminalOutcome: false,
+    // Stryker disable next-line ConditionalExpression: equivalent — forcing the
+    // condition true spreads `frontierDisclosure: reentry.frontier`, and on
+    // every other arm `reentry` carries no `frontier`, so the key lands as
+    // `undefined`. `finishCollection` gates on `!== undefined`, so present-and-
+    // undefined and absent reach the same branch. The spread exists only to
+    // satisfy `exactOptionalPropertyTypes`, not to change behaviour.
     ...(reentry.status === 'projected' ? { frontierDisclosure: reentry.frontier } : {}),
     value: {
       kind: 'collection_applied',
@@ -994,6 +1000,12 @@ async function finishCollection(
   const value = prepared.value;
   if (value.kind !== 'collection_applied') return value;
 
+  // Stryker disable next-line ConditionalExpression: equivalent on the second
+  // term — `frontierDisclosure` is set only on `prepareCollection`'s projected
+  // arm, which sets `target` in the same literal, so the first term already
+  // implies the second. It is spelled out because `target` is optional on
+  // `PreparedCollection` and TypeScript narrows on the check, not on the
+  // invariant.
   if (prepared.frontierDisclosure !== undefined && prepared.target !== undefined) {
     try {
       // The SAME seam `rundown run` enters through, so the `STEP_ENTERED` a

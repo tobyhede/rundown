@@ -62,6 +62,7 @@ import { flattenTemplateVars } from './output-evaluator.js';
 import { merge, replace, type ResolvedCompletionsOp } from './state-update-ops.js';
 import { deriveActiveFrame, frameKeyForCursor } from './targeting.js';
 import { inferFrameEntryFromState, type FrameEntryCoordinates } from './frame-entry.js';
+import { InvalidRunbookStateError } from './persisted-state-guards.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
 import { isArtifactRecord } from './artifact-schema.js';
@@ -187,8 +188,13 @@ export interface EnterExecutionUnitInput {
    *
    * Supplied only by the re-entry frontier seam, which verifies each token
    * against its persisted hash before handing it here.
+   *
+   * Explicitly `| undefined` rather than merely optional: an absent frontier and
+   * one passed as `undefined` are the same fact, and under
+   * `exactOptionalPropertyTypes` the distinction would otherwise force every
+   * forwarding call site into a conditional spread that says nothing.
    */
-  readonly delegateFrontier?: readonly DelegateFrontierEntry[];
+  readonly delegateFrontier?: readonly DelegateFrontierEntry[] | undefined;
 }
 
 /** Runtime dependencies for {@link RunbookActorService}. */
@@ -875,22 +881,42 @@ export class RunbookActorService {
     };
   }
 
+  /**
+   * Refuse a persisted snapshot this build cannot read.
+   *
+   * Every refusal here is one run's corrupt persisted state, and every message
+   * already spells RD-309's remediation — "Prune invalid runbook state and
+   * restart execution". They therefore raise {@link InvalidRunbookStateError}
+   * rather than a bare `Error`: the class is what routes them onto the CLI's
+   * finish/stop/prune envelope instead of RD-999 "Unknown error", and what lets
+   * a caller distinguish "this run is unusable" from "the operation failed".
+   * `finishCollection` reads exactly that distinction to decide whether a
+   * committed collect reports RD-309 or RD-833.
+   *
+   * @param id - Run whose snapshot is being read.
+   * @param snapshot - The persisted snapshot envelope.
+   * @param steps - Parsed steps the snapshot's cursor must name.
+   * @throws {InvalidRunbookStateError} When the snapshot value is an
+   *   unreadable shape, a transient parent-entry state, unparseable, or names a
+   *   step the runbook does not declare.
+   */
   private assertFreshSnapshotValue(
     id: string,
     snapshot: PersistedRunbookSnapshot,
     steps: readonly ResolvedStep[],
   ): void {
-    if (isPendingMachineEffectSnapshotValue(snapshot.value)) {
-      throw new Error(
+    const unsupportedShape = (): InvalidRunbookStateError =>
+      new InvalidRunbookStateError(
         `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(snapshot.value)}`,
+        { runId: id, reason: 'unsupported_snapshot_state_value' },
       );
+    if (isPendingMachineEffectSnapshotValue(snapshot.value)) {
+      throw unsupportedShape();
     }
 
     const stateValue = stateValueAsString(snapshot.value);
     if (stateValue === null) {
-      throw new Error(
-        `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(snapshot.value)}`,
-      );
+      throw unsupportedShape();
     }
     if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') return;
     if (stateValue === RECOVERY_REQUIRED_STATE_NAME) return;
@@ -904,24 +930,27 @@ export class RunbookActorService {
     // wrong substep, wrong recovery path. Bail with a clear diagnostic
     // before the regex runs.
     if (stateValue.includes('::__parent-entry::')) {
-      throw new Error(
+      throw new InvalidRunbookStateError(
         `Persisted stateValue "${stateValue}" for runbook "${id}" is a transient parent-entry state. ` +
           'Prune invalid runbook state and restart execution.',
+        { runId: id, reason: 'unsupported_snapshot_state_value' },
       );
     }
 
     const parsed = parseStepStateValue(stateValue);
     if (!parsed) {
-      throw new Error(
+      throw new InvalidRunbookStateError(
         `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
           'Prune invalid runbook state and restart execution.',
+        { runId: id, reason: 'unsupported_snapshot_state_value' },
       );
     }
     const stepName = parsed.stepName;
     if (!steps.find((s) => s.name === stepName)) {
-      throw new Error(
+      throw new InvalidRunbookStateError(
         `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
           'Prune invalid runbook state and restart execution.',
+        { runId: id, reason: 'snapshot_step_not_in_runbook' },
       );
     }
   }
@@ -940,7 +969,8 @@ export class RunbookActorService {
    * @param executionObserver - Optional non-persisted observer for command actor output
    * @param runtime - Optional verified runtime capabilities for machine-owned actors
    * @returns Compiled XState machine seeded with all hydration-time context
-   * @throws {Error} If `state.frontmatterOutputs` is undefined (invalid state)
+   * @throws {InvalidRunbookStateError} If `state.frontmatterOutputs` is
+   *   undefined — one run's corrupt persisted state, not an operation failure
    */
   private compileMachineFromState(
     id: string,
@@ -950,9 +980,10 @@ export class RunbookActorService {
     runtime?: RunbookActorRuntimeCapabilities,
   ): ReturnType<typeof compileRunbookToMachine> {
     if (state.frontmatterOutputs === undefined) {
-      throw new Error(
+      throw new InvalidRunbookStateError(
         `Invalid runbook state for "${id}": missing frontmatter outputs declarations. ` +
           'Run `rundown prune` and restart execution.',
+        { runId: id, reason: 'missing_frontmatter_outputs' },
       );
     }
     return compileRunbookToMachine(steps, {
@@ -1656,11 +1687,9 @@ export class RunbookActorService {
       deriveExecutionUnitEntry({
         state,
         steps,
-        ...(input.delegateFrontier === undefined
-          ? {}
-          : { delegateFrontier: input.delegateFrontier }),
+        delegateFrontier: input.delegateFrontier,
         cwd: this.manager.cwd,
-        ...(this.options.helpers === undefined ? {} : { helpers: this.options.helpers }),
+        helpers: this.options.helpers,
       }),
     );
   }

@@ -5467,6 +5467,74 @@ describe('runExecutionLoop', () => {
     });
   });
 
+  it('does not act on an inline-launch intent reached through a projected frontier', async () => {
+    // The one-shot intent is consumed by the launch it drives, and the frontier
+    // seam's own consume has ALREADY committed by the time the classified entry
+    // comes back. Launching here would start a child the re-entry never armed —
+    // so the guard is on `reentry.status`, not on the classification alone.
+    const delegateSteps: any[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parallel work',
+        substeps: [
+          {
+            id: '1',
+            description: 'First task',
+            delegate: true,
+            runbooks: ['child-a.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_retry_a')]),
+    );
+    mockActorService.sendAndSync.mockResolvedValue({
+      state: { id: runbookId, step: '1', substep: '1', status: 'running' },
+      snapshot: {},
+    });
+    // The seam enters through the SAME double, so this is what its `projected`
+    // arm carries back to the loop.
+    mockActorService.enterExecutionUnit.mockResolvedValue({
+      kind: 'inline-launch',
+      launch: {
+        parentRunId: runbookId,
+        parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: '1|',
+        parentEntry: 1,
+        childRunId: `rd_${'3'.repeat(32)}`,
+        childRunbookPath: 'child-a.runbook.md',
+        childRunbookRef: { source: 'project', path: 'child-a.runbook.md' },
+        contextSnapshot: { vars: {}, ancestors: [], step: '1', substep: '1', at: '1.1' },
+      },
+      effects: [],
+    });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(delegateSteps),
+      '/tmp',
+      asEmitter(mockEmitter),
+      { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a') },
+    );
+
+    // No launch was attempted: the latch is the launch span's first write, and
+    // it was never reached.
+    expect(mockManager.mutateStateReturning).not.toHaveBeenCalled();
+    expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
+    // The frontier still consumed — the re-entry itself is unaffected.
+    expect(mockActorService.sendAndSync).toHaveBeenCalledWith(runbookId, delegateSteps, {
+      type: 'DELEGATE_FRONTIER_CONSUMED',
+    });
+    expect(result).toBe('waiting');
+  });
+
   it('STEP_ENTERED does not issue delegations when delegateFrontier is absent', async () => {
     const delegateSteps: any[] = [
       {
