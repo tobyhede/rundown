@@ -774,8 +774,6 @@ echo ok
         command: 'true',
         displayCommand: 'true',
         runbookPath: 'workflow.runbook.md',
-        outputScope: { stepId: '1' },
-        nakedOutputs: [],
         rdInjected: { RD_RUN_ID: runId },
       });
 
@@ -827,8 +825,6 @@ echo ok
         command: 'sleep-longer-than-machine-effect-timeout',
         displayCommand: 'sleep-longer-than-machine-effect-timeout',
         runbookPath: 'workflow.runbook.md',
-        outputScope: { stepId: '1' },
-        nakedOutputs: [],
         rdInjected: { RD_RUN_ID: runId },
       });
 
@@ -863,8 +859,6 @@ echo ok
         command: 'false',
         displayCommand: 'false',
         runbookPath: 'workflow.runbook.md',
-        outputScope: { stepId: '1' },
-        nakedOutputs: [],
         rdInjected: { RD_RUN_ID: runId },
       });
 
@@ -902,8 +896,6 @@ echo ok
         command: 'curl https://example.test',
         displayCommand: 'curl https://example.test',
         runbookPath: 'workflow.runbook.md',
-        outputScope: { stepId: '1' },
-        nakedOutputs: [],
         rdInjected: { RD_RUN_ID: runId },
       });
 
@@ -942,8 +934,6 @@ echo ok
         command: 'npm test',
         displayCommand: 'npm test',
         runbookPath: 'workflow.runbook.md',
-        outputScope: { stepId: '1' },
-        nakedOutputs: [],
         rdInjected: { RD_RUN_ID: runId },
       });
 
@@ -979,8 +969,6 @@ echo ok
         command: 'true',
         displayCommand: 'true',
         runbookPath: 'workflow.runbook.md',
-        outputScope: { stepId: '1' },
-        nakedOutputs: [],
         rdInjected: { RD_RUN_ID: runId },
       });
 

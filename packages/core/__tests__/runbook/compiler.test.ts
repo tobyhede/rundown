@@ -9958,8 +9958,6 @@ echo hi
         type: 'EXECUTE_COMMAND',
         command: 'echo first',
         displayCommand: 'echo first',
-        outputScope: { stepId: '1' },
-        nakedOutputs: [],
         rdInjected: {},
       });
       await waitFor(actor, (snapshot) => snapshot.hasTag(PENDING_COMMAND_EXECUTION_TAG), {
@@ -9970,8 +9968,6 @@ echo hi
         type: 'EXECUTE_COMMAND',
         command: 'echo second',
         displayCommand: 'echo second',
-        outputScope: { stepId: '1' },
-        nakedOutputs: [],
         rdInjected: {},
       });
       expect(executeCalls).toBe(1);

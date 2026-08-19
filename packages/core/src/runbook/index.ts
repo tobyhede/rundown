@@ -75,7 +75,7 @@ export {
   type ExecutionEpoch,
   type GuardedMutationResult,
 } from './storage/mutation-result.js';
-export { resolveCurrentExecutionUnit } from './execution-units.js';
+export { extractUnitOutputs, resolveCurrentExecutionUnit } from './execution-units.js';
 export {
   buildContextVars,
   buildStepVariables,
@@ -120,6 +120,7 @@ export * from './claim-activity.js';
 export * from './claim-id.js';
 export * from './duration.js';
 export * from './last-action.js';
+export * from './session-release.js';
 export * from './transition-kernel.js';
 // `manual-delegation-machine.js` is deliberately NOT barrelled. Publishing
 // `prepareManualDelegation` would invite a front end to drive delegation around
@@ -688,6 +689,7 @@ export {
   type VariableValue,
 } from './effective-vars.js';
 export {
+  deriveOutputScope,
   partitionOutputDeclarations,
   outputsDirForRun,
   outputChannelPath,

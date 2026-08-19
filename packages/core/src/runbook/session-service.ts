@@ -176,6 +176,44 @@ export function projectRunbookRelease(
   };
 }
 
+/**
+ * Remove the topmost stack entry for a run, and nothing else.
+ *
+ * The undo of a bare `defaultStack.push`, and deliberately not a variant of
+ * {@link projectRunbookRelease}. That primitive revokes every claim
+ * controlling the run and clears a matching stash slot, which is correct when
+ * a run is genuinely released, and wrong as the undo of a push: the push mints
+ * no claim and never reads `session.claims`, so an undo that disposes of
+ * authority destroys what the operation being undone never created (#788).
+ *
+ * The input is the stack array rather than the whole `SessionData`, and that
+ * narrowness IS the guarantee. A release policy expressed as an option can be
+ * omitted, and omission reads as the destructive direction; a function holding
+ * no reference to `claims` or `stashedRunbookId` cannot revoke or clear either,
+ * today or after an edit that forgets why it must not.
+ *
+ * Only the topmost occurrence goes. `session_stack` carries no uniqueness
+ * constraint — adding one would make an existing session with a duplicate
+ * impossible to load, which the no-migration rule forbids — so a run can
+ * appear lower in the stack, and an undo of one push must leave that entry
+ * alone. `projectRunbookRelease` filters every occurrence, which is right for
+ * a release and wrong here.
+ *
+ * Returns nothing: the sole caller reads the new top back off the stack it
+ * passed in, and a `not-on-stack` status it cannot reach would be dead code
+ * rather than defence.
+ *
+ * @param defaultStack - The session's active-run stack, mutated in place
+ * @param runbookId - Run whose topmost stack entry is removed
+ */
+export function projectStackPop(defaultStack: RunId[], runbookId: RunId): void {
+  const index = defaultStack.lastIndexOf(runbookId);
+  // Guarded because `splice(-1, 1)` would remove the top — a run that is absent
+  // must cost nothing, not somebody else's entry.
+  if (index === -1) return;
+  defaultStack.splice(index, 1);
+}
+
 /** Force-terminal command kind that drives inline-root resolution. */
 export type InlineForceTerminalKind = 'complete' | 'stop';
 
@@ -2000,11 +2038,30 @@ export class SessionService {
    * `execution_in_progress` refusal naming a foreign run this call was never
    * going to touch.
    *
+   * What it removes is one stack entry. Claims controlling the run survive, and
+   * a stash slot naming it survives, because the push this undoes created
+   * neither (#788). Revoking the run-control claim here was irrecoverable: the
+   * child is still live and still resumable, and `adoptRunControlClaim` refuses
+   * to re-mint once that child has issued a delegation, so nothing addressed
+   * the run again — and the holder read the revocation as `claim-rotated`, a
+   * rotation that never happened.
+   *
+   * Still {@link mutateGuarded}. A stack-only projection issues no guarded
+   * statement, so the two ownership refusals below are now unreachable through
+   * this path, and the caller's arms for them are unreachable with them. They
+   * stay until a test drives a run holding a stale lease: the preflight refuses
+   * on `exec_token IS NOT NULL` with no liveness probe, and this method's one
+   * caller is the crash-recovery path where the child provably holds a lease
+   * naming a dead pid — so the guard can only refuse where the undo must run.
+   * Removing it is a separate change, and the projection above is what makes it
+   * a no-op rather than a lossy edit.
+   *
    * @param expected - The only run this may pop.
    * @returns `popped` with the new top when `expected` was still active, or
    *   `not-active` naming whatever holds the top instead. Refused
    *   `execution_in_progress` or `recovery_required` instead when `expected` is
-   *   execution-owned or awaiting recovery; the value is absent then.
+   *   execution-owned or awaiting recovery; the value is absent then. Claims
+   *   and the stash slot are untouched on every arm.
    */
   async popRunbookIfActive(expected: RunId): Promise<SessionMutationResult<PopIfActiveResult>> {
     return this.mutateGuarded(
@@ -2023,12 +2080,15 @@ export class SessionService {
         if (topId !== expected) {
           return { status: 'not-active', activeRunbookId: topId };
         }
-        // The release mutates `ctx.session` in place, and `expected` is provably
-        // on the stack here, so the new top is read back rather than taken from
-        // the result's `released` arm — the `not-found` arm that branch would
-        // guard against cannot be reached from inside this `if`, and an
-        // unreachable guard is dead code, not defence.
-        this.releaseFromSession(ctx.session, expected);
+        // A stack-only projection, never `releaseFromSession`: this undoes a
+        // push, and the push minted no claim and wrote no stash slot, so the
+        // undo must dispose of neither. It takes the stack array alone, so it
+        // could not reach `claims` even if a later edit asked it to.
+        //
+        // It mutates in place, and `expected` is provably on the stack here, so
+        // the new top is read back rather than returned — a status arm that
+        // cannot be reached from inside this `if` is dead code, not defence.
+        projectStackPop(ctx.session.defaultStack, expected);
         return {
           status: 'popped',
           runbookId: expected,

@@ -44,7 +44,10 @@ import type {
   CollectionSessionService,
   RunbookCollectionServiceDependencies,
 } from '../../src/runbook/collection-service.js';
-import type { ExecutionObservationEffect } from '../../src/events/execution-observation.js';
+import type {
+  ExecutionObservationEffect,
+  StepEntryMetadata,
+} from '../../src/events/execution-observation.js';
 import type { RecoveryActor } from '../../src/runbook/execution-recovery-service.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { brandCurrentCursorResolvedCompletionForTest } from '../../src/runbook/completion-service.js';
@@ -2595,6 +2598,143 @@ describe('RunbookCollectionService', () => {
       targetRunId: runId,
       applied: 0,
       reEntryObservations: reEntryEffects,
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // #816 characterisation — the COLLECT half of the STEP_ENTERED divergence.
+  //
+  // `prepareCollectReEntryFrontier` and the CLI execution loop both build a
+  // `StepEntryMetadata`, and they disagree about what it carries. These pin what
+  // THIS builder does today. The loop half is pinned in the CLI's
+  // `services/execution-loop.test.ts`, and the two paths are contrasted end to
+  // end in `integration/step-entered-divergence-characterisation.test.ts`.
+  //
+  // Additive by construction: every payload pinned above stays exactly as it is,
+  // so the fix that follows shows up as an assertion flipping here rather than
+  // as churn across the suite.
+  // ---------------------------------------------------------------------------
+  describe('STEP_ENTERED entry metadata (#816 characterisation)', () => {
+    /**
+     * Run a no-op collect that projects a valid frontier and return the entry it
+     * handed `observeExecutionUnitEntry`.
+     *
+     * A local twin of `projectFrontierAndCapture` above, which closes over the
+     * shared `steps` fixture. This one takes the step graph, because the
+     * `prompted` characterisation below needs a step KIND the shared fixture
+     * does not carry.
+     *
+     * @param collectSteps - Step graph the collect resolves its target step in.
+     * @param overrides - Target-state overrides applied on top of the fixture.
+     * @returns The single captured entry metadata.
+     */
+    async function captureCollectEntry(
+      collectSteps: ResolvedStep[],
+      overrides: Partial<RunbookState> = {},
+    ): Promise<StepEntryMetadata> {
+      const frameKey = buildFrameKey('1');
+      const retry = frontierEntry();
+      const target = state({
+        retryCount: 1,
+        snapshot: { context: { delegateFrontier: [retry.persisted] } },
+        ...overrides,
+      });
+      await manager.save(target);
+      jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
+        status: 'continue',
+        state: target,
+        unresolved: 1,
+        applied: [],
+      });
+      const observeEntrySpy = jest
+        .spyOn(actorService, 'observeExecutionUnitEntry')
+        .mockResolvedValue([]);
+      jest
+        .spyOn(actorService, 'prepareActorMutation')
+        .mockResolvedValue(preparedMutation(target, { context: {} }));
+
+      const outcome = await collectionService.collectDelegationOutcomes({
+        targetState: target,
+        steps: collectSteps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(frameKey, 1),
+      });
+
+      expect(outcome.kind).toBe('collection_applied');
+      expect(observeEntrySpy).toHaveBeenCalledTimes(1);
+      return observeEntrySpy.mock.calls[0][2];
+    }
+
+    it('carries none of the four rendered fields, though the substep it names has a description', async () => {
+      // The shared fixture gives substep '1' a description, so a builder that
+      // rendered anything at all would have something to render here.
+      expect(steps[0]).toMatchObject({
+        substeps: expect.arrayContaining([expect.objectContaining({ id: '1', description: 'A' })]),
+      });
+
+      const entry = await captureCollectEntry(steps);
+
+      // THE DIVERGENCE. All four rendered fields are optional on
+      // `StepEntryMetadata`, which is what lets this builder omit every one of
+      // them and still compile against a type the CLI loop fills completely.
+      // `hasCommand` on the derived event is computed as
+      // `commandCode !== undefined`, so the omission does not stop at the
+      // absent fields — it decides a flag too.
+      //
+      // CORRECT VALUE: the rendered fields, as the loop supplies them. A
+      // substep's description does not depend on which command entered it, so
+      // this path under-fills.
+      expect(entry.description).toBeUndefined();
+      expect(entry.prompt).toBeUndefined();
+      expect(entry.commandCode).toBeUndefined();
+      expect(entry.commandLang).toBeUndefined();
+      // The fields it DOES fill, so the omission reads as a gap in one builder
+      // rather than as an entry naming some other unit.
+      expect(entry).toMatchObject({
+        stepId: '1',
+        substepId: '1',
+        stepName: '1',
+        isSubstep: true,
+      });
+    });
+
+    it('reads prompted off the persisted flag alone, never off the step kind', async () => {
+      // The same two delegate substeps, hung off a step whose FOR bounds did
+      // not resolve. `resolvedStepHasSubsteps` accepts `prompted-for`, so the
+      // collect reaches its frontier exactly as it does for the shared fixture.
+      const promptedForSteps: ResolvedStep[] = [
+        {
+          kind: 'prompted-for',
+          name: '1',
+          description: 'Delegate work',
+          prompt: 'FOR item IN {{ items }}',
+          substeps: [
+            { id: '1', description: 'A', delegate: true, transitions: tx('CONTINUE', 'STOP') },
+            { id: '2', description: 'B', delegate: true, transitions: tx('CONTINUE', 'STOP') },
+          ],
+          transitions: tx('CONTINUE', 'STOP'),
+        },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'After collection',
+          transitions: tx('CONTINUE', 'STOP'),
+        },
+      ];
+
+      const entry = await captureCollectEntry(promptedForSteps, { prompted: undefined });
+
+      // THE DIVERGENCE. This builder never looks at the step graph, so a
+      // prompted-FOR step reports `prompted: false` on the persisted flag
+      // alone. The CLI loop ORs `currentStep.kind === 'prompted-for'` into the
+      // same field and reports `true` for this exact cursor and step — pinned
+      // in the CLI's `execution-loop.test.ts`.
+      //
+      // CORRECT VALUE: `true`. The field documents whether execution is
+      // prompted rather than automatic, and a prompted-FOR step is: the loop
+      // returns 'waiting' on that same term. So this path under-reports, and
+      // the fix makes the composed value the one both paths derive.
+      expect(entry.prompted).toBe(false);
     });
   });
 

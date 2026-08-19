@@ -3,6 +3,7 @@ import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import {
+  deriveOutputScope,
   partitionOutputDeclarations,
   outputsDirForRun,
   outputChannelPath,
@@ -11,6 +12,60 @@ import {
   readCapturedOutputs,
   type OutputScope,
 } from '../../src/runbook/output-channels.js';
+import type { ForContext } from '../../src/runbook/types.js';
+
+function rangeFrame(stepId: string, iteration: number, implicit: boolean): ForContext {
+  return { stepId, iteration, start: 1, end: 10, implicit, source: { kind: 'range' } };
+}
+
+describe('deriveOutputScope', () => {
+  it('returns only the step tier for a step-level unit', () => {
+    expect(deriveOutputScope('1', undefined, [])).toEqual({ stepId: '1' });
+    expect(deriveOutputScope('ErrorHandler', undefined, [])).toEqual({
+      stepId: 'ErrorHandler',
+    });
+  });
+
+  it('omits the substep tier for a step-level unit even under a matching FOR frame', () => {
+    // FOR loops always execute their commands inside substeps, so a step-level
+    // unit contributes no iteration: `{ stepId, iteration }` stays
+    // unrepresentable because iteration nests inside the substep tier.
+    const scope = deriveOutputScope('1', undefined, [rangeFrame('1', 2, false)]);
+    expect(scope).toEqual({ stepId: '1' });
+    expect(scope).not.toHaveProperty('substep');
+  });
+
+  it('adds the substep tier when a substep id names the unit', () => {
+    expect(deriveOutputScope('1', '2', [])).toEqual({ stepId: '1', substep: { id: '2' } });
+  });
+
+  it('nests the iteration inside the substep tier for a matching non-implicit frame', () => {
+    expect(deriveOutputScope('1', '2', [rangeFrame('1', 3, false)])).toEqual({
+      stepId: '1',
+      substep: { id: '2', iteration: 3 },
+    });
+  });
+
+  it('omits the iteration tier when the top FOR frame is implicit', () => {
+    const scope = deriveOutputScope('1', '2', [rangeFrame('1', 3, true)]);
+    expect(scope).toEqual({ stepId: '1', substep: { id: '2' } });
+    expect(scope.substep).not.toHaveProperty('iteration');
+  });
+
+  it('omits the iteration tier when the top FOR frame belongs to another step', () => {
+    const scope = deriveOutputScope('1', '2', [rangeFrame('99', 3, false)]);
+    expect(scope).toEqual({ stepId: '1', substep: { id: '2' } });
+    expect(scope.substep).not.toHaveProperty('iteration');
+  });
+
+  it('reads the innermost frame when frames are stacked', () => {
+    const scope = deriveOutputScope('1', '2', [
+      rangeFrame('1', 1, false),
+      rangeFrame('1', 5, false),
+    ]);
+    expect(scope.substep?.iteration).toBe(5);
+  });
+});
 
 describe('partitionOutputDeclarations', () => {
   it('separates naked and expression entries preserving order', () => {

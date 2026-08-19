@@ -5,7 +5,11 @@ import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { RunbookStateManager, type SessionData } from '../../src/runbook/state.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
-import { SessionService, projectRunbookRelease } from '../../src/runbook/session-service.js';
+import {
+  SessionService,
+  projectRunbookRelease,
+  projectStackPop,
+} from '../../src/runbook/session-service.js';
 import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 import {
   assertClaimId,
@@ -287,6 +291,64 @@ describe('SessionService', () => {
       const session = await manager.loadSession();
       expect(session.defaultStack).toEqual([mine.id, mid.id, foreign.id]);
       expect(session.claims[minted.claim.claimKey]).toBeDefined();
+    });
+
+    // #788. The undo of a push must dispose of nothing the push created, and
+    // the push creates one stack entry. Revoking the claim here was
+    // irrecoverable: the child survives the rollback and the next attempt
+    // resumes it, but `adoptRunControlClaim` refuses to re-mint once that child
+    // has issued a delegation, so nothing addressed the run again.
+    it("popRunbookIfActive leaves the popped run's run-control claim intact", async () => {
+      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
+        runbookPath: 'parent.md',
+      });
+      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
+        runbookPath: 'child.md',
+      });
+      await sessionService.pushRunbook(parent.id);
+      // Pushed and claimed the way an inline launch does it, so the claim under
+      // test is a real run-control bearer an orchestrator could still hold.
+      const minted = unwrapSessionMutation(
+        await sessionService.pushRunbookWithRunControlClaim(child.id),
+      );
+
+      const result = unwrapSessionMutation(await sessionService.popRunbookIfActive(child.id));
+
+      expect(result).toEqual({
+        status: 'popped',
+        runbookId: child.id,
+        nextDefaultRunbookId: parent.id,
+      });
+      const session = await manager.loadSession();
+      expect(session.defaultStack).toEqual([parent.id]);
+      // The whole point: the run left the stack, the authority over it did not.
+      expect(session.claims[minted.claim.claimKey]).toBeDefined();
+      expect(session.claims[minted.claim.claimKey].controlledRunId).toBe(child.id);
+    });
+
+    // `session_stack` has no uniqueness constraint, and cannot gain one without
+    // making an existing session impossible to load, so a run can sit lower
+    // in the stack as well. Undoing one push must leave that entry alone —
+    // `releaseRunbook` filters every occurrence, which is why it is not the fix.
+    it('popRunbookIfActive removes only the topmost entry for a repeated run', async () => {
+      const outer = await manager.create({ source: 'project', path: 'outer.md' }, mockRunbook, {
+        runbookPath: 'outer.md',
+      });
+      const mid = await manager.create({ source: 'project', path: 'mid.md' }, mockRunbook, {
+        runbookPath: 'mid.md',
+      });
+      await sessionService.pushRunbook(outer.id);
+      await sessionService.pushRunbook(mid.id);
+      await sessionService.pushRunbook(outer.id);
+
+      const result = unwrapSessionMutation(await sessionService.popRunbookIfActive(outer.id));
+
+      expect(result).toEqual({
+        status: 'popped',
+        runbookId: outer.id,
+        nextDefaultRunbookId: mid.id,
+      });
+      expect((await manager.loadSession()).defaultStack).toEqual([outer.id, mid.id]);
     });
 
     it('popRunbookIfActive reports an empty stack as not-active', async () => {
@@ -4574,6 +4636,59 @@ describe('SessionService', () => {
       const result = await sessionService.resolveActiveInlineForceTerminalPlan('complete');
       expect(result).toEqual({ status: 'none', kind: 'complete' });
     });
+  });
+});
+
+describe('projectStackPop', () => {
+  // The undo of a bare `defaultStack.push`. Exercised directly because its
+  // narrow input is the point: it takes the stack array, so a session field it
+  // must not touch is not reachable from inside it.
+  const RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
+  const OTHER_RUN_ID = brandRunIdForTest(`rd_${'b'.repeat(32)}`);
+
+  it('removes the topmost entry for the run', () => {
+    const stack = [OTHER_RUN_ID, RUN_ID];
+
+    projectStackPop(stack, RUN_ID);
+
+    expect(stack).toEqual([OTHER_RUN_ID]);
+  });
+
+  it('leaves a lower entry for the same run in place', () => {
+    const stack = [RUN_ID, OTHER_RUN_ID, RUN_ID];
+
+    projectStackPop(stack, RUN_ID);
+
+    expect(stack).toEqual([RUN_ID, OTHER_RUN_ID]);
+  });
+
+  // Without the `index === -1` guard, `splice(-1, 1)` removes the LAST entry —
+  // so an absent run would cost whoever holds the top their stack entry.
+  it('removes nothing when the run is not on the stack', () => {
+    const stack = [OTHER_RUN_ID];
+
+    projectStackPop(stack, RUN_ID);
+
+    expect(stack).toEqual([OTHER_RUN_ID]);
+  });
+
+  it('removes nothing from an empty stack', () => {
+    const stack: RunId[] = [];
+
+    projectStackPop(stack, RUN_ID);
+
+    expect(stack).toEqual([]);
+  });
+
+  it('mutates the array in place rather than replacing it', () => {
+    const stack = [OTHER_RUN_ID, RUN_ID];
+    const same = stack;
+
+    projectStackPop(stack, RUN_ID);
+
+    // The caller passes `session.defaultStack` and reads the new top back off
+    // the same reference, so a reassignment would leave the session unchanged.
+    expect(same).toEqual([OTHER_RUN_ID]);
   });
 });
 

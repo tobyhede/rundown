@@ -188,8 +188,6 @@ describe('persisted context hygiene properties', () => {
         type: 'EXECUTE_COMMAND',
         command: 'true',
         displayCommand: 'true',
-        outputScope: { stepId: '1' },
-        nakedOutputs: [],
         rdInjected: { RD_RUN_ID: 'rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' },
       });
       await waitFor(actor, (snap) => !snap.hasTag(PENDING_MACHINE_EFFECT_TAG));

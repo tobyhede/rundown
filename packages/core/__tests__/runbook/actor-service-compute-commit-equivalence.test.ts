@@ -277,8 +277,6 @@ describe('prepareActorMutation / sendAndSync equivalence', () => {
       command: 'true',
       displayCommand: 'true',
       runbookPath: 'workflow.runbook.md',
-      outputScope: { stepId: '1' },
-      nakedOutputs: [],
       rdInjected: { RD_RUN_ID: runId },
     };
     const { computed, computedEffects, persisted, persistedEffects } = await bothHalves(
@@ -320,8 +318,6 @@ describe('prepareActorMutation / sendAndSync equivalence', () => {
       command: 'curl https://example.test',
       displayCommand: 'curl https://example.test',
       runbookPath: 'workflow.runbook.md',
-      outputScope: { stepId: '1' },
-      nakedOutputs: [],
       rdInjected: { RD_RUN_ID: runId },
     };
     const { computed, computedEffects, persisted, persistedEffects } = await bothHalves(

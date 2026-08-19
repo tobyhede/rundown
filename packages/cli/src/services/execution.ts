@@ -47,9 +47,7 @@ import {
   ErrorCodes,
   type ErrorCodeKey,
   getErrorMessage,
-  partitionOutputDeclarations,
   resolveCurrentExecutionUnit,
-  type OutputScope,
   deriveTransitionObservation,
   asTerminalSnapshotOrDefault,
   isRunbookStopped,
@@ -60,7 +58,6 @@ import {
   createEffectfulActorMutationRunner,
   type EffectfulActorMutationRunner,
 } from '@rundown-org/core';
-import { resolvedStepHasSubsteps, type OutputDeclaration } from '@rundown-org/parser';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import {
   inlineLinkageFromIntent,
@@ -118,68 +115,6 @@ export function findStepOrThrow(steps: ResolvedStep[], stepName: string): Resolv
   const step = steps.find((s) => s.name === stepName);
   if (!step) throw new Error(`Step '${stepName}' not found — possible state corruption`);
   return step;
-}
-
-/**
- * Derive the output-channel scope for the unit currently being executed.
- *
- * Produces one of three tier compositions:
- * - `{ stepId }` — step-level (no substep, no iteration)
- * - `{ stepId, substep: { id } }` — substep-level, no FOR loop
- * - `{ stepId, substep: { id, iteration } }` — substep inside a FOR loop
- *
- * Tier population:
- * - substep tier: set from `substepId` when both `isSubstep` is true and
- *   `substepId` is defined — the `isSubstep` guard is a belt-and-suspenders
- *   check; the nested type makes iteration-without-substep unrepresentable
- * - iteration tier: set from `top.iteration` when `isSubstep` is true AND
- *   the top FOR frame is non-implicit and its `stepId` matches
- *   `currentState.step`
- *
- * Implicit FOR frames contribute no iteration tier — implicit frames have no
- * user-visible counter to segment the path with.
- *
- * @param currentState - The runbook state at the moment of execution
- * @param isSubstep - Whether the current execution unit is a substep
- * @param substepId - The substep id when isSubstep is true
- * @returns OutputScope suitable for `outputChannelPath` / `prepareOutputChannels`
- */
-export function deriveOutputScope(
-  currentState: RunbookState,
-  isSubstep: boolean,
-  substepId?: string,
-): OutputScope {
-  const stepId = currentState.step;
-  if (!isSubstep || substepId === undefined) {
-    return { stepId };
-  }
-  const top = currentState.forStack?.at(-1);
-  if (top && !top.implicit && top.stepId === stepId) {
-    return { stepId, substep: { id: substepId, iteration: top.iteration } };
-  }
-  return { stepId, substep: { id: substepId } };
-}
-
-/**
- * Extract the OUTPUTS declarations attached to the execution unit currently
- * being run. For a substep, return the substep's OUTPUTS; for a step-level
- * command, return the parent step's OUTPUTS.
- *
- * @param currentStep - The resolved parent step
- * @param isSubstep - Whether a substep is being executed
- * @param substepId - The substep id when isSubstep is true
- * @returns Output declarations or empty array
- */
-export function extractUnitOutputs(
-  currentStep: ResolvedStep,
-  isSubstep: boolean,
-  substepId?: string,
-): readonly OutputDeclaration[] {
-  if (isSubstep && substepId !== undefined && resolvedStepHasSubsteps(currentStep)) {
-    const sub = currentStep.substeps.find((s) => s.id === substepId);
-    return sub?.outputs ?? [];
-  }
-  return currentStep.outputs ?? [];
 }
 
 type TransitionApplicationResult =
@@ -1699,11 +1634,6 @@ export async function runExecutionLoop(
       return 'waiting';
     }
 
-    const substepId = isSubstep ? itemToRender.id : undefined;
-    const unitOutputs = extractUnitOutputs(currentStep, isSubstep, substepId);
-    const { naked: nakedOutputs } = partitionOutputDeclarations(unitOutputs);
-    const outputScope = deriveOutputScope(currentState, isSubstep, substepId);
-
     // Build rundown-injected environment variables (RD_WORK_PATH, RD_RUN_ID, etc.)
     // Keys come from BUILTIN_VARIABLES so a rename in variable-discovery.ts
     // surfaces here as a typecheck error instead of silently breaking injection.
@@ -1750,8 +1680,6 @@ export async function runExecutionLoop(
             command: expandedCommandCode,
             displayCommand,
             runbookPath: capturedState.runbookPath,
-            outputScope,
-            nakedOutputs,
             rdInjected,
           },
           { issueDelegationCredential: options.delegationRuntime?.issueDelegationCredential },

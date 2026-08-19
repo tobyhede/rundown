@@ -476,3 +476,4 @@ lstart
 unaddressable
 decorrelate
 decorrelates
+characterisation

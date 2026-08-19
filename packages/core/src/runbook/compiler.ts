@@ -29,7 +29,9 @@ import type { StepId } from './step-id.js';
 import type { DelegationTokenHash } from './delegation-token.js';
 import type { ArtifactDeclaration, ForClause, OutputDeclaration } from '@rundown-org/parser';
 import { MAX_FOR_BOUND } from '@rundown-org/parser';
-import type { NakedOutput, OutputScope, PreparedChannel } from './output-channels.js';
+import { deriveOutputScope, partitionOutputDeclarations } from './output-channels.js';
+import type { NakedOutput, PreparedChannel } from './output-channels.js';
+import { extractUnitOutputs } from './execution-units.js';
 import {
   artifactResolveActor,
   type ArtifactResolveInput,
@@ -825,11 +827,37 @@ function requireCommandCwd(evaluationOptions: EvaluateOutputOptions | undefined)
   return evaluationOptions.cwd;
 }
 
+/**
+ * Assemble the command actor's input for one execution unit.
+ *
+ * The OUTPUTS half of this input is derived here rather than carried on the
+ * event, and its two halves enter through different doors for the reasons in
+ * CLAUDE.md § Actor dependencies. `nakedOutputs` is compile-time-bound — the
+ * unit's OUTPUTS declarations are fixed by the parsed runbook, so the leaf
+ * builder resolves them once and closes over them. `outputScope` is
+ * event-time-bound: its iteration tier comes from `context.forStack`, which
+ * changes per FOR iteration, so it is read from context at fire time.
+ *
+ * `stepName`/`substepId` name this leaf, so the scope is derived against the
+ * machine's own position rather than against a cursor a caller reports.
+ *
+ * @param event - The dispatched EXECUTE_COMMAND event
+ * @param context - Machine context at fire time
+ * @param evaluationOptions - Compile-time evaluation options supplying `cwd`
+ * @param commandServices - DI'd command execution callables
+ * @param stepName - Step owning this leaf state
+ * @param substepId - Substep owning this leaf state, when it is a substep
+ * @param nakedOutputs - Compile-time-resolved naked OUTPUTS for the unit
+ * @returns Fully assembled command actor input
+ */
 function buildCommandExecutionInput(
   event: Extract<RunbookEvent, { type: 'EXECUTE_COMMAND' }>,
   context: RunbookContext,
   evaluationOptions: EvaluateOutputOptions | undefined,
   commandServices: CommandExecutionServices | undefined,
+  stepName: string,
+  substepId: string | undefined,
+  nakedOutputs: readonly NakedOutput[],
 ): CommandExecutionInput {
   return {
     services: requireCommandServices(commandServices),
@@ -839,8 +867,8 @@ function buildCommandExecutionInput(
     runId: assertRunId(requireStringTemplateVar(context.templateVars, 'RunId')),
     runbookPath: event.runbookPath,
     runbook: requireRunbookRef(context.templateVars),
-    outputScope: event.outputScope,
-    nakedOutputs: event.nakedOutputs,
+    outputScope: deriveOutputScope(stepName, substepId, context.forStack),
+    nakedOutputs,
     rdInjected: event.rdInjected,
   };
 }
@@ -1195,8 +1223,6 @@ export type RunbookEvent =
       command: string;
       displayCommand: string;
       runbookPath?: string;
-      outputScope: OutputScope;
-      nakedOutputs: readonly NakedOutput[];
       rdInjected: Record<string, string>;
     }
   | {
@@ -4742,6 +4768,12 @@ export function compileRunbookToMachine(
     ];
     const owningStep = steps.find((step) => step.name === config.stepName);
     const needsIteration = owningStep !== undefined && leafNeedsIterationResolution(owningStep);
+    // Compile-time-bound: which names this unit captures is fixed by the parsed
+    // runbook, so it is resolved once here and closed over by the invoke input
+    // rather than re-derived (or supplied by a caller) on every execution.
+    const { naked: unitNakedOutputs } = partitionOutputDeclarations(
+      owningStep === undefined ? [] : extractUnitOutputs(owningStep, config.substepId),
+    );
     const afterArtifactsTarget = shouldIssueDelegations
       ? '__issue-delegations'
       : shouldPrepareInlineLaunch
@@ -5027,6 +5059,9 @@ export function compileRunbookToMachine(
                 context,
                 evaluationOptions,
                 options?.commandServices,
+                config.stepName,
+                config.substepId,
+                unitNakedOutputs,
               );
             },
             onDone: [

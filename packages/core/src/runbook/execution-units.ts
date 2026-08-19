@@ -1,4 +1,5 @@
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
+import type { OutputDeclaration } from '@rundown-org/parser';
 import type { ResolvedStep, Substep } from './types.js';
 
 /**
@@ -19,4 +20,33 @@ export function resolveCurrentExecutionUnit(
     return currentStep;
   }
   return currentStep.substeps.find((substep) => substep.id === substepId) ?? currentStep;
+}
+
+/**
+ * Extract the OUTPUTS declarations attached to one execution unit.
+ *
+ * For a substep, return the substep's OUTPUTS; for a step-level command,
+ * return the parent step's OUTPUTS. On a step that DEFINES substeps, a
+ * `substepId` naming none of them yields no declarations rather than silently
+ * falling back to the parent's — the parent's OUTPUTS belong to a different
+ * channel path, so capturing them under a substep scope would misfile them.
+ *
+ * A `substepId` on a step that defines NO substeps is the other case, and it
+ * DOES return the step's own OUTPUTS. That is not the misfiling above:
+ * {@link resolveCurrentExecutionUnit} resolves the same cursor to the parent
+ * step, so the unit being entered really is the step and its declarations are
+ * the ones in scope.
+ *
+ * @param currentStep - The resolved parent step
+ * @param substepId - Substep identifier, or undefined for a step-level unit
+ * @returns Output declarations for the unit, or an empty list
+ */
+export function extractUnitOutputs(
+  currentStep: ResolvedStep,
+  substepId: string | undefined,
+): readonly OutputDeclaration[] {
+  if (substepId !== undefined && resolvedStepHasSubsteps(currentStep)) {
+    return currentStep.substeps.find((s) => s.id === substepId)?.outputs ?? [];
+  }
+  return currentStep.outputs ?? [];
 }
