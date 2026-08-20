@@ -6,4 +6,5 @@ import type { RenderedUnitCommand } from '../../../src/runbook/execution-unit-en
 
 declare const value: string;
 
+/** Forged from a `string`, which only the detour through `unknown` makes assignable. */
 export const forged = value as unknown as RenderedUnitCommand;

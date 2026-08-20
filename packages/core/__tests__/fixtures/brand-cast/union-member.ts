@@ -10,4 +10,5 @@ import type { RenderedUnitCommand } from '../../../src/runbook/execution-unit-en
 
 declare const value: unknown;
 
+/** Forged as one constituent of a union the checker does not collapse away. */
 export const forged = value as RenderedUnitCommand | undefined;

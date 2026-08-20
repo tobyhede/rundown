@@ -7,4 +7,5 @@ type Laundered = RenderedUnitCommand;
 
 declare const value: unknown;
 
+/** Forged through an alias, so nothing at the assertion site names the brand. */
 export const forged = value as Laundered;

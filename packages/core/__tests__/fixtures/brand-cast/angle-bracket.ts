@@ -5,4 +5,5 @@ import type { RenderedUnitCommand } from '../../../src/runbook/execution-unit-en
 
 declare const value: unknown;
 
+/** Forged through the pre-JSX assertion node rather than `as`. */
 export const forged = <RenderedUnitCommand>value;

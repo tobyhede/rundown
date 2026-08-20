@@ -7,4 +7,5 @@ interface Laundered extends RenderedUnitCommand {}
 
 declare const value: unknown;
 
+/** Forged through a distinct symbol that merely inherits the brand. */
 export const forged = value as Laundered;

@@ -8,4 +8,5 @@ type Second = First;
 
 declare const value: unknown;
 
+/** Forged two alias hops from the brand, past any single-level unwrap. */
 export const forged = value as Second;

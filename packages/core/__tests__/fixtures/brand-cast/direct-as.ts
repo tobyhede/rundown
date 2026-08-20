@@ -4,4 +4,5 @@ import type { RenderedUnitCommand } from '../../../src/runbook/execution-unit-en
 
 declare const value: unknown;
 
+/** Forged by the plainest route: one `as` naming the brand directly. */
 export const forged = value as RenderedUnitCommand;

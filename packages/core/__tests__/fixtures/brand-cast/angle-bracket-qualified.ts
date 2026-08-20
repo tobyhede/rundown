@@ -5,4 +5,5 @@ import type * as producer from '../../../src/runbook/execution-unit-entry.js';
 
 declare const value: unknown;
 
+/** Forged through both evasions at once: the older node and a qualified name. */
 export const forged = <producer.RenderedUnitCommand>value;

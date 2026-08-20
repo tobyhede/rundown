@@ -4,4 +4,5 @@ import type * as producer from '../../../src/runbook/execution-unit-entry.js';
 
 declare const value: unknown;
 
+/** Forged through a qualified name, so the annotation carries no bare identifier. */
 export const forged = value as producer.RenderedUnitCommand;

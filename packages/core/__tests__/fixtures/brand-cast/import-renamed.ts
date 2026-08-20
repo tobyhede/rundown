@@ -6,4 +6,5 @@ import type { RenderedUnitCommand as Renamed } from '../../../src/runbook/execut
 
 declare const value: unknown;
 
+/** Forged through an import rename, the spelling no selector can anticipate. */
 export const forged = value as Renamed;
