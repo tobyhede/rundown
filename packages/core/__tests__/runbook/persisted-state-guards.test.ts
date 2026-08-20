@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { ZodError } from 'zod';
 import { RunbookStateSchema } from '../../src/schemas.js';
 import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import {
@@ -661,27 +660,36 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
     });
   });
 
-  it('clears the version gate and escapes as a bare ZodError on both store read seams (#828)', async () => {
+  it('clears the version gate and is refused as invalid state on both store read seams', async () => {
     const store = await getRunbookStore(tmpDir);
     const runId = brandRunIdForTest(PRE_STARTED_RUN_ID);
 
-    // `loadRun` and the in-transaction `ctx.readState` share one validating read,
-    // but only its gate is classified: the version check passes (both are `1`),
-    // so both fall through to `readRun`'s `.parse()`, and the shape that fails it
-    // escapes as a bare `ZodError` — outside the taxonomy
-    // `isRecoverableActiveStackError` classifies on, which is what leaves a
-    // `--claim-id` bearer unable to finish, stop or prune the run. This is the
-    // accepted, tracked gap (#828), not a regression: moving
-    // `CURRENT_SCHEMA_VERSION` would close it for this specific trigger, and
-    // `persisted-state-guards.ts`'s doc comment records why that move was not
-    // made.
+    // `loadRun` and the in-transaction `ctx.readState` share one validating
+    // read, and this is the shape that reaches its parse: the version check
+    // passes (both are `1`), so nothing before the parse can refuse the row.
+    // Until #828 the parse threw a bare `ZodError` here — outside the taxonomy
+    // `isRecoverableActiveStackError` classifies on, so it surfaced as RD-999
+    // "Unknown error" and left a `--claim-id` bearer unable to finish, stop or
+    // prune the run. Both seams, because pinning only `loadRun` would leave the
+    // transactional read — the one `rundown stash` / `pop` go through on all
+    // four of their paths — unpinned.
     const seams: readonly (() => Promise<unknown>)[] = [
       () => store.loadRun(runId),
       () => store.mutateSession((ctx) => ctx.readState(runId)),
     ];
 
     for (const read of seams) {
-      await expect(read()).rejects.toBeInstanceOf(ZodError);
+      await expect(read()).rejects.toBeInstanceOf(InvalidRunbookStateError);
+      // The reason, not only the class. `invalid_schema_version` and
+      // `schema_validation_failed` share one error class, so the class alone
+      // cannot tell the version gate from the parse — and this row's version
+      // matches, so only the parse's reason is correct. It is the same reason
+      // `RunbookStateManager.load` reports for the same row above, which is the
+      // whole point: one taxonomy across both readers, past the gates as well
+      // as before them.
+      await expect(read()).rejects.toMatchObject({
+        defect: { runId: PRE_STARTED_RUN_ID, reason: 'schema_validation_failed' },
+      });
     }
   });
 

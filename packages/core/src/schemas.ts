@@ -962,9 +962,10 @@ const RunbookStateObjectSchema = z
     // Required, on the same reasoning as `templateVars` below.
     // `RunbookStateManager.create` always writes it (`false` at minimum), and it
     // decides whether the run announces its commands or executes them — a fact
-    // no reader may default. `state.load()` checks `schemaVersion` and names
-    // this field's absence explicitly before this schema parses, so requiring it
-    // here cannot mask invalid-state detection for rows of another version.
+    // no reader may default. `assertLoadablePersistedRun` checks `schemaVersion`
+    // and names this field's absence explicitly, at every reader, before this
+    // schema parses — so requiring it here cannot mask invalid-state detection
+    // for rows of another version.
     prompted: z.boolean(),
     lastResult: z.enum(['pass', 'fail']).optional(),
     lastAction: LastActionSchema.optional(),
@@ -972,7 +973,7 @@ const RunbookStateObjectSchema = z
     // Required: `RunbookStateManager.create` always writes it (`{}` at minimum),
     // and readers substitute `runbookSrc` against it on every resume. A row
     // without it is incompatible state whose only recovery is prune/restart —
-    // never a re-parse of the stored source. `state.load()` checks
+    // never a re-parse of the stored source. `assertLoadablePersistedRun` checks
     // `schemaVersion` before this schema parses, so requiring it here cannot
     // mask invalid-state detection for rows of another version.
     templateVars: z.record(z.string(), TemplateVarValueSchema),
