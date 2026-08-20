@@ -61,6 +61,7 @@ const steps: ResolvedStep[] = [
 function state(overrides: Partial<RunbookState> = {}): RunbookState {
   const frameKey = buildFrameKey('1');
   return {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id: runId,
     runbook: { source: 'project', path: 'p.md' },

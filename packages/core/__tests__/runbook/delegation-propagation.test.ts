@@ -35,6 +35,7 @@ describe('DelegationLinkage extended fields', () => {
       retryCount: 0,
       variables: {},
       templateVars: {},
+      prompted: false,
       steps: [],
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -170,6 +171,7 @@ describe('parentLinkage discriminated union schema', () => {
       retryCount: 0,
       variables: {},
       templateVars: {},
+      prompted: false,
       steps: [],
       startedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -282,6 +284,7 @@ describe('parentLinkage discriminated union schema', () => {
 describe('frame identity derivation for propagation', () => {
   function makeState(overrides: Partial<RunbookState>): RunbookState {
     return {
+      prompted: false,
       templateVars: brandInitialTemplateVarsForTest({}),
       id: LOCAL_RUN_ID,
       runbook: { source: 'project', path: 'test.md' },

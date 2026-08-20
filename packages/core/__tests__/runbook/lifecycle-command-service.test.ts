@@ -333,6 +333,7 @@ describe('RunbookLifecycleCommandService', () => {
 
   function baseState(overrides: Partial<RunbookState> = {}): RunbookState {
     return {
+      prompted: false,
       id: runId,
       runbook: { source: 'project', path: 'lifecycle-test.md' },
       runbookPath: 'lifecycle-test.md',

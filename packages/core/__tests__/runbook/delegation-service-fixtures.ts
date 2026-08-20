@@ -99,6 +99,7 @@ function makeTestSubstep(id: string): {
 /** Helper: create minimal RunbookState for testing. */
 export function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
+    prompted: false,
     id: brandRunIdForTest(`rd_${'c'.repeat(32)}`),
     runbook: { source: 'project', path: 'parent.md' },
     runbookPath: 'parent.md',

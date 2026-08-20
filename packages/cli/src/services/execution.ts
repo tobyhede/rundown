@@ -674,7 +674,7 @@ async function launchInlineChildFromIntent({
       emitRunbookStarted(
         childEmitter,
         existingChild,
-        !!existingChild.prompted,
+        existingChild.prompted,
         adoption.runtime.claimId,
       );
     }
@@ -1077,7 +1077,7 @@ export async function drainResolvedCompletions({
     // for each transition before the next apply is derived. That is why the loop
     // lives here rather than in core.
     const entry = applied.entry;
-    const currentStep = findStepOrThrow(steps, entry.stateBefore.step);
+    const currentStep = findStepOrThrow(steps, entry.stateBefore.step, entry.stateBefore.id);
     const observed = await observeAndOrchestrate({
       sessionService,
       emitter,
@@ -1133,15 +1133,16 @@ export async function drainResolvedCompletions({
  *   three arms come from the shared core seam
  *   {@link projectAndConsumeReEntryFrontier}, so `rundown collect` reports each
  *   condition under the same code.
- * @throws {Error} If state lookup via {@link findStepOrThrow} fails, the core
- *   actor/lifecycle/session services throw while advancing transitions, entering
- *   an execution unit cannot render it (a `--helpers` helper raising, or a run
- *   missing the `ContextId` / `WorkPath` its frame renders against), command
- *   execution rejects, or the emitter raises during event dispatch.
+ * @throws {Error} If the core actor/lifecycle/session services throw while
+ *   advancing transitions, entering an execution unit cannot render it (a
+ *   `--helpers` helper raising), command execution rejects, or the emitter
+ *   raises during event dispatch.
  * @throws {InvalidRunbookStateError} If the run's persisted snapshot carries a
- *   structurally malformed `delegateFrontier`. Per the no-migration rule this is
- *   corrupt persisted state whose recovery path is explicit user action
- *   (finish, stop, prune, restart), not a refusal the loop can absorb.
+ *   structurally malformed `delegateFrontier`, its cursor names a step the
+ *   parsed runbook does not define ({@link findStepOrThrow}), or it carries no
+ *   `ContextId` / `WorkPath` to render its frame against. Per the no-migration
+ *   rule each is corrupt persisted state whose recovery path is explicit user
+ *   action (finish, stop, prune, restart), not a refusal the loop can absorb.
  */
 export async function runExecutionLoop(
   manager: RunbookStateManager,
@@ -1164,29 +1165,10 @@ export async function runExecutionLoop(
   // `STEP_ENTERED` payload — moved into the entry seam, which reads the run
   // directly.
   //
-  // Stryker disable next-line BooleanLiteral: equivalent — the fallback is
-  // unreachable from any run this codebase's production code creates, but NOT
-  // because the type forbids it: `RunbookState.prompted` and
-  // `CreateOptions.prompted` (state.ts) are both declared `prompted?: boolean`,
-  // and unlike `templateVars`, `RunbookStateManager.load` carries no fail-closed
-  // guard for a missing one. What actually pins the value is call-site
-  // discipline instead: `RunbookStateManager.create` has one production call
-  // site (`runbook-pipeline.ts`'s `launchRunbook`, shared by `startRunbook` and
-  // `claimAndLaunch`), and every caller of that shared helper supplies a real
-  // boolean — `!!options.prompted` or `freshParent.prompted ?? false` — never
-  // `undefined`. So a persisted row this codebase creates always carries one; a
-  // row that reached this fallback would have to originate outside that path,
-  // which the no-migration rule treats as invalid state regardless. `false`
-  // versus `true` here is therefore not a behaviour this suite can pin.
-  //
-  // The sibling `&& false` mutation on this line is NOT equivalent and IS
-  // killed — by the inline-child prompted-inheritance pair in
-  // `integration/inline-child-launch.test.ts`, verified by hand-applying it.
-  // The scoped mutation gate still reports it as a survivor, because it runs
-  // this file against its dedicated UNIT suite alone: the one consumer is a
-  // child-run launch, which no unit suite can reach without stubbing out the
-  // launch pipeline it is trying to observe.
-  const prompted = state.prompted ?? false;
+  // No fallback: `RunbookState.prompted` is required and `RunbookStateManager`
+  // .`load` refuses a persisted row without it, so an absent flag is invalid
+  // state refused upstream rather than a mode this read has to guess at.
+  const prompted = state.prompted;
 
   const terminalReleaseMode = options.terminalReleaseMode ?? 'stack-pop';
   // Unconditional, in every release mode: the terminal session release is now
@@ -1207,7 +1189,7 @@ export async function runExecutionLoop(
   if (currentState.lifecycle === 'stopped') {
     const terminalSnap = asTerminalSnapshotOrDefault(currentState.snapshot);
     const snapIsTerminal = isRunbookStopped(terminalSnap) || isRunbookComplete(terminalSnap);
-    const currentStepForProjection = findStepOrThrow(steps, currentState.step);
+    const currentStepForProjection = findStepOrThrow(steps, currentState.step, currentState.id);
 
     if (snapIsTerminal) {
       // Machine-driven stop: delegate to core projection
@@ -1294,7 +1276,7 @@ export async function runExecutionLoop(
     }
 
     if (snapIsTerminal) {
-      const currentStepForProjection = findStepOrThrow(steps, currentState.step);
+      const currentStepForProjection = findStepOrThrow(steps, currentState.step, currentState.id);
       const observation = deriveTransitionObservation({
         steps,
         currentStep: currentStepForProjection,
@@ -1338,7 +1320,7 @@ export async function runExecutionLoop(
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
-    const currentStep = findStepOrThrow(steps, currentState.step);
+    const currentStep = findStepOrThrow(steps, currentState.step, currentState.id);
 
     const totalSteps = countNumberedSteps(steps);
 
@@ -1767,7 +1749,7 @@ export function buildMetadata(state: RunbookState): RunbookMetadata {
     file: state.runbook.path,
     state: DB_FILE,
     runId: state.id,
-    prompted: state.prompted ?? undefined,
+    prompted: state.prompted,
   };
 }
 

@@ -1680,7 +1680,13 @@ export class RunbookActorService {
    * @throws {InvalidRunbookStateError} When the run carries no `ContextId` or
    *   `WorkPath` to render its frame against.
    */
-  enterExecutionUnit(input: EnterExecutionUnitInput): Promise<ExecutionUnitEntry> {
+  // The `async` IS the contract here, not a leftover. The rule's premise is that
+  // an async function with no `await` could have been synchronous; this one
+  // could not. Dropping the keyword makes the three refusals below throw in the
+  // caller's own tick instead of rejecting the promise the signature returns, so
+  // a caller using `.catch(...)` or `Promise.all` observes no failure at all.
+  // eslint-disable-next-line @typescript-eslint/require-await -- see above: async is the contract
+  async enterExecutionUnit(input: EnterExecutionUnitInput): Promise<ExecutionUnitEntry> {
     const { state, steps } = input;
     if (state.snapshot) {
       this.assertFreshSnapshotValue(state.id, state.snapshot as PersistedRunbookSnapshot, steps);
@@ -1688,19 +1694,21 @@ export class RunbookActorService {
     // Compiled for its refusals alone — a run whose frontmatter OUTPUTS are
     // missing cannot be entered — which is why the machine is discarded.
     this.compileMachineFromState(state.id, state, steps);
-    // Promise-returning though the derivation is synchronous today: this is a
+    // `async` though every line of the body is synchronous today: this is a
     // service seam whose siblings are all async, and callers must not come to
-    // depend on it settling in the same tick.
-    return Promise.resolve(
-      deriveExecutionUnitEntry({
-        state,
-        steps,
-        delegateFrontier: input.delegateFrontier,
-        cwd: this.manager.cwd,
-        helpers: this.options.helpers,
-        position: input.position,
-      }),
-    );
+    // depend on it settling — or FAILING — in the same tick. Without the
+    // keyword the three refusals above and below throw in the caller's own
+    // tick, so a caller that attaches `.catch(...)` to the returned promise, or
+    // collects the call in `Promise.all`, never observes them at all. `await`
+    // callers are unaffected either way.
+    return deriveExecutionUnitEntry({
+      state,
+      steps,
+      delegateFrontier: input.delegateFrontier,
+      cwd: this.manager.cwd,
+      helpers: this.options.helpers,
+      position: input.position,
+    });
   }
 
   /**

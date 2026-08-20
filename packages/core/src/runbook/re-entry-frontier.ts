@@ -212,7 +212,9 @@ export interface ProjectAndConsumeReEntryFrontierInput {
  * @throws {Error} When the cursor names a step the runbook does not define.
  */
 function cursorIsOnSubstep(state: RunbookState, steps: readonly ResolvedStep[]): boolean {
-  return 'id' in resolveCurrentExecutionUnit(findStepOrThrow(steps, state.step), state.substep);
+  return (
+    'id' in resolveCurrentExecutionUnit(findStepOrThrow(steps, state.step, state.id), state.substep)
+  );
 }
 
 /**

@@ -1,5 +1,6 @@
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import type { OutputDeclaration } from '@rundown-org/parser';
+import { InvalidRunbookStateError } from './persisted-state-guards.js';
 import type { ResolvedStep, Substep } from './types.js';
 
 /**
@@ -11,14 +12,31 @@ import type { ResolvedStep, Substep } from './types.js';
  * that resolves an execution unit needs the same refusal, so it lives beside
  * {@link resolveCurrentExecutionUnit} rather than being re-declared per module.
  *
+ * The class is the contract, not the message. `rundown collect` wraps any
+ * non-`InvalidRunbookStateError` rejection out of the entry seam as RD-833,
+ * whose recovery is "fix the helper and re-delegate" — the wrong instruction for
+ * a diverged cursor, which is corrupt persisted state and recoverable only by
+ * prune or restart. Raising the typed refusal is what routes it onto the CLI's
+ * existing RD-309 finish/stop/prune path instead.
+ *
  * @param steps - Parsed steps for the run.
  * @param stepName - Step name from the run's cursor.
+ * @param runId - The run whose cursor is being resolved, for the RD-309 defect.
  * @returns The matching step.
- * @throws {Error} When no step carries that name.
+ * @throws {InvalidRunbookStateError} When no step carries that name.
  */
-export function findStepOrThrow(steps: readonly ResolvedStep[], stepName: string): ResolvedStep {
+export function findStepOrThrow(
+  steps: readonly ResolvedStep[],
+  stepName: string,
+  runId: string,
+): ResolvedStep {
   const step = steps.find((candidate) => candidate.name === stepName);
-  if (!step) throw new Error(`Step "${stepName}" not found`);
+  if (!step) {
+    throw new InvalidRunbookStateError(`Step "${stepName}" not found`, {
+      runId,
+      reason: 'cursor_step_not_in_runbook',
+    });
+  }
   return step;
 }
 

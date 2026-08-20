@@ -41,6 +41,7 @@ import {
   brandTrustedArtifactRecordForTest,
 } from '../../src/testing/effective-vars.js';
 import { seedRawRunState } from '../../src/testing/state-fixtures.js';
+import { getErrorMessage } from '../../src/errors.js';
 import {
   makeDelegatedSubstepState,
   makeDelegationCredentialIssuer,
@@ -1166,6 +1167,18 @@ echo ok
         reason: 'unsupported_snapshot_state_value',
       });
 
+      // A string the `step::…` grammar does not accept. A separate arm from the
+      // unreadable shape above — that one never reaches the parse — so its
+      // defect needs asserting separately or the whole literal can be emptied
+      // with this table still green.
+      const unparseable = await seed('rd_8888888888888888888888888888888f', {
+        value: 'some-old-format',
+      });
+      expect(await defectOf(unparseable)).toEqual({
+        runId: unparseable,
+        reason: 'unsupported_snapshot_state_value',
+      });
+
       const missingStep = await seed('rd_8888888888888888888888888888888d', {
         value: 'step::Gone',
       });
@@ -1174,6 +1187,56 @@ echo ok
         reason: 'snapshot_step_not_in_runbook',
       });
     });
+
+    // The recovery instruction, not just the diagnosis. Every refusal here is
+    // one run's corrupt persisted state, and what an operator can DO about it
+    // lives in the second sentence — a sentence the class-and-defect assertions
+    // above cannot see and the first-sentence message assertions stop short of.
+    // Emptying any of these leaves a refusal that says what is wrong and not how
+    // to recover, which for RD-309 is most of the value of the message.
+    it.each([
+      {
+        label: 'a transient parent-entry state',
+        runId: 'rd_888888888888888888888888888888a1',
+        snapshot: { value: 'step::1::__parent-entry::1' },
+        message:
+          /is a transient parent-entry state\. Prune invalid runbook state and restart execution\./,
+      },
+      {
+        label: 'an unparseable state value',
+        runId: 'rd_888888888888888888888888888888a2',
+        snapshot: { value: 'some-old-format' },
+        message:
+          /Unsupported persisted stateValue "some-old-format" .*\. Prune invalid runbook state and restart execution\./,
+      },
+      {
+        label: 'a step the runbook does not declare',
+        runId: 'rd_888888888888888888888888888888a3',
+        snapshot: { value: 'step::Gone' },
+        message:
+          /references missing step "Gone"\. Prune invalid runbook state and restart execution\./,
+      },
+    ])(
+      'spells the recovery when the snapshot carries $label',
+      async ({ runId, snapshot, message }) => {
+        const service = new RunbookActorService(manager);
+        const created = await manager.create(
+          { source: 'project', path: 'workflow.runbook.md' },
+          { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+          {
+            runId: assertRunId(runId),
+            runbookPath: 'workflow.runbook.md',
+            frontmatterOutputs: [],
+            templateVars: commandTemplateVars(runId),
+          },
+        );
+        await manager.update(created.id, { snapshot });
+
+        await expect(enterEffects(service, created.id, stepsWithOneCommand)).rejects.toThrow(
+          message,
+        );
+      },
+    );
 
     it('names the run and the reason when the run carries no frontmatter outputs', async () => {
       const runId = assertRunId('rd_8888888888888888888888888888888e');
@@ -1199,6 +1262,14 @@ echo ok
           runId,
           reason: 'missing_frontmatter_outputs',
         });
+        // The recovery, for the reason the snapshot table above pins its own:
+        // the defect says which refusal fired, and only the message says what
+        // to do about it. This arm names a different command from the snapshot
+        // refusals — a run missing its OUTPUTS declarations is pruned, not
+        // resumed — so it cannot borrow their assertion.
+        expect(getErrorMessage(error)).toMatch(
+          /missing frontmatter outputs declarations\. Run `rundown prune` and restart execution\./,
+        );
       }
     });
 
@@ -1220,6 +1291,66 @@ echo ok
       await expect(enterEffects(service, state.id, stepsWithOneCommand)).rejects.toThrow(
         /references missing step "Gone"/,
       );
+    });
+
+    // Every refusal above reaches its assertion through `enterEffects`, which is
+    // `async` and therefore launders a synchronous throw into a rejection of its
+    // OWN promise. That hides the question this pins: does the promise
+    // `enterExecutionUnit` returns reject, or does the method throw in the
+    // caller's tick and leave that promise unborn? `Promise.allSettled` answers
+    // it, because a synchronous throw escapes before `allSettled` is ever
+    // called — so the seam is exercised directly here, never through the helper.
+    //
+    // A caller that attaches `.catch(...)` to the returned promise, or collects
+    // the call in `Promise.all`, observes nothing otherwise. The method's own
+    // doc comment already tells callers not to depend on same-tick settling;
+    // this is what makes that true on the failure path as well.
+    it.each([
+      {
+        label: 'the snapshot freshness gate',
+        plant: async (id: string) => {
+          await manager.update(id, { snapshot: { value: 'step::Gone', context: {} } });
+        },
+      },
+      {
+        label: 'the machine compile',
+        plant: async (id: string) => {
+          const loaded = await manager.load(id);
+          if (!loaded) throw new Error(`expected persisted state for ${id}`);
+          await manager.save({ ...loaded, frontmatterOutputs: undefined });
+        },
+      },
+      {
+        label: 'the entry derivation',
+        plant: async (id: string) => {
+          const loaded = await manager.load(id);
+          if (!loaded) throw new Error(`expected persisted state for ${id}`);
+          const { WorkPath: _omitted, ...withoutWorkPath } = loaded.templateVars;
+          await manager.save({ ...loaded, templateVars: withoutWorkPath });
+        },
+      },
+    ])('rejects rather than throwing when $label refuses', async ({ plant }) => {
+      const runId = assertRunId('rd_8888888888888888888888888888888b');
+      const service = new RunbookActorService(manager);
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      await plant(state.id);
+      const loaded = await manager.load(state.id);
+      if (!loaded) throw new Error('expected persisted state');
+
+      const [settled] = await Promise.allSettled([
+        service.enterExecutionUnit({ state: loaded, steps: stepsWithOneCommand }),
+      ]);
+
+      expect(settled.status).toBe('rejected');
     });
 
     it('passes inline launch child id and clock dependencies through service-created actors', async () => {

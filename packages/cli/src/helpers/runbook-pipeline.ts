@@ -1908,7 +1908,7 @@ export async function claimAndLaunch(
     output.warning(`Undefined variable "{{${name}}}" preserved as literal text`);
   }
 
-  const parentPrompted = freshParent.prompted ?? false;
+  const parentPrompted = freshParent.prompted;
 
   // 3g. Launch child runbook
   let capturedClaim: { readonly claimId: ClaimId; readonly childRunId: RunId } | undefined;

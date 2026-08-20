@@ -62,6 +62,7 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   } = overrides;
   const runbook = overrideRunbook ?? { source: 'project' as const, path: 'test.runbook.md' };
   return {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id: brandRunIdForTest(`rd_${'a'.repeat(32)}`),
     runbook,

@@ -118,6 +118,48 @@ Child prompt.
     await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
   }
 
+  /**
+   * Write the composing parent and its child for the prompted-inheritance pair.
+   *
+   * The two tests that use it are an A/B on ONE variable — whether the parent was
+   * started `--prompted` — so the runbooks either side of that variable have to be
+   * identical for the comparison to mean anything. A shared writer enforces that;
+   * two copies only agreed by inspection.
+   *
+   * The child body stays a parameter because the pair does differ there, and
+   * deliberately: the prompted parent's child carries a command, so its
+   * inherited flag is observable as a command announced rather than run.
+   *
+   * @param childBody - Body of the child's single step.
+   */
+  async function writeComposingParentAndChild(childBody: string): Promise<void> {
+    await writeFile(
+      join(workspace.rootRunbooksDir(), 'parent.runbook.md'),
+      `# Parent
+
+## 1. Start
+- PASS CONTINUE
+
+Ready.
+
+## 2. Compose
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`,
+    );
+    const childRunbook = `# Child
+
+## 1. Create
+- PASS COMPLETE
+
+${childBody}
+`;
+    await writeFile(join(workspace.rootRunbooksDir(), 'child.runbook.md'), childRunbook);
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
+  }
+
   it('launches an inline child from a typed STEP_ENTERED intent', async () => {
     await writeFile(
       join(workspace.rootRunbooksDir(), 'parent.runbook.md'),
@@ -382,33 +424,7 @@ Child prompt.
     // A prompted parent still performs the launch — the classification puts
     // inline-launch ahead of awaiting — which is what makes the inheritance
     // observable at all.
-    await writeFile(
-      join(workspace.rootRunbooksDir(), 'parent.runbook.md'),
-      `# Parent
-
-## 1. Start
-- PASS CONTINUE
-
-Ready.
-
-## 2. Compose
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-- child.runbook.md
-`,
-    );
-    const childRunbook = `# Child
-
-## 1. Create
-- PASS COMPLETE
-
-\`\`\`bash
-echo child-ran
-\`\`\`
-`;
-    await writeFile(join(workspace.rootRunbooksDir(), 'child.runbook.md'), childRunbook);
-    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
+    await writeComposingParentAndChild('```bash\necho child-ran\n```');
 
     const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
     expect(start.exitCode).toBe(0);
@@ -431,31 +447,7 @@ echo child-ran
   });
 
   it('starts an inline child in automatic mode when the parent is not prompted', async () => {
-    await writeFile(
-      join(workspace.rootRunbooksDir(), 'parent.runbook.md'),
-      `# Parent
-
-## 1. Start
-- PASS CONTINUE
-
-Ready.
-
-## 2. Compose
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-- child.runbook.md
-`,
-    );
-    const childRunbook = `# Child
-
-## 1. Create
-- PASS COMPLETE
-
-Child prompt.
-`;
-    await writeFile(join(workspace.rootRunbooksDir(), 'child.runbook.md'), childRunbook);
-    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
+    await writeComposingParentAndChild('Child prompt.');
 
     const start = await runCliInProcess('run runbooks/parent.runbook.md', workspace);
     expect(start.exitCode).toBe(0);

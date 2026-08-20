@@ -959,7 +959,13 @@ const RunbookStateObjectSchema = z
     // TSDoc there for the bypass-prohibition. Do not add a structural
     // `.superRefine()` here without a public XState snapshot schema to anchor it.
     snapshot: z.unknown().optional(),
-    prompted: z.boolean().optional(),
+    // Required, on the same reasoning as `templateVars` below.
+    // `RunbookStateManager.create` always writes it (`false` at minimum), and it
+    // decides whether the run announces its commands or executes them — a fact
+    // no reader may default. `state.load()` checks `schemaVersion` and names
+    // this field's absence explicitly before this schema parses, so requiring it
+    // here cannot mask invalid-state detection for rows of another version.
+    prompted: z.boolean(),
     lastResult: z.enum(['pass', 'fail']).optional(),
     lastAction: LastActionSchema.optional(),
     runbookSrc: z.string().optional(),

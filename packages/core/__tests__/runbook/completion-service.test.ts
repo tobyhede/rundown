@@ -80,6 +80,7 @@ describe('RunbookCompletionService', () => {
 
   function state(overrides: Partial<RunbookState> = {}): RunbookState {
     return {
+      prompted: false,
       id: runbookId,
       runbook: { source: 'project', path: 'test.md' },
       runbookPath: 'test.md',

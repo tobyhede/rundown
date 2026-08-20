@@ -1130,7 +1130,14 @@ export interface RunbookState {
   readonly startedAt: string;
   readonly updatedAt: string;
 
-  readonly prompted?: boolean;
+  /**
+   * Whether this run announces its commands rather than executing them.
+   *
+   * Required, and written once at creation: `load` refuses a persisted row
+   * without it rather than defaulting, so no reader has to spell a fallback that
+   * would silently adapt an incompatible row into an executing run.
+   */
+  readonly prompted: boolean;
   readonly lastResult?: 'pass' | 'fail';
   readonly lastAction?: LastAction;
 

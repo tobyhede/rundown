@@ -224,6 +224,7 @@ describe('RunbookCollectionService', () => {
 
   function state(overrides: Partial<RunbookState> = {}): RunbookState {
     return {
+      prompted: false,
       id: runId,
       runbook: { source: 'project', path: 'collection-test.md' },
       runbookPath: 'collection-test.md',
@@ -2708,7 +2709,9 @@ describe('RunbookCollectionService', () => {
         },
       ];
 
-      const payload = await collectStepEnteredPayload(promptedForSteps, { prompted: undefined });
+      // `false`, not absent: the run's own flag is off, which is what makes the
+      // composition below about the step kind rather than about the run.
+      const payload = await collectStepEnteredPayload(promptedForSteps, { prompted: false });
 
       // THE FLIP. `false` before #820, on the persisted flag alone. The field
       // documents whether execution is prompted rather than automatic, and a
@@ -2720,12 +2723,18 @@ describe('RunbookCollectionService', () => {
       expect(payload.prompt).toBe('FOR item IN {{ items }}');
     });
 
-    it('leaves substepId off the payload for a cursor naming no live substep', async () => {
+    it('neither enters nor consumes the frontier for a cursor naming no live substep', async () => {
       // The third divergence, and the only one that never reached the payload:
       // `substepId` came off the raw cursor while `isSubstep` came off the
       // resolved unit. Both answer one question, and both come off the resolved
       // unit now — so a cursor naming no live substep is not a substep entry,
       // and the frontier it would have disclosed stays persisted.
+      //
+      // Named for what it asserts rather than for that origin: the payload is
+      // never read here, so a title promising payload coverage would send a
+      // reader looking for it in the wrong file. The `substepId` assertion
+      // itself lives on the seam that renders the payload, in
+      // `execution-unit-entry.test.ts`.
       const frameKey = buildFrameKey('1');
       const retry = frontierEntry();
       const target = state({

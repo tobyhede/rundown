@@ -3,6 +3,7 @@ import tseslint from 'typescript-eslint';
 import globals from 'globals';
 import jsdoc from 'eslint-plugin-jsdoc';
 import { ignores } from './eslint.ignores.js';
+import { noRenderedUnitCommandCast } from './eslint-rules/no-rendered-unit-command-cast.mjs';
 
 // Ban direct `Error.isError(...)` calls — undefined in Node ≤ 23 (notably
 // WebContainer's bundled Node 22.x). Use the polyfilled helpers from
@@ -37,17 +38,32 @@ const trustedArtifactCastSelectors = [
   },
 ];
 
-// Ban `as RenderedUnitCommand` casts. The brand witnesses that a command string
-// came from the sanctioned expander inside `deriveExecutionUnitEntry`, so a cast
-// anywhere else asserts a provenance the value does not have. Tier 1 (a
-// `declare const` unique symbol) means there is no runtime check to fall back on
-// — the cast IS the mint — which is exactly why it has to be confined to the
-// producer. `execution-unit-entry.ts` is exempted below.
-const renderedUnitCommandCastSelector = {
-  selector: "TSAsExpression[typeAnnotation.typeName.name='RenderedUnitCommand']",
-  message:
-    'A RenderedUnitCommand is minted only by deriveExecutionUnitEntry. Reach it through RunbookActorService.enterExecutionUnit; a direct `as RenderedUnitCommand` cast asserts provenance the value does not have.',
-};
+// Ban every assertion that can mint a `RenderedUnitCommand`. The brand witnesses
+// that a command string came from the sanctioned expander inside
+// `deriveExecutionUnitEntry`, so a cast anywhere else asserts a provenance the
+// value does not have. Tier 1 (a `declare const` unique symbol) means there is
+// no runtime check to fall back on — the cast IS the mint — which is exactly why
+// it has to be confined to the producer. `execution-unit-entry.ts` is exempted
+// below.
+//
+// This used to be a `no-restricted-syntax` selector matching the identifier
+// `RenderedUnitCommand` by name, which has a hole by construction: the set of
+// SPELLINGS a selector must enumerate (a bare cast, a qualified one, an
+// import-renamed one, a type alias, an interface that inherits the brand) is
+// unbounded, while the set of underlying TYPES those spellings can resolve to
+// is exactly one. `local/no-rendered-unit-command-cast`
+// (./eslint-rules/no-rendered-unit-command-cast.mjs) checks the resolved type
+// instead — via `tsconfig.eslint.json`'s type-aware parser project, already
+// wired below — so an import rename that produces a NEW identifier at the
+// assertion site is caught the same as a direct cast, because the checker
+// resolves both back to the same declared symbol.
+//
+// `RenderedUnitCommand` is also not re-exported from `@rundown-org/core`, so
+// outside `packages/core` the name cannot be brought into scope at all — a
+// second, structural layer this rule does not need to reason about.
+// `scripts/__tests__/eslint-brand-cast-guard.test.mjs` lints a snippet per
+// laundering route through this config, so a regression in either layer fails
+// rather than reading as passing.
 
 // Closes the dynamic-import gap left by the front-end no-restricted-imports
 // boundary (below): no-restricted-imports vets static named/aliased/namespace
@@ -134,6 +150,13 @@ export default tseslint.config(
   // Global settings for all TypeScript files
   {
     files: ['**/*.ts'],
+    plugins: {
+      local: {
+        rules: {
+          'no-rendered-unit-command-cast': noRenderedUnitCommandCast,
+        },
+      },
+    },
     languageOptions: {
       globals: {
         ...globals.node,
@@ -144,6 +167,11 @@ export default tseslint.config(
       },
     },
     rules: {
+      // Type-aware ban on minting RenderedUnitCommand outside its producer.
+      // Full rationale at the top of this file; exempted for
+      // execution-unit-entry.ts below.
+      'local/no-rendered-unit-command-cast': 'error',
+
       // TSDoc coverage for exported symbols
       'jsdoc/require-jsdoc': [
         'error',
@@ -214,7 +242,6 @@ export default tseslint.config(
         'error',
         errorIsErrorSelector,
         ...trustedArtifactCastSelectors,
-        renderedUnitCommandCastSelector,
         ...parserDynamicImportSelectors,
       ],
     },
@@ -256,6 +283,9 @@ export default tseslint.config(
   {
     files: ['packages/core/src/runbook/execution-unit-entry.ts'],
     rules: {
+      // The one file the type-aware ban above does not apply to — it mints the
+      // brand.
+      'local/no-rendered-unit-command-cast': 'off',
       // Every selector the base block applies, minus the one this file produces.
       // Re-declaring replaces the whole list, so omitting the parser spread here
       // would make this the only source file where a dynamic parser import goes
@@ -409,6 +439,11 @@ export default tseslint.config(
   // dynamic-import `@rundown-org/parser` to mock allowed APIs (e.g. extractFrontmatter)
   // while passing the rest of the namespace through. The Error.isError and
   // trust-brand-cast bans still apply to tests, so they are re-declared here.
+  // The RenderedUnitCommand ban is NOT re-declared: it lives on its own rule ID
+  // (`local/no-rendered-unit-command-cast`) rather than inside this
+  // `no-restricted-syntax` array, so setting it once in the base block already
+  // covers test files — re-declaring `no-restricted-syntax` here replaces only
+  // that array, not sibling rule IDs.
   //
   // brand-helpers.ts is excluded: it carries its own `no-restricted-syntax: off`
   // override (the sanctioned place for `as TrustedArtifact*` casts), and that
@@ -417,12 +452,7 @@ export default tseslint.config(
     files: ['**/__tests__/**/*.ts', '**/*.test.ts', '**/*.spec.ts'],
     ignores: ['packages/cli/__tests__/helpers/brand-helpers.ts'],
     rules: {
-      'no-restricted-syntax': [
-        'error',
-        errorIsErrorSelector,
-        ...trustedArtifactCastSelectors,
-        renderedUnitCommandCastSelector,
-      ],
+      'no-restricted-syntax': ['error', errorIsErrorSelector, ...trustedArtifactCastSelectors],
     },
   },
 );

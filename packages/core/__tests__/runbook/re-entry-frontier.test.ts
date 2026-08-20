@@ -109,6 +109,7 @@ const steps: readonly ResolvedStep[] = [
 
 function state(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id: runId,
     runbook: { source: 'project', path: 're-entry-test.md' },

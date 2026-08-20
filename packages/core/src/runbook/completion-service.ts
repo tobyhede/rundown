@@ -801,7 +801,7 @@ function selectNextResolvedCompletionApply(
   steps: readonly ResolvedStep[],
   frameOverride?: Frame,
 ): ResolvedCompletionApplySelection {
-  const currentStep = findStepOrThrow(steps, state.step);
+  const currentStep = findStepOrThrow(steps, state.step, state.id);
   if (!resolvedStepHasSubsteps(currentStep) || !state.substep) {
     return { kind: 'none', unresolved: 0 };
   }

@@ -214,6 +214,7 @@ function buildState(clauses: ExposureClauses, noise: ExposureNoise): RunbookStat
     substepStates.push(inlineSubstepRecord(noise));
   }
   return {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id: runId,
     runbook: { source: 'project', path: 'exposure-properties.md' },

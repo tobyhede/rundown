@@ -1819,9 +1819,10 @@ Error RD-308: Runbook state lost to a concurrent writer - Run rd_9e725b142d81dab
 
 A run in the database does not match the state contract this build reads:
 unparseable persisted state, a `RunbookState.schemaVersion` other than `1`, a
-missing required field such as `templateVars`, or a deprecated dynamic-step
-snapshot. Rundown never migrates persisted state, so the run cannot be resumed
-and is never silently repaired.
+missing required field such as `templateVars` or `prompted`, a cursor naming a
+step the runbook no longer declares, or a deprecated dynamic-step snapshot.
+Rundown never migrates persisted state, so the run cannot be resumed and is
+never silently repaired.
 
 Scope is deliberately narrow and is the reason this is not `RD-305`: **only that
 run is affected**, and the database and every other run in it are intact. The
@@ -1836,9 +1837,12 @@ validation, so it exits `0` having pruned nothing at all. `--inactive` (or
 
 Being scoped to one run is also why `context` names it. `runId` is the affected
 run, `reason` is a closed set naming which refusal fired (`unparseable_json`,
-`invalid_schema_version`, `missing_template_vars`, `schema_validation_failed`,
-`legacy_dynamic_step_snapshot`, `malformed_delegate_frontier`,
-`unrecognized_recovery_reason`), and `schemaVersion` — present only for
+`invalid_schema_version`, `missing_template_vars`, `missing_prompted`,
+`schema_validation_failed`, `legacy_dynamic_step_snapshot`,
+`malformed_delegate_frontier`, `unrecognized_recovery_reason`,
+`missing_render_context`, `unsupported_snapshot_state_value`,
+`snapshot_step_not_in_runbook`, `cursor_step_not_in_runbook`,
+`missing_frontmatter_outputs`), and `schemaVersion` — present only for
 `invalid_schema_version` — is the version the row claims, reported exactly as
 persisted and deliberately not narrowed to a number. That last field appears
 **nowhere** in the message prose, so structured context is the only way to read

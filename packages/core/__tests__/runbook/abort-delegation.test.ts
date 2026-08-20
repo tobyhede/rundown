@@ -33,6 +33,7 @@ function makeDelegation(overrides: Partial<StepDelegation> = {}): StepDelegation
 /** Helper: create minimal RunbookState for testing. */
 function makeState(substepStates: SubstepState[]): RunbookState {
   return {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id: RUN_ID,
     runbook: { source: 'project', path: 'parent.md' },

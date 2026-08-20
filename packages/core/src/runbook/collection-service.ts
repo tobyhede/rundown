@@ -426,7 +426,7 @@ function deriveCollectionTransitionObservations(
   applied: readonly AppliedResolvedCompletion[],
 ): readonly TransitionObservationEvent[] {
   return applied.flatMap((entry) => {
-    const currentStep = findStepOrThrow(input.steps, entry.stateBefore.step);
+    const currentStep = findStepOrThrow(input.steps, entry.stateBefore.step, entry.stateBefore.id);
     return deriveTransitionObservation({
       steps: input.steps,
       currentStep,

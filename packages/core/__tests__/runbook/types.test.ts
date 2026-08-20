@@ -112,6 +112,7 @@ describe('Substep interface', () => {
 describe('RunbookState runbookSrc field', () => {
   it('should include runbookSrc field', () => {
     const state: RunbookState = {
+      prompted: false,
       templateVars: brandInitialTemplateVarsForTest({}),
       id: brandRunIdForTest(`rd_${'e'.repeat(32)}`),
       runbook: { source: 'project', path: 'test.runbook.md' },

@@ -392,6 +392,11 @@ describe('runExecutionLoop', () => {
       runbookPath: 'test.runbook.md',
       step,
       status: 'running',
+      // Every persisted run carries this: `create` always writes it and `load`
+      // refuses a row without it, so a loose fixture that omitted it modelled a
+      // state the manager cannot hand back. Ahead of the spread so a test that
+      // is about prompted mode still overrides it.
+      prompted: false,
       ...overrides,
       templateVars: {
         ...baseTemplateVars,

@@ -51,6 +51,8 @@ export type InvalidRunStateReason =
   | 'invalid_schema_version'
   /** A current-schema row is missing the required `templateVars` field. */
   | 'missing_template_vars'
+  /** A current-schema row is missing the required `prompted` field. */
+  | 'missing_prompted'
   /** The row parsed as JSON but failed the `RunbookState` schema. */
   | 'schema_validation_failed'
   /** The deprecated dynamic-step snapshot shape (`GOTO_NEXT` or `instance`). */
@@ -65,6 +67,8 @@ export type InvalidRunStateReason =
   | 'unsupported_snapshot_state_value'
   /** The persisted `snapshot.value` names a step the parsed runbook does not declare. */
   | 'snapshot_step_not_in_runbook'
+  /** The run's `step` cursor names a step the parsed runbook does not declare. */
+  | 'cursor_step_not_in_runbook'
   /** A current-schema row is missing the required `frontmatterOutputs` field. */
   | 'missing_frontmatter_outputs';
 

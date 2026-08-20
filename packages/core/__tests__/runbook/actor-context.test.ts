@@ -23,6 +23,7 @@ const claimKey = assertClaimLookupKey('rdclk_11111111111111111111111111111111');
 
 function baseState(id = runIdA): RunbookState {
   return {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id,
     runbook: { source: 'project', path: 'p.md' },

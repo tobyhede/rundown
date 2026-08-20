@@ -46,11 +46,38 @@ constraint is helper determinism, which is what the docs now say.
 `deriveExecutionUnitEntry`. Tier 1 is right here because the record is consumed
 by typed functions and never round-trips through JSON: `EXECUTE_COMMAND` targets
 `__execute-command`, whose `invoke.input` reads the event with no `assign`, so a
-rendered command never reaches persisted context. Two ESLint rules make the
-brand load-bearing rather than decorative: `as RenderedUnitCommand` is banned
-outside the producing module, and the CLI, MCP and plugin `src/**` may no longer
-import `buildStepVariables`, `expandLoopVariables`,
-`expandLoopVariablesForCommand`, or `deriveExecutionUnitEntry` from core at all.
+rendered command never reaches persisted context.
+
+The brand is load-bearing rather than decorative, and two things keep it that
+way. `RenderedUnitCommand` is **not** re-exported from `@rundown-org/core`, so
+outside core the type cannot be named — and a type that cannot be named cannot
+be asserted to, aliased, or reached through a namespace import. Inside core,
+where a relative import puts the name back in scope, a type-aware ESLint rule
+(`local/no-rendered-unit-command-cast`,
+`eslint-rules/no-rendered-unit-command-cast.mjs`) bans every assertion that can
+mint one. Tier 1 means the assertion IS the mint, so the set of assertion
+SYNTAXES is the whole surface — but a selector that matches syntax has to
+enumerate every spelling, and an import rename (`RenderedUnitCommand as Local`)
+produces a spelling no enumeration anticipates. The rule instead resolves the
+asserted-to TYPE through the checker and walks its symbol, base types, and
+union/intersection members, so a rename, an alias two hops away, or an interface
+that inherits the brand all resolve to the same declared symbol and get caught
+the same as a direct cast. `scripts/__tests__/eslint-brand-cast-guard.test.mjs`
+lints a snippet per laundering route through the real config, because a bug in
+the rule's type resolution matches nothing and otherwise reads as passing.
+Separately, the CLI, MCP and plugin `src/**` may no longer import
+`buildStepVariables`, `expandLoopVariables`, `expandLoopVariablesForCommand`, or
+`deriveExecutionUnitEntry` from core at all.
+
+**The entry seam's internals came off the public barrel** on the same reasoning.
+`deriveStepEnteredEffect` used to carry two cursor-mismatch guards, refusing an
+entry whose `stepId` / `substepId` disagreed with the snapshot; they are deleted
+because the entry now has exactly ONE producer, which reads the cursor and the
+snapshot off the same `RunbookState`. That argument only holds while a front end
+cannot reach the deriver with a hand-built entry, and a wildcard
+`export * from './execution-observation.js'` was putting the deriver,
+`StepEntryMetadata` and `StepEntryObservationInput` on `@rundown-org/core`
+without any file naming them. The barrel names its exports now.
 
 **`hasCommand` is now a field on the entry, derived from the parsed unit.** It
 used to be computed as `commandCode !== undefined` inside
@@ -59,29 +86,59 @@ builder produced the entry — the collect-side builder renders nothing, so ever
 entry it produced reported `hasCommand: false` regardless of the unit. A command
 that renders to the empty string is now correctly `hasCommand: true`.
 
-**The unfenced re-entry frontier seam sheds its `entry` parameter.**
-`projectAndConsumeReEntryFrontier` read exactly one field off it — `isSubstep` —
-and now derives that from the state it already holds, through the same
-`resolveCurrentExecutionUnit` the entry seam uses. It enters through
+**Both re-entry frontier seams shed their `entry` parameter.** Each read exactly
+one field off it — `isSubstep` — and both now derive that from the state they
+already hold, through the same `resolveCurrentExecutionUnit` the entry seam
+uses. A caller-supplied entry was the wrong shape for it anyway: the field
+describes the cursor, so taking it from the caller let an entry describing one
+cursor decide a question about another.
+
+The unfenced seam (`projectAndConsumeReEntryFrontier`) enters through
 `enterExecutionUnit` with the verified bearers attached, and its `projected` arm
 returns the whole classified entry rather than bare observations, so the caller
 gets the same classification on the re-entry path as on an ordinary one. The
 ordering guarantee is untouched: the consume still commits before the entry is
 returned, so a failed consume discloses no bearers. The fenced twin
-(`prepareReEntryFrontierConsume`, which `rundown collect` drives) still takes a
-caller-supplied entry and is unchanged here.
+(`prepareReEntryFrontierConsume`, which `rundown collect` drives) returns the
+prepared state and the projected frontier, leaving the commit and the disclosure
+to the caller's transaction — `RunbookCollectionService` enters through
+`enterExecutionUnit` after its commit lands.
 
-**Two behaviour notes.** Helper path containment now resolves against
-`manager.cwd` rather than the `cwd` argument threaded into the loop — the
-canonicalised directory the actor service already used for artifact path
-projection, so the two can no longer disagree. (The CLI always passes
-`process.cwd()`, which Node returns already resolved, so the two values are
-identical in production; the canonicalisation only bites a caller that supplies
-a symlinked path, and containment wants the resolved one anyway.) And a run
-whose `templateVars` carry no string `ContextId` or `WorkPath` is now refused
-with a typed `InvalidRunbookStateError` (`reason: 'missing_render_context'`)
-rather than a bare `Error`, which routes it onto the CLI's existing
-finish/stop/prune recovery path.
+**`enterExecutionUnit` is declared `async`.** Its body is synchronous today, but
+three refusals run before the derivation returns — the snapshot freshness gate,
+the machine compile, and the render itself — and without the keyword all three
+threw in the CALLER's tick rather than rejecting the promise the signature
+advertises. A caller that attached `.catch(...)` to the returned promise, or
+collected the call in `Promise.all`, observed none of them. `await` callers are
+unaffected.
+
+**Behaviour notes.** Helper path containment now resolves against `manager.cwd`
+rather than the `cwd` argument threaded into the loop — the canonicalised
+directory the actor service already used for artifact path projection, so the
+two can no longer disagree. (The CLI always passes `process.cwd()`, which Node
+returns already resolved, so the two values are identical in production; the
+canonicalisation only bites a caller that supplies a symlinked path, and
+containment wants the resolved one anyway.)
+
+Three refusals are now typed `InvalidRunbookStateError` rather than bare, which
+is what routes each onto the CLI's existing RD-309 finish/stop/prune recovery
+rather than an envelope carrying the wrong instruction:
+
+- A run whose `templateVars` carry no string `ContextId` or `WorkPath`
+  (`reason: 'missing_render_context'`).
+- A cursor naming a step the parsed runbook does not define
+  (`reason: 'cursor_step_not_in_runbook'`, raised by `findStepOrThrow`, which
+  now takes the run id for the defect). This one was a live misclassification:
+  the collect path wraps any non-`InvalidRunbookStateError` rejection out of the
+  entry seam as RD-833, whose recovery reads "fix the helper and re-delegate" —
+  the wrong instruction entirely for corrupt persisted state.
+- A persisted row carrying no `prompted` (`reason: 'missing_prompted'`).
+  `RunbookState.prompted` is required now and `create` always writes it, exactly
+  as `templateVars` already worked, so the `?? false` at each read site is gone
+  rather than unreachable. The field decides whether a run announces its
+  commands or executes them, and is the value a composing parent inherits down
+  into a fresh inline child, so defaulting it silently adapted an incompatible
+  row into an executing run.
 
 **Five branches came out as provably dead** while mutation-testing the new
 module to 100%, and each was a second spelling of a fact the types already
@@ -95,9 +152,18 @@ answered. The cursor overlay that used to sit in `snapshotForEntry` went with
 them — it existed to satisfy `deriveStepEnteredEffect`'s guards, which this work
 deletes, so nothing read it any more.
 
-Behaviour is otherwise unchanged, and the #816 characterisation of the
-`run`-vs-`collect` `STEP_ENTERED` divergence is still green: `rundown collect`
-still builds its own partial entry. The two loop-half characterisation
+**The #816 divergence is closed rather than characterised.** `rundown collect`
+used to build its own partial entry — ids, position, name and flags, and none of
+the four rendered fields — while the CLI execution loop's builder filled all of
+them, so the same cursor produced two different `STEP_ENTERED` payloads
+depending on which command reached it. There is one builder now and nothing left
+to disagree, so the characterisation assertions are inverted rather than
+deleted: what was `toBeUndefined()` is the rendered value, and what was `false`
+is the composed one. They read the emitted payload, because the argument they
+used to capture is core-private. The end-to-end contrast is pinned in the CLI's
+`integration/step-entered-run-collect-agreement.test.ts`, and the two loop-half
 assertions moved from the CLI's mocked loop onto the real derivation in
 `packages/core/__tests__/runbook/execution-unit-entry.test.ts`, asserting the
 same values on the same fixtures.
+
+Behaviour is otherwise unchanged.

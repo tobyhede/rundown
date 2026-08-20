@@ -373,7 +373,7 @@ function persistedContext(state: RunbookState): Record<string, unknown> {
  */
 export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): ExecutionUnitEntry {
   const { state, steps } = input;
-  const currentStep = findStepOrThrow(steps, state.step);
+  const currentStep = findStepOrThrow(steps, state.step, state.id);
   const unit = resolveCurrentExecutionUnit(currentStep, state.substep);
 
   const effectiveVars = mergeEffectiveVars(state);
@@ -428,7 +428,7 @@ export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): 
     isSubstep: 'id' in unit,
     // A prompted-FOR step is prompted whatever the run was started as, and the
     // `awaiting` classification below turns on this same composed term.
-    prompted: (state.prompted ?? false) || currentStep.kind === 'prompted-for',
+    prompted: state.prompted || currentStep.kind === 'prompted-for',
     delegateFrontier: input.delegateFrontier,
   };
 

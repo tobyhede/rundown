@@ -199,6 +199,7 @@ function makeFrontierState(
   substepStates: readonly SubstepState[],
 ): RunbookState {
   return {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id: brandRunIdForTest(`rd_${'1'.repeat(32)}`),
     runbook: { source: 'project', path: 'parent.md' },

@@ -5,7 +5,10 @@ language: "en-US"
 # for the whole file. Measure before editing — the folded length is what counts,
 # not the source lines. The semver clause is load-bearing (CLAUDE.md forbids
 # raising it as a finding); the rest of that policy lives in CLAUDE.md, which
-# `reviews.path_instructions` already points the reviewer at.
+# CodeRabbit auto-detects through `knowledge_base.code_guidelines` (enabled at
+# the foot of this file). Do NOT add CLAUDE.md to `reviews.path_instructions` —
+# that field maps instructions onto files being REVIEWED, so listing it there
+# would have CodeRabbit review the guidelines instead of applying them.
 tone_instructions: >-
   Focus on type safety, state-machine correctness, security policy,
   persisted-state no-migration, CLI output stability, and CLAUDE.md design

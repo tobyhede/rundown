@@ -71,6 +71,7 @@ function stepsWithInlineRunbookListSubstep(): readonly ResolvedStep[] {
 
 function plainState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id: runId,
     runbook: { source: 'project', path: 'exposure-test.md' },

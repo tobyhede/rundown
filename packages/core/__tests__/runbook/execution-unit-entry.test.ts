@@ -60,6 +60,7 @@ function vars(extra: Record<string, string> = {}) {
  */
 function state(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
+    prompted: false,
     id: runId,
     runbook: { source: 'project', path: 'entry-test.md' },
     runbookPath: 'entry-test.md',
@@ -635,7 +636,23 @@ describe('deriveExecutionUnitEntry', () => {
     });
 
     it('refuses a cursor naming a step the parsed runbook does not define', () => {
+      // Same class as the two render refusals above, and for the same reason: a
+      // cursor that has diverged from the compiled steps is corrupt persisted
+      // state, whose recovery is prune or restart. A bare `Error` here would be
+      // relabelled RD-833 by the collect path's catch, which tells the operator
+      // to fix a helper and re-delegate instead.
+      expect(() => enter([commandStep], state({ step: '9' }))).toThrow(InvalidRunbookStateError);
       expect(() => enter([commandStep], state({ step: '9' }))).toThrow('Step "9" not found');
+
+      try {
+        enter([commandStep], state({ step: '9' }));
+        throw new Error('expected a refusal');
+      } catch (error) {
+        expect((error as InvalidRunbookStateError).defect).toEqual({
+          runId,
+          reason: 'cursor_step_not_in_runbook',
+        });
+      }
     });
   });
 
