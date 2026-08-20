@@ -18,7 +18,7 @@ import {
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
 import { seedRawRunState } from '../../src/testing/state-fixtures.js';
-import { writeRawRunJson } from '../../src/testing/session-fixtures.js';
+import { FOREIGN_SCHEMA_VERSION, writeRawRunJson } from '../../src/testing/session-fixtures.js';
 
 const BASE_RUN_ID = `rd_${'1'.repeat(32)}`;
 const INVALID_RUN_ID = `rd_${'2'.repeat(32)}`;
@@ -36,16 +36,6 @@ const BASE_SCHEMA_STATE = {
   templateVars: {},
   prompted: false,
 };
-
-/**
- * A version no build writes, so a row carrying it is refused by the version gate.
- *
- * Derived rather than hard-coded, and the distinction is the whole of #775: a
- * literal "foreign" version that {@link CURRENT_SCHEMA_VERSION} later catches up
- * to plants VALID state under a name that says otherwise, and every assertion
- * about the refusal it was supposed to provoke silently stops testing anything.
- */
-const FOREIGN_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION + 1;
 
 describe('RunbookStateSchema — schema version and lifecycle fields', () => {
   it('rejects state without templateVars — persistable state always carries it', () => {

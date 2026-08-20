@@ -399,12 +399,41 @@ persists across context clears.
 **Principle:** Never migrate persisted runbook state between versions. This
 applies to all run data written to SQLite: structured `RunbookState` fields
 (step, variables, lifecycle, etc.) and the opaque `state.snapshot` blob stored
-inside `RunbookState`. Neither is exempt. For the v1 release, persisted runbook
-state uses schema version `1`; state with any other schema version or
-incompatible structure is invalid. On schema changes, running runbooks should be
-completed/closed and restarted. The CLI should detect invalid state (via schema
-version or structural guard) and prompt the user to finish or prune — never
-silently adapt, rewrite, or shim the data.
+inside `RunbookState`. Neither is exempt. Persisted runbook state carries the
+schema version in `CURRENT_SCHEMA_VERSION`
+(`packages/core/src/runbook/persisted-state-guards.ts`, currently `2`); state
+with any other schema version or incompatible structure is invalid. On schema
+changes, running runbooks should be completed/closed and restarted. The CLI
+should detect invalid state (via schema version or structural guard) and prompt
+the user to finish or prune — never silently adapt, rewrite, or shim the data.
+
+**Change the shape, move the version — in the same commit.** Any edit to the
+persisted run-state shape (`RunbookState` in `runbook/types.ts`,
+`RunbookStateObjectSchema` or its nested schemas in `schemas.ts`) MUST move
+`CURRENT_SCHEMA_VERSION`, because that constant is the only thing that refuses
+state an older build wrote. Widening an optional field is the sole exception —
+state written before the widening still parses. Adding a required field,
+removing a field, and narrowing an existing one all require the bump; the last
+is the one that looks harmless and is not. This is not hypothetical: #746, #772
+and #827 each added a required field and left the version at `1`, which routed a
+mid-inline-launch run into a bare `ZodError` out of `RunbookStore.readRun` —
+outside the CLI's recovery taxonomy, so `finish`/`stop`/`prune` could not clear
+it (#775).
+
+`packages/core/__tests__/runbook/persisted-state-shape.test.ts` fails when the
+shape moves and the recorded fixture does not. It reports the changed fields;
+the remedy is to bump the constant and record the new shape as
+`schema-v<new>.txt`, never to overwrite the existing file. It does **not** cover
+the opaque `snapshot` blob (see below) or the body of a `.refine()`, so those
+still need the bump decided by hand.
+
+**Fixtures name the constant; they never hard-code the number.** State meant to
+be readable uses `CURRENT_SCHEMA_VERSION`, state meant to be refused uses
+`CURRENT_SCHEMA_VERSION + 1`. A literal in either position is what made #775
+invisible for three PRs: a "valid" fixture pinned to `1` could not notice the
+constant going stale, and a "foreign" fixture pinned to `2` silently became
+valid current state the moment the constant reached it, asserting nothing while
+still passing.
 
 There is no in-memory migration scenario. In-memory state does not survive
 process restarts. Any state that reaches `createActor` originates from disk and

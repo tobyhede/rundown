@@ -106,8 +106,9 @@ function toRundownError(error: unknown): RundownError {
   // One run's persisted state that this build refuses — RD-309. The two classes
   // are the same condition in two shapes and share one arm because they share
   // one recovery: `InvalidRunbookStateError` covers unparseable persisted state,
-  // a schemaVersion other than 1, a missing `templateVars`, and a failed schema
-  // parse; `LegacySnapshotError` covers the deprecated dynamic-step snapshot.
+  // a schemaVersion other than `CURRENT_SCHEMA_VERSION`, a missing
+  // `templateVars`, and a failed schema parse; `LegacySnapshotError` covers the
+  // deprecated dynamic-step snapshot.
   // Both are raised by `RunbookStateManager.load`, at the same point, and both
   // are cleared by `rundown complete` / `rundown stop` (which route through
   // `isRecoverableActiveStackError` to drop the unusable entry) or by
@@ -115,7 +116,8 @@ function toRundownError(error: unknown): RundownError {
   //
   // This arm is what makes CLAUDE.md § State Persistence's required behaviour —
   // "detect invalid state ... and prompt the user to finish or prune" —
-  // reachable at all. Reproduced against the built CLI before it existed:
+  // reachable at all. Reproduced against the built CLI before it existed, when
+  // the current version was 1:
   // RD-999 "Unknown error - Invalid runbook state for "rd_..." : invalid
   // schemaVersion; expected schema version 1." An envelope titled "Unknown
   // error" cannot carry a recovery instruction, so the documented path existed

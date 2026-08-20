@@ -32,6 +32,7 @@
     "/prcomment.md",
     "docs/superpowers",
     "*.snap",
+    "packages/core/__tests__/fixtures/persisted-state-shape/*.txt",
     "package-lock.json",
     "*.json",
     "*.yaml",

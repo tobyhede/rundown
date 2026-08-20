@@ -157,7 +157,7 @@ describe('Errors factory - exhaustive coverage', () => {
     describe('invalidPersistedRunState → RD-309', () => {
       it('appends the finish / stop / prune recovery to the store diagnosis', () => {
         const error = Errors.invalidPersistedRunState(
-          'Invalid runbook state for "rd_abc": invalid schemaVersion; expected schema version 1.',
+          'Invalid runbook state for "rd_abc": invalid schemaVersion; expected schema version 2.',
         );
 
         expect(error).toBeInstanceOf(RundownError);
@@ -209,13 +209,13 @@ describe('Errors factory - exhaustive coverage', () => {
       // `driverCode`, RD-308 `runId`).
       it('lifts the defect facts into context', () => {
         const error = Errors.invalidPersistedRunState(
-          'Invalid runbook state for "rd_abc": invalid schemaVersion; expected schema version 1.',
-          { runId: 'rd_abc', reason: 'invalid_schema_version', schemaVersion: 2 },
+          'Invalid runbook state for "rd_abc": invalid schemaVersion; expected schema version 2.',
+          { runId: 'rd_abc', reason: 'invalid_schema_version', schemaVersion: 1 },
         );
 
         expect(error.context.runId).toBe('rd_abc');
         expect(error.context.reason).toBe('invalid_schema_version');
-        expect(error.context.schemaVersion).toBe(2);
+        expect(error.context.schemaVersion).toBe(1);
       });
 
       it('omits schemaVersion when the defect does not carry one', () => {

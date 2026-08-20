@@ -32,6 +32,13 @@ Measured on `main` against a run persisted mid-inline-launch on a pre-#772 build
 is a rejection, not a migration: version `1` state is not read, adapted, or
 rewritten.
 
+That closes the reachable population, not the `ZodError` hole itself.
+`RunbookStore.readRun` still ends in a bare `.parse()`, so a row at the
+**current** version that fails the schema — corruption, a hand-edited
+`state_json` — still escapes untyped. Tracked as #828 and deliberately not fixed
+here: it is a different trigger with a different fix, and bundling it would have
+hidden which change closed which failure.
+
 ## The fixtures were the reason nobody noticed
 
 Every fixture wrote `schemaVersion: 1` as a literal, so a stale constant could
@@ -50,6 +57,13 @@ against a fixture named for the version they belong to
 (`__tests__/fixtures/persisted-state-shape/schema-v2.txt`). Change the shape and
 it fails, naming `CURRENT_SCHEMA_VERSION` as the remedy. Verified by reverting
 #772's field in `schemas.ts`: the guard fails, and passes again when restored.
+
+It covers narrowing as well as addition — `z.string()` and `z.string().min(3)`
+render differently — because a tightened constraint fails an older build's state
+for the same reason a new required field does. It does **not** cover the opaque
+`snapshot` blob (declared `z.unknown()`, so a machine-context change is
+invisible to it) or the body of a `.refine()`; both are named as decide-by-hand
+triggers in the fixture README rather than left as an implied guarantee.
 
 No test can force a developer to move a number — rewriting the fixture in place
 would work — but the moment is no longer silent, and rewriting a file named for

@@ -1818,11 +1818,11 @@ Error RD-308: Runbook state lost to a concurrent writer - Run rd_9e725b142d81dab
 #### `RD-309` — invalid persisted run state
 
 A run in the database does not match the state contract this build reads:
-unparseable persisted state, a `RunbookState.schemaVersion` other than `1`, a
-missing required field such as `templateVars` or `prompted`, a cursor naming a
-step the runbook no longer declares, or a deprecated dynamic-step snapshot.
-Rundown never migrates persisted state, so the run cannot be resumed and is
-never silently repaired.
+unparseable persisted state, a `RunbookState.schemaVersion` other than the
+build's own `CURRENT_SCHEMA_VERSION`, a missing required field such as
+`templateVars` or `prompted`, a cursor naming a step the runbook no longer
+declares, or a deprecated dynamic-step snapshot. Rundown never migrates
+persisted state, so the run cannot be resumed and is never silently repaired.
 
 Scope is deliberately narrow and is the reason this is not `RD-305`: **only that
 run is affected**, and the database and every other run in it are intact. The
@@ -1851,7 +1851,7 @@ it.
 **Text:**
 
 ```text
-Error RD-309: Invalid persisted run state - Invalid runbook state for "rd_9e725b142d81dabcefb9e04919568fcd": invalid schemaVersion; expected schema version 1. Rundown never migrates persisted state, so this run cannot be resumed: finish it with "rundown complete", stop it with "rundown stop", or discard it with "rundown prune --inactive", then re-run the runbook from source.
+Error RD-309: Invalid persisted run state - Invalid runbook state for "rd_9e725b142d81dabcefb9e04919568fcd": invalid schemaVersion; expected schema version 2. Rundown never migrates persisted state, so this run cannot be resumed: finish it with "rundown complete", stop it with "rundown stop", or discard it with "rundown prune --inactive", then re-run the runbook from source.
 ```
 
 **JSON:**
@@ -1859,7 +1859,7 @@ Error RD-309: Invalid persisted run state - Invalid runbook state for "rd_9e725b
 ```json
 {
   "kind": "error",
-  "error": "Invalid persisted run state - Invalid runbook state for \"rd_9e725b142d81dabcefb9e04919568fcd\": invalid schemaVersion; expected schema version 1. Rundown never migrates persisted state, so this run cannot be resumed: finish it with \"rundown complete\", stop it with \"rundown stop\", or discard it with \"rundown prune --inactive\", then re-run the runbook from source.",
+  "error": "Invalid persisted run state - Invalid runbook state for \"rd_9e725b142d81dabcefb9e04919568fcd\": invalid schemaVersion; expected schema version 2. Rundown never migrates persisted state, so this run cannot be resumed: finish it with \"rundown complete\", stop it with \"rundown stop\", or discard it with \"rundown prune --inactive\", then re-run the runbook from source.",
   "code": "RD-309",
   "command": "pass",
   "details": {
@@ -1868,7 +1868,7 @@ Error RD-309: Invalid persisted run state - Invalid runbook state for "rd_9e725b
     "context": {
       "runId": "rd_9e725b142d81dabcefb9e04919568fcd",
       "reason": "invalid_schema_version",
-      "schemaVersion": 2
+      "schemaVersion": 1
     }
   }
 }

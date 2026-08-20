@@ -3,6 +3,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  FOREIGN_SCHEMA_VERSION,
   seedActiveRun,
   seedRun,
   seedStashedRun,
@@ -14,10 +15,7 @@ import {
   deletePersistedRunState,
   issueRunControlClaimFor,
 } from '../../src/testing/session-fixtures.js';
-import { CURRENT_SCHEMA_VERSION, RunbookStateManager } from '../../src/runbook/state.js';
-
-/** A version no build writes, so a row carrying it is refused by the gate. */
-const FOREIGN_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION + 1;
+import { RunbookStateManager } from '../../src/runbook/state.js';
 
 describe('session-fixtures', () => {
   it('seeds an active run with a claim', async () => {

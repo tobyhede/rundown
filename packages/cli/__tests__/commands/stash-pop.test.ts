@@ -16,6 +16,7 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import {
+  FOREIGN_SCHEMA_VERSION,
   issueRunControlClaimFor,
   patchPersistedRunState,
   seedRawRunState,
@@ -48,17 +49,6 @@ import {
 } from '@rundown-org/core';
 
 import { CURRENT_SCHEMA_VERSION } from '@rundown-org/core';
-
-/**
- * A schema version no build writes, so a row carrying it is refused by the
- * version gate rather than parsed.
- *
- * Derived rather than hard-coded, which is the whole of #775: a literal
- * "foreign" version that {@link CURRENT_SCHEMA_VERSION} later catches up to
- * plants VALID state, and the refusal this fixture exists to provoke stops
- * happening with nothing failing to say so.
- */
-const FOREIGN_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION + 1;
 
 const VALID_OTHER_CLAIM_ID = assertClaimId(
   'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
