@@ -19,6 +19,8 @@ import {
   brandInitialTemplateVarsForTest,
 } from '../../src/testing/effective-vars.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 const tx: Transitions = {
   pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
   fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
@@ -83,7 +85,7 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     startedAt: '2026-07-01T00:00:00.000Z',
     updatedAt: '2026-07-01T00:00:00.000Z',
     lifecycle: 'running',
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     frontmatterOutputs: [],
     ...overrides,
   };

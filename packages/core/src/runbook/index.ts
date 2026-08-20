@@ -159,6 +159,9 @@ export {
   RunbookStateManager,
   ConcurrentStateModificationError,
   isConcurrentStateModificationError,
+  // Barrelled so a front end's fixtures name the version rather than hard-code a
+  // literal that goes stale silently — the #775 defect, in the shape it recurs.
+  CURRENT_SCHEMA_VERSION,
   InvalidRunbookStateError,
   LegacySnapshotError,
   type SessionData,

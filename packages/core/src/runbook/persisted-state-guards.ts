@@ -23,12 +23,44 @@
 import type { InvalidRunStateDefect } from '../errors/rundown-error.js';
 
 /**
- * Current persisted state schema version for the v1 release.
+ * Current persisted state schema version.
  *
  * Every newly derived state is stamped with this version; every read of
  * persisted state rejects any other one. Exported so callers deriving state
  * outside the manager — and the tests pinning that guarantee — name the version
- * rather than hard-coding `1`.
+ * rather than hard-coding a literal. Hard-coding one is how this constant went
+ * stale: nothing forced a fixture to move with it, so nothing failed when it
+ * did not move. `packages/core/__tests__/runbook/persisted-state-shape.test.ts`
+ * is what forces the pairing now.
+ *
+ * A version mismatch is a rejection, never a migration: state carrying any
+ * other value is refused outright, not read, adapted, or rewritten (CLAUDE.md
+ * § State Persistence). Three PRs added a required field to the persisted run
+ * state while this stood at `1` — `StepInlineChild.startedAt` (#746),
+ * `StepInlineChild.started` replacing it (#772), and `RunbookState.prompted`
+ * (#827) — without moving it (#775). State from before any of those builds
+ * still carries `schemaVersion: 1`, still passes this check, and is refused
+ * further in instead, by the Zod structural parse: as
+ * `schema_validation_failed` through `RunbookStateManager.load`, and as an
+ * unclassified `ZodError` through `RunbookStore.readRun` — reachable as RD-999
+ * "Unknown error" with no finish/stop/prune recovery. Moving this constant
+ * would close that second path too, by rejecting the mismatch before either
+ * reader reaches its parse.
+ *
+ * Left at `1` deliberately: per CLAUDE.md § Active Development Stance, no
+ * `.rundown/rundown.db` outside a local clone or CI run holds state this
+ * matters for, and its documented hard reset — delete the file — clears a
+ * stuck run the same as any other. `RunbookStore.readRun`'s unclassified
+ * `ZodError` escape stays open for this trigger, tracked together with the
+ * same escape for a same-version parse failure (corruption, a hand-edited
+ * `state_json`) as #828.
+ *
+ * Move this constant when a change to `RunbookState` (`runbook/types.ts`) or
+ * `RunbookStateObjectSchema` (`schemas.ts`) is one the Zod structural parse
+ * cannot itself refuse. The opaque `snapshot` field, declared `z.unknown()` on
+ * purpose, is the standing example: a change to the XState machine's context
+ * shape or state IDs is invisible to it, so nothing else will refuse a stale
+ * snapshot.
  */
 export const CURRENT_SCHEMA_VERSION = 1;
 

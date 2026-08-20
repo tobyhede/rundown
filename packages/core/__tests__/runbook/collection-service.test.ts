@@ -64,6 +64,8 @@ import {
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 // NOTE: there is no `createTempRunbookStateManager` helper in this repo. Core
 // runbook tests build the manager inline with `mkdtemp` + `new
 // RunbookStateManager(tmp)` (see completion-service.test.ts). Fixtures mirror the
@@ -249,7 +251,7 @@ describe('RunbookCollectionService', () => {
         { id: '2', frameKey: buildFrameKey('1'), status: 'done' },
       ],
       resolvedCompletions: {},
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       frontmatterOutputs: [],
       ...overrides,
     };

@@ -12,6 +12,8 @@ import { ArtifactRecordSchema } from '../../src/runbook/artifact-schema.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import { makeRunbookStateSchema } from '../../src/schemas.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 const RUN_ID = assertRunId(`rd_${'a'.repeat(32)}`);
 const CTX = 'ctx';
 const URI = `rd://artifacts/${CTX}/${RUN_ID}/plan.json`;
@@ -104,7 +106,7 @@ describe('TrustedArtifactRecord brand under XState/persistence operations', () =
       updatedAt: '2026-05-25T00:00:00.000Z',
       frontmatterOutputs: [],
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
     };
     const persisted = JSON.parse(JSON.stringify(stateRecord));
     const reloaded = schema.parse(persisted) as { variables: Record<string, unknown> };

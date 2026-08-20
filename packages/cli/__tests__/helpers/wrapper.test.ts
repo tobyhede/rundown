@@ -1,6 +1,7 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import {
   ConcurrentStateModificationError,
+  CURRENT_SCHEMA_VERSION,
   ErrorResponseSchema,
   Errors,
   IncompatibleSchemaError,
@@ -10,6 +11,7 @@ import {
   SqljsUnavailableError,
   WalJournalModeUnavailableError,
 } from '@rundown-org/core';
+import { FOREIGN_SCHEMA_VERSION } from '@rundown-org/core/testing/session-fixtures';
 import { RunbookSyntaxError } from '@rundown-org/parser';
 
 const { withErrorHandling } = await import('../../src/helpers/wrapper.js');
@@ -223,8 +225,9 @@ describe('withErrorHandling', () => {
   // schema version or structural guard) and prompt the user to finish or prune".
   // An "Unknown error" envelope cannot carry that instruction, so before this arm
   // the documented recovery path was unreachable from the error surface.
-  // Reproduced against the built CLI by patching a persisted run to
-  // `schemaVersion: 2` and running `rundown status`:
+  // Reproduced against the built CLI, back when the current version was 1, by
+  // patching a persisted run to a foreign `schemaVersion` and running
+  // `rundown status`:
   //   { "kind": "error",
   //     "error": "Unknown error - Invalid runbook state for \"rd_…\": invalid
   //               schemaVersion; expected schema version 1.",
@@ -233,7 +236,7 @@ describe('withErrorHandling', () => {
     it('converts InvalidRunbookStateError to RD-309 rather than RD-999', async () => {
       await withErrorHandling(async () => {
         throw new InvalidRunbookStateError(
-          'Invalid runbook state for "rd_f6dbc58e5e08706a2aa8c7bec5ffd176": invalid schemaVersion; expected schema version 1.',
+          `Invalid runbook state for "rd_f6dbc58e5e08706a2aa8c7bec5ffd176": invalid schemaVersion; expected schema version ${String(CURRENT_SCHEMA_VERSION)}.`,
         );
       });
 
@@ -287,11 +290,11 @@ describe('withErrorHandling', () => {
     it('forwards the structured defect into details.context', async () => {
       await withErrorHandling(async () => {
         throw new InvalidRunbookStateError(
-          'Invalid runbook state for "rd_f6dbc58e5e08706a2aa8c7bec5ffd176": invalid schemaVersion; expected schema version 1.',
+          `Invalid runbook state for "rd_f6dbc58e5e08706a2aa8c7bec5ffd176": invalid schemaVersion; expected schema version ${String(CURRENT_SCHEMA_VERSION)}.`,
           {
             runId: 'rd_f6dbc58e5e08706a2aa8c7bec5ffd176',
             reason: 'invalid_schema_version',
-            schemaVersion: 2,
+            schemaVersion: FOREIGN_SCHEMA_VERSION,
           },
         );
       });
@@ -303,7 +306,7 @@ describe('withErrorHandling', () => {
           reason: 'invalid_schema_version',
           // Not stated anywhere in the message prose — structured context is
           // the only way a consumer can learn it.
-          schemaVersion: 2,
+          schemaVersion: FOREIGN_SCHEMA_VERSION,
         },
       });
       expect(ErrorResponseSchema.safeParse(parsed).success).toBe(true);

@@ -9,6 +9,8 @@ import { assertRunId } from '../../src/runbook/run-id.js';
 import { brandTrustedArtifactRecordForTest } from '../../src/testing/effective-vars.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 const RUN_ID = assertRunId(`rd_${'a'.repeat(32)}`);
 const CTX = 'context-a';
 const KEY = 'plan.json';
@@ -43,7 +45,7 @@ function validStateWithVariables(variables: Record<string, unknown>): Record<str
     updatedAt: '2026-05-25T00:00:00.000Z',
     frontmatterOutputs: [],
     lifecycle: 'running',
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
   };
 }
 

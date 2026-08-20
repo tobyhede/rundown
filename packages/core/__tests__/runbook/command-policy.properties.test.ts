@@ -28,6 +28,8 @@ import {
   brandInitialTemplateVarsForTest,
 } from '../../src/testing/effective-vars.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 // RunId fixtures must be 32 lowercase hex chars (`/^rd_[a-f0-9]{32}$/`);
 // `assertRunId` rejects any char outside a-f0-9, so do not use g-z here.
 const runIdA = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
@@ -59,7 +61,7 @@ function baseState(id = runIdA): RunbookState {
     startedAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     lifecycle: 'running',
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     frontmatterOutputs: [],
   };
 }

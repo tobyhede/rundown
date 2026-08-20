@@ -882,10 +882,10 @@ protects.
 Two version checks enforce it and MUST NOT be conflated. They fail at different
 scopes, so they have different recovery actions:
 
-| Check                        | Scope                                         | Recovery when it fails                                                                                                           |
-| ---------------------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `RunbookState.schemaVersion` | One run's own state; MUST be `1`              | Complete, stop, or prune **that run**, then re-run it from the source document. The store and every other run in it stay intact. |
-| Database schema version      | The whole store, including session and claims | Discard **the store**: delete `.rundown/rundown.db` and restart the runbooks from source. Every run it held is unrecoverable.    |
+| Check                        | Scope                                                    | Recovery when it fails                                                                                                           |
+| ---------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `RunbookState.schemaVersion` | One run's own state; MUST equal `CURRENT_SCHEMA_VERSION` | Complete, stop, or prune **that run**, then re-run it from the source document. The store and every other run in it stay intact. |
+| Database schema version      | The whole store, including session and claims            | Discard **the store**: delete `.rundown/rundown.db` and restart the runbooks from source. Every run it held is unrecoverable.    |
 
 The two do not substitute for each other. Pruning a run cannot repair a store
 whose schema this build refuses — the store is what failed, and every run in it

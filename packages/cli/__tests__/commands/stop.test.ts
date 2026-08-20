@@ -20,6 +20,7 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import {
+  FOREIGN_SCHEMA_VERSION,
   patchPersistedRunState,
   seedSession,
   writeRawRunJson,
@@ -287,7 +288,9 @@ The result is {{ Result }}.
       const stateId = state!.id;
 
       // Write a state with the wrong schemaVersion to trigger InvalidRunbookStateError
-      await patchPersistedRunState(workspace.cwd, stateId, { schemaVersion: 2 });
+      await patchPersistedRunState(workspace.cwd, stateId, {
+        schemaVersion: FOREIGN_SCHEMA_VERSION,
+      });
 
       // stop is a cleanup command — InvalidRunbookStateError must not propagate
       const result = await runCliInProcess('stop --text', workspace);

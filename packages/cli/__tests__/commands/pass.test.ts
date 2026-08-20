@@ -22,6 +22,7 @@ import {
   validateSchema,
 } from '../helpers/schema-validator.js';
 import {
+  FOREIGN_SCHEMA_VERSION,
   patchPersistedRunState,
   readPersistedRunState,
 } from '@rundown-org/core/testing/session-fixtures';
@@ -192,11 +193,11 @@ describe('pass command', () => {
       expect(state?.step).toBe('2');
     });
 
-    it('fails closed on invalid non-v1 schemaVersion state instead of migrating it', async () => {
+    it('fails closed on a foreign schemaVersion instead of migrating it', async () => {
       const state = await getActiveState(workspace);
       expect(state).toBeDefined();
       await patchPersistedRunState(workspace.cwd, state!.id, {
-        schemaVersion: 2,
+        schemaVersion: FOREIGN_SCHEMA_VERSION,
       });
 
       const result = await runCliInProcess('pass --text', workspace);
@@ -206,7 +207,7 @@ describe('pass command', () => {
       const reloaded = (await readPersistedRunState(workspace.cwd, state!.id)) as {
         schemaVersion?: unknown;
       } | null;
-      expect(reloaded?.schemaVersion).toBe(2);
+      expect(reloaded?.schemaVersion).toBe(FOREIGN_SCHEMA_VERSION);
     });
   });
 

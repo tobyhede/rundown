@@ -22,6 +22,8 @@ import {
   brandInitialTemplateVarsForTest,
 } from '../../src/testing/effective-vars.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 const runbookId = brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 
 function state(overrides: Partial<RunbookState> = {}): RunbookState {
@@ -44,7 +46,7 @@ function state(overrides: Partial<RunbookState> = {}): RunbookState {
     startedAt: '2026-01-01T00:00:00.000Z',
     updatedAt: '2026-01-01T00:00:00.000Z',
     lifecycle: 'running',
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     frontmatterOutputs: [],
     ...overrides,
   };

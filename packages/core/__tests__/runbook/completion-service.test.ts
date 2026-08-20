@@ -39,6 +39,8 @@ import {
   makeDelegationCredentialIssuer,
 } from '../../src/testing/delegation-fixtures.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 describe('RunbookCompletionService', () => {
   const runbookId = brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
   let tmp: string;
@@ -98,7 +100,7 @@ describe('RunbookCompletionService', () => {
       startedAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       frontmatterOutputs: [],
       ...overrides,
     };

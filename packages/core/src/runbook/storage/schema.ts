@@ -35,6 +35,17 @@ import type { SqlReadTransaction, SqlTransaction } from './sql-driver.js';
  * development database rejects a `released` write at the constraint; the
  * remedy is to delete `.rundown/rundown.db`. From the first release, any DDL
  * edit MUST move this constant or `IncompatibleSchemaError` can never fire.
+ *
+ * **Not the same version as `CURRENT_SCHEMA_VERSION`, and neither one covers
+ * the other.** This constant gates the DDL — the whole database, via
+ * `PRAGMA user_version`, refused as {@link IncompatibleSchemaError} / RD-305.
+ * `CURRENT_SCHEMA_VERSION` (`runbook/persisted-state-guards.ts`) gates the run
+ * state inside each `runs.state_json` blob, one row at a time, refused as
+ * RD-309. `state_json` is opaque TEXT to this DDL, so a change to the persisted
+ * run-state shape moves that constant and not this one — which is why #746,
+ * #772 and #827 were misses on RD-309's constant while this one was correctly
+ * left alone (verified: no commit has touched this file since before #746). The
+ * converse holds too: a DDL edit moves this and leaves that.
  */
 export const SCHEMA_VERSION = 2;
 

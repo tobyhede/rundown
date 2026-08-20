@@ -3,6 +3,7 @@ import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  FOREIGN_SCHEMA_VERSION,
   seedActiveRun,
   seedRun,
   seedStashedRun,
@@ -40,8 +41,8 @@ describe('session-fixtures', () => {
     expect(cid).toMatch(/^rdclm_/);
     await seedSession(cwd, { defaultStack: [b.runId, a.runId] });
     expect((await m.loadSession()).defaultStack).toEqual([b.runId, a.runId]);
-    await patchPersistedRunState(cwd, a.runId, { schemaVersion: 2 });
-    expect((await readPersistedRunState(cwd, a.runId))?.schemaVersion).toBe(2);
+    await patchPersistedRunState(cwd, a.runId, { schemaVersion: FOREIGN_SCHEMA_VERSION });
+    expect((await readPersistedRunState(cwd, a.runId))?.schemaVersion).toBe(FOREIGN_SCHEMA_VERSION);
     await writeRawRunJson(cwd, a.runId, '{invalid');
     await expect(readPersistedRunState(cwd, a.runId)).rejects.toThrow();
     await deletePersistedRunState(cwd, a.runId);

@@ -1059,10 +1059,10 @@ Six tables carry everything: `runs`, `claims`, `session_stack`, `stash_slot`,
 They are separate mechanisms with separate failure modes, and conflating them is
 a documented mistake:
 
-| Version                      | Governs                                                                            | Where it lives                     | Rule                                        |
-| ---------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------- | ------------------------------------------- |
-| SQLite storage schema        | The whole database — runs, session, stash, claims, attempts                        | `PRAGMA user_version`              | Must equal `SCHEMA_VERSION` (currently `2`) |
-| `RunbookState.schemaVersion` | One run's structured state fields and its opaque `snapshot` blob, and nothing else | The run row's persisted state JSON | Must be exactly `1`                         |
+| Version                      | Governs                                                                            | Where it lives                     | Rule                                                |
+| ---------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------- | --------------------------------------------------- |
+| SQLite storage schema        | The whole database — runs, session, stash, claims, attempts                        | `PRAGMA user_version`              | Must equal `SCHEMA_VERSION` (currently `2`)         |
+| `RunbookState.schemaVersion` | One run's structured state fields and its opaque `snapshot` blob, and nothing else | The run row's persisted state JSON | Must equal `CURRENT_SCHEMA_VERSION` (currently `1`) |
 
 A wrong storage version invalidates the whole database (`RD-305`); a wrong
 `RunbookState.schemaVersion` invalidates **only that run** (`RD-309`). Session,

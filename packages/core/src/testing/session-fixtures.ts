@@ -38,8 +38,24 @@ import type { ParentLinkage, RunbookState } from '../runbook/types.js';
 import type { VariableValue } from '../runbook/effective-vars.js';
 import { getRunbookStore } from '../runbook/storage/store-registry.js';
 import { seedRawRunState } from './state-fixtures.js';
+import { CURRENT_SCHEMA_VERSION } from '../runbook/persisted-state-guards.js';
 
 export { seedRawRunState };
+
+/**
+ * A schema version no build writes, so a row carrying it is refused by the
+ * version gate rather than parsed.
+ *
+ * Derived rather than hard-coded, which is the whole of #775: a literal
+ * "foreign" version that {@link CURRENT_SCHEMA_VERSION} later catches up to
+ * plants VALID state, and every assertion about the refusal it was meant to
+ * provoke silently stops testing anything while still passing.
+ *
+ * Exported so every fixture that plants state the build must refuse shares one
+ * definition across packages. A per-file copy is the same duplication that let
+ * the literal `1` go stale in forty places at once.
+ */
+export const FOREIGN_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION + 1;
 
 /**
  * Markdown used when a caller does not supply its own runbook source.
@@ -442,7 +458,10 @@ export async function readPersistedRunState(
  *
  * The direct replacement for the read-modify-write `writeFile` pattern. The
  * write is unvalidated on purpose: the most common use is planting state the
- * CLI must reject (`{ schemaVersion: 2 }`, a terminal `lifecycle`, and so on).
+ * CLI must reject (`{ schemaVersion: CURRENT_SCHEMA_VERSION + 1 }`, a terminal
+ * `lifecycle`, and so on). Derive such a version from the constant rather than
+ * writing a literal: a literal that the constant later catches up to plants
+ * VALID state under a name that says otherwise, and nothing fails.
  *
  * @param cwd - Project root whose store holds the run.
  * @param runId - Run to patch.

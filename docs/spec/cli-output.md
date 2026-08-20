@@ -1818,11 +1818,11 @@ Error RD-308: Runbook state lost to a concurrent writer - Run rd_9e725b142d81dab
 #### `RD-309` — invalid persisted run state
 
 A run in the database does not match the state contract this build reads:
-unparseable persisted state, a `RunbookState.schemaVersion` other than `1`, a
-missing required field such as `templateVars` or `prompted`, a cursor naming a
-step the runbook no longer declares, or a deprecated dynamic-step snapshot.
-Rundown never migrates persisted state, so the run cannot be resumed and is
-never silently repaired.
+unparseable persisted state, a `RunbookState.schemaVersion` other than the
+build's own `CURRENT_SCHEMA_VERSION`, a missing required field such as
+`templateVars` or `prompted`, a cursor naming a step the runbook no longer
+declares, or a deprecated dynamic-step snapshot. Rundown never migrates
+persisted state, so the run cannot be resumed and is never silently repaired.
 
 Scope is deliberately narrow and is the reason this is not `RD-305`: **only that
 run is affected**, and the database and every other run in it are intact. The

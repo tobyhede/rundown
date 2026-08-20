@@ -48,6 +48,8 @@ import {
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 const RELEASE_POLICY: LifecycleTerminalReleasePolicy = {
   onComplete: { releaseRunbook: true },
   onStopped: { releaseRunbook: true },
@@ -165,7 +167,7 @@ describe('entry projection ordering: machine credential issuance agrees with com
       startedAt: '2026-08-03T00:00:00.000Z',
       updatedAt: '2026-08-03T00:00:00.000Z',
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       frontmatterOutputs: [],
       ...overrides,
     };

@@ -19,6 +19,8 @@ import {
 } from '../../src/testing/effective-vars.js';
 import { seedRawRunState } from '../../src/testing/state-fixtures.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 const CHILD_RUN_ID = brandRunIdForTest(`rd_${'1'.repeat(32)}`);
 const PARENT_RUN_ID = brandRunIdForTest(`rd_${'2'.repeat(32)}`);
 const LOCAL_RUN_ID = brandRunIdForTest(`rd_${'3'.repeat(32)}`);
@@ -108,7 +110,7 @@ describe('DelegationLinkage extended fields', () => {
         delete parentLinkage[field];
         const state = {
           ...makeSchemaState(parentLinkage),
-          schemaVersion: 1,
+          schemaVersion: CURRENT_SCHEMA_VERSION,
           lifecycle: 'running',
           frontmatterOutputs: [],
         };

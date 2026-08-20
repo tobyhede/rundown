@@ -35,6 +35,8 @@ import {
   makeSubstep,
 } from '../helpers/step-factories.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 const runId = assertRunId('rd_11111111111111111111111111111111');
 const parentRunId = assertRunId('rd_22222222222222222222222222222222');
 const childRunId = assertRunId('rd_33333333333333333333333333333333');
@@ -232,7 +234,7 @@ function buildState(clauses: ExposureClauses, noise: ExposureNoise): RunbookStat
     frameEntryCounts: { [buildFrameKey('1')]: 1 },
     substepStates,
     resolvedCompletions: clauses.pendingOutcome ? pendingOutcomeCompletions() : {},
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     frontmatterOutputs: [],
     ...(clauses.parentLinkage === 'inline'
       ? {

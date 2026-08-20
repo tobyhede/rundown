@@ -16,6 +16,7 @@ import {
 } from '../helpers/test-utils.js';
 import { validateStatusOutput } from '../helpers/schema-validator.js';
 import {
+  FOREIGN_SCHEMA_VERSION,
   patchPersistedRunState,
   seedSession,
   writeRawRunJson,
@@ -109,7 +110,7 @@ describe('status command', () => {
     expect(state).toBeDefined();
 
     await patchPersistedRunState(workspace.cwd, state!.id, {
-      schemaVersion: 2,
+      schemaVersion: FOREIGN_SCHEMA_VERSION,
     });
 
     const result = await runCliInProcess('status', workspace);
@@ -144,7 +145,9 @@ describe('status command', () => {
     const state = await getActiveState(workspace);
     expect(state).toBeDefined();
 
-    await patchPersistedRunState(workspace.cwd, state!.id, { schemaVersion: 2 });
+    await patchPersistedRunState(workspace.cwd, state!.id, {
+      schemaVersion: FOREIGN_SCHEMA_VERSION,
+    });
 
     const stopped = await runCliInProcess('stop', workspace);
     expect(stopped.exitCode).toBe(0);
@@ -772,7 +775,7 @@ Do work.
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     const state = await getActiveState(workspace);
     const stateId = state!.id;
-    await patchPersistedRunState(workspace.cwd, stateId, { schemaVersion: 2 });
+    await patchPersistedRunState(workspace.cwd, stateId, { schemaVersion: FOREIGN_SCHEMA_VERSION });
 
     const result = await runCliInProcess('complete', workspace);
 

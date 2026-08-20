@@ -16,6 +16,7 @@ import * as path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import {
+  FOREIGN_SCHEMA_VERSION,
   patchPersistedRunState,
   seedActiveRun,
   writeRawRunJson,
@@ -520,7 +521,7 @@ Active step.
       {
         what: 'the run carries an unsupported schemaVersion',
         seed: brokenRun(async (cwd, runId) => {
-          await patchPersistedRunState(cwd, runId, { schemaVersion: 2 });
+          await patchPersistedRunState(cwd, runId, { schemaVersion: FOREIGN_SCHEMA_VERSION });
         }),
         realError: 'invalid schemaVersion',
       },

@@ -49,6 +49,8 @@ import {
   type DelegationTokenHash,
 } from '../../src/runbook/delegation-token.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 const DEFAULT_TRANSITIONS: Transitions = {
   pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
   fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
@@ -465,7 +467,7 @@ describe('deriveDelegateFrontier', () => {
       startedAt: '2026-01-01T00:00:00.000Z',
       updatedAt: '2026-01-01T00:00:00.000Z',
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       activeFrameKey: activeFrameKey as FrameKey,
       substepStates,
     };

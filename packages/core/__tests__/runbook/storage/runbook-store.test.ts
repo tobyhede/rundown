@@ -30,10 +30,12 @@ import {
   type ExecutionTokenHash,
 } from '../../../src/runbook/storage/mutation-result.js';
 import {
+  CURRENT_SCHEMA_VERSION,
   InvalidRunbookStateError,
   LegacySnapshotError,
   RunbookStateManager,
 } from '../../../src/runbook/state.js';
+import { FOREIGN_SCHEMA_VERSION } from '../../../src/testing/session-fixtures.js';
 import { logger } from '../../../src/logger.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
 import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
@@ -223,13 +225,15 @@ describe('RunbookStore round-trip', () => {
   // the loader refuses to load — silently adapting persisted data the
   // no-migration rule says must be refused.
   it.each([
-    ['a foreign schema version', { schemaVersion: 2 }],
+    // Derived, never a literal: a hard-coded "foreign" version that the constant
+    // later catches up to plants VALID state, and this test then asserts nothing.
+    ['a foreign schema version', { schemaVersion: FOREIGN_SCHEMA_VERSION }],
     ['an absent schema version', { schemaVersion: undefined }],
   ])('refuses to read a run carrying %s, on every read seam', async (_label, overrides) => {
     const state = await newState(overrides);
     await store.createRun(state);
 
-    const expected = `Invalid runbook state for "${state.id}": invalid schemaVersion; expected schema version 1.`;
+    const expected = `Invalid runbook state for "${state.id}": invalid schemaVersion; expected schema version ${String(CURRENT_SCHEMA_VERSION)}.`;
     // Both seams, because pinning only `loadRun` would leave the transactional
     // read — the one the stash/pop regression came in through — unguarded.
     await expect(store.loadRun(state.id)).rejects.toThrow(expected);
