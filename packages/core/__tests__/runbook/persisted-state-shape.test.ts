@@ -145,7 +145,7 @@ function renderNode(node: unknown, path: Set<unknown>): string {
  * Anything absent from this set and unhandled by {@link renderStructure} throws,
  * because the alternative is a composite silently rendering as a bare name.
  */
-const CHILDLESS_KINDS = new Set([
+const CHILDLESS_KINDS: ReadonlySet<string> = new Set([
   'any',
   'bigint',
   'boolean',

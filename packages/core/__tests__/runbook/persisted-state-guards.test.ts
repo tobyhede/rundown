@@ -688,18 +688,26 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
   it('leaves the refused row exactly as persisted', async () => {
     // Refusing is only half the no-migration rule; the other half is that the
     // refusal writes nothing. A gate that rejected the row and then re-stamped
-    // it with the current version would satisfy every assertion above while
-    // performing the silent migration CLAUDE.md forbids — and would destroy the
-    // evidence a user needs to understand why the run cannot be resumed.
+    // it with the current version would satisfy a schemaVersion-only assertion
+    // while performing the silent migration CLAUDE.md forbids — and would
+    // destroy the evidence a user needs to understand why the run cannot be
+    // resumed. Comparing the whole row before and after, not just the two
+    // fields the shape drift touches, is what actually pins "exactly as
+    // persisted" rather than "the fields we happened to check".
+    const before = await readPersistedRunState(tmpDir, PRE_STARTED_RUN_ID);
+
     await expect(new RunbookStateManager(tmpDir).load(PRE_STARTED_RUN_ID)).rejects.toBeInstanceOf(
       InvalidRunbookStateError,
     );
 
-    const raw = await readPersistedRunState(tmpDir, PRE_STARTED_RUN_ID);
+    const after = await readPersistedRunState(tmpDir, PRE_STARTED_RUN_ID);
 
-    expect(raw?.schemaVersion).toBe(PRE_STARTED_SCHEMA_VERSION);
+    expect(after).toEqual(before);
+    // Named explicitly too, so a failure here says which field regressed
+    // instead of only "the row changed".
+    expect(after?.schemaVersion).toBe(PRE_STARTED_SCHEMA_VERSION);
     // The pre-#772 latch field survives too: the row is untouched, not merely
     // un-renumbered.
-    expect(raw?.substepStates).toEqual(preStartedInlineState.substepStates);
+    expect(after?.substepStates).toEqual(preStartedInlineState.substepStates);
   });
 });
