@@ -164,6 +164,8 @@ nodenext
 nodenv
 nonmatching
 noninteractive
+nonoptional
+prefault
 normalisation
 normalise
 normaliser

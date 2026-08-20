@@ -77,6 +77,8 @@ import {
 } from './claim-test-helpers.js';
 import { patchPersistedClaim, unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 // Lifecycle command seam contract coverage. Maps the Task 3 contract
 // (docs/superpowers/notes/2026-06-28-lifecycle-command-seam-contract.md):
 //   - delegate issuance precheck (gate-only, no persistence)
@@ -351,7 +353,7 @@ describe('RunbookLifecycleCommandService', () => {
       startedAt: '2026-06-28T00:00:00.000Z',
       updatedAt: '2026-06-28T00:00:00.000Z',
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       frontmatterOutputs: [],
       ...overrides,
     };

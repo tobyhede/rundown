@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { ZodError } from 'zod';
 import { RunbookStateSchema } from '../../src/schemas.js';
+import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import {
   InvalidRunbookStateError,
   LegacySnapshotError,
@@ -35,7 +37,17 @@ const BASE_SCHEMA_STATE = {
   prompted: false,
 };
 
-describe('RunbookStateSchema — schema version 1 and lifecycle fields', () => {
+/**
+ * A version no build writes, so a row carrying it is refused by the version gate.
+ *
+ * Derived rather than hard-coded, and the distinction is the whole of #775: a
+ * literal "foreign" version that {@link CURRENT_SCHEMA_VERSION} later catches up
+ * to plants VALID state under a name that says otherwise, and every assertion
+ * about the refusal it was supposed to provoke silently stops testing anything.
+ */
+const FOREIGN_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION + 1;
+
+describe('RunbookStateSchema — schema version and lifecycle fields', () => {
   it('rejects state without templateVars — persistable state always carries it', () => {
     const { templateVars: _omit, ...withoutTemplateVars } = BASE_SCHEMA_STATE;
 
@@ -43,7 +55,7 @@ describe('RunbookStateSchema — schema version 1 and lifecycle fields', () => {
       ...withoutTemplateVars,
       variables: {},
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
     });
 
     expect(result.success).toBe(false);
@@ -60,21 +72,21 @@ describe('RunbookStateSchema — schema version 1 and lifecycle fields', () => {
       ...withoutPrompted,
       variables: {},
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
     });
 
     expect(result.success).toBe(false);
   });
 
-  it('accepts state with schemaVersion 1 and lifecycle field', () => {
+  it('accepts state with the current schemaVersion and a lifecycle field', () => {
     const parsed = RunbookStateSchema.parse({
       ...BASE_SCHEMA_STATE,
       variables: {},
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
     });
     expect(parsed.lifecycle).toBe('running');
-    expect(parsed.schemaVersion).toBe(1);
+    expect(parsed.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
   });
 
   it('accepts all lifecycle enum values', () => {
@@ -83,7 +95,7 @@ describe('RunbookStateSchema — schema version 1 and lifecycle fields', () => {
         ...BASE_SCHEMA_STATE,
         variables: {},
         lifecycle: lc,
-        schemaVersion: 1,
+        schemaVersion: CURRENT_SCHEMA_VERSION,
       });
       expect(parsed.lifecycle).toBe(lc);
     }
@@ -95,7 +107,7 @@ describe('RunbookStateSchema — schema version 1 and lifecycle fields', () => {
         ...BASE_SCHEMA_STATE,
         variables: { completed: true },
         lifecycle: 'running',
-        schemaVersion: 1,
+        schemaVersion: CURRENT_SCHEMA_VERSION,
       }),
     ).toThrow();
   });
@@ -105,7 +117,7 @@ describe('RunbookStateSchema — schema version 1 and lifecycle fields', () => {
       ...BASE_SCHEMA_STATE,
       variables: { count: 42 },
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
     });
 
     expect(parsed.variables).toEqual({ count: 42 });
@@ -116,7 +128,7 @@ describe('RunbookStateSchema — schema version 1 and lifecycle fields', () => {
       ...BASE_SCHEMA_STATE,
       variables: {},
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
     });
     expect(parsed.variables).toEqual({});
   });
@@ -126,7 +138,7 @@ describe('RunbookStateSchema — schema version 1 and lifecycle fields', () => {
       ...BASE_SCHEMA_STATE,
       variables: { env: 'staging', version: '1.2.3' },
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
     });
     expect(parsed.variables).toEqual({ env: 'staging', version: '1.2.3' });
   });
@@ -136,7 +148,7 @@ describe('RunbookStateSchema — schema version 1 and lifecycle fields', () => {
       ...BASE_SCHEMA_STATE,
       variables: {},
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       lastAction: { type: 'COMPLETE', origin: 'aggregation' },
     });
 
@@ -162,7 +174,7 @@ describe('RunbookStateSchema — schema version 1 and lifecycle fields', () => {
         Note: 'string-output',
       },
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
     });
 
     expect(parsed.variables).toEqual({
@@ -189,7 +201,7 @@ describe('RunbookStateSchema — schema version 1 and lifecycle fields', () => {
         variables: {},
         artifactVars: { PlanPath: artifact },
         lifecycle: 'running',
-        schemaVersion: 1,
+        schemaVersion: CURRENT_SCHEMA_VERSION,
       }),
     ).toThrow(/artifactVars/);
   });
@@ -211,7 +223,7 @@ describe('RunbookStateSchema — schema version 1 and lifecycle fields', () => {
         variables: {},
         templateVars: { Plan: artifact },
         lifecycle: 'running',
-        schemaVersion: 1,
+        schemaVersion: CURRENT_SCHEMA_VERSION,
       }),
     ).toThrow(
       /artifact-record-shaped objects must be validated by ArtifactRecordSchema, not the generic JsonObject branch/,
@@ -223,7 +235,7 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
   let tmpDir: string;
   let manager: RunbookStateManager;
 
-  const VALID_V1_STATE = {
+  const VALID_CURRENT_STATE = {
     id: INVALID_RUN_ID,
     runbook: 'x.md',
     runbookPath: 'x.md',
@@ -237,7 +249,7 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     templateVars: {},
     prompted: false,
     lifecycle: 'running',
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
   };
 
   beforeEach(async () => {
@@ -249,18 +261,20 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('throws InvalidRunbookStateError when loading non-v1 state', async () => {
-    const invalidState = { ...VALID_V1_STATE, schemaVersion: 2 };
+  it('throws InvalidRunbookStateError when loading foreign-version state', async () => {
+    const invalidState = { ...VALID_CURRENT_STATE, schemaVersion: FOREIGN_SCHEMA_VERSION };
     await seedRawRunState(tmpDir, invalidState);
 
     await expect(manager.load(invalidState.id)).rejects.toBeInstanceOf(InvalidRunbookStateError);
   });
 
   it('throws InvalidRunbookStateError with helpful message', async () => {
-    const invalidState = { ...VALID_V1_STATE, schemaVersion: 2 };
+    const invalidState = { ...VALID_CURRENT_STATE, schemaVersion: FOREIGN_SCHEMA_VERSION };
     await seedRawRunState(tmpDir, invalidState);
 
-    await expect(manager.load(invalidState.id)).rejects.toThrow('expected schema version 1');
+    await expect(manager.load(invalidState.id)).rejects.toThrow(
+      `expected schema version ${String(CURRENT_SCHEMA_VERSION)}`,
+    );
   });
 
   it('returns null for missing state file', async () => {
@@ -268,26 +282,26 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     expect(result).toBeNull();
   });
 
-  it('loads valid v1 state successfully', async () => {
-    const v1State = {
-      ...VALID_V1_STATE,
+  it('loads valid current-version state successfully', async () => {
+    const currentState = {
+      ...VALID_CURRENT_STATE,
       runbook: { source: 'project', path: 'x.md' },
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
     };
-    await seedRawRunState(tmpDir, v1State);
+    await seedRawRunState(tmpDir, currentState);
 
-    const result = await manager.load(v1State.id);
+    const result = await manager.load(currentState.id);
     expect(result).not.toBeNull();
-    expect(result?.id).toBe(v1State.id);
+    expect(result?.id).toBe(currentState.id);
   });
 
-  it('rejects v1 state carrying removed artifactVars instead of silently dropping it', async () => {
+  it('rejects current-version state carrying removed artifactVars instead of silently dropping it', async () => {
     const id = 'rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
-    const v1StateWithArtifactVars = {
-      ...VALID_V1_STATE,
+    const stateWithArtifactVars = {
+      ...VALID_CURRENT_STATE,
       id,
       runbook: { source: 'project', path: 'x.md' },
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       artifactVars: {
         PlanPath: {
           kind: 'artifact-record',
@@ -300,7 +314,7 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
         },
       },
     };
-    await seedRawRunState(tmpDir, v1StateWithArtifactVars);
+    await seedRawRunState(tmpDir, stateWithArtifactVars);
 
     await expect(manager.load(id)).rejects.toThrow(
       /Invalid runbook state.*schema validation failed/,
@@ -310,7 +324,7 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
 
   it('rejects state with missing schemaVersion', async () => {
     const id = 'rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
-    const { schemaVersion: _omit, ...rest } = VALID_V1_STATE;
+    const { schemaVersion: _omit, ...rest } = VALID_CURRENT_STATE;
     await seedRawRunState(tmpDir, { ...rest, id });
     await expect(manager.load(id)).rejects.toBeInstanceOf(InvalidRunbookStateError);
     await expect(manager.load(id)).rejects.toThrow(/Invalid runbook state/);
@@ -318,10 +332,10 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
   });
 
   it('rejects current-schema state missing templateVars instead of reconstructing it', async () => {
-    // A v1 row without templateVars is incompatible state, not a shape to
+    // A current-version row without templateVars is incompatible state, not a shape to
     // rebuild by re-parsing runbookSrc. The recovery path is prune and restart.
     const id = 'rd_cccccccccccccccccccccccccccccccc';
-    const { templateVars: _omit, ...withoutTemplateVars } = VALID_V1_STATE;
+    const { templateVars: _omit, ...withoutTemplateVars } = VALID_CURRENT_STATE;
     await seedRawRunState(tmpDir, {
       ...withoutTemplateVars,
       id,
@@ -339,11 +353,11 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
   });
 
   it('rejects current-schema state missing prompted instead of defaulting it', async () => {
-    // A v1 row without `prompted` is incompatible state, not a run to guess a
+    // A current-version row without `prompted` is incompatible state, not a run to guess a
     // mode for. Defaulting it would decide whether the run announces its
     // commands or executes them, which is the whole content of the field.
     const id = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab';
-    const { prompted: _omit, ...withoutPrompted } = VALID_V1_STATE;
+    const { prompted: _omit, ...withoutPrompted } = VALID_CURRENT_STATE;
     await seedRawRunState(tmpDir, {
       ...withoutPrompted,
       id,
@@ -359,7 +373,11 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
 
   it('rejects state with future schemaVersion', async () => {
     const id = 'rd_ffffffffffffffffffffffffffffffff';
-    await seedRawRunState(tmpDir, { ...VALID_V1_STATE, id, schemaVersion: 2 });
+    await seedRawRunState(tmpDir, {
+      ...VALID_CURRENT_STATE,
+      id,
+      schemaVersion: FOREIGN_SCHEMA_VERSION,
+    });
     await expect(manager.load(id)).rejects.toBeInstanceOf(InvalidRunbookStateError);
     await expect(manager.load(id)).rejects.toThrow(/Invalid runbook state/);
     await expect(manager.load(id)).rejects.not.toThrow(/prune|clear invalid state/i);
@@ -367,7 +385,7 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
 
   it('rejects state with non-numeric schemaVersion', async () => {
     const id = 'rd_99999999999999999999999999999999';
-    await seedRawRunState(tmpDir, { ...VALID_V1_STATE, id, schemaVersion: 'v2' });
+    await seedRawRunState(tmpDir, { ...VALID_CURRENT_STATE, id, schemaVersion: 'v2' });
     await expect(manager.load(id)).rejects.toThrow(/Invalid runbook state/);
     await expect(manager.load(id)).rejects.not.toThrow(/prune|clear invalid state/i);
   });
@@ -381,7 +399,7 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     // recoverable-state taxonomy routes the two to different advice.
     const id = `rd_${'b'.repeat(32)}`;
     await seedRawRunState(tmpDir, {
-      ...VALID_V1_STATE,
+      ...VALID_CURRENT_STATE,
       id,
       lastAction: { type: 'GOTO_NEXT', target: '2' },
     });
@@ -406,7 +424,7 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     // independent fields, and one test covering both would let either gate be
     // deleted while the other kept the assertion passing.
     const id = `rd_${'c'.repeat(32)}`;
-    await seedRawRunState(tmpDir, { ...VALID_V1_STATE, id, instance: { stepId: '1' } });
+    await seedRawRunState(tmpDir, { ...VALID_CURRENT_STATE, id, instance: { stepId: '1' } });
 
     const load = manager.load(id);
 
@@ -430,7 +448,7 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     // single-defect row would notice.
     const id = `rd_${'d'.repeat(32)}`;
     await seedRawRunState(tmpDir, {
-      ...VALID_V1_STATE,
+      ...VALID_CURRENT_STATE,
       id,
       schemaVersion: 0,
       lastAction: { type: 'GOTO_NEXT', target: '2' },
@@ -456,7 +474,7 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     // a corrupted row does. Mutation testing found the conjunct survived
     // `→ true`: every other test seeds `lastAction` absent or well-formed.
     const id = `rd_${'a'.repeat(32)}`;
-    await seedRawRunState(tmpDir, { ...VALID_V1_STATE, id, lastAction: null });
+    await seedRawRunState(tmpDir, { ...VALID_CURRENT_STATE, id, lastAction: null });
 
     // One load, both assertions: the class is what proves the gate did not
     // throw raw, the message is what proves it fell through to the schema parse
@@ -472,7 +490,7 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     // error" instead of a typed invalid-state refusal, and bypasses the
     // InvalidRunbookStateError arm of the CLI's recoverable-state taxonomy.
     const id = 'rd_dddddddddddddddddddddddddddddddd';
-    await seedRawRunState(tmpDir, { ...VALID_V1_STATE, id });
+    await seedRawRunState(tmpDir, { ...VALID_CURRENT_STATE, id });
     await writeRawRunJson(tmpDir, id, '{ not valid json');
 
     await expect(manager.load(id)).rejects.toBeInstanceOf(InvalidRunbookStateError);
@@ -500,7 +518,7 @@ describe('RunbookStateManager.update() — lastAction origin persistence', () =>
       ...BASE_SCHEMA_STATE,
       variables: {},
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       lastAction: { type: 'COMPLETE', origin: 'aggregation' },
     });
 
@@ -556,5 +574,116 @@ describe('applyRunbookStateUpdate — stamps, never migrates', () => {
     expect(() => applyRunbookStateUpdate(stale, { stepName: 'x' }, '2026-04-19T00:00:01Z')).toThrow(
       InvalidRunbookStateError,
     );
+  });
+});
+
+describe('pre-#772 inline shape — refused by the version gate, not by the parse', () => {
+  // The regression #775 names. Three PRs added a required field to the persisted
+  // run state without moving CURRENT_SCHEMA_VERSION: #746 introduced
+  // `StepInlineChild.startedAt`, #772 replaced it with a required `started`, and
+  // #827 made `prompted` required. With the constant stationary, state written by
+  // any of those builds still clears the version gate and is refused instead by
+  // whatever the schema parse does with it — which is not the same refusal at the
+  // two readers, and is not a classified one at either.
+  //
+  // The shape below is what a run persisted mid-inline-launch on a pre-#772 build
+  // carries: `inline.startedAt`, no `inline.started`. Everything else about it is
+  // current and valid, so the schema version is the only thing that can
+  // legitimately refuse it.
+  const PRE_STARTED_RUN_ID = `rd_${'7'.repeat(32)}`;
+  const PRE_STARTED_CHILD_ID = `rd_${'8'.repeat(32)}`;
+  const PRE_STARTED_SCHEMA_VERSION = 1;
+
+  const preStartedInlineState = {
+    id: PRE_STARTED_RUN_ID,
+    runbook: { source: 'project', path: 'parent.md' },
+    runbookPath: 'parent.md',
+    step: '1',
+    stepName: 'Parent',
+    retryCount: 0,
+    variables: {},
+    steps: [],
+    substepStates: [
+      {
+        id: '1',
+        frameKey: '1|',
+        status: 'running',
+        inline: {
+          childRunbookPath: 'child.md',
+          childRunbookRef: { source: 'project', path: 'child.md' },
+          contextSnapshot: { vars: {}, ancestors: [] },
+          childRunId: PRE_STARTED_CHILD_ID,
+          createdAt: '2026-08-13T00:00:00.000Z',
+          // The pre-#772 latch field. `started` — required since #772 — is absent.
+          startedAt: null,
+        },
+      },
+    ],
+    startedAt: '2026-08-13T00:00:00.000Z',
+    updatedAt: '2026-08-13T00:00:00.000Z',
+    templateVars: {},
+    prompted: false,
+    lifecycle: 'running',
+    schemaVersion: PRE_STARTED_SCHEMA_VERSION,
+  };
+
+  let tmpDir: string;
+
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-test-'));
+    await seedRawRunState(tmpDir, preStartedInlineState);
+  });
+
+  afterEach(async () => {
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('carries a version the current build does not write', () => {
+    // The premise both tests below rest on, asserted rather than assumed. If the
+    // constant ever returns to the version that shape was written under, the gate
+    // stops firing and those assertions would be pinning the parse's behaviour
+    // under names that say otherwise.
+    expect(CURRENT_SCHEMA_VERSION).not.toBe(PRE_STARTED_SCHEMA_VERSION);
+  });
+
+  it('refuses it at the version gate through RunbookStateManager.load', async () => {
+    const manager = new RunbookStateManager(tmpDir);
+
+    const load = manager.load(PRE_STARTED_RUN_ID);
+
+    await expect(load).rejects.toBeInstanceOf(InvalidRunbookStateError);
+    // The reason, not only the class. `load` reframes a failed parse as
+    // `schema_validation_failed`, which is the same class — so the class alone
+    // cannot tell the version gate from the parse, and this test would pass
+    // unchanged against the stale constant it exists to pin.
+    await expect(load).rejects.toMatchObject({
+      defect: {
+        runId: PRE_STARTED_RUN_ID,
+        reason: 'invalid_schema_version',
+        schemaVersion: PRE_STARTED_SCHEMA_VERSION,
+      },
+    });
+  });
+
+  it('refuses it as a classified class, never a bare ZodError, on both store read seams', async () => {
+    const store = await getRunbookStore(tmpDir);
+    const runId = brandRunIdForTest(PRE_STARTED_RUN_ID);
+
+    // `loadRun` and the in-transaction `ctx.readState` share one validating read,
+    // but only its gate is classified: past the gate, `readRun` parses with
+    // `.parse()`, so a shape that clears the version check and fails the schema
+    // escapes as a bare `ZodError` — outside the taxonomy
+    // `isRecoverableActiveStackError` classifies on, which is what leaves a
+    // `--claim-id` bearer unable to finish, stop or prune the run.
+    const seams: readonly (() => Promise<unknown>)[] = [
+      () => store.loadRun(runId),
+      () => store.mutateSession((ctx) => ctx.readState(runId)),
+    ];
+
+    for (const read of seams) {
+      await expect(read()).rejects.toBeInstanceOf(InvalidRunbookStateError);
+      await expect(read()).rejects.not.toBeInstanceOf(ZodError);
+      await expect(read()).rejects.toThrow(/invalid schemaVersion/);
+    }
   });
 });

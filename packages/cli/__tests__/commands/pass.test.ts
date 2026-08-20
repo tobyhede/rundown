@@ -32,6 +32,19 @@ import { Command } from 'commander';
 // dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
 import { registerPassCommand } from '../../src/commands/pass.js';
 
+import { CURRENT_SCHEMA_VERSION } from '@rundown-org/core';
+
+/**
+ * A schema version no build writes, so a row carrying it is refused by the
+ * version gate rather than parsed.
+ *
+ * Derived rather than hard-coded, which is the whole of #775: a literal
+ * "foreign" version that {@link CURRENT_SCHEMA_VERSION} later catches up to
+ * plants VALID state, and the refusal this fixture exists to provoke stops
+ * happening with nothing failing to say so.
+ */
+const FOREIGN_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION + 1;
+
 describe('pass command wiring', () => {
   it('registers the pass command with its aliases, flags, and descriptions', () => {
     const program = new Command();
@@ -192,11 +205,11 @@ describe('pass command', () => {
       expect(state?.step).toBe('2');
     });
 
-    it('fails closed on invalid non-v1 schemaVersion state instead of migrating it', async () => {
+    it('fails closed on a foreign schemaVersion instead of migrating it', async () => {
       const state = await getActiveState(workspace);
       expect(state).toBeDefined();
       await patchPersistedRunState(workspace.cwd, state!.id, {
-        schemaVersion: 2,
+        schemaVersion: FOREIGN_SCHEMA_VERSION,
       });
 
       const result = await runCliInProcess('pass --text', workspace);
@@ -206,7 +219,7 @@ describe('pass command', () => {
       const reloaded = (await readPersistedRunState(workspace.cwd, state!.id)) as {
         schemaVersion?: unknown;
       } | null;
-      expect(reloaded?.schemaVersion).toBe(2);
+      expect(reloaded?.schemaVersion).toBe(FOREIGN_SCHEMA_VERSION);
     });
   });
 

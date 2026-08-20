@@ -47,6 +47,19 @@ import {
   type VerifiedClaim,
 } from '@rundown-org/core';
 
+import { CURRENT_SCHEMA_VERSION } from '@rundown-org/core';
+
+/**
+ * A schema version no build writes, so a row carrying it is refused by the
+ * version gate rather than parsed.
+ *
+ * Derived rather than hard-coded, which is the whole of #775: a literal
+ * "foreign" version that {@link CURRENT_SCHEMA_VERSION} later catches up to
+ * plants VALID state, and the refusal this fixture exists to provoke stops
+ * happening with nothing failing to say so.
+ */
+const FOREIGN_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION + 1;
+
 const VALID_OTHER_CLAIM_ID = assertClaimId(
   'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
 );
@@ -211,7 +224,9 @@ describe('stash command', () => {
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     const state = await getActiveState(workspace);
     expect(state).not.toBeNull();
-    await patchPersistedRunState(workspace.cwd, state!.id, { schemaVersion: 2 });
+    await patchPersistedRunState(workspace.cwd, state!.id, {
+      schemaVersion: FOREIGN_SCHEMA_VERSION,
+    });
 
     const result = await runCliInProcess('stash', workspace);
 
@@ -221,7 +236,7 @@ describe('stash command', () => {
         kind: 'error',
         code: 'RD-309',
         error: expect.stringContaining(
-          `Invalid runbook state for "${state!.id}": invalid schemaVersion; expected schema version 1.`,
+          `Invalid runbook state for "${state!.id}": invalid schemaVersion; expected schema version ${String(CURRENT_SCHEMA_VERSION)}.`,
         ),
       }),
     );
@@ -945,7 +960,9 @@ describe('pop command', () => {
     const state = await getActiveState(workspace);
     expect(state).not.toBeNull();
     await runCliInProcess('stash', workspace);
-    await patchPersistedRunState(workspace.cwd, state!.id, { schemaVersion: 2 });
+    await patchPersistedRunState(workspace.cwd, state!.id, {
+      schemaVersion: FOREIGN_SCHEMA_VERSION,
+    });
 
     const result = await runCliInProcess('pop', workspace);
 
@@ -955,7 +972,7 @@ describe('pop command', () => {
         kind: 'error',
         code: 'RD-309',
         error: expect.stringContaining(
-          `Invalid runbook state for "${state!.id}": invalid schemaVersion; expected schema version 1.`,
+          `Invalid runbook state for "${state!.id}": invalid schemaVersion; expected schema version ${String(CURRENT_SCHEMA_VERSION)}.`,
         ),
       }),
     );
@@ -1132,7 +1149,7 @@ rd echo "hello"
       updatedAt: new Date().toISOString(),
       runbookSrc, // Include runbookSrc so pop can read steps
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
     };
     await seedRawRunState(workspace.cwd, state);
 
@@ -1180,7 +1197,7 @@ rd echo "hello"
         }),
       ],
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
     });
     const runbookSrc = [
       '# Test Runbook',
@@ -1216,7 +1233,7 @@ rd echo "hello"
         tokenHash: `sha256:${'a'.repeat(64)}`,
       },
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
     });
 
     const parsedClaim = parseClaimBearer(MANUAL_CLAIM_ID);

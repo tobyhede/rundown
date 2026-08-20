@@ -26,6 +26,8 @@ import {
 import type { SubstepState } from '../../src/runbook/types.js';
 import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 // The missing-outcome gate reads only from the passed `targetState` (no disk,
 // no drain), so these properties are pure: the service is wired with a real
 // manager for construction, but the gate path never touches it. The gate is the
@@ -80,7 +82,7 @@ function state(overrides: Partial<RunbookState> = {}): RunbookState {
     frameEntryCounts: { [frameKey]: 1 },
     substepStates: allSubstepIds.map((id) => ({ id, frameKey, status: 'done' as const })),
     resolvedCompletions: {},
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     frontmatterOutputs: [],
     ...overrides,
   };

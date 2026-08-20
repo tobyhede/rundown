@@ -23,14 +23,38 @@
 import type { InvalidRunStateDefect } from '../errors/rundown-error.js';
 
 /**
- * Current persisted state schema version for the v1 release.
+ * Current persisted state schema version.
  *
  * Every newly derived state is stamped with this version; every read of
  * persisted state rejects any other one. Exported so callers deriving state
  * outside the manager — and the tests pinning that guarantee — name the version
- * rather than hard-coding `1`.
+ * rather than hard-coding a literal. Hard-coding one is how this constant went
+ * stale: nothing forced a fixture to move with it, so nothing failed when it
+ * did not move. `packages/core/__tests__/runbook/persisted-state-shape.test.ts`
+ * is what forces the pairing now.
+ *
+ * **Version 2** covers three required fields added to the persisted run state
+ * across three PRs while this constant stood at `1`:
+ *
+ * - `StepInlineChild.startedAt` (#746), then
+ * - `StepInlineChild.started: InlineLaunchStart | null` replacing it (#772), and
+ * - `RunbookState.prompted` (#827).
+ *
+ * A run persisted mid-inline-launch on any of those builds cleared the version
+ * gate and was refused instead by the schema parse — as
+ * `schema_validation_failed` through `RunbookStateManager.load`, and as a bare
+ * `ZodError` through `RunbookStore.readRun`, which is outside the CLI's recovery
+ * taxonomy entirely. Moving the version routes all of them onto
+ * `invalid_schema_version`, which finish/stop/prune classify on. This is a
+ * rejection, never a migration: version `1` state is not read, adapted, or
+ * rewritten (CLAUDE.md § State Persistence).
+ *
+ * Move this constant in the same commit as any change to the persisted run-state
+ * shape — `RunbookState` in `runbook/types.ts` or `RunbookStateObjectSchema` in
+ * `schemas.ts`. Widening an optional field is the only edit that does not
+ * require it, because state written before the widening still parses.
  */
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 /**
  * Thrown when a persisted state file does not match the current schema contract.

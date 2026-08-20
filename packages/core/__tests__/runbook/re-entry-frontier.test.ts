@@ -33,6 +33,8 @@ import {
 } from '../../src/testing/effective-vars.js';
 import { makeResolvedStepWithSubsteps, makeSubstep } from '../helpers/step-factories.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 // This suite drives `re-entry-frontier.ts` directly rather than through
 // `collectDelegationOutcomes`. Two reasons it earns its own file:
 //
@@ -128,7 +130,7 @@ function state(overrides: Partial<RunbookState> = {}): RunbookState {
     frameEntryCounts: { [buildFrameKey('1')]: 1 },
     substepStates: [],
     resolvedCompletions: {},
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     frontmatterOutputs: [],
     ...overrides,
   };

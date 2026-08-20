@@ -24,6 +24,8 @@ import {
   brandInitialTemplateVarsForTest,
 } from '../../src/testing/effective-vars.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 const CHILD = assertRunId('rd_22222222222222222222222222222222');
 const PARENT = assertRunId('rd_11111111111111111111111111111111');
 const GRANDPARENT = assertRunId('rd_33333333333333333333333333333333');
@@ -68,7 +70,7 @@ function makeState(id: RunId, overrides: Partial<RunbookState> = {}): RunbookSta
     lifecycle: 'completed',
     startedAt: '2026-07-15T00:00:00.000Z',
     updatedAt: '2026-07-15T00:00:00.000Z',
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     frontmatterOutputs: [],
     ...overrides,
   };

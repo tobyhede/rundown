@@ -18,6 +18,8 @@ import {
   makeDelegationCredentialDescriptor,
 } from '../../src/testing/delegation-fixtures.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 describe('DelegationScanService', () => {
   let tmpDir: string;
   let manager: RunbookStateManager;
@@ -74,7 +76,7 @@ describe('DelegationScanService', () => {
       startedAt: '2026-02-27T10:00:00.000Z',
       updatedAt: '2026-02-27T10:00:00.000Z',
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       ...overrides,
     };
   }

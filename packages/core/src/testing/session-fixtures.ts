@@ -442,7 +442,10 @@ export async function readPersistedRunState(
  *
  * The direct replacement for the read-modify-write `writeFile` pattern. The
  * write is unvalidated on purpose: the most common use is planting state the
- * CLI must reject (`{ schemaVersion: 2 }`, a terminal `lifecycle`, and so on).
+ * CLI must reject (`{ schemaVersion: CURRENT_SCHEMA_VERSION + 1 }`, a terminal
+ * `lifecycle`, and so on). Derive such a version from the constant rather than
+ * writing a literal: a literal that the constant later catches up to plants
+ * VALID state under a name that says otherwise, and nothing fails.
  *
  * @param cwd - Project root whose store holds the run.
  * @param runId - Run to patch.

@@ -14,7 +14,10 @@ import {
   deletePersistedRunState,
   issueRunControlClaimFor,
 } from '../../src/testing/session-fixtures.js';
-import { RunbookStateManager } from '../../src/runbook/state.js';
+import { CURRENT_SCHEMA_VERSION, RunbookStateManager } from '../../src/runbook/state.js';
+
+/** A version no build writes, so a row carrying it is refused by the gate. */
+const FOREIGN_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION + 1;
 
 describe('session-fixtures', () => {
   it('seeds an active run with a claim', async () => {
@@ -40,8 +43,8 @@ describe('session-fixtures', () => {
     expect(cid).toMatch(/^rdclm_/);
     await seedSession(cwd, { defaultStack: [b.runId, a.runId] });
     expect((await m.loadSession()).defaultStack).toEqual([b.runId, a.runId]);
-    await patchPersistedRunState(cwd, a.runId, { schemaVersion: 2 });
-    expect((await readPersistedRunState(cwd, a.runId))?.schemaVersion).toBe(2);
+    await patchPersistedRunState(cwd, a.runId, { schemaVersion: FOREIGN_SCHEMA_VERSION });
+    expect((await readPersistedRunState(cwd, a.runId))?.schemaVersion).toBe(FOREIGN_SCHEMA_VERSION);
     await writeRawRunJson(cwd, a.runId, '{invalid');
     await expect(readPersistedRunState(cwd, a.runId)).rejects.toThrow();
     await deletePersistedRunState(cwd, a.runId);

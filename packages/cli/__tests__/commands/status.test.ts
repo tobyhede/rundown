@@ -27,6 +27,19 @@ import { Command } from 'commander';
 // dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
 import { registerStatusCommand } from '../../src/commands/status.js';
 
+import { CURRENT_SCHEMA_VERSION } from '@rundown-org/core';
+
+/**
+ * A schema version no build writes, so a row carrying it is refused by the
+ * version gate rather than parsed.
+ *
+ * Derived rather than hard-coded, which is the whole of #775: a literal
+ * "foreign" version that {@link CURRENT_SCHEMA_VERSION} later catches up to
+ * plants VALID state, and the refusal this fixture exists to provoke stops
+ * happening with nothing failing to say so.
+ */
+const FOREIGN_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION + 1;
+
 describe('status command wiring', () => {
   it('registers the status command with its documented flags and descriptions', () => {
     const program = new Command();
@@ -109,7 +122,7 @@ describe('status command', () => {
     expect(state).toBeDefined();
 
     await patchPersistedRunState(workspace.cwd, state!.id, {
-      schemaVersion: 2,
+      schemaVersion: FOREIGN_SCHEMA_VERSION,
     });
 
     const result = await runCliInProcess('status', workspace);
@@ -144,7 +157,9 @@ describe('status command', () => {
     const state = await getActiveState(workspace);
     expect(state).toBeDefined();
 
-    await patchPersistedRunState(workspace.cwd, state!.id, { schemaVersion: 2 });
+    await patchPersistedRunState(workspace.cwd, state!.id, {
+      schemaVersion: FOREIGN_SCHEMA_VERSION,
+    });
 
     const stopped = await runCliInProcess('stop', workspace);
     expect(stopped.exitCode).toBe(0);
@@ -772,7 +787,7 @@ Do work.
     await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
     const state = await getActiveState(workspace);
     const stateId = state!.id;
-    await patchPersistedRunState(workspace.cwd, stateId, { schemaVersion: 2 });
+    await patchPersistedRunState(workspace.cwd, stateId, { schemaVersion: FOREIGN_SCHEMA_VERSION });
 
     const result = await runCliInProcess('complete', workspace);
 

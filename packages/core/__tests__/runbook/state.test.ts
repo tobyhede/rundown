@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { getErrorMessage, isError } from '../../src/errors.js';
 import {
   applyRunbookStateUpdate,
+  CURRENT_SCHEMA_VERSION,
   generateRunId,
   InvalidRunbookStateError,
   isConcurrentStateModificationError,
@@ -1955,7 +1956,10 @@ describe('RunbookStateManager', () => {
     // `number`: a row claiming `"v2"` is precisely the case worth reporting, and
     // it appears nowhere in the message prose.
     it.each([
-      { label: 'a future numeric version', found: 2 },
+      // Derived, not a literal. A hard-coded "future" version that
+      // CURRENT_SCHEMA_VERSION later catches up to plants VALID state, and this
+      // row then loads cleanly with nothing failing to say the case went away.
+      { label: 'a future numeric version', found: CURRENT_SCHEMA_VERSION + 1 },
       { label: 'a non-numeric version', found: 'v2' },
     ])('names the run and $label it claims', async ({ found }) => {
       const id = await seedThenPlant((state) => ({ ...state, schemaVersion: found }));

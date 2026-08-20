@@ -19,6 +19,8 @@ import {
   makeSubstep,
 } from '../helpers/step-factories.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 const runId = assertRunId(`rd_${'1'.repeat(32)}`);
 const CONTEXT_ID = 'ctx-entry';
 const CWD = '/project';
@@ -78,7 +80,7 @@ function state(overrides: Partial<RunbookState> = {}): RunbookState {
     frameEntryCounts: { [buildFrameKey('1')]: 1 },
     substepStates: [],
     resolvedCompletions: {},
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     frontmatterOutputs: [],
     ...overrides,
   };

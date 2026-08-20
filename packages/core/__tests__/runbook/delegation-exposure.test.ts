@@ -33,6 +33,8 @@ import {
   makeSubstep,
 } from '../helpers/step-factories.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 const runId = assertRunId('rd_11111111111111111111111111111111');
 const parentRunId = assertRunId('rd_22222222222222222222222222222222');
 const childRunId = assertRunId('rd_33333333333333333333333333333333');
@@ -89,7 +91,7 @@ function plainState(overrides: Partial<RunbookState> = {}): RunbookState {
     frameEntryCounts: { [buildFrameKey('1')]: 1 },
     substepStates: [],
     resolvedCompletions: {},
-    schemaVersion: 1,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
     frontmatterOutputs: [],
     ...overrides,
   };

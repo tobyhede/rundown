@@ -44,6 +44,8 @@ import {
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 const RELEASE_POLICY: LifecycleTerminalReleasePolicy = {
   onComplete: { releaseRunbook: true },
   onStopped: { releaseRunbook: true },
@@ -145,7 +147,7 @@ describe('one mutation, one entry bump', () => {
       startedAt: '2026-08-04T00:00:00.000Z',
       updatedAt: '2026-08-04T00:00:00.000Z',
       lifecycle: 'running',
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       frontmatterOutputs: [],
       ...overrides,
     };

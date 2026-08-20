@@ -28,6 +28,8 @@ import {
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
 
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+
 const RUN_ID = brandRunIdForTest(`rd_${'8'.repeat(32)}`);
 const GRANDPARENT_RUN_ID = brandRunIdForTest(`rd_${'9'.repeat(32)}`);
 const GREAT_GRANDPARENT_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
@@ -646,7 +648,7 @@ describe('buildContextSnapshot', () => {
         templateVars: brandInitialTemplateVarsForTest({}),
         variables: brandStoredOutputsForTest({ PlanPath: ARTIFACT_RECORD }),
       }),
-      schemaVersion: 1,
+      schemaVersion: CURRENT_SCHEMA_VERSION,
     }) as unknown as RunbookState;
 
     const snap = buildContextSnapshot(parsed);
