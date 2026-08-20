@@ -63,8 +63,13 @@ asserted-to TYPE through the checker and walks its symbol, base types, and
 union/intersection members, so a rename, an alias two hops away, or an interface
 that inherits the brand all resolve to the same declared symbol and get caught
 the same as a direct cast. `scripts/__tests__/eslint-brand-cast-guard.test.mjs`
-lints a snippet per laundering route through the real config, because a bug in
-the rule's type resolution matches nothing and otherwise reads as passing.
+lints one committed fixture per laundering route through the real config,
+because a bug in the rule's type resolution matches nothing and otherwise reads
+as passing. The fixtures are real `.ts` files under
+`packages/core/__tests__/fixtures/brand-cast/` — a type-aware rule needs ESLint
+and the checker to be reading the same bytes, which `lintText` against a
+borrowed `filePath` does not guarantee, and a file this test writes and sweeps
+is visible to everything else that reads the working tree while it exists.
 Separately, the CLI, MCP and plugin `src/**` may no longer import
 `buildStepVariables`, `expandLoopVariables`, `expandLoopVariablesForCommand`, or
 `deriveExecutionUnitEntry` from core at all.

@@ -61,9 +61,12 @@ const trustedArtifactCastSelectors = [
 // `RenderedUnitCommand` is also not re-exported from `@rundown-org/core`, so
 // outside `packages/core` the name cannot be brought into scope at all — a
 // second, structural layer this rule does not need to reason about.
-// `scripts/__tests__/eslint-brand-cast-guard.test.mjs` lints a snippet per
-// laundering route through this config, so a regression in either layer fails
-// rather than reading as passing.
+// `scripts/__tests__/eslint-brand-cast-guard.test.mjs` lints one committed
+// fixture per laundering route through this config, so a regression in either
+// layer fails rather than reading as passing. Those fixtures are deliberate
+// violations, which is why `packages/core/__tests__/fixtures/brand-cast/**` is
+// in eslint.ignores.js; that test re-includes them with `ignore: false` and
+// asserts the ignore entry is still there.
 
 // Closes the dynamic-import gap left by the front-end no-restricted-imports
 // boundary (below): no-restricted-imports vets static named/aliased/namespace

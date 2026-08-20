@@ -173,6 +173,7 @@ notavar
 nums
 opts
 parallelised
+parallelises
 parameterised
 parameterizing
 parseable
