@@ -96,6 +96,7 @@ describe('TrustedArtifactRecord brand under XState/persistence operations', () =
       retryCount: 0,
       variables: { Plan: RECORD },
       templateVars: {},
+      prompted: false,
       steps: [{ id: '1', status: 'running' }],
       resolvedCompletions: {},
       frameEntryCounts: {},

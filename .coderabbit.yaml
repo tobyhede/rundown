@@ -1,13 +1,19 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 language: "en-US"
+# Hard limit: 250 characters AFTER YAML folds this block into one line. The
+# previous value was 502 and CodeRabbit silently fell back to default settings
+# for the whole file. Measure before editing — the folded length is what counts,
+# not the source lines. The semver clause is load-bearing (CLAUDE.md forbids
+# raising it as a finding); the rest of that policy lives in CLAUDE.md, which
+# CodeRabbit auto-detects through `knowledge_base.code_guidelines` (enabled at
+# the foot of this file). Do NOT add CLAUDE.md to `reviews.path_instructions` —
+# that field maps instructions onto files being REVIEWED, so listing it there
+# would have CodeRabbit review the guidelines instead of applying them.
 tone_instructions: >-
-  Focus on type safety, state machine correctness, security policy correctness,
-  persisted state no-migration, CLI output stability, and design principles
-  from CLAUDE.md. Be direct and specific. Flag action-type mapping violations.
-  This project is unreleased with no downstream consumers: never comment on
-  semver bump levels, changeset major/minor/patch choices, or breaking-change
-  impact on hypothetical consumers. A finding whose only consequence lands on a
-  consumer that does not exist is out of scope.
+  Focus on type safety, state-machine correctness, security policy,
+  persisted-state no-migration, CLI output stability, and CLAUDE.md design
+  principles. Be direct and specific. Unreleased project: never raise semver or
+  hypothetical-consumer impact.
 
 reviews:
   profile: "assertive"

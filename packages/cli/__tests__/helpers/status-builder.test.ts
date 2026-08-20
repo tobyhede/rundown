@@ -149,6 +149,7 @@ const { buildInactiveStatus, buildStashedStatus, buildActiveStatus } = await imp
 
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   const baseState: RunbookState = {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id: DEFAULT_RUN_ID,
     runbook: { source: 'project', path: 'test.runbook.md' },

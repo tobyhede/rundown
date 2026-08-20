@@ -41,6 +41,7 @@ const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
 
 function baseState(id = runIdA): RunbookState {
   return {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id,
     runbook: { source: 'project', path: 'p.md' },

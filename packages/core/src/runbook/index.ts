@@ -75,7 +75,33 @@ export {
   type ExecutionEpoch,
   type GuardedMutationResult,
 } from './storage/mutation-result.js';
-export { extractUnitOutputs, resolveCurrentExecutionUnit } from './execution-units.js';
+export {
+  extractUnitOutputs,
+  findStepOrThrow,
+  resolveCurrentExecutionUnit,
+} from './execution-units.js';
+// The renderer behind the entry seam. `RunbookActorService.enterExecutionUnit`
+// is the one production door — it binds the process-scoped dependencies and runs
+// the persisted-snapshot guards first — so the bare function is banned from every
+// front end's `src/**` by an ESLint no-restricted-imports boundary. It is exported
+// for core's own tests and for front-end test doubles, which stand in for the
+// service and must not re-implement its rendering.
+export { deriveExecutionUnitEntry } from './execution-unit-entry.js';
+// `RenderedUnitCommand` is deliberately absent. Its brand is a module-private
+// `declare const` unique symbol, so the only way to produce one outside its
+// module is a type assertion — and an assertion needs the type's NAME in scope.
+// ESLint bans the assertion syntaxes; withholding the name from the barrel is
+// what makes them unwritable outside core in the first place, closing the alias
+// and namespace-qualified spellings no selector can enumerate. Nothing outside
+// core needs it: the value travels on `ExecutionUnitRunnable.command`, which
+// callers destructure rather than annotate.
+export type {
+  DeriveExecutionUnitEntryInput,
+  ExecutionUnitAwaiting,
+  ExecutionUnitEntry,
+  ExecutionUnitInlineLaunch,
+  ExecutionUnitRunnable,
+} from './execution-unit-entry.js';
 export {
   buildContextVars,
   buildStepVariables,
@@ -428,6 +454,7 @@ export {
   RunbookActorService,
   type ActorSyncResult,
   type AnyActorRef,
+  type EnterExecutionUnitInput,
   type PreparedDelegationChildLink,
   type PreparedDelegationChildUnlink,
   type PrepareDelegationChildLinkResult,

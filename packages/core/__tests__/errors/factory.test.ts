@@ -658,6 +658,28 @@ describe('Errors factory - exhaustive coverage', () => {
           '--index 2 names a FOR iteration the parent has not entered; iteration 1 is active',
       );
     });
+
+    it('frontierDisclosureFailed maps runId + the render cause → RD-833', () => {
+      // #820. The condition is post-commit and NOT retryable: a collect that
+      // landed its aggregate could not render the entry its freshly derived
+      // bearers ride on. The `runId` key is what lets an agent name the run
+      // whose bearers were lost without parsing the prose, and `message` carries
+      // the render failure's own text — usually a `--helpers` helper raising —
+      // which is the only fact the envelope's title cannot supply.
+      const error = Errors.frontierDisclosureFailed(
+        'rd_11111111111111111111111111111111',
+        'helper "slugify" threw: boom',
+      );
+      expect(error).toBeInstanceOf(RundownError);
+      expect(error.code).toBe('RD-833');
+      expect(error.context.runId).toBe('rd_11111111111111111111111111111111');
+      expect(error.context.message).toBe('helper "slugify" threw: boom');
+      // The rendered sentence, so a blanked title or a dropped cause is visible
+      // rather than tolerated by a loose `toContain`.
+      expect(error.message).toBe(
+        'Delegation frontier disclosure could not be rendered - helper "slugify" threw: boom',
+      );
+    });
   });
 
   describe('Retry-hook errors', () => {

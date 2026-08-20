@@ -97,6 +97,22 @@ export const Errors = {
   concurrentStateModification: (runId: string, detail: string): RundownError =>
     new RundownError('CONCURRENT_STATE_MODIFICATION', { runId, message: detail }),
 
+  // The one post-commit failure a collect can suffer. Spelled with the run id in
+  // context so an operator can name the run whose bearers were lost without
+  // parsing the message, and with the render failure's own text as `message` so
+  // the cause (usually a `--helpers` helper raising) is not swallowed by the
+  // envelope.
+  // Stryker disable next-line ArrowFunction: undetectable, not uncovered. Every
+  // member of this literal is evaluated at module load, so replacing this body
+  // with `() => undefined` is a STATIC mutant — jest's module registry has
+  // already cached `Errors` by the time the mutant is applied, and the mutated
+  // arrow is never the one the test calls. Verified by hand: editing the source
+  // to `() => undefined` DOES fail the RD-833 factory test. The two mutants on
+  // the same line that Stryker can observe (the code string and the context
+  // literal) are both killed by it.
+  frontierDisclosureFailed: (runId: string, detail: string): RundownError =>
+    new RundownError('DELEGATION_FRONTIER_DISCLOSURE_FAILED', { runId, message: detail }),
+
   // The recovery is spelled into the MESSAGE, not left to the code's
   // `description`, for the same reason `walJournalModeUnavailable` spells its
   // candidate causes there: the description reaches an operator only through

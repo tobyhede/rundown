@@ -26,6 +26,7 @@ const runbookId = brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 
 function state(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id: runbookId,
     runbook: { source: 'project', path: 'parent.md' },

@@ -3,7 +3,7 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createActor, waitFor, type Snapshot } from 'xstate';
-import { RunbookStateManager } from '../../src/runbook/state.js';
+import { InvalidRunbookStateError, RunbookStateManager } from '../../src/runbook/state.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import {
   extractEnteredArtifacts,
@@ -41,6 +41,7 @@ import {
   brandTrustedArtifactRecordForTest,
 } from '../../src/testing/effective-vars.js';
 import { seedRawRunState } from '../../src/testing/state-fixtures.js';
+import { getErrorMessage } from '../../src/errors.js';
 import {
   makeDelegatedSubstepState,
   makeDelegationCredentialIssuer,
@@ -156,6 +157,30 @@ describe('RunbookActorService', () => {
 npm test
 \`\`\`
 `);
+
+  /**
+   * Enter the unit a persisted run's cursor names, and return its observations.
+   *
+   * `enterExecutionUnit` takes the state rather than an id, so these cases —
+   * every one of which writes a snapshot through the manager first — reload it
+   * here. What they assert is unchanged: the snapshot-derived half of the
+   * `STEP_ENTERED` payload (artifacts, the inline-launch intent) and the
+   * persisted-state refusals that run before any of it.
+   *
+   * @param service - Actor service under test.
+   * @param id - Run to enter.
+   * @param steps - Parsed steps for that run.
+   * @returns The entry's observation effects.
+   */
+  async function enterEffects(
+    service: RunbookActorService,
+    id: string,
+    steps: readonly ResolvedStep[],
+  ) {
+    const loaded = await manager.load(id);
+    if (!loaded) throw new Error(`expected persisted state for ${id}`);
+    return (await service.enterExecutionUnit({ state: loaded, steps })).effects;
+  }
 
   function commandTemplateVars(
     runId: string,
@@ -1032,13 +1057,7 @@ echo ok
         },
       });
 
-      const effects = await service.observeExecutionUnitEntry(state.id, stepsWithOneCommand, {
-        stepId: '1',
-        position: { current: '1', total: 1 },
-        stepName: 'Build',
-        isSubstep: false,
-        prompted: false,
-      });
+      const effects = await enterEffects(service, state.id, stepsWithOneCommand);
 
       expect(effects).toHaveLength(1);
       expect(effects[0]?.event.type).toBe('STEP_ENTERED');
@@ -1049,19 +1068,16 @@ echo ok
       expect(JSON.stringify(persisted)).not.toContain('STEP_ENTERED');
     });
 
-    it('projects STEP_ENTERED artifact paths under the default work dir when WorkPath is absent', async () => {
+    it('refuses to enter a run whose variables carry no WorkPath', async () => {
+      // There used to be a WORK_DIR fallback here, and it was never the whole
+      // story: the render context the same entry expands helper paths against
+      // refused a missing WorkPath outright, so the fallback could only produce
+      // an entry whose artifact paths and helper paths named different roots.
+      // One read now, and a run that cannot name its own work directory is
+      // corrupt persisted state (RD-309, finish/stop/prune) rather than a run
+      // rendered against a guess.
       const runId = assertRunId('rd_88888888888888888888888888888888');
       const service = new RunbookActorService(manager);
-      const artifact = {
-        kind: 'artifact-record' as const,
-        uri: `rd://artifacts/ctx/${runId}/plan.md`,
-        runId,
-        contextId: 'ctx',
-        runbook: { source: 'project' as const, path: 'workflow.runbook.md' },
-        key: 'plan.md',
-        timestamp: '2026-05-15T00:00:00.000Z',
-      };
-      // Omit WorkPath so deriveStepEnteredEffect falls back to WORK_DIR.
       const { WorkPath: _omitted, ...templateVarsWithoutWorkPath } = commandTemplateVars(runId);
       const state = await manager.create(
         { source: 'project', path: 'workflow.runbook.md' },
@@ -1073,35 +1089,268 @@ echo ok
           templateVars: templateVarsWithoutWorkPath,
         },
       );
-      const bootstrap = await service.createActor(state.id, stepsWithOneCommand);
-      if (!bootstrap) throw new Error('expected bootstrap actor');
-      const baseSnapshot = bootstrap.getPersistedSnapshot() as {
-        readonly context?: Readonly<Record<string, unknown>>;
-        readonly [key: string]: unknown;
-      };
-      service.stopActor(bootstrap);
-      await manager.update(state.id, {
-        snapshot: {
-          ...baseSnapshot,
-          context: {
-            ...(baseSnapshot.context ?? {}),
-            enteredArtifacts: { PlanPath: artifact },
-          },
+
+      await expect(enterEffects(service, state.id, stepsWithOneCommand)).rejects.toThrow(
+        /is missing WorkPath/,
+      );
+    });
+
+    // The freshness gate is CONDITIONAL on a snapshot existing, and both halves
+    // of that condition are load-bearing. These two tests are the pair: a run
+    // with no snapshot must enter (a gate that always ran would hand
+    // `assertFreshSnapshotValue` an `undefined` value and refuse every fresh
+    // run), and a run whose snapshot names a step the runbook no longer defines
+    // must be refused (a gate that never ran would enter it).
+    it('enters a run that has never synced a snapshot', async () => {
+      const runId = assertRunId('rd_88888888888888888888888888888889');
+      const service = new RunbookActorService(manager);
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
         },
-      });
+      );
 
-      const effects = await service.observeExecutionUnitEntry(state.id, stepsWithOneCommand, {
-        stepId: '1',
-        position: { current: '1', total: 1 },
-        stepName: 'Build',
-        isSubstep: false,
-        prompted: false,
-      });
+      const effects = await enterEffects(service, state.id, stepsWithOneCommand);
 
+      expect(effects).toHaveLength(1);
       expect(effects[0]?.event.type).toBe('STEP_ENTERED');
-      if (effects[0]?.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
-      const artifacts = effects[0].event.payload.artifacts as Record<string, { path: string }>;
-      expect(artifacts.PlanPath.path).toContain(`.rundown/work/.rd-ctx/${runId}/plan.md`);
+    });
+
+    // The guards raise `InvalidRunbookStateError` rather than a bare `Error`, and
+    // the DEFECT is the machine-readable half of that: RD-309's envelope reports
+    // `runId` and `reason` in FIELDS so a consumer never parses the prose. It is
+    // also what `finishCollection` reads to decide whether a committed collect
+    // reports RD-309 (prune/restart) or RD-833 (fix the helper), so a blanked
+    // reason would send an operator to the wrong recovery.
+    it('names the run and the reason in the defect of each persisted-snapshot refusal', async () => {
+      const service = new RunbookActorService(manager);
+      const seed = async (runId: string, snapshot: unknown) => {
+        const created = await manager.create(
+          { source: 'project', path: 'workflow.runbook.md' },
+          { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+          {
+            runId: assertRunId(runId),
+            runbookPath: 'workflow.runbook.md',
+            frontmatterOutputs: [],
+            templateVars: commandTemplateVars(runId),
+          },
+        );
+        await manager.update(created.id, { snapshot });
+        return created.id;
+      };
+      const defectOf = async (id: string) => {
+        try {
+          await enterEffects(service, id, stepsWithOneCommand);
+          throw new Error(`expected ${id} to be refused`);
+        } catch (error) {
+          expect(error).toBeInstanceOf(InvalidRunbookStateError);
+          return (error as InvalidRunbookStateError).defect;
+        }
+      };
+
+      const unreadable = await seed('rd_8888888888888888888888888888888b', { value: 42 });
+      expect(await defectOf(unreadable)).toEqual({
+        runId: unreadable,
+        reason: 'unsupported_snapshot_state_value',
+      });
+
+      const transient = await seed('rd_8888888888888888888888888888888c', {
+        value: 'step::1::__parent-entry::1',
+      });
+      expect(await defectOf(transient)).toEqual({
+        runId: transient,
+        reason: 'unsupported_snapshot_state_value',
+      });
+
+      // A string the `step::…` grammar does not accept. A separate arm from the
+      // unreadable shape above — that one never reaches the parse — so its
+      // defect needs asserting separately or the whole literal can be emptied
+      // with this table still green.
+      const unparseable = await seed('rd_8888888888888888888888888888888f', {
+        value: 'some-old-format',
+      });
+      expect(await defectOf(unparseable)).toEqual({
+        runId: unparseable,
+        reason: 'unsupported_snapshot_state_value',
+      });
+
+      const missingStep = await seed('rd_8888888888888888888888888888888d', {
+        value: 'step::Gone',
+      });
+      expect(await defectOf(missingStep)).toEqual({
+        runId: missingStep,
+        reason: 'snapshot_step_not_in_runbook',
+      });
+    });
+
+    // The recovery instruction, not just the diagnosis. Every refusal here is
+    // one run's corrupt persisted state, and what an operator can DO about it
+    // lives in the second sentence — a sentence the class-and-defect assertions
+    // above cannot see and the first-sentence message assertions stop short of.
+    // Emptying any of these leaves a refusal that says what is wrong and not how
+    // to recover, which for RD-309 is most of the value of the message.
+    it.each([
+      {
+        label: 'a transient parent-entry state',
+        runId: 'rd_888888888888888888888888888888a1',
+        snapshot: { value: 'step::1::__parent-entry::1' },
+        message:
+          /is a transient parent-entry state\. Prune invalid runbook state and restart execution\./,
+      },
+      {
+        label: 'an unparseable state value',
+        runId: 'rd_888888888888888888888888888888a2',
+        snapshot: { value: 'some-old-format' },
+        message:
+          /Unsupported persisted stateValue "some-old-format" .*\. Prune invalid runbook state and restart execution\./,
+      },
+      {
+        label: 'a step the runbook does not declare',
+        runId: 'rd_888888888888888888888888888888a3',
+        snapshot: { value: 'step::Gone' },
+        message:
+          /references missing step "Gone"\. Prune invalid runbook state and restart execution\./,
+      },
+    ])(
+      'spells the recovery when the snapshot carries $label',
+      async ({ runId, snapshot, message }) => {
+        const service = new RunbookActorService(manager);
+        const created = await manager.create(
+          { source: 'project', path: 'workflow.runbook.md' },
+          { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+          {
+            runId: assertRunId(runId),
+            runbookPath: 'workflow.runbook.md',
+            frontmatterOutputs: [],
+            templateVars: commandTemplateVars(runId),
+          },
+        );
+        await manager.update(created.id, { snapshot });
+
+        await expect(enterEffects(service, created.id, stepsWithOneCommand)).rejects.toThrow(
+          message,
+        );
+      },
+    );
+
+    it('names the run and the reason when the run carries no frontmatter outputs', async () => {
+      const runId = assertRunId('rd_8888888888888888888888888888888e');
+      const service = new RunbookActorService(manager);
+      const created = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      await manager.save({ ...created, frontmatterOutputs: undefined });
+
+      try {
+        await enterEffects(service, created.id, stepsWithOneCommand);
+        throw new Error('expected the run to be refused');
+      } catch (error) {
+        expect(error).toBeInstanceOf(InvalidRunbookStateError);
+        expect((error as InvalidRunbookStateError).defect).toEqual({
+          runId,
+          reason: 'missing_frontmatter_outputs',
+        });
+        // The recovery, for the reason the snapshot table above pins its own:
+        // the defect says which refusal fired, and only the message says what
+        // to do about it. This arm names a different command from the snapshot
+        // refusals — a run missing its OUTPUTS declarations is pruned, not
+        // resumed — so it cannot borrow their assertion.
+        expect(getErrorMessage(error)).toMatch(
+          /missing frontmatter outputs declarations\. Run `rundown prune` and restart execution\./,
+        );
+      }
+    });
+
+    it('refuses to enter a run whose persisted snapshot names a step the runbook no longer defines', async () => {
+      const runId = assertRunId('rd_8888888888888888888888888888888a');
+      const service = new RunbookActorService(manager);
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      await manager.update(state.id, { snapshot: { value: 'step::Gone', context: {} } });
+
+      await expect(enterEffects(service, state.id, stepsWithOneCommand)).rejects.toThrow(
+        /references missing step "Gone"/,
+      );
+    });
+
+    // Every refusal above reaches its assertion through `enterEffects`, which is
+    // `async` and therefore launders a synchronous throw into a rejection of its
+    // OWN promise. That hides the question this pins: does the promise
+    // `enterExecutionUnit` returns reject, or does the method throw in the
+    // caller's tick and leave that promise unborn? `Promise.allSettled` answers
+    // it, because a synchronous throw escapes before `allSettled` is ever
+    // called — so the seam is exercised directly here, never through the helper.
+    //
+    // A caller that attaches `.catch(...)` to the returned promise, or collects
+    // the call in `Promise.all`, observes nothing otherwise. The method's own
+    // doc comment already tells callers not to depend on same-tick settling;
+    // this is what makes that true on the failure path as well.
+    it.each([
+      {
+        label: 'the snapshot freshness gate',
+        plant: async (id: string) => {
+          await manager.update(id, { snapshot: { value: 'step::Gone', context: {} } });
+        },
+      },
+      {
+        label: 'the machine compile',
+        plant: async (id: string) => {
+          const loaded = await manager.load(id);
+          if (!loaded) throw new Error(`expected persisted state for ${id}`);
+          await manager.save({ ...loaded, frontmatterOutputs: undefined });
+        },
+      },
+      {
+        label: 'the entry derivation',
+        plant: async (id: string) => {
+          const loaded = await manager.load(id);
+          if (!loaded) throw new Error(`expected persisted state for ${id}`);
+          const { WorkPath: _omitted, ...withoutWorkPath } = loaded.templateVars;
+          await manager.save({ ...loaded, templateVars: withoutWorkPath });
+        },
+      },
+    ])('rejects rather than throwing when $label refuses', async ({ plant }) => {
+      const runId = assertRunId('rd_8888888888888888888888888888888b');
+      const service = new RunbookActorService(manager);
+      const state = await manager.create(
+        { source: 'project', path: 'workflow.runbook.md' },
+        { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+        {
+          runId,
+          runbookPath: 'workflow.runbook.md',
+          frontmatterOutputs: [],
+          templateVars: commandTemplateVars(runId),
+        },
+      );
+      await plant(state.id);
+      const loaded = await manager.load(state.id);
+      if (!loaded) throw new Error('expected persisted state');
+
+      const [settled] = await Promise.allSettled([
+        service.enterExecutionUnit({ state: loaded, steps: stepsWithOneCommand }),
+      ]);
+
+      expect(settled.status).toBe('rejected');
     });
 
     it('passes inline launch child id and clock dependencies through service-created actors', async () => {
@@ -1122,7 +1371,10 @@ echo ok
           runId: assertRunId('rd_11111111111111111111111111111111'),
           runbookPath: 'parent.runbook.md',
           frontmatterOutputs: [],
-          templateVars: { RunId: 'rd_11111111111111111111111111111111' },
+          // Every real run is seeded with ContextId and WorkPath at creation, and
+          // entering a unit renders against them, so a fixture without both is a
+          // run that could not exist.
+          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
         },
       );
       const service = new RunbookActorService(manager, {
@@ -1264,7 +1516,10 @@ echo ok
           runId: assertRunId('rd_11111111111111111111111111111111'),
           runbookPath: 'parent.runbook.md',
           frontmatterOutputs: [],
-          templateVars: { RunId: 'rd_11111111111111111111111111111111' },
+          // Every real run is seeded with ContextId and WorkPath at creation, and
+          // entering a unit renders against them, so a fixture without both is a
+          // run that could not exist.
+          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
         },
       );
       const service = new RunbookActorService(manager, {
@@ -1334,7 +1589,10 @@ echo ok
           runId: assertRunId('rd_11111111111111111111111111111111'),
           runbookPath: 'parent.runbook.md',
           frontmatterOutputs: [],
-          templateVars: { RunId: 'rd_11111111111111111111111111111111' },
+          // Every real run is seeded with ContextId and WorkPath at creation, and
+          // entering a unit renders against them, so a fixture without both is a
+          // run that could not exist.
+          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
         },
       );
       const service = new RunbookActorService(manager, {
@@ -1367,20 +1625,15 @@ echo ok
         },
       });
 
-      const effects = await service.observeExecutionUnitEntry(state.id, steps, {
-        stepId: '1',
-        substepId: '1',
-        position: { current: '1.1', total: 1 },
-        stepName: 'Parent',
-        description: '',
-        isSubstep: true,
-        prompted: false,
-      });
+      const effects = await enterEffects(service, state.id, steps);
 
       expect(effects).toHaveLength(1);
       const effect = effects[0];
       if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
-      expect(effect.event.payload.description).toBe('');
+      // Derived from the parsed substep rather than supplied by the caller, which
+      // is the whole point of the seam: the entry describes the unit the run is
+      // on, not whatever the caller happened to pass.
+      expect(effect.event.payload.description).toBe('Runbook: child.runbook.md');
       expect(effect.event.payload.hasCommand).toBe(false);
       expect(effect.event.payload.inlineLaunch).toMatchObject({
         parentEntry: 4,
@@ -1407,7 +1660,10 @@ echo ok
           runId: assertRunId('rd_11111111111111111111111111111111'),
           runbookPath: 'parent.runbook.md',
           frontmatterOutputs: [],
-          templateVars: { RunId: 'rd_11111111111111111111111111111111' },
+          // Every real run is seeded with ContextId and WorkPath at creation, and
+          // entering a unit renders against them, so a fixture without both is a
+          // run that could not exist.
+          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
         },
       );
       const service = new RunbookActorService(manager, {
@@ -1440,15 +1696,7 @@ echo ok
         },
       });
 
-      const effects = await service.observeExecutionUnitEntry(state.id, steps, {
-        stepId: '1',
-        substepId: '1',
-        position: { current: '1.1', total: 1 },
-        stepName: '1',
-        description: 'Runbook: child.runbook.md',
-        isSubstep: true,
-        prompted: false,
-      });
+      const effects = await enterEffects(service, state.id, steps);
 
       expect(effects).toHaveLength(1);
       const effect = effects[0];
@@ -1486,7 +1734,10 @@ echo ok
           runId: assertRunId('rd_11111111111111111111111111111111'),
           runbookPath: 'parent.runbook.md',
           frontmatterOutputs: [],
-          templateVars: { RunId: 'rd_11111111111111111111111111111111' },
+          // Every real run is seeded with ContextId and WorkPath at creation, and
+          // entering a unit renders against them, so a fixture without both is a
+          // run that could not exist.
+          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
         },
       );
       const service = new RunbookActorService(manager, {
@@ -1519,15 +1770,7 @@ echo ok
         },
       });
 
-      const effects = await service.observeExecutionUnitEntry(state.id, steps, {
-        stepId: '1',
-        substepId: '1',
-        position: { current: '1.1', total: 1 },
-        stepName: 'Parent',
-        description: '',
-        isSubstep: true,
-        prompted: false,
-      });
+      const effects = await enterEffects(service, state.id, steps);
 
       expect(effects).toHaveLength(1);
       const effect = effects[0];
@@ -1557,7 +1800,10 @@ echo ok
           runId: assertRunId('rd_11111111111111111111111111111111'),
           runbookPath: 'parent.runbook.md',
           frontmatterOutputs: [],
-          templateVars: { RunId: 'rd_11111111111111111111111111111111' },
+          // Every real run is seeded with ContextId and WorkPath at creation, and
+          // entering a unit renders against them, so a fixture without both is a
+          // run that could not exist.
+          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
         },
       );
       const service = new RunbookActorService(manager, {
@@ -1591,15 +1837,7 @@ echo ok
         },
       });
 
-      const effects = await service.observeExecutionUnitEntry(state.id, steps, {
-        stepId: '1',
-        substepId: '2',
-        position: { current: '1.2', total: 1 },
-        stepName: 'Parent',
-        description: '',
-        isSubstep: true,
-        prompted: false,
-      });
+      const effects = await enterEffects(service, state.id, steps);
 
       expect(effects).toHaveLength(1);
       const effect = effects[0];
@@ -1625,7 +1863,10 @@ echo ok
           runId: assertRunId('rd_11111111111111111111111111111111'),
           runbookPath: 'parent.runbook.md',
           frontmatterOutputs: [],
-          templateVars: { RunId: 'rd_11111111111111111111111111111111' },
+          // Every real run is seeded with ContextId and WorkPath at creation, and
+          // entering a unit renders against them, so a fixture without both is a
+          // run that could not exist.
+          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
         },
       );
       const service = new RunbookActorService(manager, {
@@ -1675,15 +1916,7 @@ echo ok
         },
       });
 
-      const effects = await service.observeExecutionUnitEntry(state.id, steps, {
-        stepId: '1',
-        substepId: '1',
-        position: { current: '1.1', total: 1 },
-        stepName: 'Parent',
-        description: '',
-        isSubstep: true,
-        prompted: false,
-      });
+      const effects = await enterEffects(service, state.id, steps);
 
       expect(effects).toHaveLength(1);
       const effect = effects[0];
@@ -1708,7 +1941,10 @@ echo ok
           runId: assertRunId('rd_11111111111111111111111111111111'),
           runbookPath: 'parent.runbook.md',
           frontmatterOutputs: [],
-          templateVars: { RunId: 'rd_11111111111111111111111111111111' },
+          // Every real run is seeded with ContextId and WorkPath at creation, and
+          // entering a unit renders against them, so a fixture without both is a
+          // run that could not exist.
+          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
         },
       );
       const service = new RunbookActorService(manager, {
@@ -1760,15 +1996,7 @@ echo ok
         },
       });
 
-      const effects = await service.observeExecutionUnitEntry(state.id, steps, {
-        stepId: '1',
-        substepId: '1',
-        position: { current: '1.1', total: 1 },
-        stepName: 'Parent',
-        description: '',
-        isSubstep: true,
-        prompted: false,
-      });
+      const effects = await enterEffects(service, state.id, steps);
 
       expect(effects).toHaveLength(1);
       const effect = effects[0];
@@ -1798,15 +2026,9 @@ echo ok
         frontmatterOutputs: undefined,
       });
 
-      await expect(
-        service.observeExecutionUnitEntry(state.id, stepsWithOneCommand, {
-          stepId: '1',
-          position: { current: '1', total: 1 },
-          stepName: 'Build',
-          isSubstep: false,
-          prompted: false,
-        }),
-      ).rejects.toThrow(/Invalid runbook state.*frontmatter outputs/);
+      await expect(enterEffects(service, state.id, stepsWithOneCommand)).rejects.toThrow(
+        /Invalid runbook state.*frontmatter outputs/,
+      );
     });
 
     it('clears stale lastResult when GOTO is synchronized from the machine', async () => {

@@ -181,7 +181,7 @@ describe('runExecutionLoop command transition into a DELEGATE frontier', () => {
   it('issues the frontier credential under the loop-supplied verified authority', async () => {
     const { state, delegationRuntime } = await seedParent();
 
-    const result = await runExecutionLoop(manager, state.id, steps, cwd, false, emitter, {
+    const result = await runExecutionLoop(manager, state.id, steps, cwd, emitter, {
       actorService,
       commandServices: passingCommandServices,
       delegationRuntime,

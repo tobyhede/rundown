@@ -1,11 +1,14 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   extractUnitOutputs,
+  findStepOrThrow,
   resolveCurrentExecutionUnit,
 } from '../../src/runbook/execution-units.js';
 import type { OutputDeclaration } from '@rundown-org/parser';
 import type { ResolvedStep, Substep } from '../../src/runbook/types.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
+import { InvalidRunbookStateError } from '../../src/runbook/persisted-state-guards.js';
+import { RundownError } from '../../src/errors/rundown-error.js';
 
 function makeSubstep(id: string): Substep {
   return {
@@ -17,6 +20,59 @@ function makeSubstep(id: string): Substep {
     },
   };
 }
+
+describe('findStepOrThrow', () => {
+  const first = makeBaseStep({ name: '1', description: 'First' });
+  const second = makeBaseStep({ name: 'RECOVER', description: 'Named step' });
+  const runId = 'rd_0123456789abcdef0123456789abcdef';
+
+  it('returns the step whose name matches the cursor', () => {
+    expect(findStepOrThrow([first, second], '1', runId)).toBe(first);
+    // Named (non-numeric) steps resolve the same way — the cursor carries the
+    // step's `name`, not its ordinal.
+    expect(findStepOrThrow([first, second], 'RECOVER', runId)).toBe(second);
+  });
+
+  it('refuses a cursor no step carries, naming the step it looked for', () => {
+    // A run's `step` column and its compiled steps are written together, so a
+    // miss means they have diverged. The message names the cursor because that
+    // is the only fact distinguishing this from any other lookup failure.
+    expect(() => findStepOrThrow([first, second], 'Gone', runId)).toThrow('Step "Gone" not found');
+  });
+
+  it('refuses against an empty step list', () => {
+    expect(() => findStepOrThrow([], '1', runId)).toThrow('Step "1" not found');
+  });
+
+  // The CLASS is load-bearing, not decoration on the message. `rundown collect`
+  // wraps every non-`InvalidRunbookStateError` rejection from the entry seam as
+  // RD-833, whose recovery reads "fix the helper and re-delegate" — the wrong
+  // instruction entirely for a diverged cursor, which is corrupt persisted
+  // state recoverable only by prune or restart. A bare `Error` here would pass
+  // both message assertions above and still be relabelled at that seam, so both
+  // refusals pin the class and the structured defect the CLI's RD-309 mapping
+  // reads.
+  it.each([
+    { label: 'a cursor no step carries', steps: [first, second], cursor: 'Gone' },
+    { label: 'an empty step list', steps: [], cursor: '1' },
+  ])('classifies $label as invalid persisted state', ({ steps, cursor }) => {
+    let caught: unknown;
+    try {
+      findStepOrThrow(steps, cursor, runId);
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBeInstanceOf(InvalidRunbookStateError);
+    // NOT a RundownError: the two classes are disjoint, which is exactly what
+    // keeps the collect path's RD-833 catch from swallowing this one.
+    expect(caught).not.toBeInstanceOf(RundownError);
+    expect((caught as InvalidRunbookStateError).defect).toEqual({
+      runId,
+      reason: 'cursor_step_not_in_runbook',
+    });
+  });
+});
 
 describe('resolveCurrentExecutionUnit', () => {
   it('returns the parent step when no substep id is active', () => {

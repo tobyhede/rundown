@@ -147,6 +147,7 @@ describe('entry projection ordering: machine credential issuance agrees with com
 
   function baseState(overrides: Partial<RunbookState> = {}): RunbookState {
     return {
+      prompted: false,
       id: runId,
       runbook: { source: 'project', path: 'investigation.md' },
       runbookPath: 'investigation.md',

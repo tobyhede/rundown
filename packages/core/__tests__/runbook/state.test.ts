@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isError } from '../../src/errors.js';
+import { getErrorMessage, isError } from '../../src/errors.js';
 import {
   applyRunbookStateUpdate,
   generateRunId,
@@ -840,11 +840,17 @@ describe('RunbookStateManager', () => {
       expect(state.id).toMatch(/^rd_[a-f0-9]{32}$/);
     });
 
-    it('defaults to auto mode (prompted undefined)', async () => {
+    it('defaults to auto mode, written as a definite false', async () => {
+      // Written, not left absent. `load` refuses a persisted row without
+      // `prompted`, so a run created without one would be unreadable the moment
+      // it is saved — and this default is what makes that refusal unreachable
+      // from the one production creation path.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
-      expect(state.prompted).toBeUndefined();
+
+      expect(state.prompted).toBe(false);
+      expect((await manager.load(state.id))?.prompted).toBe(false);
     });
 
     it('accepts prompted option', async () => {
@@ -1969,6 +1975,52 @@ describe('RunbookStateManager', () => {
 
       expect(await refusedDefect(id)).toEqual({ runId: id, reason: 'missing_template_vars' });
     });
+
+    // Refused, not defaulted. `prompted` decides whether a run announces its
+    // commands or executes them, and it is the value a composing parent
+    // inherits DOWN into a fresh inline child — so a `?? false` at the read site
+    // would silently adapt an incompatible row into an executing run. `create`
+    // always writes the field for the same reason `templateVars` is always
+    // written: a row that reached this refusal originates outside the one
+    // production creation path, which the no-migration rule treats as invalid
+    // regardless of which value it would have defaulted to.
+    it('names the run when prompted is missing', async () => {
+      const id = await seedThenPlant((state) => {
+        const { prompted: _omit, ...rest } = state;
+        return rest;
+      });
+
+      expect(await refusedDefect(id)).toEqual({ runId: id, reason: 'missing_prompted' });
+      // The prose too, and in this suite rather than only in the guards suite:
+      // `reason` tells a consumer which refusal fired, and the message is the
+      // only place that names the field and what to do about it. Both halves,
+      // because they are separate string literals — the diagnosis and the
+      // recovery — and either can be emptied without the other noticing.
+      const refusal = await manager.load(id).then(
+        () => {
+          throw new Error('load resolved; expected a refusal');
+        },
+        (error: unknown) => error,
+      );
+      expect(getErrorMessage(refusal)).toMatch(/missing prompted/);
+      expect(getErrorMessage(refusal)).toMatch(/Prune this run and re-run the runbook\./);
+    });
+
+    // Both spellings, because the field is a boolean and the guard must not
+    // reduce it to truthiness: a run created WITHOUT `--prompted` persists
+    // `false`, and a guard written as `if (!raw.prompted)` would refuse every
+    // one of them.
+    it.each([{ prompted: true }, { prompted: false }])(
+      'loads a run persisting prompted: $prompted',
+      async ({ prompted }) => {
+        const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+          runbookPath: 'test.md',
+          prompted,
+        });
+
+        expect((await manager.load(state.id))?.prompted).toBe(prompted);
+      },
+    );
 
     it('names the run when the schema parse fails', async () => {
       // `artifactVars` is a removed field the schema refuses explicitly, so this

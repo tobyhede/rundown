@@ -415,9 +415,6 @@ jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => {
 
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => ({
-  buildStepVariables: mockFn<(...args: unknown[]) => Record<string, unknown>>().mockReturnValue({
-    Step: '1.1',
-  }),
   runExecutionLoop: mockFn<(...args: unknown[]) => Promise<string>>().mockResolvedValue('done'),
 }));
 
@@ -509,7 +506,7 @@ const parser = await import('@rundown-org/parser');
 const { resolveRunbookFile, resolveRunbookRef, buildRunbookRef } = await import(
   '../../src/helpers/resolve-runbook.js'
 );
-const { runExecutionLoop, buildStepVariables } = await import('../../src/services/execution.js');
+const { runExecutionLoop } = await import('../../src/services/execution.js');
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
 const { FileSourcePolicyError, ArtifactChannelError, resolveVariables } = await import(
   '../../src/services/variable-discovery.js'
@@ -656,7 +653,6 @@ beforeEach(() => {
     warnings: [],
     providedKeys: new Set(),
   });
-  jest.mocked(buildStepVariables).mockReturnValue({ Step: '1.1' });
   jest
     .mocked(substituteRunbookVariables)
     .mockImplementation(
@@ -2175,7 +2171,7 @@ describe('startRunbook', () => {
     // token deriver, so it receives the branded pair whole. Pinned by REFERENCE:
     // a structural matcher also passes against a pair rebuilt from the same two
     // halves further down, which is precisely the forwarding defect this guards.
-    expect(jest.mocked(runExecutionLoop).mock.calls.at(-1)?.[6]?.delegationRuntime).toBe(
+    expect(jest.mocked(runExecutionLoop).mock.calls.at(-1)?.[5]?.delegationRuntime).toBe(
       delegationRuntime,
     );
     // Hand-off 3 — the caller. `run --prompted --step` reads `delegationRuntime`

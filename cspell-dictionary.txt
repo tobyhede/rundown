@@ -36,6 +36,7 @@ OSTYPE
 stashable
 Subcategorize
 TOCTOU
+TSESTree
 Turborepo
 Unasserted
 Unforgeable
@@ -57,9 +58,11 @@ bisectable
 callsite
 callsites
 canonicalise
+canonicalised
 canonicalises
 categorisation
 categorises
+characterised
 centralise
 Centralised
 centralising
@@ -135,12 +138,14 @@ lockfile
 materialise
 materialised
 materialising
+materialises
 macrostep
 mdast
 misattributes
 miscomputation
 microstep
 minimatch
+mintable
 Misordered
 mjs
 monorepo
@@ -168,6 +173,7 @@ notavar
 nums
 opts
 parallelised
+parallelises
 parameterised
 parameterizing
 parseable

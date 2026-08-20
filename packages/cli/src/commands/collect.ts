@@ -600,27 +600,19 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     const advanced = await manager.load(state.id);
     if (advanced) {
       const loopSteps = [...getRunbookFromState(advanced, cwd)];
-      const loopResult = await runExecutionLoop(
-        manager,
-        advanced.id,
-        loopSteps,
-        cwd,
-        !!advanced.prompted,
-        emitter,
-        {
-          terminalReleaseMode: 'release-runbook',
-          output,
-          commandStreamOptions,
-          // Core verified the collector's bearer behind the collection seam and
-          // returned the delegation capabilities bound to it. The CLI never mints
-          // authority — it only carries what core handed back, and only for the
-          // run core bound it to (`outcome.targetRunId === advanced.id`, the
-          // collect target this loop drives). Without them a collect that
-          // advances into a DELEGATE step is refused `actor_context_required` on
-          // issuance, and the following turn on frontier projection.
-          delegationRuntime: outcome.delegationRuntime,
-        },
-      );
+      const loopResult = await runExecutionLoop(manager, advanced.id, loopSteps, cwd, emitter, {
+        terminalReleaseMode: 'release-runbook',
+        output,
+        commandStreamOptions,
+        // Core verified the collector's bearer behind the collection seam and
+        // returned the delegation capabilities bound to it. The CLI never mints
+        // authority — it only carries what core handed back, and only for the
+        // run core bound it to (`outcome.targetRunId === advanced.id`, the
+        // collect target this loop drives). Without them a collect that
+        // advances into a DELEGATE step is refused `actor_context_required` on
+        // issuance, and the following turn on frontier projection.
+        delegationRuntime: outcome.delegationRuntime,
+      });
       // Do NOT early-return on a stopped loop: the run may have reached a
       // terminal state INSIDE the loop and still owe its parent a propagation
       // (the run loop does not propagate the executed run's own terminal). Defer

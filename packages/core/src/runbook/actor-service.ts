@@ -26,11 +26,7 @@ import type {
   CommandExecutionOutput,
   CommandExecutionServices,
 } from './actors/command-exec-actor.js';
-import type {
-  InlineLaunchIntentWithoutParentEntry,
-  ResolveInlineRunbook,
-} from './actors/inline-launch-intent-actor.js';
-import { isInlineLaunchIntentWithoutParentEntry } from './actors/inline-launch-intent-actor.js';
+import type { ResolveInlineRunbook } from './actors/inline-launch-intent-actor.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
 import type { DelegationCredentialIssuer } from './delegation-credential.js';
 import {
@@ -64,29 +60,23 @@ import {
 import type { RecoveryActor } from './execution-recovery-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
 import { merge, replace, type ResolvedCompletionsOp } from './state-update-ops.js';
-import {
-  deriveActiveFrame,
-  deriveOpenFrames,
-  frameKeyForCursor,
-  type FrameKey,
-} from './targeting.js';
+import { deriveActiveFrame, frameKeyForCursor } from './targeting.js';
 import { inferFrameEntryFromState, type FrameEntryCoordinates } from './frame-entry.js';
-import { rebrandContextSnapshotArtifacts } from './delegation-context.js';
+import { InvalidRunbookStateError } from './persisted-state-guards.js';
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { logger } from '../logger.js';
-import { WORK_DIR } from '../paths.js';
 import { isArtifactRecord } from './artifact-schema.js';
 import { isForResolutionFailureCode } from './actors/for-iterate-actor.js';
 import {
   commandCompletedEffect,
   commandStartedEffect,
   createExecutionEffectCollector,
-  deriveStepEnteredEffect,
   policyDeniedEffect,
   type ExecutionObservationEffect,
   type MachineExecutionObserver,
-  type StepEntryMetadata,
 } from '../events/execution-observation.js';
+import { deriveExecutionUnitEntry, type ExecutionUnitEntry } from './execution-unit-entry.js';
+import type { DelegateFrontierEntry } from '../events/types.js';
 import type { StepPosition } from '../events/types.js';
 
 /**
@@ -96,25 +86,6 @@ import type { StepPosition } from '../events/types.js';
  * depending on `xstate` directly.
  */
 export type { AnyActorRef } from 'xstate';
-
-function shouldProjectInlineLaunchIntent(
-  state: RunbookState,
-  entry: StepEntryMetadata,
-  intent: InlineLaunchIntentWithoutParentEntry,
-): boolean {
-  if (state.id !== intent.parentRunId) return false;
-  if (state.step !== intent.parentStep) return false;
-  if (entry.stepId !== intent.parentStep) return false;
-  if (state.substep !== intent.parentStepId) return false;
-  if (entry.substepId !== intent.parentStepId) return false;
-
-  // Project the one-shot intent only when its authored frame is still live (the
-  // active frame or an open FOR context). Openness flows from `deriveOpenFrames`
-  // (forStack) — never from the monotonic entry counter, whose keys persist after
-  // a loop advances and would otherwise re-project a stale prior-iteration intent
-  // onto the current frame.
-  return deriveOpenFrames(state).has(intent.parentFrameKey as FrameKey);
-}
 
 /**
  * Result of a {@link RunbookActorService.sendAndSync} operation.
@@ -199,6 +170,40 @@ export type PreparedManualDelegationMutation =
       readonly nextState: RunbookState;
     }
   | Exclude<ManualDelegationPreparationResult, { readonly status: 'prepared' }>;
+
+/** Inputs to {@link RunbookActorService.enterExecutionUnit}. */
+export interface EnterExecutionUnitInput {
+  /**
+   * Run whose cursor names the unit being entered.
+   *
+   * Taken as a value rather than looked up by id, so the entry is derived
+   * against the EXACT state the caller decided on — including a prepared state
+   * a fenced caller has not committed yet.
+   */
+  readonly state: RunbookState;
+  /** Parsed steps for that run. */
+  readonly steps: readonly ResolvedStep[];
+  /**
+   * Reconstructed delegation bearers to disclose with this entry.
+   *
+   * Supplied only by the re-entry frontier seam, which verifies each token
+   * against its persisted hash before handing it here.
+   *
+   * Explicitly `| undefined` rather than merely optional: an absent frontier and
+   * one passed as `undefined` are the same fact, and under
+   * `exactOptionalPropertyTypes` the distinction would otherwise force every
+   * forwarding call site into a conditional spread that says nothing.
+   */
+  readonly delegateFrontier?: readonly DelegateFrontierEntry[] | undefined;
+  /**
+   * Caller-precomputed position, forwarded verbatim to
+   * {@link deriveExecutionUnitEntry} instead of letting it re-derive one.
+   *
+   * Optional: a caller with no position already in scope leaves this seam to
+   * derive it, exactly as before.
+   */
+  readonly position?: StepPosition | undefined;
+}
 
 /** Runtime dependencies for {@link RunbookActorService}. */
 export interface RunbookActorServiceOptions {
@@ -884,22 +889,42 @@ export class RunbookActorService {
     };
   }
 
+  /**
+   * Refuse a persisted snapshot this build cannot read.
+   *
+   * Every refusal here is one run's corrupt persisted state, and every message
+   * already spells RD-309's remediation — "Prune invalid runbook state and
+   * restart execution". They therefore raise {@link InvalidRunbookStateError}
+   * rather than a bare `Error`: the class is what routes them onto the CLI's
+   * finish/stop/prune envelope instead of RD-999 "Unknown error", and what lets
+   * a caller distinguish "this run is unusable" from "the operation failed".
+   * `finishCollection` reads exactly that distinction to decide whether a
+   * committed collect reports RD-309 or RD-833.
+   *
+   * @param id - Run whose snapshot is being read.
+   * @param snapshot - The persisted snapshot envelope.
+   * @param steps - Parsed steps the snapshot's cursor must name.
+   * @throws {InvalidRunbookStateError} When the snapshot value is an
+   *   unreadable shape, a transient parent-entry state, unparseable, or names a
+   *   step the runbook does not declare.
+   */
   private assertFreshSnapshotValue(
     id: string,
     snapshot: PersistedRunbookSnapshot,
     steps: readonly ResolvedStep[],
   ): void {
-    if (isPendingMachineEffectSnapshotValue(snapshot.value)) {
-      throw new Error(
+    const unsupportedShape = (): InvalidRunbookStateError =>
+      new InvalidRunbookStateError(
         `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(snapshot.value)}`,
+        { runId: id, reason: 'unsupported_snapshot_state_value' },
       );
+    if (isPendingMachineEffectSnapshotValue(snapshot.value)) {
+      throw unsupportedShape();
     }
 
     const stateValue = stateValueAsString(snapshot.value);
     if (stateValue === null) {
-      throw new Error(
-        `Unsupported snapshot.value shape for runbook "${id}": ${JSON.stringify(snapshot.value)}`,
-      );
+      throw unsupportedShape();
     }
     if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') return;
     if (stateValue === RECOVERY_REQUIRED_STATE_NAME) return;
@@ -913,24 +938,27 @@ export class RunbookActorService {
     // wrong substep, wrong recovery path. Bail with a clear diagnostic
     // before the regex runs.
     if (stateValue.includes('::__parent-entry::')) {
-      throw new Error(
+      throw new InvalidRunbookStateError(
         `Persisted stateValue "${stateValue}" for runbook "${id}" is a transient parent-entry state. ` +
           'Prune invalid runbook state and restart execution.',
+        { runId: id, reason: 'unsupported_snapshot_state_value' },
       );
     }
 
     const parsed = parseStepStateValue(stateValue);
     if (!parsed) {
-      throw new Error(
+      throw new InvalidRunbookStateError(
         `Unsupported persisted stateValue "${stateValue}" for runbook "${id}". ` +
           'Prune invalid runbook state and restart execution.',
+        { runId: id, reason: 'unsupported_snapshot_state_value' },
       );
     }
     const stepName = parsed.stepName;
     if (!steps.find((s) => s.name === stepName)) {
-      throw new Error(
+      throw new InvalidRunbookStateError(
         `Persisted stateValue "${stateValue}" for runbook "${id}" references missing step "${stepName}". ` +
           'Prune invalid runbook state and restart execution.',
+        { runId: id, reason: 'snapshot_step_not_in_runbook' },
       );
     }
   }
@@ -949,7 +977,8 @@ export class RunbookActorService {
    * @param executionObserver - Optional non-persisted observer for command actor output
    * @param runtime - Optional verified runtime capabilities for machine-owned actors
    * @returns Compiled XState machine seeded with all hydration-time context
-   * @throws {Error} If `state.frontmatterOutputs` is undefined (invalid state)
+   * @throws {InvalidRunbookStateError} If `state.frontmatterOutputs` is
+   *   undefined — one run's corrupt persisted state, not an operation failure
    */
   private compileMachineFromState(
     id: string,
@@ -959,9 +988,10 @@ export class RunbookActorService {
     runtime?: RunbookActorRuntimeCapabilities,
   ): ReturnType<typeof compileRunbookToMachine> {
     if (state.frontmatterOutputs === undefined) {
-      throw new Error(
+      throw new InvalidRunbookStateError(
         `Invalid runbook state for "${id}": missing frontmatter outputs declarations. ` +
           'Run `rundown prune` and restart execution.',
+        { runId: id, reason: 'missing_frontmatter_outputs' },
       );
     }
     return compileRunbookToMachine(steps, {
@@ -1628,75 +1658,57 @@ export class RunbookActorService {
   }
 
   /**
-   * Project STEP_ENTERED observation effects from persisted machine state.
+   * Enter the execution unit the run's cursor names.
    *
-   * This method is read-only: it hydrates a snapshot without starting an actor,
-   * derives observation payloads, and does not persist.
+   * The single seam for entering a unit: it renders the unit's description,
+   * prompt and command against the run's own frame, observes the entry, and
+   * classifies what the caller must do next. Read-only — it hydrates nothing,
+   * starts no actor, and persists nothing.
    *
-   * @param id - Runbook state ID
-   * @param steps - Parsed runbook steps
-   * @param entry - Frontend-supplied rendered execution-unit metadata
-   * @returns Non-persisted STEP_ENTERED effects, or an empty array when state is missing
-   * @throws {Error} When persisted state is invalid or incompatible, or when the entry step
-   *   or substep metadata does not match the machine snapshot cursor.
+   * Two dependencies are bound here rather than passed by the caller, because
+   * both are process-scoped and neither is the caller's to choose: the
+   * canonicalised project directory (`manager.cwd`) and the runtime helper
+   * registry (`options.helpers`), which is the DI seam the CLI already fills
+   * through `createCliRunbookActorService`.
+   *
+   * @param input - Run state, parsed steps, and any verified frontier bearers.
+   * @returns The classified entry: `awaiting`, `runnable`, or `inline-launch`.
+   * @throws {Error} When the persisted snapshot names a state the compiled
+   *   machine does not have, when the run's `frontmatterOutputs` are missing,
+   *   when the cursor names a step the runbook does not define, or when a
+   *   `--helpers` helper throws while expanding a field.
+   * @throws {InvalidRunbookStateError} When the run carries no `ContextId` or
+   *   `WorkPath` to render its frame against.
    */
-  async observeExecutionUnitEntry(
-    id: string,
-    steps: readonly ResolvedStep[],
-    entry: StepEntryMetadata,
-  ): Promise<readonly ExecutionObservationEffect[]> {
-    const state = await this.manager.load(id);
-    if (!state) return [];
+  // The `async` IS the contract here, not a leftover. The rule's premise is that
+  // an async function with no `await` could have been synchronous; this one
+  // could not. Dropping the keyword makes the three refusals below throw in the
+  // caller's own tick instead of rejecting the promise the signature returns, so
+  // a caller using `.catch(...)` or `Promise.all` observes no failure at all.
+  // eslint-disable-next-line @typescript-eslint/require-await -- see above: async is the contract
+  async enterExecutionUnit(input: EnterExecutionUnitInput): Promise<ExecutionUnitEntry> {
+    const { state, steps } = input;
     if (state.snapshot) {
-      this.assertFreshSnapshotValue(id, state.snapshot as PersistedRunbookSnapshot, steps);
+      this.assertFreshSnapshotValue(state.id, state.snapshot as PersistedRunbookSnapshot, steps);
     }
-    this.compileMachineFromState(id, state, steps);
-    const snapshot =
-      state.snapshot && typeof state.snapshot === 'object'
-        ? {
-            ...(state.snapshot as Record<string, unknown>),
-            context: {
-              ...((state.snapshot as { readonly context?: Record<string, unknown> }).context ?? {}),
-              step: state.step,
-              substepStates:
-                state.substepStates ??
-                (state.snapshot as { readonly context?: Record<string, unknown> }).context
-                  ?.substepStates,
-              substep:
-                state.substep ??
-                (state.snapshot as { readonly context?: Record<string, unknown> }).context?.substep,
-            },
-          }
-        : { context: { step: state.step, substep: state.substep } };
-    const inlineLaunchIntent = (snapshot.context as Partial<RunbookContext>).inlineLaunchIntent;
-    const intent = isInlineLaunchIntentWithoutParentEntry(inlineLaunchIntent)
-      ? {
-          ...inlineLaunchIntent,
-          contextSnapshot: rebrandContextSnapshotArtifacts(inlineLaunchIntent.contextSnapshot),
-        }
-      : undefined;
-    const observedEntry =
-      intent !== undefined && shouldProjectInlineLaunchIntent(state, entry, intent)
-        ? {
-            ...entry,
-            inlineLaunch: {
-              ...intent,
-              parentEntry: inferFrameEntryFromState(state, intent.parentFrameKey as FrameKey),
-            },
-          }
-        : entry;
-    const workPath =
-      typeof state.templateVars.WorkPath === 'string' ? state.templateVars.WorkPath : WORK_DIR;
-    return [
-      deriveStepEnteredEffect({
-        snapshot,
-        entry: observedEntry,
-        artifactPathOptions: {
-          cwd: this.manager.cwd,
-          workPath,
-        },
-      }),
-    ];
+    // Compiled for its refusals alone — a run whose frontmatter OUTPUTS are
+    // missing cannot be entered — which is why the machine is discarded.
+    this.compileMachineFromState(state.id, state, steps);
+    // `async` though every line of the body is synchronous today: this is a
+    // service seam whose siblings are all async, and callers must not come to
+    // depend on it settling — or FAILING — in the same tick. Without the
+    // keyword the three refusals above and below throw in the caller's own
+    // tick, so a caller that attaches `.catch(...)` to the returned promise, or
+    // collects the call in `Promise.all`, never observes them at all. `await`
+    // callers are unaffected either way.
+    return deriveExecutionUnitEntry({
+      state,
+      steps,
+      delegateFrontier: input.delegateFrontier,
+      cwd: this.manager.cwd,
+      helpers: this.options.helpers,
+      position: input.position,
+    });
   }
 
   /**

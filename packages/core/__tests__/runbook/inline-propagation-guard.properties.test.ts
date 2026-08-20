@@ -115,6 +115,7 @@ function makeState(
     parentEntry: 1,
   };
   return {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id,
     runbook: { source: 'project', path: 'test.md' },

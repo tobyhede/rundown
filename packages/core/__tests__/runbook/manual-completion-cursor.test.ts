@@ -65,6 +65,7 @@ const promptedForSteps: readonly ResolvedStep[] = [
 
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id: brandRunIdForTest('rd_cccccccccccccccccccccccccccccccc'),
     runbook: { source: 'project', path: 'cursor-test.md' },

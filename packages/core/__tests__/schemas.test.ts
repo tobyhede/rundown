@@ -30,6 +30,7 @@ const createValidState = (overrides: Record<string, unknown> = {}) => ({
   retryCount: 0,
   variables: {},
   templateVars: {},
+  prompted: false,
   steps: [],
   startedAt: '2025-01-01T00:00:00Z',
   updatedAt: '2025-01-01T00:00:00Z',

@@ -32,6 +32,7 @@ const BASE_SCHEMA_STATE = {
   startedAt: '2026-04-19T00:00:00.000Z',
   updatedAt: '2026-04-19T00:00:00.000Z',
   templateVars: {},
+  prompted: false,
 };
 
 describe('RunbookStateSchema — schema version 1 and lifecycle fields', () => {
@@ -40,6 +41,23 @@ describe('RunbookStateSchema — schema version 1 and lifecycle fields', () => {
 
     const result = RunbookStateSchema.safeParse({
       ...withoutTemplateVars,
+      variables: {},
+      lifecycle: 'running',
+      schemaVersion: 1,
+    });
+
+    expect(result.success).toBe(false);
+  });
+
+  // Required on the same terms, and refused at the same seam. This is what
+  // extends the refusal past `RunbookStateManager.load` — which names the field
+  // explicitly — to the in-transaction reader `RunbookStore.readRun`, whose only
+  // structural gate is this parse.
+  it('rejects state without prompted — persistable state always carries it', () => {
+    const { prompted: _omit, ...withoutPrompted } = BASE_SCHEMA_STATE;
+
+    const result = RunbookStateSchema.safeParse({
+      ...withoutPrompted,
       variables: {},
       lifecycle: 'running',
       schemaVersion: 1,
@@ -217,6 +235,7 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     startedAt: '2026-04-19T00:00:00.000Z',
     updatedAt: '2026-04-19T00:00:00.000Z',
     templateVars: {},
+    prompted: false,
     lifecycle: 'running',
     schemaVersion: 1,
   };
@@ -316,6 +335,25 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
 
     await expect(load).rejects.toBeInstanceOf(InvalidRunbookStateError);
     await expect(load).rejects.toThrow(/missing templateVars/);
+    await expect(load).rejects.toThrow(/prune/i);
+  });
+
+  it('rejects current-schema state missing prompted instead of defaulting it', async () => {
+    // A v1 row without `prompted` is incompatible state, not a run to guess a
+    // mode for. Defaulting it would decide whether the run announces its
+    // commands or executes them, which is the whole content of the field.
+    const id = 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab';
+    const { prompted: _omit, ...withoutPrompted } = VALID_V1_STATE;
+    await seedRawRunState(tmpDir, {
+      ...withoutPrompted,
+      id,
+      runbook: { source: 'project', path: 'x.md' },
+    });
+
+    const load = manager.load(id);
+
+    await expect(load).rejects.toBeInstanceOf(InvalidRunbookStateError);
+    await expect(load).rejects.toThrow(/missing prompted/);
     await expect(load).rejects.toThrow(/prune/i);
   });
 

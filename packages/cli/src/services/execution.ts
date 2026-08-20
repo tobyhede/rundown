@@ -2,7 +2,6 @@ import {
   type RunId,
   type ClaimLookupKey,
   assertRunId,
-  buildStepVariables,
   buildStepPosition,
   type ActionType,
   extractLastMessage,
@@ -13,7 +12,6 @@ import {
   RunbookCompletionService,
   SessionService,
   ExecutionLifecycleService,
-  mergeEffectiveVars,
   type Step,
   type ResolvedStep,
   type Substep,
@@ -30,9 +28,10 @@ import {
   executeCommandWithEnv,
   executeCommandWithPolicy,
   countNumberedSteps,
-  extractDisplayCommand,
+  findStepOrThrow,
   type ExecutionEventEmitter,
   type InlineLaunchIntent,
+  type ExecutionUnitEntry,
   type InlineLinkage,
   type Frame,
   DB_FILE,
@@ -52,8 +51,6 @@ import {
   asTerminalSnapshotOrDefault,
   isRunbookStopped,
   isRunbookComplete,
-  expandLoopVariables,
-  expandLoopVariablesForCommand,
   deriveTerminalDrainObservationEvent,
   createEffectfulActorMutationRunner,
   type EffectfulActorMutationRunner,
@@ -71,14 +68,11 @@ import {
   isPolicyEnforced,
   getSandboxOptions,
 } from './policy-context.js';
-import { getHelperRegistry } from './helper-registry.js';
-import { BUILTIN_VARIABLES } from './variable-discovery.js';
 import {
   orchestrateTransition,
   transitionSinkFromEmitter,
   type TransitionOrchestrationPolicy,
 } from '../helpers/transition-orchestrator.js';
-import { buildRunnableRenderContext } from '../helpers/render-context.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 import type { RunScopedDelegationRuntime } from '../helpers/delegation-completion.js';
 import {
@@ -87,7 +81,6 @@ import {
 } from '../helpers/session-mutation-result.js';
 import type { OutputEmitter } from './output-emitter.js';
 export type { ExecutionVarValue, StepVariables, TemplateVariables } from './execution-vars.js';
-export { buildStepVariables };
 
 /**
  * Select command subprocess stream routing for a CLI output mode.
@@ -99,22 +92,6 @@ export function commandStreamOptionsForOutputMode(
   text: boolean | undefined,
 ): CommandExecutionStreamOptions {
   return { commandOutput: text ? 'inherit' : 'stderr' };
-}
-
-/**
- * Find a step by name, throwing if not found.
- *
- * Replaces silent `steps[0]` fallbacks that mask state corruption.
- *
- * @param steps - Parsed runbook steps
- * @param stepName - Step name to find
- * @returns The matching step
- * @throws {Error} if step is not found (indicates state corruption)
- */
-export function findStepOrThrow(steps: ResolvedStep[], stepName: string): ResolvedStep {
-  const step = steps.find((s) => s.name === stepName);
-  if (!step) throw new Error(`Step '${stepName}' not found — possible state corruption`);
-  return step;
 }
 
 type TransitionApplicationResult =
@@ -697,7 +674,7 @@ async function launchInlineChildFromIntent({
       emitRunbookStarted(
         childEmitter,
         existingChild,
-        !!existingChild.prompted,
+        existingChild.prompted,
         adoption.runtime.claimId,
       );
     }
@@ -706,7 +683,6 @@ async function launchInlineChildFromIntent({
       childRunId,
       [...getRunbookFromState(existingChild, cwd)],
       cwd,
-      !!existingChild.prompted,
       childEmitter,
       {
         output,
@@ -1101,7 +1077,7 @@ export async function drainResolvedCompletions({
     // for each transition before the next apply is derived. That is why the loop
     // lives here rather than in core.
     const entry = applied.entry;
-    const currentStep = findStepOrThrow(steps, entry.stateBefore.step);
+    const currentStep = findStepOrThrow(steps, entry.stateBefore.step, entry.stateBefore.id);
     const observed = await observeAndOrchestrate({
       sessionService,
       emitter,
@@ -1134,11 +1110,14 @@ export async function drainResolvedCompletions({
  * - A prompt-only step is reached (no command)
  * - In prompted mode (no auto-execution)
  *
+ * Prompted mode is read from the run's own persisted `prompted` flag rather
+ * than supplied by the caller: it is a fact the run state owns, fixed at
+ * creation, and a parameter is only a way for a caller to disagree with it.
+ *
  * @param manager - Runbook state manager instance
  * @param runbookId - Branded run id
  * @param steps - Array of runbook steps
  * @param cwd - Current working directory for command execution
- * @param prompted - Whether to run in prompted mode (no auto-execution)
  * @param emitter - Event emitter for execution events
  * @param options - Optional execution loop behavior overrides
  * @returns 'done' if completed, 'stopped' if stopped, 'waiting' if prompt-only
@@ -1154,25 +1133,42 @@ export async function drainResolvedCompletions({
  *   three arms come from the shared core seam
  *   {@link projectAndConsumeReEntryFrontier}, so `rundown collect` reports each
  *   condition under the same code.
- * @throws {Error} If state lookup via {@link findStepOrThrow} fails, the core
- *   actor/lifecycle/session services throw while advancing transitions,
- *   command execution rejects, or the emitter raises during event dispatch.
+ * @throws {Error} If the core actor/lifecycle/session services throw while
+ *   advancing transitions, entering an execution unit cannot render it (a
+ *   `--helpers` helper raising), command execution rejects, or the emitter
+ *   raises during event dispatch.
  * @throws {InvalidRunbookStateError} If the run's persisted snapshot carries a
- *   structurally malformed `delegateFrontier`. Per the no-migration rule this is
- *   corrupt persisted state whose recovery path is explicit user action
- *   (finish, stop, prune, restart), not a refusal the loop can absorb.
+ *   structurally malformed `delegateFrontier`, its cursor names a step the
+ *   parsed runbook does not define ({@link findStepOrThrow}), or it carries no
+ *   `ContextId` / `WorkPath` to render its frame against. Per the no-migration
+ *   rule each is corrupt persisted state whose recovery path is explicit user
+ *   action (finish, stop, prune, restart), not a refusal the loop can absorb.
  */
 export async function runExecutionLoop(
   manager: RunbookStateManager,
   runbookId: RunId,
   steps: ResolvedStep[],
   cwd: string,
-  prompted: boolean,
   emitter: ExecutionEventEmitter,
   options: ExecutionLoopOptions = {},
 ): Promise<'done' | 'stopped' | 'waiting'> {
   const state = await manager.load(runbookId);
   if (!state) return 'stopped';
+
+  // The run owns this fact. It is written once at creation and never varies
+  // across the loop, so it is read once here rather than re-derived per
+  // iteration from a `currentState` that can only carry the same value.
+  //
+  // Since #819 it has exactly ONE consumer: the value a composing parent
+  // inherits DOWN into a fresh inline child, which has no persisted flag of its
+  // own to read yet. Every other use — the `awaiting` classification, the
+  // `STEP_ENTERED` payload — moved into the entry seam, which reads the run
+  // directly.
+  //
+  // No fallback: `RunbookState.prompted` is required and `RunbookStateManager`
+  // .`load` refuses a persisted row without it, so an absent flag is invalid
+  // state refused upstream rather than a mode this read has to guess at.
+  const prompted = state.prompted;
 
   const terminalReleaseMode = options.terminalReleaseMode ?? 'stack-pop';
   // Unconditional, in every release mode: the terminal session release is now
@@ -1193,7 +1189,7 @@ export async function runExecutionLoop(
   if (currentState.lifecycle === 'stopped') {
     const terminalSnap = asTerminalSnapshotOrDefault(currentState.snapshot);
     const snapIsTerminal = isRunbookStopped(terminalSnap) || isRunbookComplete(terminalSnap);
-    const currentStepForProjection = findStepOrThrow(steps, currentState.step);
+    const currentStepForProjection = findStepOrThrow(steps, currentState.step, currentState.id);
 
     if (snapIsTerminal) {
       // Machine-driven stop: delegate to core projection
@@ -1280,7 +1276,7 @@ export async function runExecutionLoop(
     }
 
     if (snapIsTerminal) {
-      const currentStepForProjection = findStepOrThrow(steps, currentState.step);
+      const currentStepForProjection = findStepOrThrow(steps, currentState.step, currentState.id);
       const observation = deriveTransitionObservation({
         steps,
         currentStep: currentStepForProjection,
@@ -1324,12 +1320,12 @@ export async function runExecutionLoop(
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
-    const currentStep = findStepOrThrow(steps, currentState.step);
+    const currentStep = findStepOrThrow(steps, currentState.step, currentState.id);
 
     const totalSteps = countNumberedSteps(steps);
 
     // Determine the active execution unit: substep if we're at one, otherwise the step.
-    const itemToRender = resolveCurrentExecutionUnit(currentStep, currentState.substep);
+    const currentUnit = resolveCurrentExecutionUnit(currentStep, currentState.substep);
 
     const drainResult = await drainResolvedCompletions({
       actorService,
@@ -1385,87 +1381,29 @@ export async function runExecutionLoop(
       continue;
     }
 
-    // Expand per-step dynamic variables ({{Step}}, {{Index}}, {{var}}) for current iteration.
-    // mergeEffectiveVars overlays state.variables (step OUTPUTS) on state.templateVars
-    // (seeded inputs) so subsequent steps can reference outputs from prior steps in
-    // descriptions, prompts, and OUTPUTS expressions. Sole producer of EffectiveVars
-    // — same precedence as buildContextSnapshot and buildExecutionFrame.
-    const mergedTemplateVars = mergeEffectiveVars(currentState);
-    const stepVars = buildStepVariables({
-      stepId: currentState.step,
-      substepId: currentState.substep,
-      forStack: currentState.forStack,
-      forClause: currentStep.kind === 'for' ? currentStep.forClause : undefined,
-      templateVars: mergedTemplateVars,
-    });
-    const helperOptions = {
-      helpers: getHelperRegistry(),
-      context: buildRunnableRenderContext({
-        runId: runbookId,
-        cwd,
-        vars: mergedTemplateVars,
-      }),
-    };
-    const expandedDescription = expandLoopVariables(
-      itemToRender.description,
-      stepVars,
-      helperOptions,
-    );
-    // For prompted-for substeps, fall back to the step-level prompt (the reconstructed FOR text)
-    const rawPrompt =
-      itemToRender.prompt ?? (currentStep.kind === 'prompted-for' ? currentStep.prompt : undefined);
-    const expandedPrompt = rawPrompt
-      ? expandLoopVariables(rawPrompt, stepVars, helperOptions)
-      : rawPrompt;
+    // Rendering is core's. The loop derives exactly one fact for itself — whether
+    // the cursor is on a substep — because the authority precondition below has
+    // to answer it BEFORE any entry exists, and a non-substep entry can never
+    // disclose a frontier.
+    const cursorIsOnSubstep = 'id' in currentUnit;
 
-    // Emit STEP_ENTERED event
     const stepPosition = buildStepPosition(
       currentState.step,
       totalSteps,
       currentState.substep,
       currentState.forStack,
     );
-    const isSubstep = 'id' in itemToRender;
-    const command = isSubstep
-      ? itemToRender.command
-      : currentStep.kind === 'command'
-        ? currentStep.command
-        : undefined;
-
-    // Compute before STEP_ENTERED so the event includes the prompted FOR flag
-    const stepIsPrompted = currentStep.kind === 'prompted-for';
-
-    // Expand once: artifact-producing helpers in command code append a manifest
-    // row per call, so a second expansion would duplicate the entries. Sits
-    // beside the description/prompt expansions above (and ahead of the frontier
-    // seam) because the seam observes the rendered entry when it projects.
-    const expandedCommandCode = command
-      ? expandLoopVariablesForCommand(command.code, stepVars, helperOptions)
-      : undefined;
-
-    const entryMetadata = {
-      stepId: currentState.step,
-      substepId: currentState.substep,
-      position: stepPosition,
-      stepName: isSubstep ? itemToRender.id : itemToRender.name,
-      description: expandedDescription,
-      prompt: expandedPrompt,
-      commandCode: expandedCommandCode,
-      commandLang: command?.lang,
-      isSubstep,
-      prompted: prompted || stepIsPrompted,
-    };
 
     const delegationTokenDeriver = options.delegationRuntime?.deriveDelegationToken;
     // The authority precondition, and the only frontier question the loop asks
     // itself: is there something to disclose that we hold no authority to
     // disclose? The pending-frontier read is core's — the same validating reader
     // the seam uses, so the loop never parses the persisted blob — and the
-    // `isSubstep` term matches the seam's own gate, since a non-substep entry
-    // can never disclose a frontier and so needs no authority.
+    // substep term is derived the same way the seam derives its own, since a
+    // non-substep unit can never disclose a frontier and so needs no authority.
     if (
       delegationTokenDeriver === undefined &&
-      entryMetadata.isSubstep &&
+      cursorIsOnSubstep &&
       readPersistedReEntryFrontier(currentState).length > 0
     ) {
       // A missing deriver is a refusal of this continuation, not a crash.
@@ -1515,7 +1453,6 @@ export async function runExecutionLoop(
             steps,
             state: currentState,
             deriveToken: delegationTokenDeriver,
-            entry: entryMetadata,
           });
 
     if (reentry.status === 'projection_refused') {
@@ -1579,26 +1516,32 @@ export async function runExecutionLoop(
       );
     }
 
-    // A projected frontier has already been observed and consumed by the seam;
-    // an ordinary entry still needs observing here.
-    const entryEffects =
+    // One classified entry either way. A projected frontier was entered by the
+    // seam — with its bearers attached — so re-entering here would announce the
+    // unit twice; every other path enters through the same core seam.
+    const entered: ExecutionUnitEntry =
       reentry.status === 'projected'
-        ? reentry.observations
-        : await actorService.observeExecutionUnitEntry(runbookId, steps, entryMetadata);
-    for (const effect of entryEffects) {
+        ? reentry.entered
+        : await actorService.enterExecutionUnit({
+            state: currentState,
+            steps,
+            // Already computed above from the same `currentState` + `steps` for
+            // this iteration's own error-reporting events — handing it in avoids
+            // a second `countNumberedSteps` full-array scan for the identical
+            // value (RD-827 finding 3).
+            position: stepPosition,
+          });
+    for (const effect of entered.effects) {
       emitter.emit(effect.event);
     }
     if (reentry.status === 'projected') {
       currentState = reentry.state;
     }
 
-    const inlineLaunch = entryEffects
-      .map((effect) =>
-        effect.event.type === 'STEP_ENTERED' ? effect.event.payload.inlineLaunch : undefined,
-      )
-      .find((intent): intent is InlineLaunchIntent => intent !== undefined);
-
-    if (reentry.status === 'none' && inlineLaunch) {
+    // A one-shot intent is consumed by the launch it drives, and the seam's
+    // consume has already committed on the projected path — so acting on one
+    // here would launch a child the re-entry never armed.
+    if (reentry.status === 'none' && entered.kind === 'inline-launch') {
       if (!options.output) {
         emitter.emit({
           type: 'ERROR_OCCURRED',
@@ -1616,7 +1559,7 @@ export async function runExecutionLoop(
         emitter,
         cwd,
         steps,
-        intent: inlineLaunch,
+        intent: entered.launch,
         prompted,
         output: options.output,
         commandStreamOptions: options.commandStreamOptions,
@@ -1628,29 +1571,13 @@ export async function runExecutionLoop(
       });
     }
 
-    // If CLI prompted mode, per-step prompted FOR, OR no command
-    // Use itemToRender which may be a substep with its own command
-    if (prompted || stepIsPrompted || expandedCommandCode === undefined) {
+    // Prompted mode, a prompted-FOR step, and a unit with no command are one arm
+    // now, decided by core. The loop no longer reads an undefined rendered
+    // command as its signal for "nothing to run".
+    if (entered.kind !== 'runnable') {
       return 'waiting';
     }
-
-    // Build rundown-injected environment variables (RD_WORK_PATH, RD_RUN_ID, etc.)
-    // Keys come from BUILTIN_VARIABLES so a rename in variable-discovery.ts
-    // surfaces here as a typecheck error instead of silently breaking injection.
-    const rdInjected: Record<string, string> = {};
-    const workPath = stepVars[BUILTIN_VARIABLES.WorkPath];
-    const contextId = stepVars[BUILTIN_VARIABLES.ContextId];
-    if (typeof workPath === 'string') rdInjected.RD_WORK_PATH = workPath;
-    if (typeof contextId === 'string') rdInjected.RD_CONTEXT_ID = contextId;
-    rdInjected.RD_RUN_ID = currentState.id;
-    rdInjected.RD_RUNBOOK_REF = currentState.runbook.path;
-    rdInjected.RD_RUNBOOK_SOURCE = currentState.runbook.source;
-
-    // Execute the command actor through the core-owned execution fence. The
-    // external command runs in `prepareActorMutation`; persistence happens only
-    // under the exact captured authority and execution attempt.
-    const extracted = extractDisplayCommand(expandedCommandCode);
-    const displayCommand = extracted || expandedCommandCode;
+    const { code: expandedCommandCode, displayCommand, rdInjected } = entered.command;
     let previousState = currentState;
     const fencedCommand = await actorMutationRunner.run({
       runId: runbookId,
@@ -1822,7 +1749,7 @@ export function buildMetadata(state: RunbookState): RunbookMetadata {
     file: state.runbook.path,
     state: DB_FILE,
     runId: state.id,
-    prompted: state.prompted ?? undefined,
+    prompted: state.prompted,
   };
 }
 

@@ -1000,11 +1000,11 @@ describe('executeGoto', () => {
 
     const call = jest.mocked(runExecutionLoop).mock.calls.at(-1);
     expect(call).toBeDefined();
-    expect(call?.slice(0, 5)).toEqual([ctx.manager, DEFAULT_RUNBOOK_ID, ctx.steps, '/test', false]);
+    expect(call?.slice(0, 4)).toEqual([ctx.manager, DEFAULT_RUNBOOK_ID, ctx.steps, '/test']);
     // By reference, not by shape: a structural matcher would also accept a pair
     // rebuilt from the same halves, and forwarding the caller's own runtime is
     // the whole point of the assertion.
-    expect(call?.[6]?.delegationRuntime).toBe(delegationRuntime);
+    expect(call?.[5]?.delegationRuntime).toBe(delegationRuntime);
     // The mutation takes only the issuer, so the pair is unpacked at that call
     // site — pinned by identity so the unpack cannot silently take the wrong half.
     expect(runNavigationMutation).toHaveBeenCalledWith(

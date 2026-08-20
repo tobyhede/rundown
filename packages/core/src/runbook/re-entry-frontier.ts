@@ -1,12 +1,11 @@
 import { getErrorMessage } from '../errors.js';
-import {
-  projectDelegateFrontier,
-  type ExecutionObservationEffect,
-  type StepEntryMetadata,
-} from '../events/execution-observation.js';
+import { projectDelegateFrontier } from '../events/execution-observation.js';
+import type { DelegateFrontierEntry } from '../events/types.js';
 import { PersistedDelegateFrontierEntrySchema } from '../schemas.js';
 import type { RunbookActorService } from './actor-service.js';
 import type { DelegationTokenDeriver } from './delegation-credential.js';
+import { findStepOrThrow, resolveCurrentExecutionUnit } from './execution-units.js';
+import type { ExecutionUnitEntry } from './execution-unit-entry.js';
 import { InvalidRunbookStateError } from './state.js';
 import type { PersistedDelegateFrontierEntry, ResolvedStep, RunbookState } from './types.js';
 
@@ -27,16 +26,25 @@ import type { PersistedDelegateFrontierEntry, ResolvedStep, RunbookState } from 
  *   not hash to the persisted verifier. Not retryable — the same authority
  *   refuses identically.
  * - `consume_failed` — projection succeeded but the machine did not accept the
- *   consume, so the frontier is still persisted. Retryable, and no observations
- *   are returned: their tokens would be orphaned by the next attempt.
+ *   consume, so the frontier is still persisted. Retryable, and the unit is
+ *   never entered: no observations are returned, no bearer tokens would be
+ *   orphaned by the next attempt, and no render side effect runs for a commit
+ *   that never landed.
  */
 export type ReEntryProjection =
   | { readonly status: 'none' }
   | {
       /** The frontier projected, was observed, and the consume committed. */
       readonly status: 'projected';
-      /** Entry observations carrying the reconstructed delegation bearers. */
-      readonly observations: readonly ExecutionObservationEffect[];
+      /**
+       * The classified entry carrying the reconstructed delegation bearers.
+       *
+       * The whole entry rather than its observations alone: the caller needs the
+       * same `awaiting` / `runnable` / `inline-launch` classification here that it
+       * gets from an ordinary entry, and re-deriving it outside the seam would be
+       * a second renderer.
+       */
+      readonly entered: ExecutionUnitEntry;
       /** Committed state after `DELEGATE_FRONTIER_CONSUMED`. */
       readonly state: RunbookState;
     }
@@ -59,7 +67,7 @@ export type ReEntryProjection =
  */
 export type ReEntryFrontierActorService = Pick<
   RunbookActorService,
-  'observeExecutionUnitEntry' | 'sendAndSync'
+  'enterExecutionUnit' | 'sendAndSync'
 >;
 
 /**
@@ -89,12 +97,13 @@ export type PreparedReEntryProjection =
       /** Prepared state after `DELEGATE_FRONTIER_CONSUMED`, for the owned commit. */
       readonly nextState: RunbookState;
       /**
-       * Entry metadata carrying the reconstructed bearers, to be observed ONLY
-       * after the commit lands. Held as data rather than as rendered
-       * observations because observation reads committed state — deriving it
-       * here would disclose bearers a refused commit never consumed.
+       * The reconstructed bearers, to be disclosed ONLY after the commit lands.
+       *
+       * Held as data rather than as a rendered entry because entering the unit
+       * reads committed state — doing it here would disclose bearers a refused
+       * commit never consumed.
        */
-      readonly entry: StepEntryMetadata;
+      readonly frontier: readonly DelegateFrontierEntry[];
     }
   | {
       /** A disclosure boundary refused the projection. */
@@ -116,8 +125,6 @@ export interface PrepareReEntryFrontierConsumeInput {
   readonly state: RunbookState;
   /** Verified same-issuer deriver, bound to the exact issuing claim. */
   readonly deriveToken: DelegationTokenDeriver;
-  /** Frontend-rendered entry metadata for the execution unit being re-entered. */
-  readonly entry: Omit<StepEntryMetadata, 'delegateFrontier'>;
 }
 
 /**
@@ -136,8 +143,10 @@ export interface PrepareReEntryFrontierConsumeInput {
  * surrounding work does not. Here the caller cannot observe until its ONE commit
  * has landed, so a refused transaction discloses nothing and consumes nothing.
  *
- * @param input - Actor service, steps, captured state, verified deriver, and entry metadata.
+ * @param input - Actor service, steps, captured state, and verified deriver.
  * @returns The prepared re-entry outcome.
+ * @throws {Error} When the run's cursor names a step the parsed runbook does not
+ *   define.
  * @throws {InvalidRunbookStateError} When the persisted snapshot carries a
  *   `delegateFrontier` that is not an array of structurally valid entries. Per
  *   the no-migration rule this is corrupt/incompatible persisted state, and the
@@ -149,7 +158,7 @@ export async function prepareReEntryFrontierConsume(
   input: PrepareReEntryFrontierConsumeInput,
 ): Promise<PreparedReEntryProjection> {
   const persistedFrontier = readPersistedReEntryFrontier(input.state);
-  if (persistedFrontier.length === 0 || !input.entry.isSubstep) {
+  if (persistedFrontier.length === 0 || !cursorIsOnSubstep(input.state, input.steps)) {
     return { status: 'none' };
   }
 
@@ -166,11 +175,7 @@ export async function prepareReEntryFrontierConsume(
     input.steps,
     { type: 'DELEGATE_FRONTIER_CONSUMED' },
   );
-  return {
-    status: 'projected',
-    nextState: mutation.nextState,
-    entry: { ...input.entry, delegateFrontier: frontier },
-  };
+  return { status: 'projected', nextState: mutation.nextState, frontier };
 }
 
 /** Inputs for {@link projectAndConsumeReEntryFrontier}. */
@@ -189,13 +194,27 @@ export interface ProjectAndConsumeReEntryFrontierInput {
    * issuing claim — never persisted, never read from context.
    */
   readonly deriveToken: DelegationTokenDeriver;
-  /**
-   * Frontend-rendered entry metadata for the execution unit being (re-)entered.
-   * The seam supplies `delegateFrontier`; everything else is the caller's
-   * rendering decision. A non-substep entry can never carry a frontier, so
-   * `isSubstep: false` short-circuits to `none` without observing.
-   */
-  readonly entry: Omit<StepEntryMetadata, 'delegateFrontier'>;
+}
+
+/**
+ * Whether the unit a run's cursor names is a substep.
+ *
+ * The one fact the seam used to read off a caller-supplied entry, and the
+ * complete reason that parameter existed. Deriving it from the state the seam
+ * already holds removes the last route by which a caller could hand the seam an
+ * entry that disagrees with the run: a non-substep unit can never carry a
+ * frontier, so getting this wrong would gate credential disclosure on someone
+ * else's rendering decision.
+ *
+ * @param state - Run whose cursor is being resolved.
+ * @param steps - Parsed steps for that run.
+ * @returns True when the cursor resolves to a live substep.
+ * @throws {Error} When the cursor names a step the runbook does not define.
+ */
+function cursorIsOnSubstep(state: RunbookState, steps: readonly ResolvedStep[]): boolean {
+  return (
+    'id' in resolveCurrentExecutionUnit(findStepOrThrow(steps, state.step, state.id), state.substep)
+  );
 }
 
 /**
@@ -258,15 +277,23 @@ export function readPersistedReEntryFrontier(
  * `rundown collect` (via `collectDelegationOutcomes`) and `rundown run` (via the
  * CLI execution loop) both reach the same persisted data under the same
  * conditions; sharing the seam is what keeps one condition reported as one fact.
- * Frontends contribute only their rendered {@link StepEntryMetadata}, and map the
- * returned arms onto their own envelopes — emitter wiring and exit codes.
+ * Frontends contribute nothing to the entry: the seam enters the unit through
+ * `RunbookActorService.enterExecutionUnit`, which renders it from the run's own
+ * state. Callers map the returned arms onto their own envelopes — emitter wiring
+ * and exit codes — and read the classified entry off the `projected` arm.
  *
- * Ordering is deliberate: the consume commits BEFORE the observations are
- * returned, so a failed consume discloses no bearers. The frontier stays
- * persisted in that case, and the next attempt re-projects it.
+ * Ordering is deliberate: the consume commits BEFORE the unit is entered, so a
+ * failed consume neither discloses bearers nor renders. Rendering can run
+ * arbitrary `--helpers` JS, so this is not only a disclosure boundary — it also
+ * bounds a non-idempotent helper to running at most once per commit. The
+ * frontier stays persisted when the consume fails, and the next attempt
+ * re-projects it; had rendering already run on that attempt, the retry would
+ * re-invoke the same helper a second time.
  *
- * @param input - Actor service, steps, committed state, verified deriver, and rendered entry metadata.
+ * @param input - Actor service, steps, committed state, and verified deriver.
  * @returns The classified re-entry outcome.
+ * @throws {Error} When the run's cursor names a step the parsed runbook does not
+ *   define, or when entering the unit cannot render it.
  * @throws {InvalidRunbookStateError} When the persisted snapshot carries a
  *   `delegateFrontier` that is not an array of structurally valid entries. Per
  *   the no-migration rule this is corrupt/incompatible persisted state, and the
@@ -277,7 +304,7 @@ export async function projectAndConsumeReEntryFrontier(
   input: ProjectAndConsumeReEntryFrontierInput,
 ): Promise<ReEntryProjection> {
   const persistedFrontier = readPersistedReEntryFrontier(input.state);
-  if (persistedFrontier.length === 0 || !input.entry.isSubstep) {
+  if (persistedFrontier.length === 0 || !cursorIsOnSubstep(input.state, input.steps)) {
     return { status: 'none' };
   }
 
@@ -288,12 +315,6 @@ export async function projectAndConsumeReEntryFrontier(
     return { status: 'projection_refused', message: getErrorMessage(error) };
   }
 
-  const observations = await input.actorService.observeExecutionUnitEntry(
-    input.state.id,
-    [...input.steps],
-    { ...input.entry, delegateFrontier: frontier },
-  );
-
   const consumed = await input.actorService.sendAndSync(input.state.id, [...input.steps], {
     type: 'DELEGATE_FRONTIER_CONSUMED',
   });
@@ -301,5 +322,14 @@ export async function projectAndConsumeReEntryFrontier(
     return { status: 'consume_failed' };
   }
 
-  return { status: 'projected', observations, state: consumed.state };
+  // The COMMITTED state, not `input.state`: rendering must describe the run as
+  // it exists after the consume landed, and must not run before the commit that
+  // gates it — see the ordering note above.
+  const entered = await input.actorService.enterExecutionUnit({
+    state: consumed.state,
+    steps: input.steps,
+    delegateFrontier: frontier,
+  });
+
+  return { status: 'projected', entered, state: consumed.state };
 }

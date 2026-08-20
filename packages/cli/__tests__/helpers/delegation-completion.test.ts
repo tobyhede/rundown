@@ -235,6 +235,7 @@ const {
 
 function makeState(id: RunbookState['id'], overrides: Partial<RunbookState> = {}): RunbookState {
   const base: RunbookState = {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id,
     runbook: { source: 'project', path: 'test.md' },
@@ -817,7 +818,6 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       PARENT_RUN_ID,
       expect.anything(),
       '/test',
-      expect.any(Boolean),
       expect.anything(),
       expect.objectContaining({ terminalReleaseMode: 'defer-to-caller' }),
     );
@@ -941,11 +941,10 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
         PARENT_RUN_ID,
         expect.anything(),
         '/test',
-        expect.any(Boolean),
         expect.anything(),
         expect.anything(),
       );
-      expect(jest.mocked(runExecutionLoop).mock.calls[0][6]?.delegationRuntime).toBe(runtime);
+      expect(jest.mocked(runExecutionLoop).mock.calls[0][5]?.delegationRuntime).toBe(runtime);
     });
 
     // The core seam recurses up an inline chain, invoking this same callable for
@@ -975,7 +974,6 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
         PARENT_RUN_ID,
         expect.anything(),
         '/test',
-        expect.any(Boolean),
         expect.anything(),
         expect.objectContaining({ delegationRuntime: undefined }),
       );
@@ -1038,11 +1036,10 @@ describe('propagateChildTerminal run-scoped delegation runtime', () => {
       PARENT_RUN_ID,
       expect.anything(),
       '/test',
-      expect.any(Boolean),
       expect.anything(),
       expect.anything(),
     );
-    expect(jest.mocked(runExecutionLoop).mock.calls[0][6]?.delegationRuntime).toBe(runtime);
+    expect(jest.mocked(runExecutionLoop).mock.calls[0][5]?.delegationRuntime).toBe(runtime);
   });
 });
 

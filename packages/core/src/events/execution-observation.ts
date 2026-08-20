@@ -91,7 +91,18 @@ export interface StepEntryObservationInput {
   readonly artifactPathOptions: ArtifactPathOptions;
 }
 
-/** Frontend-rendered metadata for the execution unit being entered. */
+/**
+ * Metadata for the execution unit being entered.
+ *
+ * Core-internal since #820: `deriveExecutionUnitEntry` is its only producer and
+ * {@link deriveStepEnteredEffect} its only consumer, so it is a local passed
+ * between two core functions rather than a parameter any caller supplies. It was
+ * a parameter of three exported seams before that, and having two builders fill
+ * it differently is the divergence #799 exists to close — a front end that can
+ * hand core an entry can hand it one that disagrees with the run.
+ *
+ * @internal
+ */
 export interface StepEntryMetadata {
   /** Current parent step id. */
   readonly stepId: string;
@@ -105,6 +116,14 @@ export interface StepEntryMetadata {
   readonly description?: string;
   /** Rendered prompt text. */
   readonly prompt?: string;
+  /**
+   * Whether the parsed execution unit declares a command.
+   *
+   * Derived from the unit, never from whether {@link commandCode} happens to be
+   * present: the two answered differently depending on which builder produced
+   * the entry, which made a payload flag an accident of the caller.
+   */
+  readonly hasCommand: boolean;
   /** Rendered command code, when the execution unit has a command. */
   readonly commandCode?: string;
   /** Command language info string. */
@@ -179,61 +198,23 @@ function extractSnapshotEnteredArtifacts(
   return {};
 }
 
-function snapshotSubstep(snapshot: unknown): string | undefined {
-  if (
-    snapshot &&
-    typeof snapshot === 'object' &&
-    'context' in snapshot &&
-    snapshot.context &&
-    typeof snapshot.context === 'object'
-  ) {
-    return (snapshot.context as { readonly substep?: unknown }).substep as string | undefined;
-  }
-  return undefined;
-}
-
-function snapshotStep(snapshot: unknown): string | undefined {
-  if (
-    snapshot &&
-    typeof snapshot === 'object' &&
-    'context' in snapshot &&
-    snapshot.context &&
-    typeof snapshot.context === 'object'
-  ) {
-    return (snapshot.context as { readonly step?: unknown }).step as string | undefined;
-  }
-  return undefined;
-}
-
 /**
- * Derive a STEP_ENTERED observation from a machine snapshot and rendered entry metadata.
+ * Derive a STEP_ENTERED observation from a machine snapshot and entry metadata.
  *
- * @param input - Snapshot plus rendered execution-unit metadata.
+ * Two cursor-mismatch guards used to live here, refusing an entry whose
+ * `stepId` / `substepId` disagreed with the snapshot. They existed because the
+ * entry was a PARAMETER — a caller could hand this function metadata describing
+ * some other cursor. Since #820 the entry has one producer,
+ * `deriveExecutionUnitEntry`, which reads both the cursor and the snapshot off
+ * the same `RunbookState`. The bug class the guards caught is unrepresentable,
+ * so they are gone rather than kept as unreachable code.
+ *
+ * @param input - Snapshot plus execution-unit metadata.
  * @returns Non-persisted STEP_ENTERED observation effect.
- * @throws {Error} When the STEP_ENTERED entry step does not match the snapshot step.
- * @throws {Error} When the STEP_ENTERED entry substep does not match the snapshot substep.
  */
 export function deriveStepEnteredEffect(
   input: StepEntryObservationInput,
 ): ExecutionObservationEffect {
-  const step = snapshotStep(input.snapshot);
-  if (step !== input.entry.stepId) {
-    throw new Error(
-      `Cannot observe STEP_ENTERED for step ${input.entry.stepId} while machine snapshot is at ${
-        step ?? '<unknown>'
-      }`,
-    );
-  }
-  if (input.entry.substepId !== undefined) {
-    const substep = snapshotSubstep(input.snapshot);
-    if (substep !== input.entry.substepId) {
-      throw new Error(
-        `Cannot observe STEP_ENTERED for substep ${input.entry.substepId} while machine snapshot is at ${
-          substep ?? '<unknown>'
-        }`,
-      );
-    }
-  }
   return {
     kind: 'execution_observation',
     event: {
@@ -243,7 +224,7 @@ export function deriveStepEnteredEffect(
         stepName: input.entry.stepName,
         description: input.entry.description,
         prompt: input.entry.prompt,
-        hasCommand: input.entry.commandCode !== undefined,
+        hasCommand: input.entry.hasCommand,
         commandCode: input.entry.commandCode,
         commandLang: input.entry.commandLang,
         isSubstep: input.entry.isSubstep,

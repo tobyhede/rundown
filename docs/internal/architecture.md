@@ -570,13 +570,21 @@ events for stdout/stderr (and for the MCP server when it is the front end):
 | `ERROR_OCCURRED { code, message }`                        | When a typed `lastAction` variant indicates a machine-internal failure (e.g. `RETRY_ERROR`). See [Typed `lastAction` Discriminants](#typed-lastaction-discriminants).                                                                                                                                                                                                                                                                |
 | `COMMAND_STARTED` / `COMMAND_COMPLETED` / `POLICY_DENIED` | Machine-owned. Command execution is the Category C actor `commandExecActor` (`packages/core/src/runbook/actors/command-exec-actor.ts`), wired into every leaf in `compiler.ts`. These observations flow through the `MachineExecutionObserver` effect collector in core (`packages/core/src/events/execution-observation.ts`); the CLI supplies the `runExternalCommand` services that the actor calls but does not emit the events. |
 
+`STEP_ENTERED` is built by exactly one function, `deriveExecutionUnitEntry`
+(`packages/core/src/runbook/execution-unit-entry.ts`), reached through
+`RunbookActorService.enterExecutionUnit`. Every frontend enters a unit that way
+— `rundown run`'s execution loop and `rundown collect`'s re-entry disclosure
+alike — so the payload cannot vary with the command that produced it. The seam
+also classifies the entry, returning `awaiting` / `runnable` / `inline-launch`;
+the rendered command travels only on the `runnable` arm, inside a nominally
+branded record the module is the sole producer of.
+
 `STEP_ENTERED` may include `delegateFrontier` for authored `- DELEGATE` targets
 or `inlineLaunch` for non-DELEGATE child-runbook targets. `inlineLaunch` is
-projected from persisted `context.inlineLaunchIntent` by
-`RunbookActorService.observeExecutionUnitEntry`; it includes the parent
-identity, parent frame, preallocated child run id, and child runbook reference.
-The CLI launch loop consumes this typed intent, creates the child run with
-inline parent linkage, sends `INLINE_CHILD_STARTED`, then sends
+projected from persisted `context.inlineLaunchIntent` by the same seam; it
+includes the parent identity, parent frame, preallocated child run id, and child
+runbook reference. The CLI launch loop consumes this typed intent, creates the
+child run with inline parent linkage, sends `INLINE_CHILD_STARTED`, then sends
 `INLINE_LAUNCH_CONSUMED`. Variable inheritance uses the internal context
 snapshot carried on the intent, but the public JSON renderer redacts that
 snapshot from `step_entered.inlineLaunch`.
@@ -680,8 +688,8 @@ it.
    re-announcing the step and re-running any command it carries. The
    discriminant is the surviving intent itself
    (`#hasUnconsumedInlineLaunchIntent`), which is the same value
-   `observeExecutionUnitEntry` re-projects, so the seam's decision and the
-   loop's behaviour agree by construction.
+   `enterExecutionUnit` re-projects, so the seam's decision and the loop's
+   behaviour agree by construction.
 
    **A child is activated only by the launch span that wins it.** The seam
    matches on a running child with matching linkage, which is also what a
@@ -875,20 +883,33 @@ code, `RD-821` (`DELEGATION_INVARIANT_VIOLATED`):
 
 The last two rows share one **disclosure boundary** — the same reader, the same
 projector, and the same refusal arm — in two seams that differ only in when the
-consume commits. Both live in `packages/core/src/runbook/re-entry-frontier.ts`,
-and each frontend contributes only its rendered `StepEntryMetadata`, its emitter
-wiring, and its exit-code mapping.
+consume commits. Both live in `packages/core/src/runbook/re-entry-frontier.ts`.
+Neither takes a caller-supplied entry: each derives "is the cursor on a substep"
+from the state it already holds, and the entry the bearers ride on is rendered
+by `enterExecutionUnit`. A frontend contributes its emitter wiring and its
+exit-code mapping, nothing more.
 
 | Seam                               | Driver             | Consume                                  | Arms                                                              |
 | ---------------------------------- | ------------------ | ---------------------------------------- | ----------------------------------------------------------------- |
 | `projectAndConsumeReEntryFrontier` | `runExecutionLoop` | Committed by the seam, via `sendAndSync` | `none` / `projected` / `projection_refused` / `consume_failed`    |
 | `prepareReEntryFrontierConsume`    | `rundown collect`  | **Derived**, committed by the caller     | `none` / `projected` / `projection_refused` — no `consume_failed` |
 
-The unfenced seam commits the consume **before** returning observations, so a
-failed consume discloses no bearer. The fenced twin cannot observe until the
-caller's single transaction has landed, which strengthens the same guarantee:
-where the unfenced seam can leave a consume committed while the surrounding work
-is not, a refused transaction consumes nothing and discloses nothing.
+The unfenced seam commits the consume **before** returning the entered unit, so
+a failed consume discloses no bearer. The fenced twin cannot enter the unit
+until the caller's single transaction has landed, which strengthens the same
+guarantee: where the unfenced seam can leave a consume committed while the
+surrounding work is not, a refused transaction consumes nothing and discloses
+nothing.
+
+A collect's disclosure has one failure mode the loop's does not, and it is new
+with the shared entry: a collect that has already committed can fail to RENDER
+the entry its bearers ride on — typically a `--helpers` helper raising. Nothing
+recovers the bearers (the consume is durable, so a retry answers the idempotent
+no-op), so the collect rejects rather than reporting a phantom success with an
+empty observation list. It rejects with a code of its own, `RD-833`
+(`DELEGATION_FRONTIER_DISCLOSURE_FAILED`), except when the render refusal is
+`InvalidRunbookStateError` — corrupt persisted state keeps its class so the
+CLI's RD-309 arm still prints finish/stop/prune.
 
 That is why `consume_failed` has no fenced counterpart. A derivation cannot
 half-commit, so the only way a collect's consume does not land is that its

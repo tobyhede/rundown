@@ -285,7 +285,6 @@ jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
 
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => ({
-  buildStepVariables: mockFn<() => Record<string, unknown>>().mockReturnValue({ Step: '1.1' }),
   runExecutionLoop:
     mockFn<(...args: unknown[]) => Promise<'done' | 'stopped' | 'waiting'>>().mockResolvedValue(
       'done',

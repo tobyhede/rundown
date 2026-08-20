@@ -470,8 +470,9 @@ export class RunbookStateManager {
    * filesystem-backed `.rundown/runs/<id>/outputs/` tree holds captured command
    * output only, and is created on demand by the capture path.
    *
-   * `templateVars` is always written — `{}` when the caller supplies none — because
-   * {@link load} refuses a persisted row without it.
+   * `templateVars` is always written — `{}` when the caller supplies none — and
+   * so is `prompted` (`false` when the caller names no mode), because {@link load}
+   * refuses a persisted row without either.
    *
    * @param runbookRef - Canonical runbook identity
    * @param runbook - The parsed runbook definition
@@ -504,7 +505,10 @@ export class RunbookStateManager {
       parentLinkage: options.parentLinkage,
       startedAt: now,
       updatedAt: now,
-      prompted: options.prompted,
+      // Always written, `false` when the caller names no mode: `load` refuses a
+      // persisted row without `prompted` rather than defaulting one, so a run
+      // created without it would be unreadable the moment it is saved.
+      prompted: options.prompted ?? false,
       runbookSrc: options.runbookSrc,
       // Always written, `{}` when the caller supplies none: `load` refuses a
       // persisted row without templateVars rather than reconstructing it, so a
@@ -535,7 +539,7 @@ export class RunbookStateManager {
    * @throws {Error} If `id` is traversal-unsafe — rejected before any store access
    * @throws {InvalidRunbookStateError} If the record exists but its `state_json`
    *   is unparseable, fails schema validation, has an incompatible schemaVersion,
-   *   or is missing `templateVars`
+   *   or is missing `templateVars` or `prompted`
    * @throws {LegacySnapshotError} If the runbook state uses deprecated dynamic-step snapshots
    */
   async load(id: string): Promise<RunbookState | null> {
@@ -579,6 +583,21 @@ export class RunbookStateManager {
         `Invalid runbook state for "${id}": missing templateVars. ` +
           `Prune this run and re-run the runbook.`,
         { runId, reason: 'missing_template_vars' },
+      );
+    }
+
+    // Same rule, same reason. `prompted` decides whether the run announces its
+    // commands or executes them, and it is the value a composing parent
+    // inherits down into a fresh inline child. Defaulting an absent one at the
+    // read sites would silently adapt an incompatible row into an executing
+    // run; `create` always writes the field, so a row without it originates
+    // outside this codebase's only creation path. Named here rather than left
+    // to the schema parse below so the refusal says which field is missing.
+    if (raw.prompted === undefined) {
+      throw new InvalidRunbookStateError(
+        `Invalid runbook state for "${id}": missing prompted. ` +
+          `Prune this run and re-run the runbook.`,
+        { runId, reason: 'missing_prompted' },
       );
     }
 

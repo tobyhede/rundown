@@ -3,8 +3,10 @@ import type {
   DelegationRuntimeCapabilities,
   DelegationTokenDeriver,
   DelegationTokenHash,
+  EnterExecutionUnitInput,
   ErrorCodeKey,
   ExecutionEventEmitter,
+  ExecutionUnitEntry,
   FrameKey,
   InlineLaunchStart,
   InlineLinkage,
@@ -65,8 +67,12 @@ const mockActorService = {
   getContextSnapshot: mockFn<
     (id: string, steps: unknown) => Promise<Record<string, unknown> | null>
   >() as any,
-  observeExecutionUnitEntry: mockFn<
-    (id: string, steps: unknown, entry: Record<string, unknown>) => Promise<unknown[]>
+  // The entry seam. Declared with core's own input/output types because the
+  // default implementation below IS core's derivation — the double stands in for
+  // the service, not for the rendering, so it cannot drift from what production
+  // renders. Tests that need a specific classification override it per call.
+  enterExecutionUnit: mockFn<
+    (input: EnterExecutionUnitInput) => Promise<ExecutionUnitEntry>
   >() as any,
   prepareActorMutation: mockFn<RunbookActorService['prepareActorMutation']>(),
 };
@@ -386,6 +392,11 @@ describe('runExecutionLoop', () => {
       runbookPath: 'test.runbook.md',
       step,
       status: 'running',
+      // Every persisted run carries this: `create` always writes it and `load`
+      // refuses a row without it, so a loose fixture that omitted it modelled a
+      // state the manager cannot hand back. Ahead of the spread so a test that
+      // is about prompted mode still overrides it.
+      prompted: false,
       ...overrides,
       templateVars: {
         ...baseTemplateVars,
@@ -407,6 +418,20 @@ describe('runExecutionLoop', () => {
       snapshot: { context: { delegateFrontier: frontier } },
       ...overrides,
     });
+  /**
+   * Realistic post-commit state for a `DELEGATE_FRONTIER_CONSUMED` `sendAndSync`
+   * mock result.
+   *
+   * The entry is rendered from the COMMITTED state (RD-827 finding 1: rendering
+   * — which can run `--helpers` JS — must not run before the consume that gates
+   * it, so it now runs against `consumed.state` rather than the pre-commit
+   * capture). A bare `{ id, step, substep, status }` stub carries no
+   * `templateVars`, so it trips `deriveExecutionUnitEntry`'s missing-`WorkPath`
+   * guard the instant it is used for rendering instead of only for loop control.
+   * The frontier is cleared from context, mirroring what the real consume retires.
+   */
+  const frontierConsumedState = (overrides: Record<string, unknown> = {}) =>
+    frontierLoopState(undefined, { snapshot: { context: {} }, ...overrides });
   const commandCompletedEffect = (result: 'pass' | 'fail' = 'pass') => ({
     kind: 'execution_observation',
     event: {
@@ -542,44 +567,17 @@ describe('runExecutionLoop', () => {
     });
     mockActorService.getContextSnapshot.mockReset();
     mockActorService.getContextSnapshot.mockResolvedValue(null);
-    mockActorService.observeExecutionUnitEntry.mockReset();
-    mockActorService.observeExecutionUnitEntry.mockImplementation(
-      async (id: string, steps: unknown, entry: Record<string, unknown>) => {
-        const context = await mockActorService.getContextSnapshot(id, steps);
-        return [
-          {
-            kind: 'execution_observation',
-            event: {
-              type: 'STEP_ENTERED',
-              payload: {
-                position: entry.position,
-                stepName: entry.stepName,
-                description: entry.description,
-                prompt: entry.prompt,
-                hasCommand: entry.commandCode !== undefined,
-                commandCode: entry.commandCode,
-                commandLang: entry.commandLang,
-                isSubstep: entry.isSubstep,
-                prompted: entry.prompted,
-                artifacts:
-                  context &&
-                  typeof context === 'object' &&
-                  'enteredArtifacts' in context &&
-                  context.enteredArtifacts &&
-                  typeof context.enteredArtifacts === 'object'
-                    ? actualCore.toPublicArtifactMap(
-                        context.enteredArtifacts as Parameters<
-                          typeof actualCore.toPublicArtifactMap
-                        >[0],
-                        { cwd: '/tmp', workPath: actualCore.WORK_DIR },
-                      )
-                    : {},
-                delegateFrontier: entry.delegateFrontier,
-              },
-            },
-          },
-        ];
-      },
+    mockActorService.enterExecutionUnit.mockReset();
+    // Core's own derivation, with the two dependencies the real service binds
+    // supplied here: the project directory and the CLI helper registry. The
+    // double therefore renders exactly what production renders, and these tests
+    // stay about the loop's wiring rather than about rendering.
+    mockActorService.enterExecutionUnit.mockImplementation(async (input: EnterExecutionUnitInput) =>
+      actualCore.deriveExecutionUnitEntry({
+        ...input,
+        cwd: '/tmp',
+        helpers: getHelperRegistry(),
+      }),
     );
 
     mockEmitter = {
@@ -651,7 +649,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
     expect(result).toBe('stopped');
@@ -1050,7 +1047,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -1073,14 +1069,13 @@ describe('runExecutionLoop', () => {
   });
 
   it('returns waiting if prompted mode is on', async () => {
-    mockManager.load.mockResolvedValue(makeLoopState());
+    mockManager.load.mockResolvedValue(makeLoopState('1', { prompted: true }));
 
     const result = await runExecutionLoop(
       asManager(mockManager),
       runbookId,
       asSteps(steps),
       '/tmp',
-      true,
       asEmitter(mockEmitter),
     );
 
@@ -1104,17 +1099,21 @@ describe('runExecutionLoop', () => {
       key: 'plan.json',
       timestamp: '2026-05-12T00:00:00.000Z',
     };
-    mockManager.load.mockResolvedValue(makeLoopState());
-    mockActorService.getContextSnapshot.mockResolvedValue({
-      enteredArtifacts: { PlanPath: artifact },
-    });
+    // Off the run's own persisted snapshot, which is where core reads it: the
+    // entry seam takes the state it renders against, so a separate context read
+    // is not a source it consults.
+    mockManager.load.mockResolvedValue(
+      makeLoopState('1', {
+        prompted: true,
+        snapshot: { context: { enteredArtifacts: { PlanPath: artifact } } },
+      }),
+    );
 
     await runExecutionLoop(
       asManager(mockManager),
       runbookId,
       asSteps(steps),
       '/tmp',
-      true,
       asEmitter(mockEmitter),
     );
 
@@ -1135,17 +1134,18 @@ describe('runExecutionLoop', () => {
   });
 
   it('emits STEP_ENTERED.artifacts as an empty object when no ARTIFACTS resolved', async () => {
-    mockManager.load.mockResolvedValue(makeLoopState());
-    mockActorService.getContextSnapshot.mockResolvedValue({
-      enteredArtifacts: undefined,
-    });
+    mockManager.load.mockResolvedValue(
+      makeLoopState('1', {
+        prompted: true,
+        snapshot: { context: { enteredArtifacts: undefined } },
+      }),
+    );
 
     await runExecutionLoop(
       asManager(mockManager),
       runbookId,
       asSteps(steps),
       '/tmp',
-      true,
       asEmitter(mockEmitter),
     );
 
@@ -1169,153 +1169,10 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(stepsNoCmd),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
     expect(result).toBe('waiting');
-  });
-
-  // ---------------------------------------------------------------------------
-  // #816 characterisation — the LOOP half of the STEP_ENTERED divergence.
-  //
-  // Two builders produce the `StepEntryMetadata` behind a STEP_ENTERED payload:
-  // this loop's (`execution.ts`, every field filled) and core's collect-side one
-  // (`collection-service.ts`, ids/position/name/flags only). These pin what the
-  // loop builder does TODAY on the two axes the end-to-end contrast in
-  // `integration/step-entered-divergence-characterisation.test.ts` cannot reach,
-  // so #799's move reads as an assertion flipping rather than as a new test.
-  //
-  // The entry is captured off `observeExecutionUnitEntry` rather than off the
-  // emitted event, because that argument IS the builder's output and the payload
-  // is a lossy projection of it — `substepId` never reaches the event at all.
-  // ---------------------------------------------------------------------------
-  describe('STEP_ENTERED entry metadata (#816 characterisation)', () => {
-    type ObserveEntryMock = jest.Mock<
-      (id: string, steps: unknown, entry: Record<string, unknown>) => Promise<unknown[]>
-    >;
-
-    /**
-     * The entry metadata the loop handed core for the unit it entered.
-     *
-     * @returns The single captured `StepEntryMetadata`-shaped argument.
-     */
-    function capturedEntry(): Record<string, unknown> {
-      const { calls } = (mockActorService.observeExecutionUnitEntry as ObserveEntryMock).mock;
-      expect(calls).toHaveLength(1);
-      return calls[0][2];
-    }
-
-    it('composes prompted from the loop flag OR the prompted-FOR step kind', async () => {
-      // A FOR step whose bounds did not resolve is demoted to `prompted-for`:
-      // substeps, no iteration machinery, the original FOR text kept as the
-      // step prompt.
-      const promptedForSteps: LooseStep[] = [
-        {
-          kind: 'prompted-for',
-          name: '1',
-          description: 'Fan out over an unresolved source',
-          prompt: 'FOR item IN {{ items }}',
-          substeps: [
-            {
-              id: '1',
-              description: 'Handle one item',
-              transitions: {
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: 'CONTINUE' },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
-              },
-            },
-          ],
-          transitions: {
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: 'CONTINUE' },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
-          },
-        },
-      ];
-      mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1' }));
-
-      const result = await runExecutionLoop(
-        asManager(mockManager),
-        runbookId,
-        asSteps(promptedForSteps),
-        '/tmp',
-        // The persisted/CLI prompted flag, explicitly FALSE. Everything below
-        // is about the second term.
-        false,
-        asEmitter(mockEmitter),
-      );
-
-      expect(result).toBe('waiting');
-      // THE DIVERGENCE. The loop ORs `currentStep.kind === 'prompted-for'` into
-      // the flag it was called with; core's collect-side builder reads
-      // `!!advanced.prompted` alone and would report `false` for this same
-      // cursor on this same step.
-      //
-      // CORRECT VALUE: `true`. The payload field documents whether execution is
-      // prompted rather than automatic, and a prompted-FOR step IS prompted —
-      // the loop returns 'waiting' on exactly this term, as asserted above. So
-      // the collect path under-reports, and #799's move makes the composed
-      // value the one both paths derive.
-      expect(capturedEntry().prompted).toBe(true);
-    });
-
-    it('takes substepId from the raw cursor and isSubstep from the resolved unit', async () => {
-      // A cursor naming a substep the current step does not define.
-      // `resolveCurrentExecutionUnit` falls back to the parent step for it, so
-      // the two fields are derived from different sources and disagree.
-      const substepSteps: LooseStep[] = [
-        {
-          kind: 'substeps',
-          name: '1',
-          description: 'Fan out',
-          aggregation: { strategy: 'ALL' },
-          substeps: [
-            {
-              id: '1',
-              description: 'The only live substep',
-              transitions: {
-                pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: 'CONTINUE' },
-                fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
-              },
-            },
-          ],
-          transitions: {
-            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' }, next: 'CONTINUE' },
-            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' }, next: 'STOP' },
-          },
-        },
-      ];
-      mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '9' }));
-
-      const result = await runExecutionLoop(
-        asManager(mockManager),
-        runbookId,
-        asSteps(substepSteps),
-        '/tmp',
-        false,
-        asEmitter(mockEmitter),
-      );
-
-      expect(result).toBe('waiting');
-      const entry = capturedEntry();
-      // THE DIVERGENCE, inside one builder rather than between two: `substepId`
-      // comes straight off the raw cursor while `isSubstep` comes off the
-      // resolved execution unit, so a cursor naming no live substep yields a
-      // populated `substepId` alongside `isSubstep: false`.
-      //
-      // CORRECT VALUE: `substepId: undefined` with `isSubstep: false`. Both
-      // describe the same question — is the unit being entered a substep? — so
-      // both must come from the resolved unit. This matters beyond tidiness:
-      // the frontier seams gate credential disclosure on `isSubstep`, and
-      // `deriveStepEnteredEffect`'s cursor guard fires on `substepId`, so the
-      // two fields answering differently splits one decision across two seams.
-      expect(entry.substepId).toBe('9');
-      expect(entry.isSubstep).toBe(false);
-      // The name confirms the fallback landed on the parent step: the substep
-      // arm would have used the substep's own id.
-      expect(entry.stepName).toBe('1');
-      expect(entry.description).toBe('Fan out');
-    });
   });
 
   it('executes command and advances to next step', async () => {
@@ -1348,7 +1205,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(testSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -1406,7 +1262,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps([steps[0]]),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -1466,7 +1321,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps([steps[0]]),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -1500,7 +1354,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -1537,7 +1390,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps([steps[0]]),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -1582,7 +1434,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -1680,7 +1531,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -1718,7 +1568,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -1758,7 +1607,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
         { terminalReleaseMode: 'release-runbook' },
       );
@@ -1782,7 +1630,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
         { terminalReleaseMode: 'release-runbook' },
       );
@@ -1837,7 +1684,6 @@ describe('runExecutionLoop', () => {
           runbookId,
           asSteps(steps),
           '/tmp',
-          false,
           asEmitter(mockEmitter),
           { terminalReleaseMode: 'release-runbook' },
         );
@@ -1876,7 +1722,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -1909,7 +1754,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -1940,7 +1784,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -1984,7 +1827,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
         { terminalReleaseMode: 'defer-to-caller' },
       );
@@ -2026,7 +1868,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
         { terminalReleaseMode: 'defer-to-caller' },
       );
@@ -2059,7 +1900,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
         { terminalReleaseMode: 'release-runbook' },
       );
@@ -2096,7 +1936,6 @@ describe('runExecutionLoop', () => {
           runbookId,
           asSteps(steps),
           '/tmp',
-          false,
           asEmitter(mockEmitter),
           { terminalReleaseMode: 'future-mode' as ExecutionTerminalReleaseMode },
         ),
@@ -2134,7 +1973,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(steps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
         options,
       );
@@ -2199,7 +2037,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(commandSteps),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -2251,7 +2088,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2326,7 +2162,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2384,7 +2219,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2437,7 +2271,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2485,7 +2318,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2517,7 +2349,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(steps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2558,8 +2389,7 @@ describe('runExecutionLoop', () => {
       asManager(mockManager),
       runbookId,
       asSteps(promptedForSteps),
-      '/tmp',
-      false, // prompted=false — step itself gates execution
+      '/tmp', // prompted=false — step itself gates execution
       asEmitter(mockEmitter),
     );
 
@@ -2592,7 +2422,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(promptedForSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2631,7 +2460,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(promptedForSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2669,7 +2497,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(promptedForSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -2702,14 +2529,13 @@ describe('runExecutionLoop', () => {
       },
     ];
 
-    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1' }));
+    mockManager.load.mockResolvedValue(makeLoopState('1', { substep: '1', prompted: true }));
 
     const result = await runExecutionLoop(
       asManager(mockManager),
       runbookId,
       asSteps(forSteps),
       '/tmp',
-      true,
       asEmitter(mockEmitter),
     );
 
@@ -2775,7 +2601,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(stepsWithOutputs),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -2844,7 +2669,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(stepsWithOutputsForCommandResult),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
       );
 
@@ -2896,7 +2720,7 @@ describe('runExecutionLoop', () => {
       ]),
     );
     mockActorService.sendAndSync.mockResolvedValue({
-      state: { id: runbookId, step: '1', substep: '1', status: 'running' },
+      state: frontierConsumedState(),
       snapshot: {},
     });
 
@@ -2905,7 +2729,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       {
         delegationRuntime: frontierProjectionRuntime((credential) =>
@@ -2982,7 +2805,7 @@ describe('runExecutionLoop', () => {
     ];
 
     mockActorService.sendAndSync.mockResolvedValue({
-      state: { id: runbookId, step: '1', substep: '1', status: 'running' },
+      state: frontierConsumedState(),
       snapshot: {},
     });
 
@@ -2991,7 +2814,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       {
         delegationRuntime: frontierProjectionRuntime((credential) =>
@@ -3052,7 +2874,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -3078,7 +2899,7 @@ describe('runExecutionLoop', () => {
     });
 
     // None of the frontier-dependent work may run on the refusal path.
-    expect(mockActorService.observeExecutionUnitEntry).not.toHaveBeenCalled();
+    expect(mockActorService.enterExecutionUnit).not.toHaveBeenCalled();
     expect(mockActorService.sendAndSync).not.toHaveBeenCalledWith(runbookId, delegateSteps, {
       type: 'DELEGATE_FRONTIER_CONSUMED',
     });
@@ -3097,7 +2918,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(singleDelegateFrontierSteps()),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -3120,7 +2940,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(singleDelegateFrontierSteps()),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       { terminalReleaseMode: 'release-runbook' },
     );
@@ -3160,7 +2979,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       // Derives a well-formed bearer that is not the one the frontier recorded.
       { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_other') },
@@ -3181,7 +2999,7 @@ describe('runExecutionLoop', () => {
     });
 
     // None of the frontier-dependent work may run on the refusal path.
-    expect(mockActorService.observeExecutionUnitEntry).not.toHaveBeenCalled();
+    expect(mockActorService.enterExecutionUnit).not.toHaveBeenCalled();
     expect(mockActorService.sendAndSync).not.toHaveBeenCalledWith(runbookId, delegateSteps, {
       type: 'DELEGATE_FRONTIER_CONSUMED',
     });
@@ -3202,7 +3020,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       { delegationRuntime: frontierProjectionRuntime(rotatedIssuerDeriver) },
     );
@@ -3218,7 +3035,7 @@ describe('runExecutionLoop', () => {
       payload: { position: { current: '1', total: 1, substep: '1' }, message },
     });
 
-    expect(mockActorService.observeExecutionUnitEntry).not.toHaveBeenCalled();
+    expect(mockActorService.enterExecutionUnit).not.toHaveBeenCalled();
     expect(mockActorService.sendAndSync).not.toHaveBeenCalledWith(runbookId, delegateSteps, {
       type: 'DELEGATE_FRONTIER_CONSUMED',
     });
@@ -3237,7 +3054,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(singleDelegateFrontierSteps()),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_other') },
     );
@@ -3263,7 +3079,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(singleDelegateFrontierSteps()),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       {
         terminalReleaseMode: 'release-runbook',
@@ -3303,7 +3118,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
       { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a') },
     );
@@ -3349,7 +3163,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(singleDelegateFrontierSteps()),
         '/tmp',
-        false,
         asEmitter(mockEmitter),
         { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a') },
       ),
@@ -3431,21 +3244,28 @@ describe('runExecutionLoop', () => {
       .mockResolvedValueOnce(parentState)
       .mockResolvedValueOnce(parentState)
       .mockResolvedValueOnce(existingChild);
-    mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
-      {
-        kind: 'execution_observation',
-        event: {
-          type: 'STEP_ENTERED',
-          payload: {
-            position: { current: '1.1', total: 1 },
-            stepName: '1',
-            description: 'Inline child',
-            isSubstep: true,
-            inlineLaunch,
+    mockActorService.enterExecutionUnit.mockResolvedValueOnce({
+      kind: 'inline-launch',
+      launch: inlineLaunch,
+      effects: [
+        {
+          kind: 'execution_observation',
+          event: {
+            type: 'STEP_ENTERED',
+            payload: {
+              position: { current: '1.1', total: 1 },
+              stepName: '1',
+              description: 'Inline child',
+              hasCommand: false,
+              isSubstep: true,
+              prompted: false,
+              artifacts: {},
+              inlineLaunch,
+            },
           },
         },
-      },
-    ]);
+      ],
+    });
     mockActorService.sendAndSync
       .mockResolvedValueOnce({ state: parentState, snapshot: {} })
       .mockRejectedValueOnce(new Error('consume failed'));
@@ -3455,7 +3275,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(inlineSteps),
       mockManager.cwd,
-      false,
       asEmitter(mockEmitter),
       { output: { executionEvent: jest.fn() } as never },
     );
@@ -3508,7 +3327,7 @@ describe('runExecutionLoop', () => {
     expect(mockActorService.sendAndSync).toHaveBeenNthCalledWith(2, runbookId, inlineSteps, {
       type: 'INLINE_LAUNCH_CONSUMED',
     });
-    expect(mockActorService.observeExecutionUnitEntry).toHaveBeenCalledTimes(1);
+    expect(mockActorService.enterExecutionUnit).toHaveBeenCalledTimes(1);
   });
 
   // The rollback's refusal arms, which no test reached: a `switch` jumps
@@ -3609,21 +3428,28 @@ describe('runExecutionLoop', () => {
         .mockResolvedValueOnce(parentState)
         .mockResolvedValueOnce(parentState)
         .mockResolvedValueOnce(existingChild);
-      mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
-        {
-          kind: 'execution_observation',
-          event: {
-            type: 'STEP_ENTERED',
-            payload: {
-              position: { current: '1.1', total: 1 },
-              stepName: '1',
-              description: 'Inline child',
-              isSubstep: true,
-              inlineLaunch,
+      mockActorService.enterExecutionUnit.mockResolvedValueOnce({
+        kind: 'inline-launch',
+        launch: inlineLaunch,
+        effects: [
+          {
+            kind: 'execution_observation',
+            event: {
+              type: 'STEP_ENTERED',
+              payload: {
+                position: { current: '1.1', total: 1 },
+                stepName: '1',
+                description: 'Inline child',
+                hasCommand: false,
+                isSubstep: true,
+                prompted: false,
+                artifacts: {},
+                inlineLaunch,
+              },
             },
           },
-        },
-      ]);
+        ],
+      });
       mockActorService.sendAndSync
         .mockResolvedValueOnce({ state: parentState, snapshot: {} })
         .mockRejectedValueOnce(new Error('consume failed'));
@@ -3634,7 +3460,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(inlineSteps),
         mockManager.cwd,
-        false,
         asEmitter(mockEmitter),
         { output: { executionEvent: jest.fn() } as never },
       );
@@ -3742,21 +3567,28 @@ describe('runExecutionLoop', () => {
     // The child already holds the top, so the conditional activation writes
     // nothing and reports as much.
     mockSessionService.pushRunbookIfNotActive.mockResolvedValue({ status: 'already-active' });
-    mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
-      {
-        kind: 'execution_observation',
-        event: {
-          type: 'STEP_ENTERED',
-          payload: {
-            position: { current: '1.1', total: 1 },
-            stepName: '1',
-            description: 'Inline child',
-            isSubstep: true,
-            inlineLaunch,
+    mockActorService.enterExecutionUnit.mockResolvedValueOnce({
+      kind: 'inline-launch',
+      launch: inlineLaunch,
+      effects: [
+        {
+          kind: 'execution_observation',
+          event: {
+            type: 'STEP_ENTERED',
+            payload: {
+              position: { current: '1.1', total: 1 },
+              stepName: '1',
+              description: 'Inline child',
+              hasCommand: false,
+              isSubstep: true,
+              prompted: false,
+              artifacts: {},
+              inlineLaunch,
+            },
           },
         },
-      },
-    ]);
+      ],
+    });
     mockActorService.sendAndSync
       .mockResolvedValueOnce({ state: parentState, snapshot: {} })
       .mockRejectedValueOnce(new Error('consume failed'));
@@ -3766,7 +3598,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(inlineSteps),
       mockManager.cwd,
-      false,
       asEmitter(mockEmitter),
       { output: { executionEvent: jest.fn() } as never },
     );
@@ -3861,21 +3692,28 @@ describe('runExecutionLoop', () => {
       .mockResolvedValueOnce(parentState)
       .mockResolvedValueOnce(existingChild)
       .mockResolvedValue(existingChild);
-    mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
-      {
-        kind: 'execution_observation',
-        event: {
-          type: 'STEP_ENTERED',
-          payload: {
-            position: { current: '1.1', total: 1 },
-            stepName: '1',
-            description: 'Inline child',
-            isSubstep: true,
-            inlineLaunch,
+    mockActorService.enterExecutionUnit.mockResolvedValueOnce({
+      kind: 'inline-launch',
+      launch: inlineLaunch,
+      effects: [
+        {
+          kind: 'execution_observation',
+          event: {
+            type: 'STEP_ENTERED',
+            payload: {
+              position: { current: '1.1', total: 1 },
+              stepName: '1',
+              description: 'Inline child',
+              hasCommand: false,
+              isSubstep: true,
+              prompted: false,
+              artifacts: {},
+              inlineLaunch,
+            },
           },
         },
-      },
-    ]);
+      ],
+    });
     mockActorService.sendAndSync
       .mockResolvedValueOnce({ state: parentState, snapshot: {} })
       .mockResolvedValueOnce({ state: parentState, snapshot: {} });
@@ -3885,7 +3723,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(inlineSteps),
       mockManager.cwd,
-      false,
       asEmitter(mockEmitter),
       { output: { executionEvent: jest.fn() } as never },
     );
@@ -4047,21 +3884,28 @@ describe('runExecutionLoop', () => {
         return { state: parent, snapshot: {} };
       },
     );
-    mockActorService.observeExecutionUnitEntry.mockImplementation(async () => [
-      {
-        kind: 'execution_observation',
-        event: {
-          type: 'STEP_ENTERED',
-          payload: {
-            position: { current: '1.1', total: 1 },
-            stepName: '1',
-            description: 'Inline child',
-            isSubstep: true,
-            inlineLaunch,
+    mockActorService.enterExecutionUnit.mockResolvedValue({
+      kind: 'inline-launch',
+      launch: inlineLaunch,
+      effects: [
+        {
+          kind: 'execution_observation',
+          event: {
+            type: 'STEP_ENTERED',
+            payload: {
+              position: { current: '1.1', total: 1 },
+              stepName: '1',
+              description: 'Inline child',
+              hasCommand: false,
+              isSubstep: true,
+              prompted: false,
+              artifacts: {},
+              inlineLaunch,
+            },
           },
         },
-      },
-    ]);
+      ],
+    });
 
     const driveLoop = () =>
       runExecutionLoop(
@@ -4069,7 +3913,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(inlineSteps),
         mockManager.cwd,
-        false,
         asEmitter(mockEmitter),
         // `warning` is part of the double because the contender stands down
         // through the arm that names the process holding the launch.
@@ -4242,21 +4085,28 @@ describe('runExecutionLoop', () => {
      */
     const latchOutcomes: { next: Record<string, unknown> | null; value: unknown }[] = [];
 
-    const stepEnteredWithInlineLaunch = () => [
-      {
-        kind: 'execution_observation',
-        event: {
-          type: 'STEP_ENTERED',
-          payload: {
-            position: { current: '1.1', total: 1 },
-            stepName: '1',
-            description: 'Inline child',
-            isSubstep: true,
-            inlineLaunch,
+    const stepEnteredWithInlineLaunch = () => ({
+      kind: 'inline-launch' as const,
+      launch: inlineLaunch,
+      effects: [
+        {
+          kind: 'execution_observation' as const,
+          event: {
+            type: 'STEP_ENTERED' as const,
+            payload: {
+              position: { current: '1.1', total: 1 },
+              stepName: '1',
+              description: 'Inline child',
+              hasCommand: false,
+              isSubstep: true,
+              prompted: false,
+              artifacts: {},
+              inlineLaunch,
+            },
           },
         },
-      },
-    ];
+      ],
+    });
 
     /**
      * The launch path's operator channel, which two arms below write to.
@@ -4277,7 +4127,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(inlineSteps),
         mockManager.cwd,
-        false,
         asEmitter(mockEmitter),
         { output: mockOutput as never },
       );
@@ -4308,7 +4157,7 @@ describe('runExecutionLoop', () => {
       mockOutput.warning.mockClear();
       mockOutput.executionEvent.mockClear();
       captureLatch();
-      mockActorService.observeExecutionUnitEntry.mockResolvedValue(stepEnteredWithInlineLaunch());
+      mockActorService.enterExecutionUnit.mockResolvedValue(stepEnteredWithInlineLaunch());
       // Armed by default so that a refusal arm broken by a future edit fails on
       // its own assertion below. Left unarmed, `prepareActorMutation`'s double
       // throws `Actor synchronization failed` the moment a refusal wrongly falls
@@ -5174,21 +5023,28 @@ describe('runExecutionLoop', () => {
         }),
       },
     } as never);
-    mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
-      {
-        kind: 'execution_observation',
-        event: {
-          type: 'STEP_ENTERED',
-          payload: {
-            position: { current: '1.1', total: 1 },
-            stepName: '1',
-            description: 'Inline child',
-            isSubstep: true,
-            inlineLaunch,
+    mockActorService.enterExecutionUnit.mockResolvedValueOnce({
+      kind: 'inline-launch',
+      launch: inlineLaunch,
+      effects: [
+        {
+          kind: 'execution_observation',
+          event: {
+            type: 'STEP_ENTERED',
+            payload: {
+              position: { current: '1.1', total: 1 },
+              stepName: '1',
+              description: 'Inline child',
+              hasCommand: false,
+              isSubstep: true,
+              prompted: false,
+              artifacts: {},
+              inlineLaunch,
+            },
           },
         },
-      },
-    ]);
+      ],
+    });
     mockActorService.sendAndSync
       .mockResolvedValueOnce({ state: parentState, snapshot: {} })
       .mockResolvedValueOnce({ state: parentState, snapshot: {} });
@@ -5202,7 +5058,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(inlineSteps),
       mockManager.cwd,
-      false,
       asEmitter(mockEmitter),
       { output: { executionEvent } as never },
     );
@@ -5306,21 +5161,28 @@ describe('runExecutionLoop', () => {
       .mockResolvedValueOnce(existingChild)
       .mockResolvedValue(existingChild);
     mockSessionService.getActive.mockResolvedValueOnce({ id: runbookId });
-    mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
-      {
-        kind: 'execution_observation',
-        event: {
-          type: 'STEP_ENTERED',
-          payload: {
-            position: { current: '1.1', total: 1 },
-            stepName: '1',
-            description: 'Inline child',
-            isSubstep: true,
-            inlineLaunch,
+    mockActorService.enterExecutionUnit.mockResolvedValueOnce({
+      kind: 'inline-launch',
+      launch: inlineLaunch,
+      effects: [
+        {
+          kind: 'execution_observation',
+          event: {
+            type: 'STEP_ENTERED',
+            payload: {
+              position: { current: '1.1', total: 1 },
+              stepName: '1',
+              description: 'Inline child',
+              hasCommand: false,
+              isSubstep: true,
+              prompted: false,
+              artifacts: {},
+              inlineLaunch,
+            },
           },
         },
-      },
-    ]);
+      ],
+    });
     // Twice: the latch write this observer now performs (it took an unlatched
     // launch), then the intent consumption after the child is activated.
     mockActorService.sendAndSync.mockResolvedValue({ state: parentState, snapshot: {} });
@@ -5335,7 +5197,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(inlineSteps),
       mockManager.cwd,
-      false,
       asEmitter(mockEmitter),
       { output: output as never },
     );
@@ -5434,21 +5295,28 @@ describe('runExecutionLoop', () => {
     );
     // The latch write, which precedes the activation this test fails.
     mockActorService.sendAndSync.mockResolvedValue({ state: parentState, snapshot: {} });
-    mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
-      {
-        kind: 'execution_observation',
-        event: {
-          type: 'STEP_ENTERED',
-          payload: {
-            position: { current: '1.1', total: 1 },
-            stepName: '1',
-            description: 'Inline child',
-            isSubstep: true,
-            inlineLaunch,
+    mockActorService.enterExecutionUnit.mockResolvedValueOnce({
+      kind: 'inline-launch',
+      launch: inlineLaunch,
+      effects: [
+        {
+          kind: 'execution_observation',
+          event: {
+            type: 'STEP_ENTERED',
+            payload: {
+              position: { current: '1.1', total: 1 },
+              stepName: '1',
+              description: 'Inline child',
+              hasCommand: false,
+              isSubstep: true,
+              prompted: false,
+              artifacts: {},
+              inlineLaunch,
+            },
           },
         },
-      },
-    ]);
+      ],
+    });
 
     await expect(
       runExecutionLoop(
@@ -5456,7 +5324,6 @@ describe('runExecutionLoop', () => {
         runbookId,
         asSteps(inlineSteps),
         mockManager.cwd,
-        false,
         asEmitter(mockEmitter),
         { output: {} as never },
       ),
@@ -5508,21 +5375,28 @@ describe('runExecutionLoop', () => {
       snapshot: { context: { inlineLaunchIntent: undefined } },
     });
     mockManager.load.mockResolvedValue(parentState);
-    mockActorService.observeExecutionUnitEntry.mockResolvedValueOnce([
-      {
-        kind: 'execution_observation',
-        event: {
-          type: 'STEP_ENTERED',
-          payload: {
-            position: { current: '1.1', total: 1 },
-            stepName: '1',
-            description: 'Inline child',
-            isSubstep: true,
-            inlineLaunch,
+    mockActorService.enterExecutionUnit.mockResolvedValueOnce({
+      kind: 'inline-launch',
+      launch: inlineLaunch,
+      effects: [
+        {
+          kind: 'execution_observation',
+          event: {
+            type: 'STEP_ENTERED',
+            payload: {
+              position: { current: '1.1', total: 1 },
+              stepName: '1',
+              description: 'Inline child',
+              hasCommand: false,
+              isSubstep: true,
+              prompted: false,
+              artifacts: {},
+              inlineLaunch,
+            },
           },
         },
-      },
-    ]);
+      ],
+    });
 
     // The superseded arm writes to the operator channel now, so the double has
     // to carry one: a stand-down that returns `waiting` and touches nothing else
@@ -5534,7 +5408,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(inlineSteps),
       mockManager.cwd,
-      false,
       asEmitter(mockEmitter),
       { output: { warning } as never },
     );
@@ -5581,10 +5454,12 @@ describe('runExecutionLoop', () => {
     ];
 
     mockManager.load.mockResolvedValue(
-      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_retry_a')]),
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_retry_a')], {
+        prompted: true,
+      }),
     );
     mockActorService.sendAndSync.mockResolvedValue({
-      state: { id: runbookId, step: '1', substep: '1', status: 'running' },
+      state: frontierConsumedState({ prompted: true }),
       snapshot: {},
     });
 
@@ -5593,7 +5468,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      true,
       asEmitter(mockEmitter),
       { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a') },
     );
@@ -5610,6 +5484,74 @@ describe('runExecutionLoop', () => {
     expect(mockActorService.sendAndSync).toHaveBeenCalledWith(runbookId, delegateSteps, {
       type: 'DELEGATE_FRONTIER_CONSUMED',
     });
+  });
+
+  it('does not act on an inline-launch intent reached through a projected frontier', async () => {
+    // The one-shot intent is consumed by the launch it drives, and the frontier
+    // seam's own consume has ALREADY committed by the time the classified entry
+    // comes back. Launching here would start a child the re-entry never armed —
+    // so the guard is on `reentry.status`, not on the classification alone.
+    const delegateSteps: any[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parallel work',
+        substeps: [
+          {
+            id: '1',
+            description: 'First task',
+            delegate: true,
+            runbooks: ['child-a.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_retry_a')]),
+    );
+    mockActorService.sendAndSync.mockResolvedValue({
+      state: { id: runbookId, step: '1', substep: '1', status: 'running' },
+      snapshot: {},
+    });
+    // The seam enters through the SAME double, so this is what its `projected`
+    // arm carries back to the loop.
+    mockActorService.enterExecutionUnit.mockResolvedValue({
+      kind: 'inline-launch',
+      launch: {
+        parentRunId: runbookId,
+        parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: '1|',
+        parentEntry: 1,
+        childRunId: `rd_${'3'.repeat(32)}`,
+        childRunbookPath: 'child-a.runbook.md',
+        childRunbookRef: { source: 'project', path: 'child-a.runbook.md' },
+        contextSnapshot: { vars: {}, ancestors: [], step: '1', substep: '1', at: '1.1' },
+      },
+      effects: [],
+    });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(delegateSteps),
+      '/tmp',
+      asEmitter(mockEmitter),
+      { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a') },
+    );
+
+    // No launch was attempted: the latch is the launch span's first write, and
+    // it was never reached.
+    expect(mockManager.mutateStateReturning).not.toHaveBeenCalled();
+    expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
+    // The frontier still consumed — the re-entry itself is unaffected.
+    expect(mockActorService.sendAndSync).toHaveBeenCalledWith(runbookId, delegateSteps, {
+      type: 'DELEGATE_FRONTIER_CONSUMED',
+    });
+    expect(result).toBe('waiting');
   });
 
   it('STEP_ENTERED does not issue delegations when delegateFrontier is absent', async () => {
@@ -5640,7 +5582,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 
@@ -5697,7 +5638,6 @@ describe('runExecutionLoop', () => {
       runbookId,
       asSteps(delegateSteps),
       '/tmp',
-      false,
       asEmitter(mockEmitter),
     );
 

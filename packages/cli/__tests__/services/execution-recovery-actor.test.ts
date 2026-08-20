@@ -117,7 +117,7 @@ describe('runExecutionLoop interrupted fenced command', () => {
     // reach the REAL factory, whose returned actor the recovery service drives.
     const recovery = jest.spyOn(actorService, 'createRecoveryActor');
 
-    const result = await runExecutionLoop(manager, state.id, steps, cwd, false, emitter, {
+    const result = await runExecutionLoop(manager, state.id, steps, cwd, emitter, {
       actorService,
     });
 

@@ -55,6 +55,7 @@ function delegationLinkage(parentRunId: RunId = PARENT): DelegationLinkage {
 
 function makeState(id: RunId, overrides: Partial<RunbookState> = {}): RunbookState {
   return {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id,
     runbook: { source: 'project', path: 'test.md' },

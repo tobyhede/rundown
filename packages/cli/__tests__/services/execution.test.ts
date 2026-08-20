@@ -1,12 +1,8 @@
 import { describe, it, expect } from '@jest/globals';
-import {
-  isValidResult,
-  getStepRetryMax,
-  buildStepVariables,
-  buildMetadata,
-} from '../../src/services/execution.js';
+import { isValidResult, getStepRetryMax, buildMetadata } from '../../src/services/execution.js';
 import { expandLoopVariables } from '../../src/services/template-renderer.js';
 import {
+  buildStepVariables,
   createJsonArrayStream,
   isRunbookComplete,
   isRunbookStopped,

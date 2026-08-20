@@ -19,6 +19,7 @@ import { resolveMutationAuthority, type CommandTargetReader } from './command-ta
 import type { AppliedResolvedCompletion } from './completion-service.js';
 import type { RunbookCompletionService } from './completion-service.js';
 import { isPostDelegateAggregationCursor } from './delegation-inference.js';
+import { findStepOrThrow } from './execution-units.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import type { RunbookStateManager } from './state.js';
 import {
@@ -26,9 +27,8 @@ import {
   type PreparedReEntryProjection,
 } from './re-entry-frontier.js';
 import type { Frame, FrameKey } from './targeting.js';
-import { buildStepPosition, completionTargetsFrame, findSubstepState } from './targeting.js';
+import { completionTargetsFrame, findSubstepState } from './targeting.js';
 import { deriveActiveCompletionFrame } from './frame-entry.js';
-import { countNumberedSteps } from './step-utils.js';
 import type { ClaimSeenRecordResult, ReleaseRunbookResult } from './session-service.js';
 import type { SessionMutationResult } from './storage/runbook-store.js';
 import type { ResolvedStep, RunbookState, RunId } from './types.js';
@@ -37,9 +37,11 @@ import {
   type DelegationRuntimeCapabilities,
 } from './delegation-credential.js';
 import { ErrorCodes } from '../errors/codes.js';
+import { Errors } from '../errors/factory.js';
 import { getErrorMessage } from '../errors.js';
+import { InvalidRunbookStateError } from './persisted-state-guards.js';
 import { logger } from '../logger.js';
-import type { StepEntryMetadata } from '../events/execution-observation.js';
+import type { DelegateFrontierEntry } from '../events/types.js';
 import {
   deriveTransitionObservation,
   type TransitionObservationEvent,
@@ -197,12 +199,6 @@ function delegateSubstepIds(step: ResolvedStep | undefined): readonly string[] {
   // a hand-rolled `'substeps' in step && step.substeps` check.
   if (!step || !resolvedStepHasSubsteps(step)) return [];
   return step.substeps.filter((substep) => substep.delegate).map((substep) => substep.id);
-}
-
-function findStepOrThrow(steps: readonly ResolvedStep[], stepName: string): ResolvedStep {
-  const step = steps.find((candidate) => candidate.name === stepName);
-  if (!step) throw new Error(`Step "${stepName}" not found`);
-  return step;
 }
 
 // Set of delegate substep ids that have a LIVE resolved-completion row in the
@@ -430,7 +426,7 @@ function deriveCollectionTransitionObservations(
   applied: readonly AppliedResolvedCompletion[],
 ): readonly TransitionObservationEvent[] {
   return applied.flatMap((entry) => {
-    const currentStep = findStepOrThrow(input.steps, entry.stateBefore.step);
+    const currentStep = findStepOrThrow(input.steps, entry.stateBefore.step, entry.stateBefore.id);
     return deriveTransitionObservation({
       steps: input.steps,
       currentStep,
@@ -448,9 +444,10 @@ function deriveCollectionTransitionObservations(
  * The seam itself lives in `re-entry-frontier.ts` and shares its disclosure
  * boundary verbatim with the CLI execution loop (F6): both entry points reach
  * the same persisted data under the same conditions, so both classify it with
- * the same arms and report each arm under the same code. All this wrapper
- * contributes is the rendered entry metadata for the collect cursor and the
- * verified deriver.
+ * the same arms and report each arm under the same code. Since #820 this wrapper
+ * contributes only the verified deriver — the entry the disclosure rides on is
+ * rendered by core when the commit lands, from the same state the seam decided
+ * against.
  *
  * @param input - Collection operation input (services + target + steps).
  * @param advanced - Prepared post-drain state whose snapshot carries the frontier.
@@ -463,53 +460,11 @@ async function prepareCollectReEntryFrontier(
   advanced: RunbookState,
   delegationRuntime: DelegationRuntimeCapabilities,
 ): Promise<PreparedReEntryProjection> {
-  const position = buildStepPosition(
-    advanced.step,
-    countNumberedSteps(input.steps),
-    advanced.substep,
-    advanced.forStack,
-  );
-  const substep = advanced.substep;
-  // A cursor that has advanced off the substeps cannot carry a frontier, and the
-  // seam short-circuits on `isSubstep: false` without observing. Spelled as two
-  // complete literals rather than one with `??` fallbacks so neither variant
-  // carries a field it could never have.
-  // Equivalent mutants on the non-substep arm below: the seam short-circuits to
-  // `status: 'none'` on `isSubstep: false` and never observes that entry, so
-  // every field of it EXCEPT `isSubstep` is unobservable — and collapsing the
-  // whole literal to `{}` leaves `isSubstep` undefined, which is falsy, so it
-  // reaches the same arm. `isSubstep: false` itself stays mutated: flipping it to
-  // `true` IS killed, by the "treats a present frontier with an undefined cursor
-  // substep as no re-entry" test. The arm is spelled out rather than
-  // short-circuited here so the malformed-snapshot guard inside the seam still
-  // runs for an off-substep cursor.
-  const entry =
-    substep === undefined
-      ? // Stryker disable ObjectLiteral,StringLiteral: equivalent — this entry is never observed
-        {
-          stepId: advanced.step,
-          position,
-          stepName: advanced.step,
-          isSubstep: false,
-          // Stryker disable next-line BooleanLiteral: equivalent — never observed (see above)
-          prompted: !!advanced.prompted,
-        }
-      : // Stryker restore ObjectLiteral,StringLiteral
-        {
-          stepId: advanced.step,
-          substepId: substep,
-          position,
-          stepName: substep,
-          isSubstep: true,
-          prompted: !!advanced.prompted,
-        };
-
   return await prepareReEntryFrontierConsume({
     actorService: input.actorService,
     steps: input.steps,
     state: advanced,
     deriveToken: delegationRuntime.deriveDelegationToken,
-    entry,
   });
 }
 
@@ -558,7 +513,7 @@ interface PreparedCollection {
   /** Whether the prepared parent write was a FRESH upward report. */
   readonly reportedTerminalOutcome: boolean;
   /** Post-commit frontier disclosure, withheld until the commit lands. */
-  readonly frontierEntry?: StepEntryMetadata;
+  readonly frontierDisclosure?: readonly DelegateFrontierEntry[];
   /** The collection outcome to return once the commit succeeds. */
   readonly value: DelegationPolicyOutcome;
   /** Whether the prepared target state is terminal (drives release + upward walk). */
@@ -883,7 +838,13 @@ async function prepareCollection(
   return {
     target: reentry.status === 'projected' ? reentry.nextState : drained.state,
     reportedTerminalOutcome: false,
-    ...(reentry.status === 'projected' ? { frontierEntry: reentry.entry } : {}),
+    // Stryker disable next-line ConditionalExpression: equivalent — forcing the
+    // condition true spreads `frontierDisclosure: reentry.frontier`, and on
+    // every other arm `reentry` carries no `frontier`, so the key lands as
+    // `undefined`. `finishCollection` gates on `!== undefined`, so present-and-
+    // undefined and absent reach the same branch. The spread exists only to
+    // satisfy `exactOptionalPropertyTypes`, not to change behaviour.
+    ...(reentry.status === 'projected' ? { frontierDisclosure: reentry.frontier } : {}),
     value: {
       kind: 'collection_applied',
       targetRunId,
@@ -1019,8 +980,13 @@ function prepareTerminalCollection(
  * @param input - Collection operation input (services + target + steps).
  * @param prepared - The prepared collection whose commit has landed.
  * @returns The final collection outcome with post-commit data folded in.
- * @throws {unknown} The observation failure, unchanged, when a committed
- *   collection cannot render its re-entry disclosure (see above).
+ * @throws {InvalidRunbookStateError} When the committed target cannot describe
+ *   itself well enough to render its re-entry entry — corrupt persisted state,
+ *   whose recovery (finish/stop/prune) the CLI's RD-309 arm already spells.
+ * @throws {RundownError} `DELEGATION_FRONTIER_DISCLOSURE_FAILED` (RD-833) for
+ *   any other render failure — typically a `--helpers` helper raising. Typed
+ *   rather than bare because this is a new way for a collect to fail: it used
+ *   to emit a thinner event that needed no rendering.
  */
 async function finishCollection(
   input: CollectDelegationOutcomesOperationInput,
@@ -1029,26 +995,45 @@ async function finishCollection(
   const value = prepared.value;
   if (value.kind !== 'collection_applied') return value;
 
-  if (prepared.frontierEntry !== undefined && prepared.target !== undefined) {
+  // Stryker disable next-line ConditionalExpression: equivalent on the second
+  // term — `frontierDisclosure` is set only on `prepareCollection`'s projected
+  // arm, which sets `target` in the same literal, so the first term already
+  // implies the second. It is spelled out because `target` is optional on
+  // `PreparedCollection` and TypeScript narrows on the check, not on the
+  // invariant.
+  if (prepared.frontierDisclosure !== undefined && prepared.target !== undefined) {
     try {
-      const observations = await input.actorService.observeExecutionUnitEntry(
-        prepared.target.id,
-        [...input.steps],
-        prepared.frontierEntry,
-      );
-      return { ...value, reEntryObservations: observations };
-    } catch (observationError) {
-      // Attribute, then RE-THROW unchanged. The rejection is the outcome; this
-      // log exists because the rejection alone cannot say that the collection
-      // COMMITTED — which is the fact an operator needs and the only fact the
-      // error's own message will not carry. Re-throwing the original preserves
-      // its class, so the CLI's `InvalidRunbookStateError` → finish/stop/prune
-      // mapping still fires for a corrupt persisted snapshot.
-      void logger.error('collection committed but its re-entry disclosure could not be observed', {
-        runId: prepared.target.id,
-        error: getErrorMessage(observationError),
+      // The SAME seam `rundown run` enters through, so the `STEP_ENTERED` a
+      // collect emits carries every rendered field a run's does. The state is
+      // the one this transaction just committed, which is why the entry cannot
+      // be derived before the commit: it would describe a run that does not yet
+      // exist in that shape, and would disclose bearers a refused commit never
+      // consumed.
+      const entered = await input.actorService.enterExecutionUnit({
+        state: prepared.target,
+        steps: input.steps,
+        delegateFrontier: prepared.frontierDisclosure,
       });
-      throw observationError;
+      return { ...value, reEntryObservations: entered.effects };
+    } catch (renderError) {
+      // Attribute, then reject. The rejection is the outcome; this log exists
+      // because the rejection alone cannot say that the collection COMMITTED —
+      // the fact an operator needs and the only one the error's own message
+      // will not carry.
+      void logger.error('collection committed but its re-entry disclosure could not be rendered', {
+        runId: prepared.target.id,
+        error: getErrorMessage(renderError),
+      });
+      // A corrupt persisted snapshot keeps its own class, so the CLI's RD-309
+      // mapping still fires and still prints finish/stop/prune — the right
+      // recovery for a run that cannot describe itself. Everything else is a
+      // render failure, and since #820 that is a NEW way for a collect to fail:
+      // it used to emit a thinner event that needed no rendering at all. It gets
+      // a code of its own rather than escaping bare as RD-999 "Unknown error",
+      // because the two recoveries differ — RD-833's is "fix the helper and
+      // re-delegate", and a retry cannot recover the bearers.
+      if (renderError instanceof InvalidRunbookStateError) throw renderError;
+      throw Errors.frontierDisclosureFailed(prepared.target.id, getErrorMessage(renderError));
     }
   }
 

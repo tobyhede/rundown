@@ -410,23 +410,15 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
   const emitter = createBridgedEmitter(state, output);
 
   // Continue with execution loop
-  const loopResult = await runExecutionLoop(
-    manager,
-    state.id,
-    steps,
-    cwd,
-    !!state.prompted,
-    emitter,
-    {
-      terminalReleaseMode: ctx.terminalReleaseMode,
-      ...(callerEvidence.kind === 'claim_bearer'
-        ? { claimKey: claimKeyFromBearer(callerEvidence.claimId) }
-        : {}),
-      output,
-      commandStreamOptions: ctx.commandStreamOptions,
-      delegationRuntime: ctx.delegationRuntime,
-    },
-  );
+  const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, emitter, {
+    terminalReleaseMode: ctx.terminalReleaseMode,
+    ...(callerEvidence.kind === 'claim_bearer'
+      ? { claimKey: claimKeyFromBearer(callerEvidence.claimId) }
+      : {}),
+    output,
+    commandStreamOptions: ctx.commandStreamOptions,
+    delegationRuntime: ctx.delegationRuntime,
+  });
 
   // Any driver that takes a run terminal must propagate that terminal to its
   // parent — goto included. goto authors no operator RESULT, so use the

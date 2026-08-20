@@ -165,7 +165,7 @@ export function registerPopCommand(program: Command): void {
             step: {
               name: currentStep.name,
               description: currentStep.description,
-              prompted: !!state.prompted,
+              prompted: state.prompted,
             },
             restoredId: state.id,
           });

@@ -333,6 +333,7 @@ describe('RunbookLifecycleCommandService', () => {
 
   function baseState(overrides: Partial<RunbookState> = {}): RunbookState {
     return {
+      prompted: false,
       id: runId,
       runbook: { source: 'project', path: 'lifecycle-test.md' },
       runbookPath: 'lifecycle-test.md',
@@ -5274,6 +5275,13 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      // The directive, not just the commit. `loop` is what tells the CLI to
+      // enter the next unit after this transition, and a substep drive that
+      // applied a completion has advanced the cursor — so standing down here
+      // would strand the run one step short with no diagnostic. The `none` arm
+      // is pinned by the idempotent-duplicate test below, which applies nothing.
+      expect(outcome.loop).toEqual({ kind: 'run' });
       const persisted = await manager.load(namedRunId);
       expect(persisted?.step).toBe('2');
       expect(persisted?.substep).toBeUndefined();
@@ -5858,7 +5866,7 @@ describe('RunbookLifecycleCommandService', () => {
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('continue');
       expect(outcome.terminalReleaseMode).toBe('stack-pop');
-      expect(outcome.loop).toEqual({ kind: 'run', prompted: false });
+      expect(outcome.loop).toEqual({ kind: 'run' });
       expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
       expect(outcome.updatedState?.step).toBe('2');
       expect(fenced).toHaveBeenCalledTimes(1);
@@ -5907,7 +5915,7 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('continue');
-      expect(outcome.loop).toEqual({ kind: 'run', prompted: false });
+      expect(outcome.loop).toEqual({ kind: 'run' });
       expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
       expect(outcome.updatedState?.step).toBe('2');
 
@@ -6671,6 +6679,10 @@ describe('RunbookLifecycleCommandService', () => {
       // Idempotent: surfaced as already-resolved, not an advance.
       expect(outcome.duplicate?.at).toBe('1.1');
       expect(outcome.updatedState).toBeUndefined();
+      // And the loop stands down. This is the counterpart to the `run` arm on
+      // the applied path: a duplicate advanced nothing, so re-entering would
+      // announce a unit the run is not on.
+      expect(outcome.loop).toEqual({ kind: 'none' });
 
       // No orphan row was written and the run did not move.
       const persisted = await manager.load(runId);

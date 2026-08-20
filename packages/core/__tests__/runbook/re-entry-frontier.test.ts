@@ -12,10 +12,13 @@ import {
 } from '../../src/runbook/delegation-token.js';
 import { assertClaimId, assertClaimLookupKey, assertRunId } from '../../src/runbook/index.js';
 import {
+  prepareReEntryFrontierConsume,
   projectAndConsumeReEntryFrontier,
   readPersistedReEntryFrontier,
+  type PrepareReEntryFrontierActorService,
   type ReEntryFrontierActorService,
 } from '../../src/runbook/re-entry-frontier.js';
+import type { ExecutionUnitEntry } from '../../src/runbook/execution-unit-entry.js';
 import { InvalidRunbookStateError } from '../../src/runbook/state.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import type {
@@ -23,10 +26,7 @@ import type {
   ResolvedStep,
   RunbookState,
 } from '../../src/runbook/types.js';
-import type {
-  ExecutionObservationEffect,
-  StepEntryMetadata,
-} from '../../src/events/execution-observation.js';
+import type { ExecutionObservationEffect } from '../../src/events/execution-observation.js';
 import {
   brandStoredOutputsForTest,
   brandInitialTemplateVarsForTest,
@@ -109,6 +109,7 @@ const steps: readonly ResolvedStep[] = [
 
 function state(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
+    prompted: false,
     templateVars: brandInitialTemplateVarsForTest({}),
     id: runId,
     runbook: { source: 'project', path: 're-entry-test.md' },
@@ -138,26 +139,20 @@ function stateWithFrontier(delegateFrontier: unknown): RunbookState {
   return state({ snapshot: { context: { delegateFrontier } } });
 }
 
-/** Rendered entry metadata for a substep — the only shape that can carry a frontier. */
-const substepEntry: Omit<StepEntryMetadata, 'delegateFrontier'> = {
-  stepId: '1',
-  substepId: '1',
-  position: { current: '1', total: 1, substep: '1' },
-  stepName: '1',
-  description: 'Delegate A',
-  prompt: 'Dispatch the child',
-  isSubstep: true,
-  prompted: false,
-};
-
-/** The same rendering for a cursor that has advanced off the substeps. */
-const stepEntry: Omit<StepEntryMetadata, 'delegateFrontier'> = {
-  stepId: '1',
-  position: { current: '1', total: 1 },
-  stepName: '1',
-  isSubstep: false,
-  prompted: false,
-};
+/**
+ * A run whose cursor has advanced off the substeps.
+ *
+ * The seam derives "is this a substep" from the cursor itself now, so the
+ * non-substep case is a STATE, not a caller-supplied entry that says so. Both
+ * spellings reach the same arm: `substep: undefined` is off the substeps
+ * entirely, and a cursor naming no live substep resolves back to the parent step.
+ *
+ * @param delegateFrontier - Value to persist in the snapshot's `delegateFrontier`.
+ * @returns A run positioned on the step rather than on one of its substeps.
+ */
+function stepCursorWithFrontier(delegateFrontier: unknown): RunbookState {
+  return state({ substep: undefined, snapshot: { context: { delegateFrontier } } });
+}
 
 function observationEffect(stepName: string): ExecutionObservationEffect {
   return {
@@ -189,6 +184,7 @@ function makeActorService(
   } = {},
 ) {
   const observations = options.observations ?? [observationEffect('1')];
+  const entered: ExecutionUnitEntry = { kind: 'awaiting', effects: observations };
   const consumed =
     options.consumed === undefined
       ? ({
@@ -198,11 +194,11 @@ function makeActorService(
         } satisfies ActorSyncResult)
       : options.consumed;
   const calls: string[] = [];
-  const observeExecutionUnitEntry = jest
-    .fn<ReEntryFrontierActorService['observeExecutionUnitEntry']>()
+  const enterExecutionUnit = jest
+    .fn<ReEntryFrontierActorService['enterExecutionUnit']>()
     .mockImplementation(async () => {
-      calls.push('observe');
-      return observations;
+      calls.push('enter');
+      return entered;
     });
   const sendAndSync = jest
     .fn<ReEntryFrontierActorService['sendAndSync']>()
@@ -210,9 +206,177 @@ function makeActorService(
       calls.push('sendAndSync');
       return consumed;
     });
-  const service: ReEntryFrontierActorService = { observeExecutionUnitEntry, sendAndSync };
-  return { service, observeExecutionUnitEntry, sendAndSync, calls, observations, consumed };
+  const service: ReEntryFrontierActorService = { enterExecutionUnit, sendAndSync };
+  return { service, enterExecutionUnit, sendAndSync, calls, entered, observations, consumed };
 }
+
+/**
+ * Build a structural {@link PrepareReEntryFrontierActorService} double.
+ *
+ * Narrower than the unfenced one by design: the fenced twin DERIVES its consume
+ * and never commits, so a double that could commit would let a regression reach
+ * the store unnoticed.
+ *
+ * @param nextState - State the derived consume produces.
+ * @returns The double plus the spy the assertions read.
+ */
+function makePrepareActorService(nextState: RunbookState = state({ substep: '2' })) {
+  const prepareActorMutation = jest
+    .fn<PrepareReEntryFrontierActorService['prepareActorMutation']>()
+    .mockImplementation(async (_id, previousState) => ({
+      previousState,
+      nextState,
+      snapshot: { context: {} },
+      effects: [],
+    }));
+  return { service: { prepareActorMutation }, prepareActorMutation, nextState };
+}
+
+describe('prepareReEntryFrontierConsume', () => {
+  /** A deriver that fails the test if the seam reaches it. */
+  function neverDerives(): DelegationTokenDeriver {
+    return jest.fn<DelegationTokenDeriver>().mockImplementation(() => {
+      throw new Error('deriveToken must not be called on the none arm');
+    });
+  }
+
+  it('returns none when the run carries no persisted frontier', async () => {
+    const actor = makePrepareActorService();
+
+    await expect(
+      prepareReEntryFrontierConsume({
+        actorService: actor.service,
+        steps,
+        state: state(),
+        deriveToken: neverDerives(),
+      }),
+    ).resolves.toEqual({ status: 'none' });
+    expect(actor.prepareActorMutation).not.toHaveBeenCalled();
+  });
+
+  it('returns none for an empty persisted frontier without deriving a consume', async () => {
+    const actor = makePrepareActorService();
+
+    await expect(
+      prepareReEntryFrontierConsume({
+        actorService: actor.service,
+        steps,
+        state: stateWithFrontier([]),
+        deriveToken: neverDerives(),
+      }),
+    ).resolves.toEqual({ status: 'none' });
+    expect(actor.prepareActorMutation).not.toHaveBeenCalled();
+  });
+
+  it('returns none for a cursor off the substeps even when a frontier is persisted', async () => {
+    // A step-level execution unit can never carry a frontier, so the seam must
+    // not disclose one to it. The frontier stays persisted for the substep entry
+    // that can legitimately receive it.
+    const actor = makePrepareActorService();
+
+    await expect(
+      prepareReEntryFrontierConsume({
+        actorService: actor.service,
+        steps,
+        state: stepCursorWithFrontier([frontierEntry().persisted]),
+        deriveToken: neverDerives(),
+      }),
+    ).resolves.toEqual({ status: 'none' });
+    expect(actor.prepareActorMutation).not.toHaveBeenCalled();
+  });
+
+  it('validates the persisted blob before the non-substep short-circuit', async () => {
+    // Read-then-gate, not gate-then-read, exactly as the unfenced twin does.
+    const actor = makePrepareActorService();
+
+    await expect(
+      prepareReEntryFrontierConsume({
+        actorService: actor.service,
+        steps,
+        state: stepCursorWithFrontier('oops'),
+        deriveToken: neverDerives(),
+      }),
+    ).rejects.toBeInstanceOf(InvalidRunbookStateError);
+    expect(actor.prepareActorMutation).not.toHaveBeenCalled();
+  });
+
+  it('projects the bearers and derives the consume against the captured state', async () => {
+    const entry = frontierEntry();
+    const actor = makePrepareActorService();
+    const captured = stateWithFrontier([entry.persisted]);
+
+    const prepared = await prepareReEntryFrontierConsume({
+      actorService: actor.service,
+      steps,
+      state: captured,
+      deriveToken,
+    });
+
+    expect(prepared).toEqual({
+      status: 'projected',
+      nextState: actor.nextState,
+      frontier: [entry.public],
+    });
+    // The EXACT captured state, and the consume event the machine retires the
+    // frontier with — derived, never committed.
+    const [id, previousState, forwardedSteps, event] = actor.prepareActorMutation.mock.calls[0];
+    expect(id).toBe(runId);
+    expect(previousState).toBe(captured);
+    expect(forwardedSteps).toEqual(steps);
+    expect(event).toEqual({ type: 'DELEGATE_FRONTIER_CONSUMED' });
+  });
+
+  it('preserves persisted frontier order in the projected bearers', async () => {
+    const first = frontierEntry('1.1', 'child-a.md', 'A');
+    const second = frontierEntry('1.2', 'child-b.md', 'B');
+
+    const prepared = await prepareReEntryFrontierConsume({
+      actorService: makePrepareActorService().service,
+      steps,
+      state: stateWithFrontier([first.persisted, second.persisted]),
+      deriveToken,
+    });
+
+    if (prepared.status !== 'projected') throw new Error('expected projected');
+    expect(prepared.frontier).toEqual([first.public, second.public]);
+  });
+
+  it('refuses projection when the deriver is not the frontier issuer, without deriving a consume', async () => {
+    // The disclosure boundary, shared verbatim with the unfenced twin: refuse
+    // rather than prepare a consume that would retire bearers this authority
+    // cannot vouch for.
+    const actor = makePrepareActorService();
+
+    await expect(
+      prepareReEntryFrontierConsume({
+        actorService: actor.service,
+        steps,
+        state: stateWithFrontier([frontierEntry().persisted]),
+        deriveToken: deriveForeignToken,
+      }),
+    ).resolves.toEqual({
+      status: 'projection_refused',
+      message: 'Delegation credential belongs to a different issuer claim',
+    });
+    expect(actor.prepareActorMutation).not.toHaveBeenCalled();
+  });
+
+  it('never leaks a bearer through the refusal message', async () => {
+    const base = frontierEntry();
+
+    const prepared = await prepareReEntryFrontierConsume({
+      actorService: makePrepareActorService().service,
+      steps,
+      state: stateWithFrontier([
+        { ...base.persisted, tokenHash: assertDelegationTokenHash(`sha256:${'0'.repeat(64)}`) },
+      ]),
+      deriveToken,
+    });
+
+    expect(prepared).toMatchObject({ status: 'projection_refused' });
+    expect(JSON.stringify(prepared)).not.toMatch(/rdtk_/);
+  });
+});
 
 describe('readPersistedReEntryFrontier', () => {
   it('returns empty when the run carries no persisted snapshot', () => {
@@ -435,10 +599,10 @@ describe('readPersistedReEntryFrontier', () => {
 });
 
 describe('projectAndConsumeReEntryFrontier', () => {
-  /** First recorded `observeExecutionUnitEntry` call, as a typed tuple. */
-  function observedCall(actor: ReturnType<typeof makeActorService>) {
-    expect(actor.observeExecutionUnitEntry).toHaveBeenCalledTimes(1);
-    return actor.observeExecutionUnitEntry.mock.calls[0];
+  /** The single recorded `enterExecutionUnit` input. */
+  function enteredWith(actor: ReturnType<typeof makeActorService>) {
+    expect(actor.enterExecutionUnit).toHaveBeenCalledTimes(1);
+    return actor.enterExecutionUnit.mock.calls[0][0];
   }
 
   /** A deriver that fails the test if the seam reaches it. */
@@ -457,7 +621,6 @@ describe('projectAndConsumeReEntryFrontier', () => {
         steps,
         state: state(),
         deriveToken: neverDerives(),
-        entry: substepEntry,
       }),
     ).resolves.toEqual({ status: 'none' });
     expect(actor.calls).toEqual([]);
@@ -474,7 +637,6 @@ describe('projectAndConsumeReEntryFrontier', () => {
         steps,
         state: stateWithFrontier([]),
         deriveToken: neverDerives(),
-        entry: substepEntry,
       }),
     ).resolves.toEqual({ status: 'none' });
     expect(actor.calls).toEqual([]);
@@ -490,9 +652,8 @@ describe('projectAndConsumeReEntryFrontier', () => {
       projectAndConsumeReEntryFrontier({
         actorService: actor.service,
         steps,
-        state: stateWithFrontier([frontierEntry().persisted]),
+        state: stepCursorWithFrontier([frontierEntry().persisted]),
         deriveToken: neverDerives(),
-        entry: stepEntry,
       }),
     ).resolves.toEqual({ status: 'none' });
     expect(actor.calls).toEqual([]);
@@ -508,9 +669,8 @@ describe('projectAndConsumeReEntryFrontier', () => {
       projectAndConsumeReEntryFrontier({
         actorService: actor.service,
         steps,
-        state: stateWithFrontier('oops'),
+        state: stepCursorWithFrontier('oops'),
         deriveToken: neverDerives(),
-        entry: stepEntry,
       }),
     ).rejects.toBeInstanceOf(InvalidRunbookStateError);
     expect(actor.calls).toEqual([]);
@@ -525,12 +685,11 @@ describe('projectAndConsumeReEntryFrontier', () => {
       steps,
       state: stateWithFrontier([entry.persisted]),
       deriveToken,
-      entry: substepEntry,
     });
 
     expect(result).toEqual({
       status: 'projected',
-      observations: actor.observations,
+      entered: actor.entered,
       state: actor.consumed?.state,
     });
     // The consumed state, NOT the input state: the caller continues from the
@@ -539,29 +698,34 @@ describe('projectAndConsumeReEntryFrontier', () => {
     expect(result).toMatchObject({ status: 'projected', state: { substep: '2' } });
   });
 
-  it('observes the caller entry augmented with the projected bearers', async () => {
-    // The seam contributes `delegateFrontier` and nothing else — every other
-    // field is the frontend's rendering decision and must survive untouched.
+  it('enters the unit with the projected bearers and the COMMITTED state and caller steps', async () => {
+    // The seam contributes `delegateFrontier` and nothing else beyond routing the
+    // render through the state the commit just produced. Rendering against the
+    // pre-commit `target` would describe a run that does not yet exist in that
+    // shape — the same reasoning `finishCollection` documents for the fenced
+    // twin — so the entry must be derived from `consumed.state`, never `target`.
     const entry = frontierEntry();
     const actor = makeActorService();
+    const target = stateWithFrontier([entry.persisted]);
 
     await projectAndConsumeReEntryFrontier({
       actorService: actor.service,
       steps,
-      state: stateWithFrontier([entry.persisted]),
+      state: target,
       deriveToken,
-      entry: substepEntry,
     });
 
     // Asserted through `mock.calls` rather than `toHaveBeenCalledWith`: the
     // latter's tuple matcher recurses through `ResolvedStep` deeply enough to
     // trip TS2589 on this signature.
-    const [observedRunId, observedSteps, observedEntry] = observedCall(actor);
-    expect(observedRunId).toBe(runId);
+    const input = enteredWith(actor);
+    // The COMMITTED state, not the pre-commit capture: rendering must reflect
+    // the run as it exists after `DELEGATE_FRONTIER_CONSUMED` landed.
+    expect(input.state).toBe(actor.consumed?.state);
     // The seam forwards the caller's steps verbatim; an emptied copy would make
-    // the observation unresolvable against the machine.
-    expect(observedSteps).toEqual(steps);
-    expect(observedEntry).toEqual({ ...substepEntry, delegateFrontier: [entry.public] });
+    // the entry unresolvable against the runbook.
+    expect(input.steps).toEqual(steps);
+    expect(input.delegateFrontier).toEqual([entry.public]);
   });
 
   it('preserves persisted frontier order in the projected bearers', async () => {
@@ -574,10 +738,9 @@ describe('projectAndConsumeReEntryFrontier', () => {
       steps,
       state: stateWithFrontier([first.persisted, second.persisted]),
       deriveToken,
-      entry: substepEntry,
     });
 
-    expect(observedCall(actor)[2].delegateFrontier).toEqual([first.public, second.public]);
+    expect(enteredWith(actor).delegateFrontier).toEqual([first.public, second.public]);
   });
 
   it('commits the consume with DELEGATE_FRONTIER_CONSUMED on the same run', async () => {
@@ -588,7 +751,6 @@ describe('projectAndConsumeReEntryFrontier', () => {
       steps,
       state: stateWithFrontier([frontierEntry().persisted]),
       deriveToken,
-      entry: substepEntry,
     });
 
     expect(actor.sendAndSync).toHaveBeenCalledTimes(1);
@@ -598,9 +760,12 @@ describe('projectAndConsumeReEntryFrontier', () => {
     expect(consumeCall[2]).toEqual({ type: 'DELEGATE_FRONTIER_CONSUMED' });
   });
 
-  it('observes the entry before committing the consume', async () => {
-    // The documented ordering. Observing after the consume would leave a window
-    // where the frontier is consumed but the bearers were never surfaced.
+  it('commits the consume before rendering the entry', async () => {
+    // The documented ordering (RD-827 finding 1). Rendering can run arbitrary
+    // `--helpers` JS with real side effects; rendering before the commit would
+    // re-run those side effects on every retry that follows a failed commit,
+    // since the frontier stays persisted and the next attempt re-projects it.
+    // Committing first bounds the side effect to happen at most once per commit.
     const actor = makeActorService();
 
     await projectAndConsumeReEntryFrontier({
@@ -608,10 +773,9 @@ describe('projectAndConsumeReEntryFrontier', () => {
       steps,
       state: stateWithFrontier([frontierEntry().persisted]),
       deriveToken,
-      entry: substepEntry,
     });
 
-    expect(actor.calls).toEqual(['observe', 'sendAndSync']);
+    expect(actor.calls).toEqual(['sendAndSync', 'enter']);
   });
 
   it('refuses projection when the deriver is not the frontier issuer', async () => {
@@ -626,7 +790,6 @@ describe('projectAndConsumeReEntryFrontier', () => {
         steps,
         state: stateWithFrontier([frontierEntry().persisted]),
         deriveToken: deriveForeignToken,
-        entry: substepEntry,
       }),
     ).resolves.toEqual({
       status: 'projection_refused',
@@ -651,7 +814,6 @@ describe('projectAndConsumeReEntryFrontier', () => {
         steps,
         state: stateWithFrontier([tampered]),
         deriveToken,
-        entry: substepEntry,
       }),
     ).resolves.toEqual({
       status: 'projection_refused',
@@ -673,7 +835,6 @@ describe('projectAndConsumeReEntryFrontier', () => {
         { ...base.persisted, tokenHash: assertDelegationTokenHash(`sha256:${'0'.repeat(64)}`) },
       ]),
       deriveToken,
-      entry: substepEntry,
     });
 
     expect(result).toMatchObject({ status: 'projection_refused' });
@@ -694,15 +855,16 @@ describe('projectAndConsumeReEntryFrontier', () => {
           // eslint-disable-next-line @typescript-eslint/only-throw-error
           throw 'derivation exploded';
         },
-        entry: substepEntry,
       }),
     ).resolves.toEqual({ status: 'projection_refused', message: 'derivation exploded' });
     expect(actor.calls).toEqual([]);
   });
 
-  it('withholds observations when the consume is not accepted', async () => {
-    // The frontier is still persisted, so the next attempt re-projects it.
-    // Returning the observations here would orphan the bearers they carry.
+  it('never renders the entry when the consume is not accepted', async () => {
+    // The frontier is still persisted, so the next attempt re-projects it. The
+    // unit must never be entered on this arm: rendering can invoke non-idempotent
+    // `--helpers` JS, and a render whose commit never landed would re-run that
+    // side effect again on the retry that follows.
     const actor = makeActorService({ consumed: null });
 
     const result = await projectAndConsumeReEntryFrontier({
@@ -710,15 +872,13 @@ describe('projectAndConsumeReEntryFrontier', () => {
       steps,
       state: stateWithFrontier([frontierEntry().persisted]),
       deriveToken,
-      entry: substepEntry,
     });
 
     expect(result).toEqual({ status: 'consume_failed' });
-    expect(result).not.toHaveProperty('observations');
+    expect(result).not.toHaveProperty('entered');
     expect(result).not.toHaveProperty('state');
-    // The entry WAS observed — the arm is about what is returned, not about
-    // skipping the observation — so the ordering guarantee still holds.
-    expect(actor.calls).toEqual(['observe', 'sendAndSync']);
+    expect(actor.calls).toEqual(['sendAndSync']);
+    expect(actor.enterExecutionUnit).not.toHaveBeenCalled();
   });
 
   it('carries no bearer in the consume_failed result', async () => {
@@ -729,7 +889,6 @@ describe('projectAndConsumeReEntryFrontier', () => {
       steps,
       state: stateWithFrontier([frontierEntry().persisted]),
       deriveToken,
-      entry: substepEntry,
     });
 
     expect(JSON.stringify(result)).not.toMatch(/rdtk_/);
@@ -744,7 +903,6 @@ describe('projectAndConsumeReEntryFrontier', () => {
         steps,
         state: stateWithFrontier([{ id: '1.1', runbook: 'child-a.md' }]),
         deriveToken,
-        entry: substepEntry,
       }),
     ).rejects.toBeInstanceOf(InvalidRunbookStateError);
     expect(actor.calls).toEqual([]);

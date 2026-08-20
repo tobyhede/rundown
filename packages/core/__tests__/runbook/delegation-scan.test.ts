@@ -61,6 +61,7 @@ describe('DelegationScanService', () => {
 
   function makeState(id: string, overrides: Partial<RunbookState> = {}): RunbookState {
     return {
+      prompted: false,
       id: id as RunbookState['id'],
       runbook: { source: 'project', path: 'parent.md' },
       runbookPath: 'parent.md',
