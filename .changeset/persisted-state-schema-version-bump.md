@@ -56,7 +56,7 @@ persisted run-state schemas as a canonical structural string and compares them
 against a fixture named for the version they belong to
 (`__tests__/fixtures/persisted-state-shape/schema-v2.txt`). Change the shape and
 it fails, naming `CURRENT_SCHEMA_VERSION` as the remedy. Verified by reverting
-#772's field in `schemas.ts`: the guard fails, and passes again when restored.
+the #772 field in `schemas.ts`: the guard fails, and passes again when restored.
 
 It covers narrowing as well as addition — `z.string()` and `z.string().min(3)`
 render differently — because a tightened constraint fails an older build's state

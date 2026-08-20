@@ -427,13 +427,21 @@ the remedy is to bump the constant and record the new shape as
 the opaque `snapshot` blob (see below) or the body of a `.refine()`, so those
 still need the bump decided by hand.
 
-**Fixtures name the constant; they never hard-code the number.** State meant to
-be readable uses `CURRENT_SCHEMA_VERSION`, state meant to be refused uses
-`CURRENT_SCHEMA_VERSION + 1`. A literal in either position is what made #775
+**A fixture's `schemaVersion` field names the constant; it never hard-codes the
+number.** State meant to be readable uses `CURRENT_SCHEMA_VERSION`, state meant
+to be refused uses `FOREIGN_SCHEMA_VERSION` (exported from
+`core/testing/session-fixtures`). A literal in either position is what made #775
 invisible for three PRs: a "valid" fixture pinned to `1` could not notice the
 constant going stale, and a "foreign" fixture pinned to `2` silently became
 valid current state the moment the constant reached it, asserting nothing while
 still passing.
+
+This is a rule about the **value inside a state object**, and nothing else. The
+structural fixture _filenames_ (`schema-v2.txt`) are deliberately versioned
+literals: each one is the permanent record of one version's shape, so it must
+not follow the constant. The same goes for a historical transcript quoting what
+an older build printed — say which version produced it and leave the number
+alone.
 
 There is no in-memory migration scenario. In-memory state does not survive
 process restarts. Any state that reaches `createActor` originates from disk and

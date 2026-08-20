@@ -132,6 +132,35 @@ function renderNode(node: unknown, path: Set<unknown>): string {
 }
 
 /**
+ * Zod kinds that carry no sub-schema, so rendering them by name loses nothing.
+ *
+ * Membership is measured, not assumed: `boolean`, `null` and `transform` all
+ * occur in the persisted run-state schemas today and would break an allow-list
+ * built from the obvious scalars alone. `transform` belongs here because its
+ * output is a function's return value — not a schema this walker can descend
+ * into — which is a limit of the rendering, stated rather than hidden.
+ *
+ * Anything absent from this set and unhandled by {@link renderStructure} throws,
+ * because the alternative is a composite silently rendering as a bare name.
+ */
+const CHILDLESS_KINDS = new Set([
+  'any',
+  'bigint',
+  'boolean',
+  'date',
+  'nan',
+  'never',
+  'null',
+  'number',
+  'string',
+  'symbol',
+  'transform',
+  'undefined',
+  'unknown',
+  'void',
+]);
+
+/**
  * Render a node's structure for its kind, without its checks.
  *
  * @param kind - The node's `def.type`.
@@ -188,12 +217,21 @@ function renderStructure(
       return `pipe(${sub(def.in)},${sub(def.out)})`;
     case 'lazy':
       return `lazy(${sub((def.getter as (() => unknown) | undefined)?.())})`;
-    // A leaf with no children to walk (`string`, `number`, `unknown`, `never`),
-    // or a `transform`, whose output shape is a function's return value and is
-    // not readable from the schema. Named by kind; any narrowing it carries is
-    // in the `checks(...)` suffix the caller appends.
     default:
-      return kind;
+      if (CHILDLESS_KINDS.has(kind)) {
+        return kind;
+      }
+      // A kind with children this walker does not visit would render as a bare
+      // name, and every difference inside it — a `map`'s key and value types, a
+      // `set`'s element — would be invisible to the pin. Refusing is the whole
+      // point: a guard that silently stops covering part of the shape is worse
+      // than no guard, because the green result reads as coverage. Add the case
+      // above, then re-record the fixture.
+      throw new Error(
+        `persisted-state-shape: no rendering for Zod kind "${kind}". ` +
+          'Add a case to renderStructure (or to CHILDLESS_KINDS if it has no ' +
+          'sub-schemas), then re-record the fixture.',
+      );
   }
 }
 
@@ -311,6 +349,18 @@ describe('persisted run-state shape is pinned to CURRENT_SCHEMA_VERSION', () => 
     const narrowed = RunbookStateSchema.safeExtend({ stepName: z.string().min(3) });
 
     expect(fingerprint(narrowed)).not.toBe(fingerprint(RunbookStateSchema));
+  });
+
+  it('refuses a composite kind it cannot walk, rather than naming it', () => {
+    // `z.map` has key and value schemas this walker never visits, so rendering
+    // it as the bare string "map" would pin a field whose entire contents are
+    // invisible — and the green result would read as coverage. Persisted state
+    // carries no map today; this is what happens on the day someone adds one.
+    const withMap = RunbookStateSchema.extend({
+      inlineLaunchOwners: z.map(z.string(), z.number()),
+    });
+
+    expect(() => fingerprint(withMap)).toThrow(/no rendering for Zod kind "map"/);
   });
 
   it('does not distinguish two spellings of the same constraint', () => {

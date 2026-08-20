@@ -18,7 +18,11 @@ import {
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
 import { seedRawRunState } from '../../src/testing/state-fixtures.js';
-import { FOREIGN_SCHEMA_VERSION, writeRawRunJson } from '../../src/testing/session-fixtures.js';
+import {
+  FOREIGN_SCHEMA_VERSION,
+  readPersistedRunState,
+  writeRawRunJson,
+} from '../../src/testing/session-fixtures.js';
 
 const BASE_RUN_ID = `rd_${'1'.repeat(32)}`;
 const INVALID_RUN_ID = `rd_${'2'.repeat(32)}`;
@@ -675,5 +679,23 @@ describe('pre-#772 inline shape — refused by the version gate, not by the pars
       await expect(read()).rejects.not.toBeInstanceOf(ZodError);
       await expect(read()).rejects.toThrow(/invalid schemaVersion/);
     }
+  });
+
+  it('leaves the refused row exactly as persisted', async () => {
+    // Refusing is only half the no-migration rule; the other half is that the
+    // refusal writes nothing. A gate that rejected the row and then re-stamped
+    // it with the current version would satisfy every assertion above while
+    // performing the silent migration CLAUDE.md forbids — and would destroy the
+    // evidence a user needs to understand why the run cannot be resumed.
+    await expect(new RunbookStateManager(tmpDir).load(PRE_STARTED_RUN_ID)).rejects.toBeInstanceOf(
+      InvalidRunbookStateError,
+    );
+
+    const raw = await readPersistedRunState(tmpDir, PRE_STARTED_RUN_ID);
+
+    expect(raw?.schemaVersion).toBe(PRE_STARTED_SCHEMA_VERSION);
+    // The pre-#772 latch field survives too: the row is untouched, not merely
+    // un-renumbered.
+    expect(raw?.substepStates).toEqual(preStartedInlineState.substepStates);
   });
 });

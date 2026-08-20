@@ -35,6 +35,7 @@ import {
   LegacySnapshotError,
   RunbookStateManager,
 } from '../../../src/runbook/state.js';
+import { FOREIGN_SCHEMA_VERSION } from '../../../src/testing/session-fixtures.js';
 import { logger } from '../../../src/logger.js';
 import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
 import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
@@ -226,7 +227,7 @@ describe('RunbookStore round-trip', () => {
   it.each([
     // Derived, never a literal: a hard-coded "foreign" version that the constant
     // later catches up to plants VALID state, and this test then asserts nothing.
-    ['a foreign schema version', { schemaVersion: CURRENT_SCHEMA_VERSION + 1 }],
+    ['a foreign schema version', { schemaVersion: FOREIGN_SCHEMA_VERSION }],
     ['an absent schema version', { schemaVersion: undefined }],
   ])('refuses to read a run carrying %s, on every read seam', async (_label, overrides) => {
     const state = await newState(overrides);

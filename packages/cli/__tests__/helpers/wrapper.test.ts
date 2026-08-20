@@ -1,6 +1,7 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import {
   ConcurrentStateModificationError,
+  CURRENT_SCHEMA_VERSION,
   ErrorResponseSchema,
   Errors,
   IncompatibleSchemaError,
@@ -235,7 +236,7 @@ describe('withErrorHandling', () => {
     it('converts InvalidRunbookStateError to RD-309 rather than RD-999', async () => {
       await withErrorHandling(async () => {
         throw new InvalidRunbookStateError(
-          'Invalid runbook state for "rd_f6dbc58e5e08706a2aa8c7bec5ffd176": invalid schemaVersion; expected schema version 2.',
+          `Invalid runbook state for "rd_f6dbc58e5e08706a2aa8c7bec5ffd176": invalid schemaVersion; expected schema version ${String(CURRENT_SCHEMA_VERSION)}.`,
         );
       });
 
@@ -289,7 +290,7 @@ describe('withErrorHandling', () => {
     it('forwards the structured defect into details.context', async () => {
       await withErrorHandling(async () => {
         throw new InvalidRunbookStateError(
-          'Invalid runbook state for "rd_f6dbc58e5e08706a2aa8c7bec5ffd176": invalid schemaVersion; expected schema version 2.',
+          `Invalid runbook state for "rd_f6dbc58e5e08706a2aa8c7bec5ffd176": invalid schemaVersion; expected schema version ${String(CURRENT_SCHEMA_VERSION)}.`,
           {
             runId: 'rd_f6dbc58e5e08706a2aa8c7bec5ffd176',
             reason: 'invalid_schema_version',
