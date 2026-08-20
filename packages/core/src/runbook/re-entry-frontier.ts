@@ -26,8 +26,10 @@ import type { PersistedDelegateFrontierEntry, ResolvedStep, RunbookState } from 
  *   not hash to the persisted verifier. Not retryable — the same authority
  *   refuses identically.
  * - `consume_failed` — projection succeeded but the machine did not accept the
- *   consume, so the frontier is still persisted. Retryable, and no observations
- *   are returned: their tokens would be orphaned by the next attempt.
+ *   consume, so the frontier is still persisted. Retryable, and the unit is
+ *   never entered: no observations are returned, no bearer tokens would be
+ *   orphaned by the next attempt, and no render side effect runs for a commit
+ *   that never landed.
  */
 export type ReEntryProjection =
   | { readonly status: 'none' }
@@ -278,9 +280,13 @@ export function readPersistedReEntryFrontier(
  * state. Callers map the returned arms onto their own envelopes — emitter wiring
  * and exit codes — and read the classified entry off the `projected` arm.
  *
- * Ordering is deliberate: the consume commits BEFORE the observations are
- * returned, so a failed consume discloses no bearers. The frontier stays
- * persisted in that case, and the next attempt re-projects it.
+ * Ordering is deliberate: the consume commits BEFORE the unit is entered, so a
+ * failed consume neither discloses bearers nor renders. Rendering can run
+ * arbitrary `--helpers` JS, so this is not only a disclosure boundary — it also
+ * bounds a non-idempotent helper to running at most once per commit. The
+ * frontier stays persisted when the consume fails, and the next attempt
+ * re-projects it; had rendering already run on that attempt, the retry would
+ * re-invoke the same helper a second time.
  *
  * @param input - Actor service, steps, committed state, and verified deriver.
  * @returns The classified re-entry outcome.
@@ -307,18 +313,21 @@ export async function projectAndConsumeReEntryFrontier(
     return { status: 'projection_refused', message: getErrorMessage(error) };
   }
 
-  const entered = await input.actorService.enterExecutionUnit({
-    state: input.state,
-    steps: input.steps,
-    delegateFrontier: frontier,
-  });
-
   const consumed = await input.actorService.sendAndSync(input.state.id, [...input.steps], {
     type: 'DELEGATE_FRONTIER_CONSUMED',
   });
   if (!consumed) {
     return { status: 'consume_failed' };
   }
+
+  // The COMMITTED state, not `input.state`: rendering must describe the run as
+  // it exists after the consume landed, and must not run before the commit that
+  // gates it — see the ordering note above.
+  const entered = await input.actorService.enterExecutionUnit({
+    state: consumed.state,
+    steps: input.steps,
+    delegateFrontier: frontier,
+  });
 
   return { status: 'projected', entered, state: consumed.state };
 }

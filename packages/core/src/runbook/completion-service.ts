@@ -8,6 +8,7 @@ import {
   type RunbookStateManager,
   type RunbookStateUpdate,
 } from './state.js';
+import { findStepOrThrow } from './execution-units.js';
 import { deriveActiveCompletionFrame } from './frame-entry.js';
 import {
   activeFrame,
@@ -420,12 +421,6 @@ export type PreparedResolvedCompletionDrain =
       /** Always empty when `not_active`. */
       readonly applied: readonly [];
     };
-
-function findStepOrThrow(steps: readonly ResolvedStep[], stepName: string): ResolvedStep {
-  const step = steps.find((candidate) => candidate.name === stepName);
-  if (!step) throw new Error(`Step "${stepName}" not found`);
-  return step;
-}
 
 /**
  * Map a state's lifecycle to the terminal status that reports it, if terminal.

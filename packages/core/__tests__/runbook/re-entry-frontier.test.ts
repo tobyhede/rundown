@@ -697,11 +697,12 @@ describe('projectAndConsumeReEntryFrontier', () => {
     expect(result).toMatchObject({ status: 'projected', state: { substep: '2' } });
   });
 
-  it('enters the unit with the projected bearers and the caller state and steps', async () => {
-    // The seam contributes `delegateFrontier` and nothing else. Everything the
-    // entry renders is derived by the seam it delegates to, from the state and
-    // steps forwarded here — there is no longer a caller rendering for it to
-    // preserve, which is the point.
+  it('enters the unit with the projected bearers and the COMMITTED state and caller steps', async () => {
+    // The seam contributes `delegateFrontier` and nothing else beyond routing the
+    // render through the state the commit just produced. Rendering against the
+    // pre-commit `target` would describe a run that does not yet exist in that
+    // shape — the same reasoning `finishCollection` documents for the fenced
+    // twin — so the entry must be derived from `consumed.state`, never `target`.
     const entry = frontierEntry();
     const actor = makeActorService();
     const target = stateWithFrontier([entry.persisted]);
@@ -717,9 +718,9 @@ describe('projectAndConsumeReEntryFrontier', () => {
     // latter's tuple matcher recurses through `ResolvedStep` deeply enough to
     // trip TS2589 on this signature.
     const input = enteredWith(actor);
-    // The EXACT captured state, not a re-read: the entry must describe the run
-    // the frontier decision was made against.
-    expect(input.state).toBe(target);
+    // The COMMITTED state, not the pre-commit capture: rendering must reflect
+    // the run as it exists after `DELEGATE_FRONTIER_CONSUMED` landed.
+    expect(input.state).toBe(actor.consumed?.state);
     // The seam forwards the caller's steps verbatim; an emptied copy would make
     // the entry unresolvable against the runbook.
     expect(input.steps).toEqual(steps);
@@ -758,9 +759,12 @@ describe('projectAndConsumeReEntryFrontier', () => {
     expect(consumeCall[2]).toEqual({ type: 'DELEGATE_FRONTIER_CONSUMED' });
   });
 
-  it('observes the entry before committing the consume', async () => {
-    // The documented ordering. Observing after the consume would leave a window
-    // where the frontier is consumed but the bearers were never surfaced.
+  it('commits the consume before rendering the entry', async () => {
+    // The documented ordering (RD-827 finding 1). Rendering can run arbitrary
+    // `--helpers` JS with real side effects; rendering before the commit would
+    // re-run those side effects on every retry that follows a failed commit,
+    // since the frontier stays persisted and the next attempt re-projects it.
+    // Committing first bounds the side effect to happen at most once per commit.
     const actor = makeActorService();
 
     await projectAndConsumeReEntryFrontier({
@@ -770,7 +774,7 @@ describe('projectAndConsumeReEntryFrontier', () => {
       deriveToken,
     });
 
-    expect(actor.calls).toEqual(['enter', 'sendAndSync']);
+    expect(actor.calls).toEqual(['sendAndSync', 'enter']);
   });
 
   it('refuses projection when the deriver is not the frontier issuer', async () => {
@@ -855,9 +859,11 @@ describe('projectAndConsumeReEntryFrontier', () => {
     expect(actor.calls).toEqual([]);
   });
 
-  it('withholds the entry when the consume is not accepted', async () => {
-    // The frontier is still persisted, so the next attempt re-projects it.
-    // Returning the entry here would orphan the bearers its observations carry.
+  it('never renders the entry when the consume is not accepted', async () => {
+    // The frontier is still persisted, so the next attempt re-projects it. The
+    // unit must never be entered on this arm: rendering can invoke non-idempotent
+    // `--helpers` JS, and a render whose commit never landed would re-run that
+    // side effect again on the retry that follows.
     const actor = makeActorService({ consumed: null });
 
     const result = await projectAndConsumeReEntryFrontier({
@@ -870,9 +876,8 @@ describe('projectAndConsumeReEntryFrontier', () => {
     expect(result).toEqual({ status: 'consume_failed' });
     expect(result).not.toHaveProperty('entered');
     expect(result).not.toHaveProperty('state');
-    // The entry WAS observed — the arm is about what is returned, not about
-    // skipping the observation — so the ordering guarantee still holds.
-    expect(actor.calls).toEqual(['enter', 'sendAndSync']);
+    expect(actor.calls).toEqual(['sendAndSync']);
+    expect(actor.enterExecutionUnit).not.toHaveBeenCalled();
   });
 
   it('carries no bearer in the consume_failed result', async () => {

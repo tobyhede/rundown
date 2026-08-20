@@ -19,6 +19,7 @@ import { resolveMutationAuthority, type CommandTargetReader } from './command-ta
 import type { AppliedResolvedCompletion } from './completion-service.js';
 import type { RunbookCompletionService } from './completion-service.js';
 import { isPostDelegateAggregationCursor } from './delegation-inference.js';
+import { findStepOrThrow } from './execution-units.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import type { RunbookStateManager } from './state.js';
 import {
@@ -198,12 +199,6 @@ function delegateSubstepIds(step: ResolvedStep | undefined): readonly string[] {
   // a hand-rolled `'substeps' in step && step.substeps` check.
   if (!step || !resolvedStepHasSubsteps(step)) return [];
   return step.substeps.filter((substep) => substep.delegate).map((substep) => substep.id);
-}
-
-function findStepOrThrow(steps: readonly ResolvedStep[], stepName: string): ResolvedStep {
-  const step = steps.find((candidate) => candidate.name === stepName);
-  if (!step) throw new Error(`Step "${stepName}" not found`);
-  return step;
 }
 
 // Set of delegate substep ids that have a LIVE resolved-completion row in the

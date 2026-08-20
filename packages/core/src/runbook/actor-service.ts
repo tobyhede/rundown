@@ -195,6 +195,14 @@ export interface EnterExecutionUnitInput {
    * forwarding call site into a conditional spread that says nothing.
    */
   readonly delegateFrontier?: readonly DelegateFrontierEntry[] | undefined;
+  /**
+   * Caller-precomputed position, forwarded verbatim to
+   * {@link deriveExecutionUnitEntry} instead of letting it re-derive one.
+   *
+   * Optional: a caller with no position already in scope leaves this seam to
+   * derive it, exactly as before.
+   */
+  readonly position?: StepPosition | undefined;
 }
 
 /** Runtime dependencies for {@link RunbookActorService}. */
@@ -1690,6 +1698,7 @@ export class RunbookActorService {
         delegateFrontier: input.delegateFrontier,
         cwd: this.manager.cwd,
         helpers: this.options.helpers,
+        position: input.position,
       }),
     );
   }

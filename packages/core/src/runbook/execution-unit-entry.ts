@@ -53,6 +53,7 @@ import { inferFrameEntryFromState } from './frame-entry.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { ResolvedStep, RunbookState } from './types.js';
 import type { RunId } from './run-id.js';
+import type { StepPosition } from '../cli/types.js';
 
 /**
  * Module-private nominal brand on {@link RenderedUnitCommand}.
@@ -171,6 +172,18 @@ export interface DeriveExecutionUnitEntryInput {
   readonly cwd: string;
   /** Runtime template helpers loaded for this process, if any were declared. */
   readonly helpers?: TemplateHelperRegistry | undefined;
+  /**
+   * Caller-precomputed position, used verbatim instead of deriving one.
+   *
+   * `buildStepPosition` needs nothing this function does not already have
+   * (`state.step`, `countNumberedSteps(steps)`, `state.substep`,
+   * `state.forStack`), so a caller that already computed the identical value
+   * for its own purposes — the CLI execution loop derives one for its
+   * independent error-reporting events on the same iteration — hands it in
+   * rather than paying for the same full-array `countNumberedSteps` scan twice.
+   * `| undefined` because omitted and explicitly-undefined are the same fact.
+   */
+  readonly position?: StepPosition | undefined;
 }
 
 /**
@@ -402,12 +415,9 @@ export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): 
     // beside `isSubstep: false`. `position` still reports the raw cursor,
     // because position describes where the run IS rather than what it entered.
     substepId: 'id' in unit ? unit.id : undefined,
-    position: buildStepPosition(
-      state.step,
-      countNumberedSteps(steps),
-      state.substep,
-      state.forStack,
-    ),
+    position:
+      input.position ??
+      buildStepPosition(state.step, countNumberedSteps(steps), state.substep, state.forStack),
     stepName: 'id' in unit ? unit.id : unit.name,
     description: expandLoopVariables(unit.description, stepVars, renderOptions),
     prompt:

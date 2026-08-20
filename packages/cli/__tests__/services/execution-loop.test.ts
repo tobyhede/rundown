@@ -413,6 +413,20 @@ describe('runExecutionLoop', () => {
       snapshot: { context: { delegateFrontier: frontier } },
       ...overrides,
     });
+  /**
+   * Realistic post-commit state for a `DELEGATE_FRONTIER_CONSUMED` `sendAndSync`
+   * mock result.
+   *
+   * The entry is rendered from the COMMITTED state (RD-827 finding 1: rendering
+   * — which can run `--helpers` JS — must not run before the consume that gates
+   * it, so it now runs against `consumed.state` rather than the pre-commit
+   * capture). A bare `{ id, step, substep, status }` stub carries no
+   * `templateVars`, so it trips `deriveExecutionUnitEntry`'s missing-`WorkPath`
+   * guard the instant it is used for rendering instead of only for loop control.
+   * The frontier is cleared from context, mirroring what the real consume retires.
+   */
+  const frontierConsumedState = (overrides: Record<string, unknown> = {}) =>
+    frontierLoopState(undefined, { snapshot: { context: {} }, ...overrides });
   const commandCompletedEffect = (result: 'pass' | 'fail' = 'pass') => ({
     kind: 'execution_observation',
     event: {
@@ -2701,7 +2715,7 @@ describe('runExecutionLoop', () => {
       ]),
     );
     mockActorService.sendAndSync.mockResolvedValue({
-      state: { id: runbookId, step: '1', substep: '1', status: 'running' },
+      state: frontierConsumedState(),
       snapshot: {},
     });
 
@@ -2786,7 +2800,7 @@ describe('runExecutionLoop', () => {
     ];
 
     mockActorService.sendAndSync.mockResolvedValue({
-      state: { id: runbookId, step: '1', substep: '1', status: 'running' },
+      state: frontierConsumedState(),
       snapshot: {},
     });
 
@@ -5440,7 +5454,7 @@ describe('runExecutionLoop', () => {
       }),
     );
     mockActorService.sendAndSync.mockResolvedValue({
-      state: { id: runbookId, step: '1', substep: '1', status: 'running' },
+      state: frontierConsumedState({ prompted: true }),
       snapshot: {},
     });
 

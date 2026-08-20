@@ -203,6 +203,34 @@ describe('deriveExecutionUnitEntry', () => {
     });
   });
 
+  describe('position input', () => {
+    it('uses a caller-supplied position instead of deriving one (RD-827 finding 3)', () => {
+      // Every caller with a position already in scope (the CLI execution loop
+      // computes one via `countNumberedSteps` + `buildStepPosition` for its own
+      // error-reporting events) hands it in rather than making this function
+      // repeat that full-array scan for the identical value. `total: 999` could
+      // never arise from `countNumberedSteps([commandStep])` (which is 1), so
+      // the assertion below only passes if the supplied value rode through
+      // without being recomputed.
+      const suppliedPosition = { current: '1', total: 999 };
+
+      const entered = deriveExecutionUnitEntry({
+        state: state(),
+        steps: [commandStep],
+        cwd: CWD,
+        position: suppliedPosition,
+      });
+
+      expect(payloadOf(entered).position).toEqual(suppliedPosition);
+    });
+
+    it('derives its own position when the caller supplies none', () => {
+      const entered = enter([commandStep], state());
+
+      expect(payloadOf(entered).position).toMatchObject({ current: '1', total: 1 });
+    });
+  });
+
   describe('the unit the cursor resolves to', () => {
     const parentWithSubsteps = makeResolvedStepWithSubsteps({
       description: 'Fan out',

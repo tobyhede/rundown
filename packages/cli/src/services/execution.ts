@@ -28,6 +28,7 @@ import {
   executeCommandWithEnv,
   executeCommandWithPolicy,
   countNumberedSteps,
+  findStepOrThrow,
   type ExecutionEventEmitter,
   type InlineLaunchIntent,
   type ExecutionUnitEntry,
@@ -91,22 +92,6 @@ export function commandStreamOptionsForOutputMode(
   text: boolean | undefined,
 ): CommandExecutionStreamOptions {
   return { commandOutput: text ? 'inherit' : 'stderr' };
-}
-
-/**
- * Find a step by name, throwing if not found.
- *
- * Replaces silent `steps[0]` fallbacks that mask state corruption.
- *
- * @param steps - Parsed runbook steps
- * @param stepName - Step name to find
- * @returns The matching step
- * @throws {Error} if step is not found (indicates state corruption)
- */
-export function findStepOrThrow(steps: ResolvedStep[], stepName: string): ResolvedStep {
-  const step = steps.find((s) => s.name === stepName);
-  if (!step) throw new Error(`Step '${stepName}' not found — possible state corruption`);
-  return step;
 }
 
 type TransitionApplicationResult =
@@ -1180,11 +1165,19 @@ export async function runExecutionLoop(
   // directly.
   //
   // Stryker disable next-line BooleanLiteral: equivalent — the fallback is
-  // unreachable from any run this codebase creates. `RunbookStateManager.create`
-  // has one production call site (`runbook-pipeline.ts`, in `startRunbook`),
-  // whose `options.prompted` is a required boolean, so a persisted row always
-  // carries one. A row without it is invalid state by the no-migration rule, and
-  // `false` versus `true` there is not a behaviour this suite can pin.
+  // unreachable from any run this codebase's production code creates, but NOT
+  // because the type forbids it: `RunbookState.prompted` and
+  // `CreateOptions.prompted` (state.ts) are both declared `prompted?: boolean`,
+  // and unlike `templateVars`, `RunbookStateManager.load` carries no fail-closed
+  // guard for a missing one. What actually pins the value is call-site
+  // discipline instead: `RunbookStateManager.create` has one production call
+  // site (`runbook-pipeline.ts`'s `launchRunbook`, shared by `startRunbook` and
+  // `claimAndLaunch`), and every caller of that shared helper supplies a real
+  // boolean — `!!options.prompted` or `freshParent.prompted ?? false` — never
+  // `undefined`. So a persisted row this codebase creates always carries one; a
+  // row that reached this fallback would have to originate outside that path,
+  // which the no-migration rule treats as invalid state regardless. `false`
+  // versus `true` here is therefore not a behaviour this suite can pin.
   //
   // The sibling `&& false` mutation on this line is NOT equivalent and IS
   // killed — by the inline-child prompted-inheritance pair in
@@ -1547,7 +1540,15 @@ export async function runExecutionLoop(
     const entered: ExecutionUnitEntry =
       reentry.status === 'projected'
         ? reentry.entered
-        : await actorService.enterExecutionUnit({ state: currentState, steps });
+        : await actorService.enterExecutionUnit({
+            state: currentState,
+            steps,
+            // Already computed above from the same `currentState` + `steps` for
+            // this iteration's own error-reporting events — handing it in avoids
+            // a second `countNumberedSteps` full-array scan for the identical
+            // value (RD-827 finding 3).
+            position: stepPosition,
+          });
     for (const effect of entered.effects) {
       emitter.emit(effect.event);
     }
