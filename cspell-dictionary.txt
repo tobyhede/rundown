@@ -36,6 +36,7 @@ OSTYPE
 stashable
 Subcategorize
 TOCTOU
+TSESTree
 Turborepo
 Unasserted
 Unforgeable
@@ -137,6 +138,7 @@ lockfile
 materialise
 materialised
 materialising
+materialises
 macrostep
 mdast
 misattributes

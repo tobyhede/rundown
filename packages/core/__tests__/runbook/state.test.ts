@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { isError } from '../../src/errors.js';
+import { getErrorMessage, isError } from '../../src/errors.js';
 import {
   applyRunbookStateUpdate,
   generateRunId,
@@ -1991,6 +1991,19 @@ describe('RunbookStateManager', () => {
       });
 
       expect(await refusedDefect(id)).toEqual({ runId: id, reason: 'missing_prompted' });
+      // The prose too, and in this suite rather than only in the guards suite:
+      // `reason` tells a consumer which refusal fired, and the message is the
+      // only place that names the field and what to do about it. Both halves,
+      // because they are separate string literals — the diagnosis and the
+      // recovery — and either can be emptied without the other noticing.
+      const refusal = await manager.load(id).then(
+        () => {
+          throw new Error('load resolved; expected a refusal');
+        },
+        (error: unknown) => error,
+      );
+      expect(getErrorMessage(refusal)).toMatch(/missing prompted/);
+      expect(getErrorMessage(refusal)).toMatch(/Prune this run and re-run the runbook\./);
     });
 
     // Both spellings, because the field is a boolean and the guard must not

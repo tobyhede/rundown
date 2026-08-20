@@ -58,3 +58,9 @@ packages/*/.stryker-tmp/
 
 # TypeScript incremental build
 *.tsbuildinfo
+
+# Transient lint fixtures written by scripts/__tests__/eslint-brand-cast-guard.test.mjs.
+# The test writes real .ts files into the core package so ESLint and TypeScript
+# read the same bytes, and sweeps them again on exit; this keeps a run that dies
+# mid-flight from dirtying the tree.
+packages/core/src/runbook/brand-cast-fixture-*.ts
