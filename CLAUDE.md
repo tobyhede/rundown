@@ -233,6 +233,29 @@ prevents these failures by construction. See
 [docs/internal/architecture.md § Actor input wiring](docs/internal/architecture.md#actor-input-wiring)
 for the implementation pattern and the canonical worked example.
 
+## Active Development Stance
+
+Rundown is in active development. There is no production environment and no
+release until further notice — no users, and no data, documents, state, content,
+or bytes that exist outside this repository. The only environments are
+**development** (a local git clone) and **CI** (GitHub Actions).
+
+The codebase is the sole source of truth. It must generate everything needed for
+development and testing — automated or manual, human- or agent-driven — through
+seeds, fixtures, migrations, and scripts checked into the repo. Any
+inconsistency in that generated state, found at any point in time, is a bug in
+the codebase to fix, not a compatibility case to design around.
+
+Local development must bootstrap cleanly from a fresh clone, and a hard reset
+back to that clean state must be simple and efficient — a single command,
+ideally. A slow or manual reset path is a bug in the bootstrapping, not an
+acceptable cost of doing business.
+
+This is the reasoning behind [State Persistence](#state-persistence)'s
+no-migration rule and [Versioning and changesets](#versioning-and-changesets)'s
+stance on semver: neither persisted state nor a package version has anything
+outside this repo to stay compatible with.
+
 ## Installation
 
 ```bash
@@ -387,6 +410,9 @@ not part of the public Rundown format specification. See
 
 ## State Persistence
 
+See [Active Development Stance](#active-development-stance) for why the rules
+below hold: there is no state outside this repo for them to protect.
+
 Run and session state persists in `.rundown/rundown.db`. Captured outputs remain
 under `.rundown/runs/<run-id>/outputs/`. Runbook source files are discovered
 from multiple locations (see [Runbook Discovery](#runbook-discovery)). State
@@ -401,43 +427,47 @@ applies to all run data written to SQLite: structured `RunbookState` fields
 (step, variables, lifecycle, etc.) and the opaque `state.snapshot` blob stored
 inside `RunbookState`. Neither is exempt. Persisted runbook state carries the
 schema version in `CURRENT_SCHEMA_VERSION`
-(`packages/core/src/runbook/persisted-state-guards.ts`, currently `2`); state
+(`packages/core/src/runbook/persisted-state-guards.ts`, currently `1`); state
 with any other schema version or incompatible structure is invalid. On schema
 changes, running runbooks should be completed/closed and restarted. The CLI
 should detect invalid state (via schema version or structural guard) and prompt
 the user to finish or prune — never silently adapt, rewrite, or shim the data.
 
-**Change the shape, move the version — in the same commit.** Any edit to the
-persisted run-state shape (`RunbookState` in `runbook/types.ts`,
-`RunbookStateObjectSchema` or its nested schemas in `schemas.ts`) MUST move
-`CURRENT_SCHEMA_VERSION`, because that constant is the only thing that refuses
-state an older build wrote. Widening an optional field is the sole exception —
-state written before the widening still parses. Adding a required field,
-removing a field, and narrowing an existing one all require the bump; the last
-is the one that looks harmless and is not. This is not hypothetical: #746, #772
-and #827 each added a required field and left the version at `1`, which routed a
-mid-inline-launch run into a bare `ZodError` out of `RunbookStore.readRun` —
-outside the CLI's recovery taxonomy, so `finish`/`stop`/`prune` could not clear
-it (#775).
+**A shape change does not automatically move the version.** Every field in
+`RunbookStateObjectSchema` (`schemas.ts`) is Zod-checked independently, so for
+most shape edits — a required field added or removed, a narrowed constraint —
+state an older build wrote already fails the structural parse, version gate or
+not: #746, #772, and #827 each added a required field and left
+`CURRENT_SCHEMA_VERSION` at `1`, and old state was refused either way (#775).
+Moving the constant only changes _which_ rejection fires —
+`invalid_schema_version` (RD-309, via the cheap equality check) instead of
+`schema_validation_failed` (via the full parse) — so treat it as worth doing
+when that distinction matters, not as mandatory on every shape edit. See
+`CURRENT_SCHEMA_VERSION`'s own TSDoc for the one case where it is not optional:
+the opaque `snapshot` field is declared `z.unknown()` on purpose, so a change to
+the XState machine's context shape or state IDs is invisible to the structural
+parse and only the version gate can refuse it.
 
-`packages/core/__tests__/runbook/persisted-state-shape.test.ts` fails when the
-shape moves and the recorded fixture does not. It reports the changed fields;
-the remedy is to bump the constant and record the new shape as
-`schema-v<new>.txt`, never to overwrite the existing file. It does **not** cover
-the opaque `snapshot` blob (see below) or the body of a `.refine()`, so those
-still need the bump decided by hand.
+`packages/core/__tests__/runbook/persisted-state-shape.test.ts` fails whenever
+the shape changes, whether or not that change needs a version bump — it is a
+forcing function for the judgment call above, not a verdict. It reports the
+changed fields; re-record the current version's fixture for an ordinary shape
+edit, or bump the constant and record a new `schema-v<new>.txt` for a change the
+structural parse cannot itself catch. It does **not** cover the body of a
+`.refine()` either — a custom check's content is a function, which has no stable
+identity across runs — so that case is also decided by hand.
 
 **A fixture's `schemaVersion` field names the constant; it never hard-codes the
 number.** State meant to be readable uses `CURRENT_SCHEMA_VERSION`, state meant
 to be refused uses `FOREIGN_SCHEMA_VERSION` (exported from
 `core/testing/session-fixtures`). A literal in either position is what made #775
 invisible for three PRs: a "valid" fixture pinned to `1` could not notice the
-constant going stale, and a "foreign" fixture pinned to `2` silently became
-valid current state the moment the constant reached it, asserting nothing while
-still passing.
+constant going stale, and a "foreign" fixture pinned to a fixed future number
+would silently become valid current state the moment the constant reached it,
+asserting nothing while still passing.
 
 This is a rule about the **value inside a state object**, and nothing else. The
-structural fixture _filenames_ (`schema-v2.txt`) are deliberately versioned
+structural fixture _filenames_ (`schema-v1.txt`) are deliberately versioned
 literals: each one is the permanent record of one version's shape, so it must
 not follow the constant. The same goes for a historical transcript quoting what
 an older build printed — say which version produced it and leave the number

@@ -44,26 +44,33 @@ Three PRs added a required field to the persisted run state and left
 `StepInlineChild.started` replacing it (#772), and `RunbookState.prompted`
 (#827). Nothing failed, because nothing connected the shape in `schemas.ts` to
 the version in `runbook/persisted-state-guards.ts`. Runs persisted by those
-builds cleared the version gate and died in the schema parse instead — as
-`schema_validation_failed` through `RunbookStateManager.load`, and as a bare
-`ZodError` through `RunbookStore.readRun`, which is outside the taxonomy the
-CLI's finish/stop/prune recovery classifies on. See #775.
+builds cleared the version gate (still `1`, which they still carried) and died
+in the schema parse instead — as `schema_validation_failed` through
+`RunbookStateManager.load`, and as an unclassified `ZodError` through
+`RunbookStore.readRun`, which is outside the taxonomy the CLI's
+finish/stop/prune recovery classifies on. See #775.
 
 ## When the test fails
 
-The persisted run-state shape changed. Persisted state is never migrated
-(CLAUDE.md § State Persistence), so a changed shape means state written by an
-older build must now be **refused**, and the version gate is what refuses it.
+The persisted run-state shape changed, and this fixture no longer describes it.
+Update the record; whether that also means moving `CURRENT_SCHEMA_VERSION` is a
+separate judgment call (see that constant's TSDoc in
+`runbook/persisted-state-guards.ts`), not something this test decides for you.
 
-1. Move `CURRENT_SCHEMA_VERSION` in
-   `packages/core/src/runbook/persisted-state-guards.ts` to the next integer,
-   and record what moved it in that constant's TSDoc.
-2. Record the new shape as `schema-v<new>.txt`. The test's own failure output is
-   the rendered text; the previous version's file stays, unmodified, as the
-   record of what the old shape was.
-3. Leave the older files alone. They are history, and a diff between two of them
-   is the clearest available answer to "what did this version change?".
+- **Most shape changes — a required field added or removed, a narrowed
+  constraint** — are already refused by the Zod structural parse for state an
+  older build wrote, version gate or not. Re-record this same version's file:
 
-Rewriting `schema-v<n>.txt` in place turns the test green without moving the
-version — which is the defect this directory exists to prevent, not a shortcut
-around a failing test.
+  ```bash
+  RUNDOWN_RECORD_STATE_SHAPE=1 pnpm --filter @rundown-org/core exec jest __tests__/runbook/persisted-state-shape.test.ts
+  ```
+
+- **A change the structural parse cannot itself catch** — the opaque `snapshot`
+  field is the standing example — needs `CURRENT_SCHEMA_VERSION` moved to the
+  next integer first, with the reason recorded in that constant's TSDoc, and the
+  new shape recorded as `schema-v<new>.txt`. Leave the older files alone: they
+  are history, and a diff between two of them is the clearest available answer
+  to "what did this version change?".
+
+Editing `schema-v<n>.txt` by hand, rather than through the recording run above,
+is the shortcut this directory exists to prevent.

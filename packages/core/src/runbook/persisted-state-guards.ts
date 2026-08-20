@@ -33,28 +33,36 @@ import type { InvalidRunStateDefect } from '../errors/rundown-error.js';
  * did not move. `packages/core/__tests__/runbook/persisted-state-shape.test.ts`
  * is what forces the pairing now.
  *
- * **Version 2** covers three required fields added to the persisted run state
- * across three PRs while this constant stood at `1`:
+ * A version mismatch is a rejection, never a migration: state carrying any
+ * other value is refused outright, not read, adapted, or rewritten (CLAUDE.md
+ * § State Persistence). Three PRs added a required field to the persisted run
+ * state while this stood at `1` — `StepInlineChild.startedAt` (#746),
+ * `StepInlineChild.started` replacing it (#772), and `RunbookState.prompted`
+ * (#827) — without moving it (#775). State from before any of those builds
+ * still carries `schemaVersion: 1`, still passes this check, and is refused
+ * further in instead, by the Zod structural parse: as
+ * `schema_validation_failed` through `RunbookStateManager.load`, and as an
+ * unclassified `ZodError` through `RunbookStore.readRun` — reachable as RD-999
+ * "Unknown error" with no finish/stop/prune recovery. Moving this constant
+ * would close that second path too, by rejecting the mismatch before either
+ * reader reaches its parse.
  *
- * - `StepInlineChild.startedAt` (#746), then
- * - `StepInlineChild.started: InlineLaunchStart | null` replacing it (#772), and
- * - `RunbookState.prompted` (#827).
+ * Left at `1` deliberately: per CLAUDE.md § Active Development Stance, no
+ * `.rundown/rundown.db` outside a local clone or CI run holds state this
+ * matters for, and its documented hard reset — delete the file — clears a
+ * stuck run the same as any other. `RunbookStore.readRun`'s unclassified
+ * `ZodError` escape stays open for this trigger, tracked together with the
+ * same escape for a same-version parse failure (corruption, a hand-edited
+ * `state_json`) as #828.
  *
- * A run persisted mid-inline-launch on any of those builds cleared the version
- * gate and was refused instead by the schema parse — as
- * `schema_validation_failed` through `RunbookStateManager.load`, and as a bare
- * `ZodError` through `RunbookStore.readRun`, which is outside the CLI's recovery
- * taxonomy entirely. Moving the version routes all of them onto
- * `invalid_schema_version`, which finish/stop/prune classify on. This is a
- * rejection, never a migration: version `1` state is not read, adapted, or
- * rewritten (CLAUDE.md § State Persistence).
- *
- * Move this constant in the same commit as any change to the persisted run-state
- * shape — `RunbookState` in `runbook/types.ts` or `RunbookStateObjectSchema` in
- * `schemas.ts`. Widening an optional field is the only edit that does not
- * require it, because state written before the widening still parses.
+ * Move this constant when a change to `RunbookState` (`runbook/types.ts`) or
+ * `RunbookStateObjectSchema` (`schemas.ts`) is one the Zod structural parse
+ * cannot itself refuse. The opaque `snapshot` field, declared `z.unknown()` on
+ * purpose, is the standing example: a change to the XState machine's context
+ * shape or state IDs is invisible to it, so nothing else will refuse a stale
+ * snapshot.
  */
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 1;
 
 /**
  * Thrown when a persisted state file does not match the current schema contract.

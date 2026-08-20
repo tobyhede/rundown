@@ -571,18 +571,21 @@ describe('applyRunbookStateUpdate — stamps, never migrates', () => {
   });
 });
 
-describe('pre-#772 inline shape — refused by the version gate, not by the parse', () => {
+describe('pre-#772 inline shape — refused by the structural parse, not the version gate', () => {
   // The regression #775 names. Three PRs added a required field to the persisted
   // run state without moving CURRENT_SCHEMA_VERSION: #746 introduced
   // `StepInlineChild.startedAt`, #772 replaced it with a required `started`, and
-  // #827 made `prompted` required. With the constant stationary, state written by
-  // any of those builds still clears the version gate and is refused instead by
-  // whatever the schema parse does with it — which is not the same refusal at the
-  // two readers, and is not a classified one at either.
+  // #827 made `prompted` required. Per CLAUDE.md § Active Development Stance and
+  // § State Persistence, the constant was deliberately left at `1` rather than
+  // moved to cover this: no persisted state outside a local clone or CI run is
+  // worth protecting with the nicer classification, and the structural parse
+  // already refuses this shape on its own. This block pins what that refusal
+  // actually looks like at each reader, not what it would look like if the
+  // constant had moved.
   //
   // The shape below is what a run persisted mid-inline-launch on a pre-#772 build
   // carries: `inline.startedAt`, no `inline.started`. Everything else about it is
-  // current and valid, so the schema version is the only thing that can
+  // current and valid, so the missing field is the only thing that can
   // legitimately refuse it.
   const PRE_STARTED_RUN_ID = `rd_${'7'.repeat(32)}`;
   const PRE_STARTED_CHILD_ID = `rd_${'8'.repeat(32)}`;
@@ -632,52 +635,53 @@ describe('pre-#772 inline shape — refused by the version gate, not by the pars
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('carries a version the current build does not write', () => {
+  it('carries the version the current build also writes', () => {
     // The premise both tests below rest on, asserted rather than assumed. If the
-    // constant ever returns to the version that shape was written under, the gate
-    // stops firing and those assertions would be pinning the parse's behaviour
-    // under names that say otherwise.
-    expect(CURRENT_SCHEMA_VERSION).not.toBe(PRE_STARTED_SCHEMA_VERSION);
+    // constant ever moves away from the version that shape was written under,
+    // the gate would start firing first and these assertions would be pinning a
+    // refusal the version gate produces, under names that say the parse does.
+    expect(CURRENT_SCHEMA_VERSION).toBe(PRE_STARTED_SCHEMA_VERSION);
   });
 
-  it('refuses it at the version gate through RunbookStateManager.load', async () => {
+  it('clears the version gate and is refused by the structural parse through RunbookStateManager.load', async () => {
     const manager = new RunbookStateManager(tmpDir);
 
     const load = manager.load(PRE_STARTED_RUN_ID);
 
     await expect(load).rejects.toBeInstanceOf(InvalidRunbookStateError);
-    // The reason, not only the class. `load` reframes a failed parse as
-    // `schema_validation_failed`, which is the same class — so the class alone
-    // cannot tell the version gate from the parse, and this test would pass
-    // unchanged against the stale constant it exists to pin.
+    // The reason, not only the class. `invalid_schema_version` and
+    // `schema_validation_failed` share one error class, so the class alone
+    // cannot tell the version gate from the parse — only the reason can, and
+    // only the parse's reason is correct here, since the version matches.
     await expect(load).rejects.toMatchObject({
       defect: {
         runId: PRE_STARTED_RUN_ID,
-        reason: 'invalid_schema_version',
-        schemaVersion: PRE_STARTED_SCHEMA_VERSION,
+        reason: 'schema_validation_failed',
       },
     });
   });
 
-  it('refuses it as a classified class, never a bare ZodError, on both store read seams', async () => {
+  it('clears the version gate and escapes as a bare ZodError on both store read seams (#828)', async () => {
     const store = await getRunbookStore(tmpDir);
     const runId = brandRunIdForTest(PRE_STARTED_RUN_ID);
 
     // `loadRun` and the in-transaction `ctx.readState` share one validating read,
-    // but only its gate is classified: past the gate, `readRun` parses with
-    // `.parse()`, so a shape that clears the version check and fails the schema
+    // but only its gate is classified: the version check passes (both are `1`),
+    // so both fall through to `readRun`'s `.parse()`, and the shape that fails it
     // escapes as a bare `ZodError` — outside the taxonomy
     // `isRecoverableActiveStackError` classifies on, which is what leaves a
-    // `--claim-id` bearer unable to finish, stop or prune the run.
+    // `--claim-id` bearer unable to finish, stop or prune the run. This is the
+    // accepted, tracked gap (#828), not a regression: moving
+    // `CURRENT_SCHEMA_VERSION` would close it for this specific trigger, and
+    // `persisted-state-guards.ts`'s doc comment records why that move was not
+    // made.
     const seams: readonly (() => Promise<unknown>)[] = [
       () => store.loadRun(runId),
       () => store.mutateSession((ctx) => ctx.readState(runId)),
     ];
 
     for (const read of seams) {
-      await expect(read()).rejects.toBeInstanceOf(InvalidRunbookStateError);
-      await expect(read()).rejects.not.toBeInstanceOf(ZodError);
-      await expect(read()).rejects.toThrow(/invalid schemaVersion/);
+      await expect(read()).rejects.toBeInstanceOf(ZodError);
     }
   });
 

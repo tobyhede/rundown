@@ -10,24 +10,26 @@ import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/state.js';
  * The pairing guard for #775.
  *
  * Three PRs (#746, #772, #827) each added a required field to the persisted run
- * state and left `CURRENT_SCHEMA_VERSION` at `1`. Nothing failed, because
- * nothing connected the two: the shape lives in `schemas.ts`, the version lives
- * in `persisted-state-guards.ts`, and every fixture hard-coded the version as a
- * literal that could not go stale because it was never derived from anything.
+ * state without anything noticing: the shape lives in `schemas.ts`, the version
+ * lives in `persisted-state-guards.ts`, and every fixture hard-coded the version
+ * as a literal that could not go stale because it was never derived from
+ * anything.
  *
  * This file is the connection. It renders the persisted run-state schema as a
  * canonical structural string and compares it against a fixture named for the
- * version that shape belongs to. Change the shape and this fails; the way to
- * make it pass is to move `CURRENT_SCHEMA_VERSION` and record the new shape
- * under the new version's name.
+ * version that shape belongs to. Change the shape and this fails, naming the
+ * fields that moved. The remedy is a judgment call, not an automatic bump: for
+ * most shape changes — a required field added or removed, a narrowed
+ * constraint — the Zod structural parse already refuses state an older build
+ * wrote, so re-recording this same version's fixture is enough (see
+ * `CURRENT_SCHEMA_VERSION`'s own doc comment for what it does and does not
+ * still protect). Move `CURRENT_SCHEMA_VERSION` and record the new shape under
+ * a new version's name only when the change is one the structural parse cannot
+ * itself catch — the opaque `snapshot` field is the standing example.
  *
- * What it does NOT do is force the bump — no test can. Editing
- * `schema-v<n>.txt` in place makes it green again while leaving the version
- * stationary, which is the exact defect. What the guard buys is that the moment
- * becomes unmissable and the remedy is named at the failure, instead of the
- * change landing in silence three times running. Rewriting a fixture named for
- * an already-shipped version is also a conspicuous thing to do in review, which
- * is the rest of the protection.
+ * What it does NOT do is force either remedy — no test can. What the guard
+ * buys is that the moment becomes unmissable, with the changed fields named at
+ * the failure, instead of landing in silence three times running.
  */
 
 /**
@@ -294,7 +296,8 @@ describe('persisted run-state shape is pinned to CURRENT_SCHEMA_VERSION', () => 
       // recorded must not read as a run that verified.
       throw new Error(
         `Recorded the persisted run-state shape to schema-v${String(CURRENT_SCHEMA_VERSION)}.txt. ` +
-          `Re-run without ${RECORD_ENV} to verify it, and confirm CURRENT_SCHEMA_VERSION moved with it.`,
+          `Re-run without ${RECORD_ENV} to verify it, and decide whether this change also needs ` +
+          `CURRENT_SCHEMA_VERSION moved (see its doc comment).`,
       );
     }
 
