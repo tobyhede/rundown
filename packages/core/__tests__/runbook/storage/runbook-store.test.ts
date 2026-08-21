@@ -79,6 +79,28 @@ async function newState(overrides: Partial<RunbookState> = {}): Promise<RunbookS
   return { ...state, ...overrides };
 }
 
+/**
+ * Overwrite a run's persisted `state_json` with a shape the typed API cannot express.
+ *
+ * Planted after the insert, never through `createRun`: that takes a typed
+ * `RunbookState`, and every shape worth refusing here is one the current type
+ * does not have.
+ *
+ * @param runId - Run whose row is rewritten.
+ * @param overrides - Raw fields merged over the persisted object.
+ */
+async function plantRawState(runId: RunId, overrides: Record<string, unknown>): Promise<void> {
+  await store.transaction((txn) => {
+    const row = txn.tx
+      .prepare('SELECT state_json FROM runs WHERE id = :id')
+      .get<{ readonly state_json: string }>({ id: runId });
+    const raw = JSON.parse(row!.state_json) as Record<string, unknown>;
+    txn.tx
+      .prepare('UPDATE runs SET state_json = :json WHERE id = :id')
+      .run({ id: runId, json: JSON.stringify({ ...raw, ...overrides }) });
+  });
+}
+
 /** Read a run's raw counters. */
 function counters(runId: RunId): Promise<{ stateVersion: number; claimGeneration: number }> {
   return store.read((txn) => {
@@ -260,17 +282,7 @@ describe('RunbookStore round-trip', () => {
     async (_label, legacyShape, shapeName) => {
       const state = await newState();
       await store.createRun(state);
-      // Planted after the insert: `createRun` takes a typed `RunbookState`, and
-      // the legacy fields are exactly the ones the current type does not have.
-      await store.transaction((txn) => {
-        const row = txn.tx
-          .prepare('SELECT state_json FROM runs WHERE id = :id')
-          .get<{ readonly state_json: string }>({ id: state.id });
-        const raw = JSON.parse(row!.state_json) as Record<string, unknown>;
-        txn.tx
-          .prepare('UPDATE runs SET state_json = :json WHERE id = :id')
-          .run({ id: state.id, json: JSON.stringify({ ...raw, ...legacyShape }) });
-      });
+      await plantRawState(state.id, legacyShape);
 
       const expected =
         `This runbook used dynamic-step snapshots (${shapeName}), which are no longer supported. ` +
@@ -295,22 +307,85 @@ describe('RunbookStore round-trip', () => {
     // population that needs it — real legacy state, which is stale in both ways.
     const state = await newState({ schemaVersion: 0 });
     await store.createRun(state);
-    await store.transaction((txn) => {
-      const row = txn.tx
-        .prepare('SELECT state_json FROM runs WHERE id = :id')
-        .get<{ readonly state_json: string }>({ id: state.id });
-      const raw = JSON.parse(row!.state_json) as Record<string, unknown>;
-      txn.tx.prepare('UPDATE runs SET state_json = :json WHERE id = :id').run({
-        id: state.id,
-        json: JSON.stringify({ ...raw, instance: 2, lastAction: { type: 'GOTO_NEXT' } }),
-      });
-    });
+    await plantRawState(state.id, { instance: 2, lastAction: { type: 'GOTO_NEXT' } });
 
     await expect(store.loadRun(state.id)).rejects.toBeInstanceOf(LegacySnapshotError);
     await expect(store.loadRun(state.id)).rejects.toThrow('(GOTO_NEXT)');
     await expect(store.mutateSession((ctx) => ctx.readState(state.id))).rejects.toThrow(
       '(GOTO_NEXT)',
     );
+  });
+
+  // Past the three gates, the two readers of persisted state used to diverge.
+  // `RunbookStateManager.load` reframes a failed parse as
+  // `InvalidRunbookStateError` / `schema_validation_failed`; `readRun` threw the
+  // bare `ZodError` the parse produces (#828) — neither class
+  // `isRecoverableActiveStackError` accepts, nor an arm `toRundownError`
+  // classifies on, so it reached the operator as RD-999 "Unknown error" carrying
+  // a schema dump and left `complete` / `stop` / `prune` unable to clear the run.
+  // That is the failure the gates exist to prevent, surviving one line past them.
+  //
+  // The rows that reach this arm are at the CURRENT version and still fail the
+  // schema: corruption, a hand-edited `state_json`, a partial write, or state
+  // written by a build whose shape drifted without the constant moving.
+  it.each([
+    ['a removed field the schema names', { artifactVars: {} }],
+    ['a required field of the wrong type', { startedAt: 42 }],
+  ])(
+    'refuses a current-version row failing schema validation on %s, on every read seam',
+    async (_label, corruption) => {
+      const state = await newState();
+      await store.createRun(state);
+      await plantRawState(state.id, corruption);
+
+      const seams: readonly (() => Promise<unknown>)[] = [
+        () => store.loadRun(state.id),
+        () => store.mutateSession((ctx) => ctx.readState(state.id)),
+      ];
+      for (const read of seams) {
+        // Both seams, because pinning only `loadRun` would leave the
+        // transactional read — `rundown stash` / `pop` on both their bare and
+        // `--claim-id` paths — reporting the unclassified escape.
+        await expect(read()).rejects.toThrow(
+          `Invalid runbook state for "${state.id}": schema validation failed.`,
+        );
+        await expect(read()).rejects.toBeInstanceOf(InvalidRunbookStateError);
+        // The reason as well as the class: `invalid_schema_version` shares the
+        // class, so only the reason says which refusal actually fired, and a
+        // version gate firing here would mean the fixture stopped being
+        // current-version state.
+        await expect(read()).rejects.toMatchObject({
+          defect: { runId: state.id, reason: 'schema_validation_failed' },
+        });
+      }
+    },
+  );
+
+  // The two fields `RunbookStateManager.load` refuses by name rather than
+  // leaving to the parse, because "missing templateVars" says what to do and
+  // "schema validation failed" does not. They are gates, not parse arms, so the
+  // in-transaction reader gets the same named refusal — the taxonomy is one
+  // across both readers at every point past the row being read, not just at the
+  // parse.
+  it.each([
+    ['templateVars', { templateVars: undefined }, 'missing_template_vars'],
+    ['prompted', { prompted: undefined }, 'missing_prompted'],
+  ])('names %s when the row is missing it, on every read seam', async (field, plant, reason) => {
+    const state = await newState();
+    await store.createRun(state);
+    await plantRawState(state.id, plant);
+
+    const seams: readonly (() => Promise<unknown>)[] = [
+      () => store.loadRun(state.id),
+      () => store.mutateSession((ctx) => ctx.readState(state.id)),
+    ];
+    for (const read of seams) {
+      await expect(read()).rejects.toThrow(
+        `Invalid runbook state for "${state.id}": missing ${field}. ` +
+          `Prune this run and re-run the runbook.`,
+      );
+      await expect(read()).rejects.toMatchObject({ defect: { runId: state.id, reason } });
+    }
   });
 
   it('refuses to delete a run with active execution ownership', async () => {

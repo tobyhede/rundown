@@ -107,12 +107,24 @@ function toRundownError(error: unknown): RundownError {
   // are the same condition in two shapes and share one arm because they share
   // one recovery: `InvalidRunbookStateError` covers unparseable persisted state,
   // a schemaVersion other than `CURRENT_SCHEMA_VERSION`, a missing
-  // `templateVars`, and a failed schema parse; `LegacySnapshotError` covers the
-  // deprecated dynamic-step snapshot.
-  // Both are raised by `RunbookStateManager.load`, at the same point, and both
-  // are cleared by `rundown complete` / `rundown stop` (which route through
+  // `templateVars` or `prompted`, and a failed schema parse; `LegacySnapshotError`
+  // covers the deprecated dynamic-step snapshot. Both are cleared by
+  // `rundown complete` / `rundown stop` (which route through
   // `isRecoverableActiveStackError` to drop the unusable entry) or by
   // `rundown prune`.
+  //
+  // Raised at BOTH readers of persisted state since #828, not only
+  // `RunbookStateManager.load`: `RunbookStore.readRun` reframes its own parse
+  // failure the same way, so every in-transaction read reaches this arm too. One
+  // consequence is worth knowing before reading a report of it as a bug. The
+  // parent-advance guard `openDelegatedChildrenFor` performs a validating read
+  // of each delegated CHILD, so a `rundown pass` on a healthy parent with a
+  // corrupt child now surfaces RD-309 naming the child — a run the operator did
+  // not target and is nonetheless told to prune. That coupling is deliberate and
+  // predates this arm (a guard that skipped unreadable children would report "no
+  // open children" and advance the parent past a delegation it cannot evaluate);
+  // what changed is only that the refusal now arrives classified instead of as
+  // RD-999. See the note at the child read in `runbook-store.ts`.
   //
   // This arm is what makes CLAUDE.md § State Persistence's required behaviour —
   // "detect invalid state ... and prompt the user to finish or prune" —

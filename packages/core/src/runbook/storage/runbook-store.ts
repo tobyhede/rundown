@@ -35,7 +35,7 @@ import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } fro
 import { getErrorMessage } from '../../errors.js';
 import { logger } from '../../logger.js';
 import type { SessionData } from '../state.js';
-import { assertLoadablePersistedRun } from '../persisted-state-guards.js';
+import { assertLoadablePersistedRun, parsePersistedRunState } from '../persisted-state-guards.js';
 import type { SqlDriver, SqlTransaction, SqlReadTransaction, SyncWork } from './sql-driver.js';
 import {
   type CapturedAuthority,
@@ -989,9 +989,8 @@ export class RunbookStore {
    * @throws {LegacySnapshotError} When the row carries a deprecated dynamic-step
    *   snapshot shape (`GOTO_NEXT` last action, or an `instance` field).
    * @throws {InvalidRunbookStateError} When the row carries a schema version
-   *   other than `CURRENT_SCHEMA_VERSION`.
-   * @throws {z.ZodError} When the row clears those gates but fails run-state
-   *   schema validation.
+   *   other than `CURRENT_SCHEMA_VERSION`, is missing `templateVars` or
+   *   `prompted`, or clears those gates and fails run-state schema validation.
    */
   loadRun(runId: RunId): Promise<RunbookState | null> {
     return this.driver.read((tx) => this.readRun(tx, runId));
@@ -1631,9 +1630,8 @@ export class RunbookStore {
    * @throws {LegacySnapshotError} When any row carries a deprecated dynamic-step
    *   snapshot shape (`GOTO_NEXT` last action, or an `instance` field).
    * @throws {InvalidRunbookStateError} When any row carries a schema version
-   *   other than `CURRENT_SCHEMA_VERSION`.
-   * @throws {z.ZodError} When any row clears those gates but fails run-state
-   *   schema validation.
+   *   other than `CURRENT_SCHEMA_VERSION`, is missing `templateVars` or
+   *   `prompted`, or clears those gates and fails run-state schema validation.
    */
   listRuns(): Promise<readonly RunbookState[]> {
     return this.driver.read((tx) => {
@@ -1665,9 +1663,8 @@ export class RunbookStore {
    * @throws {LegacySnapshotError} When the row carries a deprecated dynamic-step
    *   snapshot shape (`GOTO_NEXT` last action, or an `instance` field).
    * @throws {InvalidRunbookStateError} When the row carries a schema version
-   *   other than `CURRENT_SCHEMA_VERSION`.
-   * @throws {z.ZodError} When the row clears those gates but fails run-state
-   *   schema validation.
+   *   other than `CURRENT_SCHEMA_VERSION`, is missing `templateVars` or
+   *   `prompted`, or clears those gates and fails run-state schema validation.
    */
   private readRunWithVersion(
     tx: SqlReadTransaction,
@@ -2435,16 +2432,24 @@ export class RunbookStore {
   /**
    * Read and validate a run from an open transaction.
    *
-   * `assertLoadablePersistedRun` runs BEFORE `stateSchema.parse`, and is the same
-   * function `RunbookStateManager.load` runs before its own parse, so both
-   * readers of persisted state refuse the same shapes with the same message.
-   * Without it the in-transaction readers — `ctx.readState`, and so
+   * Both halves are shared with `RunbookStateManager.load`, in the same order:
+   * `assertLoadablePersistedRun` gates the raw row, then
+   * `parsePersistedRunState` performs the structural parse and reframes its
+   * failure. So the two readers of persisted state refuse the same shapes with
+   * the same message, and — unlike before #828 — the same error class either
+   * side of the parse.
+   *
+   * Without the gates the in-transaction readers — `ctx.readState`, and so
    * `rundown stash` / `pop` on both their bare and `--claim-id` paths — would
    * mutate a foreign-version run the loader refuses to load (the schema leaves
    * `schemaVersion` optional, so the parse accepts every version), and would
-   * report a legacy dynamic-step snapshot as a bare `ZodError` — outside the
-   * three-shape taxonomy `isRecoverableActiveStackError` classifies on, and
-   * without the actionable "restart from the entrypoint" the loader gives.
+   * downgrade a legacy dynamic-step snapshot to the generic
+   * `schema_validation_failed` instead of the actionable "restart from the
+   * entrypoint" under its own `LegacySnapshotError` class. Without the shared
+   * parse they reported every OTHER schema failure as a bare `ZodError`:
+   * outside the taxonomy `isRecoverableActiveStackError` classifies on, so
+   * RD-999 "Unknown error" with no finish/stop/prune recovery for the run it
+   * names.
    *
    * @param tx - Open transaction.
    * @param runId - Run to read.
@@ -2452,7 +2457,8 @@ export class RunbookStore {
    * @throws {LegacySnapshotError} When the row carries a deprecated dynamic-step
    *   snapshot shape (`GOTO_NEXT` last action, or an `instance` field).
    * @throws {InvalidRunbookStateError} When the row carries a schema version
-   *   other than `CURRENT_SCHEMA_VERSION`.
+   *   other than `CURRENT_SCHEMA_VERSION`, is missing `templateVars` or
+   *   `prompted`, or clears those gates and fails run-state schema validation.
    */
   private readRun(tx: SqlReadTransaction, runId: RunId): RunbookState | null {
     const raw = this.readRunRaw(tx, runId);
@@ -2460,15 +2466,16 @@ export class RunbookStore {
       return null;
     }
     assertLoadablePersistedRun(raw, runId);
-    return this.stateSchema.parse(raw) as RunbookState;
+    return parsePersistedRunState(raw, runId, this.stateSchema);
   }
 
   /**
    * Reassemble a run's persisted JSON without validating it.
    *
-   * Exposed for the state manager, which owns the caller-facing error taxonomy
-   * (legacy-snapshot and schema-version rejection) and must therefore inspect the
-   * raw object before validation rather than receive a parsed value or a ZodError.
+   * Exposed for the state manager, which reframes an unparseable `state_json` as
+   * its own `unparseable_json` refusal and must therefore reach the row before
+   * anything validates it — a parsed value would already have been refused on
+   * its behalf, under a reason it did not choose.
    *
    * @param runId - Run to read.
    * @returns The assembled state object, or null when absent.

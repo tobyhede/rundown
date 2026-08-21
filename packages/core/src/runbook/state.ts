@@ -53,6 +53,7 @@ import type { SyncWork } from './storage/sql-driver.js';
 import {
   assertCurrentSchemaVersion,
   assertLoadablePersistedRun,
+  parsePersistedRunState,
   CURRENT_SCHEMA_VERSION,
   InvalidRunbookStateError,
   LegacySnapshotError,
@@ -567,50 +568,18 @@ export class RunbookStateManager {
       return null;
     }
 
-    // Legacy dynamic-step snapshots and foreign schema versions, in that order.
-    // Shared with `RunbookStore.readRun` so the in-transaction readers — every
+    // Legacy dynamic-step snapshots, foreign schema versions, and the two
+    // required fields no reader may default, in that order. Shared with
+    // `RunbookStore.readRun` so the in-transaction readers — every
     // `ctx.readState`, and so `rundown stash`/`pop` on both their bare and
     // `--claim-id` paths — refuse the same shapes with the same message.
     assertLoadablePersistedRun(raw, id);
 
-    // A current-schema row without templateVars is incompatible state. Readers
-    // substitute `runbookSrc` against it on every resume; re-parsing the stored
-    // source to stand in for it would be a silent migration. Named explicitly
-    // rather than left to the schema parse below so the refusal says which field
-    // is missing and what to do about it.
-    if (raw.templateVars === undefined) {
-      throw new InvalidRunbookStateError(
-        `Invalid runbook state for "${id}": missing templateVars. ` +
-          `Prune this run and re-run the runbook.`,
-        { runId, reason: 'missing_template_vars' },
-      );
-    }
-
-    // Same rule, same reason. `prompted` decides whether the run announces its
-    // commands or executes them, and it is the value a composing parent
-    // inherits down into a fresh inline child. Defaulting an absent one at the
-    // read sites would silently adapt an incompatible row into an executing
-    // run; `create` always writes the field, so a row without it originates
-    // outside this codebase's only creation path. Named here rather than left
-    // to the schema parse below so the refusal says which field is missing.
-    if (raw.prompted === undefined) {
-      throw new InvalidRunbookStateError(
-        `Invalid runbook state for "${id}": missing prompted. ` +
-          `Prune this run and re-run the runbook.`,
-        { runId, reason: 'missing_prompted' },
-      );
-    }
-
-    const result = makeRunbookStateSchema(this.cwd).safeParse(raw);
-    if (!result.success) {
-      throw new InvalidRunbookStateError(
-        `Invalid runbook state for "${id}": schema validation failed.`,
-        { runId, reason: 'schema_validation_failed' },
-      );
-    }
-    // Zod's .regex() refinement narrows at runtime but infers as `string` at the type level.
-    // The schema guarantees GOTO `at` matches TEMPLATE_VAR_PATTERN; cast to the stricter TS type.
-    return result.data as RunbookState;
+    // Shared with `RunbookStore.readRun` on the same reasoning as the gates
+    // above: a row that clears them and still fails the schema is refused in
+    // this method's taxonomy at BOTH readers, never as the bare `ZodError` the
+    // parse raises (#828).
+    return parsePersistedRunState(raw, id, makeRunbookStateSchema(this.cwd));
   }
 
   /**
