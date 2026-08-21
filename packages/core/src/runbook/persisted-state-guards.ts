@@ -20,6 +20,10 @@
  * the same reason the gates are shared — a taxonomy split across two call sites
  * is one edit away from diverging again.
  *
+ * Leaf in the sense that matters — the runbook graph. The one runtime import is
+ * `logger`, which pulls in nothing but node builtins and so cannot close a cycle
+ * back through the store.
+ *
  * `runbook/state.ts` re-exports both error classes, so it stays the import site
  * every existing consumer names. There is exactly one definition of each: a
  * second copy would give the CLI's `instanceof` classification two identities to
@@ -30,6 +34,7 @@
 
 import type { z } from 'zod';
 import type { InvalidRunStateDefect } from '../errors/rundown-error.js';
+import { logger } from '../logger.js';
 import type { RunbookState } from './types.js';
 
 /**
@@ -184,11 +189,21 @@ export function assertCurrentSchemaVersion(schemaVersion: unknown, id: string): 
  * The parse alone is not a substitute for any of these gates, for two different
  * reasons. The run schema leaves `schemaVersion` optional on purpose (so `load`
  * can parse an invalid file far enough to report it usefully), so gate 3 is the
- * only thing standing between a foreign version and a successful read. The two
- * legacy shapes the parse does reject — measured: `invalid_union` / "No matching
- * discriminator" for `GOTO_NEXT`, `unrecognized_keys ["instance"]` for the other
- * — it rejects as a bare `ZodError` carrying a schema dump. That is neither of
- * the two classes the CLI's recovery paths classify on, so an ungated read turns
+ * only thing standing between a foreign version and a successful read — nothing
+ * downstream refuses it at all.
+ *
+ * The other four the parse does reject, so what they buy is the DIAGNOSIS, not
+ * the refusal. Measured, ungated: `invalid_union` / "No matching discriminator"
+ * for `GOTO_NEXT`, `unrecognized_keys ["instance"]` for the other legacy shape,
+ * and a required-field issue for each of gates 4 and 5. Since #828 that lands
+ * as `InvalidRunbookStateError` / `schema_validation_failed`, which the CLI's
+ * recovery paths do classify — so dropping a gate no longer strands a run, and
+ * the cost is narrower than it once was but still real: a pre-v1 run is told
+ * "schema validation failed" instead of "restart execution from the runbook
+ * entrypoint", under `InvalidRunbookStateError` rather than the
+ * `LegacySnapshotError` class a consumer can branch on, and a row missing one
+ * required field stops naming which. Before #828 the same drop was worse than
+ * a downgrade — a bare `ZodError`, outside the taxonomy entirely, turning
  * "restart from the entrypoint" into an unrecoverable internal fault.
  *
  * @param raw - The reassembled state object exactly as persisted, unvalidated
@@ -285,6 +300,19 @@ export function parsePersistedRunState(
 ): RunbookState {
   const result = schema.safeParse(raw);
   if (!result.success) {
+    // The refusal names the run and nothing else, deliberately: the message is
+    // an operator instruction, not a schema report. That drops the one signal
+    // the old bare `ZodError` did carry — which field failed — so it goes to
+    // the debug log instead of nowhere (RUNDOWN_LOG_LEVEL=debug), which is the
+    // same trail `lifecycle-write` leaves. Paths and codes only: an issue can
+    // quote the value it rejected, and persisted state holds delegation tokens.
+    void logger.debug('invalid-run-state', {
+      runId: id,
+      issues: result.error.issues.map((issue) => ({
+        path: issue.path.join('.'),
+        code: issue.code,
+      })),
+    });
     throw new InvalidRunbookStateError(
       `Invalid runbook state for "${id}": schema validation failed.`,
       { runId: id, reason: 'schema_validation_failed' },

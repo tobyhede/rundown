@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -16,6 +16,7 @@ import {
   brandRunIdForTest,
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
+import { logger } from '../../src/logger.js';
 import { seedRawRunState } from '../../src/testing/state-fixtures.js';
 import {
   FOREIGN_SCHEMA_VERSION,
@@ -640,6 +641,9 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
   });
 
   afterEach(async () => {
+    // `logger` is a module singleton; a spy leaked by a failing assertion would
+    // silence every suite that runs after this one.
+    jest.restoreAllMocks();
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
@@ -700,6 +704,30 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
         defect: { runId: PRE_STARTED_RUN_ID, reason: 'schema_validation_failed' },
       });
     }
+  });
+
+  it('logs which fields failed, at debug, carrying no rejected values', async () => {
+    // The refusal message names the run and nothing else, because it is an
+    // operator instruction rather than a schema report. That leaves nowhere for
+    // the one useful thing the old bare `ZodError` did carry — which field
+    // failed — so it goes to the debug trail instead.
+    const debug = jest.spyOn(logger, 'debug').mockResolvedValue(undefined);
+
+    await expect(new RunbookStateManager(tmpDir).load(PRE_STARTED_RUN_ID)).rejects.toBeInstanceOf(
+      InvalidRunbookStateError,
+    );
+
+    const entry = debug.mock.calls.find(([message]) => message === 'invalid-run-state');
+    expect(entry).toBeDefined();
+    const data = entry?.[1] as { runId: string; issues: Record<string, unknown>[] };
+    expect(data.runId).toBe(PRE_STARTED_RUN_ID);
+    // The whole array, exactly. The dotted path is the diagnosis — the drift
+    // this fixture carries is inside the inline latch, so a trail that stopped
+    // at the top-level field would name the wrong thing — and comparing the
+    // entries whole is also the redaction guarantee: a Zod issue can quote the
+    // value it rejected, persisted run state holds delegation tokens, and a
+    // third key appearing here would fail this assertion rather than ship.
+    expect(data.issues).toEqual([{ path: 'substepStates.0.inline.started', code: 'invalid_type' }]);
   });
 
   it('leaves the refused row exactly as persisted', async () => {

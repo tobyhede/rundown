@@ -2443,10 +2443,13 @@ export class RunbookStore {
    * `rundown stash` / `pop` on both their bare and `--claim-id` paths — would
    * mutate a foreign-version run the loader refuses to load (the schema leaves
    * `schemaVersion` optional, so the parse accepts every version), and would
-   * report a legacy dynamic-step snapshot as a bare `ZodError`. Without the
-   * shared parse they reported every OTHER schema failure that way: outside the
-   * taxonomy `isRecoverableActiveStackError` classifies on, so RD-999 "Unknown
-   * error" with no finish/stop/prune recovery for the run it names.
+   * downgrade a legacy dynamic-step snapshot to the generic
+   * `schema_validation_failed` instead of the actionable "restart from the
+   * entrypoint" under its own `LegacySnapshotError` class. Without the shared
+   * parse they reported every OTHER schema failure as a bare `ZodError`:
+   * outside the taxonomy `isRecoverableActiveStackError` classifies on, so
+   * RD-999 "Unknown error" with no finish/stop/prune recovery for the run it
+   * names.
    *
    * @param tx - Open transaction.
    * @param runId - Run to read.
@@ -2469,9 +2472,10 @@ export class RunbookStore {
   /**
    * Reassemble a run's persisted JSON without validating it.
    *
-   * Exposed for the state manager, which owns the caller-facing error taxonomy
-   * (legacy-snapshot and schema-version rejection) and must therefore inspect the
-   * raw object before validation rather than receive a parsed value or a ZodError.
+   * Exposed for the state manager, which reframes an unparseable `state_json` as
+   * its own `unparseable_json` refusal and must therefore reach the row before
+   * anything validates it — a parsed value would already have been refused on
+   * its behalf, under a reason it did not choose.
    *
    * @param runId - Run to read.
    * @returns The assembled state object, or null when absent.
