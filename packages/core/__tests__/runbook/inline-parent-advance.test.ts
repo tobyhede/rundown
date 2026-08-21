@@ -7,6 +7,7 @@ import {
   type PropagateTerminalChildUpwardDeps,
   type TerminalUpwardPropagationResult,
 } from '../../src/runbook/inline-parent-advance.js';
+import { COMPLETION_TARGET_MISMATCH_CODE } from '../../src/runbook/completion-service.js';
 import {
   assertRunId,
   assertDelegationTokenHash,
@@ -308,6 +309,42 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     expect(releaseRunbook).not.toHaveBeenCalled();
   });
 
+  // #802: a drain that refused a persisted completion not meant for the active
+  // cursor is a diagnosed, permanent refusal. It travels as data on the return
+  // value — the shape `linkage-cycle` already uses — and the seam performs no
+  // release and no recursion, because nothing was applied.
+  it('refused advance returns advance-refused with no release and no recursion', async () => {
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
+    const refusal = {
+      reason: 'target_mismatch',
+      message: 'Completion targets substep 2, cursor is on 1',
+      code: COMPLETION_TARGET_MISMATCH_CODE,
+      runId: PARENT,
+    } as const;
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'refused', refusal });
+    const load = jest.fn<(id: string) => Promise<RunbookState | null>>().mockResolvedValue(null);
+    const releaseRunbook = jest
+      .fn<
+        (
+          id: RunId,
+          o?: { readonly retainClaimsAsTerminal?: boolean },
+        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
+      >()
+      .mockImplementation(async (id) => committedRelease(id));
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
+      child,
+      'pass',
+    );
+    // Returned UNCHANGED — the message and code core composed are what the
+    // frontend renders; nothing between here and the emitter re-words them.
+    expect(result).toEqual({ kind: 'advance-refused', refusal });
+    expect(releaseRunbook).not.toHaveBeenCalled();
+    expect(load).not.toHaveBeenCalled();
+  });
+
   it('stopped advance releases the parent and returns stopped (parent has no linkage)', async () => {
     const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
     const parent = makeState(PARENT, { lifecycle: 'stopped', parentLinkage: undefined });
@@ -420,6 +457,65 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     expect(result).toEqual({ kind: 'handled' });
     expect(load).toHaveBeenCalledWith(PARENT);
   });
+
+  // The nested case the depth-1 test above cannot see. A refusal produced by the
+  // RECURSIVE call has to survive the severity collapse the way `linkage-cycle`
+  // does — it carries the refusal the frontend renders, and a caller that never
+  // sees it renders nothing and exits 0 on a permanent, diagnosed refusal.
+  it.each([
+    ['done', 'handled'],
+    ['stopped', 'stopped'],
+  ] as const)(
+    'escalates a refusal from the recursive level past a %s advance',
+    async (shallowStatus, wouldHaveBeen) => {
+      // child -> parent(inline-linked to grandparent) -> grandparent.
+      const child = makeState(CHILD, { parentLinkage: inlineLinkage(PARENT) });
+      const parentTerminal = makeState(PARENT, {
+        lifecycle: shallowStatus === 'done' ? 'completed' : 'stopped',
+        parentLinkage: inlineLinkage(GRANDPARENT),
+      });
+      const refusal = {
+        reason: 'target_mismatch',
+        message: 'Resolved completion target does not match current cursor 3.a.',
+        code: COMPLETION_TARGET_MISMATCH_CODE,
+        // The GRANDPARENT, not the parent this level advanced — naming the run
+        // that actually refused is the whole job of the field, and a fixture
+        // that named the nearer run would pass while proving nothing.
+        runId: GRANDPARENT,
+      } as const;
+      const advanceInlineParent = jest
+        .fn<AdvanceInlineParent>()
+        // Level 1 drives the parent terminal; level 2's advance of the
+        // grandparent refuses.
+        .mockResolvedValueOnce({ status: shallowStatus })
+        .mockResolvedValueOnce({ status: 'refused', refusal });
+      const load = jest
+        .fn<(id: string) => Promise<RunbookState | null>>()
+        .mockResolvedValue(parentTerminal);
+      const releaseRunbook = jest
+        .fn<
+          (
+            id: RunId,
+            o?: { readonly retainClaimsAsTerminal?: boolean },
+          ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
+        >()
+        .mockImplementation(async (id) => committedRelease(id));
+
+      const result = await propagateTerminalChildUpward(
+        makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
+        child,
+        'pass',
+      );
+
+      // Returned AS IT CAME BACK, refusal intact — the `linkage-cycle` rule
+      // applied to the other escalating member. Without the arm this collapsed
+      // to the second tuple element and the refusal vanished.
+      expect(result).toEqual({ kind: 'advance-refused', refusal });
+      expect(result).not.toEqual({ kind: wouldHaveBeen });
+      // Both levels ran: the shallow advance is what makes the collapse reachable.
+      expect(advanceInlineParent).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it('inline→inline chain advances synchronously (callable re-invoked per level)', async () => {
     // child -> parent(inline-linked to grandparent) -> grandparent.

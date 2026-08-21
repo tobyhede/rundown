@@ -43,6 +43,7 @@ import {
 import { assertDelegationIssuanceNonce } from '../../src/runbook/delegation-token.js';
 import { claimCanReportDelegationResult } from '../../src/runbook/claim-id.js';
 import { narrowInlineUpwardPropagation } from '../../src/runbook/collection-service.js';
+import { COMPLETION_TARGET_MISMATCH_CODE } from '../../src/runbook/completion-service.js';
 import type {
   CollectionSessionService,
   RunbookCollectionServiceDependencies,
@@ -3161,6 +3162,18 @@ describe('RunbookCollectionService', () => {
             repeatedRunId: ancestorRunId,
             code: 'INLINE_PARENT_CYCLE',
             message: `Parent linkage cycle detected at ${ancestorRunId}`,
+          },
+        },
+      ],
+      [
+        'advance-refused',
+        {
+          kind: 'advance-refused',
+          refusal: {
+            reason: 'target_mismatch',
+            code: COMPLETION_TARGET_MISMATCH_CODE,
+            message: 'Completion targets substep 2, cursor is on 1',
+            runId: ancestorRunId,
           },
         },
       ],

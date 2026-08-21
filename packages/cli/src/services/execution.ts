@@ -37,6 +37,8 @@ import {
   DB_FILE,
   type DelegationCredentialIssuer,
   type DelegationRuntimeCapabilities,
+  type InlineParentAdvanceRefusal,
+  COMPLETION_TARGET_MISMATCH_CODE,
   projectAndConsumeReEntryFrontier,
   readPersistedReEntryFrontier,
   type ReEntryProjection,
@@ -145,6 +147,59 @@ const EXECUTION_TERMINAL_NO_STACK_POLICY: TransitionOrchestrationPolicy = {
  *   status so the caller can release exactly once (RD-598).
  */
 export type ExecutionTerminalReleaseMode = 'stack-pop' | 'release-runbook' | 'defer-to-caller';
+
+/** Terminal status an execution loop reports when it owns its own release. */
+export type ExecutionLoopResult = 'done' | 'stopped' | 'waiting';
+
+/**
+ * A diagnosed refusal the loop ended on, reported ONLY in `defer-to-caller`.
+ *
+ * The two release-owning modes have already taken their release by the time
+ * they report, so `'stopped'` is true of the run there: it is off the session
+ * stack. `defer-to-caller` releases nothing and hands its status to a caller
+ * that acts on it — the inline parent-advance seam releases the run and
+ * recurses one level up on `'stopped'`. A refusal applied nothing and left the
+ * run RUNNING, so reporting it as `'stopped'` there made the seam release a
+ * live parent and report a terminal to ITS parent that never happened.
+ *
+ * An object rather than a fourth string member: the two release-owning modes
+ * cannot produce it, and the overloads below are what make that unrepresentable
+ * rather than merely documented — their five callers keep the three-member
+ * union and so cannot silently fall through an arm they can never receive.
+ */
+export interface ExecutionLoopRefusal {
+  /** Discriminant, and the reason this is not a terminal. */
+  readonly kind: 'refused';
+  /** What to tell the operator, and under which code. Composed by core. */
+  readonly refusal: InlineParentAdvanceRefusal;
+}
+
+/**
+ * Build the operator-facing refusal for a drain that refused.
+ *
+ * The SOLE construction site. Two paths reach the identical `failed` arm of
+ * {@link DrainResolvedCompletionsResult} — this loop's own drain and the inline
+ * parent-advance callable's — and the whole point of the shared
+ * {@link COMPLETION_TARGET_MISMATCH_CODE} is that they cannot describe one fact
+ * differently. Two literals spelling the same object left them free to, so the
+ * guarantee held only by inspection; this makes it hold by construction.
+ *
+ * @param runbookId - The run whose drain refused. Carried on the refusal because
+ *   core's messages name no run and the walk routinely refuses at an ancestor.
+ * @param drained - The drain's refusal arm.
+ * @returns The refusal both paths render.
+ */
+export function refusalFromDrainFailure(
+  runbookId: RunId,
+  drained: Extract<DrainResolvedCompletionsResult, { status: 'failed' }>,
+): InlineParentAdvanceRefusal {
+  return {
+    reason: drained.reason,
+    message: drained.message,
+    code: COMPLETION_TARGET_MISMATCH_CODE,
+    runId: runbookId,
+  };
+}
 
 /**
  * Optional behavior overrides for {@link runExecutionLoop}.
@@ -394,12 +449,12 @@ function describeInlineChildLinkageRefusal(
 async function propagateInlineChildTerminalResult(args: {
   readonly manager: RunbookStateManager;
   readonly childRunId: RunId;
-  readonly loopResult: 'done' | 'stopped' | 'waiting';
+  readonly loopResult: ExecutionLoopResult;
   readonly cwd: string;
   readonly output: OutputEmitter;
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
   readonly parentDelegationRuntime?: RunScopedDelegationRuntime;
-}): Promise<'done' | 'stopped' | 'waiting'> {
+}): Promise<ExecutionLoopResult> {
   const {
     manager,
     childRunId,
@@ -475,7 +530,7 @@ async function launchInlineChildFromIntent({
   output,
   commandStreamOptions,
   parentDelegationRuntime,
-}: InlineLaunchArgs): Promise<'done' | 'stopped' | 'waiting'> {
+}: InlineLaunchArgs): Promise<ExecutionLoopResult> {
   // Both projections of the one intent, and derived through the same helper the
   // latch derives its own from, so this span and the latch cannot disagree about
   // which child under which parent frame is being launched.
@@ -1132,7 +1187,13 @@ export async function drainResolvedCompletions({
  *   coded `RD-829` (`DELEGATION_FRONTIER_CONSUME_FAILED`) and is retryable. All
  *   three arms come from the shared core seam
  *   {@link projectAndConsumeReEntryFrontier}, so `rundown collect` reports each
- *   condition under the same code.
+ *   condition under the same code. A persisted completion that is not for the
+ *   active cursor returns 'stopped' the same way, coded
+ *   `COMPLETION_TARGET_MISMATCH` — permanent, and the same code the inline
+ *   parent-advance seam reports for the identical drain refusal (#802). Under
+ *   `defer-to-caller` that ONE arm returns {@link ExecutionLoopRefusal} instead
+ *   of `'stopped'`, and emits nothing: a caller that owns the terminal owns
+ *   reporting it, and nothing terminal happened.
  * @throws {Error} If the core actor/lifecycle/session services throw while
  *   advancing transitions, entering an execution unit cannot render it (a
  *   `--helpers` helper raising), command execution rejects, or the emitter
@@ -1150,8 +1211,26 @@ export async function runExecutionLoop(
   steps: ResolvedStep[],
   cwd: string,
   emitter: ExecutionEventEmitter,
+  options: ExecutionLoopOptions & { readonly terminalReleaseMode: 'defer-to-caller' },
+): Promise<ExecutionLoopResult | ExecutionLoopRefusal>;
+export async function runExecutionLoop(
+  manager: RunbookStateManager,
+  runbookId: RunId,
+  steps: ResolvedStep[],
+  cwd: string,
+  emitter: ExecutionEventEmitter,
+  options?: ExecutionLoopOptions & {
+    readonly terminalReleaseMode?: Exclude<ExecutionTerminalReleaseMode, 'defer-to-caller'>;
+  },
+): Promise<ExecutionLoopResult>;
+export async function runExecutionLoop(
+  manager: RunbookStateManager,
+  runbookId: RunId,
+  steps: ResolvedStep[],
+  cwd: string,
+  emitter: ExecutionEventEmitter,
   options: ExecutionLoopOptions = {},
-): Promise<'done' | 'stopped' | 'waiting'> {
+): Promise<ExecutionLoopResult | ExecutionLoopRefusal> {
   const state = await manager.load(runbookId);
   if (!state) return 'stopped';
 
@@ -1371,7 +1450,64 @@ export async function runExecutionLoop(
       return 'stopped';
     }
     if (drainResult.status === 'failed') {
-      throw new Error(drainResult.message);
+      // A REFUSAL, not a crash — the same treatment the three frontier arms
+      // below already give their own diagnosed conditions, and for the reason
+      // spelled out there: an escaping throw unwinds past both the emitter and
+      // `applyExecutionTerminalRelease`, so the caller gets a bare `Error`
+      // carrying no code and the refused run stays on the session stack. Here it
+      // also arrived as RD-999 "Unknown error", telling the operator to retry a
+      // cursor mismatch that no retry can resolve (#802).
+      //
+      // The code names the CONDITION, so this loop and the inline
+      // parent-advance seam report the identical drain refusal identically.
+      const refusal = refusalFromDrainFailure(runbookId, drainResult);
+      // `defer-to-caller` releases NOTHING, so its caller acts on the status it
+      // is given: the inline parent-advance seam releases the run and recurses
+      // one level up on `'stopped'`. This refusal applied nothing and left the
+      // run RUNNING, so reporting `'stopped'` here made the seam release a live
+      // parent and report a terminal to that parent's own parent that never
+      // happened. Hand the refusal back instead — the callable turns it into
+      // the seam's `refused` arm, which releases nothing and walks nowhere.
+      //
+      // Nothing is emitted on this path either, for the same reason and by the
+      // same division: a caller that owns the terminal owns REPORTING it, and
+      // the adapter renders this exact code and message through the emitter it
+      // owns. Emitting here as well would announce a `RUNBOOK_STOPPED` for a run
+      // that is still running, and would print the diagnostic twice.
+      if (terminalReleaseMode === 'defer-to-caller') {
+        return { kind: 'refused', refusal };
+      }
+      emitter.emit({
+        type: 'ERROR_OCCURRED',
+        payload: { message: refusal.message, code: refusal.code },
+      });
+      // Read the CURSOR THE DRAIN COMMITTED, not the capture this iteration
+      // started from. The drain's `failed` arm reports `applied: 0` and carries
+      // no state, so a pass that applied before it mismatched leaves
+      // `currentState` behind — and the corrective stop then named a step the
+      // run had already left while `message` named the real one. Falls back to
+      // the capture only when the run has since vanished, where the capture is
+      // the best coordinate that exists.
+      const refusedState = (await manager.load(runbookId)) ?? currentState;
+      emitter.emit({
+        type: 'RUNBOOK_STOPPED',
+        payload: {
+          position: buildStepPosition(
+            refusedState.step,
+            totalSteps,
+            refusedState.substep,
+            refusedState.forStack,
+          ),
+          message: refusal.message,
+        },
+      });
+      return await applyExecutionTerminalRelease(
+        sessionService,
+        runbookId,
+        terminalReleaseMode,
+        emitter,
+        'stopped',
+      );
     }
     if (drainResult.status === 'not_active') {
       return 'waiting';

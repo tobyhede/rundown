@@ -16,6 +16,7 @@ import {
   type ApplyNextResolvedCompletionArgs,
   type ApplyNextResolvedCompletionResult,
 } from '../../src/runbook/index.js';
+import { COMPLETION_TARGET_MISMATCH_CODE } from '../../src/runbook/completion-service.js';
 import { merge } from '../../src/runbook/state-update-ops.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import {
@@ -637,6 +638,16 @@ describe('RunbookCompletionService', () => {
   });
 
   describe('drain target mismatch variants', () => {
+    // The code both frontends render for this refusal (#802). Pinned as a
+    // literal rather than read back from the constant, because the constant IS
+    // what is under test: the execution loop and the inline parent-advance seam
+    // each reach the identical refusal by a different route, and the whole point
+    // of a shared constant is that neither can word it differently. An agent
+    // routes on this exact string.
+    it('names the operator code for a completion that is not for the active cursor', () => {
+      expect(COMPLETION_TARGET_MISMATCH_CODE).toBe('COMPLETION_TARGET_MISMATCH');
+    });
+
     it('returns target_mismatch for wrong targetStep', async () => {
       const current = state();
       const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');

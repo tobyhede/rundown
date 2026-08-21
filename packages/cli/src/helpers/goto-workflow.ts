@@ -26,7 +26,7 @@ import {
   type DelegationRuntimeCapabilities,
   claimKeyFromBearer,
 } from '@rundown-org/core';
-import { runExecutionLoop } from '../services/execution.js';
+import { runExecutionLoop, type ExecutionLoopResult } from '../services/execution.js';
 import {
   propagateDrivenRunTerminal,
   propagationRequiresFailureExit,
@@ -85,7 +85,7 @@ export type GotoValidationResult =
  * Result of goto execution.
  */
 export type GotoExecutionResult =
-  | { ok: true; loopResult: 'done' | 'stopped' | 'waiting'; propagation?: DrivenRunPropagation }
+  | { ok: true; loopResult: ExecutionLoopResult; propagation?: DrivenRunPropagation }
   | { ok: false; error: string; code: string };
 
 /**

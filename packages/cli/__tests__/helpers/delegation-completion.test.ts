@@ -77,6 +77,33 @@ const REPEAT_CYCLE_SEAM_RESULT = {
   },
 } as const satisfies SeamResult;
 
+/**
+ * A refused inline advance, as the seam hands it back (#802).
+ *
+ * Same construction as the cycle fixture above and for the same reason: the
+ * message and code are core's, so a placeholder no adapter could have composed
+ * is what proves the render is pass-through rather than re-synthesis.
+ */
+const ADVANCE_REFUSED_SEAM_RESULT = {
+  kind: 'advance-refused',
+  refusal: {
+    reason: 'target_mismatch',
+    code: 'COMPLETION_TARGET_MISMATCH',
+    message: 'core-composed target mismatch message',
+    // The walk recurses, so the run that refused is routinely an ANCESTOR — not
+    // the child this adapter was called for. A distinct id here is what proves
+    // the envelope names the refusing run rather than the one in hand.
+    runId: PARENT_RUN_ID,
+  },
+} as const satisfies SeamResult;
+
+/** The envelope every adapter must emit when it collapses the refused advance. */
+const ADVANCE_REFUSED_ENVELOPE = [
+  'core-composed target mismatch message',
+  'COMPLETION_TARGET_MISMATCH',
+  { reason: 'target_mismatch', runId: PARENT_RUN_ID },
+] as const;
+
 /** The envelope every adapter must emit when it collapses the refusal. */
 const REPEAT_CYCLE_ENVELOPE = [
   'core-composed repeat message',
@@ -100,6 +127,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   // Retained as a plain stub for the ESM link check; the thin adapters no longer
   // project — the core seam does — so no test drives it.
   projectDelegationTerminalOutcome: jest.fn(),
+  // A real value, not a stub: the module composes the refused-advance envelope
+  // from it, and the tests assert the code the operator actually sees.
+  COMPLETION_TARGET_MISMATCH_CODE: 'COMPLETION_TARGET_MISMATCH',
   // The thin CLI adapters delegate the decision to the core seam. Mock it so
   // adapter tests assert routing + result mapping; the REAL seam logic is
   // covered by packages/core/__tests__/runbook/inline-parent-advance.test.ts.
@@ -182,6 +212,19 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 jest.unstable_mockModule('../../src/services/execution', () => ({
   drainResolvedCompletions: jest.fn(),
   runExecutionLoop: jest.fn(),
+  // The REAL builder, not a stub: it is the sole construction site for the
+  // refusal envelope, and these tests assert the exact object the operator
+  // ends up seeing. Stubbing it would assert the adapter forwards whatever it
+  // is handed — which is not the property under test.
+  refusalFromDrainFailure: (
+    runId: string,
+    drained: { reason: string; message: string },
+  ): Record<string, unknown> => ({
+    reason: drained.reason,
+    message: drained.message,
+    code: 'COMPLETION_TARGET_MISMATCH',
+    runId,
+  }),
 }));
 
 // Mock actor-service factory to keep this unit test on structural service doubles.
@@ -231,6 +274,8 @@ const {
   propagateDrivenRunTerminal,
   propagationRequiresFailureExit,
   inlineAdvanceRequiresFailureExit,
+  isInlinePropagationRefusal,
+  renderInlinePropagationRefusal,
 } = await import('../../src/helpers/delegation-completion.js');
 
 function makeState(id: RunbookState['id'], overrides: Partial<RunbookState> = {}): RunbookState {
@@ -489,6 +534,24 @@ describe('reportTerminalToDelegatingRun (thin adapter over core seam)', () => {
     expect(output.error).toHaveBeenCalledWith(...REPEAT_CYCLE_ENVELOPE);
   });
 
+  // Unreachable in production — a delegation linkage takes the seam's
+  // report-only arm and never calls the inline advance — but reachable through
+  // the union this adapter must narrow. Pinned so the member cannot be dropped
+  // from the narrowing and silently fall through to `return outcome.kind`,
+  // which has no member to receive it (#802).
+  it('renders the seam refusal, then maps it onto the fail-closed blocked (#802)', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeDelegationLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue(ADVANCE_REFUSED_SEAM_RESULT);
+    const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
+    expect(result).toBe('blocked');
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(output.error).toHaveBeenCalledWith(...ADVANCE_REFUSED_ENVELOPE);
+  });
+
   it('maps a seam not-applicable result to not-applicable', async () => {
     const childState = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
@@ -628,6 +691,37 @@ describe('advanceParentForInlineChild (thin adapter over core seam)', () => {
     expect(output.error).toHaveBeenCalledWith(...REPEAT_CYCLE_ENVELOPE);
   });
 
+  // #802: the arm that replaced the bare throw. The reason reaches the operator
+  // under its own permanent code, and the exit stays fail-closed.
+  it('renders the seam refusal, then maps it onto the fail-closed blocked (#802)', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeInlineLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue(ADVANCE_REFUSED_SEAM_RESULT);
+    const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
+    expect(result).toBe('blocked');
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(output.error).toHaveBeenCalledWith(...ADVANCE_REFUSED_ENVELOPE);
+    // Rendered BEFORE the flush, which is what the throw skipped: buffered
+    // parent-stream output used to be discarded along with the diagnostic.
+    //
+    // ORDER, not presence. `output.error` only accumulates into the JSON
+    // renderer while the action object goes straight to the writer, so a flush
+    // that ran first would still satisfy two `toHaveBeenCalled` assertions
+    // while breaking the "action object is the last line" contract this comment
+    // names — the one regression the test exists for would be the one it could
+    // not see.
+    /* eslint-disable @typescript-eslint/unbound-method -- Jest inspects these structural mocks without invoking them. */
+    const errorAt = jest.mocked(output.error).mock.invocationCallOrder[0];
+    const flushAt = jest.mocked(output.flush).mock.invocationCallOrder[0];
+    /* eslint-enable @typescript-eslint/unbound-method */
+    expect(errorAt).toBeDefined();
+    expect(flushAt).toBeDefined();
+    expect(errorAt).toBeLessThan(flushAt);
+  });
+
   it('renders no diagnostic when the seam did not refuse', async () => {
     // The collapse and the render are two statements around one flush; a render
     // that drifted outside the refusal arm would print INLINE_PARENT_CYCLE on a
@@ -641,6 +735,76 @@ describe('advanceParentForInlineChild (thin adapter over core seam)', () => {
     await advanceParentForInlineChild(childState, 'pass', '/test', output);
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).not.toHaveBeenCalled();
+  });
+});
+
+// The ONE owner of "which arms are refusals", read by the three adapters above
+// and by `rundown collect`. Both halves are pinned here because the two must
+// agree: a renderer that draws a diagnostic the predicate does not classify as
+// a refusal produces a command that prints a refusal and exits 0.
+describe('isInlinePropagationRefusal / renderInlinePropagationRefusal', () => {
+  const nonRefusals = [
+    { kind: 'handled' },
+    { kind: 'stopped' },
+    { kind: 'blocked' },
+    { kind: 'not-applicable' },
+    { kind: 'reported' },
+    { kind: 'duplicate' },
+  ] as const satisfies readonly SeamResult[];
+
+  it.each(nonRefusals.map((o) => [o.kind, o] as const))(
+    'classifies %s as not a refusal and renders nothing',
+    (_kind, outcome) => {
+      const output = makeOutput();
+      expect(isInlinePropagationRefusal(outcome)).toBe(false);
+      expect(renderInlinePropagationRefusal(output, outcome)).toBe(false);
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+      expect(output.error).not.toHaveBeenCalled();
+    },
+  );
+
+  // `undefined` is the shape `collect` holds when the walk never ran: a
+  // non-terminal collect sets no `terminalInlineAdvance` at all.
+  it('treats an absent outcome as no refusal', () => {
+    const output = makeOutput();
+    expect(isInlinePropagationRefusal(undefined)).toBe(false);
+    expect(renderInlinePropagationRefusal(output, undefined)).toBe(false);
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(output.error).not.toHaveBeenCalled();
+  });
+
+  const refusalArms: readonly [
+    string,
+    SeamResult,
+    readonly [string, string, Record<string, unknown>],
+  ][] = [
+    ['linkage-cycle', REPEAT_CYCLE_SEAM_RESULT, REPEAT_CYCLE_ENVELOPE],
+    ['advance-refused', ADVANCE_REFUSED_SEAM_RESULT, ADVANCE_REFUSED_ENVELOPE],
+  ];
+
+  it.each(refusalArms)(
+    'classifies %s as a refusal and renders its envelope',
+    (_kind, outcome, envelope) => {
+      const output = makeOutput();
+      expect(isInlinePropagationRefusal(outcome)).toBe(true);
+      expect(renderInlinePropagationRefusal(output, outcome)).toBe(true);
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+      expect(output.error).toHaveBeenCalledWith(envelope[0], envelope[1], envelope[2]);
+      // Exactly one diagnostic: the two arms are mutually exclusive, and drawing
+      // both would print a cycle for a cursor mismatch.
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+      expect(output.error).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  // Rendering is the caller's decision to act on; it never flushes on their
+  // behalf, because the flush POSITION differs between the adapters and
+  // `collect` (which must flush here to keep the applied action object last).
+  it('leaves the flush to the caller', () => {
+    const output = makeOutput();
+    renderInlinePropagationRefusal(output, ADVANCE_REFUSED_SEAM_RESULT);
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(output.flush).not.toHaveBeenCalled();
   });
 });
 
@@ -660,6 +824,19 @@ describe('propagateChildTerminal (linkage dispatcher over core seam)', () => {
     expect(result).toBe('blocked');
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).toHaveBeenCalledWith(...REPEAT_CYCLE_ENVELOPE);
+  });
+
+  it('renders the seam refusal, then maps it onto the fail-closed blocked (#802)', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeInlineLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue(ADVANCE_REFUSED_SEAM_RESULT);
+    const result = await propagateChildTerminal(childState, 'pass', '/test', output);
+    expect(result).toBe('blocked');
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(output.error).toHaveBeenCalledWith(...ADVANCE_REFUSED_ENVELOPE);
   });
 
   it('still collapses a seam duplicate to reported (finding 2 regression)', async () => {
@@ -725,7 +902,11 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     jest.mocked(runExecutionLoop).mockReset();
   });
 
-  it('throws when drain reports a hard failure', async () => {
+  // #802: the drain's `target_mismatch` is a diagnosed, permanent refusal. It
+  // used to be re-thrown as a bare `Error`, which unwound past the adapter's
+  // renderer and past `output.flush()` — so the operator lost the buffered
+  // parent stream AND the reason, and was handed RD-999 "Unknown error".
+  it('returns the drain refusal as data rather than throwing, and flushes first', async () => {
     const parentState = makeState(PARENT_RUN_ID);
     const manager = makeManager(new Map([[parentState.id, parentState]]));
     const output = makeOutput();
@@ -733,6 +914,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     jest.mocked(drainResolvedCompletions).mockResolvedValue({
       unresolved: 0,
       status: 'failed',
+      reason: 'target_mismatch',
       applied: 0,
       state: parentState,
       message: 'drain blew up',
@@ -746,8 +928,66 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
         parentEntry: 1,
         result: 'pass',
       }),
-    ).rejects.toThrow('drain blew up');
+    ).resolves.toEqual({
+      status: 'refused',
+      refusal: {
+        reason: 'target_mismatch',
+        message: 'drain blew up',
+        code: 'COMPLETION_TARGET_MISMATCH',
+        runId: PARENT_RUN_ID,
+      },
+    });
+    // The buffered parent stream survives the refusal; the throw discarded it.
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(output.flush).toHaveBeenCalled();
     expect(runExecutionLoop).not.toHaveBeenCalled();
+  });
+
+  // The nested arm: this callable's OWN drain applied, so it runs the parent's
+  // execution loop — whose drain can hit the same refusal. In
+  // `defer-to-caller` the loop hands that back as data instead of reporting
+  // `'stopped'`. Forwarding a `'stopped'` here would have the core seam release
+  // a parent that is still running and recurse one level up reporting a
+  // terminal that never happened.
+  it('forwards a refusal from the deferred execution loop without claiming a terminal', async () => {
+    const parentState = makeState(PARENT_RUN_ID);
+    const manager = makeManager(new Map([[parentState.id, parentState]]));
+    const output = makeOutput();
+    wireMocks(manager, makeLifecycleService());
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 1,
+      status: 'continue',
+      applied: 1,
+      state: parentState,
+    } as never);
+    jest.mocked(runExecutionLoop).mockResolvedValue({
+      kind: 'refused',
+      refusal: {
+        reason: 'target_mismatch',
+        message: 'loop drain blew up',
+        code: 'COMPLETION_TARGET_MISMATCH',
+        runId: PARENT_RUN_ID,
+      },
+    } as never);
+
+    const advance = buildAdvanceInlineParent('/test', output);
+    await expect(
+      advance({
+        parentRunId: PARENT_RUN_ID,
+        parentFrameKey: FRAME,
+        parentEntry: 1,
+        result: 'pass',
+      }),
+    ).resolves.toEqual({
+      status: 'refused',
+      refusal: {
+        reason: 'target_mismatch',
+        message: 'loop drain blew up',
+        code: 'COMPLETION_TARGET_MISMATCH',
+        runId: PARENT_RUN_ID,
+      },
+    });
+    expect(runExecutionLoop).toHaveBeenCalled();
   });
 
   it('collapses a drain STOP to status stopped', async () => {
@@ -792,6 +1032,34 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     });
     expect(runExecutionLoop).toHaveBeenCalledTimes(1);
     expect(outcome).toEqual({ status: 'stopped' });
+  });
+
+  // The loop's non-terminal exit. It used to be this callable's fall-through, so
+  // no test had to name it; making the refusal reachable only by exclusion made
+  // it an explicit branch, and an untested one is a branch that could return the
+  // refusal shape for a parent that is merely waiting on its siblings.
+  it('collapses a loop that is still waiting to status active', async () => {
+    const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
+    const manager = makeManager(new Map([[parentState.id, parentState]]));
+    const output = makeOutput();
+    wireMocks(manager, makeLifecycleService());
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
+      status: 'continue',
+      applied: 1,
+      state: parentState,
+    });
+    jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+    const advance = buildAdvanceInlineParent('/test', output);
+    const outcome = await advance({
+      parentRunId: PARENT_RUN_ID,
+      parentFrameKey: FRAME,
+      parentEntry: 1,
+      result: 'pass',
+    });
+    // `active`, and nothing else: the seam releases nothing and recurses
+    // nowhere on it, which is what a parent still waiting on siblings needs.
+    expect(outcome).toEqual({ status: 'active' });
   });
 
   it('drives the loop with the defer-to-caller terminal mode (no self-release)', async () => {

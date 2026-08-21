@@ -73,7 +73,9 @@ export const CLISymbolicErrorCodeValues = [
   'COLLECT_OPERATION_FAILED',
   'CHILD_RUN_MISSING',
   'CHILD_LINKAGE_MISMATCH',
+  'PARENT_RUN_MISSING',
   'DELEGATION_SUPERSEDED',
+  'COMPLETION_TARGET_MISMATCH',
   'INVALID_TOKEN',
   'TOKEN_NOT_FOUND',
   'DELEGATION_CANCELLED',
@@ -164,6 +166,23 @@ export const CLIErrorCodes = {
   CHILD_RUN_MISSING: 'CHILD_RUN_MISSING',
   /** Child runbook's persisted parentLinkage diverges from the freshly token-validated linkage (state corruption — operator intervention required) */
   CHILD_LINKAGE_MISMATCH: 'CHILD_LINKAGE_MISMATCH',
+  /**
+   * The parent run named by a delegation no longer exists (#807).
+   *
+   * The sibling of `CHILD_RUN_MISSING` on the other end of the same linkage,
+   * and deliberately not `TOKEN_NOT_FOUND`: the token was found and was valid,
+   * so a code naming the token sends the holder to check the one thing that is
+   * not wrong.
+   */
+  PARENT_RUN_MISSING: 'PARENT_RUN_MISSING',
+  /**
+   * Core refused a persisted completion that is not for the active cursor (#802).
+   *
+   * Names the CONDITION rather than the command, so the inline parent-advance
+   * seam and the execution loop report it identically. Permanent: re-running
+   * cannot make a stale completion match the cursor.
+   */
+  COMPLETION_TARGET_MISMATCH: 'COMPLETION_TARGET_MISMATCH',
   /** Delegation token format is invalid */
   INVALID_TOKEN: ErrorCodes.INVALID_TOKEN.code,
   /** Delegation token was not found */

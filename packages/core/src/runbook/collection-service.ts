@@ -1068,10 +1068,16 @@ async function finishCollection(
  * 2. The walk RECURSES upward, and an ancestor above an inline parent may well
  *    carry delegation linkage, so `reported` genuinely is produced one level
  *    up. It never escapes: `propagateTerminalChildUpwardInner`'s severity
- *    collapse returns only `linkage-cycle` and `blocked` unchanged, maps a
- *    `stopped` advance to `stopped`, and folds everything else — `reported`
- *    included — into `handled`. Pinned by "collapses a delegation-linked
- *    grandparent report INSIDE the seam, not at this boundary".
+ *    collapse returns the diagnosing members — `linkage-cycle`,
+ *    `advance-refused` — and `blocked` unchanged, maps a `stopped` advance to
+ *    `stopped`, and folds everything else — `reported` included — into
+ *    `handled`. Pinned by "collapses a delegation-linked grandparent report
+ *    INSIDE the seam, not at this boundary".
+ *
+ *    Keep this list in step with that ladder. It named two members while the
+ *    ladder had grown a third, which read as a statement that the third was
+ *    meant to be folded — the swallow it actually described was a defect
+ *    (#802 review).
  *
  * Spelled as an exhaustive switch rather than a conditional so the compiler,
  * not a reviewer, is what forces this boundary to be revisited when a member is
@@ -1101,8 +1107,10 @@ export function narrowInlineUpwardPropagation(
     case 'blocked':
     case 'not-applicable':
     case 'linkage-cycle':
+    case 'advance-refused':
       // Returned AS IT CAME BACK, never rebuilt: the `linkage-cycle` arm carries
-      // the trip naming the run to prune (#603).
+      // the trip naming the run to prune (#603), and `advance-refused` the
+      // diagnosed drain refusal the frontend renders (#802).
       return outcome;
     case 'reported':
     case 'duplicate':

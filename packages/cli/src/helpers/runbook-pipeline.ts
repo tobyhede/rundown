@@ -58,7 +58,7 @@ import {
 } from '@rundown-org/parser';
 import { buildRunbookRef, resolveRunbookFile, resolveRunbookRef } from './resolve-runbook.js';
 import type { ResolvedRunbook as ResolvedRunbookFile } from './resolve-runbook.js';
-import { runExecutionLoop } from '../services/execution.js';
+import { runExecutionLoop, type ExecutionLoopResult } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import {
@@ -193,7 +193,7 @@ export interface SessionRefusedFailure {
 export type RunbookStartResult =
   | {
       ok: true;
-      loopResult: 'done' | 'stopped' | 'waiting';
+      loopResult: ExecutionLoopResult;
       stateId: RunId;
       claimId?: ClaimId;
       /** Process-only capabilities bound to the exact run-control claim. */
@@ -316,7 +316,7 @@ export type ClaimResult =
       /** Step (or substep) ID on the parent that holds the delegation. */
       stepId: string;
       /** Terminal state of the child execution loop. */
-      loopResult: 'done' | 'stopped' | 'waiting';
+      loopResult: ExecutionLoopResult;
     }
   | ({ readonly ok: false } & ClaimFailure);
 
@@ -1574,7 +1574,7 @@ function emitClaimedSuccess(args: {
   readonly parentRunId: RunId;
   readonly stepId: string;
   readonly parentStepAt: string | undefined;
-  readonly loopResult: 'done' | 'stopped' | 'waiting';
+  readonly loopResult: ExecutionLoopResult;
 }): Extract<ClaimResult, { ok: true }> {
   const payload = buildClaimedPayload(args);
   emitClaimedOutput(

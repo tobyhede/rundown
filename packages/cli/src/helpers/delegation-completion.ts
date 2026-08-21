@@ -27,6 +27,16 @@
  * loading the parent, draining, and running the execution loop (subprocess
  * spawn). Release is owned solely by the core seam.
  *
+ * Every refusal these adapters can receive travels as DATA on the seam's return
+ * value and is rendered here, where the emitter lives — the tripped linkage
+ * guard (#603) and, since #802, a drain that refused a persisted completion not
+ * meant for the active cursor. Neither is thrown: an exception escaping the
+ * Category-A callable unwinds past the renderer AND past `output.flush()`, so
+ * the buffered parent stream is discarded and a fully diagnosed, permanent
+ * refusal reaches the operator as RD-999 "Unknown error" — an envelope that
+ * says nothing was diagnosed and whose only implied remedy is a retry that
+ * cannot work. A throw from here means an UNDIAGNOSED failure and nothing else.
+ *
  * @module helpers/delegation-completion
  */
 
@@ -34,10 +44,12 @@ import {
   RunbookStateManager,
   RunbookCompletionService,
   type AdvanceInlineParent,
+  type InlineParentAdvanceRefusal,
   type LinkageCycleTrip,
   type PropagateTerminalChildUpwardDeps,
   type RunbookState,
   type ParentLinkage,
+  type TerminalUpwardPropagationResult,
   type CommandExecutionStreamOptions,
   type DelegationOutcome,
   type DelegationRuntimeCapabilities,
@@ -124,7 +136,8 @@ function delegationRuntimeFor(
  * release owner and releases parentRunId once, with `retainClaimsAsTerminal: true`,
  * on terminal. The drain uses a non-releasing policy, and the execution loop is
  * invoked with `terminalReleaseMode: 'defer-to-caller'` (Task 3) so it too skips
- * release. This closes the ownership gap: there is exactly one release site with
+ * release — and, in that mode, hands back its own drain refusal as data rather
+ * than a `'stopped'` this callable would forward as a terminal (#802). This closes the ownership gap: there is exactly one release site with
  * one deliberate claim disposition, so the tombstone-destruction hazard the old
  * two-owner code carried (drain deleted, loop retained) cannot recur (RD-598).
  *
@@ -148,7 +161,6 @@ function delegationRuntimeFor(
  * @param parentDelegationRuntime - Verified capabilities the caller holds for one
  *   specific run; applied only when the seam advances that run.
  * @returns The runtime callable the core seam invokes.
- * @throws {Error} If drain reports a hard failure (`target_mismatch`).
  */
 export function buildAdvanceInlineParent(
   cwd: string,
@@ -161,7 +173,9 @@ export function buildAdvanceInlineParent(
     // the module's static surface stays minimal — test doubles that mock
     // `@rundown-org/core` need not supply `SessionService` / `exactFrame`.
     const { SessionService, exactFrame } = await import('@rundown-org/core');
-    const { drainResolvedCompletions, runExecutionLoop } = await import('../services/execution.js');
+    const { drainResolvedCompletions, refusalFromDrainFailure, runExecutionLoop } = await import(
+      '../services/execution.js'
+    );
     const { getRunbookFromState } = await import('./runbook-loader.js');
     const { createBridgedEmitter } = await import('./execution-emitter.js');
     const { createPassTransitionConfig, createFailTransitionConfig } = await import(
@@ -213,7 +227,18 @@ export function buildAdvanceInlineParent(
       return { status: 'done' };
     }
     if (drained.status === 'failed') {
-      throw new Error(drained.message);
+      // A DIAGNOSED, permanent refusal: core rejected a persisted completion
+      // that is not for the active cursor. It travels back as data (#802) — the
+      // `refused` arm of the seam's outcome — for the same reason the linkage
+      // trip does. Thrown, it unwound past the adapter's renderer AND past this
+      // flush, so the operator lost both the buffered parent stream and the
+      // reason, and was handed RD-999 "Unknown error" telling them to retry
+      // something a retry cannot fix.
+      output.flush();
+      // Built by the drain's own module, never spelled here: two literals of
+      // this object left the loop and this callable free to describe one fact
+      // differently, which is the property the shared code exists to guarantee.
+      return { status: 'refused', refusal: refusalFromDrainFailure(parentRunId, drained) };
     }
     if (drained.status === 'not_active') {
       output.flush();
@@ -242,9 +267,26 @@ export function buildAdvanceInlineParent(
         },
       );
       output.flush();
+      // The loop's own drain can refuse the same way this callable's did, and
+      // in `defer-to-caller` it hands the refusal back rather than reporting a
+      // `'stopped'` this callable would forward as a terminal — which would
+      // have the seam release a still-running parent and recurse upward on a
+      // terminal that never happened.
+      //
+      //
+      // The three TERMINAL statuses are exhausted first and the refusal is what
+      // is left, rather than the refusal being picked off by a `typeof` test. A
+      // shape test says only "not one of these strings", so a second
+      // object-shaped arm added to the deferred result would be swallowed and
+      // forwarded as `{status: 'refused', refusal: undefined}` with no compile
+      // error. Reaching the refusal by exclusion makes that a type error at
+      // `.refusal` instead — and, unlike an explicit `kind === 'refused'`
+      // check, it does not read as a redundant test of the union's only object
+      // member.
       if (loopResult === 'stopped') return { status: 'stopped' };
       if (loopResult === 'done') return { status: 'done' };
-      return { status: 'active' };
+      if (loopResult === 'waiting') return { status: 'active' };
+      return { status: 'refused', refusal: loopResult.refusal };
     }
 
     // applied === 0: waiting for sibling substeps to resolve.
@@ -279,6 +321,86 @@ export function emitLinkageCycleDiagnostic(output: OutputEmitter, trip: LinkageC
     cause: trip.cause,
     runId: trip.cause === 'repeat' ? trip.repeatedRunId : trip.deepestRunId,
   });
+}
+
+/**
+ * Render a refused inline parent-advance (Category A: terminal rendering).
+ *
+ * The sibling of {@link emitLinkageCycleDiagnostic}, and it exists for the same
+ * three reasons: core composed the message and the code, the adapter that owns
+ * the emitter is the only place that knows when a refusal is terminal for this
+ * command, and rendering here puts the envelope ahead of the `output.flush()`
+ * that the previous `throw` skipped entirely (#802).
+ *
+ * `reason` and `runId` ride in `details` — the same pair of jobs
+ * {@link emitLinkageCycleDiagnostic}'s `cause`/`runId` do. The reason lets an
+ * agent route on the diagnosis rather than re-deriving it from the prose, and
+ * the run id is the only place the refusing run is named: neither of core's
+ * `target_mismatch` messages carries one, and the walk recurses, so the run
+ * that refused is routinely an ancestor rather than the one the operator
+ * invoked.
+ *
+ * @param output - Output emitter owned by the calling command.
+ * @param refusal - The core-diagnosed refusal: reason, message, code.
+ */
+export function emitAdvanceRefusalDiagnostic(
+  output: OutputEmitter,
+  refusal: InlineParentAdvanceRefusal,
+): void {
+  output.error(refusal.message, refusal.code, {
+    reason: refusal.reason,
+    runId: refusal.runId,
+  });
+}
+
+/**
+ * Whether the seam refused, on either of the two arms that carry a refusal.
+ *
+ * The ONE place that answers this question. Four sites need it — the three
+ * adapters below and `rundown collect` — and each needs it twice, once to
+ * render and once to decide the exit. Spelling the arm set at each of the eight
+ * points is how the two arms would come to be handled differently: `collect`
+ * would keep rendering a trip it no longer failed closed on, or an adapter
+ * would fail closed on a refusal it never rendered.
+ *
+ * @param outcome - A propagation outcome, or `undefined` when the walk never ran.
+ * @returns True when the outcome is a refusal the caller must fail closed on.
+ */
+export function isInlinePropagationRefusal(
+  outcome: TerminalUpwardPropagationResult | undefined,
+): outcome is Extract<
+  TerminalUpwardPropagationResult,
+  { readonly kind: 'linkage-cycle' | 'advance-refused' }
+> {
+  return outcome?.kind === 'linkage-cycle' || outcome?.kind === 'advance-refused';
+}
+
+/**
+ * Render whichever refusal the seam returned, and say whether it refused.
+ *
+ * The shared refusal-renderer protocol (`refusal-renderers.ts`,
+ * `session-mutation-result.ts`): render and return `true` on a refusal, render
+ * nothing and return `false` otherwise, so a caller decides its exit from the
+ * same call that produced the operator's diagnostic. Callers still own their
+ * `output.flush()` — its POSITION differs between the adapters (which flush
+ * unconditionally) and `collect` (which must flush here to keep the applied
+ * action object last), and that difference is theirs to state.
+ *
+ * @param output - Output emitter owned by the calling command.
+ * @param outcome - A propagation outcome, or `undefined` when the walk never ran.
+ * @returns True when a refusal was rendered.
+ */
+export function renderInlinePropagationRefusal(
+  output: OutputEmitter,
+  outcome: TerminalUpwardPropagationResult | undefined,
+): boolean {
+  if (!isInlinePropagationRefusal(outcome)) return false;
+  if (outcome.kind === 'linkage-cycle') {
+    emitLinkageCycleDiagnostic(output, outcome.trip);
+    return true;
+  }
+  emitAdvanceRefusalDiagnostic(output, outcome.refusal);
+  return true;
 }
 
 /**
@@ -355,9 +477,13 @@ export async function reportTerminalToDelegatingRun(
     childState,
     result,
   );
-  // #603: the trip rides the seam's return value, so render it here — this
-  // adapter owns the emitter — before the flush the sink's output used to precede.
-  if (outcome.kind === 'linkage-cycle') emitLinkageCycleDiagnostic(output, outcome.trip);
+  // #603/#802: a refusal rides the seam's return value, so render it here —
+  // this adapter owns the emitter — before the flush the sink's output used to
+  // precede. `advance-refused` is unreachable through a delegation linkage,
+  // which takes the seam's report-only arm; it is still narrowed away here so
+  // the member cannot be silently dropped into a `return outcome.kind` that has
+  // no member to receive it.
+  renderInlinePropagationRefusal(output, outcome);
   output.flush();
   // A delegation linkage yields 'reported' | 'duplicate' | 'blocked' |
   // 'linkage-cycle' | 'not-applicable' from the seam. The CLI never distinguished a
@@ -365,10 +491,10 @@ export async function reportTerminalToDelegatingRun(
   // (finding 2), and narrow away the inline-only members — all without a cast.
   if (outcome.kind === 'handled' || outcome.kind === 'stopped') return 'not-applicable';
   if (outcome.kind === 'duplicate') return 'reported';
-  // #602: a corrupt linkage graph is fail-closed. 'blocked' is this adapter's
+  // #602/#802: a refusal is fail-closed. 'blocked' is this adapter's
   // pre-existing "could not propagate; exit non-zero" member, so map onto it
   // explicitly rather than inventing a CLI-visible member no caller can act on.
-  if (outcome.kind === 'linkage-cycle') return 'blocked';
+  if (isInlinePropagationRefusal(outcome)) return 'blocked';
   return outcome.kind;
 }
 
@@ -403,8 +529,12 @@ export async function reportTerminalToDelegatingRun(
  * stdout/stderr while inline propagation continues the parent
  * @returns 'handled' when the parent was advanced (or is waiting on siblings),
  *          'stopped' when advancing the parent reached a STOP terminal,
- *          'not-applicable' when the child has no parent linkage
- * @throws {Error} If parent state I/O fails or drain execution fails.
+ *          'blocked' when the walk or the advance refused (the refusal is
+ *          rendered here first), 'not-applicable' when the child has no parent
+ *          linkage
+ * @throws {Error} If parent state I/O fails, or the advance fails for a reason
+ *   it has not diagnosed. The drain's own `target_mismatch` is NOT a throw: it
+ *   is rendered and collapsed onto 'blocked' (#802).
  */
 export async function advanceParentForInlineChild(
   childState: RunbookState,
@@ -426,16 +556,19 @@ export async function advanceParentForInlineChild(
     childState,
     result,
   );
-  // #603: render the returned trip before the flush (see the delegation adapter).
-  if (outcome.kind === 'linkage-cycle') emitLinkageCycleDiagnostic(output, outcome.trip);
+  // #603/#802: render the returned refusal before the flush (see the delegation
+  // adapter). For `advance-refused` — the drain refusal the callable used to
+  // throw — that ordering is the fix: the reason reaches the operator under its
+  // own code, and the buffered parent stream is not discarded on the way out.
+  renderInlinePropagationRefusal(output, outcome);
   // Flush any buffered parent-stream output the seam produced (the callable
   // flushes on its advance paths, but a record-only short-circuit — e.g. a
   // 'blocked'/'cancelled' record — returns before the callable runs).
   output.flush();
   // An inline linkage never yields the delegation-only 'reported' / 'duplicate';
-  // narrow them away without a cast. #602: a tripped linkage guard is fail-closed
-  // onto this adapter's pre-existing 'blocked'.
-  if (outcome.kind === 'linkage-cycle') return 'blocked';
+  // narrow them away without a cast. #602/#802: a refusal is fail-closed onto
+  // this adapter's pre-existing 'blocked'.
+  if (isInlinePropagationRefusal(outcome)) return 'blocked';
   return outcome.kind === 'reported' || outcome.kind === 'duplicate'
     ? 'not-applicable'
     : outcome.kind;
@@ -495,16 +628,18 @@ export async function propagateChildTerminal(
     childState,
     result,
   );
-  // #603: render the returned trip before the flush (see the delegation adapter).
-  if (outcome.kind === 'linkage-cycle') emitLinkageCycleDiagnostic(output, outcome.trip);
+  // #603/#802: render the returned refusal before the flush (see the delegation
+  // adapter) — the diagnosed drain refusal reaches the operator here rather
+  // than escaping as a throw past this flush.
+  renderInlinePropagationRefusal(output, outcome);
   // Flush any buffered parent-stream output the seam produced (matches the old
   // dispatch, where both sub-adapters flushed).
   output.flush();
   // TerminalPropagationResult has no 'duplicate' member (the CLI never
-  // distinguished it); collapse to 'reported' (finding 2). #602: nor a
-  // 'linkage-cycle' member; collapse to the fail-closed 'blocked'. All other
+  // distinguished it); collapse to 'reported' (finding 2). #602/#802: nor a
+  // refusal member; collapse those to the fail-closed 'blocked'. All other
   // members are shared between the seam union and TerminalPropagationResult.
-  if (outcome.kind === 'linkage-cycle') return 'blocked';
+  if (isInlinePropagationRefusal(outcome)) return 'blocked';
   return outcome.kind === 'duplicate' ? 'reported' : outcome.kind;
 }
 

@@ -18,7 +18,13 @@
  */
 
 import { projectDelegationTerminalOutcome } from './completion-service.js';
-import type { RunbookCompletionService } from './completion-service.js';
+// `COMPLETION_TARGET_MISMATCH_CODE` is type-only here: this module names it on
+// the refusal's `code` field but never reads its value — the CLI callable that
+// composes the refusal supplies it.
+import type {
+  COMPLETION_TARGET_MISMATCH_CODE,
+  RunbookCompletionService,
+} from './completion-service.js';
 import type { ReleaseRunbookResult } from './session-service.js';
 import type { SessionMutationResult } from './storage/runbook-store.js';
 import type { FrameKey } from './targeting.js';
@@ -44,15 +50,58 @@ export interface AdvanceInlineParentInput {
 }
 
 /**
+ * A diagnosed, permanent refusal the inline parent-advance could not absorb.
+ *
+ * Carries `message` and `code` for the same reason {@link LinkageCycleTrip}
+ * does: the frontend renders, it does not decide what the condition says. The
+ * only member today is core's completion drain refusing a persisted completion
+ * that is not for the active cursor — a fact `RunbookCompletionService` has
+ * already diagnosed and worded, which used to be re-thrown as a bare `Error`
+ * and reached the operator as RD-999 "Unknown error" (#802).
+ */
+export interface InlineParentAdvanceRefusal {
+  /** Why the advance refused. Mirrors `CompletionTargetMismatch.reason`. */
+  readonly reason: 'target_mismatch';
+  /** Operator-facing message, composed by core at the point of diagnosis. */
+  readonly message: string;
+  /** Operator-facing error code. */
+  readonly code: typeof COMPLETION_TARGET_MISMATCH_CODE;
+  /**
+   * The run whose drain refused.
+   *
+   * REQUIRED, and the field the frontend renders into `details` — the same job
+   * `LinkageCycleTrip` gives its `repeatedRunId`. Neither of core's two
+   * `target_mismatch` messages names a run (one names the cursor, the other
+   * names neither), and the walk recurses, so the refusing run is routinely an
+   * ANCESTOR rather than the run the operator invoked. Without it the recovery
+   * the refusal prescribes — prune the run and restart it from source — has no
+   * run to name.
+   */
+  readonly runId: RunId;
+}
+
+/**
  * Collapsed outcome of one inline parent-advance.
  *
  * `stopped` / `done` mean the advance drove the parent to that terminal (the
  * seam then releases it and recurses one level). `active` means the parent is
  * still running or waiting on sibling substeps (no release, no recursion).
+ *
+ * `refused` is the fail-closed arm (#802). The advance applied nothing, so the
+ * seam performs NO release and NO recursion and hands the refusal back on its
+ * own return value — the same shape `linkage-cycle` uses, and for the same
+ * reason: a refusal thrown as an exception unwinds past the frontend's
+ * renderer and its `flush`, arriving as an undiagnosed envelope with the
+ * buffered output already discarded.
  */
-export interface AdvanceInlineParentOutcome {
-  readonly status: 'stopped' | 'done' | 'active';
-}
+export type AdvanceInlineParentOutcome =
+  | { readonly status: 'stopped' | 'done' | 'active' }
+  | {
+      /** The advance refused; nothing was applied. */
+      readonly status: 'refused';
+      /** What to tell the operator, and under which code. */
+      readonly refusal: InlineParentAdvanceRefusal;
+    };
 
 /**
  * CLI-supplied Category-C callable that drains and advances an inline parent.
@@ -103,6 +152,12 @@ export type InlineUpwardPropagationResult =
       readonly kind: 'linkage-cycle';
       /** Which run to prune, why, and what to tell the operator. */
       readonly trip: LinkageCycleTrip;
+    }
+  | {
+      /** The inline advance itself refused; nothing was applied (#802). */
+      readonly kind: 'advance-refused';
+      /** What to tell the operator, and under which code. */
+      readonly refusal: InlineParentAdvanceRefusal;
     };
 
 /**
@@ -328,8 +383,11 @@ export const MAX_INLINE_PROPAGATION_CHAIN = 64;
  * @param deps - Core services + the inline-advance callable.
  * @param childState - The terminal child run's state.
  * @param result - Explicit operator result, or `undefined` for lifecycle inference.
- * @returns The upward-propagation outcome.
- * @throws {Error} If the inline-advance callable rejects (e.g. drain failure).
+ * @returns The upward-propagation outcome. A drain refusal arrives as
+ *   `advance-refused` rather than as a rejection (#802).
+ * @throws {Error} If the inline-advance callable rejects for any reason it has
+ *   not diagnosed — an unexpected state-IO or subprocess failure, never the
+ *   drain's own typed refusal.
  */
 export async function propagateTerminalChildUpward(
   deps: PropagateTerminalChildUpwardDeps,
@@ -437,6 +495,14 @@ async function propagateTerminalChildUpwardInner(
     result: projection.result,
   });
 
+  // A refused advance applied nothing, so there is no terminal to release and
+  // nothing to recurse into — the fail-closed shape `linkage-cycle` already
+  // uses, and the reason this arm exists at all (#802). The refusal rides the
+  // return value UNCHANGED so the frontend that owns the emitter renders it
+  // before its own flush; the alternative it replaces was the callable throwing,
+  // which unwound past both.
+  if (outcome.status === 'refused') return { kind: 'advance-refused', refusal: outcome.refusal };
+
   // Parent is still running / waiting on sibling substeps: nothing to release.
   if (outcome.status === 'active') return { kind: 'handled' };
 
@@ -490,15 +556,23 @@ async function propagateTerminalChildUpwardInner(
       { kind: 'not-applicable' };
   // Stryker restore StringLiteral,ObjectLiteral
 
-  // Severity precedence: linkage-cycle > blocked > stopped > handled. The first
-  // two lines extend the pre-#602 rule (blocked already outranked stopped) to the
-  // new member; the rest is the same stopped/done collapse it always was.
+  // Severity precedence: linkage-cycle > advance-refused > blocked > stopped >
+  // handled. The first three lines extend the pre-#602 rule (blocked already
+  // outranked stopped) to the two members that carry a diagnosis; the rest is
+  // the same stopped/done collapse it always was.
   //
-  // The two escalating arms are returned AS THEY CAME BACK, not rebuilt: that is
+  // The escalating arms are returned AS THEY CAME BACK, not rebuilt: that is
   // what carries a deep level's `trip` (the run that actually repeated) out past
-  // the shallower levels (#603). Rebuilding `{ kind: 'linkage-cycle' }` here would
-  // reintroduce the very loss the old sink existed to work around.
+  // the shallower levels (#603), and a deep level's `refusal` with it (#802).
+  // Rebuilding `{ kind: 'linkage-cycle' }` here would reintroduce the very loss
+  // the old sink existed to work around, and OMITTING `advance-refused` was the
+  // same loss in a worse form: the arm fell through to `stopped`/`handled`, so
+  // a refusal raised one level up rendered nothing and exited 0 — quieter than
+  // the RD-999 the refusal arm replaced. Both members must be listed here
+  // BEFORE the two `outcome.status` lines below, which describe only this
+  // level's own advance and would otherwise answer for the deeper one.
   if (propagated.kind === 'linkage-cycle') return propagated;
+  if (propagated.kind === 'advance-refused') return propagated;
   if (propagated.kind === 'blocked') return propagated;
   if (outcome.status === 'stopped') return { kind: 'stopped' };
   if (propagated.kind === 'stopped') return { kind: 'stopped' };
