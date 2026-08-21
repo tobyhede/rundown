@@ -137,7 +137,8 @@ function delegationRuntimeFor(
  * release owner and releases parentRunId once, with `retainClaimsAsTerminal: true`,
  * on terminal. The drain uses a non-releasing policy, and the execution loop is
  * invoked with `terminalReleaseMode: 'defer-to-caller'` (Task 3) so it too skips
- * release. This closes the ownership gap: there is exactly one release site with
+ * release — and, in that mode, hands back its own drain refusal as data rather
+ * than a `'stopped'` this callable would forward as a terminal (#802). This closes the ownership gap: there is exactly one release site with
  * one deliberate claim disposition, so the tombstone-destruction hazard the old
  * two-owner code carried (drain deleted, loop retained) cannot recur (RD-598).
  *
@@ -269,6 +270,15 @@ export function buildAdvanceInlineParent(
         },
       );
       output.flush();
+      // The loop's own drain can refuse the same way this callable's did, and
+      // in `defer-to-caller` it hands the refusal back rather than reporting a
+      // `'stopped'` this callable would forward as a terminal — which would
+      // have the seam release a still-running parent and recurse upward on a
+      // terminal that never happened. Narrowed by shape: the three terminal
+      // statuses are strings, the refusal is the one object.
+      if (typeof loopResult !== 'string') {
+        return { status: 'refused', refusal: loopResult.refusal };
+      }
       if (loopResult === 'stopped') return { status: 'stopped' };
       if (loopResult === 'done') return { status: 'done' };
       return { status: 'active' };

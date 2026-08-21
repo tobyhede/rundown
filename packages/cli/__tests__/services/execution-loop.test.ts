@@ -1937,7 +1937,17 @@ describe('runExecutionLoop', () => {
           asSteps(steps),
           '/tmp',
           asEmitter(mockEmitter),
-          { terminalReleaseMode: 'future-mode' as ExecutionTerminalReleaseMode },
+          // Cast against the RELEASE-OWNING overload's mode: `runExecutionLoop`
+          // is now overloaded on the mode, so a bare
+          // `ExecutionTerminalReleaseMode` matches neither signature. The test
+          // is unchanged in substance — an unknown mode still reaches the
+          // runtime exhaustiveness guard in `applyExecutionTerminalRelease`.
+          {
+            terminalReleaseMode: 'future-mode' as Exclude<
+              ExecutionTerminalReleaseMode,
+              'defer-to-caller'
+            >,
+          },
         ),
       ).rejects.toThrow(/future-mode/);
 
@@ -2887,6 +2897,61 @@ describe('runExecutionLoop', () => {
     // The release the throw used to skip. Without it the refused run stays on
     // the session stack and every later bare command still resolves it.
     expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
+  });
+
+  // `defer-to-caller` is the mode where the loop releases NOTHING and its caller
+  // acts on the status it is handed: the inline parent-advance seam releases the
+  // run and recurses one level up on 'stopped'. A refusal applied nothing and
+  // left the run RUNNING, so 'stopped' there released a live parent and reported
+  // a terminal to ITS parent that never happened.
+  it('hands the refusal back instead of a terminal when the release is deferred', async () => {
+    const currentState = makeLoopState('1', {
+      lifecycle: 'running',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+    mockManager.load.mockResolvedValue(currentState);
+    mockCompletionService.applyNextResolvedCompletion.mockResolvedValueOnce({
+      kind: 'mismatch',
+      state: currentState,
+      mismatch: {
+        status: 'failed',
+        reason: 'target_mismatch',
+        message: 'Completion targets substep 2, cursor is on 1',
+        completion: { result: 'pass', targetSubstep: '2' },
+      },
+      unresolved: 1,
+    });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      asEmitter(mockEmitter),
+      { terminalReleaseMode: 'defer-to-caller' },
+    );
+
+    expect(result).toEqual({
+      kind: 'refused',
+      refusal: {
+        reason: 'target_mismatch',
+        message: 'Completion targets substep 2, cursor is on 1',
+        code: 'COMPLETION_TARGET_MISMATCH',
+      },
+    });
+    // Nothing released — that is what the mode means, and what makes reporting
+    // a terminal here a lie the caller would act on.
+    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+    // And nothing announced: a caller that owns the terminal owns reporting it,
+    // and the adapter renders this same code and message. A RUNBOOK_STOPPED
+    // here would announce a stop for a run that is still running.
+    expect(mockEmitter.emit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'ERROR_OCCURRED' }),
+    );
+    expect(mockEmitter.emit).not.toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'RUNBOOK_STOPPED' }),
+    );
   });
 
   // The missing-authority refusal must behave exactly like its neighbour, the

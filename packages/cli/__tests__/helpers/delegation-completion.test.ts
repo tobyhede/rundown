@@ -913,6 +913,51 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     expect(runExecutionLoop).not.toHaveBeenCalled();
   });
 
+  // The nested arm: this callable's OWN drain applied, so it runs the parent's
+  // execution loop — whose drain can hit the same refusal. In
+  // `defer-to-caller` the loop hands that back as data instead of reporting
+  // `'stopped'`. Forwarding a `'stopped'` here would have the core seam release
+  // a parent that is still running and recurse one level up reporting a
+  // terminal that never happened.
+  it('forwards a refusal from the deferred execution loop without claiming a terminal', async () => {
+    const parentState = makeState(PARENT_RUN_ID);
+    const manager = makeManager(new Map([[parentState.id, parentState]]));
+    const output = makeOutput();
+    wireMocks(manager, makeLifecycleService());
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 1,
+      status: 'continue',
+      applied: 1,
+      state: parentState,
+    } as never);
+    jest.mocked(runExecutionLoop).mockResolvedValue({
+      kind: 'refused',
+      refusal: {
+        reason: 'target_mismatch',
+        message: 'loop drain blew up',
+        code: 'COMPLETION_TARGET_MISMATCH',
+      },
+    } as never);
+
+    const advance = buildAdvanceInlineParent('/test', output);
+    await expect(
+      advance({
+        parentRunId: PARENT_RUN_ID,
+        parentFrameKey: FRAME,
+        parentEntry: 1,
+        result: 'pass',
+      }),
+    ).resolves.toEqual({
+      status: 'refused',
+      refusal: {
+        reason: 'target_mismatch',
+        message: 'loop drain blew up',
+        code: 'COMPLETION_TARGET_MISMATCH',
+      },
+    });
+    expect(runExecutionLoop).toHaveBeenCalled();
+  });
+
   it('collapses a drain STOP to status stopped', async () => {
     const parentState = makeState(PARENT_RUN_ID);
     const manager = makeManager(new Map([[parentState.id, parentState]]));
