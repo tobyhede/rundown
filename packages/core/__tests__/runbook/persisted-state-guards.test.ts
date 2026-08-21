@@ -343,6 +343,12 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     await expect(load).rejects.toBeInstanceOf(InvalidRunbookStateError);
     await expect(load).rejects.toThrow(/missing templateVars/);
     await expect(load).rejects.toThrow(/prune/i);
+    // The RD-309 defect too, not only the prose. It is what names the run in
+    // the error envelope's FIELDS, and the reason is what separates this gate
+    // from the other four that share the class.
+    await expect(load).rejects.toMatchObject({
+      defect: { runId: id, reason: 'missing_template_vars' },
+    });
   });
 
   it('rejects current-schema state missing prompted instead of defaulting it', async () => {
@@ -362,6 +368,9 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     await expect(load).rejects.toBeInstanceOf(InvalidRunbookStateError);
     await expect(load).rejects.toThrow(/missing prompted/);
     await expect(load).rejects.toThrow(/prune/i);
+    await expect(load).rejects.toMatchObject({
+      defect: { runId: id, reason: 'missing_prompted' },
+    });
   });
 
   it('rejects state with future schemaVersion', async () => {
