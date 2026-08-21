@@ -1034,6 +1034,34 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     expect(outcome).toEqual({ status: 'stopped' });
   });
 
+  // The loop's non-terminal exit. It used to be this callable's fall-through, so
+  // no test had to name it; making the refusal reachable only by exclusion made
+  // it an explicit branch, and an untested one is a branch that could return the
+  // refusal shape for a parent that is merely waiting on its siblings.
+  it('collapses a loop that is still waiting to status active', async () => {
+    const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
+    const manager = makeManager(new Map([[parentState.id, parentState]]));
+    const output = makeOutput();
+    wireMocks(manager, makeLifecycleService());
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
+      status: 'continue',
+      applied: 1,
+      state: parentState,
+    });
+    jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+    const advance = buildAdvanceInlineParent('/test', output);
+    const outcome = await advance({
+      parentRunId: PARENT_RUN_ID,
+      parentFrameKey: FRAME,
+      parentEntry: 1,
+      result: 'pass',
+    });
+    // `active`, and nothing else: the seam releases nothing and recurses
+    // nowhere on it, which is what a parent still waiting on siblings needs.
+    expect(outcome).toEqual({ status: 'active' });
+  });
+
   it('drives the loop with the defer-to-caller terminal mode (no self-release)', async () => {
     const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
     const manager = makeManager(new Map([[parentState.id, parentState]]));
