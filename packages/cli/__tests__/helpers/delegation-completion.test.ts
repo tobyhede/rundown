@@ -257,6 +257,8 @@ const {
   propagateDrivenRunTerminal,
   propagationRequiresFailureExit,
   inlineAdvanceRequiresFailureExit,
+  isInlinePropagationRefusal,
+  renderInlinePropagationRefusal,
 } = await import('../../src/helpers/delegation-completion.js');
 
 function makeState(id: RunbookState['id'], overrides: Partial<RunbookState> = {}): RunbookState {
@@ -515,6 +517,24 @@ describe('reportTerminalToDelegatingRun (thin adapter over core seam)', () => {
     expect(output.error).toHaveBeenCalledWith(...REPEAT_CYCLE_ENVELOPE);
   });
 
+  // Unreachable in production — a delegation linkage takes the seam's
+  // report-only arm and never calls the inline advance — but reachable through
+  // the union this adapter must narrow. Pinned so the member cannot be dropped
+  // from the narrowing and silently fall through to `return outcome.kind`,
+  // which has no member to receive it (#802).
+  it('renders the seam refusal, then maps it onto the fail-closed blocked (#802)', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeDelegationLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue(ADVANCE_REFUSED_SEAM_RESULT);
+    const result = await reportTerminalToDelegatingRun(childState, 'pass', '/test', output);
+    expect(result).toBe('blocked');
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(output.error).toHaveBeenCalledWith(...ADVANCE_REFUSED_ENVELOPE);
+  });
+
   it('maps a seam not-applicable result to not-applicable', async () => {
     const childState = makeState(CHILD_RUN_ID, {
       lifecycle: 'completed',
@@ -686,6 +706,76 @@ describe('advanceParentForInlineChild (thin adapter over core seam)', () => {
     await advanceParentForInlineChild(childState, 'pass', '/test', output);
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).not.toHaveBeenCalled();
+  });
+});
+
+// The ONE owner of "which arms are refusals", read by the three adapters above
+// and by `rundown collect`. Both halves are pinned here because the two must
+// agree: a renderer that draws a diagnostic the predicate does not classify as
+// a refusal produces a command that prints a refusal and exits 0.
+describe('isInlinePropagationRefusal / renderInlinePropagationRefusal', () => {
+  const nonRefusals = [
+    { kind: 'handled' },
+    { kind: 'stopped' },
+    { kind: 'blocked' },
+    { kind: 'not-applicable' },
+    { kind: 'reported' },
+    { kind: 'duplicate' },
+  ] as const satisfies readonly SeamResult[];
+
+  it.each(nonRefusals.map((o) => [o.kind, o] as const))(
+    'classifies %s as not a refusal and renders nothing',
+    (_kind, outcome) => {
+      const output = makeOutput();
+      expect(isInlinePropagationRefusal(outcome)).toBe(false);
+      expect(renderInlinePropagationRefusal(output, outcome)).toBe(false);
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+      expect(output.error).not.toHaveBeenCalled();
+    },
+  );
+
+  // `undefined` is the shape `collect` holds when the walk never ran: a
+  // non-terminal collect sets no `terminalInlineAdvance` at all.
+  it('treats an absent outcome as no refusal', () => {
+    const output = makeOutput();
+    expect(isInlinePropagationRefusal(undefined)).toBe(false);
+    expect(renderInlinePropagationRefusal(output, undefined)).toBe(false);
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(output.error).not.toHaveBeenCalled();
+  });
+
+  const refusalArms: readonly [
+    string,
+    SeamResult,
+    readonly [string, string, Record<string, unknown>],
+  ][] = [
+    ['linkage-cycle', REPEAT_CYCLE_SEAM_RESULT, REPEAT_CYCLE_ENVELOPE],
+    ['advance-refused', ADVANCE_REFUSED_SEAM_RESULT, ADVANCE_REFUSED_ENVELOPE],
+  ];
+
+  it.each(refusalArms)(
+    'classifies %s as a refusal and renders its envelope',
+    (_kind, outcome, envelope) => {
+      const output = makeOutput();
+      expect(isInlinePropagationRefusal(outcome)).toBe(true);
+      expect(renderInlinePropagationRefusal(output, outcome)).toBe(true);
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+      expect(output.error).toHaveBeenCalledWith(envelope[0], envelope[1], envelope[2]);
+      // Exactly one diagnostic: the two arms are mutually exclusive, and drawing
+      // both would print a cycle for a cursor mismatch.
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+      expect(output.error).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  // Rendering is the caller's decision to act on; it never flushes on their
+  // behalf, because the flush POSITION differs between the adapters and
+  // `collect` (which must flush here to keep the applied action object last).
+  it('leaves the flush to the caller', () => {
+    const output = makeOutput();
+    renderInlinePropagationRefusal(output, ADVANCE_REFUSED_SEAM_RESULT);
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(output.flush).not.toHaveBeenCalled();
   });
 });
 

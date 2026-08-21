@@ -43,8 +43,8 @@ import {
   propagateDrivenRunTerminal,
   inlineAdvanceRequiresFailureExit,
   buildAdvanceInlineParent,
-  emitAdvanceRefusalDiagnostic,
-  emitLinkageCycleDiagnostic,
+  isInlinePropagationRefusal,
+  renderInlinePropagationRefusal,
   type DrivenRunPropagation,
 } from '../helpers/delegation-completion.js';
 
@@ -558,15 +558,11 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   // #802's `advance-refused` rides the same field for the same reason and is
   // rendered at the same point: it too is a diagnosed refusal core composed and
   // this frontend renders, and it too must precede the action object.
-  if (outcome.kind === 'collection_applied') {
-    const advance = outcome.terminalInlineAdvance;
-    if (advance?.kind === 'linkage-cycle') {
-      emitLinkageCycleDiagnostic(output, advance.trip);
-      output.flush();
-    } else if (advance?.kind === 'advance-refused') {
-      emitAdvanceRefusalDiagnostic(output, advance.refusal);
-      output.flush();
-    }
+  if (
+    outcome.kind === 'collection_applied' &&
+    renderInlinePropagationRefusal(output, outcome.terminalInlineAdvance)
+  ) {
+    output.flush();
   }
 
   // The collected outcome may advance the delegating run into execution-loop
@@ -663,18 +659,16 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     // outcome to the same exit contract the CLI post-loop path uses. (loopStopped
     // is false here — the loop did not run.)
     //
-    // `linkage-cycle` collapses onto the CLI's pre-existing fail-closed 'blocked'
-    // (#602) — the same explicit mapping the three delegation-completion adapters
-    // make — and so does #802's `advance-refused`. Both were already rendered
-    // above; only the exit code is decided here, so `InlinePropagationResult`
-    // stays the flat union its five `=== 'blocked'` consumers already read.
+    // A refusal collapses onto the CLI's pre-existing fail-closed 'blocked'
+    // (#602/#802) — the same explicit mapping the three delegation-completion
+    // adapters make, and read through the same predicate so the two cannot
+    // diverge on which arms are refusals. It was already rendered above; only
+    // the exit code is decided here, so `InlinePropagationResult` stays the flat
+    // union its five `=== 'blocked'` consumers already read.
     const advance = outcome.terminalInlineAdvance;
     const corePropagation: DrivenRunPropagation = {
       kind: 'inline-advanced',
-      result:
-        advance.kind === 'linkage-cycle' || advance.kind === 'advance-refused'
-          ? 'blocked'
-          : advance.kind,
+      result: isInlinePropagationRefusal(advance) ? 'blocked' : advance.kind,
     };
     exitWithError =
       shouldExitWithError || inlineAdvanceRequiresFailureExit(corePropagation) || loopStopped;
