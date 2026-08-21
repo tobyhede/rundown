@@ -18,10 +18,13 @@
  */
 
 import { projectDelegationTerminalOutcome } from './completion-service.js';
-// Type-only: this module names the code on the refusal's `code` field but never
-// reads its value — the CLI callable that composes the refusal supplies it.
-import type { COMPLETION_TARGET_MISMATCH_CODE } from './completion-service.js';
-import type { RunbookCompletionService } from './completion-service.js';
+// `COMPLETION_TARGET_MISMATCH_CODE` is type-only here: this module names it on
+// the refusal's `code` field but never reads its value — the CLI callable that
+// composes the refusal supplies it.
+import type {
+  COMPLETION_TARGET_MISMATCH_CODE,
+  RunbookCompletionService,
+} from './completion-service.js';
 import type { ReleaseRunbookResult } from './session-service.js';
 import type { SessionMutationResult } from './storage/runbook-store.js';
 import type { FrameKey } from './targeting.js';
@@ -63,6 +66,18 @@ export interface InlineParentAdvanceRefusal {
   readonly message: string;
   /** Operator-facing error code. */
   readonly code: typeof COMPLETION_TARGET_MISMATCH_CODE;
+  /**
+   * The run whose drain refused.
+   *
+   * REQUIRED, and the field the frontend renders into `details` — the same job
+   * `LinkageCycleTrip` gives its `repeatedRunId`. Neither of core's two
+   * `target_mismatch` messages names a run (one names the cursor, the other
+   * names neither), and the walk recurses, so the refusing run is routinely an
+   * ANCESTOR rather than the run the operator invoked. Without it the recovery
+   * the refusal prescribes — prune the run and restart it from source — has no
+   * run to name.
+   */
+  readonly runId: RunId;
 }
 
 /**
@@ -541,15 +556,23 @@ async function propagateTerminalChildUpwardInner(
       { kind: 'not-applicable' };
   // Stryker restore StringLiteral,ObjectLiteral
 
-  // Severity precedence: linkage-cycle > blocked > stopped > handled. The first
-  // two lines extend the pre-#602 rule (blocked already outranked stopped) to the
-  // new member; the rest is the same stopped/done collapse it always was.
+  // Severity precedence: linkage-cycle > advance-refused > blocked > stopped >
+  // handled. The first three lines extend the pre-#602 rule (blocked already
+  // outranked stopped) to the two members that carry a diagnosis; the rest is
+  // the same stopped/done collapse it always was.
   //
-  // The two escalating arms are returned AS THEY CAME BACK, not rebuilt: that is
+  // The escalating arms are returned AS THEY CAME BACK, not rebuilt: that is
   // what carries a deep level's `trip` (the run that actually repeated) out past
-  // the shallower levels (#603). Rebuilding `{ kind: 'linkage-cycle' }` here would
-  // reintroduce the very loss the old sink existed to work around.
+  // the shallower levels (#603), and a deep level's `refusal` with it (#802).
+  // Rebuilding `{ kind: 'linkage-cycle' }` here would reintroduce the very loss
+  // the old sink existed to work around, and OMITTING `advance-refused` was the
+  // same loss in a worse form: the arm fell through to `stopped`/`handled`, so
+  // a refusal raised one level up rendered nothing and exited 0 — quieter than
+  // the RD-999 the refusal arm replaced. Both members must be listed here
+  // BEFORE the two `outcome.status` lines below, which describe only this
+  // level's own advance and would otherwise answer for the deeper one.
   if (propagated.kind === 'linkage-cycle') return propagated;
+  if (propagated.kind === 'advance-refused') return propagated;
   if (propagated.kind === 'blocked') return propagated;
   if (outcome.status === 'stopped') return { kind: 'stopped' };
   if (propagated.kind === 'stopped') return { kind: 'stopped' };

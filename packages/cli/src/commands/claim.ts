@@ -28,7 +28,21 @@ import { renderSessionMutationRefusal } from '../helpers/session-mutation-result
 
 /** One `rundown claim` refusal, rendered as the CLI's flat error envelope. */
 export interface ClaimFailureEnvelope {
-  /** Registered symbolic code an agent routes on. */
+  /**
+   * Code an agent routes on.
+   *
+   * `string`, and NOT `CLIErrorCode`, which is what it should be: a typo here
+   * compiles and only surfaces if some test validates the envelope against
+   * `ErrorCodeSchema`. Narrowing it was tried and does not build, because two
+   * arms already emit codes the registry does not carry —
+   * `delegation-already-claimed` renders the symbolic
+   * `'DELEGATION_ALREADY_CLAIMED'` (only the RD-811 VALUE is registered, not
+   * that spelling), and `prepare-failed` forwards `PrepareFailure['code']`
+   * (`POLICY_DENIED`, `MISSING_REQUIRED_VARS`, …), none of which is registered
+   * either. Both predate #807 and both mean those envelopes fail the schema
+   * they document; registering the missing codes is a public-surface decision
+   * of its own, tracked separately rather than smuggled in here.
+   */
   readonly code: string;
   /** Operator-facing message. */
   readonly message: string;

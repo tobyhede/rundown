@@ -1410,7 +1410,7 @@ describe('claimAndLaunch', () => {
     expect(mockClaimRunbook).toHaveBeenCalled();
   });
 
-  it('returns TOKEN_NOT_FOUND when parent state no longer exists at the freshness re-read', async () => {
+  it('refuses parent-missing when parent state no longer exists at the freshness re-read', async () => {
     const ctx = makeCtx();
 
     const parentState = {
@@ -1506,7 +1506,7 @@ describe('claimAndLaunch', () => {
     },
   );
 
-  it('returns TOKEN_NOT_FOUND when delegation disappears before the freshness re-read', async () => {
+  it('refuses delegation-removed when the delegation disappears before the freshness re-read', async () => {
     const ctx = makeCtx();
 
     const parentState = {
@@ -1557,7 +1557,7 @@ describe('claimAndLaunch', () => {
     }
   });
 
-  it('returns TOKEN_NOT_FOUND when token hash mismatches after reload', async () => {
+  it('refuses delegation-removed when the token hash mismatches after reload', async () => {
     const ctx = makeCtx();
 
     const parentState = {

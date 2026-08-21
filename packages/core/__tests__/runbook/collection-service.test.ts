@@ -3173,6 +3173,7 @@ describe('RunbookCollectionService', () => {
             reason: 'target_mismatch',
             code: COMPLETION_TARGET_MISMATCH_CODE,
             message: 'Completion targets substep 2, cursor is on 1',
+            runId: ancestorRunId,
           },
         },
       ],

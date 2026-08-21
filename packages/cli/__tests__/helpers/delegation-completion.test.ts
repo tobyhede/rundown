@@ -90,6 +90,10 @@ const ADVANCE_REFUSED_SEAM_RESULT = {
     reason: 'target_mismatch',
     code: 'COMPLETION_TARGET_MISMATCH',
     message: 'core-composed target mismatch message',
+    // The walk recurses, so the run that refused is routinely an ANCESTOR — not
+    // the child this adapter was called for. A distinct id here is what proves
+    // the envelope names the refusing run rather than the one in hand.
+    runId: PARENT_RUN_ID,
   },
 } as const satisfies SeamResult;
 
@@ -97,7 +101,7 @@ const ADVANCE_REFUSED_SEAM_RESULT = {
 const ADVANCE_REFUSED_ENVELOPE = [
   'core-composed target mismatch message',
   'COMPLETION_TARGET_MISMATCH',
-  { reason: 'target_mismatch' },
+  { reason: 'target_mismatch', runId: PARENT_RUN_ID },
 ] as const;
 
 /** The envelope every adapter must emit when it collapses the refusal. */
@@ -208,6 +212,19 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 jest.unstable_mockModule('../../src/services/execution', () => ({
   drainResolvedCompletions: jest.fn(),
   runExecutionLoop: jest.fn(),
+  // The REAL builder, not a stub: it is the sole construction site for the
+  // refusal envelope, and these tests assert the exact object the operator
+  // ends up seeing. Stubbing it would assert the adapter forwards whatever it
+  // is handed — which is not the property under test.
+  refusalFromDrainFailure: (
+    runId: string,
+    drained: { reason: string; message: string },
+  ): Record<string, unknown> => ({
+    reason: drained.reason,
+    message: drained.message,
+    code: 'COMPLETION_TARGET_MISMATCH',
+    runId,
+  }),
 }));
 
 // Mock actor-service factory to keep this unit test on structural service doubles.
@@ -689,8 +706,20 @@ describe('advanceParentForInlineChild (thin adapter over core seam)', () => {
     expect(output.error).toHaveBeenCalledWith(...ADVANCE_REFUSED_ENVELOPE);
     // Rendered BEFORE the flush, which is what the throw skipped: buffered
     // parent-stream output used to be discarded along with the diagnostic.
-    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
-    expect(output.flush).toHaveBeenCalled();
+    //
+    // ORDER, not presence. `output.error` only accumulates into the JSON
+    // renderer while the action object goes straight to the writer, so a flush
+    // that ran first would still satisfy two `toHaveBeenCalled` assertions
+    // while breaking the "action object is the last line" contract this comment
+    // names — the one regression the test exists for would be the one it could
+    // not see.
+    /* eslint-disable @typescript-eslint/unbound-method -- Jest inspects these structural mocks without invoking them. */
+    const errorAt = jest.mocked(output.error).mock.invocationCallOrder[0];
+    const flushAt = jest.mocked(output.flush).mock.invocationCallOrder[0];
+    /* eslint-enable @typescript-eslint/unbound-method */
+    expect(errorAt).toBeDefined();
+    expect(flushAt).toBeDefined();
+    expect(errorAt).toBeLessThan(flushAt);
   });
 
   it('renders no diagnostic when the seam did not refuse', async () => {
@@ -905,6 +934,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
         reason: 'target_mismatch',
         message: 'drain blew up',
         code: 'COMPLETION_TARGET_MISMATCH',
+        runId: PARENT_RUN_ID,
       },
     });
     // The buffered parent stream survives the refusal; the throw discarded it.
@@ -936,6 +966,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
         reason: 'target_mismatch',
         message: 'loop drain blew up',
         code: 'COMPLETION_TARGET_MISMATCH',
+        runId: PARENT_RUN_ID,
       },
     } as never);
 
@@ -953,6 +984,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
         reason: 'target_mismatch',
         message: 'loop drain blew up',
         code: 'COMPLETION_TARGET_MISMATCH',
+        runId: PARENT_RUN_ID,
       },
     });
     expect(runExecutionLoop).toHaveBeenCalled();

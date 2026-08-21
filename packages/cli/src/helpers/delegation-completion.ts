@@ -41,7 +41,6 @@
  */
 
 import {
-  COMPLETION_TARGET_MISMATCH_CODE,
   RunbookStateManager,
   RunbookCompletionService,
   type AdvanceInlineParent,
@@ -174,7 +173,9 @@ export function buildAdvanceInlineParent(
     // the module's static surface stays minimal — test doubles that mock
     // `@rundown-org/core` need not supply `SessionService` / `exactFrame`.
     const { SessionService, exactFrame } = await import('@rundown-org/core');
-    const { drainResolvedCompletions, runExecutionLoop } = await import('../services/execution.js');
+    const { drainResolvedCompletions, refusalFromDrainFailure, runExecutionLoop } = await import(
+      '../services/execution.js'
+    );
     const { getRunbookFromState } = await import('./runbook-loader.js');
     const { createBridgedEmitter } = await import('./execution-emitter.js');
     const { createPassTransitionConfig, createFailTransitionConfig } = await import(
@@ -234,14 +235,10 @@ export function buildAdvanceInlineParent(
       // reason, and was handed RD-999 "Unknown error" telling them to retry
       // something a retry cannot fix.
       output.flush();
-      return {
-        status: 'refused',
-        refusal: {
-          reason: drained.reason,
-          message: drained.message,
-          code: COMPLETION_TARGET_MISMATCH_CODE,
-        },
-      };
+      // Built by the drain's own module, never spelled here: two literals of
+      // this object left the loop and this callable free to describe one fact
+      // differently, which is the property the shared code exists to guarantee.
+      return { status: 'refused', refusal: refusalFromDrainFailure(parentRunId, drained) };
     }
     if (drained.status === 'not_active') {
       output.flush();
@@ -274,14 +271,22 @@ export function buildAdvanceInlineParent(
       // in `defer-to-caller` it hands the refusal back rather than reporting a
       // `'stopped'` this callable would forward as a terminal — which would
       // have the seam release a still-running parent and recurse upward on a
-      // terminal that never happened. Narrowed by shape: the three terminal
-      // statuses are strings, the refusal is the one object.
-      if (typeof loopResult !== 'string') {
-        return { status: 'refused', refusal: loopResult.refusal };
-      }
+      // terminal that never happened.
+      //
+      //
+      // The three TERMINAL statuses are exhausted first and the refusal is what
+      // is left, rather than the refusal being picked off by a `typeof` test. A
+      // shape test says only "not one of these strings", so a second
+      // object-shaped arm added to the deferred result would be swallowed and
+      // forwarded as `{status: 'refused', refusal: undefined}` with no compile
+      // error. Reaching the refusal by exclusion makes that a type error at
+      // `.refusal` instead — and, unlike an explicit `kind === 'refused'`
+      // check, it does not read as a redundant test of the union's only object
+      // member.
       if (loopResult === 'stopped') return { status: 'stopped' };
       if (loopResult === 'done') return { status: 'done' };
-      return { status: 'active' };
+      if (loopResult === 'waiting') return { status: 'active' };
+      return { status: 'refused', refusal: loopResult.refusal };
     }
 
     // applied === 0: waiting for sibling substeps to resolve.
@@ -327,9 +332,13 @@ export function emitLinkageCycleDiagnostic(output: OutputEmitter, trip: LinkageC
  * command, and rendering here puts the envelope ahead of the `output.flush()`
  * that the previous `throw` skipped entirely (#802).
  *
- * `reason` rides in `details` so an agent can route on the diagnosis rather than
- * re-deriving it from the prose — the reason surviving to the operator is the
- * whole point of the arm.
+ * `reason` and `runId` ride in `details` — the same pair of jobs
+ * {@link emitLinkageCycleDiagnostic}'s `cause`/`runId` do. The reason lets an
+ * agent route on the diagnosis rather than re-deriving it from the prose, and
+ * the run id is the only place the refusing run is named: neither of core's
+ * `target_mismatch` messages carries one, and the walk recurses, so the run
+ * that refused is routinely an ancestor rather than the one the operator
+ * invoked.
  *
  * @param output - Output emitter owned by the calling command.
  * @param refusal - The core-diagnosed refusal: reason, message, code.
@@ -338,7 +347,10 @@ export function emitAdvanceRefusalDiagnostic(
   output: OutputEmitter,
   refusal: InlineParentAdvanceRefusal,
 ): void {
-  output.error(refusal.message, refusal.code, { reason: refusal.reason });
+  output.error(refusal.message, refusal.code, {
+    reason: refusal.reason,
+    runId: refusal.runId,
+  });
 }
 
 /**

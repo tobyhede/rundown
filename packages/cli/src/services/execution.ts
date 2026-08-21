@@ -175,6 +175,33 @@ export interface ExecutionLoopRefusal {
 }
 
 /**
+ * Build the operator-facing refusal for a drain that refused.
+ *
+ * The SOLE construction site. Two paths reach the identical `failed` arm of
+ * {@link DrainResolvedCompletionsResult} — this loop's own drain and the inline
+ * parent-advance callable's — and the whole point of the shared
+ * {@link COMPLETION_TARGET_MISMATCH_CODE} is that they cannot describe one fact
+ * differently. Two literals spelling the same object left them free to, so the
+ * guarantee held only by inspection; this makes it hold by construction.
+ *
+ * @param runbookId - The run whose drain refused. Carried on the refusal because
+ *   core's messages name no run and the walk routinely refuses at an ancestor.
+ * @param drained - The drain's refusal arm.
+ * @returns The refusal both paths render.
+ */
+export function refusalFromDrainFailure(
+  runbookId: RunId,
+  drained: Extract<DrainResolvedCompletionsResult, { status: 'failed' }>,
+): InlineParentAdvanceRefusal {
+  return {
+    reason: drained.reason,
+    message: drained.message,
+    code: COMPLETION_TARGET_MISMATCH_CODE,
+    runId: runbookId,
+  };
+}
+
+/**
  * Optional behavior overrides for {@link runExecutionLoop}.
  */
 export interface ExecutionLoopOptions {
@@ -422,12 +449,12 @@ function describeInlineChildLinkageRefusal(
 async function propagateInlineChildTerminalResult(args: {
   readonly manager: RunbookStateManager;
   readonly childRunId: RunId;
-  readonly loopResult: 'done' | 'stopped' | 'waiting';
+  readonly loopResult: ExecutionLoopResult;
   readonly cwd: string;
   readonly output: OutputEmitter;
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
   readonly parentDelegationRuntime?: RunScopedDelegationRuntime;
-}): Promise<'done' | 'stopped' | 'waiting'> {
+}): Promise<ExecutionLoopResult> {
   const {
     manager,
     childRunId,
@@ -503,7 +530,7 @@ async function launchInlineChildFromIntent({
   output,
   commandStreamOptions,
   parentDelegationRuntime,
-}: InlineLaunchArgs): Promise<'done' | 'stopped' | 'waiting'> {
+}: InlineLaunchArgs): Promise<ExecutionLoopResult> {
   // Both projections of the one intent, and derived through the same helper the
   // latch derives its own from, so this span and the latch cannot disagree about
   // which child under which parent frame is being launched.
@@ -1433,11 +1460,7 @@ export async function runExecutionLoop(
       //
       // The code names the CONDITION, so this loop and the inline
       // parent-advance seam report the identical drain refusal identically.
-      const refusal: InlineParentAdvanceRefusal = {
-        reason: drainResult.reason,
-        message: drainResult.message,
-        code: COMPLETION_TARGET_MISMATCH_CODE,
-      };
+      const refusal = refusalFromDrainFailure(runbookId, drainResult);
       // `defer-to-caller` releases NOTHING, so its caller acts on the status it
       // is given: the inline parent-advance seam releases the run and recurses
       // one level up on `'stopped'`. This refusal applied nothing and left the
@@ -1458,16 +1481,24 @@ export async function runExecutionLoop(
         type: 'ERROR_OCCURRED',
         payload: { message: refusal.message, code: refusal.code },
       });
+      // Read the CURSOR THE DRAIN COMMITTED, not the capture this iteration
+      // started from. The drain's `failed` arm reports `applied: 0` and carries
+      // no state, so a pass that applied before it mismatched leaves
+      // `currentState` behind — and the corrective stop then named a step the
+      // run had already left while `message` named the real one. Falls back to
+      // the capture only when the run has since vanished, where the capture is
+      // the best coordinate that exists.
+      const refusedState = (await manager.load(runbookId)) ?? currentState;
       emitter.emit({
         type: 'RUNBOOK_STOPPED',
         payload: {
           position: buildStepPosition(
-            currentState.step,
+            refusedState.step,
             totalSteps,
-            currentState.substep,
-            currentState.forStack,
+            refusedState.substep,
+            refusedState.forStack,
           ),
-          message: drainResult.message,
+          message: refusal.message,
         },
       });
       return await applyExecutionTerminalRelease(

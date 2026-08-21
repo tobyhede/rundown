@@ -2899,6 +2899,55 @@ describe('runExecutionLoop', () => {
     expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
   });
 
+  // The drain's mismatch arm reports `applied: 0` and carries no state, so a
+  // drain that APPLIED before it mismatched leaves the loop's captured
+  // `currentState` behind the committed cursor. Building the corrective stop's
+  // position from that capture named a step the run had already left, while the
+  // message named the real one — one envelope contradicting itself, and an agent
+  // routing on the machine-readable `position` targeting the wrong step.
+  it('names the committed cursor in the corrective stop, not the pre-drain capture', async () => {
+    const before = makeLoopState('1', {
+      lifecycle: 'running',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+    const afterApply = makeLoopState('2', {
+      lifecycle: 'running',
+      activeFrameKey: '2|',
+      activeEntry: 1,
+    });
+    // Loop entry reads the pre-drain state; the refusal path re-reads and sees
+    // the cursor the applies committed.
+    mockManager.load.mockResolvedValueOnce(before).mockResolvedValue(afterApply);
+    mockCompletionService.applyNextResolvedCompletion.mockResolvedValueOnce({
+      kind: 'mismatch',
+      state: before,
+      mismatch: {
+        status: 'failed',
+        reason: 'target_mismatch',
+        message: 'Resolved completion target does not match current cursor 2.',
+        completion: { result: 'pass', targetSubstep: '3' },
+      },
+      unresolved: 1,
+    });
+
+    await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      asEmitter(mockEmitter),
+    );
+
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_STOPPED',
+      payload: {
+        position: { current: '2', total: 2 },
+        message: 'Resolved completion target does not match current cursor 2.',
+      },
+    });
+  });
+
   // `defer-to-caller` is the mode where the loop releases NOTHING and its caller
   // acts on the status it is handed: the inline parent-advance seam releases the
   // run and recurses one level up on 'stopped'. A refusal applied nothing and
@@ -2938,6 +2987,10 @@ describe('runExecutionLoop', () => {
         reason: 'target_mismatch',
         message: 'Completion targets substep 2, cursor is on 1',
         code: 'COMPLETION_TARGET_MISMATCH',
+        // In an inline chain the refusing run is an ANCESTOR, not the run the
+        // operator invoked, and neither core message names one — so without
+        // this the recovery the docs prescribe has no run to name.
+        runId: runbookId,
       },
     });
     // Nothing released — that is what the mode means, and what makes reporting

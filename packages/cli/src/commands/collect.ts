@@ -558,11 +558,14 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   // #802's `advance-refused` rides the same field for the same reason and is
   // rendered at the same point: it too is a diagnosed refusal core composed and
   // this frontend renders, and it too must precede the action object.
-  if (
-    outcome.kind === 'collection_applied' &&
-    renderInlinePropagationRefusal(output, outcome.terminalInlineAdvance)
-  ) {
-    output.flush();
+  if (outcome.kind === 'collection_applied') {
+    // The render is its own statement rather than the second operand of an
+    // `&&`: a condition that writes output reads as a pure test, and swapping
+    // the operands — a plausible tidy-up — would emit the diagnostic on
+    // outcomes that carry no advance at all.
+    if (renderInlinePropagationRefusal(output, outcome.terminalInlineAdvance)) {
+      output.flush();
+    }
   }
 
   // The collected outcome may advance the delegating run into execution-loop
