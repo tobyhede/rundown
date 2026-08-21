@@ -47,6 +47,10 @@ const COMMAND_TEST_MODULE_MAP: Readonly<Record<string, readonly string[]>> = {
   'abort.test.ts': ['abort'],
   'artifact.test.ts': ['artifact'],
   'claim.test.ts': ['claim'],
+  // A second home for the same module, not a replacement: this one pins the
+  // refusal envelope mapping arm by arm (#807), which `claim.test.ts` drives
+  // end-to-end and cannot reach exhaustively.
+  'claim-failure-envelope.test.ts': ['claim'],
   'collect.test.ts': ['collect'],
   'complete.test.ts': ['complete'],
   'delegate.test.ts': ['delegate'],

@@ -48,6 +48,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   ExecutionLifecycleService: jest.fn(),
   RunbookCompletionService: jest.fn(),
   projectDelegationTerminalOutcome: jest.fn(),
+  // Satisfies the ESM named-import link check for delegation-completion.ts,
+  // which this module pulls in transitively.
+  COMPLETION_TARGET_MISMATCH_CODE: 'COMPLETION_TARGET_MISMATCH',
   parseStepIdFromString: jest.fn(),
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,

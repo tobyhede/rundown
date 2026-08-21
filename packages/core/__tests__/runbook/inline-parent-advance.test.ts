@@ -7,6 +7,7 @@ import {
   type PropagateTerminalChildUpwardDeps,
   type TerminalUpwardPropagationResult,
 } from '../../src/runbook/inline-parent-advance.js';
+import { COMPLETION_TARGET_MISMATCH_CODE } from '../../src/runbook/completion-service.js';
 import {
   assertRunId,
   assertDelegationTokenHash,
@@ -306,6 +307,41 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       result: 'pass',
     });
     expect(releaseRunbook).not.toHaveBeenCalled();
+  });
+
+  // #802: a drain that refused a persisted completion not meant for the active
+  // cursor is a diagnosed, permanent refusal. It travels as data on the return
+  // value — the shape `linkage-cycle` already uses — and the seam performs no
+  // release and no recursion, because nothing was applied.
+  it('refused advance returns advance-refused with no release and no recursion', async () => {
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
+    const refusal = {
+      reason: 'target_mismatch',
+      message: 'Completion targets substep 2, cursor is on 1',
+      code: COMPLETION_TARGET_MISMATCH_CODE,
+    } as const;
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'refused', refusal });
+    const load = jest.fn<(id: string) => Promise<RunbookState | null>>().mockResolvedValue(null);
+    const releaseRunbook = jest
+      .fn<
+        (
+          id: RunId,
+          o?: { readonly retainClaimsAsTerminal?: boolean },
+        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
+      >()
+      .mockImplementation(async (id) => committedRelease(id));
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
+      child,
+      'pass',
+    );
+    // Returned UNCHANGED — the message and code core composed are what the
+    // frontend renders; nothing between here and the emitter re-words them.
+    expect(result).toEqual({ kind: 'advance-refused', refusal });
+    expect(releaseRunbook).not.toHaveBeenCalled();
+    expect(load).not.toHaveBeenCalled();
   });
 
   it('stopped advance releases the parent and returns stopped (parent has no linkage)', async () => {

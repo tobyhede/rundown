@@ -186,6 +186,23 @@ export interface AppliedResolvedCompletion {
   readonly snapshot: unknown;
 }
 
+/**
+ * Operator-facing code for a completion that is not for the active cursor.
+ *
+ * Names the CONDITION rather than the command that hit it (#802), following
+ * RD-821's precedent on the shared re-entry seam: the inline parent-advance
+ * seam and the execution loop reach the identical refusal by different routes
+ * and must report it identically. It is permanent — re-running cannot make a
+ * stale completion match a cursor that has moved — so it must never arrive
+ * wearing RD-999 `UNKNOWN_ERROR`, whose envelope says nothing was diagnosed and
+ * whose only implied remedy is a retry.
+ *
+ * `rundown collect` deliberately keeps its own `COLLECT_OPERATION_FAILED` for
+ * the same reason (`command-policy.ts`): that surface reports the collection
+ * that failed, not the cursor fact underneath it.
+ */
+export const COMPLETION_TARGET_MISMATCH_CODE = 'COMPLETION_TARGET_MISMATCH';
+
 /** Target mismatch returned when a persisted completion is not for the active cursor. */
 export interface CompletionTargetMismatch {
   /** Discriminant: drain refused to apply this completion. */

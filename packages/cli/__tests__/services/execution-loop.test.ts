@@ -2837,6 +2837,58 @@ describe('runExecutionLoop', () => {
     });
   });
 
+  // #802: the drain's `target_mismatch` is the same class as the three frontier
+  // refusals below, and used to be the one that still threw. A throw unwinds
+  // past `applyExecutionTerminalRelease`, stranding the refused run on the
+  // session stack, and reaches the operator as RD-999 "Unknown error" — telling
+  // them to retry a cursor mismatch no retry can resolve.
+  it('refuses a completion that is not for the active cursor as a coded stop', async () => {
+    const currentState = makeLoopState('1', {
+      lifecycle: 'running',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+    mockManager.load.mockResolvedValue(currentState);
+    mockCompletionService.applyNextResolvedCompletion.mockResolvedValueOnce({
+      kind: 'mismatch',
+      state: currentState,
+      mismatch: {
+        status: 'failed',
+        reason: 'target_mismatch',
+        message: 'Completion targets substep 2, cursor is on 1',
+        completion: { result: 'pass', targetSubstep: '2' },
+      },
+      unresolved: 1,
+    });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      asEmitter(mockEmitter),
+    );
+
+    expect(result).toBe('stopped');
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'ERROR_OCCURRED',
+      payload: {
+        message: 'Completion targets substep 2, cursor is on 1',
+        code: 'COMPLETION_TARGET_MISMATCH',
+      },
+    });
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'RUNBOOK_STOPPED',
+      payload: {
+        position: { current: '1', total: 2 },
+        message: 'Completion targets substep 2, cursor is on 1',
+      },
+    });
+    // The release the throw used to skip. Without it the refused run stays on
+    // the session stack and every later bare command still resolves it.
+    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
+  });
+
   // The missing-authority refusal must behave exactly like its neighbour, the
   // frontier-consume failure: a coded ERROR_OCCURRED, a positioned
   // RUNBOOK_STOPPED, and a terminal release — never an untyped throw. A throw

@@ -277,6 +277,7 @@ export {
   RunbookCompletionService,
   brandCurrentCursorResolvedCompletionForTest,
   lifecycleToDelegationOutcome,
+  COMPLETION_TARGET_MISMATCH_CODE,
   projectDelegationTerminalOutcome,
   // Deprecated alias kept on the public surface for callers still on generic
   // result terminology; the re-export itself must not trip no-deprecated.
@@ -319,6 +320,7 @@ export {
   type AdvanceInlineParent,
   type AdvanceInlineParentInput,
   type AdvanceInlineParentOutcome,
+  type InlineParentAdvanceRefusal,
   type InlineParentAdvanceSessionService,
   type InlineParentAdvanceStateReader,
   type InlineUpwardPropagationResult,

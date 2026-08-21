@@ -1101,8 +1101,10 @@ export function narrowInlineUpwardPropagation(
     case 'blocked':
     case 'not-applicable':
     case 'linkage-cycle':
+    case 'advance-refused':
       // Returned AS IT CAME BACK, never rebuilt: the `linkage-cycle` arm carries
-      // the trip naming the run to prune (#603).
+      // the trip naming the run to prune (#603), and `advance-refused` the
+      // diagnosed drain refusal the frontend renders (#802).
       return outcome;
     case 'reported':
     case 'duplicate':

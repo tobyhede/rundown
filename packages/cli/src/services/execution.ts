@@ -1132,7 +1132,10 @@ export async function drainResolvedCompletions({
  *   coded `RD-829` (`DELEGATION_FRONTIER_CONSUME_FAILED`) and is retryable. All
  *   three arms come from the shared core seam
  *   {@link projectAndConsumeReEntryFrontier}, so `rundown collect` reports each
- *   condition under the same code.
+ *   condition under the same code. A persisted completion that is not for the
+ *   active cursor returns 'stopped' the same way, coded
+ *   `COMPLETION_TARGET_MISMATCH` — permanent, and the same code the inline
+ *   parent-advance seam reports for the identical drain refusal (#802).
  * @throws {Error} If the core actor/lifecycle/session services throw while
  *   advancing transitions, entering an execution unit cannot render it (a
  *   `--helpers` helper raising), command execution rejects, or the emitter
@@ -1371,7 +1374,42 @@ export async function runExecutionLoop(
       return 'stopped';
     }
     if (drainResult.status === 'failed') {
-      throw new Error(drainResult.message);
+      // A REFUSAL, not a crash — the same treatment the three frontier arms
+      // below already give their own diagnosed conditions, and for the reason
+      // spelled out there: an escaping throw unwinds past both the emitter and
+      // `applyExecutionTerminalRelease`, so the caller gets a bare `Error`
+      // carrying no code and the refused run stays on the session stack. Here it
+      // also arrived as RD-999 "Unknown error", telling the operator to retry a
+      // cursor mismatch that no retry can resolve (#802).
+      //
+      // The code names the CONDITION, so this loop and the inline
+      // parent-advance seam report the identical drain refusal identically.
+      emitter.emit({
+        type: 'ERROR_OCCURRED',
+        payload: {
+          message: drainResult.message,
+          code: CLIErrorCodes.COMPLETION_TARGET_MISMATCH,
+        },
+      });
+      emitter.emit({
+        type: 'RUNBOOK_STOPPED',
+        payload: {
+          position: buildStepPosition(
+            currentState.step,
+            totalSteps,
+            currentState.substep,
+            currentState.forStack,
+          ),
+          message: drainResult.message,
+        },
+      });
+      return await applyExecutionTerminalRelease(
+        sessionService,
+        runbookId,
+        terminalReleaseMode,
+        emitter,
+        'stopped',
+      );
     }
     if (drainResult.status === 'not_active') {
       return 'waiting';

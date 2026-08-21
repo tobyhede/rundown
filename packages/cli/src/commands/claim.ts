@@ -26,11 +26,33 @@ import {
 import { propagateDrivenRunTerminal } from '../helpers/delegation-completion.js';
 import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
 
-function claimFailureToEnvelope(failure: Exclude<ClaimFailure, { reason: 'session-refused' }>): {
+/** One `rundown claim` refusal, rendered as the CLI's flat error envelope. */
+export interface ClaimFailureEnvelope {
+  /** Registered symbolic code an agent routes on. */
   readonly code: string;
+  /** Operator-facing message. */
   readonly message: string;
+  /** Structured facts the code alone does not carry. */
   readonly details?: Record<string, unknown>;
-} {
+}
+
+/**
+ * Map one claim refusal onto the code and message the claimer receives.
+ *
+ * Exported for the test that pins every arm's code and message character for
+ * character, and deliberately not re-exported from the package: it is not a
+ * public contract. The pin is what this mapping was missing — four distinct,
+ * correctly-discriminated reasons collapsed onto `TOKEN_NOT_FOUND` with no test
+ * observing it, and three of them were not about the token at all (#807).
+ *
+ * @param failure - The refusal the claim pipeline returned, minus the session
+ *   arm, which has its own shared renderer.
+ * @returns The envelope to emit.
+ * @throws {Error} When an unrecognized refusal reaches the exhaustive guard.
+ */
+export function claimFailureToEnvelope(
+  failure: Exclude<ClaimFailure, { reason: 'session-refused' }>,
+): ClaimFailureEnvelope {
   switch (failure.reason) {
     case 'invalid-token':
       return {
@@ -45,21 +67,46 @@ function claimFailureToEnvelope(failure: Exclude<ClaimFailure, { reason: 'sessio
         details: { token: failure.token },
       };
     case 'parent-missing':
+      // NOT `TOKEN_NOT_FOUND`: the scan found the token and it was valid. The
+      // sibling of `CHILD_RUN_MISSING` at the other end of the same linkage,
+      // and the code core's own classification of this fact already implies —
+      // `classifyDelegationLiveness` reports it as `parent-unreadable`, a
+      // corruption signal, never as a supersession. Same code whether this
+      // pre-read saw it or the claim transaction did (`missing-parent` reaches
+      // `claimResultToFailure` as this same reason).
       return {
-        code: 'TOKEN_NOT_FOUND',
+        code: 'PARENT_RUN_MISSING',
         message: `Parent run ${failure.parentRunId} no longer exists.`,
         details: { parentRunId: failure.parentRunId },
       };
     case 'parent-ended':
+      // The pre-read and the claim transaction now report the identical fact
+      // under the identical code (#807). Core is the classification owner:
+      // `classifyDelegationLiveness` closes an ended parent `parent-ended`, and
+      // both consumers of that reason — `claimRunbookInTransaction` and
+      // `describeSupersededClaim` — render it RD-825. This arm rendering
+      // `TOKEN_NOT_FOUND` meant a claimer landing before the window saw a
+      // different code from one landing inside it, for a fact neither side
+      // disagreed about.
+      //
+      // The specific sentence leads and the registry description follows, for
+      // the reason the `delegation-superseded` arm sources its whole message
+      // there: the operative instruction is RD-825's and must not be retyped.
       return {
-        code: 'TOKEN_NOT_FOUND',
-        message: `Parent run has been ${failure.lifecycle}. Delegation cannot be claimed.`,
+        code: 'DELEGATION_SUPERSEDED',
+        message: `Parent run ${failure.parentRunId} has been ${failure.lifecycle}. ${ErrorCodes.DELEGATION_SUPERSEDED.description}`,
         details: { parentRunId: failure.parentRunId, lifecycle: failure.lifecycle },
       };
     case 'delegation-removed':
+      // Same settlement as `parent-ended`, on the fact core classifies as
+      // `cursor-advanced` (the substep is gone) or `token-reissued` (it carries
+      // a different token) — both of which are RD-825. The delegation this
+      // token names is no longer on the parent's step, which is precisely "the
+      // parent advanced, reset, or reissued the token"; it is not a token this run
+      // cannot find.
       return {
-        code: 'TOKEN_NOT_FOUND',
-        message: 'Delegation no longer exists on parent step.',
+        code: 'DELEGATION_SUPERSEDED',
+        message: `Delegation no longer exists on parent step ${failure.stepId}. ${ErrorCodes.DELEGATION_SUPERSEDED.description}`,
         details: { parentRunId: failure.parentRunId, stepId: failure.stepId },
       };
     case 'delegation-cancelled':

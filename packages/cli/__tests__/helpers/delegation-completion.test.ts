@@ -77,6 +77,29 @@ const REPEAT_CYCLE_SEAM_RESULT = {
   },
 } as const satisfies SeamResult;
 
+/**
+ * A refused inline advance, as the seam hands it back (#802).
+ *
+ * Same construction as the cycle fixture above and for the same reason: the
+ * message and code are core's, so a placeholder no adapter could have composed
+ * is what proves the render is pass-through rather than re-synthesis.
+ */
+const ADVANCE_REFUSED_SEAM_RESULT = {
+  kind: 'advance-refused',
+  refusal: {
+    reason: 'target_mismatch',
+    code: 'COMPLETION_TARGET_MISMATCH',
+    message: 'core-composed target mismatch message',
+  },
+} as const satisfies SeamResult;
+
+/** The envelope every adapter must emit when it collapses the refused advance. */
+const ADVANCE_REFUSED_ENVELOPE = [
+  'core-composed target mismatch message',
+  'COMPLETION_TARGET_MISMATCH',
+  { reason: 'target_mismatch' },
+] as const;
+
 /** The envelope every adapter must emit when it collapses the refusal. */
 const REPEAT_CYCLE_ENVELOPE = [
   'core-composed repeat message',
@@ -100,6 +123,9 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   // Retained as a plain stub for the ESM link check; the thin adapters no longer
   // project — the core seam does — so no test drives it.
   projectDelegationTerminalOutcome: jest.fn(),
+  // A real value, not a stub: the module composes the refused-advance envelope
+  // from it, and the tests assert the code the operator actually sees.
+  COMPLETION_TARGET_MISMATCH_CODE: 'COMPLETION_TARGET_MISMATCH',
   // The thin CLI adapters delegate the decision to the core seam. Mock it so
   // adapter tests assert routing + result mapping; the REAL seam logic is
   // covered by packages/core/__tests__/runbook/inline-parent-advance.test.ts.
@@ -628,6 +654,25 @@ describe('advanceParentForInlineChild (thin adapter over core seam)', () => {
     expect(output.error).toHaveBeenCalledWith(...REPEAT_CYCLE_ENVELOPE);
   });
 
+  // #802: the arm that replaced the bare throw. The reason reaches the operator
+  // under its own permanent code, and the exit stays fail-closed.
+  it('renders the seam refusal, then maps it onto the fail-closed blocked (#802)', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeInlineLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue(ADVANCE_REFUSED_SEAM_RESULT);
+    const result = await advanceParentForInlineChild(childState, 'pass', '/test', output);
+    expect(result).toBe('blocked');
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(output.error).toHaveBeenCalledWith(...ADVANCE_REFUSED_ENVELOPE);
+    // Rendered BEFORE the flush, which is what the throw skipped: buffered
+    // parent-stream output used to be discarded along with the diagnostic.
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(output.flush).toHaveBeenCalled();
+  });
+
   it('renders no diagnostic when the seam did not refuse', async () => {
     // The collapse and the render are two statements around one flush; a render
     // that drifted outside the refusal arm would print INLINE_PARENT_CYCLE on a
@@ -660,6 +705,19 @@ describe('propagateChildTerminal (linkage dispatcher over core seam)', () => {
     expect(result).toBe('blocked');
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.error).toHaveBeenCalledWith(...REPEAT_CYCLE_ENVELOPE);
+  });
+
+  it('renders the seam refusal, then maps it onto the fail-closed blocked (#802)', async () => {
+    const childState = makeState(CHILD_RUN_ID, {
+      lifecycle: 'completed',
+      parentLinkage: makeInlineLinkage(),
+    });
+    const output = makeOutput();
+    propagateTerminalChildUpward.mockResolvedValue(ADVANCE_REFUSED_SEAM_RESULT);
+    const result = await propagateChildTerminal(childState, 'pass', '/test', output);
+    expect(result).toBe('blocked');
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(output.error).toHaveBeenCalledWith(...ADVANCE_REFUSED_ENVELOPE);
   });
 
   it('still collapses a seam duplicate to reported (finding 2 regression)', async () => {
@@ -725,7 +783,11 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     jest.mocked(runExecutionLoop).mockReset();
   });
 
-  it('throws when drain reports a hard failure', async () => {
+  // #802: the drain's `target_mismatch` is a diagnosed, permanent refusal. It
+  // used to be re-thrown as a bare `Error`, which unwound past the adapter's
+  // renderer and past `output.flush()` — so the operator lost the buffered
+  // parent stream AND the reason, and was handed RD-999 "Unknown error".
+  it('returns the drain refusal as data rather than throwing, and flushes first', async () => {
     const parentState = makeState(PARENT_RUN_ID);
     const manager = makeManager(new Map([[parentState.id, parentState]]));
     const output = makeOutput();
@@ -733,6 +795,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     jest.mocked(drainResolvedCompletions).mockResolvedValue({
       unresolved: 0,
       status: 'failed',
+      reason: 'target_mismatch',
       applied: 0,
       state: parentState,
       message: 'drain blew up',
@@ -746,7 +809,17 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
         parentEntry: 1,
         result: 'pass',
       }),
-    ).rejects.toThrow('drain blew up');
+    ).resolves.toEqual({
+      status: 'refused',
+      refusal: {
+        reason: 'target_mismatch',
+        message: 'drain blew up',
+        code: 'COMPLETION_TARGET_MISMATCH',
+      },
+    });
+    // The buffered parent stream survives the refusal; the throw discarded it.
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(output.flush).toHaveBeenCalled();
     expect(runExecutionLoop).not.toHaveBeenCalled();
   });
 
