@@ -46,8 +46,7 @@ import { assertClaimed, linkageFor, seedLiveDelegation } from './claim-test-help
  */
 
 const RELEASE_POLICY: LifecycleTerminalReleasePolicy = {
-  onComplete: { releaseRunbook: true },
-  onStopped: { releaseRunbook: true },
+  releaseOnTerminal: true,
 };
 
 // Substeps 1.1/1.2 are drained; 1.3 carries the delegation and stays pending, so

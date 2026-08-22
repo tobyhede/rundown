@@ -729,8 +729,8 @@ Do work.
     const session = await readSession(workspace);
     expect(session.defaultStack.at(-1)).toBe(parentState!.id);
     expect(session.defaultStack).not.toContain(String(childRunId));
-    // Item 4: the terminal claim is RETAINED as a tombstone (release with
-    // retainClaimsAsTerminal) so a later --claim-id can confirm/conflict again.
+    // Item 4: the terminal claim is RETAINED as a tombstone (released in the
+    // `addressed` role) so a later --claim-id can confirm/conflict again.
     // Completing the child resolves its parent delegation, but the R2 latch
     // does not supersede a claim whose controlled child is itself terminal.
     expect(Object.values(session.claims)).toContainEqual(

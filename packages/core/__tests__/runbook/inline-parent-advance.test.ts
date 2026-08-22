@@ -15,7 +15,7 @@ import {
   type RunId,
   type DelegationLinkage,
   type InlineLinkage,
-  type ReleaseRunbookResult,
+  type RunRelease,
   type SessionMutationResult,
 } from '../../src/runbook/index.js';
 import type { ExecutionEpoch } from '../../src/runbook/storage/mutation-result.js';
@@ -82,27 +82,14 @@ const NEVER_ADVANCE: AdvanceInlineParent = () => {
 };
 
 /**
- * A committed release whose value describes the run that was actually released.
+ * The committed envelope a release returns.
  *
- * Deriving the value from the argument keeps the fixture honest. `{} as
- * ReleaseRunbookResult` satisfies the compiler while describing a state the
- * union forbids — no `status`, no `runbookId` — so the moment production reads
- * `release.value` it would see `undefined` and these tests would still pass.
- *
- * @param runbookId - Run the seam asked to release.
- * @returns A committed result carrying a complete `released` value.
+ * A single shared constant rather than a per-run fixture because the envelope
+ * now carries no payload: `releaseRuns` reports only that the batch committed,
+ * and the seam reads only `kind`. There is nothing left for a fixture to
+ * describe dishonestly.
  */
-function committedRelease(runbookId: RunId): SessionMutationResult<ReleaseRunbookResult> {
-  return {
-    kind: 'committed',
-    value: {
-      status: 'released',
-      runbookId,
-      removedFromDefaultStack: true,
-      nextDefaultRunbookId: null,
-    },
-  };
-}
+const COMMITTED_RELEASE: SessionMutationResult<void> = { kind: 'committed', value: undefined };
 
 function makeDeps(
   overrides: Partial<PropagateTerminalChildUpwardDeps> = {},
@@ -112,14 +99,9 @@ function makeDeps(
       load: jest.fn<(id: string) => Promise<RunbookState | null>>().mockResolvedValue(null),
     },
     sessionService: {
-      releaseRunbook: jest
-        .fn<
-          (
-            id: RunId,
-            o?: { readonly retainClaimsAsTerminal?: boolean },
-          ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
-        >()
-        .mockImplementation(async (id) => committedRelease(id)),
+      releaseRuns: jest
+        .fn<(releases: readonly RunRelease[]) => Promise<SessionMutationResult<void>>>()
+        .mockResolvedValue(COMMITTED_RELEASE),
     },
     completionService: {
       recordChildCompletion: jest
@@ -286,16 +268,11 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     const advanceInlineParent = jest
       .fn<AdvanceInlineParent>()
       .mockResolvedValue({ status: 'active' });
-    const releaseRunbook = jest
-      .fn<
-        (
-          id: RunId,
-          o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
-      >()
-      .mockImplementation(async (id) => committedRelease(id));
+    const releaseRuns = jest
+      .fn<(releases: readonly RunRelease[]) => Promise<SessionMutationResult<void>>>()
+      .mockResolvedValue(COMMITTED_RELEASE);
     const result = await propagateTerminalChildUpward(
-      makeDeps({ advanceInlineParent, sessionService: { releaseRunbook } }),
+      makeDeps({ advanceInlineParent, sessionService: { releaseRuns } }),
       child,
       'pass',
     );
@@ -306,7 +283,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       parentEntry: 1,
       result: 'pass',
     });
-    expect(releaseRunbook).not.toHaveBeenCalled();
+    expect(releaseRuns).not.toHaveBeenCalled();
   });
 
   // #802: a drain that refused a persisted completion not meant for the active
@@ -325,23 +302,18 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       .fn<AdvanceInlineParent>()
       .mockResolvedValue({ status: 'refused', refusal });
     const load = jest.fn<(id: string) => Promise<RunbookState | null>>().mockResolvedValue(null);
-    const releaseRunbook = jest
-      .fn<
-        (
-          id: RunId,
-          o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
-      >()
-      .mockImplementation(async (id) => committedRelease(id));
+    const releaseRuns = jest
+      .fn<(releases: readonly RunRelease[]) => Promise<SessionMutationResult<void>>>()
+      .mockResolvedValue(COMMITTED_RELEASE);
     const result = await propagateTerminalChildUpward(
-      makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
+      makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRuns } }),
       child,
       'pass',
     );
     // Returned UNCHANGED — the message and code core composed are what the
     // frontend renders; nothing between here and the emitter re-words them.
     expect(result).toEqual({ kind: 'advance-refused', refusal });
-    expect(releaseRunbook).not.toHaveBeenCalled();
+    expect(releaseRuns).not.toHaveBeenCalled();
     expect(load).not.toHaveBeenCalled();
   });
 
@@ -352,23 +324,19 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       .fn<AdvanceInlineParent>()
       .mockResolvedValue({ status: 'stopped' });
     const load = jest.fn<(id: string) => Promise<RunbookState | null>>().mockResolvedValue(parent);
-    const releaseRunbook = jest
-      .fn<
-        (
-          id: RunId,
-          o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
-      >()
-      .mockImplementation(async (id) => committedRelease(id));
+    const releaseRuns = jest
+      .fn<(releases: readonly RunRelease[]) => Promise<SessionMutationResult<void>>>()
+      .mockResolvedValue(COMMITTED_RELEASE);
     const result = await propagateTerminalChildUpward(
-      makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
+      makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRuns } }),
       child,
       'fail',
     );
     expect(result).toEqual({ kind: 'stopped' });
-    // Release disposition: retain the claim tombstone (matches collect + loop),
-    // so a bare second release never destroys it. See RD-598 verification.
-    expect(releaseRunbook).toHaveBeenCalledWith(PARENT, { retainClaimsAsTerminal: true });
+    // Release role: `addressed` — this seam drove the parent terminal, so the
+    // claim is retained as terminal evidence (matching collect + loop) and a
+    // bare second release never destroys it. See RD-598 verification.
+    expect(releaseRuns).toHaveBeenCalledWith([{ runId: PARENT, role: 'addressed' }]);
   });
 
   it.each([
@@ -392,27 +360,22 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       const load = jest
         .fn<(id: string) => Promise<RunbookState | null>>()
         .mockResolvedValue(parent);
-      const releaseRunbook = jest
-        .fn<
-          (
-            id: RunId,
-            o?: { readonly retainClaimsAsTerminal?: boolean },
-          ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
-        >()
-        .mockImplementation(async (id) =>
+      const releaseRuns = jest
+        .fn<(releases: readonly RunRelease[]) => Promise<SessionMutationResult<void>>>()
+        .mockImplementation(async (releases) =>
           kind === 'execution_in_progress'
-            ? { kind, runId: id, message }
-            : { kind, runId: id, epoch: 7 as ExecutionEpoch, message },
+            ? { kind, runId: releases[0].runId, message }
+            : { kind, runId: releases[0].runId, epoch: 7 as ExecutionEpoch, message },
         );
 
       const result = await propagateTerminalChildUpward(
-        makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
+        makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRuns } }),
         child,
         'fail',
       );
 
       expect(result).toEqual({ kind: 'stopped' });
-      expect(releaseRunbook).toHaveBeenCalledWith(PARENT, { retainClaimsAsTerminal: true });
+      expect(releaseRuns).toHaveBeenCalledWith([{ runId: PARENT, role: 'addressed' }]);
     },
   );
 
@@ -431,23 +394,18 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     expect(result).toEqual({ kind: 'handled' });
   });
 
-  it('done advance still reloads and recurses when releaseRunbook rejects (RD-102)', async () => {
+  it('done advance still reloads and recurses when releaseRuns rejects (RD-102)', async () => {
     const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
     const parent = makeState(PARENT, { lifecycle: 'completed', parentLinkage: undefined });
     const advanceInlineParent = jest
       .fn<AdvanceInlineParent>()
       .mockResolvedValue({ status: 'done' });
     const load = jest.fn<(id: string) => Promise<RunbookState | null>>().mockResolvedValue(parent);
-    const releaseRunbook = jest
-      .fn<
-        (
-          id: RunId,
-          o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
-      >()
+    const releaseRuns = jest
+      .fn<(releases: readonly RunRelease[]) => Promise<SessionMutationResult<void>>>()
       .mockRejectedValue(new Error('release boom'));
     const result = await propagateTerminalChildUpward(
-      makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
+      makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRuns } }),
       child,
       'pass',
     );
@@ -492,17 +450,12 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       const load = jest
         .fn<(id: string) => Promise<RunbookState | null>>()
         .mockResolvedValue(parentTerminal);
-      const releaseRunbook = jest
-        .fn<
-          (
-            id: RunId,
-            o?: { readonly retainClaimsAsTerminal?: boolean },
-          ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
-        >()
-        .mockImplementation(async (id) => committedRelease(id));
+      const releaseRuns = jest
+        .fn<(releases: readonly RunRelease[]) => Promise<SessionMutationResult<void>>>()
+        .mockResolvedValue(COMMITTED_RELEASE);
 
       const result = await propagateTerminalChildUpward(
-        makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
+        makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRuns } }),
         child,
         'pass',
       );
@@ -717,19 +670,14 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     const recordChildCompletion = jest
       .fn<(args: unknown) => Promise<'recorded'>>()
       .mockResolvedValue('recorded');
-    const releaseRunbook = jest
-      .fn<
-        (
-          id: RunId,
-          o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
-      >()
-      .mockImplementation(async (id) => committedRelease(id));
+    const releaseRuns = jest
+      .fn<(releases: readonly RunRelease[]) => Promise<SessionMutationResult<void>>>()
+      .mockResolvedValue(COMMITTED_RELEASE);
     const result = await propagateTerminalChildUpward(
       makeDeps({
         advanceInlineParent,
         completionService: { recordChildCompletion },
-        sessionService: { releaseRunbook },
+        sessionService: { releaseRuns },
       }),
       child,
       'pass',
@@ -737,7 +685,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     expect(result.kind).toBe('linkage-cycle');
     expect(recordChildCompletion).not.toHaveBeenCalled();
     expect(advanceInlineParent).not.toHaveBeenCalled();
-    expect(releaseRunbook).not.toHaveBeenCalled();
+    expect(releaseRuns).not.toHaveBeenCalled();
   });
 
   it('two-node cycle (child→parent→child) trips after exactly one advance', async () => {
@@ -753,16 +701,11 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     const load = jest
       .fn<(id: string) => Promise<RunbookState | null>>()
       .mockResolvedValue(parentTerminal);
-    const releaseRunbook = jest
-      .fn<
-        (
-          id: RunId,
-          o?: { readonly retainClaimsAsTerminal?: boolean },
-        ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
-      >()
-      .mockImplementation(async (id) => committedRelease(id));
+    const releaseRuns = jest
+      .fn<(releases: readonly RunRelease[]) => Promise<SessionMutationResult<void>>>()
+      .mockResolvedValue(COMMITTED_RELEASE);
     const result = await propagateTerminalChildUpward(
-      makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRunbook } }),
+      makeDeps({ advanceInlineParent, manager: { load }, sessionService: { releaseRuns } }),
       child,
       'pass',
     );
@@ -772,8 +715,8 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     expect(advanceInlineParent).toHaveBeenCalledWith(
       expect.objectContaining({ parentRunId: PARENT }),
     );
-    expect(releaseRunbook).toHaveBeenCalledTimes(1);
-    expect(releaseRunbook).toHaveBeenCalledWith(PARENT, { retainClaimsAsTerminal: true });
+    expect(releaseRuns).toHaveBeenCalledTimes(1);
+    expect(releaseRuns).toHaveBeenCalledWith([{ runId: PARENT, role: 'addressed' }]);
   });
 
   it('a cycle discovered by the recursion outranks a stopped advance', async () => {

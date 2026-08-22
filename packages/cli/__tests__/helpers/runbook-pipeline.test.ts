@@ -2250,20 +2250,15 @@ describe('startRunbook', () => {
     const mockPushWithClaim = mockFn<
       SessionService['pushRunbookWithPreparedRunControlClaim']
     >().mockResolvedValue(committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(runId) }));
-    const mockReleaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue(
-      committed({
-        status: 'released',
-        runbookId: runId,
-        removedFromDefaultStack: true,
-        nextDefaultRunbookId: null,
-      }),
+    const mockReleaseRuns = mockFn<SessionService['releaseRuns']>().mockResolvedValue(
+      committed<void>(undefined),
     );
     const mockDelete = mockFn<RunbookStateManager['delete']>().mockResolvedValue(undefined);
     const ctx = makeRunPipelineContext({
       sessionService: {
         prepareRunControlClaim: () => preparedClaimFor(runId),
         pushRunbookWithPreparedRunControlClaim: mockPushWithClaim,
-        releaseRunbook: mockReleaseRunbook,
+        releaseRuns: mockReleaseRuns,
       },
       manager: {
         create: mockFn<RunbookStateManager['create']>().mockResolvedValue(createdState),
@@ -2319,7 +2314,9 @@ describe('startRunbook', () => {
       prepared.runId,
       expect.objectContaining({ claimId: TEST_CLAIM_ID }),
     );
-    expect(mockReleaseRunbook).toHaveBeenCalledWith(prepared.runId);
+    // `discarded`: the launch failed, so the run is destroyed rather than
+    // finished and its claim must not outlive it.
+    expect(mockReleaseRuns).toHaveBeenCalledWith([{ runId: prepared.runId, role: 'discarded' }]);
     expect(mockDelete).toHaveBeenCalledWith(prepared.runId);
   });
 

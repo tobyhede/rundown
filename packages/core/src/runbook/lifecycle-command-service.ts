@@ -77,7 +77,12 @@ import {
   resolveManualCompletionCursor,
   type ExplicitTransitionTarget,
 } from './manual-completion-cursor.js';
-import type { SessionMutationRefusalOutcome, SessionService } from './session-service.js';
+import type {
+  ActiveInlineForceTerminalPlan,
+  SessionMutationRefusalOutcome,
+  SessionService,
+} from './session-service.js';
+import type { RunRelease } from './session-release.js';
 import type { RunbookCompletionService } from './completion-service.js';
 import type { ActionType } from './transition-kernel.js';
 import {
@@ -112,7 +117,7 @@ import type { PreparedActorMutation } from './effectful-mutation-executor.js';
  * constructed core services and tests pass trivial doubles. The seam adds
  * `sessionService` because the decisive parent-advance write is guarded by
  * {@link SessionService.runGuardedParentAdvance} and terminal release flows
- * through {@link SessionService.releaseRunbook}.
+ * through {@link SessionService.releaseRuns}.
  */
 export interface RunbookLifecycleCommandServiceDependencies {
   /** Session service used for target resolution, the TOCTOU guard, and terminal release. */
@@ -625,10 +630,14 @@ export type DelegationAbortOutcome =
  * (claims retained as terminal tombstones so `--claim-id` can confirm/conflict).
  */
 export interface LifecycleTerminalReleasePolicy {
-  /** Release the runbook from session targeting when it completes. */
-  readonly onComplete: { readonly releaseRunbook: boolean };
-  /** Release the runbook from session targeting when it stops. */
-  readonly onStopped: { readonly releaseRunbook: boolean };
+  /**
+   * Release the run from session targeting when the transition reaches terminal.
+   *
+   * One flag for both terminal lifecycles. `completed` and `stopped` are both
+   * "this run is finished", and the separate `onComplete`/`onStopped` pair this
+   * replaced was equal at every production caller.
+   */
+  readonly releaseOnTerminal: boolean;
 }
 
 /** How a follow-on terminal release should treat this run during execution-loop continuation. */
@@ -1303,6 +1312,28 @@ function transitionDelegationRuntime(
 }
 
 /**
+ * Roles for releasing a whole inline force-terminal chain.
+ *
+ * The command addressed the root of the chain; every inline descendant is swept
+ * up so that root can close, which is exactly what `collateral` names. Three
+ * sites cascade this same chain — two session-only releases and one folded into
+ * the aggregate transaction — and a disagreement between them about which
+ * member is the addressed one would revoke a claim on one path and retain it on
+ * another for the same command.
+ *
+ * @param plan - The resolved inline force-terminal plan being cascaded.
+ * @returns One release per chain member, root addressed and descendants collateral.
+ */
+function releasesForInlineChain(
+  plan: Extract<ActiveInlineForceTerminalPlan, { readonly status: 'resolved' }>,
+): readonly RunRelease[] {
+  return plan.releaseRunIds.map((runId) => ({
+    runId,
+    role: runId === plan.targetState.id ? 'addressed' : 'collateral',
+  }));
+}
+
+/**
  * Core seam for direct lifecycle command mutations (pass / fail) and the
  * transitional delegation-issuance policy precheck.
  *
@@ -1864,7 +1895,10 @@ export class RunbookLifecycleCommandService {
         { runId: freshState.id, claimKey: authority.actorContext.authority.claimKey },
       ],
       ...(hasTerminalChild
-        ? { releases: [{ runId: linkedChildRunId, retainClaimsAsTerminal: false }] }
+        ? // Collateral: the retry addresses the parent's delegation, and the dead
+          // child is swept up so that retry can proceed. Its bearer is revoked
+          // because nothing may present it against the run that replaces it.
+          { releases: [{ runId: linkedChildRunId, role: 'collateral' as const }] }
         : {}),
       makeRecoveryActor: (runId, recoveryState) => {
         const recoverySteps = stepsByRun.get(runId);
@@ -2266,7 +2300,9 @@ export class RunbookLifecycleCommandService {
       ],
       ...(scannedChild === undefined
         ? {}
-        : { releases: [{ runId: scannedChild.id, retainClaimsAsTerminal: false }] }),
+        : // Collateral: the abort addresses the parent's delegation, and the
+          // live child is force-stopped so that abort can complete.
+          { releases: [{ runId: scannedChild.id, role: 'collateral' as const }] }),
       makeRecoveryActor: (runId, recoveryState) => {
         const recoverySteps = stepsByRun.get(runId);
         // Unreachable invariant: recovery only runs for a member whose attempt
@@ -2996,9 +3032,9 @@ export class RunbookLifecycleCommandService {
         if (input.callerEvidence.kind === 'claim_bearer') {
           await sessionService.recordClaimSeen(input.callerEvidence.claimId);
         }
-        const release = await sessionService.releaseRunbook(resolution.state.id, {
-          retainClaimsAsTerminal: true,
-        });
+        const release = await sessionService.releaseRuns([
+          { runId: resolution.state.id, role: 'addressed' },
+        ]);
         if (release.kind !== 'committed') return release;
         return {
           kind: 'terminal_claim_confirmed',
@@ -3013,9 +3049,9 @@ export class RunbookLifecycleCommandService {
         if (input.callerEvidence.kind === 'claim_bearer') {
           await sessionService.recordClaimSeen(input.callerEvidence.claimId);
         }
-        const release = await sessionService.releaseRunbook(resolution.state.id, {
-          retainClaimsAsTerminal: true,
-        });
+        const release = await sessionService.releaseRuns([
+          { runId: resolution.state.id, role: 'addressed' },
+        ]);
         if (release.kind !== 'committed') return release;
         return {
           kind: 'terminal_claim_conflict',
@@ -3105,7 +3141,9 @@ export class RunbookLifecycleCommandService {
     const eventType = terminalForceEvent(input.command);
     const aggregate = await this.#deps.actorMutationRunner.runAll({
       targets,
-      releases: [{ runId: state.id, retainClaimsAsTerminal: true }],
+      // Addressed: the bearer's holder reported this very run terminal, so its
+      // claim stays as terminal evidence for a later `--claim-id` to confirm.
+      releases: [{ runId: state.id, role: 'addressed' as const }],
       makeRecoveryActor: (runId, recoveryState) => {
         const recoverySteps = stepsByRun.get(runId);
         if (recoverySteps === undefined) {
@@ -3250,9 +3288,7 @@ export class RunbookLifecycleCommandService {
       // up for ambient/no-bearer or authorized bearer requests only; an unauthorized
       // bearer receives the same outcome without mutating the resolved chain.
       if (input.callerEvidence.kind !== 'claim_bearer' || presenterAuthorized) {
-        const release = await sessionService.releaseRunbooks(plan.releaseRunIds, {
-          retainClaimsAsTerminalRunId: plan.targetState.id,
-        });
+        const release = await sessionService.releaseRuns(releasesForInlineChain(plan));
         if (release.kind !== 'committed') return release;
       }
       return {
@@ -3362,10 +3398,7 @@ export class RunbookLifecycleCommandService {
       Extract<LifecycleTerminalOutcome, { readonly kind: 'already_terminal' | 'applied_bare' }>
     >({
       targets,
-      releases: plan.releaseRunIds.map((runId) => ({
-        runId,
-        retainClaimsAsTerminal: runId === plan.targetState.id,
-      })),
+      releases: releasesForInlineChain(plan),
       makeRecoveryActor: (runId, recoveryState) => {
         const recoverySteps = stepsByRun.get(runId);
         if (recoverySteps === undefined) {
@@ -3479,9 +3512,7 @@ export class RunbookLifecycleCommandService {
     });
     if (aggregate.kind !== 'committed') return aggregate;
     if (aggregate.value.kind === 'already_terminal') {
-      const release = await sessionService.releaseRunbooks(plan.releaseRunIds, {
-        retainClaimsAsTerminalRunId: plan.targetState.id,
-      });
+      const release = await sessionService.releaseRuns(releasesForInlineChain(plan));
       if (release.kind !== 'committed') return release;
     }
     return aggregate.value;
@@ -3689,11 +3720,12 @@ export class RunbookLifecycleCommandService {
           ? { claimKey: claimKeyFromBearer(input.callerEvidence.claimId) }
           : {}),
         ...(guard === undefined ? {} : { guard }),
-        terminalRelease: {
-          onComplete: input.terminalPolicy.onComplete.releaseRunbook,
-          onStopped: input.terminalPolicy.onStopped.releaseRunbook,
-          retainClaimsAsTerminal: true,
-        },
+        // Addressed: the caller drove this very run to terminal, so its claims
+        // stay as terminal evidence for a later `--claim-id` to resolve
+        // `terminal` rather than `claim-rotated`.
+        ...(input.terminalPolicy.releaseOnTerminal
+          ? { terminalRelease: { role: 'addressed' as const } }
+          : {}),
         makeRecoveryActor: (state) => actorService.createRecoveryActor(state, steps),
         compute: async (capturedState) => {
           const initial = capturedState;
@@ -3908,11 +3940,12 @@ export class RunbookLifecycleCommandService {
           ? { claimKey: claimKeyFromBearer(input.callerEvidence.claimId) }
           : {}),
         ...(guard === undefined ? {} : { guard }),
-        terminalRelease: {
-          onComplete: input.terminalPolicy.onComplete.releaseRunbook,
-          onStopped: input.terminalPolicy.onStopped.releaseRunbook,
-          retainClaimsAsTerminal: true,
-        },
+        // Addressed: the caller drove this very run to terminal, so its claims
+        // stay as terminal evidence for a later `--claim-id` to resolve
+        // `terminal` rather than `claim-rotated`.
+        ...(input.terminalPolicy.releaseOnTerminal
+          ? { terminalRelease: { role: 'addressed' as const } }
+          : {}),
         makeRecoveryActor: (state) => actorService.createRecoveryActor(state, transitionSteps),
         compute: async (capturedState) => {
           previousState = capturedState;

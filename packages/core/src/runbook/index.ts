@@ -188,8 +188,6 @@ export {
   type PopIfActiveResult,
   type PreparedRunControlClaim,
   type PushIfNotActiveResult,
-  type ReleaseRunbookResult,
-  type ReleaseRunbooksResult,
   type RunningStackMemberResolution,
   type SessionMutationRefusalOutcome,
   type StashActiveResult,
@@ -271,7 +269,7 @@ export {
   type CapturedActorMutationRun,
   type PreparedActorMutationSet,
   type PreparedActorMutationSetMember,
-  type AggregateTerminalRelease,
+  type AggregateRunRelease,
 } from './effectful-actor-mutation-runner.js';
 export {
   RunbookCompletionService,

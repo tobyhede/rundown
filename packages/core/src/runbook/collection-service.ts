@@ -29,7 +29,8 @@ import {
 import type { Frame, FrameKey } from './targeting.js';
 import { completionTargetsFrame, findSubstepState } from './targeting.js';
 import { deriveActiveCompletionFrame } from './frame-entry.js';
-import type { ClaimSeenRecordResult, ReleaseRunbookResult } from './session-service.js';
+import type { ClaimSeenRecordResult } from './session-service.js';
+import type { RunRelease } from './session-release.js';
 import type { SessionMutationResult } from './storage/runbook-store.js';
 import type { ResolvedStep, RunbookState, RunId } from './types.js';
 import {
@@ -47,22 +48,22 @@ import {
   type TransitionObservationEvent,
 } from '../events/transition-observation.js';
 
-/** Session reader plus the single write used by terminal release. */
+/** Session reader plus the writes the collection seam and the seams it calls perform. */
 export interface CollectionSessionService extends CommandTargetReader {
   /**
-   * Release a run from all session targeting structures on terminal.
+   * Release runs from every session targeting structure that names them.
    *
-   * @param runbookId - Terminal run id to release.
-   * @param options - Release options.
-   * @param options.retainClaimsAsTerminal - Keep claim tombstones so a later
-   *   `--claim-id` confirm/conflict still resolves `terminal` rather than
-   *   `missing`.
-   * @returns Structured release result (not consumed by the collection seam).
+   * Not called anywhere in this module, and NOT dead: `advanceInlineParentAfterCommit`
+   * forwards this same service into `propagateTerminalChildUpward`, whose
+   * `InlineParentAdvanceSessionService` requires it and whose terminal branch
+   * calls it. Structural typing is what carries the requirement across, so
+   * deleting this member fails the type check at the hand-off rather than at any
+   * call site here — verified by deleting it.
+   *
+   * @param releases - Runs to release, each with the role that explains it.
+   * @returns The committed envelope, not consumed by the collection seam itself.
    */
-  releaseRunbook(
-    runbookId: RunId,
-    options?: { readonly retainClaimsAsTerminal?: boolean },
-  ): Promise<SessionMutationResult<ReleaseRunbookResult>>;
+  releaseRuns(releases: readonly RunRelease[]): Promise<SessionMutationResult<void>>;
 
   /**
    * Record best-effort liveness for a presented bearer claim after collection
@@ -677,17 +678,17 @@ async function applyCollection(
       });
     },
     // Terminal release is folded into the SAME transaction as the terminal
-    // state, replacing the old best-effort `releaseRunbook` that ran after the
+    // state, replacing the old best-effort release that ran after the
     // lifecycle had already committed. A collect that reaches terminal can no
     // longer leave the completed run on the session default stack (#556)
     // because the two cannot land separately. `when: 'terminal'` is required
     // rather than cosmetic: whether this collect reaches terminal is decided by
     // the drain inside `beforeEffect`, long after this input is built, and an
     // unconditional release would drop a still-running target off session
-    // targeting on every ordinary collect. `retainClaimsAsTerminal: true` keeps
-    // claim tombstones so a later `--claim-id` confirm/conflict still resolves
-    // `terminal` rather than `missing`.
-    releases: [{ runId: targetRunId, retainClaimsAsTerminal: true, when: 'terminal' }],
+    // targeting on every ordinary collect. `addressed` keeps claim tombstones so
+    // a later `--claim-id` confirm/conflict still resolves `terminal` rather
+    // than `missing`.
+    releases: [{ runId: targetRunId, role: 'addressed', when: 'terminal' }],
   });
   if (aggregate.kind !== 'committed') return aggregate;
 

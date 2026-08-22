@@ -51,8 +51,7 @@ import {
 import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
 
 const RELEASE_POLICY: LifecycleTerminalReleasePolicy = {
-  onComplete: { releaseRunbook: true },
-  onStopped: { releaseRunbook: true },
+  releaseOnTerminal: true,
 };
 
 const CONTINUE_TRANSITIONS: Transitions = {

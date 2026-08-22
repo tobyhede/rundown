@@ -177,7 +177,12 @@ export function registerPruneCommand(program: Command): void {
           // Selective prune removes each id from targeting under one lock.
           // `--all` already replaced all targeting with a canonical empty session.
           if (!options.all) {
-            const released = await sessionService.releaseRunbooks(prunedIds.filter(isRunId));
+            // `discarded`: every id here is about to be deleted from the store,
+            // so its claims go with it rather than remaining as terminal
+            // evidence for a run that will not exist.
+            const released = await sessionService.releaseRuns(
+              prunedIds.filter(isRunId).map((runId) => ({ runId, role: 'discarded' as const })),
+            );
             if (released.kind !== 'committed') {
               renderSessionMutationRefusal(output, released);
               output.flush();
@@ -185,8 +190,8 @@ export function registerPruneCommand(program: Command): void {
               return;
             }
             // Tombstone GC only for ids that are NOT parseable RunIds (invalid
-            // persisted runs) — releaseRunbooks already deleted claims for the
-            // valid RunIds.
+            // persisted runs) — the release above already deleted claims for
+            // the valid RunIds.
             const pruned = await sessionService.pruneClaimsForChildren(
               prunedIds.filter((id) => !isRunId(id)),
             );

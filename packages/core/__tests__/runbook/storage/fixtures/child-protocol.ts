@@ -35,7 +35,7 @@ export type ChildOp =
     }
   | { readonly kind: 'pushRunbook'; readonly runId: string }
   | { readonly kind: 'recordClaimSeen'; readonly claimId: string }
-  | { readonly kind: 'releaseRunbook'; readonly runId: string }
+  | { readonly kind: 'releaseRun'; readonly runId: string }
   /**
    * The positional pop, which names nothing and removes whatever is on top.
    *

@@ -25,7 +25,7 @@ import {
   type TerminalUpwardPropagationResult,
   type ClaimId,
   type ClaimSeenRecordResult,
-  type ReleaseRunbookResult,
+  type RunRelease,
   type SessionMutationResult,
 } from '../../src/runbook/index.js';
 import { ErrorCodes } from '../../src/errors/codes.js';
@@ -139,16 +139,13 @@ describe('RunbookCollectionService', () => {
   /** Real claim controlling `controlledRunId`, presented by the terminal fixtures. */
   let controlledClaim: PresentedClaimFixture;
   // Held separately from the fake so assertions reference the spy directly —
-  // `sessionService.releaseRunbook` is a declared method, and passing that
+  // `sessionService.releaseRuns` is a declared method, and passing that
   // reference to `expect()` trips `@typescript-eslint/unbound-method`.
-  let releaseRunbookSpy: jest.Mock<
-    (
-      runbookId: RunId,
-      options?: { readonly retainClaimsAsTerminal?: boolean },
-    ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
+  let releaseRunsSpy: jest.Mock<
+    (releases: readonly RunRelease[]) => Promise<SessionMutationResult<void>>
   >;
   // Held separately from the fake for the same unbound-method reason as
-  // `releaseRunbookSpy` above.
+  // `releaseRunsSpy` above.
   let recordClaimSeenSpy: jest.Mock<(claimId: ClaimId) => Promise<ClaimSeenRecordResult>>;
 
   const runId = assertRunId('rd_11111111111111111111111111111111');
@@ -372,15 +369,12 @@ describe('RunbookCollectionService', () => {
     completionService = new RunbookCompletionService(manager, actorService);
     realSession = new SessionService(manager);
     actorMutationRunner = createEffectfulActorMutationRunner(tmp);
-    releaseRunbookSpy = jest.fn(async (runbookId: RunId) => ({
-      kind: 'committed' as const,
-      value: {
-        status: 'released' as const,
-        runbookId,
-        removedFromDefaultStack: true,
-        nextDefaultRunbookId: null,
-      },
-    }));
+    releaseRunsSpy = jest.fn(
+      async (_releases: readonly RunRelease[]): Promise<SessionMutationResult<void>> => ({
+        kind: 'committed',
+        value: undefined,
+      }),
+    );
     recordClaimSeenSpy = jest.fn(async () => ({
       kind: 'recorded' as const,
       claimKey: presentedClaimKey,
@@ -426,7 +420,7 @@ describe('RunbookCollectionService', () => {
       async listOpenClaimsForParent() {
         return [];
       },
-      releaseRunbook: releaseRunbookSpy,
+      releaseRuns: releaseRunsSpy,
       recordClaimSeen: recordClaimSeenSpy,
     };
     // Seed the three fixture runs and their REAL controlling claims up front:
@@ -1367,7 +1361,7 @@ describe('RunbookCollectionService', () => {
 
   it('releases the target run from session targeting when collection drives it terminal', async () => {
     // BEHAVIOUR CHANGE: the release is no longer a post-lifecycle
-    // `sessionService.releaseRunbook` call — it is a `when: 'terminal'` release
+    // `sessionService.releaseRuns` call — it is a `when: 'terminal'` release
     // folded into the SAME owned-set commit as the terminal state (#556). So the
     // assertion moved from "the seam called the session writer" to "the committed
     // session no longer targets the run", and the seam's own session write must
@@ -1387,9 +1381,9 @@ describe('RunbookCollectionService', () => {
     });
 
     expect(await defaultStack()).not.toContain(controlledRunId);
-    expect(releaseRunbookSpy).not.toHaveBeenCalled();
-    // `retainClaimsAsTerminal: true` — the claim tombstone survives so a later
-    // `--claim-id` confirm/conflict still resolves `terminal` rather than `missing`.
+    expect(releaseRunsSpy).not.toHaveBeenCalled();
+    // `role: 'addressed'` — the claim tombstone survives so a later `--claim-id`
+    // confirm/conflict still resolves `terminal` rather than `missing`.
     expect((await manager.loadSession()).claims).toHaveProperty(controlledClaim.claimKey);
   });
 
@@ -1397,7 +1391,7 @@ describe('RunbookCollectionService', () => {
     // REPLACES "preserves the committed terminal result when the session release
     // rejects (best-effort cleanup, RD-102)". That test pinned a partial write
     // surviving a later failure: the drain had already committed the terminal
-    // lifecycle, so a rejecting `releaseRunbook` could leave a completed run on
+    // lifecycle, so a rejecting session release could leave a completed run on
     // the session stack. Under the transaction that state is unrepresentable —
     // there is no separate release to reject — so the assertion is INVERTED into
     // its all-or-none twin: all three effects are observable together, and the
@@ -1407,7 +1401,7 @@ describe('RunbookCollectionService', () => {
     const { controlled } = await seedTerminalControlled('completed', 'pass', {
       parentLinkage: delegationLinkage,
     });
-    releaseRunbookSpy.mockRejectedValue(new Error('the seam must not write the session directly'));
+    releaseRunsSpy.mockRejectedValue(new Error('the seam must not write the session directly'));
 
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: controlled,
@@ -1426,7 +1420,7 @@ describe('RunbookCollectionService', () => {
       Object.keys((await manager.load(ancestorRunId))?.resolvedCompletions ?? {}),
     ).toHaveLength(1);
     expect(await defaultStack()).not.toContain(controlledRunId);
-    expect(releaseRunbookSpy).not.toHaveBeenCalled();
+    expect(releaseRunsSpy).not.toHaveBeenCalled();
   });
 
   it('does NOT release the target when collection leaves it running', async () => {
@@ -1455,7 +1449,7 @@ describe('RunbookCollectionService', () => {
     });
 
     expect(await defaultStack()).toContain(runId);
-    expect(releaseRunbookSpy).not.toHaveBeenCalled();
+    expect(releaseRunsSpy).not.toHaveBeenCalled();
   });
 
   it('renders a stopped terminal collection with lifecycle stopped (fail polarity)', async () => {
@@ -2836,7 +2830,7 @@ describe('RunbookCollectionService', () => {
       expect(persisted?.substep).toBe('1');
       // No session release: the run is still targetable.
       expect(await defaultStack()).toContain(runId);
-      expect(releaseRunbookSpy).not.toHaveBeenCalled();
+      expect(releaseRunsSpy).not.toHaveBeenCalled();
     }
 
     it('writes nothing when the collector bearer is REPLACED after authorization', async () => {
@@ -3036,7 +3030,7 @@ describe('RunbookCollectionService', () => {
       ).toHaveLength(0);
       // 3. ...and the run was not released from session targeting.
       expect(await defaultStack()).toContain(controlledRunId);
-      expect(releaseRunbookSpy).not.toHaveBeenCalled();
+      expect(releaseRunsSpy).not.toHaveBeenCalled();
       // The child's reported outcome is still there to collect on a retry.
       expect(
         Object.keys((await manager.load(controlledRunId))?.resolvedCompletions ?? {}),

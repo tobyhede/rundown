@@ -73,7 +73,6 @@ import {
 import {
   orchestrateTransition,
   transitionSinkFromEmitter,
-  type TransitionOrchestrationPolicy,
 } from '../helpers/transition-orchestrator.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
 import type { RunScopedDelegationRuntime } from '../helpers/delegation-completion.js';
@@ -102,14 +101,11 @@ type TransitionApplicationResult =
   | { status: 'stopped' };
 
 interface ObserveAndOrchestrateArgs {
-  sessionService: SessionService;
   emitter: ExecutionEventEmitter;
-  runbookId: RunId;
   steps: ResolvedStep[];
   currentState: RunbookState;
   currentStep: ResolvedStep;
   result: 'pass' | 'fail';
-  transitionPolicy: TransitionOrchestrationPolicy;
   computeActionResult?: (actionType: ActionType) => boolean;
   command?: string;
   syncSnapshot: unknown;
@@ -127,15 +123,6 @@ interface RenderTerminalObservationArgs {
   snapshot: unknown;
   position: ReturnType<typeof buildStepPosition>;
 }
-
-const EXECUTION_TERMINAL_NO_STACK_POLICY: TransitionOrchestrationPolicy = {
-  onComplete: {
-    releaseRunbook: false,
-  },
-  onStopped: {
-    releaseRunbook: false,
-  },
-};
 
 /**
  * Session cleanup behavior to apply when an execution loop reaches a terminal state.
@@ -300,11 +287,11 @@ interface InlineLaunchArgs {
  * must not report a clean `'done'`.
  *
  * A refused release also emits a `RUNBOOK_STOPPED` carrying `correctionPosition`
- * when one is supplied. On the command and drain paths the completion
- * event was already announced by `orchestrateTransition` — whose policy does not
- * release in `release-runbook` mode — and cannot be unsent, so the stream would
- * otherwise end on a clean completion for a run still held on the session stack.
- * Callers that have not announced a completion pass no position.
+ * when one is supplied. On the command and drain paths the completion event was
+ * already announced by `orchestrateTransition` — which renders events and never
+ * releases — and cannot be unsent, so the stream would otherwise end on a clean
+ * completion for a run still held on the session stack. Callers that have not
+ * announced a completion pass no position.
  *
  * @param sessionService - Session service performing the release.
  * @param runbookId - Run whose session targeting is being released.
@@ -336,33 +323,33 @@ async function applyExecutionTerminalRelease(
   let released: SessionMutationResult<unknown>;
   switch (mode) {
     case 'release-runbook':
-      // Natural child completion: retain the claim as a terminal tombstone so
-      // `rd pass/fail --claim-id` can confirm-or-conflict against the child's
-      // outcome (idempotent post-work commands). Explicit teardown
-      // (abort/stop/complete) keeps deleting the claim.
-      released = await sessionService.releaseRunbook(runbookId, { retainClaimsAsTerminal: true });
+      // `addressed`: this loop drove the run it names to terminal, so the claim
+      // stays as terminal evidence and `rd pass/fail --claim-id` can
+      // confirm-or-conflict against the child's outcome (idempotent post-work
+      // commands).
+      released = await sessionService.releaseRuns([{ runId: runbookId, role: 'addressed' }]);
       break;
     case 'stack-pop':
       // Named, not positional. This loop is releasing the run it just drove to
       // terminal, and `runbookId` is that run — so asking the session to pop
       // "whatever is on top" is a strictly weaker statement of the same intent.
       // It is weaker in two directions: a stale child left above this run gets
-      // popped instead (taking ITS claims with it, since a release deletes
-      // every claim controlling what it removes), and this run is then left on
-      // the stack it was supposed to leave.
+      // popped instead — and, at this role, taking ITS claims with it — while
+      // this run is left on the stack it was supposed to leave.
       //
-      // Claims are still deleted here, exactly as the positional pop deleted
-      // them. `release-runbook` retains a terminal tombstone and this mode does
-      // not; that divergence is real and is tracked separately, but changing it
-      // in the same commit that changes the addressing would make a claim-
-      // disposition regression untraceable to either.
+      // `collateral` preserves exactly what the positional pop did: claims are
+      // revoked here, while `release-runbook` retains them. That divergence is
+      // #781 and is fixed separately — the role this site should carry is
+      // `addressed`, since the loop drove this very run to terminal, but
+      // changing the disposition in the commit that changes the vocabulary
+      // would make a claim regression untraceable to either.
       //
-      // `releaseRunbook` rather than the conditional pop, because the two want
+      // A release rather than the conditional pop, because the two want
       // opposite things from a stack that has moved on: an undo must reach its
       // run only while still active, while a terminal release must reach its
-      // run wherever it now sits. Its `not-found` arm makes a run already
-      // released — by the fence, or by another process — a clean no-op.
-      released = await sessionService.releaseRunbook(runbookId);
+      // run wherever it now sits. A run already released — by the fence, or by
+      // another process — is a clean no-op.
+      released = await sessionService.releaseRuns([{ runId: runbookId, role: 'collateral' }]);
       break;
     default: {
       const _exhaustive: never = mode;
@@ -886,26 +873,21 @@ async function launchInlineChildFromIntent({
   return launchResult.loopResult;
 }
 
-async function observeAndOrchestrate({
-  sessionService,
+function observeAndOrchestrate({
   emitter,
-  runbookId,
   steps,
   currentState,
   currentStep,
   result,
-  transitionPolicy,
   computeActionResult,
   command,
   syncSnapshot,
   postState,
-}: ObserveAndOrchestrateArgs): Promise<TransitionApplicationResult> {
+}: ObserveAndOrchestrateArgs): TransitionApplicationResult {
   const updatedState = postState;
 
-  const orchestration = await orchestrateTransition({
-    sessionService,
+  const orchestration = orchestrateTransition({
     sink: transitionSinkFromEmitter(emitter),
-    runbookId,
     steps,
     currentStep,
     previousState: currentState,
@@ -913,7 +895,6 @@ async function observeAndOrchestrate({
     snapshot: syncSnapshot,
     result,
     computeActionResult,
-    policy: transitionPolicy,
     command,
   });
 
@@ -968,9 +949,7 @@ function renderTerminalObservationFromCoreState({
  * @param args - Command transition arguments including sync snapshot and post-state
  * @returns Transition application result after observing the resolved transition
  */
-async function observeCommandTransition(
-  args: ObserveCommandTransitionArgs,
-): Promise<TransitionApplicationResult> {
+function observeCommandTransition(args: ObserveCommandTransitionArgs): TransitionApplicationResult {
   return observeAndOrchestrate(args);
 }
 
@@ -980,8 +959,6 @@ export interface DrainResolvedCompletionsArgs {
   actorService: RunbookActorService;
   /** State manager used by the core completion service. */
   manager: RunbookStateManager;
-  /** Session service for active runbook tracking. */
-  sessionService: SessionService;
   /** Event emitter for execution progress notifications. */
   emitter: ExecutionEventEmitter;
   /** ID of the runbook being drained. */
@@ -990,8 +967,6 @@ export interface DrainResolvedCompletionsArgs {
   steps: ResolvedStep[];
   /** Current persisted runbook state. */
   currentState: RunbookState;
-  /** Policy governing transition orchestration. */
-  transitionPolicy: TransitionOrchestrationPolicy;
   /** Optional function to compute action result for transition evaluation. */
   computeActionResult?: (actionType: ActionType) => boolean;
   /** Optional command string for event context. */
@@ -1044,12 +1019,10 @@ export type DrainResolvedCompletionsResult =
  * @param args - Drain arguments including services and current state
  * @param args.actorService - Actor service for sending events to the runbook machine
  * @param args.manager - Runbook state manager used to construct the core completion service
- * @param args.sessionService - Session service for active runbook tracking
  * @param args.emitter - Event emitter for execution progress notifications
  * @param args.runbookId - ID of the runbook being drained
  * @param args.steps - Parsed step definitions for the runbook
  * @param args.currentState - Current persisted runbook state
- * @param args.transitionPolicy - Policy governing transition orchestration
  * @param args.computeActionResult - Optional function to compute action result for transitions
  * @param args.command - Optional command string for event context
  * @param args.frameOverride - Optional frame override for frame-scoped lookups (e.g., prompted-for with explicit --index)
@@ -1060,12 +1033,10 @@ export type DrainResolvedCompletionsResult =
 export async function drainResolvedCompletions({
   actorService,
   manager,
-  sessionService,
   emitter,
   runbookId,
   steps,
   currentState,
-  transitionPolicy,
   computeActionResult,
   command,
   frameOverride,
@@ -1133,15 +1104,12 @@ export async function drainResolvedCompletions({
     // lives here rather than in core.
     const entry = applied.entry;
     const currentStep = findStepOrThrow(steps, entry.stateBefore.step, entry.stateBefore.id);
-    const observed = await observeAndOrchestrate({
-      sessionService,
+    const observed = observeAndOrchestrate({
       emitter,
-      runbookId,
       steps,
       currentState: entry.stateBefore,
       currentStep,
       result: entry.completion.result,
-      transitionPolicy,
       computeActionResult,
       command,
       syncSnapshot: entry.snapshot,
@@ -1250,11 +1218,6 @@ export async function runExecutionLoop(
   const prompted = state.prompted;
 
   const terminalReleaseMode = options.terminalReleaseMode ?? 'stack-pop';
-  // Unconditional, in every release mode: the terminal session release is now
-  // committed inside the fenced command mutation, so `orchestrateTransition`
-  // must not also release or the run is released twice — once inside the owned
-  // transaction and once outside it.
-  const terminalPolicy = EXECUTION_TERMINAL_NO_STACK_POLICY;
 
   const commandServices =
     options.commandServices ?? createCliCommandServices(options.commandStreamOptions);
@@ -1409,12 +1372,10 @@ export async function runExecutionLoop(
     const drainResult = await drainResolvedCompletions({
       actorService,
       manager,
-      sessionService,
       emitter,
       runbookId,
       steps,
       currentState,
-      transitionPolicy: terminalPolicy,
       issueDelegationCredential: options.delegationRuntime?.issueDelegationCredential,
     });
     if (drainResult.status === 'done') {
@@ -1719,19 +1680,20 @@ export async function runExecutionLoop(
       runId: runbookId,
       ...(options.claimKey === undefined ? {} : { claimKey: options.claimKey }),
       makeRecoveryActor: (state) => actorService.createRecoveryActor(state, steps),
-      terminalRelease: {
-        onComplete: terminalReleaseMode !== 'defer-to-caller',
-        onStopped: terminalReleaseMode !== 'defer-to-caller',
-        // Retained in BOTH releasing modes, matching the natural pass/fail
-        // release this fence replaced (`transition-orchestrator.ts`
-        // applyTerminalSideEffects). Explicit teardown — abort/stop/complete —
-        // is what deletes a claim; a run reaching terminal under its own steam
-        // leaves a tombstone so `rd pass/fail/status --claim-id` resolves
-        // `terminal` rather than `missing`. That applies to the run-control
-        // claim `rd run` mints over a 'stack-pop' root just as much as to a
-        // delegated child's bearer, so this must not be keyed on the mode.
-        retainClaimsAsTerminal: true,
-      },
+      // Present in both releasing modes and omitted only for `defer-to-caller`,
+      // where the inline parent-advance seam owns the single release.
+      //
+      // `addressed` in BOTH releasing modes, matching the natural pass/fail
+      // release this fence replaced. Explicit teardown — abort/stop/complete —
+      // is what revokes a claim; a run reaching terminal under its own steam
+      // leaves its claim as terminal evidence so `rd pass/fail/status
+      // --claim-id` resolves `terminal` rather than `missing`. That applies to
+      // the run-control claim `rd run` mints over a 'stack-pop' root just as
+      // much as to a delegated child's bearer, so this must not be keyed on the
+      // mode.
+      ...(terminalReleaseMode === 'defer-to-caller'
+        ? {}
+        : { terminalRelease: { role: 'addressed' as const } }),
       compute: async (capturedState) => {
         previousState = capturedState;
         const prepared = await actorService.prepareActorMutation(
@@ -1800,17 +1762,14 @@ export async function runExecutionLoop(
       return 'stopped';
     }
 
-    const transitionResult = await observeCommandTransition({
-      sessionService,
+    const transitionResult = observeCommandTransition({
       emitter,
-      runbookId,
       steps,
       currentState: previousState,
       postState: cmdSync.state,
       syncSnapshot: cmdSync.snapshot,
       currentStep,
       result: commandOutput.result,
-      transitionPolicy: terminalPolicy,
       command: displayCommand,
     });
     if (transitionResult.status === 'done') {

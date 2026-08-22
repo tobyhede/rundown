@@ -119,7 +119,7 @@ async function arrangeCollectedTrio(): Promise<
 
   // Claim + pass BOTH children so their outcomes are reported and `collect` reaches
   // `collection_applied` rather than refusing. `pass` on a claimed child drives it
-  // terminal through a path that passes `retainClaimsAsTerminal: true`, so both
+  // terminal through a path that releases it in the `addressed` role, so both
   // child records survive into the session the AC5 assertions read.
   const childClaimKeys: ClaimLookupKey[] = [];
   for (const token of [token1, token2]) {
@@ -572,9 +572,8 @@ describe('claim liveness recording drift guard (#519 AC4)', () => {
     //
     // WHY A BYSTANDER, AND NOT THE ABORTED CHILD. The obvious test — "abort child A,
     // assert A's mark did not move" — CANNOT BE WRITTEN. Aborting a CLAIMED
-    // delegation returns `needs_force`, and the force path calls
-    // `cleanupForceAbortedLinkedChild` -> `releaseRunbook(childRunId)` WITHOUT
-    // `retainClaimsAsTerminal`, which DELETES the claim record. So the aborted
+    // delegation returns `needs_force`, and the force path releases the child in
+    // the `collateral` role, which DELETES the claim record. So the aborted
     // child's mark is UNOBSERVABLE after the command: deleted is deleted, whether or
     // not it was recorded first. A bystander child is the observable form of the
     // same invariant — it has a live claim record throughout, it is not the abort's

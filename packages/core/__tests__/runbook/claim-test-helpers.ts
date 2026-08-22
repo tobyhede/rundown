@@ -237,7 +237,7 @@ export function raceChildClaimDuringActorPrepare(
  * is what lets a cascade test prove the key landed on the bearer's own run and
  * nowhere else.
  *
- * The release is UNWRAPPED, not discarded. `releaseRunbook` is guarded, so it
+ * The release is UNWRAPPED, not discarded. `releaseRuns` is guarded, so it
  * can refuse (`execution_in_progress` when the run is execution-owned,
  * `recovery_required` when it awaits recovery) and commit nothing. A discarded
  * refusal reads to every caller as a fence that held — the capture list fills,
@@ -268,7 +268,11 @@ export function retireDuringCapture(
     const captured = await realCapture(...args);
     if (!retired) {
       retired = true;
-      unwrapSessionMutation(await retiring.releaseRunbook(retiredRunId));
+      unwrapSessionMutation(
+        // `collateral`, so the release revokes the controlling claim: a retained
+        // claim would leave the stale bearer resolvable and never open the race.
+        await retiring.releaseRuns([{ runId: retiredRunId, role: 'collateral' }]),
+      );
     }
     capturedRunIds.push(args[0]);
     return captured;

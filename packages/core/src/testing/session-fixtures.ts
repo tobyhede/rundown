@@ -24,12 +24,8 @@
 
 import { parseRunbookDocument, type Runbook } from '@rundown-org/parser';
 import { RunbookStateManager } from '../runbook/state.js';
-import {
-  projectRunbookRelease,
-  SessionService,
-  topOfStack,
-  topOfStackId,
-} from '../runbook/session-service.js';
+import { SessionService, topOfStack, topOfStackId } from '../runbook/session-service.js';
+import { projectRunReleases } from '../runbook/session-release.js';
 import { assertRunId, type RunId } from '../runbook/run-id.js';
 import type { ClaimId } from '../runbook/claim-id.js';
 import type { SessionMutationResult } from '../runbook/storage/runbook-store.js';
@@ -310,14 +306,14 @@ export async function stashRunbookUnverified(
  * The two production shapes both name their run. An undo of an activation the
  * caller performed uses {@link SessionService.popRunbookIfActive}, which removes
  * the run only while it is still the top and reports `not-active` otherwise. A
- * terminal release uses {@link SessionService.releaseRunbook}, which removes the
+ * terminal release uses {@link SessionService.releaseRuns}, which removes each
  * named run wherever it now sits — a loop reaching terminal must release the run
  * it drove, not whatever is above it.
  *
  * It exists because several core tests legitimately need multi-level stack
  * setup — unwinding a seeded stack to a known depth, where the whole point is
  * that no id is named. Deleting it outright would push those onto
- * `releaseRunbook` and quietly change what they assert; a `@deprecated` tag
+ * `releaseRuns` and quietly change what they assert; a `@deprecated` tag
  * would leave it callable from product code, which is the one thing this move
  * is for.
  *
@@ -341,18 +337,22 @@ export async function popTopOfStackUnverified(
   return manager.mutateSessionGuarded(topOfStack, (ctx) => {
     const topId = topOfStackId(ctx.session);
     // Type narrowing rather than a behavioural branch, and an accepted
-    // equivalent mutant because of it: `projectRunbookRelease` takes a `RunId`,
-    // so this is what lets the call compile. Dropping the guard on an empty
-    // stack releases nothing and reads back the same `null`, so no test can
-    // distinguish the two — which is the honest reading, not a coverage gap.
+    // equivalent mutant because of it: a release names a `RunId`, so this is
+    // what lets the call compile. Dropping the guard on an empty stack releases
+    // nothing — the projection filters the stack for `undefined`, matches no
+    // claim, and `topOfStackId` reads back the same `null` — so no test can
+    // distinguish the two, which is the honest reading, not a coverage gap.
+    // Stryker disable next-line all: equivalent, per the reasoning above
     if (!topId) return null;
     // The release mutates `ctx.session` in place and `topId` is provably on the
-    // stack here, so the new top is read back rather than taken from the
-    // result's `released` arm: the `not-found` arm such a branch would guard
-    // against is unreachable from inside this `if`, and an unreachable guard is
-    // dead code rather than defence. Same reasoning `popRunbookIfActive` states
-    // for its own release.
-    projectRunbookRelease(ctx.session, topId, {});
+    // stack here, so the new top is read back afterwards rather than reported
+    // by the projection, which reports nothing.
+    //
+    // `collateral` because this fixture reproduces the positional pop that
+    // product code no longer performs, claim revocation included. It is not
+    // `addressed` — nobody acted on the popped run — and not `discarded`, since
+    // the run survives the pop.
+    projectRunReleases(ctx.session, [{ runId: topId, role: 'collateral' }]);
     return topOfStackId(ctx.session);
   });
 }

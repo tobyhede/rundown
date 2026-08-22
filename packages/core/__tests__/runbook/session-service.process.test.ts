@@ -615,7 +615,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
   }, 120_000);
 
   it('converges with no duplicate or resurrected entries when releases and pops race', async () => {
-    // Stack teardown from several processes at once. Each `releaseRunbook`
+    // Stack teardown from several processes at once. Each targeted release
     // filters one id out; each positional pop removes the current top. Whatever
     // the interleaving, the survivors must be a subset of the originals with no
     // duplicates, and exactly (initial - removals) entries must remain: a lost
@@ -625,8 +625,8 @@ describe('cross-process session write contention (transaction replaces SessionLo
 
     // Two targeted releases plus two pops: four removals against four entries.
     const results = await race([
-      { kind: 'releaseRunbook', runId: runIds[0] },
-      { kind: 'releaseRunbook', runId: runIds[1] },
+      { kind: 'releaseRun', runId: runIds[0] },
+      { kind: 'releaseRun', runId: runIds[1] },
       { kind: 'popTopOfStack' },
       { kind: 'popTopOfStack' },
     ]);
@@ -652,7 +652,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
     // Under the `getActive` + positional-pop shape this replaced, the
     // push-lands-first interleaving pops `foreign` instead: the pre-read
     // resolved `mine` as the top, and by the time the pop's own transaction
-    // opened the top had moved. `projectRunbookRelease` deletes every claim
+    // opened the top had moved. `projectRunReleases` deletes every claim
     // controlling the run it removes, so `foreign` loses the run-control bearer
     // its orchestrator is still holding — an unrecoverable authority failure,
     // not a leaked stack entry.
@@ -818,8 +818,7 @@ describe('cross-process session write contention (transaction replaces SessionLo
       callerEvidence: { kind: 'claim_bearer', claimId },
       targetSelector: { kind: 'claim', claimId },
       terminalPolicy: {
-        onComplete: { releaseRunbook: true },
-        onStopped: { releaseRunbook: true },
+        releaseOnTerminal: true,
       },
     });
 

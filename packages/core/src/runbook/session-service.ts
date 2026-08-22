@@ -64,16 +64,7 @@ import {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
 } from './delegation-lifecycle-read-model.js';
-
-/** Result of removing a runbook from session targeting structures. */
-export type ReleaseRunbookResult =
-  | { readonly status: 'not-found'; readonly runbookId: RunId }
-  | {
-      readonly status: 'released';
-      readonly runbookId: RunId;
-      readonly removedFromDefaultStack: boolean;
-      readonly nextDefaultRunbookId: RunId | null;
-    };
+import { assertValidReleaseBatch, projectRunReleases, type RunRelease } from './session-release.js';
 
 /**
  * In-memory run-control credential prepared before a run is activated.
@@ -127,60 +118,10 @@ export type RunControlAdoption =
     };
 
 /**
- * Project one terminal release onto an in-memory session snapshot.
- *
- * @param session - Session snapshot to mutate in place.
- * @param runbookId - Run to remove from session targeting structures.
- * @param options - Terminal-claim retention policy.
- * @param options.retainClaimsAsTerminal - Whether matching claims remain as terminal tombstones.
- * @returns Structured release result for the projected snapshot.
- */
-export function projectRunbookRelease(
-  session: SessionData,
-  runbookId: RunId,
-  options: { readonly retainClaimsAsTerminal?: boolean } = {},
-): ReleaseRunbookResult {
-  const originalDefaultStackLength = session.defaultStack.length;
-  session.defaultStack = session.defaultStack.filter((id) => id !== runbookId);
-  const removedFromDefaultStack = session.defaultStack.length !== originalDefaultStackLength;
-
-  const removedClaimIds: string[] = [];
-  const retainedClaimIds: string[] = [];
-  for (const [claimKey, claim] of Object.entries(session.claims)) {
-    if (claim.controlledRunId === runbookId) {
-      if (options.retainClaimsAsTerminal) {
-        retainedClaimIds.push(claimKey);
-      } else {
-        removedClaimIds.push(claimKey);
-        delete session.claims[claimKey];
-      }
-    }
-  }
-
-  const removedFromStash = session.stashedRunbookId === runbookId;
-  if (removedFromStash) session.stashedRunbookId = undefined;
-
-  if (
-    !removedFromDefaultStack &&
-    removedClaimIds.length === 0 &&
-    retainedClaimIds.length === 0 &&
-    !removedFromStash
-  ) {
-    return { status: 'not-found', runbookId };
-  }
-  return {
-    status: 'released',
-    runbookId,
-    removedFromDefaultStack,
-    nextDefaultRunbookId: session.defaultStack[session.defaultStack.length - 1] ?? null,
-  };
-}
-
-/**
  * Remove the topmost stack entry for a run, and nothing else.
  *
  * The undo of a bare `defaultStack.push`, and deliberately not a variant of
- * {@link projectRunbookRelease}. That primitive revokes every claim
+ * {@link projectRunReleases}. That projection revokes every claim
  * controlling the run and clears a matching stash slot, which is correct when
  * a run is genuinely released, and wrong as the undo of a push: the push mints
  * no claim and never reads `session.claims`, so an undo that disposes of
@@ -196,7 +137,7 @@ export function projectRunbookRelease(
  * constraint — adding one would make an existing session with a duplicate
  * impossible to load, which the no-migration rule forbids — so a run can
  * appear lower in the stack, and an undo of one push must leave that entry
- * alone. `projectRunbookRelease` filters every occurrence, which is right for
+ * alone. `projectRunReleases` filters every occurrence, which is right for
  * a release and wrong here.
  *
  * Returns nothing: the sole caller reads the new top back off the stack it
@@ -255,12 +196,6 @@ export type ActiveInlineForceTerminalPlan =
       readonly activeState: RunbookState;
       readonly repeatedRunId: RunId;
     };
-
-/** Result of releasing multiple runbooks in a single session mutation. */
-export interface ReleaseRunbooksResult {
-  readonly releasedRunIds: readonly RunId[];
-  readonly nextDefaultRunbookId: RunId | null;
-}
 
 /** Machine-derived inputs committed with a delegated child's first claim. */
 export interface ClaimAndInitialLinkInput {
@@ -1884,41 +1819,38 @@ export class SessionService {
   }
 
   /**
-   * Release multiple runbooks from session targeting structures in one session
-   * mutation, composed from {@link releaseFromSession} in a single transaction.
+   * Release runs from session targeting structures in one session mutation.
    *
-   * Used by the inline force-terminal cascade to tear down the whole active
-   * inline chain after every member reached terminal lifecycle. Callers may
-   * retain the terminal root's claim while still deleting descendant claims.
+   * The whole batch commits or refuses together, so a caller tearing down an
+   * inline chain cannot leave half of it targeted. Each member states the fact
+   * that explains its release — {@link ReleaseRole} — and the projection owns
+   * what that means for the run's claims; the caller never spells the claim
+   * disposition itself.
    *
-   * @param runbookIds - Run ids to release, in descendant-to-root order.
-   * @param options - Aggregate terminal-claim retention policy.
-   * @param options.retainClaimsAsTerminalRunId - Root run whose matching claims remain terminal.
-   * @returns The released run ids and the next default-stack runbook id, if any.
-   *   Refused `execution_in_progress` or `recovery_required` instead when the
-   *   run is execution-owned or awaiting recovery; the value is absent then.
+   * An empty batch is a committed no-op: `prune` releases whatever it pruned,
+   * which can be nothing.
+   *
+   * @param releases - Runs to release, each with its role, in
+   *   descendant-to-root order where the caller has one.
+   * @returns Nothing beyond the committed envelope. Refused
+   *   `execution_in_progress` or `recovery_required` instead when a named run is
+   *   execution-owned or awaiting recovery.
+   * @throws {Error} When two members name the same run, or a member carries a
+   *   role outside `ReleaseRole` — see {@link assertValidReleaseBatch}.
    */
-  async releaseRunbooks(
-    runbookIds: readonly RunId[],
-    options: { readonly retainClaimsAsTerminalRunId?: RunId } = {},
-  ): Promise<SessionMutationResult<ReleaseRunbooksResult>> {
-    return this.mutateGuarded(runbookIds, (ctx) => {
-      const releasedRunIds: RunId[] = [];
-      for (const runbookId of runbookIds) {
-        const released = this.releaseFromSession(ctx.session, runbookId, {
-          retainClaimsAsTerminal: runbookId === options.retainClaimsAsTerminalRunId,
-        });
-        if (released.status === 'released') {
-          releasedRunIds.push(runbookId);
-        }
-      }
-
-      const { defaultStack } = ctx.session;
-      return {
-        releasedRunIds,
-        nextDefaultRunbookId: defaultStack[defaultStack.length - 1] ?? null,
-      };
-    });
+  async releaseRuns(releases: readonly RunRelease[]): Promise<SessionMutationResult<void>> {
+    // Refused BEFORE the transaction, matching the aggregate seam. The ownership
+    // preflight inside `mutateGuarded` runs ahead of the projection, so leaving
+    // this to `projectRunReleases` would let a malformed batch naming an
+    // execution-owned run come back as `execution_in_progress` — telling the
+    // caller to retry a call that can never succeed — instead of throwing.
+    assertValidReleaseBatch(releases);
+    return this.mutateGuarded(
+      releases.map(({ runId }) => runId),
+      (ctx) => {
+        projectRunReleases(ctx.session, releases);
+      },
+    );
   }
 
   /**
@@ -1935,28 +1867,6 @@ export class SessionService {
    */
   async resetForPruneAll(): Promise<void> {
     await this.manager.saveSession({ defaultStack: [], claims: {} });
-  }
-
-  /**
-   * Release a runbook from all session targeting structures by id.
-   *
-   * @param runbookId - Runbook id to release
-   * @param options - Release options
-   * @param options.retainClaimsAsTerminal - When true, leave matching claim
-   *   records in place as terminal tombstones (so `getActiveForClaimId` resolves
-   *   `terminal` rather than `missing`) instead of deleting them. Used by the
-   *   natural-completion terminal-release path; explicit teardown deletes.
-   * @returns Structured release result
-   *   Refused `execution_in_progress` or `recovery_required` instead when the
-   *   run is execution-owned or awaiting recovery; the value is absent then.
-   */
-  async releaseRunbook(
-    runbookId: RunId,
-    options: { readonly retainClaimsAsTerminal?: boolean } = {},
-  ): Promise<SessionMutationResult<ReleaseRunbookResult>> {
-    return this.mutateGuarded([runbookId], (ctx) =>
-      this.releaseFromSession(ctx.session, runbookId, options),
-    );
   }
 
   /**
@@ -1989,30 +1899,6 @@ export class SessionService {
   }
 
   /**
-   * Release a runbook from an in-memory session (no IO, no transaction).
-   *
-   * Pure in-place mutation so a caller can release against a session snapshot
-   * it already holds and commit once, instead of round-tripping per release.
-   * {@link releaseRunbooks} needs that to put several runbooks under a single
-   * commit; {@link popRunbookIfActive} releases exactly one, folded into the
-   * same transaction that decides whether the run is still the top.
-   *
-   * @param session - Session to mutate in place.
-   * @param runbookId - Runbook id to release from session targeting structures
-   * @param options - Release options (see {@link releaseRunbook})
-   * @param options.retainClaimsAsTerminal - When true, retain matching claim
-   *   records as terminal tombstones instead of deleting them.
-   * @returns Structured release result describing what was removed
-   */
-  private releaseFromSession(
-    session: SessionData,
-    runbookId: RunId,
-    options: { readonly retainClaimsAsTerminal?: boolean } = {},
-  ): ReleaseRunbookResult {
-    return projectRunbookRelease(session, runbookId, options);
-  }
-
-  /**
    * Pop a runbook from the stack, but only while it is still the top.
    *
    * For a caller undoing an activation it performed itself. Resolving the target
@@ -2020,7 +1906,7 @@ export class SessionService {
    * shape: a positional pop re-reads the stack inside its own transaction and
    * removes whatever is on top by then, so a concurrent push means the run that
    * gets popped is no longer the one the caller resolved. That is not a
-   * recoverable slip — {@link projectRunbookRelease} deletes every claim
+   * recoverable slip — {@link projectRunReleases} deletes every claim
    * controlling the run it removes, so a foreign run pushed-and-claimed by
    * `rundown run` loses the run-control bearer its orchestrator still holds.
    *
@@ -2029,7 +1915,7 @@ export class SessionService {
    * reach it, because the multi-level stack setup a few core tests need is the
    * only remaining legitimate use.
    *
-   * {@link releaseRunbook} is not the answer either: it removes the id from
+   * {@link releaseRuns} is not the answer either: it removes the id from
    * anywhere in the stack, so an undo narrowed to "only if still active" would
    * silently reach a run that a concurrent push has since buried.
    *
@@ -2080,7 +1966,7 @@ export class SessionService {
         if (topId !== expected) {
           return { status: 'not-active', activeRunbookId: topId };
         }
-        // A stack-only projection, never `releaseFromSession`: this undoes a
+        // A stack-only projection, never a release: this undoes a
         // push, and the push minted no claim and wrote no stash slot, so the
         // undo must dispose of neither. It takes the stack array alone, so it
         // could not reach `claims` even if a later edit asked it to.

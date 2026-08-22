@@ -13,10 +13,10 @@ import type {
   ParentLinkage,
   PopIfActiveResult,
   PushIfNotActiveResult,
-  ReleaseRunbookResult,
   RunbookActorService,
   RunbookStateManager,
   RunId,
+  RunRelease,
   SessionMutationResult,
 } from '@rundown-org/core';
 import type { ResolvedStep } from '@rundown-org/parser';
@@ -54,10 +54,7 @@ function frontierProjectionRuntime(
 // The recovery-required refusal arm, so a fixture epoch carries core's brand
 // without core having to export it. Reaching it through the union also means a
 // change to the arm surfaces here rather than in a cast that keeps compiling.
-type RecoveryRefusal = Extract<
-  SessionMutationResult<ReleaseRunbookResult>,
-  { readonly kind: 'recovery_required' }
->;
+type RecoveryRefusal = Extract<SessionMutationResult<void>, { readonly kind: 'recovery_required' }>;
 
 // Mock dependencies
 const mockActorService = {
@@ -124,13 +121,7 @@ const mockSessionService = {
   pushRunbookIfNotActive: mockFn<(id: RunId) => Promise<PushIfNotActiveResult>>().mockResolvedValue(
     { status: 'pushed' },
   ),
-  releaseRunbook:
-    mockFn<
-      (
-        id: RunId,
-        options?: { readonly retainClaimsAsTerminal?: boolean },
-      ) => Promise<SessionMutationResult<ReleaseRunbookResult>>
-    >(),
+  releaseRuns: mockFn<(releases: readonly RunRelease[]) => Promise<SessionMutationResult<void>>>(),
   // A resumed inline child re-establishes its own run-control authority through
   // core. These loop tests are about the launch/repair sequence, not the
   // credential seam, so the double refuses adoption — the arm that leaves the
@@ -587,15 +578,8 @@ describe('runExecutionLoop', () => {
     mockSessionService.getActive.mockResolvedValue(null);
     mockSessionService.pushRunbook.mockReset();
     mockSessionService.pushRunbook.mockResolvedValue(undefined);
-    mockSessionService.releaseRunbook.mockReset();
-    mockSessionService.releaseRunbook.mockResolvedValue(
-      committed({
-        status: 'released',
-        runbookId,
-        removedFromDefaultStack: true,
-        nextDefaultRunbookId: null,
-      }),
-    );
+    mockSessionService.releaseRuns.mockReset();
+    mockSessionService.releaseRuns.mockResolvedValue(committed<void>(undefined));
     mockSessionService.popRunbookIfActive.mockReset();
     mockSessionService.popRunbookIfActive.mockResolvedValue(
       committed({ status: 'not-active', activeRunbookId: null }),
@@ -755,15 +739,10 @@ describe('runExecutionLoop', () => {
     const drained = await drainResolvedCompletions({
       actorService: mockActorService as any,
       manager: asManager(mockManager),
-      sessionService: mockSessionService as any,
       emitter: asEmitter(mockEmitter),
       runbookId: runbookId,
       steps: asSteps(substepSteps),
       currentState: beforeFirst as any,
-      transitionPolicy: {
-        onComplete: { releaseRunbook: false },
-        onStopped: { releaseRunbook: false },
-      },
     });
 
     expect(drained).toEqual({
@@ -808,15 +787,10 @@ describe('runExecutionLoop', () => {
     const drained = await drainResolvedCompletions({
       actorService: mockActorService as any,
       manager: asManager(mockManager),
-      sessionService: mockSessionService as any,
       emitter: asEmitter(mockEmitter),
       runbookId: runbookId,
       steps: asSteps(steps),
       currentState: currentState as any,
-      transitionPolicy: {
-        onComplete: { releaseRunbook: false },
-        onStopped: { releaseRunbook: false },
-      },
     });
 
     expect(drained).toEqual({
@@ -916,15 +890,10 @@ describe('runExecutionLoop', () => {
     const drained = await drainResolvedCompletions({
       actorService: mockActorService as any,
       manager: asManager(mockManager),
-      sessionService: mockSessionService as any,
       emitter: asEmitter(mockEmitter),
       runbookId: runbookId,
       steps: asSteps(substepSteps),
       currentState: beforeFirst as any,
-      transitionPolicy: {
-        onComplete: { releaseRunbook: false },
-        onStopped: { releaseRunbook: false },
-      },
     });
 
     expect(drained).toEqual({
@@ -1007,15 +976,10 @@ describe('runExecutionLoop', () => {
     const drained = await drainResolvedCompletions({
       actorService: mockActorService as any,
       manager: asManager(mockManager),
-      sessionService: mockSessionService as any,
       emitter: asEmitter(mockEmitter),
       runbookId: runbookId,
       steps: asSteps(substepSteps),
       currentState: before as any,
-      transitionPolicy: {
-        onComplete: { releaseRunbook: false },
-        onStopped: { releaseRunbook: false },
-      },
       frameOverride: { kind: 'inactive', frameKey: '1|' } as any,
     });
 
@@ -1063,9 +1027,11 @@ describe('runExecutionLoop', () => {
     expect(emittedEvents).not.toContain('COMMAND_STARTED');
     expect(emittedEvents).not.toContain('COMMAND_COMPLETED');
     expect(core.executeCommand).not.toHaveBeenCalled();
-    // Bare `runbookId`, asserted by exact arguments: the retaining form belongs
-    // to `release-runbook`, and the two modes must stay distinguishable here.
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
+    // Role `collateral`, asserted by exact arguments: `addressed` belongs to
+    // `release-runbook`, and the two modes must stay distinguishable here.
+    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
+      { runId: runbookId, role: 'collateral' },
+    ]);
   });
 
   it('returns waiting if prompted mode is on', async () => {
@@ -1444,22 +1410,18 @@ describe('runExecutionLoop', () => {
         message: 'Success',
       }),
     });
-    // 'stack-pop' retains the claim exactly as 'release-runbook' does: the run
+    // 'stack-pop' addresses the run exactly as 'release-runbook' does: the run
     // reached terminal under its own steam, so its bearer becomes a tombstone
-    // rather than being deleted. Pinned end-to-end against a real store by
+    // rather than being revoked. Pinned end-to-end against a real store by
     // `run.test.ts` "retains the run-control claim as a terminal tombstone" —
     // this mocked runner ignores `terminalRelease`, so it can only pin the
     // request, never the release itself.
     expect(mockActorMutationRunner.run).toHaveBeenCalledWith(
       expect.objectContaining({
-        terminalRelease: {
-          onComplete: true,
-          onStopped: true,
-          retainClaimsAsTerminal: true,
-        },
+        terminalRelease: { role: 'addressed' },
       }),
     );
-    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
   });
 
   describe('terminal release refused for execution ownership (#608)', () => {
@@ -1539,7 +1501,7 @@ describe('runExecutionLoop', () => {
         type: 'ERROR_OCCURRED',
         payload: { message: refusal.message, code },
       });
-      expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+      expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
     });
 
     it('reports a refused stack pop and downgrades an already-completed run', async () => {
@@ -1561,7 +1523,7 @@ describe('runExecutionLoop', () => {
         runId: runbookId,
         message: `Run ${runbookId} has an execution in progress.`,
       };
-      mockSessionService.releaseRunbook.mockResolvedValue(refusal);
+      mockSessionService.releaseRuns.mockResolvedValue(refusal);
 
       const result = await runExecutionLoop(
         asManager(mockManager),
@@ -1572,7 +1534,9 @@ describe('runExecutionLoop', () => {
       );
 
       expect(result).toBe('stopped');
-      expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
+      expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
+        { runId: runbookId, role: 'collateral' },
+      ]);
       expect(mockEmitter.emit).toHaveBeenCalledWith({
         type: 'ERROR_OCCURRED',
         payload: { message: refusal.message, code: 'EXECUTION_IN_PROGRESS' },
@@ -1616,7 +1580,7 @@ describe('runExecutionLoop', () => {
         type: 'ERROR_OCCURRED',
         payload: { message: refusal.message, code: 'STALE_CLAIM' },
       });
-      expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+      expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
     });
 
     it('returns done and emits no stop when the command path release commits', async () => {
@@ -1637,14 +1601,10 @@ describe('runExecutionLoop', () => {
       expect(result).toBe('done');
       expect(mockActorMutationRunner.run).toHaveBeenCalledWith(
         expect.objectContaining({
-          terminalRelease: {
-            onComplete: true,
-            onStopped: true,
-            retainClaimsAsTerminal: true,
-          },
+          terminalRelease: { role: 'addressed' },
         }),
       );
-      expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+      expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
       expect(stoppedEmissions()).toHaveLength(0);
     });
 
@@ -1672,7 +1632,7 @@ describe('runExecutionLoop', () => {
           },
         });
         if (refuse) {
-          mockSessionService.releaseRunbook.mockResolvedValue({
+          mockSessionService.releaseRuns.mockResolvedValue({
             kind: 'execution_in_progress' as const,
             runId: runbookId,
             message: `Run ${runbookId} has an execution in progress.`,
@@ -1689,9 +1649,9 @@ describe('runExecutionLoop', () => {
         );
 
         expect(result).toBe(expected);
-        expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
-          retainClaimsAsTerminal: true,
-        });
+        expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
+          { runId: runbookId, role: 'addressed' },
+        ]);
         expect(stoppedEmissions()).toHaveLength(stops);
       },
     );
@@ -1715,7 +1675,7 @@ describe('runExecutionLoop', () => {
         runId: runbookId,
         message: `Run ${runbookId} has an execution in progress.`,
       };
-      mockSessionService.releaseRunbook.mockResolvedValue(refusal);
+      mockSessionService.releaseRuns.mockResolvedValue(refusal);
 
       const result = await runExecutionLoop(
         asManager(mockManager),
@@ -1832,20 +1792,18 @@ describe('runExecutionLoop', () => {
       );
 
       expect(result).toBe('done');
-      expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+      expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
       // The release is folded INTO the fenced command mutation, so "the caller
       // owns it" has to be visible in the request the fence received — not only
       // in the absence of a separate session call, which would also hold if the
-      // fence had released it inside its own transaction.
-      expect(mockActorMutationRunner.run).toHaveBeenCalledWith(
-        expect.objectContaining({
-          terminalRelease: {
-            onComplete: false,
-            onStopped: false,
-            retainClaimsAsTerminal: true,
-          },
-        }),
-      );
+      // fence had released it inside its own transaction. `terminalRelease` is
+      // presence-means-release, so deferring is spelled by its absence — and
+      // asserted over EVERY fence request, since a single non-releasing call
+      // would satisfy a `toHaveBeenCalledWith` that any other call contradicts.
+      expect(mockActorMutationRunner.run).toHaveBeenCalled();
+      for (const [fenceInput] of mockActorMutationRunner.run.mock.calls) {
+        expect(fenceInput).not.toHaveProperty('terminalRelease');
+      }
     });
 
     it('drives a run to stopped without releasing', async () => {
@@ -1873,14 +1831,14 @@ describe('runExecutionLoop', () => {
       );
 
       expect(result).toBe('stopped');
-      expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+      expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
     });
 
     it("'release-runbook' releases the run and retains the claim as a terminal tombstone", async () => {
       // No test drove this mode through runExecutionLoop before: the suite's
-      // other retainClaimsAsTerminal assertion is satisfied by a release from a
-      // different module, and the loop's default mode is 'stack-pop'. That left
-      // the flag unpinned here — a mutant flipping it to `false` survived, even
+      // other `addressed` assertion is satisfied by a release from a different
+      // module, and the loop's default mode is 'stack-pop'. That left the role
+      // unpinned here — a mutant swapping it for `collateral` survived, even
       // though the disposition is load-bearing: retaining the tombstone is what
       // lets a later `--claim-id` confirm-or-conflict resolve `terminal` rather
       // than `missing` (RD-598).
@@ -1905,9 +1863,9 @@ describe('runExecutionLoop', () => {
       );
 
       expect(result).toBe('stopped');
-      expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
-        retainClaimsAsTerminal: true,
-      });
+      expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
+        { runId: runbookId, role: 'addressed' },
+      ]);
     });
 
     it('refuses an unrecognized release mode instead of falling through to a stack pop', async () => {
@@ -1951,7 +1909,7 @@ describe('runExecutionLoop', () => {
         ),
       ).rejects.toThrow(/future-mode/);
 
-      expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+      expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
     });
   });
 
@@ -2896,7 +2854,9 @@ describe('runExecutionLoop', () => {
     });
     // The release the throw used to skip. Without it the refused run stays on
     // the session stack and every later bare command still resolves it.
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
+    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
+      { runId: runbookId, role: 'collateral' },
+    ]);
   });
 
   // The drain's mismatch arm reports `applied: 0` and carries no state, so a
@@ -2995,7 +2955,7 @@ describe('runExecutionLoop', () => {
     });
     // Nothing released — that is what the mode means, and what makes reporting
     // a terminal here a lie the caller would act on.
-    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
     // And nothing announced: a caller that owns the terminal owns reporting it,
     // and the adapter renders this same code and message. A RUNBOOK_STOPPED
     // here would announce a stop for a run that is still running.
@@ -3093,14 +3053,16 @@ describe('runExecutionLoop', () => {
 
     // The stranding assertion: the default 'stack-pop' release must have run,
     // so the refused run is no longer targeted by the session. Asserted by
-    // exact arguments — the bare form deletes claims, the retaining form is
+    // exact arguments — `collateral` revokes claims, `addressed` is
     // `release-runbook`'s, and a mode that silently swapped them would still
     // satisfy a bare call-count check.
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledTimes(1);
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
+    expect(mockSessionService.releaseRuns).toHaveBeenCalledTimes(1);
+    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
+      { runId: runbookId, role: 'collateral' },
+    ]);
   });
 
-  it('releases a claimed child through releaseRunbook when the frontier refusal fires', async () => {
+  it('releases a claimed child through releaseRuns when the frontier refusal fires', async () => {
     mockManager.load.mockResolvedValue(
       frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
     );
@@ -3115,9 +3077,9 @@ describe('runExecutionLoop', () => {
     );
 
     expect(result).toBe('stopped');
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
-      retainClaimsAsTerminal: true,
-    });
+    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
+      { runId: runbookId, role: 'addressed' },
+    ]);
   });
 
   // The projection refusal is the sibling failure of the missing-deriver one
@@ -3230,14 +3192,16 @@ describe('runExecutionLoop', () => {
 
     // The stranding assertion: the default 'stack-pop' release must have run,
     // so the refused run is no longer targeted by the session. Asserted by
-    // exact arguments — the bare form deletes claims, the retaining form is
+    // exact arguments — `collateral` revokes claims, `addressed` is
     // `release-runbook`'s, and a mode that silently swapped them would still
     // satisfy a bare call-count check.
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledTimes(1);
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
+    expect(mockSessionService.releaseRuns).toHaveBeenCalledTimes(1);
+    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
+      { runId: runbookId, role: 'collateral' },
+    ]);
   });
 
-  it('releases a claimed child through releaseRunbook when the frontier projection is refused', async () => {
+  it('releases a claimed child through releaseRuns when the frontier projection is refused', async () => {
     mockManager.load.mockResolvedValue(
       frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
     );
@@ -3257,9 +3221,9 @@ describe('runExecutionLoop', () => {
     );
 
     expect(result).toBe('stopped');
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId, {
-      retainClaimsAsTerminal: true,
-    });
+    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
+      { runId: runbookId, role: 'addressed' },
+    ]);
   });
 
   // ---------------------------------------------------------------------------
@@ -3316,8 +3280,10 @@ describe('runExecutionLoop', () => {
     expect(mockEmitter.emit).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'STEP_ENTERED' }),
     );
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledTimes(1);
-    expect(mockSessionService.releaseRunbook).toHaveBeenCalledWith(runbookId);
+    expect(mockSessionService.releaseRuns).toHaveBeenCalledTimes(1);
+    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
+      { runId: runbookId, role: 'collateral' },
+    ]);
   });
 
   it('rejects a structurally malformed persisted frontier rather than projecting it', async () => {
@@ -3479,7 +3445,9 @@ describe('runExecutionLoop', () => {
       type: 'INLINE_LAUNCH_ABANDONED',
       started: expect.objectContaining({ ownerPid: process.pid }),
     });
-    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalledWith(childRunId);
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalledWith(
+      expect.arrayContaining([expect.objectContaining({ runId: childRunId })]),
+    );
     expect(mockManager.delete).not.toHaveBeenCalledWith(childRunId);
     expect(mockEmitter.emit).toHaveBeenCalledWith({
       type: 'ERROR_OCCURRED',
@@ -3782,7 +3750,7 @@ describe('runExecutionLoop', () => {
       }),
     });
     expect(mockSessionService.popRunbookIfActive).not.toHaveBeenCalled();
-    expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
   });
 
   it("repairs an existing inline child's missing latch, activates child, then consumes intent", async () => {
@@ -4799,7 +4767,7 @@ describe('runExecutionLoop', () => {
         expect(mockSessionService.pushRunbookIfNotActive).not.toHaveBeenCalled();
         expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
         expect(mockSessionService.popRunbookIfActive).not.toHaveBeenCalled();
-        expect(mockSessionService.releaseRunbook).not.toHaveBeenCalled();
+        expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
         expect(mockSessionService.getActive).not.toHaveBeenCalled();
       },
     );

@@ -1,9 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 import fc from 'fast-check';
 import {
-  RELEASE_ROLES,
-  claimDisposition,
-  projectRunRelease,
+  assertValidReleaseBatch,
+  projectRunReleases,
   type ReleaseRole,
   type RunRelease,
 } from '../../src/runbook/session-release.js';
@@ -11,6 +10,32 @@ import { assertRunId, type RunId } from '../../src/runbook/run-id.js';
 import { assertClaimLookupKey } from '../../src/runbook/claim-id.js';
 import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
 import type { SessionData } from '../../src/runbook/state.js';
+
+/**
+ * The claim-retention policy, stated independently of the implementation.
+ *
+ * A `Record` keyed by {@link ReleaseRole} rather than a list, so adding a role
+ * fails the type check *here* — at the one place a test has to say what the new
+ * role is expected to do — instead of leaving a silently short role list and a
+ * silently partial loop. It doubles as the role list every test below iterates,
+ * so nothing else needs to enumerate the roles and nothing else can enumerate
+ * them incompletely.
+ *
+ * The latent rule the codebase already followed at fifteen of sixteen sites: the
+ * run the caller acted ON keeps its claim as terminal evidence; a run swept up
+ * so the addressed run could close, or one being destroyed outright, does not.
+ * `discarded` agrees with `collateral` today and is still a distinct arm — a
+ * destroy path spelled `addressed` would retain claims over a run about to be
+ * deleted.
+ */
+const CLAIMS_AFTER: Readonly<Record<ReleaseRole, 'retained' | 'revoked'>> = {
+  addressed: 'retained',
+  collateral: 'revoked',
+  discarded: 'revoked',
+};
+
+/** Every {@link ReleaseRole}, exhaustive by construction of {@link CLAIMS_AFTER}. */
+const ROLES = Object.keys(CLAIMS_AFTER) as readonly ReleaseRole[];
 
 /** Distinct, canonical run ids. `n` must stay single-digit-hex wide. */
 function runId(n: number): RunId {
@@ -42,166 +67,209 @@ function sessionOver(runs: readonly RunId[]): SessionData {
   return { defaultStack: [...runs], claims };
 }
 
-describe('claimDisposition', () => {
-  // The latent rule the codebase already followed at fifteen of sixteen sites,
-  // stated once: the run the caller acted ON keeps its claim as terminal
-  // evidence; a run swept up so the addressed run could close, or one being
-  // destroyed outright, does not.
-  it('retains an addressed run’s claims as terminal evidence', () => {
-    expect(claimDisposition('addressed')).toBe('retain-as-terminal-evidence');
-  });
+/** Whether any claim in `session` still controls `run`. */
+function claimsOver(session: SessionData, run: RunId): boolean {
+  return Object.values(session.claims).some((claim) => claim.controlledRunId === run);
+}
 
-  it('revokes a collateral run’s claims', () => {
-    expect(claimDisposition('collateral')).toBe('revoke');
-  });
+describe('projectRunReleases', () => {
+  describe.each(ROLES)('role %s', (role) => {
+    const expected = CLAIMS_AFTER[role];
 
-  it('revokes a discarded run’s claims', () => {
-    // Distinct from `collateral` despite agreeing today: a destroy path must
-    // never be spelled `addressed`, which would retain claims for a run that is
-    // being deleted.
-    expect(claimDisposition('discarded')).toBe('revoke');
-  });
+    it('removes the run from the default stack', () => {
+      const [a, b] = [runId(1), runId(2)];
+      const session = sessionOver([a, b]);
 
-  it('is total over every role', () => {
-    for (const role of RELEASE_ROLES) {
-      expect(['retain-as-terminal-evidence', 'revoke']).toContain(claimDisposition(role));
-    }
-  });
+      projectRunReleases(session, [{ runId: b, role }]);
 
-  it('names exactly the three roles', () => {
-    expect([...RELEASE_ROLES]).toEqual(['addressed', 'collateral', 'discarded']);
-  });
-});
+      expect(session.defaultStack).toEqual([a]);
+    });
 
-describe('projectRunRelease', () => {
-  it('removes the run from the default stack', () => {
-    const [a, b] = [runId(1), runId(2)];
-    const session = sessionOver([a, b]);
+    it('removes every occurrence of the run from the default stack', () => {
+      // A duplicate entry is reachable (§6.3 of the release-cause note refuses
+      // to add UNIQUE(run_id) to session_stack), and a release must not leave
+      // one behind for the next read to resolve as still-active.
+      const [a, b] = [runId(1), runId(2)];
+      const session = sessionOver([a, b]);
+      session.defaultStack = [a, b, a];
 
-    expect(projectRunRelease(session, { runId: b, role: 'addressed' })).toBe(true);
+      projectRunReleases(session, [{ runId: a, role }]);
 
-    expect(session.defaultStack).toEqual([a]);
-  });
+      expect(session.defaultStack).toEqual([b]);
+    });
 
-  it('removes every occurrence of the run from the default stack', () => {
-    // A duplicate entry is reachable (§6.3 of the release-cause note refuses to
-    // add UNIQUE(run_id) to session_stack), and a release must not leave one
-    // behind for the next read to resolve as still-active.
-    const [a, b] = [runId(1), runId(2)];
-    const session = sessionOver([a, b]);
-    session.defaultStack = [a, b, a];
+    it(`leaves the run’s claims ${expected}`, () => {
+      const a = runId(1);
+      const session = sessionOver([a]);
 
-    projectRunRelease(session, { runId: a, role: 'addressed' });
+      projectRunReleases(session, [{ runId: a, role }]);
 
-    expect(session.defaultStack).toEqual([b]);
-  });
+      expect(claimsOver(session, a)).toBe(expected === 'retained');
+    });
 
-  it('leaves an addressed run’s claims in the session', () => {
-    const a = runId(1);
-    const session = sessionOver([a]);
-    const key = Object.keys(session.claims)[0];
+    it('never touches a claim over a different run', () => {
+      const [a, b] = [runId(1), runId(2)];
+      const session = sessionOver([a, b]);
+      const other = Object.values(session.claims).find((c) => c.controlledRunId === b);
 
-    projectRunRelease(session, { runId: a, role: 'addressed' });
+      projectRunReleases(session, [{ runId: a, role }]);
 
-    expect(session.claims[key]).toBeDefined();
-    expect(session.claims[key].controlledRunId).toBe(a);
-  });
+      expect(claimsOver(session, b)).toBe(true);
+      expect(Object.values(session.claims)).toContainEqual(other);
+    });
 
-  it.each(['collateral', 'discarded'] as const)('deletes a %s run’s claims', (role) => {
-    const a = runId(1);
-    const session = sessionOver([a]);
+    it('clears the stash slot when it names the released run', () => {
+      const a = runId(1);
+      const session = sessionOver([a]);
+      session.stashedRunbookId = a;
 
-    projectRunRelease(session, { runId: a, role });
+      projectRunReleases(session, [{ runId: a, role }]);
 
-    expect(session.claims).toEqual({});
-  });
+      expect(session.stashedRunbookId).toBeUndefined();
+    });
 
-  it('never touches a claim over a different run', () => {
-    const [a, b] = [runId(1), runId(2)];
-    const session = sessionOver([a, b]);
-    const other = Object.values(session.claims).find((c) => c.controlledRunId === b);
+    it('leaves a stash slot naming a different run alone', () => {
+      const [a, b] = [runId(1), runId(2)];
+      const session = sessionOver([a, b]);
+      session.stashedRunbookId = b;
 
-    projectRunRelease(session, { runId: a, role: 'discarded' });
+      projectRunReleases(session, [{ runId: a, role }]);
 
-    expect(Object.values(session.claims)).toEqual([other]);
-  });
+      expect(session.stashedRunbookId).toBe(b);
+    });
 
-  it('clears the stash slot when it names the released run', () => {
-    const a = runId(1);
-    const session = sessionOver([a]);
-    session.stashedRunbookId = a;
-
-    expect(projectRunRelease(session, { runId: a, role: 'addressed' })).toBe(true);
-
-    expect(session.stashedRunbookId).toBeUndefined();
-  });
-
-  it('leaves a stash slot naming a different run alone', () => {
-    const [a, b] = [runId(1), runId(2)];
-    const session = sessionOver([a, b]);
-    session.stashedRunbookId = b;
-
-    projectRunRelease(session, { runId: a, role: 'addressed' });
-
-    expect(session.stashedRunbookId).toBe(b);
-  });
-
-  it('reports false when the run appears nowhere in the session', () => {
-    const session = sessionOver([runId(1)]);
-
-    expect(projectRunRelease(session, { runId: runId(9), role: 'addressed' })).toBe(false);
-  });
-
-  it('reports true when only the default stack matched', () => {
-    // Stack membership alone is enough to have "found" the run. Without this
-    // the other cases all carry a claim or a stash entry as well, so the stack
-    // arm of the answer is never the one deciding it.
-    const a = runId(1);
-    const session: SessionData = { defaultStack: [a], claims: {} };
-
-    expect(projectRunRelease(session, { runId: a, role: 'addressed' })).toBe(true);
-
-    expect(session.defaultStack).toEqual([]);
-  });
-
-  it('reports true when only a retained claim matched', () => {
-    // The retained claim still counts as "found". Preserved deliberately from
-    // the primitive this replaces: a repeated `addressed` release reports
-    // found, not not-found, because the claim it retained is still there.
-    const a = runId(1);
-    const session = sessionOver([a]);
-    session.defaultStack = [];
-
-    expect(projectRunRelease(session, { runId: a, role: 'addressed' })).toBe(true);
-  });
-
-  it('changes nothing on a second application', () => {
-    const [a, b] = [runId(1), runId(2)];
-    for (const role of ['addressed', 'collateral', 'discarded'] as const) {
+    it('changes nothing on a second application', () => {
+      // Idempotent in EFFECT. The projection reports nothing, so "already
+      // released" is not a status a caller can read — it is the absence of a
+      // further change.
+      const [a, b] = [runId(1), runId(2)];
       const session = sessionOver([a, b]);
       session.stashedRunbookId = a;
-      const release: RunRelease = { runId: a, role };
+      const releases: RunRelease[] = [{ runId: a, role }];
 
-      projectRunRelease(session, release);
+      projectRunReleases(session, releases);
       const afterFirst = structuredClone(session);
-      projectRunRelease(session, release);
+      projectRunReleases(session, releases);
 
       expect(session).toEqual(afterFirst);
-    }
+    });
+
+    it('is a no-op for a run the session does not target', () => {
+      const session = sessionOver([runId(1)]);
+      const before = structuredClone(session);
+
+      projectRunReleases(session, [{ runId: runId(9), role }]);
+
+      expect(session).toEqual(before);
+    });
+  });
+
+  it('applies every member of a mixed batch', () => {
+    const [a, b, c] = [runId(1), runId(2), runId(3)];
+    const session = sessionOver([a, b, c]);
+
+    projectRunReleases(session, [
+      { runId: a, role: 'addressed' },
+      { runId: b, role: 'collateral' },
+      { runId: c, role: 'discarded' },
+    ]);
+
+    expect(session.defaultStack).toEqual([]);
+    expect(claimsOver(session, a)).toBe(true);
+    expect(claimsOver(session, b)).toBe(false);
+    expect(claimsOver(session, c)).toBe(false);
+  });
+
+  it('accepts an empty batch', () => {
+    // `prune` releases whatever it pruned, which can be nothing. An empty batch
+    // is a committed no-op, not a refusal.
+    const session = sessionOver([runId(1)]);
+    const before = structuredClone(session);
+
+    projectRunReleases(session, []);
+
+    expect(session).toEqual(before);
   });
 
   it('mutates the caller’s session object in place, synchronously', () => {
     // Load-bearing, and not merely "pure inside a mutateState build callback":
-    // six dispositions reach this projection through a synchronous in-place
+    // several dispositions reach this projection through a synchronous in-place
     // session callback that accepts nothing else.
     const a = runId(1);
     const session = sessionOver([a]);
     const before = session;
 
-    const result = projectRunRelease(session, { runId: a, role: 'addressed' });
+    projectRunReleases(session, [{ runId: a, role: 'addressed' }]);
 
     expect(session).toBe(before);
-    expect(typeof result).toBe('boolean');
+    expect(session.defaultStack).toEqual([]);
+  });
+
+  describe('duplicate run ids', () => {
+    it('rejects a batch naming the same run twice', () => {
+      // One run cannot be released for two reasons in one batch. A caller that
+      // built such a batch derived at least one of the roles from something
+      // other than what it did, which is the bug class the roles replaced.
+      const a = runId(1);
+      const session = sessionOver([a]);
+
+      expect(() => {
+        projectRunReleases(session, [
+          { runId: a, role: 'addressed' },
+          { runId: a, role: 'collateral' },
+        ]);
+      }).toThrow(a);
+    });
+
+    it('rejects a repeat even when both members agree on the role', () => {
+      const a = runId(1);
+      const session = sessionOver([a]);
+
+      expect(() => {
+        projectRunReleases(session, [
+          { runId: a, role: 'addressed' },
+          { runId: a, role: 'addressed' },
+        ]);
+      }).toThrow();
+    });
+
+    it('rejects an unknown role before applying any earlier member', () => {
+      // The batch pre-pass covers ROLES too, not just duplicates. Validating a
+      // role lazily inside the projection would leave the first member's stack
+      // entry already gone when the second member's bad role is read — exactly
+      // the half-projected state the docblock promises cannot happen.
+      const [a, b] = [runId(1), runId(2)];
+      const session = sessionOver([a, b]);
+      const before = structuredClone(session);
+
+      expect(() => {
+        projectRunReleases(session, [
+          { runId: a, role: 'discarded' },
+          { runId: b, role: 'bogus' as ReleaseRole },
+        ]);
+      }).toThrow(/Unknown release role/);
+
+      expect(session).toEqual(before);
+    });
+
+    it('leaves the session untouched when it rejects', () => {
+      // Validation runs over the WHOLE batch before the first member is
+      // applied, so a rejected batch is not half-projected. Ordering the
+      // duplicate last is what makes this fail if validation were interleaved.
+      const [a, b] = [runId(1), runId(2)];
+      const session = sessionOver([a, b]);
+      const before = structuredClone(session);
+
+      expect(() => {
+        projectRunReleases(session, [
+          { runId: a, role: 'discarded' },
+          { runId: b, role: 'discarded' },
+          { runId: b, role: 'discarded' },
+        ]);
+      }).toThrow();
+
+      expect(session).toEqual(before);
+    });
   });
 });
 
@@ -222,76 +290,118 @@ function permute<T>(items: readonly T[], seeds: readonly number[]): T[] {
   return out;
 }
 
-describe('projectRunRelease order-independence (property)', () => {
-  const role = fc.constantFrom<ReleaseRole>('addressed', 'collateral', 'discarded');
+describe('projectRunReleases order-independence (property)', () => {
+  const role = fc.constantFrom<ReleaseRole>(...ROLES);
   const seeds = fc.array(fc.nat(), { minLength: 5, maxLength: 5 });
+  const batch = fc.tuple(
+    fc.uniqueArray(fc.integer({ min: 1, max: 8 }), { minLength: 2, maxLength: 5 }),
+    fc.array(role, { minLength: 5, maxLength: 5 }),
+  );
+
+  /** Runs, and one release per run, from a generated batch. */
+  function plan([ids, roles]: [readonly number[], readonly ReleaseRole[]]): {
+    runs: RunId[];
+    releases: RunRelease[];
+  } {
+    const runs = ids.map(runId);
+    return {
+      runs,
+      releases: runs.map((run, index) => ({ runId: run, role: roles[index % roles.length] })),
+    };
+  }
 
   it('gives a member the same outcome under any permutation of the others', () => {
-    // The invariant that lets `claimDisposition(role)` widen to
-    // `claimDisposition(role, claim)` later without touching a caller: a run's
-    // disposition depends only on its OWN role, never on ordering and never on
-    // the other members of the batch.
+    // The invariant that lets the disposition table widen to a per-claim
+    // decision later without touching a caller: a run's disposition depends
+    // only on its OWN role, never on ordering and never on the other members of
+    // the batch.
     fc.assert(
-      fc.property(
-        fc.uniqueArray(fc.integer({ min: 1, max: 8 }), { minLength: 2, maxLength: 5 }),
-        fc.array(role, { minLength: 5, maxLength: 5 }),
-        fc.nat(),
-        seeds,
-        (ids, roles, pick, order) => {
-          const runs = ids.map(runId);
-          const releases: RunRelease[] = runs.map((run, index) => ({
-            runId: run,
-            role: roles[index % roles.length],
-          }));
-          const subject = releases[pick % releases.length];
+      fc.property(batch, fc.nat(), seeds, (generated, pick, order) => {
+        const { runs, releases } = plan(generated);
+        const subject = releases[pick % releases.length];
 
-          const apply = (order: readonly RunRelease[]): SessionData => {
-            const session = sessionOver(runs);
-            for (const release of order) projectRunRelease(session, release);
-            return session;
-          };
+        const apply = (batched: readonly RunRelease[]): SessionData => {
+          const session = sessionOver(runs);
+          projectRunReleases(session, batched);
+          return session;
+        };
 
-          const forward = apply(releases);
-          const reversed = apply([...releases].reverse());
-          const shuffled = apply(permute(releases, order));
+        const forward = apply(releases);
+        const reversed = apply([...releases].reverse());
+        const shuffled = apply(permute(releases, order));
 
-          // The subject's own claim survives, or does not, identically.
-          const survives = (session: SessionData): boolean =>
-            Object.values(session.claims).some((c) => c.controlledRunId === subject.runId);
-
-          expect(survives(reversed)).toBe(survives(forward));
-          expect(survives(shuffled)).toBe(survives(forward));
-          expect(survives(forward)).toBe(
-            claimDisposition(subject.role) === 'retain-as-terminal-evidence',
-          );
-        },
-      ),
+        expect(claimsOver(reversed, subject.runId)).toBe(claimsOver(forward, subject.runId));
+        expect(claimsOver(shuffled, subject.runId)).toBe(claimsOver(forward, subject.runId));
+        expect(claimsOver(forward, subject.runId)).toBe(CLAIMS_AFTER[subject.role] === 'retained');
+      }),
     );
   });
 
   it('reaches the same whole session under any permutation', () => {
     fc.assert(
-      fc.property(
-        fc.uniqueArray(fc.integer({ min: 1, max: 8 }), { minLength: 2, maxLength: 5 }),
-        fc.array(role, { minLength: 5, maxLength: 5 }),
-        seeds,
-        (ids, roles, order) => {
-          const runs = ids.map(runId);
-          const releases: RunRelease[] = runs.map((run, index) => ({
-            runId: run,
-            role: roles[index % roles.length],
-          }));
+      fc.property(batch, seeds, (generated, order) => {
+        const { runs, releases } = plan(generated);
 
-          const apply = (order: readonly RunRelease[]): SessionData => {
-            const session = sessionOver(runs);
-            for (const release of order) projectRunRelease(session, release);
-            return session;
-          };
+        const apply = (batched: readonly RunRelease[]): SessionData => {
+          const session = sessionOver(runs);
+          projectRunReleases(session, batched);
+          return session;
+        };
 
-          expect(apply([...releases].reverse())).toEqual(apply(releases));
-          expect(apply(permute(releases, order))).toEqual(apply(releases));
-        },
-      ),
+        expect(apply([...releases].reverse())).toEqual(apply(releases));
+        expect(apply(permute(releases, order))).toEqual(apply(releases));
+      }),
     );
+  });
+
+  it('reaches the same whole session on reapplication', () => {
+    fc.assert(
+      fc.property(batch, (generated) => {
+        const { runs, releases } = plan(generated);
+        const session = sessionOver(runs);
+
+        projectRunReleases(session, releases);
+        const once = structuredClone(session);
+        projectRunReleases(session, releases);
+
+        expect(session).toEqual(once);
+      }),
+    );
+  });
+});
+
+describe('assertValidReleaseBatch', () => {
+  // The pre-pass on its own, because a caller refuses with it BEFORE opening a
+  // transaction the projection would otherwise run inside.
+  it('accepts a well-formed batch', () => {
+    expect(() => {
+      assertValidReleaseBatch([
+        { runId: runId(1), role: 'addressed' },
+        { runId: runId(2), role: 'collateral' },
+      ]);
+    }).not.toThrow();
+  });
+
+  it('accepts an empty batch', () => {
+    expect(() => {
+      assertValidReleaseBatch([]);
+    }).not.toThrow();
+  });
+
+  it('rejects a repeated run', () => {
+    const a = runId(1);
+
+    expect(() => {
+      assertValidReleaseBatch([
+        { runId: a, role: 'addressed' },
+        { runId: a, role: 'collateral' },
+      ]);
+    }).toThrow(a);
+  });
+
+  it('rejects a role outside the union', () => {
+    expect(() => {
+      assertValidReleaseBatch([{ runId: runId(1), role: 'bogus' as ReleaseRole }]);
+    }).toThrow(/Unknown release role: bogus/);
   });
 });

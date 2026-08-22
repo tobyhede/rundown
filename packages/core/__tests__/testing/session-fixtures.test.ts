@@ -14,6 +14,8 @@ import {
   writeRawRunJson,
   deletePersistedRunState,
   issueRunControlClaimFor,
+  popTopOfStackUnverified,
+  unwrapSessionMutation,
 } from '../../src/testing/session-fixtures.js';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 
@@ -47,6 +49,41 @@ describe('session-fixtures', () => {
     await expect(readPersistedRunState(cwd, a.runId)).rejects.toThrow();
     await deletePersistedRunState(cwd, a.runId);
     expect(await readPersistedRunState(cwd, a.runId)).toBeNull();
+  });
+
+  it('pops the stack top, revokes its claims, and reports the run beneath it', async () => {
+    // The positional pop product code no longer performs, kept here so the few
+    // core tests that need a multi-level stack can unwind one. It is the ONLY
+    // caller of the release projection outside product code, so nothing else
+    // pins that it disposes of the popped run the way the old positional pop
+    // did — claims included.
+    const cwd = await mkdtemp(join(tmpdir(), 'sf-'));
+    const under = await seedActiveRun(cwd);
+    const top = await seedActiveRun(cwd, { withRunControlClaim: false });
+    await seedSession(cwd, { defaultStack: [under.runId, top.runId] });
+    const topClaim = await issueRunControlClaimFor(cwd, top.runId);
+    expect(topClaim).toMatch(/^rdclm_/);
+    const m = new RunbookStateManager(cwd);
+
+    const nextTop = unwrapSessionMutation(await popTopOfStackUnverified(m));
+
+    expect(nextTop).toBe(under.runId);
+    const session = await m.loadSession();
+    expect(session.defaultStack).toEqual([under.runId]);
+    // `collateral` revokes: the popped run keeps existing, but no claim may
+    // still address it. The run beneath is untouched on both counts.
+    expect(Object.values(session.claims).map((claim) => claim.controlledRunId)).toEqual([
+      under.runId,
+    ]);
+  });
+
+  it('pops nothing and reports null on an empty stack', async () => {
+    const cwd = await mkdtemp(join(tmpdir(), 'sf-'));
+    await seedSession(cwd, { defaultStack: [] });
+    const m = new RunbookStateManager(cwd);
+
+    expect(unwrapSessionMutation(await popTopOfStackUnverified(m))).toBeNull();
+    expect((await m.loadSession()).defaultStack).toEqual([]);
   });
 
   it('seeds a stashed run', async () => {

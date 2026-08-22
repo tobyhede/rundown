@@ -36,7 +36,7 @@ describe('retireDuringCapture', () => {
   /**
    * Put the run under an execution lease so its release is refused.
    *
-   * `releaseRunbook` goes through `mutateGuarded`, which refuses any session
+   * `releaseRuns` goes through `mutateGuarded`, which refuses any session
    * mutation naming an execution-owned run — the same refusal a real concurrent
    * executor produces, reached here without a second process.
    *
