@@ -12,20 +12,13 @@ import type {
   RunbookStateManager,
   StepId,
 } from '@rundown-org/core';
-import { makeClaimRecord } from '@rundown-org/core/testing/claim-fixtures';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
-import {
-  brandDelegationTokenHashForTest,
-  brandFrameKeyForTest,
-  brandRunIdForTest,
-} from './brand-helpers.js';
+import { brandRunIdForTest } from './brand-helpers.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
 import { delegationRuntimeDouble } from './delegation-runtime-helpers.js';
 
 const DEFAULT_RUNBOOK_ID = brandRunIdForTest(`rd_${'6'.repeat(32)}`);
-const PARENT_RUNBOOK_ID = brandRunIdForTest(`rd_${'7'.repeat(32)}`);
-const CLAIMED_RUNBOOK_ID = brandRunIdForTest(`rd_${'8'.repeat(32)}`);
 // Branded by cast rather than assertClaimId: core is mocked in this suite, so
 // the real validator is unavailable and only the value's identity matters here.
 const CLAIM_ID = 'rdclm_abcdefghijklmnopqrstu1' as unknown as ClaimId;
@@ -110,7 +103,6 @@ const { runExecutionLoop } = await import('../../src/services/execution.js');
 const {
   validateGotoTarget,
   executeGoto,
-  resolveTerminalReleaseModeForRunbook,
   gotoResultRequiresFailureExit,
   renderNavigationRefusal,
   buildGotoContext,
@@ -303,7 +295,6 @@ describe('buildGotoContext delegation authority propagation', () => {
     runId: DEFAULT_RUNBOOK_ID,
     state: { id: DEFAULT_RUNBOOK_ID, step: '1' },
     steps: [makeStep()],
-    terminalReleaseMode: 'stack-pop',
     ...capabilities,
   });
 
@@ -793,7 +784,6 @@ describe('executeGoto', () => {
       state: makeState(),
       steps: [makeStep()],
       cwd: '/test',
-      terminalReleaseMode: 'stack-pop' as const,
     };
 
     const result = await executeGoto(ctx, { step: '2' });
@@ -819,7 +809,6 @@ describe('executeGoto', () => {
       updatedState: makeState({ step: '2' }),
       snapshot: {},
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
-      terminalReleaseMode: 'stack-pop',
     });
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
 
@@ -838,7 +827,6 @@ describe('executeGoto', () => {
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
-      terminalReleaseMode: 'stack-pop' as const,
     };
 
     const target: StepId = { step: '2' };
@@ -861,7 +849,6 @@ describe('executeGoto', () => {
       callerEvidence: { kind: 'direct_cli' },
       steps: ctx.steps,
       target,
-      terminalReleaseMode: 'stack-pop',
     });
     expect(update).not.toHaveBeenCalledWith(
       DEFAULT_RUNBOOK_ID,
@@ -879,7 +866,6 @@ describe('executeGoto', () => {
       updatedState: makeState({ step: '2' }),
       snapshot: {},
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
-      terminalReleaseMode: 'stack-pop',
     });
     jest.mocked(runExecutionLoop).mockResolvedValue('done');
 
@@ -898,7 +884,6 @@ describe('executeGoto', () => {
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
-      terminalReleaseMode: 'stack-pop' as const,
     };
 
     const result = await executeGoto(ctx, { step: '2' });
@@ -927,7 +912,6 @@ describe('executeGoto', () => {
       updatedState: makeState({ step: '2' }),
       snapshot: {},
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
-      terminalReleaseMode: 'stack-pop',
     });
     jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
 
@@ -945,7 +929,6 @@ describe('executeGoto', () => {
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
-      terminalReleaseMode: 'stack-pop' as const,
     };
 
     const result = await executeGoto(ctx, { step: '2' });
@@ -972,7 +955,6 @@ describe('executeGoto', () => {
       updatedState: makeState({ step: '2' }),
       snapshot: {},
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
-      terminalReleaseMode: 'stack-pop',
     });
     jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
 
@@ -995,7 +977,6 @@ describe('executeGoto', () => {
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
-      terminalReleaseMode: 'stack-pop' as const,
       delegationRuntime,
     };
 
@@ -1064,53 +1045,5 @@ describe('gotoResultRequiresFailureExit', () => {
       propagation: { kind: 'inline-advanced', result: 'handled' },
     };
     expect(gotoResultRequiresFailureExit(result)).toBe(false);
-  });
-});
-
-describe('resolveTerminalReleaseModeForRunbook', () => {
-  it('uses stack-pop for default-stack runbooks', async () => {
-    const loadSession = mockFn<RunbookStateManager['loadSession']>();
-    loadSession.mockResolvedValue({
-      defaultStack: [DEFAULT_RUNBOOK_ID],
-      claims: {},
-    });
-
-    const mode = await resolveTerminalReleaseModeForRunbook(
-      { loadSession } as unknown as RunbookStateManager,
-      DEFAULT_RUNBOOK_ID,
-    );
-
-    expect(mode).toBe('stack-pop');
-  });
-
-  it('uses release-runbook for claim-targeted runbooks', async () => {
-    const loadSession = mockFn<RunbookStateManager['loadSession']>();
-    loadSession.mockResolvedValue({
-      defaultStack: [PARENT_RUNBOOK_ID],
-      claims: {
-        rdclm_abcdefghijklmnopqrstu1: makeClaimRecord({
-          controlledRunId: CLAIMED_RUNBOOK_ID,
-          delegation: {
-            childRunId: CLAIMED_RUNBOOK_ID,
-            parentRunId: PARENT_RUNBOOK_ID,
-            parentStepId: '1.1',
-            parentStep: '1',
-            parentFrameKey: brandFrameKeyForTest('1'),
-            parentEntry: 1,
-            tokenHash: brandDelegationTokenHashForTest(
-              'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-            ),
-          },
-          grants: [],
-        }),
-      },
-    });
-
-    const mode = await resolveTerminalReleaseModeForRunbook(
-      { loadSession } as unknown as RunbookStateManager,
-      CLAIMED_RUNBOOK_ID,
-    );
-
-    expect(mode).toBe('release-runbook');
   });
 });

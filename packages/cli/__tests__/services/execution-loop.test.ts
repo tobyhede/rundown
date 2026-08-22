@@ -20,7 +20,6 @@ import type {
   SessionMutationResult,
 } from '@rundown-org/core';
 import type { ResolvedStep } from '@rundown-org/parser';
-import type { ExecutionTerminalReleaseMode } from '../../src/services/execution.js';
 import { mockFn } from '../helpers/typed-mocks.js';
 import {
   delegationRuntimeDouble,
@@ -1027,10 +1026,10 @@ describe('runExecutionLoop', () => {
     expect(emittedEvents).not.toContain('COMMAND_STARTED');
     expect(emittedEvents).not.toContain('COMMAND_COMPLETED');
     expect(core.executeCommand).not.toHaveBeenCalled();
-    // Role `collateral`, asserted by exact arguments: `addressed` belongs to
-    // `release-runbook`, and the two modes must stay distinguishable here.
+    // Role `addressed`, asserted by exact arguments: the loop drove this very
+    // run to terminal, so its claims survive as terminal evidence.
     expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'collateral' },
+      { runId: runbookId, role: 'addressed' },
     ]);
   });
 
@@ -1410,9 +1409,9 @@ describe('runExecutionLoop', () => {
         message: 'Success',
       }),
     });
-    // 'stack-pop' addresses the run exactly as 'release-runbook' does: the run
-    // reached terminal under its own steam, so its bearer becomes a tombstone
-    // rather than being revoked. Pinned end-to-end against a real store by
+    // The fence addresses the run: it reached terminal under its own steam, so
+    // its bearer becomes a tombstone rather than being revoked. Pinned
+    // end-to-end against a real store by
     // `run.test.ts` "retains the run-control claim as a terminal tombstone" —
     // this mocked runner ignores `terminalRelease`, so it can only pin the
     // request, never the release itself.
@@ -1504,10 +1503,10 @@ describe('runExecutionLoop', () => {
       expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
     });
 
-    it('reports a refused stack pop and downgrades an already-completed run', async () => {
-      // The stack-pop disposition of the same release. The run is already
-      // terminal at loop entry, so the pop is the loop's only session write —
-      // and a refused pop must not report `done`.
+    it('reports a refused entry-time release and downgrades an already-completed run', async () => {
+      // The already-terminal loop entry. The run is terminal before the loop
+      // does anything, so this release is its only session write — and a
+      // refused release must not report `done`.
       mockManager.load.mockResolvedValue(
         makeLoopState('2', {
           lifecycle: 'completed',
@@ -1535,7 +1534,7 @@ describe('runExecutionLoop', () => {
 
       expect(result).toBe('stopped');
       expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-        { runId: runbookId, role: 'collateral' },
+        { runId: runbookId, role: 'addressed' },
       ]);
       expect(mockEmitter.emit).toHaveBeenCalledWith({
         type: 'ERROR_OCCURRED',
@@ -1572,7 +1571,6 @@ describe('runExecutionLoop', () => {
         asSteps(steps),
         '/tmp',
         asEmitter(mockEmitter),
-        { terminalReleaseMode: 'release-runbook' },
       );
 
       expect(result).toBe('stopped');
@@ -1595,7 +1593,6 @@ describe('runExecutionLoop', () => {
         asSteps(steps),
         '/tmp',
         asEmitter(mockEmitter),
-        { terminalReleaseMode: 'release-runbook' },
       );
 
       expect(result).toBe('done');
@@ -1615,7 +1612,8 @@ describe('runExecutionLoop', () => {
       'drives the drain terminal through the release when it $label',
       async ({ refuse, expected, stops }) => {
         // The drain reaches its own terminal release site, distinct from the
-        // command path. It was uncovered in `release-runbook` mode entirely.
+        // command path. It used to be gated on one arm of the old mode union,
+        // so a loop-owned drain terminal released nothing at all.
         mockManager.load.mockResolvedValue(makeLoopState());
         // Terminal rides on the applied arm: a run cannot reach terminal without
         // an apply that carried it there, so the entry is part of the shape.
@@ -1645,7 +1643,6 @@ describe('runExecutionLoop', () => {
           asSteps(steps),
           '/tmp',
           asEmitter(mockEmitter),
-          { terminalReleaseMode: 'release-runbook' },
         );
 
         expect(result).toBe(expected);
@@ -1655,6 +1652,123 @@ describe('runExecutionLoop', () => {
         expect(stoppedEmissions()).toHaveLength(stops);
       },
     );
+
+    it('releases a drain that reached a stopped terminal', async () => {
+      // The drain's OTHER terminal arm. It is a separate site from the `done`
+      // one above and carries no corrective position — a stop needs no
+      // contradicting — so nothing about the `done` case reaches it. With no
+      // test driving it, the whole arm could be deleted and every test passed.
+      mockManager.load.mockResolvedValue(makeLoopState());
+      mockCompletionService.applyNextResolvedCompletion.mockResolvedValue({
+        kind: 'applied',
+        unresolved: 0,
+        terminal: 'stopped',
+        entry: {
+          key: '1|1|1',
+          completion: { result: 'fail', targetSubstep: '1' },
+          stateBefore: makeLoopState(),
+          stateAfter: makeLoopState('1', { lifecycle: 'stopped' }),
+          snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+        },
+      });
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toBe('stopped');
+      expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
+        { runId: runbookId, role: 'addressed' },
+      ]);
+    });
+
+    it('names the committed cursor in the drain-done corrective stop, not the pre-drain capture', async () => {
+      // The drain's terminal arm carries no state, so the position for this
+      // stop has to be re-read. Built from the loop's pre-drain capture it named
+      // a step the applies had already left, while the refusal message named the
+      // real one — one envelope contradicting itself. The `failed` arm re-reads
+      // for exactly this reason; so must this one.
+      const before = makeLoopState('1', { lifecycle: 'running' });
+      const afterApply = makeLoopState('2', { lifecycle: 'completed' });
+      mockManager.load.mockResolvedValueOnce(before).mockResolvedValue(afterApply);
+      mockCompletionService.applyNextResolvedCompletion.mockResolvedValue({
+        kind: 'applied',
+        unresolved: 0,
+        terminal: 'done',
+        entry: {
+          key: '1|1|1',
+          completion: { result: 'pass', targetSubstep: '1' },
+          stateBefore: before,
+          stateAfter: afterApply,
+          snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+        },
+      });
+      const refusal = {
+        kind: 'execution_in_progress' as const,
+        runId: runbookId,
+        message: `Run ${runbookId} has an execution in progress.`,
+      };
+      mockSessionService.releaseRuns.mockResolvedValue(refusal);
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toBe('stopped');
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'RUNBOOK_STOPPED',
+        payload: { position: { current: '2', total: 2 }, message: refusal.message },
+      });
+    });
+
+    it('falls back to the pre-drain capture when the drained run has since vanished', async () => {
+      // The `?? currentState` arm. A run pruned between the drain's commit and
+      // this read leaves no committed cursor to name, and the capture is then
+      // the best coordinate that exists — a corrective stop with no position at
+      // all would be strictly worse than a stale one.
+      const before = makeLoopState('1', { lifecycle: 'running' });
+      mockManager.load.mockResolvedValueOnce(before).mockResolvedValue(null);
+      mockCompletionService.applyNextResolvedCompletion.mockResolvedValue({
+        kind: 'applied',
+        unresolved: 0,
+        terminal: 'done',
+        entry: {
+          key: '1|1|1',
+          completion: { result: 'pass', targetSubstep: '1' },
+          stateBefore: before,
+          stateAfter: makeLoopState('2', { lifecycle: 'completed' }),
+          snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+        },
+      });
+      const refusal = {
+        kind: 'execution_in_progress' as const,
+        runId: runbookId,
+        message: `Run ${runbookId} has an execution in progress.`,
+      };
+      mockSessionService.releaseRuns.mockResolvedValue(refusal);
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toBe('stopped');
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'RUNBOOK_STOPPED',
+        payload: { position: { current: '1', total: 2 }, message: refusal.message },
+      });
+    });
 
     it('does not fabricate a corrective stop when the refused terminal was already stopped', async () => {
       // The correction exists only to contradict a completion that was already
@@ -1757,13 +1871,13 @@ describe('runExecutionLoop', () => {
     });
   });
 
-  describe("terminalReleaseMode 'defer-to-caller' (#598)", () => {
+  describe("releaseOwner 'caller' (#598)", () => {
     it('drives a run to done without releasing — caller owns release', async () => {
       // Mirror the "completes the runbook" fixture: an in-loop command drive to
-      // a 'done' terminal. Under 'defer-to-caller' the drain policy is
-      // non-releasing AND the in-loop guard skips applyExecutionTerminalRelease,
-      // so NO session release fires — the caller (the inline
-      // parent-advance core seam) owns the single terminal release.
+      // a 'done' terminal. Under caller ownership the fence carries no
+      // terminal release AND every loop release site stands down, so NO session
+      // release fires — the caller (the inline parent-advance core seam) owns
+      // the single terminal release.
       mockManager.load.mockResolvedValue(makeLoopState());
       jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
       mockActorService.sendAndSync.mockResolvedValue({
@@ -1788,7 +1902,7 @@ describe('runExecutionLoop', () => {
         asSteps(steps),
         '/tmp',
         asEmitter(mockEmitter),
-        { terminalReleaseMode: 'defer-to-caller' },
+        { releaseOwner: 'caller' },
       );
 
       expect(result).toBe('done');
@@ -1807,9 +1921,9 @@ describe('runExecutionLoop', () => {
     });
 
     it('drives a run to stopped without releasing', async () => {
-      // Pre-loaded stopped state (CLI-owned stop recovery). Under
-      // 'defer-to-caller' applyExecutionTerminalRelease no-ops, so the terminal
-      // return releases nothing.
+      // Pre-loaded stopped state (CLI-owned stop recovery). Under caller
+      // ownership `releaseTerminalRun` stands down, so the terminal return
+      // releases nothing.
       mockManager.load.mockResolvedValue(
         makeLoopState('1', {
           lifecycle: 'stopped',
@@ -1827,21 +1941,19 @@ describe('runExecutionLoop', () => {
         asSteps(steps),
         '/tmp',
         asEmitter(mockEmitter),
-        { terminalReleaseMode: 'defer-to-caller' },
+        { releaseOwner: 'caller' },
       );
 
       expect(result).toBe('stopped');
       expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
     });
 
-    it("'release-runbook' releases the run and retains the claim as a terminal tombstone", async () => {
-      // No test drove this mode through runExecutionLoop before: the suite's
-      // other `addressed` assertion is satisfied by a release from a different
-      // module, and the loop's default mode is 'stack-pop'. That left the role
-      // unpinned here — a mutant swapping it for `collateral` survived, even
-      // though the disposition is load-bearing: retaining the tombstone is what
-      // lets a later `--claim-id` confirm-or-conflict resolve `terminal` rather
-      // than `missing` (RD-598).
+    it('loop ownership releases the run and retains the claim as terminal evidence', async () => {
+      // The other side of the same branch, at the default ownership. The role is
+      // load-bearing: retaining the tombstone is what lets a later `--claim-id`
+      // confirm-or-conflict resolve `terminal` rather than `missing` (RD-598),
+      // and it is what an already-terminal `rundown run` entry used to get wrong
+      // by revoking the run-control claim it had just minted (#781).
       mockManager.load.mockResolvedValue(
         makeLoopState('1', {
           lifecycle: 'stopped',
@@ -1859,7 +1971,6 @@ describe('runExecutionLoop', () => {
         asSteps(steps),
         '/tmp',
         asEmitter(mockEmitter),
-        { terminalReleaseMode: 'release-runbook' },
       );
 
       expect(result).toBe('stopped');
@@ -1868,15 +1979,12 @@ describe('runExecutionLoop', () => {
       ]);
     });
 
-    it('refuses an unrecognized release mode instead of falling through to a stack pop', async () => {
-      // The mode dispatch must not treat "not release-runbook" as "stack-pop":
-      // a future ExecutionTerminalReleaseMode added to the union would then
-      // silently pop the default stack, releasing a run its owner still holds.
-      // The `never` check makes the compiler the primary gate; this pins the
-      // runtime half, which is what a cast at a call site would slip past.
-      // Pre-loaded stopped state, mirroring the sibling test: that path reaches
-      // applyExecutionTerminalRelease unconditionally, whereas the in-loop
-      // transition sites guard the call on the mode and would never reach it.
+    it('refuses an unrecognized release owner instead of releasing anyway', async () => {
+      // The ownership dispatch must not treat "not the caller" as "the loop": a
+      // future ExecutionReleaseOwner added to the union would then have the loop
+      // release behind whoever actually owns it, taking the release twice. The
+      // `never` check makes the compiler the primary gate; this pins the runtime
+      // half, which is what a cast at a call site would slip past.
       mockManager.load.mockResolvedValue(
         makeLoopState('1', {
           lifecycle: 'stopped',
@@ -1895,19 +2003,13 @@ describe('runExecutionLoop', () => {
           asSteps(steps),
           '/tmp',
           asEmitter(mockEmitter),
-          // Cast against the RELEASE-OWNING overload's mode: `runExecutionLoop`
-          // is now overloaded on the mode, so a bare
-          // `ExecutionTerminalReleaseMode` matches neither signature. The test
-          // is unchanged in substance — an unknown mode still reaches the
-          // runtime exhaustiveness guard in `applyExecutionTerminalRelease`.
-          {
-            terminalReleaseMode: 'future-mode' as Exclude<
-              ExecutionTerminalReleaseMode,
-              'defer-to-caller'
-            >,
-          },
+          // Cast against the LOOP-OWNING overload: `runExecutionLoop` is
+          // overloaded on the owner, so a bare `ExecutionReleaseOwner` matches
+          // neither signature. An unknown owner reaches the runtime
+          // exhaustiveness guard in `loopOwnsRelease`.
+          { releaseOwner: 'future-owner' as 'loop' },
         ),
-      ).rejects.toThrow(/future-mode/);
+      ).rejects.toThrow(/future-owner/);
 
       expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
     });
@@ -2807,7 +2909,7 @@ describe('runExecutionLoop', () => {
 
   // #802: the drain's `target_mismatch` is the same class as the three frontier
   // refusals below, and used to be the one that still threw. A throw unwinds
-  // past `applyExecutionTerminalRelease`, stranding the refused run on the
+  // past the release, stranding the refused run on the
   // session stack, and reaches the operator as RD-999 "Unknown error" — telling
   // them to retry a cursor mismatch no retry can resolve.
   it('refuses a completion that is not for the active cursor as a coded stop', async () => {
@@ -2854,8 +2956,10 @@ describe('runExecutionLoop', () => {
     });
     // The release the throw used to skip. Without it the refused run stays on
     // the session stack and every later bare command still resolves it.
+    // `addressed`: the run is still RUNNING here, and the refusal's remediation
+    // is to retry, so the authority a retry needs must survive (#789).
     expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'collateral' },
+      { runId: runbookId, role: 'addressed' },
     ]);
   });
 
@@ -2908,7 +3012,7 @@ describe('runExecutionLoop', () => {
     });
   });
 
-  // `defer-to-caller` is the mode where the loop releases NOTHING and its caller
+  // Caller ownership is where the loop releases NOTHING and its caller
   // acts on the status it is handed: the inline parent-advance seam releases the
   // run and recurses one level up on 'stopped'. A refusal applied nothing and
   // left the run RUNNING, so 'stopped' there released a live parent and reported
@@ -2938,7 +3042,7 @@ describe('runExecutionLoop', () => {
       asSteps(steps),
       '/tmp',
       asEmitter(mockEmitter),
-      { terminalReleaseMode: 'defer-to-caller' },
+      { releaseOwner: 'caller' },
     );
 
     expect(result).toEqual({
@@ -2953,8 +3057,8 @@ describe('runExecutionLoop', () => {
         runId: runbookId,
       },
     });
-    // Nothing released — that is what the mode means, and what makes reporting
-    // a terminal here a lie the caller would act on.
+    // Nothing released — that is what caller ownership means, and what makes
+    // reporting a terminal here a lie the caller would act on.
     expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
     // And nothing announced: a caller that owns the terminal owns reporting it,
     // and the adapter renders this same code and message. A RUNBOOK_STOPPED
@@ -2969,8 +3073,8 @@ describe('runExecutionLoop', () => {
 
   // The missing-authority refusal must behave exactly like its neighbour, the
   // frontier-consume failure: a coded ERROR_OCCURRED, a positioned
-  // RUNBOOK_STOPPED, and a terminal release — never an untyped throw. A throw
-  // unwinds past `applyExecutionTerminalRelease`, so the refused run stays on
+  // RUNBOOK_STOPPED, and a release — never an untyped throw. A throw unwinds
+  // past the release, so the refused run stays on
   // the session stack (no release runs) and every later bare command
   // still resolves it as the active runbook. That stranding, not the message,
   // is what these tests pin.
@@ -3051,18 +3155,22 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    // The stranding assertion: the default 'stack-pop' release must have run,
-    // so the refused run is no longer targeted by the session. Asserted by
-    // exact arguments — `collateral` revokes claims, `addressed` is
-    // `release-runbook`'s, and a mode that silently swapped them would still
-    // satisfy a bare call-count check.
+    // The stranding assertion: the release must have run, so the refused run is
+    // no longer targeted by the session. Asserted by exact arguments — the run
+    // is still RUNNING on this path, so `collateral` would revoke the authority
+    // the prescribed retry needs (#789), and a role that silently swapped would
+    // still satisfy a bare call-count check.
     expect(mockSessionService.releaseRuns).toHaveBeenCalledTimes(1);
     expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'collateral' },
+      { runId: runbookId, role: 'addressed' },
     ]);
   });
 
-  it('releases a claimed child through releaseRuns when the frontier refusal fires', async () => {
+  it('releases nothing on the frontier refusal when the caller owns the release', async () => {
+    // The other side of the refused-continuation release: an inline
+    // parent-advance continuation names its caller as release owner, and the
+    // refusal arms stand down with it. Releasing here would take a run off the
+    // session stack behind the seam that owns it.
     mockManager.load.mockResolvedValue(
       frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
     );
@@ -3073,20 +3181,18 @@ describe('runExecutionLoop', () => {
       asSteps(singleDelegateFrontierSteps()),
       '/tmp',
       asEmitter(mockEmitter),
-      { terminalReleaseMode: 'release-runbook' },
+      { releaseOwner: 'caller' },
     );
 
     expect(result).toBe('stopped');
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'addressed' },
-    ]);
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
   });
 
   // The projection refusal is the sibling failure of the missing-deriver one
   // above: the authority IS present, but it cannot reproduce the persisted
   // frontier. `projectDelegateFrontier` throws for that, and the throw must be
   // caught here for the same reason — an escaping error unwinds past the
-  // emitter and `applyExecutionTerminalRelease`, leaving the refused run on the
+  // emitter and the release, leaving the refused run on the
   // session stack as the active runbook for every later bare command.
   //
   // Two distinct entry paths reach the throw and both are pinned below:
@@ -3190,34 +3296,31 @@ describe('runExecutionLoop', () => {
       { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_other') },
     );
 
-    // The stranding assertion: the default 'stack-pop' release must have run,
-    // so the refused run is no longer targeted by the session. Asserted by
-    // exact arguments — `collateral` revokes claims, `addressed` is
-    // `release-runbook`'s, and a mode that silently swapped them would still
-    // satisfy a bare call-count check.
+    // The stranding assertion: the release must have run, so the refused run is
+    // no longer targeted by the session. Asserted by exact arguments — the run
+    // is still RUNNING on this path, so `collateral` would revoke the authority
+    // the prescribed retry needs (#789), and a role that silently swapped would
+    // still satisfy a bare call-count check.
     expect(mockSessionService.releaseRuns).toHaveBeenCalledTimes(1);
     expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'collateral' },
+      { runId: runbookId, role: 'addressed' },
     ]);
   });
 
-  it('releases a claimed child through releaseRuns when the frontier projection is refused', async () => {
+  it('releases the rotated-issuer projection refusal exactly like the hash mismatch', async () => {
     mockManager.load.mockResolvedValue(
       frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
     );
 
     // The rotated-issuer path releases exactly like the hash-mismatch one: both
-    // enter the catch, so neither may strand the claimed child.
+    // enter the catch, so neither may strand the run.
     const result = await runExecutionLoop(
       asManager(mockManager),
       runbookId,
       asSteps(singleDelegateFrontierSteps()),
       '/tmp',
       asEmitter(mockEmitter),
-      {
-        terminalReleaseMode: 'release-runbook',
-        delegationRuntime: frontierProjectionRuntime(rotatedIssuerDeriver),
-      },
+      { delegationRuntime: frontierProjectionRuntime(rotatedIssuerDeriver) },
     );
 
     expect(result).toBe('stopped');
@@ -3282,7 +3385,7 @@ describe('runExecutionLoop', () => {
     );
     expect(mockSessionService.releaseRuns).toHaveBeenCalledTimes(1);
     expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'collateral' },
+      { runId: runbookId, role: 'addressed' },
     ]);
   });
 

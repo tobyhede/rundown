@@ -640,9 +640,6 @@ export interface LifecycleTerminalReleasePolicy {
   readonly releaseOnTerminal: boolean;
 }
 
-/** How a follow-on terminal release should treat this run during execution-loop continuation. */
-export type LifecycleTerminalReleaseMode = 'release-runbook' | 'stack-pop';
-
 /**
  * Directive telling the frontend whether to run the execution loop after the
  * seam applied a transition. The loop spawns command-step subprocesses, which is
@@ -769,8 +766,6 @@ export type LifecycleTransitionOutcome =
        * contract's two mutation paths — not a render-only flag.)
        */
       readonly mutation: 'run-transition' | 'manual-completion';
-      /** How a follow-on execution loop should release this run terminally. */
-      readonly terminalReleaseMode: LifecycleTerminalReleaseMode;
       /** Coarse transition status used by the frontend for exit-code/flow decisions. */
       readonly status: 'continue' | 'done' | 'stopped';
       /** Transition observation events for the frontend to render. */
@@ -997,8 +992,6 @@ export type LifecycleNavigationOutcome =
       readonly state: RunbookState;
       /** Parsed steps of the target run, derived in-seam. */
       readonly steps: readonly ResolvedStep[];
-      /** How a follow-on execution loop should release this run terminally. */
-      readonly terminalReleaseMode: LifecycleTerminalReleaseMode;
       /**
        * Verified runtime-only delegation capabilities for a navigation that
        * lands on a DELEGATE frontier. One branded pair — see
@@ -1013,7 +1006,6 @@ export interface LifecycleNavigationMutationInput {
   readonly callerEvidence: CallerEvidence;
   readonly steps: readonly ResolvedStep[];
   readonly target: StepId;
-  readonly terminalReleaseMode: LifecycleTerminalReleaseMode;
   /** Verified runtime-only issuer for a GOTO that enters a delegation frontier. */
   readonly issueDelegationCredential?: DelegationCredentialIssuer;
 }
@@ -1028,7 +1020,6 @@ export type LifecycleNavigationMutationOutcome =
       readonly updatedState: RunbookState;
       readonly snapshot: unknown;
       readonly steps: readonly ResolvedStep[];
-      readonly terminalReleaseMode: LifecycleTerminalReleaseMode;
     };
 
 /**
@@ -2641,8 +2632,6 @@ export class RunbookLifecycleCommandService {
       throw new Error('Explicit-step transition requires an explicit target');
     }
 
-    const terminalReleaseMode: LifecycleTerminalReleaseMode =
-      ready.kind === 'claim' ? 'release-runbook' : 'stack-pop';
     // Every resolution shape is guarded by the in-transaction open-children
     // re-check, with one exemption this expression actually applies: a
     // delegated-child bearer. Stated as an exemption rather than as an
@@ -2701,7 +2690,6 @@ export class RunbookLifecycleCommandService {
       input,
       steps,
       ready.state,
-      terminalReleaseMode,
       guardOpenChildren,
       delegationRuntime?.issueDelegationCredential,
     );
@@ -2937,7 +2925,6 @@ export class RunbookLifecycleCommandService {
       runId: state.id,
       state,
       steps: await this.#deps.loadSteps(state),
-      terminalReleaseMode: resolution.kind === 'claim' ? 'release-runbook' : 'stack-pop',
       // Navigation can land the cursor ON a DELEGATE frontier, so the same
       // run-control gate applies: the issuer follows `delegate-from-run`, not
       // the `mutate-run` grant that authorized the navigation.
@@ -2985,7 +2972,6 @@ export class RunbookLifecycleCommandService {
       updatedState: result.value.state,
       snapshot: result.value.snapshot,
       steps: input.steps,
-      terminalReleaseMode: input.terminalReleaseMode,
     };
   }
 
@@ -3629,7 +3615,6 @@ export class RunbookLifecycleCommandService {
     input: LifecycleTransitionInput,
     steps: readonly ResolvedStep[],
     state: RunbookState,
-    terminalReleaseMode: LifecycleTerminalReleaseMode,
     guardOpenChildren: boolean,
     issueDelegationCredential?: DelegationCredentialIssuer,
   ): Promise<LifecycleTransitionOutcome> {
@@ -3651,21 +3636,13 @@ export class RunbookLifecycleCommandService {
         input,
         steps,
         state,
-        terminalReleaseMode,
         false,
         input.explicitTarget,
         issueDelegationCredential,
       );
     }
     if (!isSubstepCompletion) {
-      return this.#driveTopLevel(
-        input,
-        steps,
-        state,
-        terminalReleaseMode,
-        guardOpenChildren,
-        issueDelegationCredential,
-      );
+      return this.#driveTopLevel(input, steps, state, guardOpenChildren, issueDelegationCredential);
     }
     // A bare transition means "advance the thing currently in front of the
     // operator". When that thing is an already-running inline child, resume
@@ -3676,7 +3653,6 @@ export class RunbookLifecycleCommandService {
         kind: 'applied',
         runId: state.id,
         mutation: 'manual-completion',
-        terminalReleaseMode,
         status: 'continue',
         events: [],
         loop: reactivation,
@@ -3686,7 +3662,6 @@ export class RunbookLifecycleCommandService {
       input,
       steps,
       state,
-      terminalReleaseMode,
       guardOpenChildren,
       undefined,
       issueDelegationCredential,
@@ -3697,7 +3672,6 @@ export class RunbookLifecycleCommandService {
     input: LifecycleTransitionInput,
     steps: readonly ResolvedStep[],
     activeState: RunbookState,
-    terminalReleaseMode: LifecycleTerminalReleaseMode,
     guardOpenChildren: boolean,
     explicitTarget?: ExplicitTransitionTarget,
     issueDelegationCredential?: DelegationCredentialIssuer,
@@ -3858,19 +3832,13 @@ export class RunbookLifecycleCommandService {
       observedState: preparedOutcome.state,
       terminalStatus: preparedOutcome.terminalStatus,
     };
-    return this.#substepOutcome(
-      activeState.id,
-      terminalReleaseMode,
-      drained,
-      preparedOutcome.duplicate,
-    );
+    return this.#substepOutcome(activeState.id, drained, preparedOutcome.duplicate);
   }
 
   // Assemble the `applied` outcome for a substep mutation, shared by the bare
   // and explicit paths.
   #substepOutcome(
     runId: RunId,
-    terminalReleaseMode: LifecycleTerminalReleaseMode,
     drained: SubstepDrainObservation,
     duplicate: { at: string; frameKey: FrameKey; entry: number } | undefined,
   ): LifecycleTransitionOutcome {
@@ -3879,7 +3847,6 @@ export class RunbookLifecycleCommandService {
         kind: 'applied',
         runId,
         mutation: 'manual-completion',
-        terminalReleaseMode,
         status: drained.terminalStatus,
         events: drained.drainEvents,
         loop: { kind: 'none' },
@@ -3892,7 +3859,6 @@ export class RunbookLifecycleCommandService {
       kind: 'applied',
       runId,
       mutation: 'manual-completion',
-      terminalReleaseMode,
       status: 'continue',
       events: drained.drainEvents,
       loop,
@@ -3906,7 +3872,6 @@ export class RunbookLifecycleCommandService {
     input: LifecycleTransitionInput,
     steps: readonly ResolvedStep[],
     activeState: RunbookState,
-    terminalReleaseMode: LifecycleTerminalReleaseMode,
     guardOpenChildren: boolean,
     issueDelegationCredential?: DelegationCredentialIssuer,
   ): Promise<LifecycleTransitionOutcome> {
@@ -4005,7 +3970,6 @@ export class RunbookLifecycleCommandService {
         kind: 'applied',
         runId: activeState.id,
         mutation: 'run-transition',
-        terminalReleaseMode,
         status: reconciled.status,
         events: reconciled.events,
         loop: { kind: 'none' },
@@ -4016,7 +3980,6 @@ export class RunbookLifecycleCommandService {
       kind: 'applied',
       runId: activeState.id,
       mutation: 'run-transition',
-      terminalReleaseMode,
       status: 'continue',
       events: reconciled.events,
       loop: { kind: 'run' },

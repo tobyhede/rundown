@@ -293,13 +293,21 @@ describe('SessionService', () => {
     // irrecoverable: the child survives the rollback and the next attempt
     // resumes it, but `adoptRunControlClaim` refuses to re-mint once that child
     // has issued a delegation, so nothing addressed the run again.
-    it("popRunbookIfActive leaves the popped run's run-control claim intact", async () => {
+    it("popRunbookIfActive leaves the popped run's run-control claim and the stash slot intact", async () => {
+      const stashed = await manager.create({ source: 'project', path: 'stashed.md' }, mockRunbook, {
+        runbookPath: 'stashed.md',
+      });
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
       const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
         runbookPath: 'child.md',
       });
+      // A parked run, so the slot is occupied while the undo runs. Stack
+      // deactivation undoes a push, and a push writes no slot — so it must not
+      // read one either.
+      await sessionService.pushRunbook(stashed.id);
+      unwrapSessionMutation(await sessionService.stash());
       await sessionService.pushRunbook(parent.id);
       // Pushed and claimed the way an inline launch does it, so the claim under
       // test is a real run-control bearer an orchestrator could still hold.
@@ -319,6 +327,7 @@ describe('SessionService', () => {
       // The whole point: the run left the stack, the authority over it did not.
       expect(session.claims[minted.claim.claimKey]).toBeDefined();
       expect(session.claims[minted.claim.claimKey].controlledRunId).toBe(child.id);
+      expect(session.stashedRunbookId).toBe(stashed.id);
     });
 
     // `session_stack` has no uniqueness constraint, and cannot gain one without

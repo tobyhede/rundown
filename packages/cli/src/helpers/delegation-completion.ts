@@ -133,12 +133,13 @@ function delegationRuntimeFor(
  * collapses the drain/loop statuses into the seam's `AdvanceInlineParentOutcome`.
  * It performs NO terminal session release on ANY path — the core seam is the SOLE
  * release owner and releases parentRunId once, as `addressed`, on terminal. The
- * drain performs no release of its own, and the execution loop is
- * invoked with `terminalReleaseMode: 'defer-to-caller'` (Task 3) so it too skips
- * release — and, in that mode, hands back its own drain refusal as data rather
- * than a `'stopped'` this callable would forward as a terminal (#802). This closes the ownership gap: there is exactly one release site with
- * one deliberate claim disposition, so the tombstone-destruction hazard the old
- * two-owner code carried (drain deleted, loop retained) cannot recur (RD-598).
+ * drain performs no release of its own, and the execution loop is invoked with
+ * `releaseOwner: 'caller'` so it too skips release — and, under that ownership,
+ * hands back its own drain refusal as data rather than a `'stopped'` this
+ * callable would forward as a terminal (#802). This closes the ownership gap:
+ * there is exactly one release site with one deliberate claim disposition, so
+ * the tombstone-destruction hazard the old two-owner code carried (drain
+ * deleted, loop retained) cannot recur (RD-598).
  *
  * The heavy CLI collaborators are imported LAZILY to avoid a static
  * delegation-completion ↔ execution import cycle.
@@ -247,11 +248,11 @@ export function buildAdvanceInlineParent(
         loopSteps,
         cwd,
         emitter,
-        // 'defer-to-caller': the loop does NOT release parentRunId — the core seam
-        // is the sole release owner and releases once (with retain) on terminal.
-        // See Task 3 for the mode; RD-598 verification for why single-owner.
+        // Caller-owned release: the loop does NOT release parentRunId — the core
+        // seam is the sole release owner and releases once, as `addressed`, on
+        // terminal. See RD-598 verification for why single-owner.
         {
-          terminalReleaseMode: 'defer-to-caller',
+          releaseOwner: 'caller',
           output,
           commandStreamOptions,
           delegationRuntime,
@@ -259,8 +260,8 @@ export function buildAdvanceInlineParent(
       );
       output.flush();
       // The loop's own drain can refuse the same way this callable's did, and
-      // in `defer-to-caller` it hands the refusal back rather than reporting a
-      // `'stopped'` this callable would forward as a terminal — which would
+      // under caller ownership it hands the refusal back rather than reporting
+      // a `'stopped'` this callable would forward as a terminal — which would
       // have the seam release a still-running parent and recurse upward on a
       // terminal that never happened.
       //

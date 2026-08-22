@@ -350,7 +350,6 @@ export {
   type LifecycleNavigationOutcome,
   type LifecycleTerminalInput,
   type LifecycleTerminalOutcome,
-  type LifecycleTerminalReleaseMode,
   type LifecycleTerminalReleasePolicy,
   type LifecycleTransitionInput,
   type LifecycleTransitionOutcome,

@@ -44,7 +44,6 @@ import {
 import {
   validateGotoTarget,
   executeGoto,
-  resolveTerminalReleaseModeForRunbook,
   gotoResultRequiresFailureExit,
 } from '../helpers/goto-workflow.js';
 import {
@@ -372,10 +371,6 @@ export function registerRunCommand(program: Command): void {
                 state: gotoState,
                 steps: gotoSteps,
                 cwd,
-                terminalReleaseMode: await resolveTerminalReleaseModeForRunbook(
-                  manager,
-                  gotoState.id,
-                ),
                 delegationRuntime: result.delegationRuntime,
               };
 

@@ -314,7 +314,6 @@ describe('entry projection ordering: machine credential issuance agrees with com
       callerEvidence: evidence(),
       steps,
       target: { step: '2' },
-      terminalReleaseMode: allowed.terminalReleaseMode,
       ...(allowed.delegationRuntime === undefined
         ? {}
         : { issueDelegationCredential: allowed.delegationRuntime.issueDelegationCredential }),

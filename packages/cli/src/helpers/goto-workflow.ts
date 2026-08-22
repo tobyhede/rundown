@@ -22,7 +22,6 @@ import {
   type CommandExecutionStreamOptions,
   type RunbookLifecycleCommandService,
   type CallerEvidence,
-  type LifecycleTerminalReleaseMode,
   type DelegationRuntimeCapabilities,
   claimKeyFromBearer,
 } from '@rundown-org/core';
@@ -61,8 +60,6 @@ export interface GotoContext {
   steps: ResolvedStep[];
   /** Current working directory for file resolution */
   cwd: string;
-  /** How terminal follow-on execution should release this runbook from session targeting. */
-  terminalReleaseMode: LifecycleTerminalReleaseMode;
   /** Runtime-only routing for command subprocess stdout/stderr. */
   commandStreamOptions?: CommandExecutionStreamOptions;
   /**
@@ -183,28 +180,6 @@ export function renderNavigationRefusal(output: OutputEmitter, refusal: GotoRefu
 }
 
 /**
- * Resolve how terminal execution should remove a specific runbook from session targeting.
- *
- * Used when a command already has the target state and cannot go through
- * {@link buildGotoContext}, for example `run --prompted --step` immediately
- * after launching a runbook.
- *
- * @param manager - State manager used to read session targeting data
- * @param runbookId - Runbook state id that will continue executing after goto
- * @returns Release mode matching the runbook's current session ownership
- */
-export async function resolveTerminalReleaseModeForRunbook(
-  manager: RunbookStateManager,
-  runbookId: RunId,
-): Promise<LifecycleTerminalReleaseMode> {
-  const session = await manager.loadSession();
-  const claimed = Object.values(session.claims).some(
-    (claim) => claim.controlledRunId === runbookId,
-  );
-  return claimed ? 'release-runbook' : 'stack-pop';
-}
-
-/**
  * Build context for goto command execution.
  *
  * Dispatches target resolution and the run-navigation policy gate into the
@@ -268,7 +243,6 @@ export async function buildGotoContext(
       state: outcome.state,
       steps: [...outcome.steps],
       cwd,
-      terminalReleaseMode: outcome.terminalReleaseMode,
       commandStreamOptions: options.commandStreamOptions,
       delegationRuntime: outcome.delegationRuntime,
     },
@@ -387,7 +361,6 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     callerEvidence,
     steps,
     target,
-    terminalReleaseMode: ctx.terminalReleaseMode,
     issueDelegationCredential: ctx.delegationRuntime?.issueDelegationCredential,
   });
   if (mutation.kind !== 'applied') {
@@ -411,7 +384,6 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
 
   // Continue with execution loop
   const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, emitter, {
-    terminalReleaseMode: ctx.terminalReleaseMode,
     ...(callerEvidence.kind === 'claim_bearer'
       ? { claimKey: claimKeyFromBearer(callerEvidence.claimId) }
       : {}),

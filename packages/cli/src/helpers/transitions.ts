@@ -47,7 +47,7 @@ import { renderTransactionalMutationRefusal } from './session-mutation-result.js
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import { readLifecycleCallerEvidence } from './caller-evidence.js';
-import { runExecutionLoop, type ExecutionTerminalReleaseMode } from '../services/execution.js';
+import { runExecutionLoop } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { transitionSinkFromEmitter, type TransitionEventSink } from './transition-orchestrator.js';
@@ -132,8 +132,6 @@ export interface TransitionContext {
   steps: ResolvedStep[];
   /** Current working directory */
   cwd: string;
-  /** How terminal follow-on execution should release this runbook from session targeting. */
-  terminalReleaseMode: ExecutionTerminalReleaseMode;
   /** Runtime-only routing for command subprocess stdout/stderr. */
   commandStreamOptions?: CommandExecutionStreamOptions;
   /**
@@ -195,7 +193,6 @@ export async function buildTransitionContext(
   const sessionService = new SessionService(manager);
   const lifecycleService = new ExecutionLifecycleService(manager);
 
-  let resolvedKind: 'claim' | 'default' | 'run';
   let state: RunbookState;
   // Resolved claim record, surfaced so the collect command can name the
   // bearer-verified claim for core authorization; undefined for the
@@ -208,18 +205,14 @@ export async function buildTransitionContext(
   });
   switch (active.kind) {
     case 'claim':
-      resolvedKind = active.kind;
       state = active.state;
       claim = active.claim;
       break;
+    // One arm since the release mode stopped distinguishing them: an explicit
+    // `--run` target behaves like `default` with the named state already in
+    // hand, and neither carries a claim.
     case 'default':
-      resolvedKind = active.kind;
-      state = active.state;
-      break;
     case 'run':
-      // Explicit `--run` target: behaves like `default` with the named state
-      // in hand (Task 3 mechanical arm; flag registration lands in Task 5).
-      resolvedKind = active.kind;
       state = active.state;
       break;
     case 'none':
@@ -233,8 +226,6 @@ export async function buildTransitionContext(
     }
   }
 
-  const terminalReleaseMode: ExecutionTerminalReleaseMode =
-    resolvedKind === 'claim' ? 'release-runbook' : 'stack-pop';
   const readonlySteps = getRunbookFromState(state, cwd);
   const steps = [...readonlySteps]; // Convert to mutable array for TransitionContext
 
@@ -249,7 +240,6 @@ export async function buildTransitionContext(
       state,
       steps,
       cwd,
-      terminalReleaseMode,
       commandStreamOptions: options.commandStreamOptions,
       ...(claim ? { claim } : {}),
     },
@@ -533,7 +523,6 @@ async function renderApplied(
       const steps = getRunbookFromState(state, cwd);
       emitter ??= createBridgedEmitter(state, output);
       const loopResult = await runExecutionLoop(manager, outcome.runId, [...steps], cwd, emitter, {
-        terminalReleaseMode: outcome.terminalReleaseMode,
         ...(claimKey === undefined ? {} : { claimKey }),
         output,
         commandStreamOptions,
