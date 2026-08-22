@@ -192,7 +192,7 @@ async function run(service: SessionService): Promise<unknown> {
       return service.pushRunbook(assertRunId(op.runId));
     case 'recordClaimSeen':
       return service.recordClaimSeen(assertClaimId(op.claimId));
-    case 'releaseRunbook': {
+    case 'releaseRun': {
       // `collateral` is what the bare release always did: revoke the claims the
       // run controls. Unwrapped for the refusal, not for a payload — the release
       // commits none, so this op reports nothing over the wire.

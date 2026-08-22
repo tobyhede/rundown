@@ -48,13 +48,20 @@ import {
   type TransitionObservationEvent,
 } from '../events/transition-observation.js';
 
-/** Session reader plus the single write used by terminal release. */
+/** Session reader plus the writes the collection seam and the seams it calls perform. */
 export interface CollectionSessionService extends CommandTargetReader {
   /**
-   * Release a run from all session targeting structures on terminal.
+   * Release runs from every session targeting structure that names them.
+   *
+   * Not called anywhere in this module, and NOT dead: `advanceInlineParentAfterCommit`
+   * forwards this same service into `propagateTerminalChildUpward`, whose
+   * `InlineParentAdvanceSessionService` requires it and whose terminal branch
+   * calls it. Structural typing is what carries the requirement across, so
+   * deleting this member fails the type check at the hand-off rather than at any
+   * call site here — verified by deleting it.
    *
    * @param releases - Runs to release, each with the role that explains it.
-   * @returns The committed envelope, not consumed by the collection seam.
+   * @returns The committed envelope, not consumed by the collection seam itself.
    */
   releaseRuns(releases: readonly RunRelease[]): Promise<SessionMutationResult<void>>;
 

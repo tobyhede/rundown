@@ -625,8 +625,8 @@ describe('cross-process session write contention (transaction replaces SessionLo
 
     // Two targeted releases plus two pops: four removals against four entries.
     const results = await race([
-      { kind: 'releaseRunbook', runId: runIds[0] },
-      { kind: 'releaseRunbook', runId: runIds[1] },
+      { kind: 'releaseRun', runId: runIds[0] },
+      { kind: 'releaseRun', runId: runIds[1] },
       { kind: 'popTopOfStack' },
       { kind: 'popTopOfStack' },
     ]);

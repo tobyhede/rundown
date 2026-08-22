@@ -1,6 +1,7 @@
 import { describe, expect, it } from '@jest/globals';
 import fc from 'fast-check';
 import {
+  assertValidReleaseBatch,
   projectRunReleases,
   type ReleaseRole,
   type RunRelease,
@@ -232,6 +233,25 @@ describe('projectRunReleases', () => {
       }).toThrow();
     });
 
+    it('rejects an unknown role before applying any earlier member', () => {
+      // The batch pre-pass covers ROLES too, not just duplicates. Validating a
+      // role lazily inside the projection would leave the first member's stack
+      // entry already gone when the second member's bad role is read — exactly
+      // the half-projected state the docblock promises cannot happen.
+      const [a, b] = [runId(1), runId(2)];
+      const session = sessionOver([a, b]);
+      const before = structuredClone(session);
+
+      expect(() => {
+        projectRunReleases(session, [
+          { runId: a, role: 'discarded' },
+          { runId: b, role: 'bogus' as ReleaseRole },
+        ]);
+      }).toThrow(/Unknown release role/);
+
+      expect(session).toEqual(before);
+    });
+
     it('leaves the session untouched when it rejects', () => {
       // Validation runs over the WHOLE batch before the first member is
       // applied, so a rejected batch is not half-projected. Ordering the
@@ -347,5 +367,41 @@ describe('projectRunReleases order-independence (property)', () => {
         expect(session).toEqual(once);
       }),
     );
+  });
+});
+
+describe('assertValidReleaseBatch', () => {
+  // The pre-pass on its own, because a caller refuses with it BEFORE opening a
+  // transaction the projection would otherwise run inside.
+  it('accepts a well-formed batch', () => {
+    expect(() => {
+      assertValidReleaseBatch([
+        { runId: runId(1), role: 'addressed' },
+        { runId: runId(2), role: 'collateral' },
+      ]);
+    }).not.toThrow();
+  });
+
+  it('accepts an empty batch', () => {
+    expect(() => {
+      assertValidReleaseBatch([]);
+    }).not.toThrow();
+  });
+
+  it('rejects a repeated run', () => {
+    const a = runId(1);
+
+    expect(() => {
+      assertValidReleaseBatch([
+        { runId: a, role: 'addressed' },
+        { runId: a, role: 'collateral' },
+      ]);
+    }).toThrow(a);
+  });
+
+  it('rejects a role outside the union', () => {
+    expect(() => {
+      assertValidReleaseBatch([{ runId: runId(1), role: 'bogus' as ReleaseRole }]);
+    }).toThrow(/Unknown release role: bogus/);
   });
 });

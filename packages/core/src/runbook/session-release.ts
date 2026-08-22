@@ -48,8 +48,8 @@ type ClaimDisposition = 'retain-as-terminal-evidence' | 'revoke';
  * A `switch` evaluated per call rather than a module-level `Record` keyed by the
  * union. Both are exhaustive — the `never` arm below fails the type check when a
  * role is added, exactly as a missing `Record` key would — but a `Record`
- * initialiser runs ONCE at module load, before a mutation runner can switch a
- * mutant on, so every entry in it is reported as a surviving mutant no matter
+ * literal is evaluated ONCE at module load, before a mutation runner can switch
+ * a mutant on, so every entry in it is reported as a surviving mutant no matter
  * what the tests assert. Measured: applying `collateral: 'revoke'` -> `''` by
  * hand fails three tests, while the same mutation through Stryker survived. The
  * policy has to be reachable at call time to be testable at all.
@@ -74,12 +74,16 @@ function claimDisposition(role: ReleaseRole): ClaimDisposition {
     case 'collateral':
     case 'discarded':
       return 'revoke';
-    // Stryker disable all: unreachable — the exhaustive `never` arm
     default: {
+      // Both statements are unreachable — the `never` arm proves the union is
+      // exhausted. Disabled per line: a `Stryker disable all` here would need a
+      // matching `restore` on a line that LEADS an AST node, and a trailing one
+      // after the block silently leaks the disable to end of file.
+      // Stryker disable next-line all: unreachable — the exhaustive `never` arm
       const unknown: never = role;
+      // Stryker disable next-line all: unreachable — the exhaustive `never` arm
       throw new Error(`Unknown release role: ${String(unknown)}`);
     }
-    // Stryker restore all
   }
 }
 
@@ -89,6 +93,36 @@ export interface RunRelease {
   readonly runId: RunId;
   /** Why, which decides the claim disposition. */
   readonly role: ReleaseRole;
+}
+
+/**
+ * Refuse a batch this projection cannot apply, before it applies any of it.
+ *
+ * Exported so a caller can refuse AHEAD of the transaction it would otherwise
+ * open. `SessionService.releaseRuns` needs that: its ownership preflight runs
+ * before the projection does, so a malformed batch naming an execution-owned run
+ * would otherwise come back as `execution_in_progress` — a refusal whose
+ * remediation is "retry" — instead of the programmer error it actually is. The
+ * sibling transaction seam pre-checks for the same reason.
+ *
+ * This is the batch's shape, not the retention policy: it exposes nothing about
+ * what a role DOES, only which batches are well formed.
+ *
+ * @param releases - The batch to validate.
+ * @throws {Error} When two releases name the same run, or a role is not a
+ *   {@link ReleaseRole}.
+ */
+export function assertValidReleaseBatch(releases: readonly RunRelease[]): void {
+  const seen = new Set<RunId>();
+  for (const { runId, role } of releases) {
+    if (seen.has(runId)) {
+      throw new Error(`Run release batch names ${runId} more than once.`);
+    }
+    seen.add(runId);
+    // Called for its refusal, not its answer: an unknown role throws here, in
+    // the pre-pass, rather than mid-projection with earlier members applied.
+    claimDisposition(role);
+  }
 }
 
 /**
@@ -136,22 +170,20 @@ function projectOne(session: SessionData, release: RunRelease): void {
  * answered at the claim-resolution seam, not here.
  *
  * The whole batch is validated before any member is applied, so a rejected batch
- * leaves the session untouched rather than half-projected.
+ * leaves the session untouched rather than half-projected. Both refusals are in
+ * that pre-pass, the role check included — validating roles lazily inside the
+ * projection would make this promise false, because the first member's stack
+ * entry is already gone by the time a later member's bad role is read.
  *
  * @param session - Session snapshot, mutated in place.
  * @param releases - The runs to release, each with the fact that explains it.
- * @throws {Error} When two releases name the same run. One run cannot be released
- *   for two reasons in one batch, and a caller that built such a batch derived
- *   at least one of the roles from something other than what it did.
+ * @throws {Error} When two releases name the same run, or when a release carries
+ *   a role outside {@link ReleaseRole}. One run cannot be released for two
+ *   reasons in one batch, and a caller that built such a batch derived at least
+ *   one of the roles from something other than what it did.
  */
 export function projectRunReleases(session: SessionData, releases: readonly RunRelease[]): void {
-  const seen = new Set<RunId>();
-  for (const { runId } of releases) {
-    if (seen.has(runId)) {
-      throw new Error(`Run release batch names ${runId} more than once.`);
-    }
-    seen.add(runId);
-  }
+  assertValidReleaseBatch(releases);
 
   for (const release of releases) projectOne(session, release);
 }

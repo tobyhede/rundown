@@ -80,6 +80,9 @@ export interface EffectfulActorMutationRunner {
    *
    * @param input - Aggregate targets, preparation callback, and release plan.
    * @returns The committed value or a typed aggregate refusal.
+   * @throws {Error} When the target set is empty, repeats a run, or carries a
+   *   release naming a run outside it or naming one run twice. All four are
+   *   programmer errors, refused before any authority is captured.
    */
   runAll<TResult>(
     input: EffectfulActorMutationSetRunnerInput<TResult>,

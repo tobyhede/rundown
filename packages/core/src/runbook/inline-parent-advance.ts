@@ -202,7 +202,7 @@ export interface InlineParentAdvanceStateReader {
 /** Narrow session capability used for terminal release. Satisfied by `SessionService`. */
 export interface InlineParentAdvanceSessionService {
   /**
-   * Release a run from all session targeting structures on terminal.
+   * Release runs from every session targeting structure that names them.
    *
    * @param releases - Runs to release, each with the role that explains it.
    * @returns The committed envelope, unused by the seam.

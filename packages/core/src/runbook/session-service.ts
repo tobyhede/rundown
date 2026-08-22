@@ -64,7 +64,7 @@ import {
   DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
 } from './delegation-lifecycle-read-model.js';
-import { projectRunReleases, type RunRelease } from './session-release.js';
+import { assertValidReleaseBatch, projectRunReleases, type RunRelease } from './session-release.js';
 
 /**
  * In-memory run-control credential prepared before a run is activated.
@@ -1835,10 +1835,16 @@ export class SessionService {
    * @returns Nothing beyond the committed envelope. Refused
    *   `execution_in_progress` or `recovery_required` instead when a named run is
    *   execution-owned or awaiting recovery.
-   * @throws {Error} When two members name the same run — see
-   *   {@link projectRunReleases}.
+   * @throws {Error} When two members name the same run, or a member carries a
+   *   role outside `ReleaseRole` — see {@link assertValidReleaseBatch}.
    */
   async releaseRuns(releases: readonly RunRelease[]): Promise<SessionMutationResult<void>> {
+    // Refused BEFORE the transaction, matching the aggregate seam. The ownership
+    // preflight inside `mutateGuarded` runs ahead of the projection, so leaving
+    // this to `projectRunReleases` would let a malformed batch naming an
+    // execution-owned run come back as `execution_in_progress` — telling the
+    // caller to retry a call that can never succeed — instead of throwing.
+    assertValidReleaseBatch(releases);
     return this.mutateGuarded(
       releases.map(({ runId }) => runId),
       (ctx) => {

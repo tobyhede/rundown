@@ -425,6 +425,29 @@ describe('SessionService', () => {
       expect((await manager.loadSession()).defaultStack).toEqual([state.id]);
     });
 
+    it('releaseRuns rejects a repeated run even when that run is execution-owned', async () => {
+      // The refusal has to be the programmer error, not the ownership preflight.
+      // `mutateGuarded` runs its `execution_in_progress` check BEFORE the
+      // projection, so validating the batch inside the callback would answer a
+      // malformed call with "retry" — remediation for a call that can never
+      // succeed, whichever run it names. The aggregate seam pre-checks for the
+      // same reason, and the two must not disagree.
+      const state = await manager.create({ source: 'project', path: 'owned.md' }, mockRunbook, {
+        runbookPath: 'owned.md',
+      });
+      await sessionService.pushRunbook(state.id);
+      holdExecutionLease(state.id);
+
+      await expect(
+        sessionService.releaseRuns([
+          { runId: state.id, role: 'addressed' },
+          { runId: state.id, role: 'collateral' },
+        ]),
+      ).rejects.toThrow(state.id);
+
+      expect((await manager.loadSession()).defaultStack).toEqual([state.id]);
+    });
+
     it('popRunbookIfActive resolves the top and pops it in exactly one transaction', async () => {
       // Structural guard, matching the one `stash` carries. Every behavioural
       // test above is sequential, so reintroducing the `getActive()` pre-read
@@ -3978,7 +4001,9 @@ describe('SessionService', () => {
       });
       expect(linked.kind).toBe('committed');
 
-      await sessionService.releaseRuns([{ runId: child.id, role: 'collateral' }]);
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: child.id, role: 'collateral' }]),
+      );
       const foreignChild = await manager.create(
         { source: 'project', path: 'foreign-child.md' },
         mockRunbook,
@@ -4027,7 +4052,9 @@ describe('SessionService', () => {
         capturedParent: prepared.captured.authority,
         preparedParent: prepared.preparedParent,
       });
-      await sessionService.releaseRuns([{ runId: child.id, role: 'collateral' }]);
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: child.id, role: 'collateral' }]),
+      );
       const unlink = await prepareInitialUnlink(parent.id, child.id, linkage);
 
       const result = await sessionService.rollbackInitialLink({
