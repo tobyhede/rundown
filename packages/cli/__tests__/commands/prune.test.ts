@@ -745,6 +745,30 @@ Do the thing.
       expect(session.defaultStack).toEqual([parentId]);
     });
 
+    it('releases a stacked invalid state file id when pruned via --inactive', async () => {
+      // The `--all` twin below takes a different branch: `--all` replaces the
+      // whole session with a canonical empty one and never reaches the selective
+      // release. Only this path exercises `releaseRuns` against an id whose
+      // persisted state is invalid, and nothing covered it before.
+      //
+      // Note what "invalid persisted run" means here: the STATE is unreadable,
+      // while the id itself is a canonical run id — it came out of the runs
+      // table, and `listRunIds` asserts every row. That is why the release is
+      // reached with the id intact rather than filtered away.
+      const manager = new RunbookStateManager(workspace.cwd);
+      const sessionService = new SessionService(manager);
+      const invalidId = await createStateFile(manager, { lifecycle: 'running' });
+      await sessionService.pushRunbook(invalidId);
+      await patchPersistedRunState(workspace.cwd, invalidId, { schemaVersion: 99 });
+
+      const result = await runCliInProcess('prune --inactive', workspace);
+
+      expect(result.exitCode).toBe(0);
+      const session = await readSession(workspace);
+      expect(session.defaultStack).not.toContain(invalidId);
+      expect(await readRunbookState(workspace, invalidId)).toBeNull();
+    });
+
     it('releases a stacked invalid state file id when pruned via --all', async () => {
       const manager = new RunbookStateManager(workspace.cwd);
       const sessionService = new SessionService(manager);
