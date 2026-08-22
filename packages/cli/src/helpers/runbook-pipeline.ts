@@ -1012,7 +1012,9 @@ async function launchRunbook(
     }
     if (sessionActivated) {
       try {
-        const release = await sessionService.releaseRunbook(stateId);
+        // `discarded`: the launch failed, so this run is being destroyed rather
+        // than finished, and a claim minted for it must not outlive it.
+        const release = await sessionService.releaseRuns([{ runId: stateId, role: 'discarded' }]);
         // A refusal here is the same class of event as the swallowed rejection:
         // cleanup is best effort and must not replace the launch error.
         switch (release.kind) {

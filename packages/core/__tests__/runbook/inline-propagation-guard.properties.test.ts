@@ -37,6 +37,7 @@ import {
   assertRunId,
   type RunbookState,
   type RunId,
+  type RunRelease,
 } from '../../src/runbook/index.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import {
@@ -151,7 +152,7 @@ interface Run {
   readonly result: TerminalUpwardPropagationResult;
   /** Every `parentRunId` passed to advanceInlineParent, in call order. */
   readonly advanced: readonly RunId[];
-  /** Every `runbookId` passed to releaseRunbook, in call order. */
+  /** Every `runId` passed to releaseRuns, flattened, in call order. */
   readonly released: readonly RunId[];
   /** Every `childState.id` passed to recordChildCompletion, in call order. */
   readonly recorded: readonly RunId[];
@@ -202,20 +203,12 @@ async function walk(
       },
     },
     sessionService: {
-      releaseRunbook: async (runbookId: RunId) => {
-        released.push(runbookId);
+      releaseRuns: async (releases: readonly RunRelease[]) => {
+        for (const { runId } of releases) released.push(runId);
         // The committed arm specifically: the seam narrows the release result
         // exhaustively, so an untyped stub would fall through its `never` guard
         // and become the propagation result.
-        return {
-          kind: 'committed',
-          value: {
-            status: 'released',
-            runbookId,
-            removedFromDefaultStack: true,
-            nextDefaultRunbookId: null,
-          },
-        } as const;
+        return { kind: 'committed', value: undefined } as const;
       },
     },
     completionService: {

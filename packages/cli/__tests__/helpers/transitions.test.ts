@@ -269,8 +269,7 @@ describe('createPassTransitionConfig', () => {
     expect(config.computeActionResult('CONTINUE')).toBe(true);
     expect(config.computeActionResult('NEXT')).toBe(true);
     expect(config.computeActionResult('COMPLETE')).toBe(true);
-    expect(config.policy.onStopped.releaseRunbook).toBe(true);
-    expect(config.policy.onComplete.releaseRunbook).toBe(true);
+    expect(config.policy).toEqual({ releaseOnTerminal: true });
   });
 });
 
@@ -283,8 +282,7 @@ describe('createFailTransitionConfig', () => {
     expect(config.computeActionResult('CONTINUE')).toBe(false);
     expect(config.computeActionResult('RETRY')).toBe(false);
     expect(config.computeActionResult('STOP')).toBe(false);
-    expect(config.policy.onStopped.releaseRunbook).toBe(true);
-    expect(config.policy.onComplete.releaseRunbook).toBe(true);
+    expect(config.policy).toEqual({ releaseOnTerminal: true });
   });
 });
 

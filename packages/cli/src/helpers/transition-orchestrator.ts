@@ -6,27 +6,9 @@ import {
   type RunbookCompletedPayload,
   type RunbookState,
   type RunbookStoppedPayload,
-  type RunId,
-  type SessionMutationRefusalOutcome,
-  type SessionService,
   type ResolvedStep,
   type StepTransitionedPayload,
 } from '@rundown-org/core';
-import { sessionMutationRefusalCode } from './session-mutation-result.js';
-
-/** Side-effect policy applied when a runbook reaches a terminal state. */
-export interface TerminalSideEffectsPolicy {
-  /** Whether to release this runbook from all session targeting structures. */
-  releaseRunbook: boolean;
-}
-
-/** Policy governing side effects for each terminal outcome. */
-export interface TransitionOrchestrationPolicy {
-  /** Side effects when the runbook completes successfully. */
-  onComplete: TerminalSideEffectsPolicy;
-  /** Side effects when the runbook is stopped (failure). */
-  onStopped: TerminalSideEffectsPolicy;
-}
 
 /** Event sink for transition lifecycle events. */
 export interface TransitionEventSink {
@@ -66,12 +48,8 @@ export function transitionSinkFromEmitter(
 }
 
 interface OrchestrateTransitionArgs {
-  /** Session service for managing the active runbook stack. */
-  sessionService: SessionService;
   /** Event sink for emitting transition lifecycle events. */
   sink: TransitionEventSink;
-  /** Unique identifier of the runbook being executed. */
-  runbookId: RunId;
   /** All steps in the runbook, used for position calculations. */
   steps: ResolvedStep[];
   /** The step that was just evaluated. */
@@ -86,8 +64,6 @@ interface OrchestrateTransitionArgs {
   result: 'pass' | 'fail';
   /** Optional display-result policy for direct pass/fail commands. */
   computeActionResult?: (actionType: ActionType) => boolean;
-  /** Policy governing side effects for terminal outcomes. */
-  policy: TransitionOrchestrationPolicy;
   /** The command string that triggered this transition, included in events. */
   command?: string;
 }
@@ -111,57 +87,26 @@ export type OrchestrateTransitionResult =
   | { status: 'stopped'; action: string; from: string; at: string; message?: string };
 
 /**
- * Apply the transition's terminal release, reporting an ownership refusal.
- *
- * @param sessionService - Session service performing the release.
- * @param policy - Terminal side-effect policy for the reached terminal.
- * @param runbookId - Run whose session targeting is being released.
- * @param sink - Transition event sink receiving the refusal event.
- * @returns The refusal when the release was refused, else null.
- */
-async function applyTerminalSideEffects(
-  sessionService: SessionService,
-  policy: TerminalSideEffectsPolicy,
-  runbookId: RunId,
-  sink: TransitionEventSink,
-): Promise<SessionMutationRefusalOutcome | null> {
-  if (policy.releaseRunbook) {
-    // This is the natural pass/fail transition path (explicit teardown —
-    // abort/stop/complete — releases claims directly elsewhere). When a claimed
-    // child completes here, retain its claim as a terminal tombstone so
-    // `rd pass/fail --claim-id` can confirm-or-conflict against the outcome.
-    // For an unclaimed top-level runbook there is no matching claim, so this is
-    // a no-op. Mirrors `applyExecutionTerminalRelease` in execution.ts.
-    const released = await sessionService.releaseRunbook(runbookId, {
-      retainClaimsAsTerminal: true,
-    });
-    if (released.kind !== 'committed') {
-      sink.onErrorOccurred?.({
-        message: released.message,
-        code: sessionMutationRefusalCode(released),
-      });
-      return released;
-    }
-  }
-  return null;
-}
-
-/**
- * Emit core-projected transition events and apply terminal side effects.
+ * Emit core-projected transition events for one applied transition.
  *
  * This is the shared transition application path for command-driven transitions
  * and execution-loop transitions. Payload derivation is delegated to the core
  * `deriveTransitionObservation` projection; this function is render-only.
  *
- * @param args - Transition context including state, snapshot, steps, and side-effect policy.
+ * It performs no session release, which is why it is synchronous. Terminal
+ * release is committed inside core's fenced mutation, in the same transaction
+ * as the terminal state, so an orchestrator that released as well would release
+ * the run twice — once inside the owned transaction and once outside it.
+ *
+ * @param args - Transition context including state, snapshot, and steps.
  *   See {@link OrchestrateTransitionArgs} for field descriptions.
  * @returns A result indicating whether execution should continue, has completed, or was stopped.
  *   See {@link OrchestrateTransitionResult} for the discriminated union variants.
  */
-export async function orchestrateTransition(
+export function orchestrateTransition(
   args: OrchestrateTransitionArgs,
-): Promise<OrchestrateTransitionResult> {
-  const { sessionService, sink, runbookId, policy } = args;
+): OrchestrateTransitionResult {
+  const { sink } = args;
   const observation = deriveTransitionObservation({
     steps: args.steps,
     currentStep: args.currentStep,
@@ -173,16 +118,6 @@ export async function orchestrateTransition(
     command: args.command,
   });
 
-  // A refused release means the terminal side effect this transition owed did
-  // not happen, so the transition reports `stopped` rather than a clean `done`.
-  // It has to resolve BEFORE the events are dispatched: `RUNBOOK_COMPLETED` is
-  // in this same observation, and emitting it first would leave the stream
-  // asserting a clean completion that the return value then contradicts.
-  const refusal =
-    observation.status === 'done'
-      ? await applyTerminalSideEffects(sessionService, policy.onComplete, runbookId, sink)
-      : null;
-
   for (const event of observation.events) {
     switch (event.type) {
       case 'ERROR_OCCURRED':
@@ -192,15 +127,7 @@ export async function orchestrateTransition(
         sink.onStepTransitioned(event.payload);
         break;
       case 'RUNBOOK_COMPLETED':
-        // Downgraded in place: the run did not complete cleanly, so the stream
-        // carries the stop it actually reached, with the refusal as its reason.
-        // The two payloads name the same position differently.
-        if (refusal)
-          sink.onRunbookStopped({
-            position: event.payload.finalPosition,
-            message: refusal.message,
-          });
-        else sink.onRunbookCompleted(event.payload);
+        sink.onRunbookCompleted(event.payload);
         break;
       case 'RUNBOOK_STOPPED':
         sink.onRunbookStopped(event.payload);
@@ -214,27 +141,21 @@ export async function orchestrateTransition(
 
   if (observation.status === 'done') {
     return {
-      status: refusal ? 'stopped' : 'done',
+      status: 'done',
       action: observation.action,
       from: observation.from,
       at: observation.at,
-      message: refusal ? refusal.message : observation.message,
+      message: observation.message,
     };
   }
 
   if (observation.status === 'stopped') {
-    const refusal = await applyTerminalSideEffects(
-      sessionService,
-      policy.onStopped,
-      runbookId,
-      sink,
-    );
     return {
       status: 'stopped',
       action: observation.action,
       from: observation.from,
       at: observation.at,
-      message: refusal ? refusal.message : observation.message,
+      message: observation.message,
     };
   }
 

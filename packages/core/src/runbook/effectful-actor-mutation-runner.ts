@@ -28,7 +28,7 @@ import type {
 } from './storage/runbook-store.js';
 import type { AbandonedAttemptSetOutcome } from './storage/execution-lease.js';
 import { openRunbookStore } from './storage/store-registry.js';
-import { projectRunbookRelease } from './session-service.js';
+import { projectRunReleases, type ReleaseRole, type RunRelease } from './session-release.js';
 import { getErrorMessage } from '../errors.js';
 import { logger } from '../logger.js';
 import {
@@ -50,14 +50,18 @@ export interface EffectfulActorMutationRunnerInput {
   readonly wait?: LeaseWaitPolicy;
   /** Optional open-delegated-child guard evaluated in the owned commit transaction. */
   readonly guard?: ParentAdvanceGuard;
-  /** Optional terminal session release folded into the owned-state commit. */
+  /**
+   * Optional session release folded into the owned-state commit, fired when the
+   * PREPARED state reaches terminal.
+   *
+   * One trigger, not one per terminal lifecycle. `completed` and `stopped` are
+   * both "this run is finished", and no caller has ever wanted the release on
+   * one and not the other — the pair of flags this replaced was equal at every
+   * production site. Absent means the caller owns the release itself.
+   */
   readonly terminalRelease?: {
-    /** Release when the prepared state completes. */
-    readonly onComplete: boolean;
-    /** Release when the prepared state stops. */
-    readonly onStopped: boolean;
-    /** Preserve matching claims as terminal evidence. */
-    readonly retainClaimsAsTerminal?: boolean;
+    /** Why the run is released, which decides its claim disposition. */
+    readonly role: ReleaseRole;
   };
 }
 
@@ -144,12 +148,16 @@ export interface PreparedActorMutationSet<TResult> {
   readonly value: TResult;
 }
 
-/** Declarative terminal release restricted to an owned aggregate member. */
-export interface AggregateTerminalRelease {
-  /** Owned run to release. */
-  readonly runId: RunId;
-  /** Preserve matching claims as terminal evidence. */
-  readonly retainClaimsAsTerminal?: boolean;
+/**
+ * A {@link RunRelease} an aggregate transaction plans, and when it fires.
+ *
+ * The trigger is deliberately not part of the release itself. *Whether* a
+ * release fires is transaction-planning vocabulary — it depends on what this
+ * particular commit turns out to prepare — while the role is a fact about what
+ * the caller did, which is settled before the transaction opens. Folding them
+ * together would let a caller express the trigger by choosing a role.
+ */
+export interface AggregateRunRelease extends RunRelease {
   /**
    * When the release fires, relative to the run's PREPARED lifecycle.
    *
@@ -162,9 +170,9 @@ export interface AggregateTerminalRelease {
    *   condition is not knowable when the input is built, and releasing a run
    *   that stayed `running` would drop a live run off session targeting.
    *
-   * This mirrors {@link EffectfulActorMutationRunnerInput.terminalRelease}'s
-   * `onComplete`/`onStopped` flags, which the single-run path has always
-   * evaluated against the prepared state for the same reason.
+   * This mirrors {@link EffectfulActorMutationRunnerInput.terminalRelease},
+   * whose presence the single-run path has always evaluated against the
+   * prepared state for the same reason.
    */
   readonly when?: 'always' | 'terminal';
 }
@@ -184,8 +192,8 @@ export interface EffectfulActorMutationSetRunnerInput<TResult> {
   readonly compute: (
     captured: readonly CapturedActorMutationRun[],
   ) => Promise<PreparedActorMutationSet<TResult>>;
-  /** Terminal releases committed with the owned state set. */
-  readonly releases?: readonly AggregateTerminalRelease[];
+  /** Releases committed with the owned state set. */
+  readonly releases?: readonly AggregateRunRelease[];
   /** Build inert recovery actors for interrupted members. */
   readonly makeRecoveryActor: (
     runId: RunId,
@@ -348,14 +356,8 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
         ? undefined
         : (prepared, session) => {
             const lifecycle = prepared.nextState.lifecycle;
-            const shouldRelease =
-              (lifecycle === 'completed' && terminalRelease.onComplete) ||
-              (lifecycle === 'stopped' && terminalRelease.onStopped);
-            if (shouldRelease) {
-              projectRunbookRelease(session, input.runId, {
-                retainClaimsAsTerminal: terminalRelease.retainClaimsAsTerminal,
-              });
-            }
+            if (lifecycle !== 'completed' && lifecycle !== 'stopped') return;
+            projectRunReleases(session, [{ runId: input.runId, role: terminalRelease.role }]);
           },
     );
     const result = await executor.run({
@@ -379,10 +381,18 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
     if (targetIds.size !== input.targets.length) {
       throw new Error('Aggregate actor mutation repeats a target run.');
     }
+    const releaseIds = new Set<RunId>();
     for (const release of input.releases ?? []) {
       if (!targetIds.has(release.runId)) {
         throw new Error(`Aggregate release for ${release.runId} is outside the owned run set.`);
       }
+      // Rejected here rather than at projection time: the projection runs inside
+      // the commit, and a programmer error must refuse before this transaction
+      // captures authority, not halfway through writing it.
+      if (releaseIds.has(release.runId)) {
+        throw new Error(`Aggregate release names ${release.runId} more than once.`);
+      }
+      releaseIds.add(release.runId);
     }
 
     const { driver, store } = await openRunbookStore(this.cwd);
@@ -537,11 +547,7 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
               ? {}
               : {
                   updateSession: (session) => {
-                    for (const release of releases) {
-                      projectRunbookRelease(session, release.runId, {
-                        retainClaimsAsTerminal: release.retainClaimsAsTerminal,
-                      });
-                    }
+                    projectRunReleases(session, releases);
                   },
                 }),
           });

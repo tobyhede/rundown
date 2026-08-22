@@ -782,8 +782,8 @@ describe('cross-process all-or-none delegation workflows', () => {
 
     const session = await manager.loadSession();
     expect(session.defaultStack).toEqual([]);
-    // `retainClaimsAsTerminal` keeps the bearer resolvable as terminal evidence,
-    // so the claim survives the release rather than being dropped by it.
+    // The `addressed` role keeps the bearer resolvable as terminal evidence, so
+    // the claim survives the release rather than being dropped by it.
     expect(Object.values(session.claims).map((claim) => claim.controlledRunId)).toEqual([
       parent.runId,
     ]);

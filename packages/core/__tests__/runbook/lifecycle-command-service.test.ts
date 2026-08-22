@@ -156,8 +156,7 @@ import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
 //   racing child-claim witness on each drive.
 
 const RELEASE_POLICY: LifecycleTerminalReleasePolicy = {
-  onComplete: { releaseRunbook: true },
-  onStopped: { releaseRunbook: true },
+  releaseOnTerminal: true,
 };
 
 const DIRECT_CLI: CallerEvidence = { kind: 'direct_cli' };
@@ -1936,7 +1935,7 @@ describe('RunbookLifecycleCommandService', () => {
           }),
         },
       });
-      const releaseSpy = jest.spyOn(deps.sessionService, 'releaseRunbook');
+      const releaseSpy = jest.spyOn(deps.sessionService, 'releaseRuns');
 
       const retried = await localSeam.issueDelegation({
         mode: 'retry',
@@ -2073,7 +2072,7 @@ describe('RunbookLifecycleCommandService', () => {
     it('releases nothing when the retried substep has no linked child', async () => {
       // The release is guarded on there being a terminal linked child to let go
       // of. A fresh delegation has no child yet, so retrying it must not call
-      // releaseRunbook at all — releasing on every retry would hand back a run
+      // releaseRuns at all — releasing on every retry would hand back a run
       // the seam never linked.
       const { seam: localSeam, deps } = await startSeamOnDelegateStep();
       const first = await localSeam.issueDelegation({
@@ -2081,7 +2080,7 @@ describe('RunbookLifecycleCommandService', () => {
         callerEvidence: runControlEvidence(runId),
       });
       if (first.kind !== 'delegated') throw new Error('expected delegated');
-      const releaseSpy = jest.spyOn(deps.sessionService, 'releaseRunbook');
+      const releaseSpy = jest.spyOn(deps.sessionService, 'releaseRuns');
 
       const outcome = await localSeam.issueDelegation({
         mode: 'retry',
@@ -2210,7 +2209,7 @@ describe('RunbookLifecycleCommandService', () => {
       if (first.kind !== 'delegated') throw new Error('expected delegated');
 
       const childRunId = assertRunId('rd_55555555555555555555555555555555');
-      const releaseSpy = jest.spyOn(deps.sessionService, 'releaseRunbook');
+      const releaseSpy = jest.spyOn(deps.sessionService, 'releaseRuns');
       await mgr.updateWithState(state.id, (current) => ({
         substepStates: (current.substepStates ?? []).map((entry) =>
           entry.delegation?.tokenHash === first.tokenHash
@@ -2232,7 +2231,10 @@ describe('RunbookLifecycleCommandService', () => {
       const entry = persisted?.substepStates?.find((substep) => substep.id === '1');
       expect(entry?.delegation?.childRunId).toBe(childRunId);
       expect(entry?.delegation?.tokenHash).toBe(first.tokenHash);
-      expect(releaseSpy).not.toHaveBeenCalledWith(childRunId);
+      // No release names the child, whatever role it might have carried.
+      expect(
+        releaseSpy.mock.calls.flatMap(([releases]) => releases.map((release) => release.runId)),
+      ).not.toContain(childRunId);
     });
 
     it('preserves the FOR iteration in the active retry label', async () => {
@@ -4096,7 +4098,9 @@ describe('RunbookLifecycleCommandService', () => {
       const recordSeen = sessionService.recordClaimSeen.bind(sessionService);
       jest.spyOn(sessionService, 'recordClaimSeen').mockImplementation(async (claimId) => {
         const result = await recordSeen(claimId);
-        unwrapSessionMutation(await sessionService.releaseRunbook(state.id));
+        unwrapSessionMutation(
+          await sessionService.releaseRuns([{ runId: state.id, role: 'collateral' }]),
+        );
         return result;
       });
 
@@ -5729,11 +5733,11 @@ describe('RunbookLifecycleCommandService', () => {
       const retiring = new SessionService(new RunbookStateManager(tmp));
       const realCapture = store.captureAuthorityState.bind(store);
       let capturedKind: string | undefined;
-      let retired: Awaited<ReturnType<SessionService['releaseRunbook']>> | undefined;
+      let retired: Awaited<ReturnType<SessionService['releaseRuns']>> | undefined;
       jest.spyOn(store, 'captureAuthorityState').mockImplementation(async (...args) => {
         const captured = await realCapture(...args);
         capturedKind ??= captured.kind;
-        retired ??= await retiring.releaseRunbook(childRunId);
+        retired ??= await retiring.releaseRuns([{ runId: childRunId, role: 'collateral' }]);
         return captured;
       });
 
@@ -6261,15 +6265,15 @@ describe('RunbookLifecycleCommandService', () => {
   describe('terminal release side effects', () => {
     // Top-level terminal release is projected inside the fenced owned-state
     // commit. These tests pin that no follow-on SessionService write occurs and
-    // that the durable session projection follows the per-status policy.
+    // that the durable session projection follows the terminal-release policy.
 
-    it('releases the runbook with retainClaimsAsTerminal on a terminal done (onComplete branch)', async () => {
+    it('releases the runbook as addressed when the transition reaches a terminal done', async () => {
       const steps: ResolvedStep[] = [
         { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
       ];
       loadStepsImpl = () => steps;
       await activate(baseState());
-      const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+      const releaseSpy = jest.spyOn(sessionService, 'releaseRuns');
       const fenced = jest.spyOn(actorMutationRunner, 'run');
 
       const outcome = await seam.runTransition({
@@ -6286,22 +6290,22 @@ describe('RunbookLifecycleCommandService', () => {
       expect(await sessionService.getActive()).toBeNull();
       expect(fenced).toHaveBeenCalledWith(
         expect.objectContaining({
-          terminalRelease: {
-            onComplete: true,
-            onStopped: true,
-            retainClaimsAsTerminal: true,
-          },
+          terminalRelease: { role: 'addressed' },
         }),
       );
     });
 
-    it('releases the runbook with retainClaimsAsTerminal on a terminal stopped (onStopped branch)', async () => {
+    // The `stopped` half of the same single trigger — `done` and `stopped` are
+    // both "this run is finished" and share one `releaseOnTerminal` flag, so
+    // this is not a second policy branch. It pins that a terminal `stopped`
+    // still reaches the release rather than being dropped on the way there.
+    it('releases the runbook as addressed when the transition reaches a terminal stopped', async () => {
       const steps: ResolvedStep[] = [
         { kind: 'base', name: '1', description: 'one', transitions: tx('STOP', 'STOP') },
       ];
       loadStepsImpl = () => steps;
       await activate(baseState());
-      const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+      const releaseSpy = jest.spyOn(sessionService, 'releaseRuns');
       const fenced = jest.spyOn(actorMutationRunner, 'run');
 
       const outcome = await seam.runTransition({
@@ -6318,57 +6322,26 @@ describe('RunbookLifecycleCommandService', () => {
       expect(await sessionService.getActive()).toBeNull();
       expect(fenced).toHaveBeenCalledWith(
         expect.objectContaining({
-          terminalRelease: {
-            onComplete: true,
-            onStopped: true,
-            retainClaimsAsTerminal: true,
-          },
+          terminalRelease: { role: 'addressed' },
         }),
       );
     });
 
-    it('does not release a terminal done when onComplete opts out (releaseRunbook: false)', async () => {
-      // Split policy: `done` reads `onComplete` (false here) and must NOT release,
-      // even though `onStopped` is true — proving `done` routes through its own
-      // branch rather than reading `onStopped`.
+    it('does not release a terminal stopped when the policy opts out', async () => {
+      // A policy that releases nothing does not ask for a release with a false
+      // flag — it omits `terminalRelease` from the fenced input entirely, so the
+      // runner has no release to project. Asserted as the key's ABSENCE, which
+      // is what the source's conditional spread produces.
       const policy: LifecycleTerminalReleasePolicy = {
-        onComplete: { releaseRunbook: false },
-        onStopped: { releaseRunbook: true },
-      };
-      const steps: ResolvedStep[] = [
-        { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
-      ];
-      loadStepsImpl = () => steps;
-      await activate(baseState());
-      const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
-
-      const outcome = await seam.runTransition({
-        command: 'pass',
-        callerEvidence: runControlEvidence(runId),
-        targetSelector: { kind: 'default' },
-        terminalPolicy: policy,
-      });
-
-      expect(outcome.kind).toBe('applied');
-      if (outcome.kind !== 'applied') return;
-      expect(outcome.status).toBe('done');
-      expect(releaseSpy).not.toHaveBeenCalled();
-    });
-
-    it('does not release a terminal stopped when onStopped opts out (releaseRunbook: false)', async () => {
-      // Mirror of the done opt-out: `stopped` reads `onStopped` (false here) and
-      // must NOT release, even though `onComplete` is true — proving `stopped`
-      // routes through its own branch rather than reading `onComplete`.
-      const policy: LifecycleTerminalReleasePolicy = {
-        onComplete: { releaseRunbook: true },
-        onStopped: { releaseRunbook: false },
+        releaseOnTerminal: false,
       };
       const steps: ResolvedStep[] = [
         { kind: 'base', name: '1', description: 'one', transitions: tx('STOP', 'STOP') },
       ];
       loadStepsImpl = () => steps;
       await activate(baseState());
-      const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+      const releaseSpy = jest.spyOn(sessionService, 'releaseRuns');
+      const fenced = jest.spyOn(actorMutationRunner, 'run');
 
       const outcome = await seam.runTransition({
         command: 'pass',
@@ -6381,6 +6354,8 @@ describe('RunbookLifecycleCommandService', () => {
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('stopped');
       expect(releaseSpy).not.toHaveBeenCalled();
+      expect(fenced).toHaveBeenCalled();
+      expect(fenced.mock.calls[0]?.[0]).not.toHaveProperty('terminalRelease');
     });
   });
 
@@ -6768,7 +6743,7 @@ describe('RunbookLifecycleCommandService', () => {
       // `stopped` lifecycle while its snapshot stays active, so the per-completion
       // observation returns `continue` (STEP_TRANSITIONED only). The seam must emit
       // RUNBOOK_STOPPED from the prepared lifecycle and apply the seam-owned
-      // terminal release through the `onStopped` branch.
+      // terminal release for the prepared `stopped` lifecycle.
       const steps: ResolvedStep[] = [
         {
           kind: 'substeps',
@@ -7495,21 +7470,22 @@ describe('RunbookLifecycleCommandService', () => {
 
       it('claim complete on a completed child confirms and retains the tombstone', async () => {
         const claimId = await setupClaim('completed');
-        const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+        const releaseSpy = jest.spyOn(sessionService, 'releaseRuns');
         const out = await seam.runTerminal({
           command: 'complete',
           callerEvidence: presentedBy(claimId),
           targetSelector: { kind: 'claim', claimId },
         });
         expect(out.kind).toBe('terminal_claim_confirmed');
-        // Idempotent path STILL releases with retain (item 4, second site).
-        expect(releaseSpy).toHaveBeenCalledWith(claimChildRunId, { retainClaimsAsTerminal: true });
+        // Idempotent path STILL releases as addressed, retaining the claim
+        // (item 4, second site).
+        expect(releaseSpy).toHaveBeenCalledWith([{ runId: claimChildRunId, role: 'addressed' }]);
       });
 
       it('claim complete on a stopped child conflicts (no FORCE, still retains)', async () => {
         const claimId = await setupClaim('stopped');
         const sendSpy = jest.spyOn(actorService, 'sendAndSync');
-        const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+        const releaseSpy = jest.spyOn(sessionService, 'releaseRuns');
         const out = await seam.runTerminal({
           command: 'complete',
           callerEvidence: presentedBy(claimId),
@@ -7517,7 +7493,7 @@ describe('RunbookLifecycleCommandService', () => {
         });
         expect(out.kind).toBe('terminal_claim_conflict');
         expect(sendSpy).not.toHaveBeenCalled();
-        expect(releaseSpy).toHaveBeenCalledWith(claimChildRunId, { retainClaimsAsTerminal: true });
+        expect(releaseSpy).toHaveBeenCalledWith([{ runId: claimChildRunId, role: 'addressed' }]);
       });
 
       it('claim stop atomically forces, reports, and releases the running child', async () => {
@@ -7531,7 +7507,7 @@ describe('RunbookLifecycleCommandService', () => {
           },
         ];
         const aggregate = jest.spyOn(actorMutationRunner, 'runAll');
-        const releaseSpy = jest.spyOn(sessionService, 'releaseRunbook');
+        const releaseSpy = jest.spyOn(sessionService, 'releaseRuns');
         const out = await seam.runTerminal({
           command: 'stop',
           callerEvidence: presentedBy(claimId),
@@ -7543,7 +7519,16 @@ describe('RunbookLifecycleCommandService', () => {
         expect(
           Object.keys((await manager.load(claimParentRunId))?.resolvedCompletions ?? {}),
         ).toHaveLength(1);
+        // `releaseRuns` is untouched because the release is FOLDED INTO the
+        // aggregate transaction rather than performed after it — so asserting
+        // only its absence would pass just as well if no release were planned at
+        // all, and the child would stay on the session stack while terminal.
+        // The plan itself is the thing to pin: `addressed`, because the bearer's
+        // own holder reported this run terminal.
         expect(releaseSpy).not.toHaveBeenCalled();
+        expect(aggregate.mock.calls[0]?.[0]).toMatchObject({
+          releases: [{ runId: claimChildRunId, role: 'addressed' }],
+        });
       });
 
       it('routes a claim without a delegation linkage through the bare inline cascade', async () => {
@@ -7771,7 +7756,9 @@ describe('RunbookLifecycleCommandService', () => {
         ];
         // Drop the parent's run-control claim, leaving the parent run row and
         // the live delegation intact.
-        unwrapSessionMutation(await sessionService.releaseRunbook(claimParentRunId));
+        unwrapSessionMutation(
+          await sessionService.releaseRuns([{ runId: claimParentRunId, role: 'collateral' }]),
+        );
 
         const out = await seam.runTerminal({
           command: 'complete',
@@ -8097,8 +8084,9 @@ describe('RunbookLifecycleCommandService', () => {
           return realPrepare(...args);
         });
         const aggregate = jest.spyOn(actorMutationRunner, 'runAll');
-        const releaseDescendantsSpy = jest.spyOn(sessionService, 'releaseRunbooks');
-        const releaseRootSpy = jest.spyOn(sessionService, 'releaseRunbook');
+        // One method now carries both the root and the descendant releases, so a
+        // single spy covers what the descendant/root pair used to watch apart.
+        const releaseSpy = jest.spyOn(sessionService, 'releaseRuns');
 
         const out = await seam.runTerminal({
           command: 'complete',
@@ -8110,8 +8098,7 @@ describe('RunbookLifecycleCommandService', () => {
         expect(aggregate).toHaveBeenCalledTimes(1);
         expect((await manager.load(CHILD))?.lifecycle).toBe('completed');
         expect((await manager.load(ROOT))?.lifecycle).toBe('completed');
-        expect(releaseRootSpy).not.toHaveBeenCalled();
-        expect(releaseDescendantsSpy).not.toHaveBeenCalled();
+        expect(releaseSpy).not.toHaveBeenCalled();
       });
 
       it.each([
@@ -8318,7 +8305,7 @@ describe('RunbookLifecycleCommandService', () => {
         await manager.save(root);
         await issueRunControlClaimFor(ROOT);
         installResolvedPlan(root, [root]);
-        const releaseSpy = jest.spyOn(sessionService, 'releaseRunbooks');
+        const releaseSpy = jest.spyOn(sessionService, 'releaseRuns');
         const out = await seam.runTerminal({
           command: 'stop',
           callerEvidence: runControlEvidence(ROOT),
@@ -8332,6 +8319,39 @@ describe('RunbookLifecycleCommandService', () => {
         expect(releaseSpy).toHaveBeenCalled();
       });
 
+      it('addresses the chain root and sweeps its inline descendants as collateral', async () => {
+        // The root/descendant split IS the inline cascade's rule: the command
+        // addressed the root, and every descendant is forced terminal only so
+        // that root can close. Spelled wrong in either direction it is a claim
+        // bug — `collateral` on the root revokes the bearer its orchestrator
+        // still holds, `addressed` on a descendant leaves a tombstone for a run
+        // nobody asked about.
+        //
+        // A MULTI-member chain is what makes this assertion mean anything. The
+        // single-member cases below cannot distinguish the rule from "everything
+        // is addressed", because there the root is the only member.
+        const child = baseState({ id: CHILD, lifecycle: 'completed' });
+        const root = baseState({ id: ROOT, lifecycle: 'completed' });
+        await manager.save(child);
+        await manager.save(root);
+        await issueRunControlClaimFor(ROOT);
+        installResolvedPlan(root, [child, root]);
+        const releaseSpy = jest.spyOn(sessionService, 'releaseRuns');
+
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: runControlEvidence(ROOT),
+          targetSelector: { kind: 'default' },
+        });
+
+        expect(out).toMatchObject({ kind: 'already_terminal', targetRunId: ROOT });
+        // Descendant-to-root order, exactly as the plan lists it.
+        expect(releaseSpy).toHaveBeenCalledWith([
+          { runId: CHILD, role: 'collateral' },
+          { runId: ROOT, role: 'addressed' },
+        ]);
+      });
+
       it('returns already_terminal before the effect boundary when the captured root became terminal', async () => {
         const root = baseState({ id: ROOT });
         await manager.save(root);
@@ -8343,7 +8363,7 @@ describe('RunbookLifecycleCommandService', () => {
           return await runAll(input);
         });
         const prepare = jest.spyOn(actorService, 'prepareActorMutation');
-        const release = jest.spyOn(sessionService, 'releaseRunbooks');
+        const release = jest.spyOn(sessionService, 'releaseRuns');
 
         const out = await seam.runTerminal({
           command: 'stop',
@@ -8357,9 +8377,9 @@ describe('RunbookLifecycleCommandService', () => {
           lifecycle: 'completed',
         });
         expect(prepare).not.toHaveBeenCalled();
-        expect(release).toHaveBeenCalledWith([ROOT], {
-          retainClaimsAsTerminalRunId: ROOT,
-        });
+        // Single-member chain: the root is the addressed run and there are no
+        // collateral descendants to sweep up with it.
+        expect(release).toHaveBeenCalledWith([{ runId: ROOT, role: 'addressed' }]);
         const attempts = await (await getRunbookStore(tmp)).read((txn) =>
           txn.tx
             .prepare('SELECT COUNT(*) AS count FROM execution_attempts WHERE run_id = :runId')
@@ -8375,7 +8395,7 @@ describe('RunbookLifecycleCommandService', () => {
         await manager.save(baseState({ id: CHILD }));
         await issueRunControlClaimFor(CHILD);
         installResolvedPlan(root, [root]);
-        const releaseSpy = jest.spyOn(sessionService, 'releaseRunbooks');
+        const releaseSpy = jest.spyOn(sessionService, 'releaseRuns');
 
         const out = await seam.runTerminal({
           command: 'stop',

@@ -192,8 +192,15 @@ async function run(service: SessionService): Promise<unknown> {
       return service.pushRunbook(assertRunId(op.runId));
     case 'recordClaimSeen':
       return service.recordClaimSeen(assertClaimId(op.claimId));
-    case 'releaseRunbook':
-      return unwrapSessionMutation(await service.releaseRunbook(assertRunId(op.runId)));
+    case 'releaseRunbook': {
+      // `collateral` is what the bare release always did: revoke the claims the
+      // run controls. Unwrapped for the refusal, not for a payload — the release
+      // commits none, so this op reports nothing over the wire.
+      unwrapSessionMutation(
+        await service.releaseRuns([{ runId: assertRunId(op.runId), role: 'collateral' }]),
+      );
+      return undefined;
+    }
     case 'popTopOfStack':
       return unwrapSessionMutation(await popTopOfStackUnverified(manager));
     case 'popRunbookIfActive':

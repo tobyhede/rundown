@@ -57,7 +57,6 @@ import {
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from './actor-service-factory.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
-import type { TransitionOrchestrationPolicy } from './transition-orchestrator.js';
 
 /** Inline flow-back propagation outcomes ({@link advanceParentForInlineChild}). */
 export type InlinePropagationResult = 'handled' | 'stopped' | 'blocked' | 'not-applicable';
@@ -133,8 +132,8 @@ function delegationRuntimeFor(
  * is still active — runs the execution loop (spawning command subprocesses). It
  * collapses the drain/loop statuses into the seam's `AdvanceInlineParentOutcome`.
  * It performs NO terminal session release on ANY path — the core seam is the SOLE
- * release owner and releases parentRunId once, with `retainClaimsAsTerminal: true`,
- * on terminal. The drain uses a non-releasing policy, and the execution loop is
+ * release owner and releases parentRunId once, as `addressed`, on terminal. The
+ * drain performs no release of its own, and the execution loop is
  * invoked with `terminalReleaseMode: 'defer-to-caller'` (Task 3) so it too skips
  * release — and, in that mode, hands back its own drain refusal as data rather
  * than a `'stopped'` this callable would forward as a terminal (#802). This closes the ownership gap: there is exactly one release site with
@@ -171,8 +170,8 @@ export function buildAdvanceInlineParent(
   return async ({ parentRunId, parentFrameKey, parentEntry, result }) => {
     // Core symbols used ONLY on this execution path are imported lazily too, so
     // the module's static surface stays minimal — test doubles that mock
-    // `@rundown-org/core` need not supply `SessionService` / `exactFrame`.
-    const { SessionService, exactFrame } = await import('@rundown-org/core');
+    // `@rundown-org/core` need not supply `exactFrame`.
+    const { exactFrame } = await import('@rundown-org/core');
     const { drainResolvedCompletions, refusalFromDrainFailure, runExecutionLoop } = await import(
       '../services/execution.js'
     );
@@ -184,15 +183,9 @@ export function buildAdvanceInlineParent(
 
     const manager = new RunbookStateManager(cwd);
     const parentActorService = createCliRunbookActorService(manager);
-    const sessionService = new SessionService(manager);
 
     const transitionConfig =
       result === 'pass' ? createPassTransitionConfig() : createFailTransitionConfig();
-    // Never release during drain — the core seam owns the single terminal release.
-    const inlinePolicy: TransitionOrchestrationPolicy = {
-      onComplete: { releaseRunbook: false },
-      onStopped: { releaseRunbook: false },
-    };
 
     const parentState = await manager.load(parentRunId);
     // Defensive: core already recorded against this parent, so it existed then.
@@ -207,12 +200,10 @@ export function buildAdvanceInlineParent(
     const drained = await drainResolvedCompletions({
       actorService: parentActorService,
       manager,
-      sessionService,
       emitter,
       runbookId: parentRunId,
       steps: parentSteps,
       currentState: parentState,
-      transitionPolicy: inlinePolicy,
       computeActionResult: transitionConfig.computeActionResult,
       frameOverride: exactFrame(parentFrameKey, parentEntry),
       issueDelegationCredential: delegationRuntime?.issueDelegationCredential,

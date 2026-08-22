@@ -3,14 +3,9 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { RunbookStateManager, type SessionData } from '../../src/runbook/state.js';
+import { RunbookStateManager } from '../../src/runbook/state.js';
 import { RunbookActorService } from '../../src/runbook/actor-service.js';
-import {
-  SessionService,
-  projectRunbookRelease,
-  projectStackPop,
-} from '../../src/runbook/session-service.js';
-import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
+import { SessionService, projectStackPop } from '../../src/runbook/session-service.js';
 import {
   assertClaimId,
   type ClaimRunbookResult,
@@ -260,7 +255,7 @@ describe('SessionService', () => {
     // The defect this method exists to remove. A caller that resolved its target
     // with an unlocked `getActive` and then called the positional pop
     // pops whatever the top is when the transaction opens — and
-    // `projectRunbookRelease` deletes every claim controlling that run, so a
+    // `projectRunReleases` deletes every claim controlling that run, so a
     // freshly started foreign run loses the run-control bearer `rundown run`
     // minted with its push. Nothing about that is correctable.
     it('popRunbookIfActive refuses a foreign top and leaves its stack entry and claims intact', async () => {
@@ -275,7 +270,7 @@ describe('SessionService', () => {
       });
       await sessionService.pushRunbook(mine.id);
       // Buried under more than one entry, so the refusal is depth-independent
-      // rather than "not immediately underneath". `releaseRunbook` is the method
+      // rather than "not immediately underneath". `releaseRuns` is the method
       // that would violate this: it filters the id out at ANY depth, which is
       // why it is not the fix for an undo meant as "only if still active".
       await sessionService.pushRunbook(mid.id);
@@ -329,7 +324,7 @@ describe('SessionService', () => {
     // `session_stack` has no uniqueness constraint, and cannot gain one without
     // making an existing session impossible to load, so a run can sit lower
     // in the stack as well. Undoing one push must leave that entry alone —
-    // `releaseRunbook` filters every occurrence, which is why it is not the fix.
+    // `releaseRuns` filters every occurrence, which is why it is not the fix.
     it('popRunbookIfActive removes only the topmost entry for a repeated run', async () => {
       const outer = await manager.create({ source: 'project', path: 'outer.md' }, mockRunbook, {
         runbookPath: 'outer.md',
@@ -589,7 +584,7 @@ describe('SessionService', () => {
     // the entry above it instead — deleting THAT run's claims, since a release
     // removes every claim controlling what it removes — and leave the run that
     // actually ended still targeted by the session.
-    it('releaseRunbook removes a buried run and leaves the entry above it alone', async () => {
+    it('releaseRuns removes a buried run and leaves the entry above it alone', async () => {
       const ended = await manager.create({ source: 'project', path: 'ended.md' }, mockRunbook, {
         runbookPath: 'ended.md',
       });
@@ -608,9 +603,10 @@ describe('SessionService', () => {
         await sessionService.pushRunbookWithRunControlClaim(above.id),
       );
 
-      const released = unwrapSessionMutation(await sessionService.releaseRunbook(ended.id));
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: ended.id, role: 'collateral' }]),
+      );
 
-      expect(released.status).toBe('released');
       const session = await manager.loadSession();
       expect(session.defaultStack).toEqual([above.id]);
       expect(session.claims[endedClaim.claim.claimKey]).toBeUndefined();
@@ -621,7 +617,7 @@ describe('SessionService', () => {
     // Releasing a run the session no longer targets is a no-op rather than a
     // refusal, which is what lets the loop release unconditionally at terminal
     // without first asking whether the fence or another process got there.
-    it('releaseRunbook reports not-found for a run that is not on the stack', async () => {
+    it('releaseRuns is a no-op for a run that is not on the stack', async () => {
       const absent = await manager.create({ source: 'project', path: 'absent.md' }, mockRunbook, {
         runbookPath: 'absent.md',
       });
@@ -636,9 +632,10 @@ describe('SessionService', () => {
         await sessionService.pushRunbookWithRunControlClaim(stacked.id),
       );
 
-      const released = unwrapSessionMutation(await sessionService.releaseRunbook(absent.id));
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: absent.id, role: 'collateral' }]),
+      );
 
-      expect(released).toEqual({ status: 'not-found', runbookId: absent.id });
       const session = await manager.loadSession();
       expect(session.defaultStack).toEqual([stacked.id]);
       expect(session.claims[minted.claim.claimKey]).toBeDefined();
@@ -1409,7 +1406,9 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(run.id);
       const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(run.id));
 
-      unwrapSessionMutation(await sessionService.releaseRunbook(run.id));
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: run.id, role: 'collateral' }]),
+      );
 
       const resolved = await sessionService.getActiveForClaimId(claimId);
       expect(resolved).toEqual({ status: 'superseded', claimId, reason: 'claim-rotated' });
@@ -1424,7 +1423,9 @@ describe('SessionService', () => {
       });
       await sessionService.pushRunbook(run.id);
       const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(run.id));
-      unwrapSessionMutation(await sessionService.releaseRunbook(run.id));
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: run.id, role: 'collateral' }]),
+      );
 
       // Same lookup key (so the tombstone is found), different secret segment —
       // reusing the known-valid secret shape from the unknown-claim fixture above.
@@ -2445,7 +2446,7 @@ describe('SessionService', () => {
       }
     });
 
-    it('releaseRunbook removes matching claim records', async () => {
+    it('releaseRuns with a revoking role removes matching claim records', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -2458,7 +2459,9 @@ describe('SessionService', () => {
         await claimLiveDelegation(sessionService, manager, child.id, linkage),
       );
 
-      unwrapSessionMutation(await sessionService.releaseRunbook(child.id));
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: child.id, role: 'collateral' }]),
+      );
 
       // A released claim is a tombstone, not an absent row, so it resolves as
       // `superseded` / `claim-rotated` — released or replaced, no parent-side
@@ -2500,16 +2503,13 @@ describe('SessionService', () => {
       return { claimId: claimed.claimId, claimKey: claimed.claim.claimKey, childRunId: child.id };
     }
 
-    it('releaseRunbook({ retainClaimsAsTerminal: true }) keeps the claim as a terminal tombstone', async () => {
+    it("releaseRuns role 'addressed' keeps the claim as a terminal tombstone", async () => {
       const { claimId, childRunId } = await setupClaimedChild('e', 'completed');
 
-      const result = unwrapSessionMutation(
-        await sessionService.releaseRunbook(childRunId, {
-          retainClaimsAsTerminal: true,
-        }),
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: childRunId, role: 'addressed' }]),
       );
 
-      expect(result.status).toBe('released');
       const resolution = await sessionService.getActiveForClaimId(claimId);
       expect(resolution.status).toBe('terminal');
       if (resolution.status === 'terminal') {
@@ -2517,10 +2517,12 @@ describe('SessionService', () => {
       }
     });
 
-    it('releaseRunbook() (default) still deletes the claim record', async () => {
+    it("releaseRuns role 'collateral' still deletes the claim record", async () => {
       const { claimId, childRunId } = await setupClaimedChild('7', 'completed');
 
-      unwrapSessionMutation(await sessionService.releaseRunbook(childRunId));
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: childRunId, role: 'collateral' }]),
+      );
 
       const resolution = await sessionService.getActiveForClaimId(claimId);
       expect(resolution.status).toBe('superseded');
@@ -2529,20 +2531,17 @@ describe('SessionService', () => {
       }
     });
 
-    it('releaseRunbook({ retainClaimsAsTerminal: true }) keeps a stopped child as a terminal tombstone', async () => {
+    it("releaseRuns role 'addressed' keeps a stopped child as a terminal tombstone", async () => {
       // Sibling of the `completed` tombstone test: a stopped (aborted/failed)
       // child must also retain its claim as a terminal tombstone so a later
       // getActiveForClaimId resolves `terminal` rather than `missing`, and the
       // resolved lifecycle reflects `stopped`.
       const { claimId, childRunId } = await setupClaimedChild('d', 'stopped');
 
-      const result = unwrapSessionMutation(
-        await sessionService.releaseRunbook(childRunId, {
-          retainClaimsAsTerminal: true,
-        }),
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: childRunId, role: 'addressed' }]),
       );
 
-      expect(result.status).toBe('released');
       const resolution = await sessionService.getActiveForClaimId(claimId);
       expect(resolution.status).toBe('terminal');
       if (resolution.status === 'terminal') {
@@ -2553,7 +2552,7 @@ describe('SessionService', () => {
     it('pruneClaimsForChildren removes claims pointing at the given child run ids', async () => {
       const { claimId, claimKey, childRunId } = await setupClaimedChild('6', 'completed');
       unwrapSessionMutation(
-        await sessionService.releaseRunbook(childRunId, { retainClaimsAsTerminal: true }),
+        await sessionService.releaseRuns([{ runId: childRunId, role: 'addressed' }]),
       );
 
       const removed = unwrapSessionMutation(
@@ -2577,10 +2576,10 @@ describe('SessionService', () => {
       const a = await setupClaimedChild('8', 'completed');
       const b = await setupClaimedChild('9', 'stopped');
       unwrapSessionMutation(
-        await sessionService.releaseRunbook(a.childRunId, { retainClaimsAsTerminal: true }),
+        await sessionService.releaseRuns([{ runId: a.childRunId, role: 'addressed' }]),
       );
       unwrapSessionMutation(
-        await sessionService.releaseRunbook(b.childRunId, { retainClaimsAsTerminal: true }),
+        await sessionService.releaseRuns([{ runId: b.childRunId, role: 'addressed' }]),
       );
 
       const removed = unwrapSessionMutation(
@@ -2598,7 +2597,7 @@ describe('SessionService', () => {
       // No claim is removed and the existing tombstone still resolves `terminal`.
       const { claimId, childRunId } = await setupClaimedChild('a', 'completed');
       unwrapSessionMutation(
-        await sessionService.releaseRunbook(childRunId, { retainClaimsAsTerminal: true }),
+        await sessionService.releaseRuns([{ runId: childRunId, role: 'addressed' }]),
       );
 
       const unrelatedChildId = brandRunIdForTest(`rd_${'f'.repeat(32)}`);
@@ -3124,7 +3123,9 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(run.id);
       const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(run.id));
       unwrapSessionMutation(await stashRunbookUnverified(manager, run.id));
-      unwrapSessionMutation(await sessionService.releaseRunbook(run.id));
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: run.id, role: 'collateral' }]),
+      );
 
       const result = unwrapSessionMutation(await sessionService.unstashForClaimId(claimId));
 
@@ -3177,7 +3178,9 @@ describe('SessionService', () => {
         await claimLiveDelegation(sessionService, manager, child.id, endedLinkage),
       );
       await manager.update(endedParent.id, { lifecycle: 'stopped' });
-      unwrapSessionMutation(await sessionService.releaseRunbook(terminalChild.id));
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: terminalChild.id, role: 'collateral' }]),
+      );
       unwrapSessionMutation(await stashRunbookUnverified(manager, child.id));
 
       // R2: ending the parent superseded the delegated claim. `rd pop` must say
@@ -3386,7 +3389,7 @@ describe('SessionService', () => {
       }
     });
 
-    it('releaseRunbook clears defaultStack and claim records together when the child completes', async () => {
+    it('releaseRuns clears defaultStack and claim records together when the child completes', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -3407,8 +3410,9 @@ describe('SessionService', () => {
       // Child completes: terminal release pops the default-stack entry and
       // removes the claim record in one pass.
       await manager.update(child.id, { lifecycle: 'completed' });
-      const released = unwrapSessionMutation(await sessionService.releaseRunbook(child.id));
-      expect(released.status).toBe('released');
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: child.id, role: 'collateral' }]),
+      );
 
       const session = await manager.loadSession();
       expect(session.defaultStack).not.toContain(child.id);
@@ -3974,7 +3978,7 @@ describe('SessionService', () => {
       });
       expect(linked.kind).toBe('committed');
 
-      await sessionService.releaseRunbook(child.id);
+      await sessionService.releaseRuns([{ runId: child.id, role: 'collateral' }]);
       const foreignChild = await manager.create(
         { source: 'project', path: 'foreign-child.md' },
         mockRunbook,
@@ -4023,7 +4027,7 @@ describe('SessionService', () => {
         capturedParent: prepared.captured.authority,
         preparedParent: prepared.preparedParent,
       });
-      await sessionService.releaseRunbook(child.id);
+      await sessionService.releaseRuns([{ runId: child.id, role: 'collateral' }]);
       const unlink = await prepareInitialUnlink(parent.id, child.id, linkage);
 
       const result = await sessionService.rollbackInitialLink({
@@ -4395,8 +4399,8 @@ describe('SessionService', () => {
     });
   });
 
-  describe('releaseRunbook default stack cleanup', () => {
-    it('releaseRunbook pops a default-stack child by id', async () => {
+  describe('releaseRuns default stack cleanup', () => {
+    it('releaseRuns pops a default-stack child by id', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -4406,16 +4410,17 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(parent.id);
       await sessionService.pushRunbook(child.id);
 
-      const released = unwrapSessionMutation(await sessionService.releaseRunbook(child.id));
-      expect(released.status).toBe('released');
-      if (released.status === 'released') {
-        expect(released.removedFromDefaultStack).toBe(true);
-        expect(released.nextDefaultRunbookId).toBe(parent.id);
-      }
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: child.id, role: 'collateral' }]),
+      );
+
+      // The release reports nothing, so the new top is read back off the
+      // session: the run left the stack and the entry under it became active.
+      expect((await manager.loadSession()).defaultStack).toEqual([parent.id]);
       expect((await sessionService.getActive())?.id).toBe(parent.id);
     });
 
-    it('releaseRunbook removes a non-top default-stack entry by id', async () => {
+    it('releaseRuns removes a non-top default-stack entry by id', async () => {
       const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
         runbookPath: 'parent.md',
       });
@@ -4429,19 +4434,18 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(child.id);
       await sessionService.pushRunbook(sibling.id);
 
-      const released = unwrapSessionMutation(await sessionService.releaseRunbook(child.id));
-      expect(released.status).toBe('released');
-      if (released.status === 'released') {
-        expect(released.removedFromDefaultStack).toBe(true);
-        expect(released.nextDefaultRunbookId).toBe(sibling.id);
-      }
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: child.id, role: 'collateral' }]),
+      );
 
+      // Only the named entry left; the one above it is still the top.
+      expect((await manager.loadSession()).defaultStack).toEqual([parent.id, sibling.id]);
       expect((await sessionService.getActive())?.id).toBe(sibling.id);
       unwrapSessionMutation(await popTopOfStackUnverified(manager));
       expect((await sessionService.getActive())?.id).toBe(parent.id);
     });
 
-    it('releaseRunbooks removes all force-terminal chain ids in one session mutation', async () => {
+    it('releaseRuns removes all force-terminal chain ids in one session mutation', async () => {
       const sibling = await makeState(manager, {
         id: mintInlineForceRunId(),
         lifecycle: 'running',
@@ -4453,26 +4457,32 @@ describe('SessionService', () => {
       await sessionService.pushRunbook(root.id);
       await sessionService.pushRunbook(leaf.id);
 
-      const result = unwrapSessionMutation(
-        await sessionService.releaseRunbooks([leaf.id, root.id]),
+      // Both `collateral`: this case is about the stack, and the bare
+      // multi-run release it replaces revoked every member's claims.
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([
+          { runId: leaf.id, role: 'collateral' },
+          { runId: root.id, role: 'collateral' },
+        ]),
       );
 
-      expect(result.releasedRunIds).toEqual([leaf.id, root.id]);
-      expect(result.nextDefaultRunbookId).toBe(sibling.id);
+      // Both chain members left the stack in the one mutation, and the
+      // untouched sibling is what the session now targets.
       const session = await manager.loadSession();
       expect(session.defaultStack).toEqual([sibling.id]);
     });
 
-    it('releaseRunbooks can retain the terminal root claim while removing descendant claims', async () => {
+    it('releaseRuns can retain the terminal root claim while removing descendant claims', async () => {
       const root = await makeState(manager, { id: mintInlineForceRunId(), lifecycle: 'completed' });
       const leaf = await makeState(manager, { id: mintInlineForceRunId(), lifecycle: 'completed' });
       const rootClaim = unwrapSessionMutation(await sessionService.issueRunControlClaim(root.id));
       const leafClaim = unwrapSessionMutation(await sessionService.issueRunControlClaim(leaf.id));
 
       unwrapSessionMutation(
-        await sessionService.releaseRunbooks([leaf.id, root.id], {
-          retainClaimsAsTerminalRunId: root.id,
-        }),
+        await sessionService.releaseRuns([
+          { runId: leaf.id, role: 'collateral' },
+          { runId: root.id, role: 'addressed' },
+        ]),
       );
 
       const session = await manager.loadSession();
@@ -4689,105 +4699,5 @@ describe('projectStackPop', () => {
     // The caller passes `session.defaultStack` and reads the new top back off
     // the same reference, so a reassignment would leave the session unchanged.
     expect(same).toEqual([OTHER_RUN_ID]);
-  });
-});
-
-describe('projectRunbookRelease', () => {
-  // The in-memory half of a terminal release. The fence applies this projection
-  // to a session snapshot INSIDE the same transaction as the state write, so it
-  // is exercised here directly rather than through a store round trip.
-  const RUN_ID = brandRunIdForTest(`rd_${'e'.repeat(32)}`);
-  const OTHER_RUN_ID = brandRunIdForTest(`rd_${'f'.repeat(32)}`);
-  const THIRD_RUN_ID = brandRunIdForTest(`rd_${'d'.repeat(32)}`);
-
-  function session(overrides: Partial<SessionData> = {}): SessionData {
-    return { defaultStack: [], claims: {}, ...overrides };
-  }
-
-  it('clears a stashed run and reports it released', async () => {
-    // The stash is a third place a run id can be parked, alongside the default
-    // stack and the claim table. Leaving it behind would strand `rundown pop` on
-    // a terminal run.
-    const data = session({ stashedRunbookId: RUN_ID });
-
-    expect(projectRunbookRelease(data, RUN_ID)).toEqual({
-      status: 'released',
-      runbookId: RUN_ID,
-      // Released on the strength of the stash alone: the stack never held it.
-      removedFromDefaultStack: false,
-      nextDefaultRunbookId: null,
-    });
-    expect(data.stashedRunbookId).toBeUndefined();
-  });
-
-  it('leaves a stash belonging to a different run untouched', async () => {
-    // Anti-vacuity for the case above: an unconditional clear would also pass it.
-    const data = session({ stashedRunbookId: OTHER_RUN_ID, defaultStack: [RUN_ID] });
-
-    projectRunbookRelease(data, RUN_ID);
-
-    expect(data.stashedRunbookId).toBe(OTHER_RUN_ID);
-  });
-
-  it('reports not-found when the run is in no session structure at all', async () => {
-    const data = session({ defaultStack: [OTHER_RUN_ID] });
-
-    expect(projectRunbookRelease(data, RUN_ID)).toEqual({
-      status: 'not-found',
-      runbookId: RUN_ID,
-    });
-    expect(data.defaultStack).toEqual([OTHER_RUN_ID]);
-  });
-
-  it('pops the run from the default stack and names the new top as the next default', async () => {
-    // Three deep, and the released run is NOT on top: the next default has to be
-    // the last remaining entry, so a projection that returned the first entry —
-    // or the one that happened to sit under the released run — is caught.
-    const data = session({ defaultStack: [THIRD_RUN_ID, RUN_ID, OTHER_RUN_ID] });
-
-    expect(projectRunbookRelease(data, RUN_ID)).toEqual({
-      status: 'released',
-      runbookId: RUN_ID,
-      removedFromDefaultStack: true,
-      nextDefaultRunbookId: OTHER_RUN_ID,
-    });
-    expect(data.defaultStack).toEqual([THIRD_RUN_ID, OTHER_RUN_ID]);
-  });
-
-  it('names a null next default when the released run emptied the stack', async () => {
-    const data = session({ defaultStack: [RUN_ID] });
-
-    expect(projectRunbookRelease(data, RUN_ID)).toEqual({
-      status: 'released',
-      runbookId: RUN_ID,
-      removedFromDefaultStack: true,
-      nextDefaultRunbookId: null,
-    });
-    expect(data.defaultStack).toEqual([]);
-  });
-
-  it('deletes controlling claims by default but retains them as terminal tombstones on request', async () => {
-    // Retention is what lets `rundown pass --claim-id` on a finished run resolve
-    // `terminal` instead of `missing`, so the two modes must stay distinguishable.
-    const claim = makeClaimRecord({ controlledRunId: RUN_ID });
-    const deleted = session({ claims: { [claim.claimKey]: claim } });
-    const retained = session({ claims: { [claim.claimKey]: claim } });
-
-    // Released on the strength of the claim alone, with the stack untouched.
-    expect(projectRunbookRelease(deleted, RUN_ID)).toEqual({
-      status: 'released',
-      runbookId: RUN_ID,
-      removedFromDefaultStack: false,
-      nextDefaultRunbookId: null,
-    });
-    expect(deleted.claims).toEqual({});
-
-    expect(projectRunbookRelease(retained, RUN_ID, { retainClaimsAsTerminal: true })).toEqual({
-      status: 'released',
-      runbookId: RUN_ID,
-      removedFromDefaultStack: false,
-      nextDefaultRunbookId: null,
-    });
-    expect(retained.claims[claim.claimKey]).toEqual(claim);
   });
 });

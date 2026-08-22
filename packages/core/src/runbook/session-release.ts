@@ -20,33 +20,6 @@ import type { SessionData } from './state.js';
 export type ReleaseRole = 'addressed' | 'collateral' | 'discarded';
 
 /**
- * Every {@link ReleaseRole}, for exhaustive iteration in tests and callers.
- *
- * `satisfies readonly ReleaseRole[]` checks only that the members listed are
- * *assignable* to the union, not that they *exhaust* it. The coverage half is
- * asserted by {@link UnlistedReleaseRole} below; without it, an arm added to
- * `ReleaseRole` and not to this constant would leave the constant silently
- * short and every test iterating it silently partial.
- */
-export const RELEASE_ROLES = [
-  'addressed',
-  'collateral',
-  'discarded',
-] as const satisfies readonly ReleaseRole[];
-
-/** Resolves to `T` only while `T` is `never`; a compile error otherwise. */
-type AssertNever<T extends never> = T;
-
-/**
- * Compile-time proof that {@link RELEASE_ROLES} names every {@link ReleaseRole}.
- *
- * `never` while the constant is complete. Add an arm to `ReleaseRole` without
- * adding it here and this alias stops satisfying {@link AssertNever}, so the
- * omission fails the type check instead of silently shortening a loop.
- */
-export type UnlistedReleaseRole = AssertNever<Exclude<ReleaseRole, (typeof RELEASE_ROLES)[number]>>;
-
-/**
  * What a release does to the claims a run controls.
  *
  * `retain-as-terminal-evidence` writes nothing: the claim record stays in the
@@ -58,38 +31,55 @@ export type UnlistedReleaseRole = AssertNever<Exclude<ReleaseRole, (typeof RELEA
  * Deliberately not called `tombstone`. The tombstone is the artefact **revoking**
  * produces; naming the retained case after it is the collision this vocabulary
  * exists to remove.
+ *
+ * Module-private on purpose. A caller that can read the disposition can re-derive
+ * the policy, which is the defect the role vocabulary replaced.
  */
-export type ClaimDisposition = 'retain-as-terminal-evidence' | 'revoke';
+type ClaimDisposition = 'retain-as-terminal-evidence' | 'revoke';
 
 /**
- * Decide what a release does to one run's claims.
+ * The whole claim-retention policy, in one place.
  *
- * The whole policy, in one place. Retention is the recoverable direction — a
- * retained claim is garbage-collected when its run is pruned, whereas a
- * revocation cannot be reconstructed — and it is also the majority case, so the
- * fail-safe answer and the common answer coincide.
+ * Retention is the recoverable direction — a retained claim is garbage-collected
+ * when its run is pruned, whereas a revocation cannot be reconstructed — and it
+ * is also the majority case, so the fail-safe answer and the common answer
+ * coincide.
  *
- * Takes the role alone. That a run's disposition depends only on its own role,
- * never on ordering and never on the other members of a batch, is the invariant
- * that lets this widen to `claimDisposition(role, claim)` later — when a
- * run-control claim and a delegated bearer over the same run want different
- * treatment — without touching a caller.
+ * A `switch` evaluated per call rather than a module-level `Record` keyed by the
+ * union. Both are exhaustive — the `never` arm below fails the type check when a
+ * role is added, exactly as a missing `Record` key would — but a `Record`
+ * initialiser runs ONCE at module load, before a mutation runner can switch a
+ * mutant on, so every entry in it is reported as a surviving mutant no matter
+ * what the tests assert. Measured: applying `collateral: 'revoke'` -> `''` by
+ * hand fails three tests, while the same mutation through Stryker survived. The
+ * policy has to be reachable at call time to be testable at all.
+ *
+ * The unknown-role arm throws rather than falling back. It is unreachable from
+ * typed code, so the only way to arrive there is a cast or a JS caller — a
+ * programmer error, and one that must not be answered by silently retaining a
+ * claim the caller asked to revoke.
  *
  * @param role - Why the run is being released.
- * @returns What to do with the claims that run controls.
+ * @returns What the release does to the claims that run controls.
+ * @throws {Error} When `role` is not a {@link ReleaseRole}.
  */
-export function claimDisposition(role: ReleaseRole): ClaimDisposition {
+function claimDisposition(role: ReleaseRole): ClaimDisposition {
   switch (role) {
     case 'addressed':
+      // Stryker disable next-line StringLiteral: equivalent — the sole consumer
+      // tests `=== 'revoke'`, so every other string retains exactly as this one
+      // does. Killing it would need a second comparison against a state the
+      // types already make unreachable.
       return 'retain-as-terminal-evidence';
     case 'collateral':
     case 'discarded':
       return 'revoke';
-    // Stryker disable next-line ConditionalExpression,BlockStatement: unreachable — exhaustive `never` arm
+    // Stryker disable all: unreachable — the exhaustive `never` arm
     default: {
-      const _exhaustive: never = role;
-      return _exhaustive;
+      const unknown: never = role;
+      throw new Error(`Unknown release role: ${String(unknown)}`);
     }
+    // Stryker restore all
   }
 }
 
@@ -102,41 +92,66 @@ export interface RunRelease {
 }
 
 /**
- * Project one release onto an in-memory session snapshot, in place.
+ * Remove one run from every session structure that targets it, in place.
  *
- * Removes the run from every session structure that targets it — the default
- * stack (all occurrences, since a duplicate entry is reachable), the stash slot,
- * and, when the role revokes, the claims it controls.
+ * A run's disposition depends only on its own role, never on ordering and never
+ * on the other members of the batch. That invariant is what lets
+ * {@link claimDisposition} widen to a per-claim decision later — when a
+ * run-control claim and a delegated bearer over the same run want different
+ * treatment — without touching a caller.
+ *
+ * @param session - Session snapshot, mutated in place.
+ * @param release - The run to release, and why.
+ */
+function projectOne(session: SessionData, release: RunRelease): void {
+  const { runId, role } = release;
+
+  // Every occurrence, not the topmost: a duplicate stack entry is reachable, and
+  // a release means the run is no longer a target at all.
+  session.defaultStack = session.defaultStack.filter((id) => id !== runId);
+
+  if (claimDisposition(role) === 'revoke') {
+    for (const [claimKey, claim] of Object.entries(session.claims)) {
+      if (claim.controlledRunId === runId) delete session.claims[claimKey];
+    }
+  }
+
+  if (session.stashedRunbookId === runId) session.stashedRunbookId = undefined;
+}
+
+/**
+ * Project a batch of releases onto an in-memory session snapshot, in place.
+ *
+ * Removes each run from the default stack (all occurrences), the stash slot, and
+ * — when its role revokes — the claims it controls.
  *
  * **Synchronous and in-place** by requirement, not by preference. Several
  * dispositions reach this projection through a session callback that accepts a
  * synchronous in-place mutation and nothing else, so this must never become
  * async or start returning a new snapshot.
  *
+ * **Idempotent in effect and returns nothing.** A run that is absent, or already
+ * released, is a no-op; re-applying a batch reaches the same session. There is
+ * no released/not-found payload because the question a caller actually asks is
+ * answered at the claim-resolution seam, not here.
+ *
+ * The whole batch is validated before any member is applied, so a rejected batch
+ * leaves the session untouched rather than half-projected.
+ *
  * @param session - Session snapshot, mutated in place.
- * @param release - The run to release, and why.
- * @returns Whether the run was present in any session structure. A retained
- *   claim counts as present, so re-applying an `addressed` release still
- *   reports `true` — it finds the claim it retained. Nothing in the tree
- *   branches on this beyond distinguishing "released" from "not found".
+ * @param releases - The runs to release, each with the fact that explains it.
+ * @throws {Error} When two releases name the same run. One run cannot be released
+ *   for two reasons in one batch, and a caller that built such a batch derived
+ *   at least one of the roles from something other than what it did.
  */
-export function projectRunRelease(session: SessionData, release: RunRelease): boolean {
-  const { runId, role } = release;
-
-  const stackLengthBefore = session.defaultStack.length;
-  session.defaultStack = session.defaultStack.filter((id) => id !== runId);
-  const removedFromDefaultStack = session.defaultStack.length !== stackLengthBefore;
-
-  const revoking = claimDisposition(role) === 'revoke';
-  let matchedClaim = false;
-  for (const [claimKey, claim] of Object.entries(session.claims)) {
-    if (claim.controlledRunId !== runId) continue;
-    matchedClaim = true;
-    if (revoking) delete session.claims[claimKey];
+export function projectRunReleases(session: SessionData, releases: readonly RunRelease[]): void {
+  const seen = new Set<RunId>();
+  for (const { runId } of releases) {
+    if (seen.has(runId)) {
+      throw new Error(`Run release batch names ${runId} more than once.`);
+    }
+    seen.add(runId);
   }
 
-  const removedFromStash = session.stashedRunbookId === runId;
-  if (removedFromStash) session.stashedRunbookId = undefined;
-
-  return removedFromDefaultStack || matchedClaim || removedFromStash;
+  for (const release of releases) projectOne(session, release);
 }

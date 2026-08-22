@@ -8,7 +8,6 @@ import type {
   PrepareParsedRunbookInput,
   PrepareParsedRunbookResult,
   PreparedTemplateVariables,
-  ReleaseRunbookResult,
   RunbookActorService,
   RunbookRef,
   RunId,
@@ -2602,13 +2601,8 @@ describe('claimAndLaunch', () => {
     jest.mocked(collectUnresolvedRunbookVariables).mockReturnValue(new Set());
 
     const mockClaimRunbook = mockClaimRunbookSuccess();
-    const mockReleaseRunbook = mockFn<SessionService['releaseRunbook']>().mockResolvedValue(
-      committed({
-        status: 'released',
-        runbookId: NEW_CHILD_ID,
-        removedFromDefaultStack: false,
-        nextDefaultRunbookId: null,
-      } satisfies ReleaseRunbookResult),
+    const mockReleaseRuns = mockFn<SessionService['releaseRuns']>().mockResolvedValue(
+      committed<void>(undefined),
     );
     const mockUpdate = mockFn<RunbookStateManager['update']>().mockResolvedValue(
       parentState as unknown as RunbookState,
@@ -2636,7 +2630,7 @@ describe('claimAndLaunch', () => {
       sessionService: {
         pushRunbook: mockFn<() => Promise<void>>().mockResolvedValue(undefined),
         claimRunbook: mockClaimRunbook,
-        releaseRunbook: mockReleaseRunbook,
+        releaseRuns: mockReleaseRuns,
         findClaimForDelegation:
           mockFn<SessionService['findClaimForDelegation']>().mockResolvedValue(null),
       },
@@ -2656,7 +2650,7 @@ describe('claimAndLaunch', () => {
       readonly claimAndInitialLink: jest.Mock;
     };
     expect(serviceMocks.claimAndInitialLink).not.toHaveBeenCalled();
-    expect(mockReleaseRunbook).not.toHaveBeenCalled();
+    expect(mockReleaseRuns).not.toHaveBeenCalled();
     expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
     expect(mockUpdate).not.toHaveBeenCalled();
     expect(runExecutionLoop).not.toHaveBeenCalled();

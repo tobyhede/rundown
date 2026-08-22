@@ -25,7 +25,7 @@ import type {
   COMPLETION_TARGET_MISMATCH_CODE,
   RunbookCompletionService,
 } from './completion-service.js';
-import type { ReleaseRunbookResult } from './session-service.js';
+import type { RunRelease } from './session-release.js';
 import type { SessionMutationResult } from './storage/runbook-store.js';
 import type { FrameKey } from './targeting.js';
 import type { RunId } from './run-id.js';
@@ -204,15 +204,10 @@ export interface InlineParentAdvanceSessionService {
   /**
    * Release a run from all session targeting structures on terminal.
    *
-   * @param runbookId - Terminal run id to release.
-   * @param options - Release options.
-   * @param options.retainClaimsAsTerminal - Keep claim tombstones for later confirm/conflict.
-   * @returns Structured release result (unused by the seam).
+   * @param releases - Runs to release, each with the role that explains it.
+   * @returns The committed envelope, unused by the seam.
    */
-  releaseRunbook(
-    runbookId: RunId,
-    options?: { readonly retainClaimsAsTerminal?: boolean },
-  ): Promise<SessionMutationResult<ReleaseRunbookResult>>;
+  releaseRuns(releases: readonly RunRelease[]): Promise<SessionMutationResult<void>>;
 }
 
 /**
@@ -511,15 +506,15 @@ async function propagateTerminalChildUpwardInner(
   // release here exactly once and recurse ONE level up. reportTerminalChild
   // self-guards when the fresh parent has no linkage of its own.
   //
-  // RELEASE DISPOSITION (RD-598 verification): `retainClaimsAsTerminal: true` —
-  // matching the collect terminal branch (collection-service.ts releaseRunbook at
-  // ~:502) so a later `--claim-id` confirm/conflict against the terminal parent
-  // resolves `terminal`, not `missing`. Deciding disposition once, in one owner,
+  // RELEASE ROLE (RD-598 verification): `addressed` — this seam drove the parent
+  // to terminal, matching the collect terminal branch in `collection-service.ts`,
+  // so a later `--claim-id` confirm/conflict against the terminal parent resolves
+  // `terminal`, not `missing`. Deciding disposition once, in one owner,
   // eliminates the old drain-deletes / loop-retains inconsistency.
   try {
-    const release = await deps.sessionService.releaseRunbook(linkage.parentRunId, {
-      retainClaimsAsTerminal: true,
-    });
+    const release = await deps.sessionService.releaseRuns([
+      { runId: linkage.parentRunId, role: 'addressed' },
+    ]);
     // Same best-effort disposition as the swallowed rejection below, narrowed
     // exhaustively so a future refusal arm cannot inherit silence by default.
     switch (release.kind) {

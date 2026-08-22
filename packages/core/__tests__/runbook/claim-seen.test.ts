@@ -177,7 +177,9 @@ describe('SessionService.recordClaimSeen (#519)', () => {
 
   it('records nothing for a claim key that is not in the session', async () => {
     const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(runId));
-    unwrapSessionMutation(await sessionService.releaseRunbook(runId));
+    // `collateral`, the revoking role: the claim record has to leave the session
+    // for `recordClaimSeen` to have no key to find.
+    unwrapSessionMutation(await sessionService.releaseRuns([{ runId, role: 'collateral' }]));
 
     const result = await sessionService.recordClaimSeen(claimId);
 
@@ -290,8 +292,7 @@ describe('claim-seen recording across mutating seams (#519)', () => {
   ];
   const startingStep = '1';
   const releasePolicy: LifecycleTerminalReleasePolicy = {
-    onComplete: { releaseRunbook: true },
-    onStopped: { releaseRunbook: true },
+    releaseOnTerminal: true,
   };
 
   beforeEach(async () => {

@@ -107,7 +107,9 @@ export async function cleanupOrphanedActiveStack(
 
   // Release BEFORE deleting so an ownership refusal leaves the orphan intact
   // rather than deleting its state and then failing to remove it from targeting.
-  const released = await sessionService.releaseRunbook(topId);
+  // `discarded`: the run's state cannot be loaded and it is about to be deleted,
+  // so claims over it must not survive as evidence of an outcome nobody can read.
+  const released = await sessionService.releaseRuns([{ runId: topId, role: 'discarded' }]);
   if (released.kind !== 'committed') return released;
   await manager.delete(topId);
   return { kind: 'removed', runId: topId };

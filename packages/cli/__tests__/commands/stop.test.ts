@@ -523,8 +523,8 @@ Do work.
       const action = findActionOutput(result.stdout);
       expect(action).toMatchObject({ status: 'already-resolved', lifecycle: 'stopped' });
       const session = await readSession(workspace);
-      // Item 4: the terminal claim is RETAINED as a tombstone (release with
-      // retainClaimsAsTerminal) so a later --claim-id can confirm/conflict again.
+      // Item 4: the terminal claim is RETAINED as a tombstone (released in the
+      // `addressed` role) so a later --claim-id can confirm/conflict again.
       expect(Object.values(session.claims)).toContainEqual(
         expect.objectContaining({ controlledRunId: childRunId }),
       );

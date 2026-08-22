@@ -427,8 +427,9 @@ function wireMocks(
   MockSession.mockImplementation(
     () =>
       ({
-        releaseRunbook: mockFn<() => Promise<unknown>>().mockResolvedValue({
-          status: 'released',
+        releaseRuns: mockFn<() => Promise<unknown>>().mockResolvedValue({
+          kind: 'committed',
+          value: undefined,
         }),
       }) as unknown as SessionServiceType,
   );

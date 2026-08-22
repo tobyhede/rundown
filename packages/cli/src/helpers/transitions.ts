@@ -28,6 +28,7 @@ import {
   claimKeyFromBearer,
   type RunId,
   type CommandExecutionStreamOptions,
+  type LifecycleTerminalReleasePolicy,
   type LifecycleTransitionOutcome,
   type VerifiedClaim,
   type TransitionObservationEvent,
@@ -49,11 +50,7 @@ import { readLifecycleCallerEvidence } from './caller-evidence.js';
 import { runExecutionLoop, type ExecutionTerminalReleaseMode } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
-import {
-  transitionSinkFromEmitter,
-  type TransitionEventSink,
-  type TransitionOrchestrationPolicy,
-} from './transition-orchestrator.js';
+import { transitionSinkFromEmitter, type TransitionEventSink } from './transition-orchestrator.js';
 export type { ActionType } from '@rundown-org/core';
 
 /**
@@ -78,8 +75,8 @@ export interface TransitionConfig {
    * fail: always false
    */
   computeActionResult: (actionType: ActionType) => boolean;
-  /** Terminal side-effect policy shared with execution loop transitions. */
-  policy: TransitionOrchestrationPolicy;
+  /** Terminal release policy the core seam applies inside its fenced mutation. */
+  policy: LifecycleTerminalReleasePolicy;
 }
 
 /**
@@ -94,14 +91,7 @@ export function createPassTransitionConfig(): TransitionConfig {
     lastResult: 'pass',
     computeActionResult: (actionType: ActionType) =>
       actionType !== 'RETRY' && actionType !== 'STOP',
-    policy: {
-      onStopped: {
-        releaseRunbook: true,
-      },
-      onComplete: {
-        releaseRunbook: true,
-      },
-    },
+    policy: { releaseOnTerminal: true },
   };
 }
 
@@ -116,14 +106,7 @@ export function createFailTransitionConfig(): TransitionConfig {
     commandName: 'fail',
     lastResult: 'fail',
     computeActionResult: () => false,
-    policy: {
-      onStopped: {
-        releaseRunbook: true,
-      },
-      onComplete: {
-        releaseRunbook: true,
-      },
-    },
+    policy: { releaseOnTerminal: true },
   };
 }
 

@@ -17,6 +17,7 @@ import { SqliteExecutionLeaseService } from '../../src/runbook/storage/execution
 import { readProcessStartId } from '../../src/runbook/process-identity.js';
 import { assertExecutionEpoch } from '../../src/runbook/storage/mutation-result.js';
 import { CoreEffectfulMutationExecutor } from '../../src/runbook/effectful-mutation-executor.js';
+import type { ReleaseRole } from '../../src/runbook/session-release.js';
 import type { ResolvedStep, RunbookState } from '../../src/runbook/types.js';
 import type { RunId } from '../../src/runbook/run-id.js';
 import { createRunbook } from './fixtures.js';
@@ -451,7 +452,9 @@ describe('createEffectfulActorMutationRunner', () => {
       jest
         .spyOn(RunbookStore.prototype, 'validateCapturedRunSet')
         .mockImplementationOnce(async function (this: RunbookStore, captured) {
-          unwrapSessionMutation(await sessionService.releaseRunbook(state.id));
+          unwrapSessionMutation(
+            await sessionService.releaseRuns([{ runId: state.id, role: 'collateral' }]),
+          );
           return realValidate.call(this, captured);
         });
 
@@ -492,7 +495,9 @@ describe('createEffectfulActorMutationRunner', () => {
           // Both captured cleanly, so the drop is provably a validation-layer
           // decision rather than a capture-layer one.
           expect(captured.map(({ state }) => state.id)).toEqual([opportunistic.id, required.id]);
-          unwrapSessionMutation(await sessionService.releaseRunbook(opportunistic.id));
+          unwrapSessionMutation(
+            await sessionService.releaseRuns([{ runId: opportunistic.id, role: 'collateral' }]),
+          );
           return { kind: 'return', value: 'derived-bearer' };
         },
         compute: compute as never,
@@ -515,7 +520,9 @@ describe('createEffectfulActorMutationRunner', () => {
           { runId: required.id },
         ],
         beforeEffect: async () => {
-          unwrapSessionMutation(await sessionService.releaseRunbook(required.id));
+          unwrapSessionMutation(
+            await sessionService.releaseRuns([{ runId: required.id, role: 'collateral' }]),
+          );
           return { kind: 'return', value: 'derived-bearer' };
         },
         compute: jest.fn() as never,
@@ -539,7 +546,9 @@ describe('createEffectfulActorMutationRunner', () => {
       const result = await runner.runAll<string>({
         targets: [{ runId: opportunistic.id, optionalWhenClaimSuperseded: true }],
         beforeEffect: async () => {
-          unwrapSessionMutation(await sessionService.releaseRunbook(opportunistic.id));
+          unwrapSessionMutation(
+            await sessionService.releaseRuns([{ runId: opportunistic.id, role: 'collateral' }]),
+          );
           return { kind: 'return', value: 'derived-bearer' };
         },
         compute: jest.fn() as never,
@@ -620,12 +629,36 @@ describe('createEffectfulActorMutationRunner', () => {
       await expect(
         runner.runAll<string>({
           targets: [{ runId: owned.id }],
-          releases: [{ runId: foreign.id }],
+          releases: [{ runId: foreign.id, role: 'collateral' }],
           compute: jest.fn() as never,
           makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
             actorService.createRecoveryActor(state, steps),
         }),
       ).rejects.toThrow(`Aggregate release for ${foreign.id} is outside the owned run set.`);
+    });
+
+    it('rejects a release naming the same owned run twice', async () => {
+      // One run cannot be released for two reasons in one batch, and the refusal
+      // has to land in the preflight: the projection runs inside the commit, so
+      // a duplicate caught there would refuse halfway through writing authority
+      // this transaction had already captured.
+      const runner = createEffectfulActorMutationRunner(dir);
+      const owned = await seedRun('owned.runbook.md');
+      const capture = jest.spyOn(RunbookStore.prototype, 'captureRunAuthorityState');
+
+      await expect(
+        runner.runAll<string>({
+          targets: [{ runId: owned.id }],
+          releases: [
+            { runId: owned.id, role: 'addressed' },
+            { runId: owned.id, role: 'collateral' },
+          ],
+          compute: jest.fn() as never,
+          makeRecoveryActor: (_runId: RunId, state: RunbookState) =>
+            actorService.createRecoveryActor(state, steps),
+        }),
+      ).rejects.toThrow(`Aggregate release names ${owned.id} more than once.`);
+      expect(capture).not.toHaveBeenCalled();
     });
 
     it('returns the recorded capture refusal when every optional target drops', async () => {
@@ -707,7 +740,9 @@ describe('createEffectfulActorMutationRunner', () => {
       const runner = createEffectfulActorMutationRunner(dir);
       const required = await seedRun('required.runbook.md');
       const superseded = await seedRun('superseded.runbook.md');
-      unwrapSessionMutation(await sessionService.releaseRunbook(superseded.id));
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: superseded.id, role: 'collateral' }]),
+      );
 
       const result = await runner.runAll<string>({
         targets: [
@@ -814,12 +849,14 @@ describe('createEffectfulActorMutationRunner', () => {
           { runId: opportunistic.id, optionalWhenClaimSuperseded: true },
           { runId: required.id },
         ],
-        releases: [{ runId: opportunistic.id }],
+        releases: [{ runId: opportunistic.id, role: 'collateral' }],
         beforeEffect: async (captured) => {
           // Both targets captured cleanly, so the drop below is provably an
           // acquisition-layer decision rather than a capture-layer one.
           expect(captured.map(({ state }) => state.id)).toEqual([opportunistic.id, required.id]);
-          unwrapSessionMutation(await sessionService.releaseRunbook(opportunistic.id));
+          unwrapSessionMutation(
+            await sessionService.releaseRuns([{ runId: opportunistic.id, role: 'collateral' }]),
+          );
           return { kind: 'continue' };
         },
         compute: (captured) => {
@@ -899,7 +936,9 @@ describe('createEffectfulActorMutationRunner', () => {
           { runId: required.id },
         ],
         beforeEffect: async () => {
-          unwrapSessionMutation(await sessionService.releaseRunbook(required.id));
+          unwrapSessionMutation(
+            await sessionService.releaseRuns([{ runId: required.id, role: 'collateral' }]),
+          );
           return { kind: 'continue' };
         },
         compute: compute as never,
@@ -929,7 +968,9 @@ describe('createEffectfulActorMutationRunner', () => {
           { runId: opportunistic.id, optionalWhenClaimSuperseded: true },
         ],
         beforeEffect: async () => {
-          unwrapSessionMutation(await sessionService.releaseRunbook(opportunistic.id));
+          unwrapSessionMutation(
+            await sessionService.releaseRuns([{ runId: opportunistic.id, role: 'collateral' }]),
+          );
           return { kind: 'continue' };
         },
         compute: compute as never,
@@ -959,7 +1000,9 @@ describe('createEffectfulActorMutationRunner', () => {
           { runId: required.id },
         ],
         beforeEffect: async () => {
-          unwrapSessionMutation(await sessionService.releaseRunbook(opportunistic.id));
+          unwrapSessionMutation(
+            await sessionService.releaseRuns([{ runId: opportunistic.id, role: 'collateral' }]),
+          );
           return { kind: 'continue' };
         },
         compute: (captured) => {
@@ -1068,7 +1111,9 @@ describe('createEffectfulActorMutationRunner', () => {
     it('returns claim_superseded when every opportunistic target is dropped', async () => {
       const runner = createEffectfulActorMutationRunner(dir);
       const superseded = await seedRun('superseded.runbook.md');
-      unwrapSessionMutation(await sessionService.releaseRunbook(superseded.id));
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: superseded.id, role: 'collateral' }]),
+      );
       const compute = jest.fn();
 
       const result = await runner.runAll<string>({
@@ -1094,11 +1139,13 @@ describe('createEffectfulActorMutationRunner', () => {
       const required = await seedRun('required.runbook.md');
       const optional = await seedRun('optional.runbook.md');
       // Strip the optional run's controlling claim so its capture refuses.
-      unwrapSessionMutation(await sessionService.releaseRunbook(optional.id));
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: optional.id, role: 'collateral' }]),
+      );
 
       const result = await runner.runAll<string>({
         targets: [{ runId: required.id }, { runId: optional.id, optional: true }],
-        releases: [{ runId: optional.id }],
+        releases: [{ runId: optional.id, role: 'collateral' }],
         compute: (captured) => {
           // The dropped target is absent, so preparation sees exactly the shape
           // it would have seen had the target never been named.
@@ -1133,7 +1180,10 @@ describe('createEffectfulActorMutationRunner', () => {
 
       const result = await runner.runAll<string>({
         targets: [{ runId: required.id }, { runId: optional.id, optional: true }],
-        releases: [{ runId: required.id }, { runId: optional.id }],
+        releases: [
+          { runId: required.id, role: 'collateral' },
+          { runId: optional.id, role: 'collateral' },
+        ],
         compute: (captured) => {
           expect(captured.map(({ state }) => state.id)).toEqual([required.id]);
           return Promise.resolve({
@@ -1185,7 +1235,9 @@ describe('createEffectfulActorMutationRunner', () => {
       // at a seam whose whole contract is typed refusals.
       const runner = createEffectfulActorMutationRunner(dir);
       const only = await seedRun('only.runbook.md');
-      unwrapSessionMutation(await sessionService.releaseRunbook(only.id));
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: only.id, role: 'collateral' }]),
+      );
       const compute = jest.fn();
 
       const result = await runner.runAll<string>({
@@ -1203,7 +1255,9 @@ describe('createEffectfulActorMutationRunner', () => {
       const runner = createEffectfulActorMutationRunner(dir);
       const required = await seedRun('required.runbook.md');
       const other = await seedRun('other.runbook.md');
-      unwrapSessionMutation(await sessionService.releaseRunbook(other.id));
+      unwrapSessionMutation(
+        await sessionService.releaseRuns([{ runId: other.id, role: 'collateral' }]),
+      );
       const compute = jest.fn();
 
       const result = await runner.runAll<string>({
@@ -1243,8 +1297,8 @@ describe('createEffectfulActorMutationRunner', () => {
       const result = await runner.runAll<string>({
         targets: [{ runId: retained.state.id }, { runId: retired.state.id }],
         releases: [
-          { runId: retained.state.id, retainClaimsAsTerminal: true },
-          { runId: retired.state.id },
+          { runId: retained.state.id, role: 'addressed' },
+          { runId: retired.state.id, role: 'collateral' },
         ],
         compute: (captured) =>
           Promise.resolve({
@@ -1262,9 +1316,9 @@ describe('createEffectfulActorMutationRunner', () => {
       const session = await manager.loadSession();
       expect(session.defaultStack).not.toContain(retained.state.id);
       expect(session.defaultStack).not.toContain(retired.state.id);
-      // The pair is deliberately asymmetric: retention is the ONLY difference
+      // The pair is deliberately asymmetric: the role is the ONLY difference
       // between these two releases. If the aggregate projection dropped the
-      // per-release option, both members would tombstone identically and a later
+      // per-release role, both members would tombstone identically and a later
       // `rundown pass --claim-id` against the retained run would resolve
       // `missing` rather than `terminal`.
       expect((await manager.loadClaim(retained.claimKey))?.status).toBe('active');
@@ -1349,16 +1403,26 @@ describe('createEffectfulActorMutationRunner', () => {
 - FAIL STOP
 `;
 
+    /** Two steps, so a PASS on the first advances without reaching terminal. */
+    const CONTINUING_RUNBOOK = `## 1. First
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Second
+- PASS COMPLETE
+- FAIL STOP
+`;
+
     /** Drive one run to a terminal lifecycle under the given release plan. */
     async function releaseTerminal(
       result: 'pass' | 'fail',
-      terminalRelease?: {
-        readonly onComplete: boolean;
-        readonly onStopped: boolean;
-        readonly retainClaimsAsTerminal?: boolean;
-      },
+      // Still optional: absence is a case in its own right — the caller that
+      // defers the release to itself — and the last test in this block is about
+      // exactly that.
+      terminalRelease?: { readonly role: ReleaseRole },
+      source: string = TERMINAL_RUNBOOK,
     ) {
-      steps = createRunbook(TERMINAL_RUNBOOK);
+      steps = createRunbook(source);
       const runner = createEffectfulActorMutationRunner(dir);
       // Seeded the way `rd run` starts a run — on the default stack AND holding a
       // run-control bearer — so both halves of a release are observable.
@@ -1393,77 +1457,33 @@ describe('createEffectfulActorMutationRunner', () => {
       return { committed, session, claim: presented, runId: state.id };
     }
 
-    // The two flags are deliberately driven ASYMMETRICALLY. Setting both to the
-    // same value would leave the pair indistinguishable: a fence that consulted
-    // `onStopped` for a completion (or swapped the two) would satisfy every
-    // both-true and both-false case. Each row therefore enables exactly the flag
-    // that must NOT govern the lifecycle under test, or exactly the one that must.
+    // BOTH terminal lifecycles are driven against the same request. Presence is
+    // one trigger covering `completed` and `stopped`, so a fence that read only
+    // one of them — or read the wrong one — would still satisfy a single-row
+    // case; the pair is what makes that indistinguishable fence fail.
     it.each([
-      {
-        label: 'releases a completed run when onComplete alone is set',
-        result: 'pass' as const,
-        release: { onComplete: true, onStopped: false },
-        released: true,
-      },
-      {
-        label: 'leaves a completed run alone when only onStopped is set',
-        result: 'pass' as const,
-        release: { onComplete: false, onStopped: true },
-        released: false,
-      },
-      {
-        label: 'releases a stopped run when onStopped alone is set',
-        result: 'fail' as const,
-        release: { onComplete: false, onStopped: true },
-        released: true,
-      },
-      {
-        label: 'leaves a stopped run alone when only onComplete is set',
-        result: 'fail' as const,
-        release: { onComplete: true, onStopped: false },
-        released: false,
-      },
-    ])('$label', async ({ result, release, released }) => {
-      const { committed, session, runId } = await releaseTerminal(result, release);
+      { label: 'releases a completed run when a release is requested', result: 'pass' as const },
+      { label: 'releases a stopped run when a release is requested', result: 'fail' as const },
+    ])('$label', async ({ result }) => {
+      const { committed, session, runId } = await releaseTerminal(result, { role: 'collateral' });
 
       expect(committed.kind).toBe('committed');
-      if (released) {
-        expect(session.defaultStack).not.toContain(runId);
-      } else {
-        expect(session.defaultStack).toContain(runId);
-      }
+      expect(session.defaultStack).not.toContain(runId);
     });
 
-    it('retires the bearer as a superseded tombstone on a default release', async () => {
-      const { session, claim, runId } = await releaseTerminal('pass', {
-        onComplete: true,
-        onStopped: false,
-      });
+    it('retires the bearer as a superseded tombstone on a collateral release', async () => {
+      const { session, claim, runId } = await releaseTerminal('pass', { role: 'collateral' });
 
       expect(session.defaultStack).not.toContain(runId);
-      // Default mode retires the bearer: the row survives only as a superseded
+      // `collateral` retires the bearer: the row survives only as a superseded
       // tombstone, so a later `--claim-id` resolves stale rather than terminal.
       expect(claim?.status).toBe('superseded');
-    });
-
-    it('releases neither lifecycle when both flags are clear (defer-to-caller)', async () => {
-      // The `defer-to-caller` contract: the caller owns the single terminal
-      // release, so the fence must not perform it early for either outcome.
-      const completed = await releaseTerminal('pass', { onComplete: false, onStopped: false });
-      const stopped = await releaseTerminal('fail', { onComplete: false, onStopped: false });
-
-      expect(completed.session.defaultStack).toContain(completed.runId);
-      expect(stopped.session.defaultStack).toContain(stopped.runId);
     });
 
     it('retains the controlling claim as a terminal tombstone when asked', async () => {
       // Retention is what lets `rundown pass --claim-id` on a finished run resolve
       // `terminal` rather than `missing`; the stack entry still goes.
-      const { session, claim, runId } = await releaseTerminal('pass', {
-        onComplete: true,
-        onStopped: true,
-        retainClaimsAsTerminal: true,
-      });
+      const { session, claim, runId } = await releaseTerminal('pass', { role: 'addressed' });
 
       expect(session.defaultStack).not.toContain(runId);
       // Retention is the whole difference: the claim stays ACTIVE against a
@@ -1473,12 +1493,39 @@ describe('createEffectfulActorMutationRunner', () => {
       expect(claim?.record.controlledRunId).toBe(runId);
     });
 
-    it('performs no release at all when no terminal release is requested', async () => {
-      const { committed, session, claim, runId } = await releaseTerminal('pass');
+    it('performs no release when the prepared state has not reached terminal', async () => {
+      // The trigger is the PREPARED lifecycle, not the presence of the request.
+      // A run that advances without finishing is still a live target, and
+      // releasing it here would drop it off the session while its own execution
+      // continues — the #789 shape, committed inside the fence's transaction so
+      // nothing downstream could notice.
+      //
+      // `collateral` is deliberate: it revokes, so a release that wrongly fired
+      // shows up in BOTH halves — the stack entry and the bearer — rather than
+      // only in the stack.
+      const { committed, session, claim, runId } = await releaseTerminal(
+        'pass',
+        { role: 'collateral' },
+        CONTINUING_RUNBOOK,
+      );
 
       expect(committed.kind).toBe('committed');
       expect(session.defaultStack).toContain(runId);
       expect(claim?.status).toBe('active');
+    });
+
+    it('performs no release at all when no terminal release is requested', async () => {
+      // The `defer-to-caller` contract: the caller owns the single terminal
+      // release, so the fence must not perform it early for EITHER outcome.
+      const completed = await releaseTerminal('pass');
+      const stopped = await releaseTerminal('fail');
+
+      expect(completed.committed.kind).toBe('committed');
+      expect(completed.session.defaultStack).toContain(completed.runId);
+      expect(completed.claim?.status).toBe('active');
+      expect(stopped.committed.kind).toBe('committed');
+      expect(stopped.session.defaultStack).toContain(stopped.runId);
+      expect(stopped.claim?.status).toBe('active');
     });
   });
 });

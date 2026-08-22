@@ -90,6 +90,21 @@ describe('cleanupOrphanedActiveStack', () => {
     return state;
   }
 
+  /** Push a run and mint the run-control claim `rundown run` would give it. */
+  async function createClaimedRun(): Promise<RunbookState> {
+    const state = await manager.create(
+      { source: 'project', path: 'cleanup-test.runbook.md' },
+      RUNBOOK,
+      { runbookPath: 'cleanup-test.runbook.md' },
+    );
+    const pushed = await sessionService.pushRunbookWithPreparedRunControlClaim(
+      state.id,
+      sessionService.prepareRunControlClaim(state.id),
+    );
+    if (pushed.kind !== 'committed') throw new Error(`push refused: ${pushed.kind}`);
+    return state;
+  }
+
   async function corruptStateFile(id: string): Promise<void> {
     await writeRawRunJson(tmpCwd, id, 'not json');
   }
@@ -122,6 +137,32 @@ describe('cleanupOrphanedActiveStack', () => {
     expect(result).toEqual({ kind: 'removed', runId: run.id });
     const session = await manager.loadSession();
     expect(session.defaultStack).not.toContain(run.id);
+  });
+
+  it('revokes the claims controlling an orphan it removes', async () => {
+    // Pins the end state a caller can observe: an orphan cleanup leaves no claim
+    // controlling the run it removed.
+    //
+    // It does NOT pin the release ROLE, and that is worth stating rather than
+    // leaving for the next reader to discover. `cleanupOrphanedActiveStack`
+    // deletes the run row immediately after releasing, and the claims table
+    // cascades on that delete, so the claim is gone whether the release revoked
+    // it (`discarded`) or retained it (`addressed`) — verified by flipping the
+    // role and watching this test still pass. The role is still correct at the
+    // seam: the window between release and delete is real, and a process that
+    // dies inside it leaves a retained claim over a run nobody can read. That
+    // window is what `discarded` is for, and no unit test observes it.
+    const run = await createClaimedRun();
+    const before = await manager.loadSession();
+    expect(Object.values(before.claims).map((claim) => claim.controlledRunId)).toEqual([run.id]);
+    await corruptStateFile(run.id);
+
+    const result = await cleanupOrphanedActiveStack(manager, sessionService);
+
+    expect(result).toEqual({ kind: 'removed', runId: run.id });
+    const session = await manager.loadSession();
+    expect(session.defaultStack).not.toContain(run.id);
+    expect(Object.values(session.claims)).toEqual([]);
   });
 
   it('refuses and leaves the orphan intact when the run is under execution (#608)', async () => {
