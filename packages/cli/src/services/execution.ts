@@ -299,12 +299,13 @@ interface InlineLaunchArgs {
  * typed code; the only way to arrive there is a cast or a JS caller, and that
  * must not be answered by releasing.
  *
- * "Only place" is load-bearing and includes the two sites that are not release
- * calls: the fence's `terminalRelease` — a release folded into the command
- * mutation, and the one that would double-release a new owner most quietly —
- * and the drain refusal's hand-back, where owning the terminal is the same fact
- * as owning the report of it. An inline `owner === 'caller'` at either would
- * leave the `never` arm here pointing at neither.
+ * "Only place" is load-bearing and includes the three sites that are not
+ * release calls. Two arm a `terminalRelease` — the fence's, and the drain's
+ * (#794) — each a release folded into a transaction rather than issued here,
+ * and so the pair that would double-release a new owner most quietly. The third
+ * is the drain refusal's hand-back, where owning the terminal is the same fact
+ * as owning the report of it. An inline `owner === 'caller'` at any of them
+ * would leave the `never` arm here pointing at none.
  *
  * @param owner - Who owns this loop's Run Release.
  * @returns `true` when this loop releases, `false` when its caller does.

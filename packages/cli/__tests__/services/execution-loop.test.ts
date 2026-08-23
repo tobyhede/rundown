@@ -2982,15 +2982,10 @@ describe('runExecutionLoop', () => {
     });
   });
 
-  // Caller ownership is where the loop releases NOTHING and its caller
-  // acts on the status it is handed: the inline parent-advance seam releases the
-  // run and recurses one level up on 'stopped'. A refusal applied nothing and
-  // left the run RUNNING, so 'stopped' there released a live parent and reported
-  // a terminal to ITS parent that never happened.
-  // The ordering the arm above depends on, and the only remaining consumer of
-  // the committed-cursor re-read. `RunbookStateManager.load` THROWS on
-  // structurally invalid persisted state, so hoisting that read above the
-  // ownership return would turn this typed hand-back into an escaping
+  // The ordering the caller-ownership hand-back BELOW depends on, and the only
+  // remaining consumer of the committed-cursor re-read. `RunbookStateManager.load`
+  // THROWS on structurally invalid persisted state, so hoisting that read above
+  // the ownership return would turn that typed hand-back into an escaping
   // `InvalidRunbookStateError` — a caller that owns the terminal would get a
   // bare error carrying no code where it expects `refused`.
   //
@@ -3036,6 +3031,11 @@ describe('runExecutionLoop', () => {
     expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
   });
 
+  // Caller ownership is where the loop releases NOTHING and its caller
+  // acts on the status it is handed: the inline parent-advance seam releases the
+  // run and recurses one level up on 'stopped'. A refusal applied nothing and
+  // left the run RUNNING, so 'stopped' there released a live parent and reported
+  // a terminal to ITS parent that never happened.
   it('hands the refusal back instead of a terminal when the release is deferred', async () => {
     const currentState = makeLoopState('1', {
       lifecycle: 'running',

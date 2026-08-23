@@ -1165,7 +1165,7 @@ describe('mutateState (transactional replacement for the per-run lock)', () => {
       await store.mutateSession((ctx) => {
         ctx.session.defaultStack = [state.id];
       });
-      const stackWrites = jest.spyOn(
+      const sessionWrites = jest.spyOn(
         store as unknown as { applySession: (...args: never[]) => void },
         'applySession',
       );
@@ -1177,7 +1177,7 @@ describe('mutateState (transactional replacement for the per-run lock)', () => {
       );
 
       expect(result.kind).toBe('committed');
-      expect(stackWrites).not.toHaveBeenCalled();
+      expect(sessionWrites).not.toHaveBeenCalled();
       expect((await store.loadSession()).defaultStack).toEqual([state.id]);
     });
 

@@ -1459,12 +1459,14 @@ that carries a run to a terminal lifecycle projects the release onto the
 transaction's session snapshot through `mutateStateReturning`'s
 `releaseOnCommit`, which `RunbookStore.mutateState` applies inside the
 transaction that performs the compare-and-swap write — after the state lands,
-because that write clears execution ownership and invalidates closed delegated
-claims in the same transaction, and only on the attempt that commits. It used to
-happen afterwards, from the CLI: the terminal state committed, control returned
-through several frames, and a second transaction took the run off session
-targeting. A process that died in between left a finished run the session still
-resolved to, and no healing path removes a loadable terminal run.
+because that write invalidates closed delegated claims in the same transaction,
+and only on the attempt that commits. Only the claim invalidation orders these
+two: unlike the fence's owned write, the compare-and-swap does not clear
+execution ownership — it requires `exec_token IS NULL` and writes none of it. It
+used to happen afterwards, from the CLI: the terminal state committed, control
+returned through several frames, and a second transaction took the run off
+session targeting. A process that died in between left a finished run the
+session still resolved to, and no healing path removes a loadable terminal run.
 
 Ownership is what the caller declares, never terminality. `terminalRelease`'s
 presence says "this caller owns this run's release" — the loop arms it, the

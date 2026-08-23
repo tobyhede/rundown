@@ -29,10 +29,13 @@ whose prepared state reaches a terminal lifecycle projects
 `{ runId, role: 'addressed' }` before the transaction closes. Either both writes
 land or neither does.
 
-Ordering inside the transaction matches the fence's, and for the fence's reason:
-the state write goes first, because it clears execution ownership and
-invalidates closed delegated claims in that same transaction — a session read
-before it would project onto a claim set the write is about to change.
+Ordering inside the transaction matches the fence's, and for one of the fence's
+two reasons: the state write goes first, because it invalidates closed delegated
+claims in that same transaction — a session read before it would project onto a
+claim set the write is about to change. The fence's other reason does not carry
+over. Its owned write clears execution ownership; the compare-and-swap only
+requires `exec_token IS NULL`, which is why the refusal below is subsumed rather
+than relocated.
 
 The option is release-shaped rather than the free-form session projection the
 owned-commit methods take. This cycle owns exactly ONE run, so the store states
@@ -78,5 +81,24 @@ asserted by the caller.
 The entry-time terminal checks still release through
 `SessionService.releaseRuns`. An already-terminal run has no state write to fold
 a release into; fencing that one against captured authority is #734.
+
+## What this does not close
+
+The drain has a second call site, and it is deliberately not folded. The inline
+parent-advance seam drains a parent under CALLER ownership, so it arms no
+`terminalRelease`: the parent's terminal state commits in the drain's own
+compare-and-swap, and the seam releases afterwards through
+`SessionService.releaseRuns`, in a separate transaction several frames later. A
+process that dies in between leaves the parent committed terminal and still on
+the session stack — structurally the same gap this change closes for the loop.
+
+It is left alone on purpose rather than overlooked. #794 separates ownership
+migration from transaction folding precisely because doing both at once risks a
+double release, and folding here would need the parent-advance seam to stop
+owning the release first — it is the sole release owner for three distinct
+terminal routes, only one of which is a drain that could be folded today.
+Tracked as #838, which carries the ownership migration as its first step. Naming
+it is the point: the gap is now one path, not an unbounded set, and it is
+written down rather than inferred.
 
 Closes #794. Part of #781.

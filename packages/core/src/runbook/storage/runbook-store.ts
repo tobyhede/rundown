@@ -1399,10 +1399,15 @@ export class RunbookStore {
           options.guard,
         );
         // Only the attempt that commits releases, and only after the write —
-        // the same order `commitOwnedState` keeps, and for the same reason: the
-        // write clears execution ownership and invalidates closed delegated
-        // claims in this same transaction, so a session read before it would
-        // project onto a claim set the write is about to change. A losing
+        // the same order `commitOwnedState` keeps, though only half its reason
+        // carries over: the write invalidates closed delegated claims in this
+        // same transaction, so a session read before it would project onto a
+        // claim set the write is about to change. The other half does NOT.
+        // `commitOwnedState` clears execution ownership in its write, while
+        // `writeStateAtVersion` only REQUIRES `exec_token IS NULL` in its
+        // `WHERE` and clears nothing — so a reader checking that clause against
+        // this path and finding no such write is reading correctly, and the
+        // claim invalidation is the whole of what orders these two. A losing
         // attempt writes nothing, so it must release nothing either, and a
         // throwing release rolls the state write back with it — which is what
         // makes the two writes one outcome.
