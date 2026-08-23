@@ -1729,6 +1729,60 @@ describe('runExecutionLoop', () => {
       });
     });
 
+    it.each([
+      {
+        label: 'the caller owns the release',
+        options: { releaseOwner: 'caller' as const },
+        releases: false,
+      },
+      { label: 'the release commits', options: undefined, releases: true },
+    ])('does not re-read the committed cursor when $label', async ({ options, releases }) => {
+      // The re-read exists ONLY to name the corrective stop, and that stop is
+      // emitted ONLY when the release is refused. On these two paths no
+      // position is ever consumed: caller ownership returns before the release
+      // is attempted, and a committed release emits nothing to correct.
+      //
+      // Driven by making the read FAIL rather than by counting calls, because
+      // the cost of an eager read is not only the discarded query.
+      // `RunbookStateManager.load` throws on invalid persisted state, so an
+      // eager read puts that throw ahead of the release — it would unwind past
+      // the release and strand a finished run on the session stack, which is
+      // the exact failure this arm exists to prevent. The sibling `failed` arm
+      // never had the defect: it re-reads after its own ownership return.
+      const before = makeLoopState('1', { lifecycle: 'running' });
+      mockManager.load
+        .mockResolvedValueOnce(before)
+        .mockRejectedValue(new Error('post-drain read must not happen here'));
+      mockCompletionService.applyNextResolvedCompletion.mockResolvedValue({
+        kind: 'applied',
+        unresolved: 0,
+        terminal: 'done',
+        entry: {
+          key: '1|1|1',
+          completion: { result: 'pass', targetSubstep: '1' },
+          stateBefore: before,
+          stateAfter: makeLoopState('2', { lifecycle: 'completed' }),
+          snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
+        },
+      });
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        asEmitter(mockEmitter),
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- one
+        // parameterised call over both overloads; each row's options match the
+        // overload its `releases` expectation belongs to.
+        options as any,
+      );
+
+      expect(result).toBe('done');
+      expect(mockSessionService.releaseRuns).toHaveBeenCalledTimes(releases ? 1 : 0);
+      expect(stoppedEmissions()).toHaveLength(0);
+    });
+
     it('falls back to the pre-drain capture when the drained run has since vanished', async () => {
       // The `?? currentState` arm. A run pruned between the drain's commit and
       // this read leaves no committed cursor to name, and the capture is then
@@ -3192,8 +3246,8 @@ describe('runExecutionLoop', () => {
   // above: the authority IS present, but it cannot reproduce the persisted
   // frontier. `projectDelegateFrontier` throws for that, and the throw must be
   // caught here for the same reason — an escaping error unwinds past the
-  // emitter and the release, leaving the refused run on the
-  // session stack as the active runbook for every later bare command.
+  // emitter and the release, leaving the refused run on the session stack as the
+  // active runbook for every later bare command.
   //
   // Two distinct entry paths reach the throw and both are pinned below:
   //   1. the derived bearer does not hash to the persisted verifier;

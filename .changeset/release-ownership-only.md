@@ -43,12 +43,16 @@ ever branching on it — a CLI decision that had taken up residence in the seam.
   the refused run from session targeting without revoking its claims. Each of
   those refusals leaves the run RUNNING, and RD-829 documents its own
   remediation as "retry" — destroying the authority a retry needs was never
-  intended, and followed only from the default arm omitting retention.
+  intended, and followed only from the default arm omitting retention. Under
+  `caller` ownership these arms release nothing at all, exactly as they did
+  before: what they report there is #833's question, not this one's.
 - A drain that reaches terminal now releases whenever the loop owns the release.
-  It used to be gated on one arm of the mode union, so on every other arm
+  It used to be gated on the `release-runbook` arm alone, so on `stack-pop`
   nothing released at all: the drain writes no session state of its own, and no
   healing path removes a loadable terminal run, so a finished run kept resolving
-  as the session default.
+  as the session default. The third arm was never part of that defect —
+  `defer-to-caller` released nothing because the inline parent-advance seam
+  released instead, which is the one arm of the old union that was right.
 
 ## Shape
 

@@ -9,8 +9,16 @@ import type { SessionData } from './state.js';
  * logic, and this module owns it. Sixteen call sites each performing that
  * conversion for themselves is what let one of them convert differently.
  *
- * - `addressed` — the caller acted on this run. It reached terminal, or was
- *   commanded terminal, and the release is the caller finishing with it.
+ * - `addressed` — the caller acted on this run, and this release is it finishing
+ *   with the run it acted on. Usually because the run reached terminal or was
+ *   commanded terminal. NOT only then: a caller that REFUSED to continue a run
+ *   is also finishing with it, and that run is still RUNNING — the execution
+ *   loop's refusal arms release `addressed` for exactly that reason. Retention
+ *   is what those refusals need, not an accident of them: each documents its
+ *   remediation as "retry", and revoking would destroy the authority the retry
+ *   presents (#789). So `addressed` asserts WHICH run the caller acted on, never
+ *   that the run is over — read it as terminality and a refusal looks like
+ *   `collateral`, which revokes.
  * - `collateral` — the run was swept up so that an addressed run could close.
  *   An inline descendant forced terminal under its root, for instance.
  * - `discarded` — the run is being destroyed. `prune` and the cleanup paths.

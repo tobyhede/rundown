@@ -323,6 +323,51 @@ function loopOwnsRelease(owner: ExecutionReleaseOwner): boolean {
 }
 
 /**
+ * A corrective stop's position, resolved only if one is actually needed.
+ *
+ * A thunk rather than a value because the position costs a database read and is
+ * consumed on ONE path — a refused release. Passing it eagerly spent that read
+ * on every terminal drain and, worse, put `RunbookStateManager.load`'s throw
+ * AHEAD of the release on a success path: an escape there unwinds past the
+ * release and strands a finished run on the session stack, which is the exact
+ * failure the release exists to prevent.
+ */
+type CorrectionPositionResolver = () => Promise<ReturnType<typeof buildStepPosition>>;
+
+/**
+ * Build a corrective stop's position from the cursor the drain COMMITTED.
+ *
+ * The drain's terminal and refusal arms carry no state, so a drain that applied
+ * several completions before finishing leaves the loop's pre-drain capture
+ * behind the committed cursor — and a stop built from that capture names a step
+ * the run had already left, inside the same envelope whose message names the
+ * real one. Both arms re-read for that reason and share this to do it, so a
+ * change to how the coordinate is derived cannot land in one arm and not the
+ * other.
+ *
+ * @param manager - State manager used to re-read the committed cursor.
+ * @param runbookId - Run whose committed cursor is being named.
+ * @param fallback - The loop's pre-drain capture, used only when the run has
+ *   since vanished, where a stale position beats no position at all.
+ * @param totalSteps - Numbered-step count the position is rendered against.
+ * @returns The position naming the cursor the drain committed.
+ * @throws {InvalidRunbookStateError} If the persisted row is structurally
+ *   invalid, and {@link LegacySnapshotError} for a deprecated snapshot — both
+ *   raised by `RunbookStateManager.load`. Per the no-migration rule each is
+ *   corrupt state whose recovery is explicit user action, not a refusal this
+ *   loop absorbs; both callers reach this only once already on a refusal path.
+ */
+async function committedPosition(
+  manager: RunbookStateManager,
+  runbookId: RunId,
+  fallback: RunbookState,
+  totalSteps: number,
+): Promise<ReturnType<typeof buildStepPosition>> {
+  const committed = (await manager.load(runbookId)) ?? fallback;
+  return buildStepPosition(committed.step, totalSteps, committed.substep, committed.forStack);
+}
+
+/**
  * Perform the loop's `addressed` Run Release, reporting a refusal as events.
  *
  * The single release site behind both named helpers below, and the reason they
@@ -345,15 +390,16 @@ function loopOwnsRelease(owner: ExecutionReleaseOwner): boolean {
  * @param sessionService - Session service performing the release.
  * @param runbookId - Run whose session targeting is being released.
  * @param emitter - Execution emitter receiving the refusal events.
- * @param correctionPosition - Position for the corrective stop; supply it only
- *   when a completion was already announced for this run.
+ * @param correctionPosition - Resolver for the corrective stop's position;
+ *   supply it only when a completion was already announced for this run. It is
+ *   called only on the refusal path, which is the only path that consumes one.
  * @returns `'committed'` once the release commits, `'refused'` otherwise.
  */
 async function applyAddressedRunRelease(
   sessionService: SessionService,
   runbookId: RunId,
   emitter: ExecutionEventEmitter,
-  correctionPosition?: ReturnType<typeof buildStepPosition>,
+  correctionPosition?: CorrectionPositionResolver,
 ): Promise<'committed' | 'refused'> {
   // Named, not positional. This loop is releasing the run it drove, and
   // `runbookId` is that run — so asking the session to remove "whatever is on
@@ -372,7 +418,7 @@ async function applyAddressedRunRelease(
   if (correctionPosition) {
     emitter.emit({
       type: 'RUNBOOK_STOPPED',
-      payload: { position: correctionPosition, message: released.message },
+      payload: { position: await correctionPosition(), message: released.message },
     });
   }
   // Stryker disable next-line StringLiteral: equivalent — the sole consumer
@@ -397,8 +443,9 @@ async function applyAddressedRunRelease(
  * @param owner - Who owns this loop's Run Release.
  * @param emitter - Execution emitter receiving the refusal events.
  * @param terminal - Outcome to report when the release commits.
- * @param correctionPosition - Position for the corrective stop; supply it only
- *   when a completion was already announced for this run.
+ * @param correctionPosition - Resolver for the corrective stop's position;
+ *   supply it only when a completion was already announced for this run. Passed
+ *   through unresolved, so a caller-owned return below costs nothing.
  * @returns `terminal`, or `'stopped'` when the release was refused.
  */
 async function releaseTerminalRun(
@@ -407,7 +454,7 @@ async function releaseTerminalRun(
   owner: ExecutionReleaseOwner,
   emitter: ExecutionEventEmitter,
   terminal: 'done' | 'stopped',
-  correctionPosition?: ReturnType<typeof buildStepPosition>,
+  correctionPosition?: CorrectionPositionResolver,
 ): Promise<'done' | 'stopped'> {
   // The caller (inline parent-advance core seam) owns the single terminal
   // release. The loop releases nothing but still returns 'done'/'stopped', which
@@ -1463,15 +1510,9 @@ export async function runExecutionLoop(
       // nothing else on the drain path releases, and no healing path removes it
       // — so the run kept resolving as the session default after it completed.
       //
-      // Read the CURSOR THE DRAIN COMMITTED for that stop, not the capture this
-      // iteration started from — the same read, for the same reason, as the
-      // `failed` arm below: the drain's terminal arm carries no state, so a
-      // drain that applied several completions before reaching terminal leaves
-      // `currentState` behind the committed cursor, and the corrective stop then
-      // named a step the run had already left. Falls back to the capture only
-      // when the run has since vanished, where the capture is the best
-      // coordinate that exists.
-      const drainedState = (await manager.load(runbookId)) ?? currentState;
+      // `currentState` is the loop's mutable cursor, so the resolver below
+      // binds this iteration's value rather than closing over the variable.
+      const capture = currentState;
       return await releaseTerminalRun(
         sessionService,
         runbookId,
@@ -1479,13 +1520,12 @@ export async function runExecutionLoop(
         emitter,
         'done',
         // The drain already announced the completion through
-        // orchestrateTransition, so a refusal needs the corrective stop.
-        buildStepPosition(
-          drainedState.step,
-          totalSteps,
-          drainedState.substep,
-          drainedState.forStack,
-        ),
+        // orchestrateTransition, so a refusal needs the corrective stop — and
+        // ONLY a refusal does. Unresolved for that reason: a caller-owned
+        // release returns before this is called, and a committed one discards
+        // it, so resolving eagerly would spend a read on both and put
+        // `load`'s throw ahead of the very release this arm exists to perform.
+        () => committedPosition(manager, runbookId, capture, totalSteps),
       );
     }
     if (drainResult.status === 'stopped') {
@@ -1495,10 +1535,10 @@ export async function runExecutionLoop(
       // A REFUSAL, not a crash — the same treatment the three frontier arms
       // below already give their own diagnosed conditions, and for the reason
       // spelled out there: an escaping throw unwinds past both the emitter and
-      // the release, so the caller gets a bare `Error`
-      // carrying no code and the refused run stays on the session stack. Here it
-      // also arrived as RD-999 "Unknown error", telling the operator to retry a
-      // cursor mismatch that no retry can resolve (#802).
+      // the release, so the caller gets a bare `Error` carrying no code and the
+      // refused run stays on the session stack. Here it also arrived as RD-999
+      // "Unknown error", telling the operator to retry a cursor mismatch that no
+      // retry can resolve (#802).
       //
       // The code names the CONDITION, so this loop and the inline
       // parent-advance seam report the identical drain refusal identically.
@@ -1506,10 +1546,10 @@ export async function runExecutionLoop(
       // A caller-owned release means the loop releases NOTHING, so its caller
       // acts on the status it is given: the inline parent-advance seam releases
       // the run and recurses one level up on `'stopped'`. This refusal applied
-      // nothing and left the
-      // run RUNNING, so reporting `'stopped'` here made the seam release a live
-      // parent and report a terminal to that parent's own parent that never
-      // happened. Hand the refusal back instead — the callable turns it into
+      // nothing and left the run RUNNING, so reporting `'stopped'` here made the
+      // seam release a live parent and report a terminal to that parent's own
+      // parent that never happened. Hand the refusal back instead — the callable
+      // turns it into
       // the seam's `refused` arm, which releases nothing and walks nowhere.
       //
       // Nothing is emitted on this path either, for the same reason and by the
@@ -1524,23 +1564,13 @@ export async function runExecutionLoop(
         type: 'ERROR_OCCURRED',
         payload: { message: refusal.message, code: refusal.code },
       });
-      // Read the CURSOR THE DRAIN COMMITTED, not the capture this iteration
-      // started from. The drain's `failed` arm reports `applied: 0` and carries
-      // no state, so a pass that applied before it mismatched leaves
-      // `currentState` behind — and the corrective stop then named a step the
-      // run had already left while `message` named the real one. Falls back to
-      // the capture only when the run has since vanished, where the capture is
-      // the best coordinate that exists.
-      const refusedState = (await manager.load(runbookId)) ?? currentState;
+      // Resolved eagerly, unlike the `done` arm's: this IS the refusal path, so
+      // the position is consumed rather than conditionally needed, and the read
+      // already sits behind the ownership return above.
       emitter.emit({
         type: 'RUNBOOK_STOPPED',
         payload: {
-          position: buildStepPosition(
-            refusedState.step,
-            totalSteps,
-            refusedState.substep,
-            refusedState.forStack,
-          ),
+          position: await committedPosition(manager, runbookId, currentState, totalSteps),
           message: refusal.message,
         },
       });
