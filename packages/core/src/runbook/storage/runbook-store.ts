@@ -441,6 +441,23 @@ export interface CommitOwnedRunSetInput {
   readonly updateSession?: (session: SessionData) => SyncWork<void>;
 }
 
+/** Optional budget, guard, and session projection for one optimistic state cycle. */
+export interface MutateStateOptions {
+  /** Maximum optimistic retry cycles before reporting `concurrent_modification`. */
+  readonly attempts?: number;
+  /** Open-child guard checked before the authoritative state write. */
+  readonly guard?: ParentAdvanceGuard;
+  /**
+   * Pure projection over the transaction's session snapshot, applied only on the
+   * attempt that commits and only after the state write has landed.
+   *
+   * Receives the state being committed so the projection can be decided from it
+   * — the CAS re-derives `next` per attempt, so a projection closed over one
+   * attempt's state would be reading a version the transaction did not write.
+   */
+  readonly updateSession?: (next: RunbookState, session: SessionData) => SyncWork<void>;
+}
+
 /** Optional projections applied by a single owned-state commit. */
 export interface CommitOwnedStateOptions {
   /** Open-child guard checked before the authoritative state write. */
@@ -1321,11 +1338,14 @@ export class RunbookStore {
    * @param runId - Run to mutate.
    * @param build - Derives the next state from the current one; `null` means no
    *   change. May be invoked once per attempt — see the side-effect constraint above.
-   * @param options - Optional attempt budget (default 8) and parent-advance guard.
+   * @param options - Optional attempt budget (default 8), parent-advance guard,
+   *   and session projection.
    * @param options.attempts - Maximum optimistic retry cycles before reporting
    *   `concurrent_modification`.
    * @param options.guard - Parent-advance guard: when present, the write refuses
    *   inside its transaction if the run still has a live delegated child.
+   * @param options.updateSession - Session projection committed with the state
+   *   write, in the same transaction. See {@link MutateStateOptions.updateSession}.
    * @returns The committed state, the unchanged state, or a typed refusal.
    * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a
    *   live delegated child blocks the advance.
@@ -1333,7 +1353,7 @@ export class RunbookStore {
   async mutateState(
     runId: RunId,
     build: (current: RunbookState) => RunbookState | null | Promise<RunbookState | null>,
-    options: { readonly attempts?: number; readonly guard?: ParentAdvanceGuard } = {},
+    options: MutateStateOptions = {},
   ): Promise<StateMutationResult> {
     const attempts = options.attempts ?? DEFAULT_MUTATE_ATTEMPTS;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -1349,9 +1369,27 @@ export class RunbookStore {
       // (driver ROLLBACK + rethrow); it must NOT be caught here as a retry — it
       // propagates to runGuardedParentAdvance as the open_delegated_children
       // refusal.
-      const outcome = await this.transaction((txn) =>
-        this.writeStateAtVersion(txn.tx, runId, snapshot.stateVersion, next, options.guard),
-      );
+      const outcome = await this.transaction((txn) => {
+        const written = this.writeStateAtVersion(
+          txn.tx,
+          runId,
+          snapshot.stateVersion,
+          next,
+          options.guard,
+        );
+        // Only the attempt that commits projects, and only after the write —
+        // the same order `commitOwnedState` keeps, and for the same reason: the
+        // resolution-affecting claim triggers must see the run's authoritative
+        // state already updated. A losing attempt writes nothing, so it must
+        // project nothing either. A throwing projection rolls the state write
+        // back with it, which is what makes the two writes one outcome.
+        if (written === 'committed' && options.updateSession !== undefined) {
+          const session = this.readSession(txn.tx);
+          options.updateSession(next, session);
+          this.applySession(txn, session);
+        }
+        return written;
+      });
       if (outcome === 'committed') {
         return { kind: 'committed', value: next };
       }

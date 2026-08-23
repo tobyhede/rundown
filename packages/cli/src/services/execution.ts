@@ -56,6 +56,7 @@ import {
   deriveTerminalDrainObservationEvent,
   createEffectfulActorMutationRunner,
   type EffectfulActorMutationRunner,
+  type ReleaseRole,
 } from '@rundown-org/core';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import {
@@ -323,27 +324,17 @@ function loopOwnsRelease(owner: ExecutionReleaseOwner): boolean {
 }
 
 /**
- * A corrective stop's position, resolved only if one is actually needed.
- *
- * A thunk rather than a value because the position costs a database read and is
- * consumed on ONE path — a refused release. Passing it eagerly spent that read
- * on every terminal drain and, worse, put `RunbookStateManager.load`'s throw
- * AHEAD of the release on a success path: an escape there unwinds past the
- * release and strands a finished run on the session stack, which is the exact
- * failure the release exists to prevent.
- */
-type CorrectionPositionResolver = () => Promise<ReturnType<typeof buildStepPosition>>;
-
-/**
  * Build a corrective stop's position from the cursor the drain COMMITTED.
  *
- * The drain's terminal and refusal arms carry no state, so a drain that applied
- * several completions before finishing leaves the loop's pre-drain capture
- * behind the committed cursor — and a stop built from that capture names a step
- * the run had already left, inside the same envelope whose message names the
- * real one. Both arms re-read for that reason and share this to do it, so a
- * change to how the coordinate is derived cannot land in one arm and not the
- * other.
+ * The drain's refusal arm carries no state, so a drain that applied several
+ * completions before refusing leaves the loop's pre-drain capture behind the
+ * committed cursor — and a stop built from that capture names a step the run had
+ * already left, inside the same envelope whose message names the real one.
+ *
+ * One caller now, where there were two: the terminal arms used to build a
+ * corrective stop for a refused release, and they no longer release at all —
+ * their release commits inside the apply's own transaction (#794), so a refusal
+ * takes the terminal state down with it and leaves nothing to correct.
  *
  * @param manager - State manager used to re-read the committed cursor.
  * @param runbookId - Run whose committed cursor is being named.
@@ -355,7 +346,7 @@ type CorrectionPositionResolver = () => Promise<ReturnType<typeof buildStepPosit
  *   invalid, and {@link LegacySnapshotError} for a deprecated snapshot — both
  *   raised by `RunbookStateManager.load`. Per the no-migration rule each is
  *   corrupt state whose recovery is explicit user action, not a refusal this
- *   loop absorbs; both callers reach this only once already on a refusal path.
+ *   loop absorbs; its one caller reaches this only once, on a refusal path.
  */
 async function committedPosition(
   manager: RunbookStateManager,
@@ -381,25 +372,24 @@ async function committedPosition(
  * delegation, so the holder is told `claim-rotated` about a rotation that never
  * happened (#789).
  *
- * A refused release is emitted as an `ERROR_OCCURRED`, and — when the caller
- * supplies a position — as a corrective `RUNBOOK_STOPPED`. Supplying a position
- * IS the caller's statement that it already announced a completion this refusal
- * contradicts; the completion cannot be unsent, so the stream would otherwise
- * end on a clean finish for a run still held on the session stack.
+ * A refused release is emitted as an `ERROR_OCCURRED` and nothing else. It once
+ * also took a resolver for a corrective `RUNBOOK_STOPPED`, because the drain's
+ * terminal arms announced a completion before releasing and a refusal had to
+ * contradict it. Those arms no longer release at all — their release commits
+ * inside the apply's own transaction (#794), where a refusal rolls the terminal
+ * state back with it and there is no announced completion left to correct. The
+ * remaining callers are the entry-time terminal checks, and the completed one
+ * emits its own contradiction from a position it already holds.
  *
  * @param sessionService - Session service performing the release.
  * @param runbookId - Run whose session targeting is being released.
  * @param emitter - Execution emitter receiving the refusal events.
- * @param correctionPosition - Resolver for the corrective stop's position;
- *   supply it only when a completion was already announced for this run. It is
- *   called only on the refusal path, which is the only path that consumes one.
  * @returns `'committed'` once the release commits, `'refused'` otherwise.
  */
 async function applyAddressedRunRelease(
   sessionService: SessionService,
   runbookId: RunId,
   emitter: ExecutionEventEmitter,
-  correctionPosition?: CorrectionPositionResolver,
 ): Promise<'committed' | 'refused'> {
   // Named, not positional. This loop is releasing the run it drove, and
   // `runbookId` is that run — so asking the session to remove "whatever is on
@@ -415,12 +405,6 @@ async function applyAddressedRunRelease(
     type: 'ERROR_OCCURRED',
     payload: { message: released.message, code: sessionMutationRefusalCode(released) },
   });
-  if (correctionPosition) {
-    emitter.emit({
-      type: 'RUNBOOK_STOPPED',
-      payload: { position: await correctionPosition(), message: released.message },
-    });
-  }
   // Stryker disable next-line StringLiteral: equivalent — the sole consumer
   // tests `=== 'committed'`, so every other string reports a refusal exactly as
   // this one does, and `releaseRefusedContinuation` discards the value
@@ -443,9 +427,6 @@ async function applyAddressedRunRelease(
  * @param owner - Who owns this loop's Run Release.
  * @param emitter - Execution emitter receiving the refusal events.
  * @param terminal - Outcome to report when the release commits.
- * @param correctionPosition - Resolver for the corrective stop's position;
- *   supply it only when a completion was already announced for this run. Passed
- *   through unresolved, so a caller-owned return below costs nothing.
  * @returns `terminal`, or `'stopped'` when the release was refused.
  */
 async function releaseTerminalRun(
@@ -454,18 +435,12 @@ async function releaseTerminalRun(
   owner: ExecutionReleaseOwner,
   emitter: ExecutionEventEmitter,
   terminal: 'done' | 'stopped',
-  correctionPosition?: CorrectionPositionResolver,
 ): Promise<'done' | 'stopped'> {
   // The caller (inline parent-advance core seam) owns the single terminal
   // release. The loop releases nothing but still returns 'done'/'stopped', which
   // the caller maps to one seam release. See RD-598 verification.
   if (!loopOwnsRelease(owner)) return terminal;
-  const released = await applyAddressedRunRelease(
-    sessionService,
-    runbookId,
-    emitter,
-    correctionPosition,
-  );
+  const released = await applyAddressedRunRelease(sessionService, runbookId, emitter);
   return released === 'committed' ? terminal : 'stopped';
 }
 
@@ -1109,6 +1084,16 @@ export interface DrainResolvedCompletionsArgs {
   frameOverride?: Frame;
   /** Verified runtime-only issuer for completion transitions entering delegation. */
   issueDelegationCredential?: DelegationCredentialIssuer;
+  /**
+   * Run Release the drain folds into whichever apply reaches terminal, or absent
+   * when another seam owns this run's release.
+   *
+   * Passed through to the core apply unread. Whether a given apply is terminal
+   * is decided inside that apply's own transaction, so arming it here is a
+   * statement about OWNERSHIP and nothing else — every non-terminal iteration
+   * releases nothing regardless.
+   */
+  terminalRelease?: { readonly role: ReleaseRole };
 }
 
 /** Result of draining resolved substep completions. */
@@ -1161,6 +1146,8 @@ export type DrainResolvedCompletionsResult =
  * @param args.command - Optional command string for event context
  * @param args.frameOverride - Optional frame override for frame-scoped lookups (e.g., prompted-for with explicit --index)
  * @param args.issueDelegationCredential - Verified runtime issuer for transitions entering delegation
+ * @param args.terminalRelease - Run Release folded into whichever apply reaches
+ *   terminal; omit it when another seam owns this run's release
  * @returns Drain result indicating continue/done/stopped with counts of applied and unresolved completions
  * @throws {Error} If the core completion service, session update, or transition event handling fails
  */
@@ -1175,6 +1162,7 @@ export async function drainResolvedCompletions({
   command,
   frameOverride,
   issueDelegationCredential,
+  terminalRelease,
 }: DrainResolvedCompletionsArgs): Promise<DrainResolvedCompletionsResult> {
   const completionService = new RunbookCompletionService(manager, actorService);
   // `currentState` seeds only the caller-visible return value. It is deliberately
@@ -1191,6 +1179,7 @@ export async function drainResolvedCompletions({
       steps,
       issueDelegationCredential,
       ...(frameOverride ? { frameOverride } : {}),
+      ...(terminalRelease ? { terminalRelease } : {}),
     });
 
     if (applied.kind === 'mismatch') {
@@ -1250,6 +1239,14 @@ export async function drainResolvedCompletions({
       postState: entry.stateAfter,
     });
     appliedCount += 1;
+    // Two independent derivations of one committed fact, and the loop's terminal
+    // release now rides on the OTHER one: core arms it off `state.lifecycle`,
+    // while this reads the snapshot's top-level status/value. They cannot
+    // disagree in the direction that would matter here — entering `COMPLETE` or
+    // `STOPPED` is what assigns the lifecycle, so a terminal snapshot implies a
+    // terminal lifecycle and a released run. The reverse gap is the real one and
+    // is documented on `deriveTerminalDrainObservationEvent`; it lands on
+    // `applied.terminal` below, which reports the same status.
     if (observed.status === 'done' || observed.status === 'stopped') {
       return { status: observed.status, unresolved: applied.unresolved, applied: appliedCount };
     }
@@ -1503,33 +1500,28 @@ export async function runExecutionLoop(
       steps,
       currentState,
       issueDelegationCredential: options.delegationRuntime?.issueDelegationCredential,
+      // Same ownership question, same single answer as the fence below — and
+      // the same spelling: presence means this loop's release, absence means
+      // the caller's. `addressed` because the loop acted on the run it names.
+      ...(loopOwnsRelease(releaseOwner) ? { terminalRelease: { role: 'addressed' as const } } : {}),
     });
-    if (drainResult.status === 'done') {
-      // Unconditional at loop ownership. Gating this on one arm of the old mode
-      // union left a finished run on the session stack for every other arm —
-      // nothing else on the drain path releases, and no healing path removes it
-      // — so the run kept resolving as the session default after it completed.
+    if (drainResult.status === 'done' || drainResult.status === 'stopped') {
+      // Nothing to release here, on either ownership. The apply that carried
+      // this run to terminal committed its Run Release in the SAME transaction
+      // as the terminal state (#794), armed above; a caller-owned drain armed
+      // nothing and its caller releases once. Either way the loop only reports.
       //
-      // `currentState` is the loop's mutable cursor, so the resolver below
-      // binds this iteration's value rather than closing over the variable.
-      const capture = currentState;
-      return await releaseTerminalRun(
-        sessionService,
-        runbookId,
-        releaseOwner,
-        emitter,
-        'done',
-        // The drain already announced the completion through
-        // orchestrateTransition, so a refusal needs the corrective stop — and
-        // ONLY a refusal does. Unresolved for that reason: a caller-owned
-        // release returns before this is called, and a committed one discards
-        // it, so resolving eagerly would spend a read on both and put
-        // `load`'s throw ahead of the very release this arm exists to perform.
-        () => committedPosition(manager, runbookId, capture, totalSteps),
-      );
-    }
-    if (drainResult.status === 'stopped') {
-      return await releaseTerminalRun(sessionService, runbookId, releaseOwner, emitter, 'stopped');
+      // The gap this closes was a real one, not a theoretical ordering nicety:
+      // the terminal state committed, the loop returned through several frames,
+      // and only then did a second transaction take the run off the session.
+      // A process dying in between left a finished run the session still
+      // resolved to, and no healing path removes a loadable terminal run.
+      //
+      // A refused release can no longer downgrade a `'done'` either, because
+      // there is no longer a second operation to refuse: a rolled-back
+      // projection rolls back the terminal state with it, so this arm is not
+      // reached at all. That is the whole point of one transaction.
+      return drainResult.status;
     }
     if (drainResult.status === 'failed') {
       // A REFUSAL, not a crash — the same treatment the three frontier arms

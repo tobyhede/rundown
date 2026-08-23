@@ -26,6 +26,7 @@ import {
   type FrameKey,
 } from './targeting.js';
 import { deriveStoppedReason, extractInternalFailureMessage } from './transition-kernel.js';
+import { projectRunReleases, type ReleaseRole } from './session-release.js';
 import type {
   DelegationOutcome,
   ResolvedCompletion,
@@ -311,6 +312,22 @@ export interface ApplyNextResolvedCompletionArgs {
   readonly frameOverride?: Frame;
   /** Verified runtime-only issuer for a completion transition that enters delegation. */
   readonly issueDelegationCredential?: DelegationCredentialIssuer;
+  /**
+   * Run Release folded into this apply's own transaction, fired only when the
+   * PREPARED state reaches terminal.
+   *
+   * Present when the caller owns the release for this run, absent when another
+   * seam does — the inline parent-advance seam owns the single release for a
+   * parent it drives, and a release here as well would take it behind that
+   * owner. An armed release is inert on every non-terminal apply, so a drain
+   * arms it once and lets the transaction decide.
+   *
+   * The role, and NOT the trigger: whether this apply reaches terminal is
+   * decided by the transition prepared inside the transaction, long after this
+   * argument is built. Folding the trigger in here would let a caller assert a
+   * terminality it cannot yet know.
+   */
+  readonly terminalRelease?: { readonly role: ReleaseRole };
 }
 
 /**
@@ -1443,6 +1460,7 @@ export class RunbookCompletionService {
   async applyNextResolvedCompletion(
     args: ApplyNextResolvedCompletionArgs,
   ): Promise<ApplyNextResolvedCompletionResult> {
+    const terminalRelease = args.terminalRelease;
     const { value } = await this.manager.mutateStateReturning<ApplyNextResolvedCompletionResult>(
       args.runbookId,
       async (current) => {
@@ -1529,6 +1547,26 @@ export class RunbookCompletionService {
           }
         }
       },
+      terminalRelease === undefined
+        ? {}
+        : {
+            updateSession: (next, session) => {
+              // Read off the state this transaction is committing, never off
+              // anything the caller supplied: the compare-and-swap re-derives
+              // `next` per attempt, so terminality is only knowable here.
+              if (terminalLifecycleStatus(next) === undefined) return;
+              // This transaction owns exactly one run, so that run is the only
+              // one it may release. Asserted rather than assumed — the aggregate
+              // seam refuses an out-of-set release for the same reason, and what
+              // a mistake here produces is an unfenced session write.
+              if (next.id !== args.runbookId) {
+                throw new Error(
+                  `Terminal release for ${next.id} is outside the transaction for ${args.runbookId}.`,
+                );
+              }
+              projectRunReleases(session, [{ runId: args.runbookId, role: terminalRelease.role }]);
+            },
+          },
     );
 
     // `value` is null exactly when the callback never ran, which happens only for

@@ -1081,6 +1081,135 @@ describe('mutateState (transactional replacement for the per-run lock)', () => {
     expect((await store.loadRun(state.id))?.stepName).not.toBe('never');
   });
 
+  describe('updateSession, committed with the state write (#794)', () => {
+    it('commits the state and the session projection as one transaction', async () => {
+      const state = await newState();
+      await store.createRun(state);
+      await store.mutateSession((ctx) => {
+        ctx.session.defaultStack = [state.id];
+      });
+
+      const result = await store.mutateState(
+        state.id,
+        (current) => ({ ...current, stepName: 'terminal' }),
+        {
+          updateSession: (next, session) => {
+            // The projection reads the state the transaction is committing, so
+            // it can decide from the version that actually lands rather than
+            // from whatever a closure captured on an earlier attempt.
+            session.defaultStack = session.defaultStack.filter((id) => id !== next.id);
+          },
+        },
+      );
+
+      expect(result.kind).toBe('committed');
+      expect((await store.loadRun(state.id))?.stepName).toBe('terminal');
+      expect((await store.loadSession()).defaultStack).toEqual([]);
+    });
+
+    it('rolls the state write back when the projection throws', async () => {
+      // The property the whole fold exists for: one outcome, not two. A
+      // projection that cannot be applied must not leave the state write
+      // standing, or the caller is back to the two-transaction gap with the
+      // failure moved rather than removed.
+      const state = await newState();
+      await store.createRun(state);
+      await store.mutateSession((ctx) => {
+        ctx.session.defaultStack = [state.id];
+      });
+      const before = await counters(state.id);
+
+      await expect(
+        store.mutateState(state.id, (current) => ({ ...current, stepName: 'terminal' }), {
+          updateSession: () => {
+            throw new Error('projection refused');
+          },
+        }),
+      ).rejects.toThrow('projection refused');
+
+      expect((await store.loadRun(state.id))?.stepName).not.toBe('terminal');
+      expect((await counters(state.id)).stateVersion).toBe(before.stateVersion);
+      expect((await store.loadSession()).defaultStack).toEqual([state.id]);
+    });
+
+    it('projects once, on the attempt that commits', async () => {
+      // The build callback re-runs per attempt; the projection must not. It
+      // lives inside the write transaction precisely so a losing attempt — which
+      // writes no state — also writes no session.
+      const state = await newState();
+      await store.createRun(state);
+      let builds = 0;
+      let projections = 0;
+
+      const result = await store.mutateState(
+        state.id,
+        async (current) => {
+          builds += 1;
+          if (builds === 1) {
+            await store.mutateState(state.id, (other) => ({ ...other, description: 'interloper' }));
+          }
+          return { ...current, stepName: `build-${String(builds)}` };
+        },
+        {
+          updateSession: () => {
+            projections += 1;
+          },
+        },
+      );
+
+      expect(result.kind).toBe('committed');
+      expect(builds).toBe(2);
+      expect(projections).toBe(1);
+    });
+
+    it('projects nothing when the builder declines', async () => {
+      // No write, no transaction, no projection. `unchanged` is not a commit,
+      // and a session write on it would be an unfenced one.
+      const state = await newState();
+      await store.createRun(state);
+      let projections = 0;
+
+      const result = await store.mutateState(state.id, () => null, {
+        updateSession: () => {
+          projections += 1;
+        },
+      });
+
+      expect(result.kind).toBe('unchanged');
+      expect(projections).toBe(0);
+    });
+
+    it('projects nothing when an execution owns the run', async () => {
+      // The refusal is decided by the state write itself (`exec_token IS NULL`),
+      // inside the same transaction, so a refused write cannot leave a session
+      // projection behind it.
+      const state = await newState();
+      await store.createRun(state);
+      await store.mutateSession((ctx) => {
+        ctx.session.defaultStack = [state.id];
+      });
+      await store.transaction((txn) => {
+        takeOwnership(txn.tx, state.id);
+      });
+      let projections = 0;
+
+      const result = await store.mutateState(
+        state.id,
+        (current) => ({ ...current, stepName: 'blocked' }),
+        {
+          updateSession: (next, session) => {
+            projections += 1;
+            session.defaultStack = session.defaultStack.filter((id) => id !== next.id);
+          },
+        },
+      );
+
+      expect(result.kind).toBe('execution_in_progress');
+      expect(projections).toBe(0);
+      expect((await store.loadSession()).defaultStack).toEqual([state.id]);
+    });
+  });
+
   it('lets more concurrent writers than the attempt budget all commit', async () => {
     const state = await newState();
     await store.createRun(state);

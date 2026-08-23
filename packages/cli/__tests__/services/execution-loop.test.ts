@@ -1606,36 +1606,36 @@ describe('runExecutionLoop', () => {
     });
 
     it.each([
-      { label: 'commits', refuse: false, expected: 'done', stops: 0 },
-      { label: 'is refused', refuse: true, expected: 'stopped', stops: 1 },
+      { terminal: 'done' as const, result: 'pass' as const, lifecycle: 'completed' as const },
+      { terminal: 'stopped' as const, result: 'fail' as const, lifecycle: 'stopped' as const },
     ])(
-      'drives the drain terminal through the release when it $label',
-      async ({ refuse, expected, stops }) => {
-        // The drain reaches its own terminal release site, distinct from the
-        // command path. It used to be gated on one arm of the old mode union,
-        // so a loop-owned drain terminal released nothing at all.
+      'arms the drain apply to release $terminal inside its own transaction',
+      async ({ terminal, result: completionResult, lifecycle }) => {
+        // #794. The drain's terminal release is committed by the transaction
+        // that commits the terminal state, so the loop arms it and takes no
+        // second release of its own. It used to commit terminal state in one
+        // transaction and release in another, several stack frames later — a
+        // process dying between them left a finished run the session still
+        // targeted, and no healing path removes a loadable terminal run.
+        //
+        // Idempotence is a safety property, not permission to issue the
+        // operation twice: a second release here would be a session write
+        // outside the fence that already owns this run.
         mockManager.load.mockResolvedValue(makeLoopState());
         // Terminal rides on the applied arm: a run cannot reach terminal without
         // an apply that carried it there, so the entry is part of the shape.
         mockCompletionService.applyNextResolvedCompletion.mockResolvedValue({
           kind: 'applied',
           unresolved: 0,
-          terminal: 'done',
+          terminal,
           entry: {
             key: '1|1|1',
-            completion: { result: 'pass', targetSubstep: '1' },
+            completion: { result: completionResult, targetSubstep: '1' },
             stateBefore: makeLoopState(),
-            stateAfter: makeLoopState('1', { lifecycle: 'completed' }),
+            stateAfter: makeLoopState('1', { lifecycle }),
             snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
           },
         });
-        if (refuse) {
-          mockSessionService.releaseRuns.mockResolvedValue({
-            kind: 'execution_in_progress' as const,
-            runId: runbookId,
-            message: `Run ${runbookId} has an execution in progress.`,
-          });
-        }
 
         const result = await runExecutionLoop(
           asManager(mockManager),
@@ -1645,29 +1645,37 @@ describe('runExecutionLoop', () => {
           asEmitter(mockEmitter),
         );
 
-        expect(result).toBe(expected);
-        expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-          { runId: runbookId, role: 'addressed' },
-        ]);
-        expect(stoppedEmissions()).toHaveLength(stops);
+        expect(result).toBe(terminal);
+        // Presence-means-release, so arming is asserted over EVERY apply the
+        // drain made rather than over one of them: a single armed call would
+        // satisfy a `toHaveBeenCalledWith` that any unarmed one contradicts.
+        expect(mockCompletionService.applyNextResolvedCompletion).toHaveBeenCalled();
+        for (const [applyInput] of mockCompletionService.applyNextResolvedCompletion.mock.calls) {
+          expect(applyInput).toMatchObject({ terminalRelease: { role: 'addressed' } });
+        }
+        // `addressed` is spelled inside the apply now; the loop's own release
+        // site is not reached at all on this path.
+        expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+        expect(stoppedEmissions()).toHaveLength(0);
       },
     );
 
-    it('releases a drain that reached a stopped terminal', async () => {
-      // The drain's OTHER terminal arm. It is a separate site from the `done`
-      // one above and carries no corrective position — a stop needs no
-      // contradicting — so nothing about the `done` case reaches it. With no
-      // test driving it, the whole arm could be deleted and every test passed.
+    it('arms no drain release when the caller owns it', async () => {
+      // The counterpart to the fence's own deferral. The inline parent-advance
+      // seam owns the single release for a parent it drives, so an armed apply
+      // here would release behind that owner — the same double-release the
+      // fence avoids by omitting `terminalRelease`. Deferral is spelled by
+      // absence, so it is asserted as absence, over every apply.
       mockManager.load.mockResolvedValue(makeLoopState());
       mockCompletionService.applyNextResolvedCompletion.mockResolvedValue({
         kind: 'applied',
         unresolved: 0,
-        terminal: 'stopped',
+        terminal: 'done',
         entry: {
           key: '1|1|1',
-          completion: { result: 'fail', targetSubstep: '1' },
+          completion: { result: 'pass', targetSubstep: '1' },
           stateBefore: makeLoopState(),
-          stateAfter: makeLoopState('1', { lifecycle: 'stopped' }),
+          stateAfter: makeLoopState('1', { lifecycle: 'completed' }),
           snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
         },
       });
@@ -1678,136 +1686,41 @@ describe('runExecutionLoop', () => {
         asSteps(steps),
         '/tmp',
         asEmitter(mockEmitter),
-      );
-
-      expect(result).toBe('stopped');
-      expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-        { runId: runbookId, role: 'addressed' },
-      ]);
-    });
-
-    it('names the committed cursor in the drain-done corrective stop, not the pre-drain capture', async () => {
-      // The drain's terminal arm carries no state, so the position for this
-      // stop has to be re-read. Built from the loop's pre-drain capture it named
-      // a step the applies had already left, while the refusal message named the
-      // real one — one envelope contradicting itself. The `failed` arm re-reads
-      // for exactly this reason; so must this one.
-      const before = makeLoopState('1', { lifecycle: 'running' });
-      const afterApply = makeLoopState('2', { lifecycle: 'completed' });
-      mockManager.load.mockResolvedValueOnce(before).mockResolvedValue(afterApply);
-      mockCompletionService.applyNextResolvedCompletion.mockResolvedValue({
-        kind: 'applied',
-        unresolved: 0,
-        terminal: 'done',
-        entry: {
-          key: '1|1|1',
-          completion: { result: 'pass', targetSubstep: '1' },
-          stateBefore: before,
-          stateAfter: afterApply,
-          snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
-        },
-      });
-      const refusal = {
-        kind: 'execution_in_progress' as const,
-        runId: runbookId,
-        message: `Run ${runbookId} has an execution in progress.`,
-      };
-      mockSessionService.releaseRuns.mockResolvedValue(refusal);
-
-      const result = await runExecutionLoop(
-        asManager(mockManager),
-        runbookId,
-        asSteps(steps),
-        '/tmp',
-        asEmitter(mockEmitter),
-      );
-
-      expect(result).toBe('stopped');
-      expect(mockEmitter.emit).toHaveBeenCalledWith({
-        type: 'RUNBOOK_STOPPED',
-        payload: { position: { current: '2', total: 2 }, message: refusal.message },
-      });
-    });
-
-    it.each([
-      {
-        label: 'the caller owns the release',
-        options: { releaseOwner: 'caller' as const },
-        releases: false,
-      },
-      { label: 'the release commits', options: undefined, releases: true },
-    ])('does not re-read the committed cursor when $label', async ({ options, releases }) => {
-      // The re-read exists ONLY to name the corrective stop, and that stop is
-      // emitted ONLY when the release is refused. On these two paths no
-      // position is ever consumed: caller ownership returns before the release
-      // is attempted, and a committed release emits nothing to correct.
-      //
-      // Driven by making the read FAIL rather than by counting calls, because
-      // the cost of an eager read is not only the discarded query.
-      // `RunbookStateManager.load` throws on invalid persisted state, so an
-      // eager read puts that throw ahead of the release — it would unwind past
-      // the release and strand a finished run on the session stack, which is
-      // the exact failure this arm exists to prevent. The sibling `failed` arm
-      // never had the defect: it re-reads after its own ownership return.
-      const before = makeLoopState('1', { lifecycle: 'running' });
-      mockManager.load
-        .mockResolvedValueOnce(before)
-        .mockRejectedValue(new Error('post-drain read must not happen here'));
-      mockCompletionService.applyNextResolvedCompletion.mockResolvedValue({
-        kind: 'applied',
-        unresolved: 0,
-        terminal: 'done',
-        entry: {
-          key: '1|1|1',
-          completion: { result: 'pass', targetSubstep: '1' },
-          stateBefore: before,
-          stateAfter: makeLoopState('2', { lifecycle: 'completed' }),
-          snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
-        },
-      });
-
-      const result = await runExecutionLoop(
-        asManager(mockManager),
-        runbookId,
-        asSteps(steps),
-        '/tmp',
-        asEmitter(mockEmitter),
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- one
-        // parameterised call over both overloads; each row's options match the
-        // overload its `releases` expectation belongs to.
-        options as any,
+        { releaseOwner: 'caller' },
       );
 
       expect(result).toBe('done');
-      expect(mockSessionService.releaseRuns).toHaveBeenCalledTimes(releases ? 1 : 0);
-      expect(stoppedEmissions()).toHaveLength(0);
+      expect(mockCompletionService.applyNextResolvedCompletion).toHaveBeenCalled();
+      for (const [applyInput] of mockCompletionService.applyNextResolvedCompletion.mock.calls) {
+        expect(applyInput).not.toHaveProperty('terminalRelease');
+      }
+      expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
     });
 
-    it('falls back to the pre-drain capture when the drained run has since vanished', async () => {
-      // The `?? currentState` arm. A run pruned between the drain's commit and
-      // this read leaves no committed cursor to name, and the capture is then
-      // the best coordinate that exists — a corrective stop with no position at
-      // all would be strictly worse than a stale one.
-      const before = makeLoopState('1', { lifecycle: 'running' });
-      mockManager.load.mockResolvedValueOnce(before).mockResolvedValue(null);
-      mockCompletionService.applyNextResolvedCompletion.mockResolvedValue({
-        kind: 'applied',
-        unresolved: 0,
-        terminal: 'done',
-        entry: {
-          key: '1|1|1',
-          completion: { result: 'pass', targetSubstep: '1' },
-          stateBefore: before,
-          stateAfter: makeLoopState('2', { lifecycle: 'completed' }),
-          snapshot: { status: 'active', context: { lastAction: { type: 'CONTINUE' } } },
-        },
+    it('falls back to the pre-drain capture when the refused run has since vanished', async () => {
+      // `committedPosition`'s `?? currentState` arm, on the one path that still
+      // consumes a position: the drain's cursor-mismatch refusal. A run pruned
+      // between the drain's commit and this read leaves no committed cursor to
+      // name, and the capture is then the best coordinate that exists — a
+      // corrective stop with no position at all would be strictly worse than a
+      // stale one.
+      const before = makeLoopState('1', {
+        lifecycle: 'running',
+        activeFrameKey: '1|',
+        activeEntry: 1,
       });
-      const refusal = {
-        kind: 'execution_in_progress' as const,
-        runId: runbookId,
-        message: `Run ${runbookId} has an execution in progress.`,
-      };
-      mockSessionService.releaseRuns.mockResolvedValue(refusal);
+      mockManager.load.mockResolvedValueOnce(before).mockResolvedValue(null);
+      mockCompletionService.applyNextResolvedCompletion.mockResolvedValueOnce({
+        kind: 'mismatch',
+        state: before,
+        mismatch: {
+          status: 'failed',
+          reason: 'target_mismatch',
+          message: 'Resolved completion target does not match current cursor 1.',
+          completion: { result: 'pass', targetSubstep: '3' },
+        },
+        unresolved: 1,
+      });
 
       const result = await runExecutionLoop(
         asManager(mockManager),
@@ -1820,7 +1733,10 @@ describe('runExecutionLoop', () => {
       expect(result).toBe('stopped');
       expect(mockEmitter.emit).toHaveBeenCalledWith({
         type: 'RUNBOOK_STOPPED',
-        payload: { position: { current: '1', total: 2 }, message: refusal.message },
+        payload: {
+          position: { current: '1', total: 2 },
+          message: 'Resolved completion target does not match current cursor 1.',
+        },
       });
     });
 

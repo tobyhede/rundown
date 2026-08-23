@@ -791,9 +791,22 @@ export class RunbookStateManager {
    * runbook does not exist the callback never runs and the result is
    * `{ state: null, value: null }`.
    *
+   * `updateSession` folds a session write into the very transaction that commits
+   * the state, so the two can never be separately observable: a process that dies
+   * has either both or neither. It is the seam a terminal Run Release uses — a
+   * run committed terminal in one transaction and taken off session targeting in
+   * a later one leaves a window where the session still resolves to a finished
+   * run (#794). Being inside the commit makes it synchronous by type
+   * ({@link SyncWork}), and it runs at most once: losing attempts write nothing
+   * and therefore project nothing.
+   *
    * @template R - Type of the value the callback reports.
    * @param id - The runbook state ID to mutate.
    * @param build - Callback deriving `{ next, value }` from the captured state.
+   * @param options - Optional session projection committed with the state write.
+   * @param options.updateSession - Applied to the transaction's session snapshot,
+   *   in place, after the state write lands. Receives the state being committed
+   *   so a projection can be decided from the version the transaction wrote.
    * @returns The committed state (or `null` when missing) and the reported value
    *   (or `null` when the runbook does not exist).
    * @throws {ConcurrentStateModificationError} When the optimistic retry budget
@@ -804,6 +817,9 @@ export class RunbookStateManager {
     build: (
       current: RunbookState,
     ) => { next: RunbookState | null; value: R } | Promise<{ next: RunbookState | null; value: R }>,
+    options: {
+      readonly updateSession?: (next: RunbookState, session: SessionData) => SyncWork<void>;
+    } = {},
   ): Promise<{ state: RunbookState | null; value: R | null }> {
     const runId = this.toRunId(id);
     if (runId === null) {
@@ -811,13 +827,21 @@ export class RunbookStateManager {
     }
     const store = await this.store();
     let captured: R | null = null;
-    const result = await store.mutateState(runId, async (current) => {
-      const { next, value } = await build(current);
-      // Captured on every attempt, so a retry against fresh state reports the
-      // value derived from the state that actually committed.
-      captured = value;
-      return next;
-    });
+    const result = await store.mutateState(
+      runId,
+      async (current) => {
+        const { next, value } = await build(current);
+        // Captured on every attempt, so a retry against fresh state reports the
+        // value derived from the state that actually committed.
+        captured = value;
+        return next;
+      },
+      // Forwarded whole rather than rebuilt field by field. The store already
+      // decides on `updateSession !== undefined`, so a conditional here would
+      // only restate that decision — and restating it is untestable by
+      // construction: both arms reach the same transaction.
+      options,
+    );
     if (result.kind === 'missing') {
       return { state: null, value: null };
     }
