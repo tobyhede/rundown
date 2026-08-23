@@ -945,8 +945,8 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
   });
 
   // The nested arm: this callable's OWN drain applied, so it runs the parent's
-  // execution loop — whose drain can hit the same refusal. In
-  // `defer-to-caller` the loop hands that back as data instead of reporting
+  // execution loop — whose drain can hit the same refusal. Under caller
+  // ownership the loop hands that back as data instead of reporting
   // `'stopped'`. Forwarding a `'stopped'` here would have the core seam release
   // a parent that is still running and recurse one level up reporting a
   // terminal that never happened.
@@ -1063,7 +1063,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     expect(outcome).toEqual({ status: 'active' });
   });
 
-  it('drives the loop with the defer-to-caller terminal mode (no self-release)', async () => {
+  it('drives the loop with caller-owned release (no self-release)', async () => {
     const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
     const manager = makeManager(new Map([[parentState.id, parentState]]));
     const output = makeOutput();
@@ -1088,7 +1088,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       expect.anything(),
       '/test',
       expect.anything(),
-      expect.objectContaining({ terminalReleaseMode: 'defer-to-caller' }),
+      expect.objectContaining({ releaseOwner: 'caller' }),
     );
   });
 

@@ -12,29 +12,31 @@ import {
 } from '../helpers/test-utils.js';
 
 /**
- * Characterisation of today's terminal claim disposition (#781).
+ * Terminal claim disposition at the resolution seam (#781, fixed by #793).
  *
- * These tests pin CURRENT behaviour, including the defect. They assert the
- * answer an orchestrator gets back at the *resolution* seam — the status a
- * presented run-control bearer resolves to — rather than the shape stored in
- * the session projection, because the projection is what #792 rewrites and the
- * resolution is what a caller actually observes.
+ * These assert the answer an orchestrator gets back at the *resolution* seam —
+ * the status a presented run-control bearer resolves to — rather than the shape
+ * stored in the session projection, because the projection is an implementation
+ * detail and the resolution is what a caller actually observes.
  *
- * Two of the three assertions are deliberately asymmetric:
+ * Both cases now agree, which is the whole point of the fix:
  *
- * - The already-terminal loop entry currently resolves `superseded` /
- *   `claim-rotated`. That is the #781 defect. The assertion flips to `terminal`
- *   in #793, and it must be green *before* that change so the flip is visible
- *   as a one-line diff rather than as a new test.
- * - The fenced completion currently resolves `terminal`, and must keep doing so
- *   at every point in the cluster. It is the control.
+ * - The already-terminal loop entry resolves `terminal`. It used to resolve
+ *   `superseded` / `claim-rotated`, because the loop derived its release from a
+ *   session-shaped mode whose default arm encoded "this run is unclaimed" — a
+ *   premise `rundown run` falsifies for every default-stack root by minting a
+ *   run-control claim for it. The loop now addresses the run it drove, so the
+ *   claim survives as terminal evidence.
+ * - The fenced completion resolves `terminal`, and did so throughout the
+ *   cluster. It is the control: the fence already retained, and #793 made the
+ *   loop-entry path agree with it rather than the other way round.
  *
- * The trigger for the defective path has to be an already-terminal *loop
- * entry*. A plain completion does not reach the revoking release at all: the
+ * The trigger for the previously defective path has to be an already-terminal
+ * *loop entry*. A plain completion does not reach that release at all: the
  * fenced command mutation releases with retention and the loop returns before
- * the entry-time terminal check, so a characterisation test built on a plain
- * completion passes under both the old and the new code — for the wrong reason.
- * A delegation whose child runbook is not discoverable is the cheapest trigger:
+ * the entry-time terminal check, so a test built on a plain completion would
+ * have passed under both the old and the new code — for the wrong reason. A
+ * delegation whose child runbook is not discoverable is the cheapest trigger:
  * it stops the run during initialization and re-enters the loop already
  * terminal.
  *
@@ -43,11 +45,9 @@ import {
  * this one, and the `rundown status --claim-id` assertion is a further
  * subprocess sharing nothing with the run but the database. A unit suite that
  * mocks the session boundary observes neither the retained claim nor the
- * tombstone surviving persistence; these do. A separate combined test was
- * removed as a strictly weaker restatement of the two below — it duplicated the
- * assertion #793 has to flip, in a place a reader would not think to look.
+ * tombstone surviving persistence; these do.
  */
-describe('Terminal claim disposition at the resolution seam (#781 characterisation)', () => {
+describe('Terminal claim disposition at the resolution seam (#781)', () => {
   let workspace: TestWorkspace;
 
   beforeEach(async () => {
@@ -86,6 +86,19 @@ describe('Terminal claim disposition at the resolution seam (#781 characterisati
     return session.getActiveForClaimId(assertClaimId(claimId));
   }
 
+  /**
+   * The run the session would resolve for a later bare command, if any.
+   *
+   * The targeting half of a Run Release, which the claim resolution above
+   * cannot see: a preserved claim and a run still resolving as the session
+   * default are independent facts, and only asserting both distinguishes
+   * "addressed" from "released nothing at all".
+   */
+  async function activeRunId(): Promise<string | undefined> {
+    const session = new SessionService(new RunbookStateManager(workspace.cwd));
+    return (await session.getActive())?.id;
+  }
+
   /** A parent whose only substep delegates to a runbook that does not exist. */
   async function writeUnresolvableDelegation(): Promise<void> {
     const content = [
@@ -114,12 +127,12 @@ describe('Terminal claim disposition at the resolution seam (#781 characterisati
     await writeFile(join(workspace.cwd, 'control.runbook.md'), content);
   }
 
-  it('leaves an already-terminal loop entry resolving superseded / claim-rotated', async () => {
-    // THE DEFECT. `rundown run` mints a run-control claim for every default-stack
-    // root, and the terminal loop entry releases that root through the
-    // stack-pop derivation, which encodes "this run is unclaimed" — a premise
-    // the minting falsified. The claim is revoked, and its holder is told to
-    // claim a delegation that does not exist.
+  it('leaves an already-terminal loop entry resolving terminal', async () => {
+    // THE FIX. `rundown run` mints a run-control claim for every default-stack
+    // root, and the terminal loop entry addresses the run it drove — so the
+    // claim stays as terminal evidence and its holder reads the run's stopped
+    // outcome, rather than being told to re-claim a delegation that was never
+    // issued.
     await writeUnresolvableDelegation();
 
     const run = runCli('run parent.runbook.md', workspace);
@@ -129,20 +142,26 @@ describe('Terminal claim disposition at the resolution seam (#781 characterisati
       parseJsonEvents(run.stdout).find((event) => event.type === 'runbook_stopped'),
     ).toMatchObject({ reason: 'delegation_resolution_failed' });
 
-    // The precise reason, which the CLI envelope does not carry.
+    // The precise disposition, which the CLI envelope does not carry.
     await expect(resolveClaim(started.claimId)).resolves.toMatchObject({
-      status: 'superseded',
-      reason: 'claim-rotated',
+      status: 'terminal',
+      lifecycle: 'stopped',
     });
 
-    // And what the orchestrator is actually told. `claim-rotated` and
-    // `parent-unreadable` share this code, so the message is what separates
-    // them — it names a delegation to re-claim that was never issued.
+    // And the targeting half: preserving the claim must not also leave the
+    // finished run resolving as the session default for every later bare
+    // command. Both facts move together only if the release actually ran.
+    await expect(activeRunId()).resolves.toBeUndefined();
+
+    // And what the orchestrator is actually told: the run's own outcome, at the
+    // terminal exit code, naming the run the bearer controlled.
     const status = runCli(`status --claim-id ${started.claimId}`, workspace);
-    expect(status.exitCode).toBe(1);
-    const envelope = parseCliJsonObject(status.stdout || status.stderr);
-    expect(envelope).toMatchObject({ kind: 'error', code: 'CLAIMED_RUNBOOK_UNAVAILABLE' });
-    expect(String(envelope.error)).toContain('was released or replaced and is no longer authority');
+    expect(status.exitCode).toBe(0);
+    expect(parseCliJsonObject(status.stdout)).toMatchObject({
+      status: 'stopped',
+      active: false,
+      runId: started.runId,
+    });
   });
 
   it('leaves a run that completed through a fenced command resolving terminal', async () => {
@@ -159,6 +178,7 @@ describe('Terminal claim disposition at the resolution seam (#781 characterisati
       status: 'terminal',
       lifecycle: 'completed',
     });
+    await expect(activeRunId()).resolves.toBeUndefined();
 
     const status = runCli(`status --claim-id ${started.claimId}`, workspace);
     expect(status.exitCode).toBe(0);

@@ -5550,7 +5550,6 @@ describe('RunbookLifecycleCommandService', () => {
         callerEvidence: runControlEvidence(runId),
         steps: twoSteps,
         target: { step: '1' },
-        terminalReleaseMode: 'stack-pop',
       });
 
       expect(outcome.kind).toBe('applied');
@@ -5577,7 +5576,6 @@ describe('RunbookLifecycleCommandService', () => {
         callerEvidence: DIRECT_CLI,
         steps: twoSteps,
         target: { step: '2' },
-        terminalReleaseMode: 'stack-pop',
       });
 
       expect(outcome.kind).toBe('applied');
@@ -5585,7 +5583,7 @@ describe('RunbookLifecycleCommandService', () => {
       expect((await manager.load(runId))?.step).toBe('2');
     });
 
-    it('allows bare navigation on a standalone run (stack-pop release)', async () => {
+    it('allows bare navigation on a standalone run', async () => {
       loadStepsImpl = () => twoSteps;
       await activate(baseState());
 
@@ -5599,7 +5597,6 @@ describe('RunbookLifecycleCommandService', () => {
       if (outcome.kind !== 'allowed') return;
       expect(outcome.runId).toBe(runId);
       expect(outcome.steps).toEqual(twoSteps);
-      expect(outcome.terminalReleaseMode).toBe('stack-pop');
     });
 
     it('allows navigation when a bearer claim authorizes the run', async () => {
@@ -5658,7 +5655,7 @@ describe('RunbookLifecycleCommandService', () => {
       });
     });
 
-    it('resolves a claim-targeted navigation to the claimed child with release-runbook', async () => {
+    it('resolves a claim-targeted navigation to the claimed child', async () => {
       loadStepsImpl = () => twoSteps;
       await activate(baseState());
       const childRunId = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee');
@@ -5685,7 +5682,6 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('allowed');
       if (outcome.kind !== 'allowed') return;
       expect(outcome.runId).toBe(childRunId);
-      expect(outcome.terminalReleaseMode).toBe('release-runbook');
     });
 
     it('refuses a bearer retired inside the fenced navigation write, without recovery', async () => {
@@ -5746,7 +5742,6 @@ describe('RunbookLifecycleCommandService', () => {
         callerEvidence: evidence,
         steps: navigation.steps,
         target: { step: '2' },
-        terminalReleaseMode: navigation.terminalReleaseMode,
       });
 
       // The authority the write would be validated against was live when read.
@@ -5817,7 +5812,6 @@ describe('RunbookLifecycleCommandService', () => {
         callerEvidence: runControlEvidence(runId),
         steps: navigation.steps,
         target: { step: '2' },
-        terminalReleaseMode: navigation.terminalReleaseMode,
       });
 
       expect(claimResult?.kind).toBe('committed');
@@ -5871,7 +5865,6 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('continue');
-      expect(outcome.terminalReleaseMode).toBe('stack-pop');
       expect(outcome.loop).toEqual({ kind: 'run' });
       expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
       expect(outcome.updatedState?.step).toBe('2');
@@ -6115,7 +6108,6 @@ describe('RunbookLifecycleCommandService', () => {
         callerEvidence: runControlEvidence(runId),
         steps: stepsLandingOnDelegate,
         target: { step: '2' },
-        terminalReleaseMode: allowed.terminalReleaseMode,
         ...(allowed.delegationRuntime === undefined
           ? {}
           : { issueDelegationCredential: allowed.delegationRuntime.issueDelegationCredential }),
@@ -7055,7 +7047,6 @@ describe('RunbookLifecycleCommandService', () => {
         kind: 'applied',
         runId,
         mutation: 'manual-completion',
-        terminalReleaseMode: 'stack-pop',
         status: 'continue',
         events: [],
         loop: { kind: 'none' },

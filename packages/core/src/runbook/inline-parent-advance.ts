@@ -502,7 +502,7 @@ async function propagateTerminalChildUpwardInner(
   if (outcome.status === 'active') return { kind: 'handled' };
 
   // Parent reached a terminal (stopped/done) via the callable. This seam is the
-  // SOLE release owner (the callable defers release via 'defer-to-caller'), so
+  // SOLE release owner (the callable names the caller as release owner), so
   // release here exactly once and recurse ONE level up. reportTerminalChild
   // self-guards when the fresh parent has no linkage of its own.
   //

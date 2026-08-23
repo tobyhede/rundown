@@ -201,7 +201,6 @@ describe('one mutation, one entry bump', () => {
       callerEvidence: evidence(),
       steps,
       target,
-      terminalReleaseMode: allowed.terminalReleaseMode,
       ...(allowed.delegationRuntime === undefined
         ? {}
         : { issueDelegationCredential: allowed.delegationRuntime.issueDelegationCredential }),

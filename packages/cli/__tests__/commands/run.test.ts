@@ -355,8 +355,9 @@ Bundled task.
     });
 
     it('retains the run-control claim as a terminal tombstone after a command completion', async () => {
-      // `rd run` mints a run-control claim over the root run and drives the loop
-      // in 'stack-pop' mode. When a command step carries the run terminal, the
+      // `rundown run` mints a run-control claim over the root run and drives
+      // the loop at its own release ownership. When a command step carries the
+      // run terminal, the
       // release folded into that command's fenced commit must RETAIN the claim:
       // deleting it makes a post-completion `rd pass/fail/status --claim-id`
       // resolve `missing` instead of `terminal`, so the orchestrator can no

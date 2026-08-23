@@ -608,7 +608,6 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     if (advanced) {
       const loopSteps = [...getRunbookFromState(advanced, cwd)];
       const loopResult = await runExecutionLoop(manager, advanced.id, loopSteps, cwd, emitter, {
-        terminalReleaseMode: 'release-runbook',
         output,
         commandStreamOptions,
         // Core verified the collector's bearer behind the collection seam and

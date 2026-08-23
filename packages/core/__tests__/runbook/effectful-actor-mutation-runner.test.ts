@@ -1515,7 +1515,7 @@ describe('createEffectfulActorMutationRunner', () => {
     });
 
     it('performs no release at all when no terminal release is requested', async () => {
-      // The `defer-to-caller` contract: the caller owns the single terminal
+      // The caller-owned release contract: the caller owns the single terminal
       // release, so the fence must not perform it early for EITHER outcome.
       const completed = await releaseTerminal('pass');
       const stopped = await releaseTerminal('fail');

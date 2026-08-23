@@ -229,7 +229,6 @@ function appliedOutcome(
     kind: 'applied',
     runId: PARENT_RUN_ID,
     mutation: 'run-transition',
-    terminalReleaseMode: 'stack-pop',
     status: 'continue',
     events: [],
     loop: { kind: 'none' },
@@ -332,7 +331,7 @@ describe('emitDelegationCollectionPendingError', () => {
 });
 
 describe('buildTransitionContext', () => {
-  it('resolves a claim target with release-runbook terminal mode and surfaces the claim', async () => {
+  it('resolves a claim target and surfaces the claim', async () => {
     const output = makeOutput();
     mockResolveCommandTarget.mockResolvedValue({
       kind: 'claim',
@@ -344,12 +343,11 @@ describe('buildTransitionContext', () => {
 
     expect(result.kind).toBe('ready');
     if (result.kind === 'ready') {
-      expect(result.ctx.terminalReleaseMode).toBe('release-runbook');
       expect(result.ctx.claim).toBeDefined();
     }
   });
 
-  it('resolves a default target with stack-pop terminal mode and no claim', async () => {
+  it('resolves a default target with no claim', async () => {
     const output = makeOutput();
     mockResolveCommandTarget.mockResolvedValue({
       kind: 'default',
@@ -360,7 +358,6 @@ describe('buildTransitionContext', () => {
 
     expect(result.kind).toBe('ready');
     if (result.kind === 'ready') {
-      expect(result.ctx.terminalReleaseMode).toBe('stack-pop');
       expect(result.ctx.claim).toBeUndefined();
     }
   });
@@ -949,7 +946,6 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
     mockRunTransition.mockResolvedValue(
       appliedOutcome({
         loop: { kind: 'run' },
-        terminalReleaseMode: 'release-runbook',
       }),
     );
 
@@ -957,8 +953,9 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
 
     expect(mockRunExecutionLoop).toHaveBeenCalledTimes(1);
     const loopArgs = mockRunExecutionLoop.mock.calls[0];
-    // The seam directive's terminalReleaseMode + output are forwarded verbatim.
-    expect(loopArgs[5]).toEqual({ terminalReleaseMode: 'release-runbook', output });
+    // The output is forwarded, and NO release ownership: the loop owns its own
+    // release by default, and this path never names a different owner.
+    expect(loopArgs[5]).toEqual({ output });
     // A bare caller presented no bearer, so the key must be ABSENT rather than
     // present-and-undefined: the loop spreads this object into the fence input,
     // where an explicit `claimKey: undefined` is a different request from no key.
@@ -975,7 +972,6 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
     mockRunTransition.mockResolvedValue(
       appliedOutcome({
         loop: { kind: 'run' },
-        terminalReleaseMode: 'release-runbook',
       }),
     );
 
@@ -985,7 +981,6 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
 
     const loopArgs = mockRunExecutionLoop.mock.calls[0];
     expect(loopArgs[5]).toEqual({
-      terminalReleaseMode: 'release-runbook',
       claimKey: TEST_CLAIM_KEY,
       output,
     });
