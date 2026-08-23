@@ -2987,6 +2987,55 @@ describe('runExecutionLoop', () => {
   // run and recurses one level up on 'stopped'. A refusal applied nothing and
   // left the run RUNNING, so 'stopped' there released a live parent and reported
   // a terminal to ITS parent that never happened.
+  // The ordering the arm above depends on, and the only remaining consumer of
+  // the committed-cursor re-read. `RunbookStateManager.load` THROWS on
+  // structurally invalid persisted state, so hoisting that read above the
+  // ownership return would turn this typed hand-back into an escaping
+  // `InvalidRunbookStateError` — a caller that owns the terminal would get a
+  // bare error carrying no code where it expects `refused`.
+  //
+  // Driven by making the read fail rather than by counting calls: a call count
+  // pins that the read did not happen, while a rejection pins the consequence of
+  // it happening. The `done` arm used to carry the same guarantee and no longer
+  // needs it — its release moved inside the apply's transaction (#794) — so this
+  // arm is where the property now lives alone.
+  it('does not re-read the committed cursor before standing down for the caller', async () => {
+    const currentState = makeLoopState('1', {
+      lifecycle: 'running',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+    mockManager.load
+      .mockResolvedValueOnce(currentState)
+      .mockRejectedValue(new Error('post-drain read must not happen here'));
+    mockCompletionService.applyNextResolvedCompletion.mockResolvedValueOnce({
+      kind: 'mismatch',
+      state: currentState,
+      mismatch: {
+        status: 'failed',
+        reason: 'target_mismatch',
+        message: 'Completion targets substep 2, cursor is on 1',
+        completion: { result: 'pass', targetSubstep: '2' },
+      },
+      unresolved: 1,
+    });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      asEmitter(mockEmitter),
+      { releaseOwner: 'caller' },
+    );
+
+    expect(result).toEqual({
+      kind: 'refused',
+      refusal: expect.objectContaining({ code: 'COMPLETION_TARGET_MISMATCH' }),
+    });
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+  });
+
   it('hands the refusal back instead of a terminal when the release is deferred', async () => {
     const currentState = makeLoopState('1', {
       lifecycle: 'running',

@@ -377,9 +377,15 @@ async function committedPosition(
  * terminal arms announced a completion before releasing and a refusal had to
  * contradict it. Those arms no longer release at all — their release commits
  * inside the apply's own transaction (#794), where a refusal rolls the terminal
- * state back with it and there is no announced completion left to correct. The
- * remaining callers are the entry-time terminal checks, and the completed one
- * emits its own contradiction from a position it already holds.
+ * state back with it and there is no announced completion left to correct.
+ *
+ * What still reaches here, and is therefore the whole set of releases this loop
+ * takes outside a transaction: {@link releaseTerminalRun}'s two entry-time
+ * terminal checks — the `completed` one emits its own contradiction from a
+ * position it already holds — and {@link releaseRefusedContinuation}, from the
+ * drain's cursor-mismatch refusal and the three frontier refusal arms. None of
+ * those has a state write to fold into: the entry-time checks find a run that
+ * was already terminal, and every refusal leaves its run RUNNING.
  *
  * @param sessionService - Session service performing the release.
  * @param runbookId - Run whose session targeting is being released.
@@ -1556,9 +1562,12 @@ export async function runExecutionLoop(
         type: 'ERROR_OCCURRED',
         payload: { message: refusal.message, code: refusal.code },
       });
-      // Resolved eagerly, unlike the `done` arm's: this IS the refusal path, so
-      // the position is consumed rather than conditionally needed, and the read
-      // already sits behind the ownership return above.
+      // Resolved eagerly, and safely so: this IS the refusal path, so the
+      // position is consumed rather than conditionally needed, and the read sits
+      // BEHIND the ownership return above. Order matters there — `load` throws
+      // on structurally invalid persisted state, so hoisting this read above
+      // that return would turn a caller-owned refusal into an escaping
+      // `InvalidRunbookStateError` instead of the typed hand-back.
       emitter.emit({
         type: 'RUNBOOK_STOPPED',
         payload: {

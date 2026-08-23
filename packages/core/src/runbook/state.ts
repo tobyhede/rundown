@@ -50,6 +50,7 @@ import {
 } from './storage/runbook-store.js';
 import type { OpenRunbookDriverOptions } from './storage/driver-factory.js';
 import type { SyncWork } from './storage/sql-driver.js';
+import type { RunRelease } from './session-release.js';
 import {
   assertCurrentSchemaVersion,
   assertLoadablePersistedRun,
@@ -791,26 +792,31 @@ export class RunbookStateManager {
    * runbook does not exist the callback never runs and the result is
    * `{ state: null, value: null }`.
    *
-   * `updateSession` folds a session write into the very transaction that commits
+   * `releaseOnCommit` folds a Run Release into the very transaction that commits
    * the state, so the two can never be separately observable: a process that dies
-   * has either both or neither. It is the seam a terminal Run Release uses — a
-   * run committed terminal in one transaction and taken off session targeting in
-   * a later one leaves a window where the session still resolves to a finished
-   * run (#794). Being inside the commit makes it synchronous by type
-   * ({@link SyncWork}), and it runs at most once: losing attempts write nothing
-   * and therefore project nothing.
+   * has either both or neither. A run committed terminal in one transaction and
+   * taken off session targeting in a later one leaves a window where the session
+   * still resolves to a finished run (#794). Being inside the commit makes it
+   * synchronous by type ({@link SyncWork}), and it runs at most once: losing
+   * attempts write nothing and therefore release nothing. Returning no releases
+   * is free — the session is not even read — so a caller arms it for a whole
+   * sequence rather than predicting which cycle will need it.
    *
    * @template R - Type of the value the callback reports.
    * @param id - The runbook state ID to mutate.
    * @param build - Callback deriving `{ next, value }` from the captured state.
-   * @param options - Optional session projection committed with the state write.
-   * @param options.updateSession - Applied to the transaction's session snapshot,
-   *   in place, after the state write lands. Receives the state being committed
-   *   so a projection can be decided from the version the transaction wrote.
+   * @param options - Optional Run Release committed with the state write.
+   * @param options.releaseOnCommit - Derives the releases to project, from the
+   *   state the transaction is committing. Applied in place, after the state
+   *   write lands; an empty result reads no session and writes none.
    * @returns The committed state (or `null` when missing) and the reported value
    *   (or `null` when the runbook does not exist).
    * @throws {ConcurrentStateModificationError} When the optimistic retry budget
    *   is spent under sustained contention.
+   * @throws {Error} When a derived release names any run but this one, and
+   *   whatever reading the session for a non-empty batch raises. Both roll the
+   *   state write back, so a caller told its release failed is never also told
+   *   its state committed.
    */
   async mutateStateReturning<R>(
     id: string,
@@ -818,7 +824,7 @@ export class RunbookStateManager {
       current: RunbookState,
     ) => { next: RunbookState | null; value: R } | Promise<{ next: RunbookState | null; value: R }>,
     options: {
-      readonly updateSession?: (next: RunbookState, session: SessionData) => SyncWork<void>;
+      readonly releaseOnCommit?: (next: RunbookState) => SyncWork<readonly RunRelease[]>;
     } = {},
   ): Promise<{ state: RunbookState | null; value: R | null }> {
     const runId = this.toRunId(id);
@@ -837,7 +843,7 @@ export class RunbookStateManager {
         return next;
       },
       // Forwarded whole rather than rebuilt field by field. The store already
-      // decides on `updateSession !== undefined`, so a conditional here would
+      // decides on `releaseOnCommit !== undefined`, so a conditional here would
       // only restate that decision — and restating it is untestable by
       // construction: both arms reach the same transaction.
       options,

@@ -28,7 +28,7 @@ import type { ChildOp, ChildReport } from './storage/fixtures/drain-terminal-rel
  *
  * WHAT IS UNDER TEST. `applyNextResolvedCompletion` now folds the terminal Run
  * Release into the very transaction that commits the terminal state
- * (`RunbookStore.mutateState`'s `updateSession` projection). Before that fold the
+ * (`RunbookStore.mutateState`'s `releaseOnCommit`). Before that fold the
  * drain committed the state in one transaction and called
  * `SessionService.releaseRuns` in a SECOND one, so the two were separately
  * observable. The invariant asserted here is the consequence, and it is stated as
@@ -40,15 +40,25 @@ import type { ChildOp, ChildReport } from './storage/fixtures/drain-terminal-rel
  *
  * WHY THIS IS A RED-FIRST WITNESS AND NOT A RESTATEMENT OF THE UNIT TESTS. The
  * unit tests observe the fold from a process that lives to make the assertion,
- * so a second, separate release transaction would satisfy them just as well: the
- * drain would simply have run both. The gap only exists for a process that stops
- * running between them. Here the worker is SIGKILLed the instant the apply
- * returns — before any further work — so the second transaction provably never
- * happens. Under the pre-#794 shape the terminal run would still be sitting on
- * `defaultStack` when the parent looks, and this suite fails. Verified by
- * reverting the fold: with the `updateSession` block removed from
+ * so a release performed anywhere before that assertion satisfies them. The gap
+ * only exists for a process that stops running. Here the worker is SIGKILLed the
+ * instant the apply returns — before any further work — so nothing the CLI would
+ * have done next can happen. Under the pre-#794 shape the terminal run would
+ * still be sitting on `defaultStack` when the parent looks, and this suite fails.
+ * Verified by reverting the fold: with the release block removed from
  * `RunbookStore.mutateState`, the terminal case fails on
- * `expect(session.defaultStack).not.toContain(runId)`.
+ * `expect(session.defaultStack).not.toContain(runId)` while the control below
+ * stays green.
+ *
+ * WHAT THIS SUITE DOES NOT PROVE, so that nobody reads more into a green run than
+ * it carries. The kill lands after the apply RETURNS, so what is discriminated is
+ * "the release happens before the apply returns" against "the release happens in
+ * the CLI, several frames later" — which is the gap #794 names, and the whole of
+ * its process-death criterion. An implementation that opened a SECOND transaction
+ * inside `applyNextResolvedCompletion` would still pass here, because its much
+ * smaller gap closes before the kill point. The one-transaction half is witnessed
+ * where it can be — `runbook-store.test.ts`'s `rolls the state write back when
+ * the release is refused`, which no arrangement of two transactions satisfies.
  *
  * WHY SEPARATE OS PROCESSES. Process death is the subject, so nothing in-process
  * can stand in for it: choosing not to call `releaseRuns` is an assertion about

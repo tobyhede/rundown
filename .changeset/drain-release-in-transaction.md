@@ -20,7 +20,7 @@ session at all.
 
 ## What changed
 
-`RunbookStore.mutateState` now accepts an `updateSession` projection, applied
+`RunbookStore.mutateState` now accepts a `releaseOnCommit` derivation, applied
 inside the transaction that performs the compare-and-swap write, after the state
 lands and only on the attempt that commits.
 `RunbookStateManager.mutateStateReturning` threads it through, and
@@ -30,8 +30,18 @@ whose prepared state reaches a terminal lifecycle projects
 land or neither does.
 
 Ordering inside the transaction matches the fence's, and for the fence's reason:
-the state write goes first so the resolution-affecting claim triggers see the
-authoritative row already updated.
+the state write goes first, because it clears execution ownership and
+invalidates closed delegated claims in that same transaction — a session read
+before it would project onto a claim set the write is about to change.
+
+The option is release-shaped rather than the free-form session projection the
+owned-commit methods take. This cycle owns exactly ONE run, so the store states
+and enforces the owned-set rule itself instead of trusting each caller to
+restate it. It also makes an empty answer free: the session is read and
+rewritten only when there is something to project, so a caller arms the option
+once for a whole drain and every non-terminal iteration still touches no session
+row — and cannot fail on one either, since a corrupt claim row elsewhere in the
+session is only ever read when a release is actually due.
 
 ## Ownership, not terminality
 
@@ -44,10 +54,7 @@ non-terminal apply, so a drain arms it once and lets each transaction decide.
 The trigger cannot be spelled the same way. Whether an apply reaches terminal is
 decided by the transition prepared inside the transaction, long after the
 argument is built, so it is read from the state being committed rather than
-asserted by the caller. The projection also refuses to release any run but the
-one its transaction owns — releasing another would be an unfenced session write,
-which is the refusal the aggregate seam already raises for an out-of-set
-release.
+asserted by the caller.
 
 ## What a caller sees
 
@@ -62,6 +69,11 @@ release.
   `releaseTerminalRun` lost that parameter. The drain's cursor-mismatch refusal
   still re-reads the committed cursor for its own stop — that arm leaves the run
   RUNNING and has no transaction to fold into.
+- Two refusals `SessionService.releaseRuns` could return on this path are
+  retired rather than relocated. `execution_in_progress` is now unreachable
+  because the same transaction's compare-and-swap already requires
+  `exec_token IS NULL`, and `recovery_required` because an abandoned run keeps
+  its `exec_token`, so the apply refuses before a release is even considered.
 
 The entry-time terminal checks still release through
 `SessionService.releaseRuns`. An already-terminal run has no state write to fold

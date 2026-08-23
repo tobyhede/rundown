@@ -1242,7 +1242,10 @@ describe('RunbookCompletionService', () => {
       ).rejects.toThrow(/outside the transaction/);
 
       // Refused before the projection, and inside the transaction, so nothing
-      // partial survives: the session is untouched and so is the run.
+      // partial survives. The RUN is the half that distinguishes this from the
+      // defect: a projection that refused outside the transaction would leave
+      // the terminal state standing, which is #794 wearing a different failure.
+      expect((await manager.load(runbookId))?.lifecycle).toBe('running');
       const session = await manager.loadSession();
       expect(session.defaultStack).toContain(runbookId);
       expect(session.claims[claimKey]).toBeDefined();

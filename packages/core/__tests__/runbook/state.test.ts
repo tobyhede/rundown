@@ -1723,10 +1723,10 @@ describe('RunbookStateManager', () => {
       expect((await manager.load(state.id))?.stepName).toBe('churn');
     });
 
-    describe('updateSession, committed with the state write (#794)', () => {
-      it('forwards the projection so the session write commits with the state', async () => {
+    describe('releaseOnCommit, committed with the state write (#794)', () => {
+      it('forwards the release so the session write commits with the state', async () => {
         // The manager's job here is threading, and threading is only observable
-        // as an effect: the projection has to reach the store's transaction, not
+        // as an effect: the derivation has to reach the store's transaction, not
         // merely be accepted as an argument.
         const state = await seedRun();
         const sessions = new SessionService(manager);
@@ -1737,12 +1737,10 @@ describe('RunbookStateManager', () => {
           state.id,
           (current) => ({ next: { ...current, stepName: 'terminal' }, value: 'applied' }),
           {
-            updateSession: (next, session) => {
-              // Decided from the state the transaction commits, which is the
-              // whole reason the projection receives it rather than closing over
-              // an attempt's derivation.
-              session.defaultStack = session.defaultStack.filter((id) => id !== next.id);
-            },
+            // Derived from the state the transaction commits, which is the whole
+            // reason the derivation receives it rather than closing over an
+            // attempt's own.
+            releaseOnCommit: (next) => [{ runId: next.id, role: 'addressed' }],
           },
         );
 
@@ -1751,11 +1749,28 @@ describe('RunbookStateManager', () => {
         expect((await manager.loadSession()).defaultStack).not.toContain(state.id);
       });
 
-      it('leaves the session alone when no projection is supplied', async () => {
+      it('leaves the session alone when no release is derived', async () => {
+        // The armed-but-empty arm, which is the common one: a caller arms this
+        // for a whole sequence and most cycles have nothing to release.
+        const state = await seedRun();
+        const sessions = new SessionService(manager);
+        await sessions.pushRunbook(state.id);
+
+        await manager.mutateStateReturning(
+          state.id,
+          (current) => ({ next: { ...current, stepName: 'ordinary' }, value: 'applied' }),
+          { releaseOnCommit: () => [] },
+        );
+
+        expect((await manager.load(state.id))?.stepName).toBe('ordinary');
+        expect((await manager.loadSession()).defaultStack).toContain(state.id);
+      });
+
+      it('leaves the session alone when no derivation is supplied', async () => {
         // The absent arm, and the reason it is spelled as omission rather than
-        // as an `undefined` field: a cycle that declares no session write must
-        // reach the store with none, so an ordinary state write cannot churn
-        // session rows it never mentioned.
+        // as an `undefined` field: a cycle that declares no release must reach
+        // the store with none, so an ordinary state write cannot churn session
+        // rows it never mentioned.
         const state = await seedRun();
         const sessions = new SessionService(manager);
         await sessions.pushRunbook(state.id);
@@ -1769,10 +1784,10 @@ describe('RunbookStateManager', () => {
         expect((await manager.loadSession()).defaultStack).toContain(state.id);
       });
 
-      it('rejects and writes nothing when the projection throws', async () => {
+      it('rejects and writes nothing when the release is refused', async () => {
         // One outcome, not two. The manager surfaces the rollback rather than
-        // absorbing it: a caller that learns its projection failed must not also
-        // be told its state committed.
+        // absorbing it: a caller that learns its release failed must not also be
+        // told its state committed.
         const state = await seedRun();
         const sessions = new SessionService(manager);
         await sessions.pushRunbook(state.id);
@@ -1783,12 +1798,12 @@ describe('RunbookStateManager', () => {
             state.id,
             (current) => ({ next: { ...current, stepName: 'terminal' }, value: 'applied' }),
             {
-              updateSession: () => {
-                throw new Error('projection refused');
+              releaseOnCommit: () => {
+                throw new Error('release refused');
               },
             },
           ),
-        ).rejects.toThrow('projection refused');
+        ).rejects.toThrow('release refused');
 
         expect((await manager.load(state.id))?.stepName).not.toBe('terminal');
         expect(await stateVersionOf(state.id)).toBe(versionBefore);
