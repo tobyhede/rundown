@@ -43,6 +43,7 @@ import {
   type ParentAdvanceGuard,
   type CapturedRunStateResult,
   type PresentedClaim,
+  type MutateStateOptions,
   type RunbookStore,
   type SessionMutationResult,
   type SessionMutationTxn,
@@ -50,7 +51,6 @@ import {
 } from './storage/runbook-store.js';
 import type { OpenRunbookDriverOptions } from './storage/driver-factory.js';
 import type { SyncWork } from './storage/sql-driver.js';
-import type { RunRelease } from './session-release.js';
 import {
   assertCurrentSchemaVersion,
   assertLoadablePersistedRun,
@@ -813,19 +813,25 @@ export class RunbookStateManager {
    *   (or `null` when the runbook does not exist).
    * @throws {ConcurrentStateModificationError} When the optimistic retry budget
    *   is spent under sustained contention.
-   * @throws {Error} When a derived release names any run but this one, and
-   *   whatever reading the session for a non-empty batch raises. Both roll the
-   *   state write back, so a caller told its release failed is never also told
-   *   its state committed.
+   * @throws {Error} When a derived release names any run but this one, returns a
+   *   non-array batch, and whatever reading the session for a non-empty batch
+   *   raises. Each rolls the state write back, so a caller told its release
+   *   failed is never also told its state committed.
+   * @throws {AsyncTransactionWorkError} When `options.releaseOnCommit` returns a
+   *   thenable. Forwarded from {@link RunbookStore.mutateState}, which this
+   *   passes `options` to whole; unreachable through the typed signature, and
+   *   guarded there because that failure is silent rather than loud.
    */
   async mutateStateReturning<R>(
     id: string,
     build: (
       current: RunbookState,
     ) => { next: RunbookState | null; value: R } | Promise<{ next: RunbookState | null; value: R }>,
-    options: {
-      readonly releaseOnCommit?: (next: RunbookState) => SyncWork<readonly RunRelease[]>;
-    } = {},
+    // Picked from the store's own options rather than re-spelled: this
+    // forwards `options` WHOLE, so a second declaration of the same field is a
+    // second place for one contract to drift, and the drift would not surface
+    // until the forwarded call itself stopped compiling.
+    options: Pick<MutateStateOptions, 'releaseOnCommit'> = {},
   ): Promise<{ state: RunbookState | null; value: R | null }> {
     const runId = this.toRunId(id);
     if (runId === null) {

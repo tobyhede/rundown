@@ -48,6 +48,7 @@ import * as path from 'node:path';
 import { RunbookStateManager } from '../../../../src/runbook/state.js';
 import { RunbookActorService } from '../../../../src/runbook/actor-service.js';
 import { RunbookCompletionService } from '../../../../src/runbook/completion-service.js';
+import type { ApplyNextResolvedCompletionResult } from '../../../../src/runbook/completion-service.js';
 import { assertRunId } from '../../../../src/runbook/run-id.js';
 import type { ReleaseRole } from '../../../../src/runbook/session-release.js';
 import { getErrorMessage } from '../../../../src/errors.js';
@@ -76,6 +77,26 @@ export interface ChildOp {
 }
 
 /**
+ * Discriminant of an apply outcome, derived from the service's own union.
+ *
+ * Derived rather than restated: this is the wire contract the parent asserts
+ * against, so a spelling only this file knows would let `expectApplied(report,
+ * 'complete')` compile and assert nothing. Deriving makes a new arm on the
+ * service a compile error here instead.
+ */
+type DrainKind = ApplyNextResolvedCompletionResult['kind'];
+
+/**
+ * Terminal status an apply carried, or null when it stayed running.
+ *
+ * `null` rather than `undefined` because it crosses JSON, which drops an
+ * absent key but preserves an explicit null.
+ */
+type DrainTerminal = NonNullable<
+  Extract<ApplyNextResolvedCompletionResult, { kind: 'applied' }>['terminal']
+> | null;
+
+/**
  * What this worker reports from inside the gap, as written to `appliedFile`.
  *
  * The report is the parent's proof that the apply really did commit — and, on
@@ -87,9 +108,9 @@ export type ChildReport =
   | {
       readonly ok: true;
       /** Discriminant of the apply outcome, for example `applied`. */
-      readonly kind: string;
+      readonly kind: DrainKind;
       /** Terminal status the apply carried, or null when it stayed running. */
-      readonly terminal: string | null;
+      readonly terminal: DrainTerminal;
       /** The writer, so the parent can confirm this was not its own process. */
       readonly pid: number;
     }
@@ -169,7 +190,7 @@ const completionService = new RunbookCompletionService(manager, actorService);
  * @returns The apply outcome.
  * @throws {Error} When the target run has disappeared.
  */
-async function drain(): Promise<{ readonly kind: string; readonly terminal: string | null }> {
+async function drain(): Promise<{ readonly kind: DrainKind; readonly terminal: DrainTerminal }> {
   const runId = assertRunId(op.runId);
   const state = await manager.load(runId);
   if (!state) throw new Error(`drain target ${op.runId} is missing`);
