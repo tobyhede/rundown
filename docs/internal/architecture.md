@@ -1454,6 +1454,34 @@ The parent-advance guard did not survive the move, because it had no production
 caller to survive for: no code ever passed `guard` to the drain, and the CLI
 wrapper never even destructured it.
 
+The drain's **terminal Run Release** is committed by that same cycle. An apply
+that carries a run to a terminal lifecycle projects the release onto the
+transaction's session snapshot through `mutateStateReturning`'s
+`releaseOnCommit`, which `RunbookStore.mutateState` applies inside the
+transaction that performs the compare-and-swap write — after the state lands,
+because that write invalidates closed delegated claims in the same transaction,
+and only on the attempt that commits. Only the claim invalidation orders these
+two: unlike the fence's owned write, the compare-and-swap does not clear
+execution ownership — it requires `exec_token IS NULL` and writes none of it. It
+used to happen afterwards, from the CLI: the terminal state committed, control
+returned through several frames, and a second transaction took the run off
+session targeting. A process that died in between left a finished run the
+session still resolved to, and no healing path removes a loadable terminal run.
+
+Ownership is what the caller declares, never terminality. `terminalRelease`'s
+presence says "this caller owns this run's release" — the loop arms it, the
+inline parent-advance path leaves it absent because the core seam releases once
+for a parent it drives — and every non-terminal iteration releases nothing
+regardless. Whether an apply is terminal is decided by the transition prepared
+inside the transaction, long after the argument is built, which is why the
+trigger cannot be folded into the argument the way the role is. The option is
+release-shaped rather than a free-form session projection for two reasons the
+owned-commit methods do not share: this cycle owns exactly ONE run, so the store
+states and enforces the owned-set rule itself instead of trusting each caller to
+restate it; and an empty answer then costs nothing, so an ordinary non-terminal
+iteration reads no session and rewrites none even though the option is armed for
+the whole drain.
+
 The run-start `afterInit` callback in `commands/run.ts` was the fourth site, and
 the first CLI one. It is the same shape as the recorders — load the parent,
 derive the substep row for the substep this launch targets, commit — folded the

@@ -17,6 +17,9 @@ import {
   type ApplyNextResolvedCompletionResult,
 } from '../../src/runbook/index.js';
 import { COMPLETION_TARGET_MISMATCH_CODE } from '../../src/runbook/completion-service.js';
+import { SessionService } from '../../src/runbook/session-service.js';
+import { claimKeyFromBearer } from '../../src/runbook/claim-id.js';
+import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
 import { merge } from '../../src/runbook/state-update-ops.js';
 import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import {
@@ -1075,6 +1078,195 @@ describe('RunbookCompletionService', () => {
       if (result.last.kind === 'not_active') {
         expect(result.last.unresolved).toBe(1);
       }
+    });
+  });
+
+  describe('terminal Run Release folded into the apply transaction (#794)', () => {
+    let sessions: SessionService;
+
+    /**
+     * Seed a run that the session both targets and holds a run-control claim over.
+     *
+     * Both structures matter: the stack entry is what a stranded terminal run
+     * keeps resolving through, and the claim is what an `addressed` release must
+     * NOT revoke.
+     *
+     * @param current - The run state to persist before the session references it.
+     * @returns The claim key the minted run-control bearer is recorded under.
+     */
+    async function seedTargetedRun(current: RunbookState): Promise<string> {
+      await manager.save(current);
+      const { claimId } = unwrapSessionMutation(
+        await sessions.pushRunbookWithRunControlClaim(runbookId),
+      );
+      return claimKeyFromBearer(claimId);
+    }
+
+    /** Single substep whose PASS drives the run straight to COMPLETE. */
+    const completingSteps: ResolvedStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent',
+        aggregation: { strategy: 'ALL' },
+        substeps: [
+          {
+            id: '1',
+            description: 'Only',
+            transitions: {
+              pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+              fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+            },
+          },
+        ],
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      },
+    ];
+
+    /**
+     * Persist one resolved completion for substep `1` of the active frame.
+     *
+     * @param current - State to persist the completion onto.
+     * @param result - Outcome the completion reports.
+     */
+    async function persistCompletion(
+      current: RunbookState,
+      result: 'pass' | 'fail',
+    ): Promise<void> {
+      const key = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+      await manager.save({
+        ...current,
+        resolvedCompletions: {
+          [key]: buildResolvedCompletion({
+            agentId: 'manual',
+            result,
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      });
+    }
+
+    beforeEach(() => {
+      sessions = new SessionService(manager);
+    });
+
+    it('releases the run in the same transaction that commits its terminal state', async () => {
+      const claimKey = await seedTargetedRun(state({ substep: '1' }));
+      await persistCompletion(state({ substep: '1' }), 'pass');
+
+      const applied = await service.applyNextResolvedCompletion({
+        runbookId,
+        steps: completingSteps,
+        terminalRelease: { role: 'addressed' },
+      });
+
+      expect(applied.kind === 'applied' && applied.terminal).toBe('done');
+      const session = await manager.loadSession();
+      // The whole point of the fold: the committed terminal state and the
+      // session that no longer targets it are the same write.
+      expect(session.defaultStack).not.toContain(runbookId);
+      // `addressed` retains, so the orchestrator holding the run-control bearer
+      // can still resolve the outcome as terminal evidence.
+      expect(session.claims[claimKey]).toBeDefined();
+    });
+
+    it('releases a run the drain drove to stopped', async () => {
+      const claimKey = await seedTargetedRun(state({ substep: '1' }));
+      await persistCompletion(state({ substep: '1' }), 'fail');
+
+      const applied = await service.applyNextResolvedCompletion({
+        runbookId,
+        steps: completingSteps,
+        terminalRelease: { role: 'addressed' },
+      });
+
+      expect(applied.kind === 'applied' && applied.terminal).toBe('stopped');
+      const session = await manager.loadSession();
+      expect(session.defaultStack).not.toContain(runbookId);
+      expect(session.claims[claimKey]).toBeDefined();
+    });
+
+    it('leaves a still-running run targeted when the apply is not terminal', async () => {
+      const claimKey = await seedTargetedRun(state({ substep: '1' }));
+      await persistCompletion(state({ substep: '1' }), 'pass');
+
+      // `steps` (the suite default) continues to substep 2 rather than
+      // completing, so the apply commits a RUNNING state. Releasing here would
+      // drop a live run off session targeting on every ordinary drain — the
+      // reason the trigger is read from the prepared state rather than assumed.
+      const applied = await service.applyNextResolvedCompletion({
+        runbookId,
+        steps,
+        terminalRelease: { role: 'addressed' },
+      });
+
+      expect(applied.kind === 'applied' && applied.terminal).toBeUndefined();
+      const session = await manager.loadSession();
+      expect(session.defaultStack).toContain(runbookId);
+      expect(session.claims[claimKey]).toBeDefined();
+    });
+
+    it('refuses to release a run outside the transaction, before projecting', async () => {
+      // The owned-set refusal. This transaction commits exactly one run, so that
+      // run is the only one it may take off session targeting — releasing any
+      // other would be a session write outside the fence that owns it. The
+      // aggregate seam refuses an out-of-set release for the same reason, and
+      // refuses it before capturing authority rather than halfway through
+      // writing.
+      const claimKey = await seedTargetedRun(state({ substep: '1' }));
+      await persistCompletion(state({ substep: '1' }), 'pass');
+      const foreign = brandRunIdForTest('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+      // The real preparation, then one field rewritten: the guard is about the
+      // identity the transaction is asked to commit, so everything else about
+      // the mutation has to stay exactly what production would have produced.
+      const prepareActorMutation = actorService.prepareActorMutation.bind(actorService);
+      jest
+        .spyOn(actorService, 'prepareActorMutation')
+        .mockImplementation(async (...args: Parameters<typeof prepareActorMutation>) => {
+          const mutation = await prepareActorMutation(...args);
+          return { ...mutation, nextState: { ...mutation.nextState, id: foreign } };
+        });
+
+      await expect(
+        service.applyNextResolvedCompletion({
+          runbookId,
+          steps: completingSteps,
+          terminalRelease: { role: 'addressed' },
+        }),
+      ).rejects.toThrow(/outside the transaction/);
+
+      // Refused before the projection, and inside the transaction, so nothing
+      // partial survives. The RUN is the half that distinguishes this from the
+      // defect: a projection that refused outside the transaction would leave
+      // the terminal state standing, which is #794 wearing a different failure.
+      expect((await manager.load(runbookId))?.lifecycle).toBe('running');
+      const session = await manager.loadSession();
+      expect(session.defaultStack).toContain(runbookId);
+      expect(session.claims[claimKey]).toBeDefined();
+    });
+
+    it('releases nothing when the caller owns the release', async () => {
+      const claimKey = await seedTargetedRun(state({ substep: '1' }));
+      await persistCompletion(state({ substep: '1' }), 'pass');
+
+      // No `terminalRelease`: the inline parent-advance seam owns the single
+      // release for this run, and a second one here would take it behind that
+      // owner.
+      const applied = await service.applyNextResolvedCompletion({
+        runbookId,
+        steps: completingSteps,
+      });
+
+      expect(applied.kind === 'applied' && applied.terminal).toBe('done');
+      const session = await manager.loadSession();
+      expect(session.defaultStack).toContain(runbookId);
+      expect(session.claims[claimKey]).toBeDefined();
     });
   });
 

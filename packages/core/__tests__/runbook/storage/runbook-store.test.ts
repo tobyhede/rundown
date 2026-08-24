@@ -1081,6 +1081,186 @@ describe('mutateState (transactional replacement for the per-run lock)', () => {
     expect((await store.loadRun(state.id))?.stepName).not.toBe('never');
   });
 
+  describe('releaseOnCommit, committed with the state write (#794)', () => {
+    it('commits the state and the Run Release as one transaction', async () => {
+      const state = await newState();
+      await store.createRun(state);
+      await store.mutateSession((ctx) => {
+        ctx.session.defaultStack = [state.id];
+      });
+
+      const result = await store.mutateState(
+        state.id,
+        (current) => ({ ...current, stepName: 'terminal' }),
+        {
+          // Derived from the state the transaction is committing, so the
+          // decision is made against the version that actually lands rather
+          // than against whatever a closure captured on an earlier attempt.
+          releaseOnCommit: (next) => [{ runId: next.id, role: 'addressed' }],
+        },
+      );
+
+      expect(result.kind).toBe('committed');
+      expect((await store.loadRun(state.id))?.stepName).toBe('terminal');
+      expect((await store.loadSession()).defaultStack).toEqual([]);
+    });
+
+    it('rolls the state write back when the release is refused', async () => {
+      // The property the whole fold exists for: one outcome, not two. A release
+      // that cannot be applied must not leave the state write standing, or the
+      // caller is back to the two-transaction gap with the failure moved rather
+      // than removed.
+      const state = await newState();
+      await store.createRun(state);
+      await store.mutateSession((ctx) => {
+        ctx.session.defaultStack = [state.id];
+      });
+      const before = await counters(state.id);
+
+      await expect(
+        store.mutateState(state.id, (current) => ({ ...current, stepName: 'terminal' }), {
+          releaseOnCommit: () => {
+            throw new Error('release refused');
+          },
+        }),
+      ).rejects.toThrow('release refused');
+
+      expect((await store.loadRun(state.id))?.stepName).not.toBe('terminal');
+      expect((await counters(state.id)).stateVersion).toBe(before.stateVersion);
+      expect((await store.loadSession()).defaultStack).toEqual([state.id]);
+    });
+
+    it('refuses a release naming a run outside the transaction, and writes nothing', async () => {
+      // This cycle commits exactly one run, so that run is the only one it may
+      // release. The store owns the rule rather than trusting each caller to
+      // restate it, and it refuses BEFORE the session is read — what a mistake
+      // here would otherwise produce is a session write unfenced by the
+      // transaction it claims to belong to.
+      const state = await newState();
+      const other = await newState();
+      await store.createRun(state);
+      await store.createRun(other);
+      await store.mutateSession((ctx) => {
+        ctx.session.defaultStack = [other.id, state.id];
+      });
+
+      await expect(
+        store.mutateState(state.id, (current) => ({ ...current, stepName: 'terminal' }), {
+          releaseOnCommit: () => [{ runId: other.id, role: 'addressed' }],
+        }),
+      ).rejects.toThrow(/outside the transaction/);
+
+      expect((await store.loadRun(state.id))?.stepName).not.toBe('terminal');
+      expect((await store.loadSession()).defaultStack).toEqual([other.id, state.id]);
+    });
+
+    it('reads no session at all when the release is empty', async () => {
+      // An armed option that answers "nothing" must cost nothing. This is what
+      // lets a caller arm it once for a whole drain instead of predicting which
+      // iteration turns terminal: every other iteration touches no session row,
+      // and cannot fail on one either — a corrupt claim row elsewhere in the
+      // session is only read when there is actually something to project.
+      const state = await newState();
+      await store.createRun(state);
+      await store.mutateSession((ctx) => {
+        ctx.session.defaultStack = [state.id];
+      });
+      const sessionWrites = jest.spyOn(
+        store as unknown as { applySession: (...args: never[]) => void },
+        'applySession',
+      );
+
+      const result = await store.mutateState(
+        state.id,
+        (current) => ({ ...current, stepName: 'still running' }),
+        { releaseOnCommit: () => [] },
+      );
+
+      expect(result.kind).toBe('committed');
+      expect(sessionWrites).not.toHaveBeenCalled();
+      expect((await store.loadSession()).defaultStack).toEqual([state.id]);
+    });
+
+    it('releases once, on the attempt that commits', async () => {
+      // The build callback re-runs per attempt; the release must not. It lives
+      // inside the write transaction precisely so a losing attempt — which
+      // writes no state — also writes no session.
+      const state = await newState();
+      await store.createRun(state);
+      let builds = 0;
+      let releases = 0;
+
+      const result = await store.mutateState(
+        state.id,
+        async (current) => {
+          builds += 1;
+          if (builds === 1) {
+            await store.mutateState(state.id, (other) => ({ ...other, description: 'interloper' }));
+          }
+          return { ...current, stepName: `build-${String(builds)}` };
+        },
+        {
+          releaseOnCommit: (next) => {
+            releases += 1;
+            return [{ runId: next.id, role: 'addressed' }];
+          },
+        },
+      );
+
+      expect(result.kind).toBe('committed');
+      expect(builds).toBe(2);
+      expect(releases).toBe(1);
+    });
+
+    it('releases nothing when the builder declines', async () => {
+      // No write, no transaction, no release. `unchanged` is not a commit, and a
+      // session write on it would be an unfenced one.
+      const state = await newState();
+      await store.createRun(state);
+      let releases = 0;
+
+      const result = await store.mutateState(state.id, () => null, {
+        releaseOnCommit: () => {
+          releases += 1;
+          return [];
+        },
+      });
+
+      expect(result.kind).toBe('unchanged');
+      expect(releases).toBe(0);
+    });
+
+    it('releases nothing when an execution owns the run', async () => {
+      // The refusal is decided by the state write itself (`exec_token IS NULL`),
+      // inside the same transaction, so a refused write cannot leave a session
+      // release behind it.
+      const state = await newState();
+      await store.createRun(state);
+      await store.mutateSession((ctx) => {
+        ctx.session.defaultStack = [state.id];
+      });
+      await store.transaction((txn) => {
+        takeOwnership(txn.tx, state.id);
+      });
+      let releases = 0;
+
+      const result = await store.mutateState(
+        state.id,
+        (current) => ({ ...current, stepName: 'blocked' }),
+        {
+          releaseOnCommit: (next) => {
+            releases += 1;
+            return [{ runId: next.id, role: 'addressed' }];
+          },
+        },
+      );
+
+      expect(result.kind).toBe('execution_in_progress');
+      expect(releases).toBe(0);
+      expect((await store.loadSession()).defaultStack).toEqual([state.id]);
+    });
+  });
+
   it('lets more concurrent writers than the attempt budget all commit', async () => {
     const state = await newState();
     await store.createRun(state);

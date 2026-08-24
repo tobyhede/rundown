@@ -1722,6 +1722,94 @@ describe('RunbookStateManager', () => {
       // as `not 'never'`, which a corrupted or empty row would also satisfy.
       expect((await manager.load(state.id))?.stepName).toBe('churn');
     });
+
+    describe('releaseOnCommit, committed with the state write (#794)', () => {
+      it('forwards the release so the session write commits with the state', async () => {
+        // The manager's job here is threading, and threading is only observable
+        // as an effect: the derivation has to reach the store's transaction, not
+        // merely be accepted as an argument.
+        const state = await seedRun();
+        const sessions = new SessionService(manager);
+        await sessions.pushRunbook(state.id);
+        expect((await manager.loadSession()).defaultStack).toContain(state.id);
+
+        const result = await manager.mutateStateReturning(
+          state.id,
+          (current) => ({ next: { ...current, stepName: 'terminal' }, value: 'applied' }),
+          {
+            // Derived from the state the transaction commits, which is the whole
+            // reason the derivation receives it rather than closing over an
+            // attempt's own.
+            releaseOnCommit: (next) => [{ runId: next.id, role: 'addressed' }],
+          },
+        );
+
+        expect(result.value).toBe('applied');
+        expect((await manager.load(state.id))?.stepName).toBe('terminal');
+        expect((await manager.loadSession()).defaultStack).not.toContain(state.id);
+      });
+
+      it('leaves the session alone when no release is derived', async () => {
+        // The armed-but-empty arm, which is the common one: a caller arms this
+        // for a whole sequence and most cycles have nothing to release.
+        const state = await seedRun();
+        const sessions = new SessionService(manager);
+        await sessions.pushRunbook(state.id);
+
+        await manager.mutateStateReturning(
+          state.id,
+          (current) => ({ next: { ...current, stepName: 'ordinary' }, value: 'applied' }),
+          { releaseOnCommit: () => [] },
+        );
+
+        expect((await manager.load(state.id))?.stepName).toBe('ordinary');
+        expect((await manager.loadSession()).defaultStack).toContain(state.id);
+      });
+
+      it('leaves the session alone when no derivation is supplied', async () => {
+        // The absent arm, and the reason it is spelled as omission rather than
+        // as an `undefined` field: a cycle that declares no release must reach
+        // the store with none, so an ordinary state write cannot churn session
+        // rows it never mentioned.
+        const state = await seedRun();
+        const sessions = new SessionService(manager);
+        await sessions.pushRunbook(state.id);
+
+        await manager.mutateStateReturning(state.id, (current) => ({
+          next: { ...current, stepName: 'ordinary' },
+          value: 'applied',
+        }));
+
+        expect((await manager.load(state.id))?.stepName).toBe('ordinary');
+        expect((await manager.loadSession()).defaultStack).toContain(state.id);
+      });
+
+      it('rejects and writes nothing when the release is refused', async () => {
+        // One outcome, not two. The manager surfaces the rollback rather than
+        // absorbing it: a caller that learns its release failed must not also be
+        // told its state committed.
+        const state = await seedRun();
+        const sessions = new SessionService(manager);
+        await sessions.pushRunbook(state.id);
+        const versionBefore = await stateVersionOf(state.id);
+
+        await expect(
+          manager.mutateStateReturning(
+            state.id,
+            (current) => ({ next: { ...current, stepName: 'terminal' }, value: 'applied' }),
+            {
+              releaseOnCommit: () => {
+                throw new Error('release refused');
+              },
+            },
+          ),
+        ).rejects.toThrow('release refused');
+
+        expect((await manager.load(state.id))?.stepName).not.toBe('terminal');
+        expect(await stateVersionOf(state.id)).toBe(versionBefore);
+        expect((await manager.loadSession()).defaultStack).toContain(state.id);
+      });
+    });
   });
 
   describe('frame entry ordinal persistence', () => {

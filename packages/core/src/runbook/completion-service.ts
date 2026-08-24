@@ -26,6 +26,7 @@ import {
   type FrameKey,
 } from './targeting.js';
 import { deriveStoppedReason, extractInternalFailureMessage } from './transition-kernel.js';
+import type { ReleaseRole } from './session-release.js';
 import type {
   DelegationOutcome,
   ResolvedCompletion,
@@ -311,6 +312,22 @@ export interface ApplyNextResolvedCompletionArgs {
   readonly frameOverride?: Frame;
   /** Verified runtime-only issuer for a completion transition that enters delegation. */
   readonly issueDelegationCredential?: DelegationCredentialIssuer;
+  /**
+   * Run Release folded into this apply's own transaction, fired only when the
+   * PREPARED state reaches terminal.
+   *
+   * Present when the caller owns the release for this run, absent when another
+   * seam does — the inline parent-advance seam owns the single release for a
+   * parent it drives, and a release here as well would take it behind that
+   * owner. An armed release is inert on every non-terminal apply, so a drain
+   * arms it once and lets the transaction decide.
+   *
+   * The role, and NOT the trigger: whether this apply reaches terminal is
+   * decided by the transition prepared inside the transaction, long after this
+   * argument is built. Folding the trigger in here would let a caller assert a
+   * terminality it cannot yet know.
+   */
+  readonly terminalRelease?: { readonly role: ReleaseRole };
 }
 
 /**
@@ -1439,10 +1456,22 @@ export class RunbookCompletionService {
    *   row it was handed nor moves the cursor. A caller looping on this method
    *   would otherwise re-select the same row from the same position forever, so
    *   the apply is refused before it commits rather than looped.
+   * @throws {Error} When `terminalRelease` is armed and the prepared state names
+   *   a run other than `args.runbookId`. The transaction owns one run, so that
+   *   is the only one it may release, and the store refuses before projecting;
+   *   the throw rolls the whole apply back.
+   * @throws {InvalidPersistedClaimError} When `terminalRelease` is armed, the
+   *   apply reaches terminal, and any active claim row in the session is
+   *   inconsistent — the release reads the session inside the transaction, so an
+   *   unrelated corrupt row rolls this apply back rather than letting it commit
+   *   terminal beside a session write that failed. That is the atomicity this
+   *   fold exists for, and the recovery is the sanctioned one: fix or prune the
+   *   corrupt claim. A non-terminal apply reads no session and cannot raise it.
    */
   async applyNextResolvedCompletion(
     args: ApplyNextResolvedCompletionArgs,
   ): Promise<ApplyNextResolvedCompletionResult> {
+    const terminalRelease = args.terminalRelease;
     const { value } = await this.manager.mutateStateReturning<ApplyNextResolvedCompletionResult>(
       args.runbookId,
       async (current) => {
@@ -1529,6 +1558,19 @@ export class RunbookCompletionService {
           }
         }
       },
+      terminalRelease === undefined
+        ? {}
+        : {
+            // Decided off the state this transaction is committing, never off
+            // anything the caller supplied: the compare-and-swap re-derives
+            // `next` per attempt, so terminality is only knowable here. A
+            // non-terminal apply answers with no releases, which the store
+            // treats as nothing to do rather than as an empty session write.
+            releaseOnCommit: (next) =>
+              terminalLifecycleStatus(next) === undefined
+                ? []
+                : [{ runId: next.id, role: terminalRelease.role }],
+          },
     );
 
     // `value` is null exactly when the callback never ran, which happens only for

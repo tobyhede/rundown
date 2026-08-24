@@ -35,6 +35,7 @@ import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } fro
 import { getErrorMessage } from '../../errors.js';
 import { logger } from '../../logger.js';
 import type { SessionData } from '../state.js';
+import { projectRunReleases, type RunRelease } from '../session-release.js';
 import { assertLoadablePersistedRun, parsePersistedRunState } from '../persisted-state-guards.js';
 import type { SqlDriver, SqlTransaction, SqlReadTransaction, SyncWork } from './sql-driver.js';
 import {
@@ -439,6 +440,35 @@ export interface CommitOwnedRunSetInput {
    * projected snapshot after every run owner has been cleared.
    */
   readonly updateSession?: (session: SessionData) => SyncWork<void>;
+}
+
+/** Optional budget, guard, and Run Release for one optimistic state cycle. */
+export interface MutateStateOptions {
+  /** Maximum optimistic retry cycles before reporting `concurrent_modification`. */
+  readonly attempts?: number;
+  /** Open-child guard checked before the authoritative state write. */
+  readonly guard?: ParentAdvanceGuard;
+  /**
+   * Run Releases to commit with the state write, derived from the state this
+   * cycle is committing.
+   *
+   * Release-shaped rather than a free-form session projection, which is what the
+   * owned-commit methods above take. This cycle owns exactly ONE run, so the
+   * store can state and enforce the rule itself — every release must name
+   * `runId` — instead of trusting each caller to. The aggregate seam validates
+   * the same rule a layer up, where the owned set is the caller's declaration
+   * rather than the transaction's.
+   *
+   * Being release-shaped also lets an empty answer cost nothing: the session is
+   * read and rewritten only when there is something to project, so an ordinary
+   * non-terminal cycle touches no session row even though the option is armed.
+   *
+   * Receives the state being committed, because that is the only version whose
+   * terminality this cycle can honestly decide from — the compare-and-swap
+   * re-derives `next` per attempt, so a decision closed over an earlier one
+   * would be about a version the transaction did not write.
+   */
+  readonly releaseOnCommit?: (next: RunbookState) => SyncWork<readonly RunRelease[]>;
 }
 
 /** Optional projections applied by a single owned-state commit. */
@@ -1321,19 +1351,30 @@ export class RunbookStore {
    * @param runId - Run to mutate.
    * @param build - Derives the next state from the current one; `null` means no
    *   change. May be invoked once per attempt — see the side-effect constraint above.
-   * @param options - Optional attempt budget (default 8) and parent-advance guard.
+   * @param options - Optional attempt budget (default 8), parent-advance guard,
+   *   and Run Release.
    * @param options.attempts - Maximum optimistic retry cycles before reporting
    *   `concurrent_modification`.
    * @param options.guard - Parent-advance guard: when present, the write refuses
    *   inside its transaction if the run still has a live delegated child.
+   * @param options.releaseOnCommit - Run Releases committed with the state write,
+   *   in the same transaction. See {@link MutateStateOptions.releaseOnCommit}.
    * @returns The committed state, the unchanged state, or a typed refusal.
    * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a
    *   live delegated child blocks the advance.
+   * @throws {Error} When `options.releaseOnCommit` returns a release naming any
+   *   run but this one, or a malformed batch; and whatever reading the session
+   *   for a non-empty batch raises — an inconsistent active claim row makes that
+   *   an `InvalidPersistedClaimError`, from any claim in the session rather than
+   *   only one this run controls. Each rolls the state write back with it, which
+   *   is the point: a release the caller asked to commit with the state must not
+   *   be separately observable from it. A cycle that projects nothing reads no
+   *   session and so raises none of these.
    */
   async mutateState(
     runId: RunId,
     build: (current: RunbookState) => RunbookState | null | Promise<RunbookState | null>,
-    options: { readonly attempts?: number; readonly guard?: ParentAdvanceGuard } = {},
+    options: MutateStateOptions = {},
   ): Promise<StateMutationResult> {
     const attempts = options.attempts ?? DEFAULT_MUTATE_ATTEMPTS;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
@@ -1349,9 +1390,49 @@ export class RunbookStore {
       // (driver ROLLBACK + rethrow); it must NOT be caught here as a retry — it
       // propagates to runGuardedParentAdvance as the open_delegated_children
       // refusal.
-      const outcome = await this.transaction((txn) =>
-        this.writeStateAtVersion(txn.tx, runId, snapshot.stateVersion, next, options.guard),
-      );
+      const outcome = await this.transaction((txn) => {
+        const written = this.writeStateAtVersion(
+          txn.tx,
+          runId,
+          snapshot.stateVersion,
+          next,
+          options.guard,
+        );
+        // Only the attempt that commits releases, and only after the write —
+        // the same order `commitOwnedState` keeps, though only half its reason
+        // carries over: the write invalidates closed delegated claims in this
+        // same transaction, so a session read before it would project onto a
+        // claim set the write is about to change. The other half does NOT.
+        // `commitOwnedState` clears execution ownership in its write, while
+        // `writeStateAtVersion` only REQUIRES `exec_token IS NULL` in its
+        // `WHERE` and clears nothing — so a reader checking that clause against
+        // this path and finding no such write is reading correctly, and the
+        // claim invalidation is the whole of what orders these two. A losing
+        // attempt writes nothing, so it must release nothing either, and a
+        // throwing release rolls the state write back with it — which is what
+        // makes the two writes one outcome.
+        if (written === 'committed' && options.releaseOnCommit !== undefined) {
+          const releases = options.releaseOnCommit(next);
+          // Nothing to project costs nothing: no session read, no rewrite, and
+          // none of the throws either. An ordinary non-terminal cycle arms this
+          // option and still touches no session row, which is what lets a caller
+          // arm it once for a whole drain rather than predicting which iteration
+          // will need it.
+          if (releases.length > 0) {
+            for (const release of releases) {
+              if (release.runId !== runId) {
+                throw new Error(
+                  `Run release for ${release.runId} is outside the transaction for ${runId}.`,
+                );
+              }
+            }
+            const session = this.readSession(txn.tx);
+            projectRunReleases(session, releases);
+            this.applySession(txn, session);
+          }
+        }
+        return written;
+      });
       if (outcome === 'committed') {
         return { kind: 'committed', value: next };
       }
