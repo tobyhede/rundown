@@ -1440,14 +1440,20 @@ export class RunbookStore {
           // transaction callback returns `written` and never sees this result.
           assertSyncWorkResult(releases);
           // The thenable check closes only half of its own threat model. For
-          // the untyped caller it exists for, a non-array return fails the SAME
-          // silent way and just as reachably: `({}).length` is `undefined`,
+          // the untyped caller it exists for, a non-array return is just as
+          // reachable and fails the SAME silent way: `({}).length` is `undefined`,
           // `> 0` is false, the release is skipped and the terminal state still
           // commits. `undefined` and `null` already throw on property access,
           // so the array-like case is the one that leaks. This is also what
           // makes `@throws`'s "or a malformed batch" true rather than
           // aspirational -- it was documented before anything enforced it.
-          if (!Array.isArray(releases)) {
+          // Tested through an `unknown` alias deliberately. `Array.isArray` is
+          // declared `arg is any[]`, so applying it to `releases` directly
+          // narrows the declared `readonly RunRelease[]` DOWN to `any[]` and
+          // every `release.runId` below becomes an unsafe `any` access. Widening
+          // first keeps the check and leaves the element type intact.
+          const derived: unknown = releases;
+          if (!Array.isArray(derived)) {
             throw new Error(`Run release derivation for ${runId} returned a non-array batch.`);
           }
           // Nothing to project costs nothing: no session read, no rewrite, and
