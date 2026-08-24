@@ -43,6 +43,7 @@ import {
   type ParentAdvanceGuard,
   type CapturedRunStateResult,
   type PresentedClaim,
+  type MutateStateOptions,
   type RunbookStore,
   type SessionMutationResult,
   type SessionMutationTxn,
@@ -50,7 +51,6 @@ import {
 } from './storage/runbook-store.js';
 import type { OpenRunbookDriverOptions } from './storage/driver-factory.js';
 import type { SyncWork } from './storage/sql-driver.js';
-import type { RunRelease } from './session-release.js';
 import {
   assertCurrentSchemaVersion,
   assertLoadablePersistedRun,
@@ -823,9 +823,11 @@ export class RunbookStateManager {
     build: (
       current: RunbookState,
     ) => { next: RunbookState | null; value: R } | Promise<{ next: RunbookState | null; value: R }>,
-    options: {
-      readonly releaseOnCommit?: (next: RunbookState) => SyncWork<readonly RunRelease[]>;
-    } = {},
+    // Picked from the store's own options rather than re-spelled: this
+    // forwards `options` WHOLE, so a second declaration of the same field is a
+    // second place for one contract to drift, and the drift would not surface
+    // until the forwarded call itself stopped compiling.
+    options: Pick<MutateStateOptions, 'releaseOnCommit'> = {},
   ): Promise<{ state: RunbookState | null; value: R | null }> {
     const runId = this.toRunId(id);
     if (runId === null) {

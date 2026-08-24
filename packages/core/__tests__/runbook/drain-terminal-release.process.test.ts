@@ -378,7 +378,10 @@ async function killAtGap(op: ChildOp): Promise<ChildReport> {
  * @param terminal - Terminal status the apply must have carried, or null.
  * @throws {Error} When the worker threw instead of applying.
  */
-function expectApplied(report: ChildReport, terminal: string | null): void {
+function expectApplied(
+  report: ChildReport,
+  terminal: Extract<ChildReport, { ok: true }>['terminal'],
+): void {
   if (!report.ok) throw new Error(`worker threw instead of applying: ${report.error}`);
   // Not this process: an in-process "death" would leave the assertions below
   // reading through the dead writer's own driver and connection.

@@ -38,6 +38,7 @@ import type { SessionData } from '../state.js';
 import { projectRunReleases, type RunRelease } from '../session-release.js';
 import { assertLoadablePersistedRun, parsePersistedRunState } from '../persisted-state-guards.js';
 import type { SqlDriver, SqlTransaction, SqlReadTransaction, SyncWork } from './sql-driver.js';
+import { assertSyncWorkResult } from './sql-driver.js';
 import {
   type CapturedAuthority,
   type ClaimGeneration,
@@ -1370,6 +1371,11 @@ export class RunbookStore {
    *   is the point: a release the caller asked to commit with the state must not
    *   be separately observable from it. A cycle that projects nothing reads no
    *   session and so raises none of these.
+   * @throws {AsyncTransactionWorkError} When `options.releaseOnCommit` returns a
+   *   thenable. Unreachable through the typed signature; the guard exists for
+   *   the callers types cannot reach, because this one fails silently rather
+   *   than loudly — an unguarded thenable skips the release while committing
+   *   the terminal state.
    */
   async mutateState(
     runId: RunId,
@@ -1398,26 +1404,53 @@ export class RunbookStore {
           next,
           options.guard,
         );
-        // Only the attempt that commits releases, and only after the write —
-        // the same order `commitOwnedState` keeps, though only half its reason
-        // carries over: the write invalidates closed delegated claims in this
-        // same transaction, so a session read before it would project onto a
-        // claim set the write is about to change. The other half does NOT.
-        // `commitOwnedState` clears execution ownership in its write, while
-        // `writeStateAtVersion` only REQUIRES `exec_token IS NULL` in its
-        // `WHERE` and clears nothing — so a reader checking that clause against
-        // this path and finding no such write is reading correctly, and the
-        // claim invalidation is the whole of what orders these two. A losing
-        // attempt writes nothing, so it must release nothing either, and a
-        // throwing release rolls the state write back with it — which is what
-        // makes the two writes one outcome.
+        // Only the attempt that commits releases, and only after the write.
+        // What binds and what merely matches a sibling are different claims,
+        // and conflating them has now cost two review rounds:
+        //
+        // BINDING. A losing attempt writes nothing, so it must release nothing
+        // either, and a throwing release rolls the state write back with it.
+        // That is what makes the two writes one outcome, and it is the whole
+        // point of the fold.
+        //
+        // NOT BINDING: the ordering against the write. It matches
+        // `commitOwnedState`, but neither of that method's reasons survives the
+        // trip. `commitOwnedState` clears execution ownership in its write,
+        // while `writeStateAtVersion` only REQUIRES `exec_token IS NULL` in its
+        // `WHERE` and clears nothing. And the claim invalidation this write
+        // does perform TOMBSTONES rather than deletes, which `applySession` is
+        // insensitive to by construction: it builds `persisted` from ALL rows
+        // and `stale` from active ones only, so a claim superseded inside this
+        // transaction lands identically whether the session was read before the
+        // write (present in `session.claims`, matched by `persisted`, so never
+        // re-inserted) or after it (absent from both, so never re-tombstoned).
+        // Keep the order — matching the sibling path is worth the nothing it
+        // costs — but do not credit it with an invariant it does not carry, and
+        // do not conclude from its freedom that the READ may move: hoisting
+        // `readSession` above the emptiness guard below is a real defect, and
+        // the reason is written there.
         if (written === 'committed' && options.releaseOnCommit !== undefined) {
           const releases = options.releaseOnCommit(next);
+          // `SyncWork`'s type half cannot constrain a JavaScript caller, and
+          // the untyped failure here is SILENT rather than loud: a thenable
+          // leaves `releases.length` undefined, fails the emptiness guard, and
+          // skips the release while the terminal state commits — #794's exact
+          // defect, restored with no error raised. The driver's own
+          // `assertSyncWorkResult` cannot catch this one, because the outer
+          // transaction callback returns `written` and never sees this result.
+          assertSyncWorkResult(releases);
           // Nothing to project costs nothing: no session read, no rewrite, and
           // none of the throws either. An ordinary non-terminal cycle arms this
           // option and still touches no session row, which is what lets a caller
           // arm it once for a whole drain rather than predicting which iteration
           // will need it.
+          //
+          // The READ is inside this guard on purpose, and moving it above is
+          // the failure this comment exists to prevent: `readSession`
+          // deserializes EVERY active claim, so one corrupt claim row anywhere
+          // in the session would fail every non-terminal apply — runs that have
+          // nothing to do with it, on a path that had no reason to read the
+          // session at all. `@throws` on this method sells exactly that.
           if (releases.length > 0) {
             for (const release of releases) {
               if (release.runId !== runId) {

@@ -4,6 +4,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { openRunbookDriver } from '../../../src/runbook/storage/driver-factory.js';
 import type { SqlDriver, SqlTransaction } from '../../../src/runbook/storage/sql-driver.js';
+import { AsyncTransactionWorkError } from '../../../src/runbook/storage/sql-driver.js';
 import {
   RunbookStore,
   classifyCommitRow,
@@ -46,6 +47,7 @@ import {
 import { makeStepDelegation } from '../../../src/testing/delegation-fixtures.js';
 import { assertRunId, type RunId } from '../../../src/runbook/run-id.js';
 import type { RunbookState, Runbook, Step } from '../../../src/runbook/types.js';
+import type { RunRelease } from '../../../src/runbook/session-release.js';
 import { buildFrameKey } from '../../../src/runbook/targeting.js';
 import { makeBaseStep } from '../../helpers/step-factories.js';
 
@@ -1089,6 +1091,16 @@ describe('mutateState (transactional replacement for the per-run lock)', () => {
         ctx.session.defaultStack = [state.id];
       });
 
+      // Positive control for the two `not.toHaveBeenCalled()` assertions below:
+      // it is this spy, on this name, firing on the path that SHOULD read the
+      // session. Without it, a spy on a method that never fires -- a renamed
+      // private, a typo -- would satisfy those assertions vacuously while
+      // observing nothing at all.
+      const sessionReads = jest.spyOn(
+        store as unknown as { readSession: (...args: never[]) => unknown },
+        'readSession',
+      );
+
       const result = await store.mutateState(
         state.id,
         (current) => ({ ...current, stepName: 'terminal' }),
@@ -1101,6 +1113,7 @@ describe('mutateState (transactional replacement for the per-run lock)', () => {
       );
 
       expect(result.kind).toBe('committed');
+      expect(sessionReads).toHaveBeenCalled();
       expect((await store.loadRun(state.id))?.stepName).toBe('terminal');
       expect((await store.loadSession()).defaultStack).toEqual([]);
     });
@@ -1144,12 +1157,25 @@ describe('mutateState (transactional replacement for the per-run lock)', () => {
         ctx.session.defaultStack = [other.id, state.id];
       });
 
+      const sessionReads = jest.spyOn(
+        store as unknown as { readSession: (...args: never[]) => unknown },
+        'readSession',
+      );
+
       await expect(
         store.mutateState(state.id, (current) => ({ ...current, stepName: 'terminal' }), {
           releaseOnCommit: () => [{ runId: other.id, role: 'addressed' }],
         }),
       ).rejects.toThrow(/outside the transaction/);
 
+      // The rollback alone cannot witness the ordering: the throw undoes the
+      // write from either side of the read, so both assertions below hold even
+      // with the ownership check moved after `readSession`. Only the unread
+      // session tells them apart -- and the difference is what the operator is
+      // told, since a session holding one inconsistent claim row would surface
+      // `InvalidPersistedClaimError` ("the database is inconsistent", recovered
+      // by pruning) in place of a programmer error naming the wrong run.
+      expect(sessionReads).not.toHaveBeenCalled();
       expect((await store.loadRun(state.id))?.stepName).not.toBe('terminal');
       expect((await store.loadSession()).defaultStack).toEqual([other.id, state.id]);
     });
@@ -1169,6 +1195,10 @@ describe('mutateState (transactional replacement for the per-run lock)', () => {
         store as unknown as { applySession: (...args: never[]) => void },
         'applySession',
       );
+      const sessionReads = jest.spyOn(
+        store as unknown as { readSession: (...args: never[]) => unknown },
+        'readSession',
+      );
 
       const result = await store.mutateState(
         state.id,
@@ -1177,7 +1207,42 @@ describe('mutateState (transactional replacement for the per-run lock)', () => {
       );
 
       expect(result.kind).toBe('committed');
+      // The READ is the half the contract sells -- `mutateState`'s own
+      // `@throws` closes with "a cycle that projects nothing reads no session
+      // and so raises none of these". `readSession` deserializes every active
+      // claim, so a read hoisted above the emptiness guard would make one
+      // corrupt claim row anywhere in the session fail every non-terminal
+      // apply, on runs that have nothing to do with it.
+      expect(sessionReads).not.toHaveBeenCalled();
       expect(sessionWrites).not.toHaveBeenCalled();
+      expect((await store.loadSession()).defaultStack).toEqual([state.id]);
+    });
+
+    it('refuses a thenable release rather than silently skipping it', async () => {
+      // `SyncWork` is enforced by type AND by runtime check because the type
+      // half cannot reach a JavaScript caller. Here the unguarded failure is
+      // silent: a thenable leaves `releases.length` undefined, so `> 0` is
+      // false, the release is skipped -- and the terminal state commits without
+      // it. That is #794's defect exactly, so the guard must throw rather than
+      // let the run land terminal and still targeted.
+      const state = await newState();
+      await store.createRun(state);
+      await store.mutateSession((ctx) => {
+        ctx.session.defaultStack = [state.id];
+      });
+
+      await expect(
+        store.mutateState(state.id, (current) => ({ ...current, stepName: 'terminal' }), {
+          releaseOnCommit: (() =>
+            Promise.resolve([{ runId: state.id, role: 'addressed' }])) as unknown as (
+            next: RunbookState,
+          ) => readonly RunRelease[],
+        }),
+      ).rejects.toThrow(AsyncTransactionWorkError);
+
+      // Rolled back rather than half-applied: the refusal must not leave the
+      // run terminal, which is the state the skipped release would have stranded.
+      expect((await store.loadRun(state.id))?.stepName).not.toBe('terminal');
       expect((await store.loadSession()).defaultStack).toEqual([state.id]);
     });
 
