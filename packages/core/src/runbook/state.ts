@@ -813,10 +813,14 @@ export class RunbookStateManager {
    *   (or `null` when the runbook does not exist).
    * @throws {ConcurrentStateModificationError} When the optimistic retry budget
    *   is spent under sustained contention.
-   * @throws {Error} When a derived release names any run but this one, and
-   *   whatever reading the session for a non-empty batch raises. Both roll the
-   *   state write back, so a caller told its release failed is never also told
-   *   its state committed.
+   * @throws {Error} When a derived release names any run but this one, returns a
+   *   non-array batch, and whatever reading the session for a non-empty batch
+   *   raises. Each rolls the state write back, so a caller told its release
+   *   failed is never also told its state committed.
+   * @throws {AsyncTransactionWorkError} When `options.releaseOnCommit` returns a
+   *   thenable. Forwarded from {@link RunbookStore.mutateState}, which this
+   *   passes `options` to whole; unreachable through the typed signature, and
+   *   guarded there because that failure is silent rather than loud.
    */
   async mutateStateReturning<R>(
     id: string,

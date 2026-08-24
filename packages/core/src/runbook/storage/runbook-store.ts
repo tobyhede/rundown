@@ -1439,6 +1439,17 @@ export class RunbookStore {
           // `assertSyncWorkResult` cannot catch this one, because the outer
           // transaction callback returns `written` and never sees this result.
           assertSyncWorkResult(releases);
+          // The thenable check closes only half of its own threat model. For
+          // the untyped caller it exists for, a non-array return fails the SAME
+          // silent way and just as reachably: `({}).length` is `undefined`,
+          // `> 0` is false, the release is skipped and the terminal state still
+          // commits. `undefined` and `null` already throw on property access,
+          // so the array-like case is the one that leaks. This is also what
+          // makes `@throws`'s "or a malformed batch" true rather than
+          // aspirational -- it was documented before anything enforced it.
+          if (!Array.isArray(releases)) {
+            throw new Error(`Run release derivation for ${runId} returned a non-array batch.`);
+          }
           // Nothing to project costs nothing: no session read, no rewrite, and
           // none of the throws either. An ordinary non-terminal cycle arms this
           // option and still touches no session row, which is what lets a caller

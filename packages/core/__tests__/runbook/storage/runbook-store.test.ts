@@ -1246,6 +1246,31 @@ describe('mutateState (transactional replacement for the per-run lock)', () => {
       expect((await store.loadSession()).defaultStack).toEqual([state.id]);
     });
 
+    it('refuses a non-array release batch rather than silently skipping it', async () => {
+      // The sibling of the thenable case, and reachable the same way: for the
+      // untyped caller these guards exist for, a non-array return fails
+      // IDENTICALLY and just as silently -- `({}).length` is undefined, so the
+      // emptiness guard is false, the release is skipped, and the terminal
+      // state commits anyway. `undefined`/`null` already throw on property
+      // access; the array-like case is the one that leaked.
+      const state = await newState();
+      await store.createRun(state);
+      await store.mutateSession((ctx) => {
+        ctx.session.defaultStack = [state.id];
+      });
+
+      await expect(
+        store.mutateState(state.id, (current) => ({ ...current, stepName: 'terminal' }), {
+          releaseOnCommit: (() => ({ runId: state.id, role: 'addressed' })) as unknown as (
+            next: RunbookState,
+          ) => readonly RunRelease[],
+        }),
+      ).rejects.toThrow(/non-array batch/);
+
+      expect((await store.loadRun(state.id))?.stepName).not.toBe('terminal');
+      expect((await store.loadSession()).defaultStack).toEqual([state.id]);
+    });
+
     it('releases once, on the attempt that commits', async () => {
       // The build callback re-runs per attempt; the release must not. It lives
       // inside the write transaction precisely so a losing attempt — which
