@@ -419,8 +419,7 @@ async function committedPosition(
 /**
  * Perform the loop's `addressed` Run Release, reporting a refusal as events.
  *
- * The single release site behind both named helpers below, and the reason they
- * can differ in what they report without differing in what they DO. The role is
+ * The release site behind {@link releaseTerminalRun}. The role is
  * `addressed` on every path this loop takes: it acted on the run it names.
  * Before terminality the preserved claim is still live authority for the holder
  * that presented it; after terminality it is the terminal evidence
@@ -437,13 +436,10 @@ async function committedPosition(
  * inside the apply's own transaction (#794), where a refusal rolls the terminal
  * state back with it and there is no announced completion left to correct.
  *
- * What still reaches here, and is therefore the whole set of releases this loop
- * takes outside a transaction: {@link releaseTerminalRun}'s two entry-time
- * terminal checks — the `completed` one emits its own contradiction from a
- * position it already holds — and {@link releaseRefusedContinuation}, from the
- * drain's cursor-mismatch refusal and the three frontier refusal arms. None of
- * those has a state write to fold into: the entry-time checks find a run that
- * was already terminal, and every refusal leaves its run RUNNING.
+ * What still reaches here is the pair of entry-time terminal checks. They find
+ * a run that was already terminal and therefore have no state write into which
+ * their release can fold. Refusals never reach here: they committed no terminal
+ * state and therefore owe no Run Release (#833).
  *
  * @param sessionService - Session service performing the release.
  * @param runbookId - Run whose session targeting is being released.
@@ -482,9 +478,6 @@ async function applyAddressedRunRelease(
  * Reports `terminal` once the release commits, or when the caller owns it. A
  * refused release downgrades the status to `'stopped'`: the terminal side
  * effect this loop owed did not happen, so it must not report a clean `'done'`.
- * That downgrade is the whole difference from
- * {@link releaseRefusedContinuation}, which has no clean outcome to protect.
- *
  * The downgrade is lossy on its own — `'stopped'` says a run stopped, not that
  * a release was refused — which is why the disposition travels beside it rather
  * than being inferred from it.
@@ -512,51 +505,6 @@ async function releaseTerminalRun(
   return released === 'committed'
     ? { status: terminal, release: 'released' }
     : { status: 'stopped', release: 'refused' };
-}
-
-/**
- * Release a run whose continuation this loop refused, and report `'stopped'`.
- *
- * The run is still RUNNING here — the entry-time terminal checks and the drain
- * returned earlier, and nothing on these paths made it terminal. Taking it off
- * the session stack is deliberate: an escaping throw left the refused run
- * resolving as the active runbook for every later bare command. Its claims are
- * a different question, and the answer is the same `addressed` one — a refusal
- * whose remediation is "retry" must not destroy the authority the retry needs
- * (#789).
- *
- * Always `'stopped'`. The refusal already decided the outcome, so unlike
- * {@link releaseTerminalRun} there is no clean report for a refused release to
- * downgrade; a refusal is still surfaced through the emitter.
- *
- * Standing down under `caller` ownership settles only the RELEASE. The arms
- * that call this still report `'stopped'` there, and the inline parent-advance
- * seam acts on that by releasing a run this refusal left RUNNING and recursing
- * one level up on a terminal that never happened — the defect the drain's own
- * refusal arm already avoids by handing back {@link ExecutionLoopRefusal}
- * instead. Tracked as #833; it is a question about what a refusal REPORTS, not
- * about who releases, so it is not settled here.
- *
- * @param sessionService - Session service performing the release.
- * @param runbookId - Run whose session targeting is being released.
- * @param owner - Who owns this loop's Run Release.
- * @param emitter - Execution emitter receiving the refusal events.
- * @returns `'stopped'`, with the disposition of the release this loop took —
- *   `'deferred'` under caller ownership, where it took none.
- */
-async function releaseRefusedContinuation(
-  sessionService: SessionService,
-  runbookId: RunId,
-  owner: ExecutionReleaseOwner,
-  emitter: ExecutionEventEmitter,
-): Promise<ExecutionLoopResult> {
-  if (!loopOwnsRelease(owner)) return { status: 'stopped', release: 'deferred' };
-  // Reported, not acted on. The refusal already decided the status, so this
-  // value changes nothing the loop does — which is exactly why it was
-  // discarded before, and exactly why discarding it left "the release was
-  // refused" indistinguishable from "the release committed" at every caller.
-  const released = await applyAddressedRunRelease(sessionService, runbookId, emitter);
-  return { status: 'stopped', release: released === 'committed' ? 'released' : 'refused' };
 }
 
 function createCliCommandServices(
@@ -1679,7 +1627,7 @@ export async function runExecutionLoop(
           message: refusal.message,
         },
       });
-      return await releaseRefusedContinuation(sessionService, runbookId, releaseOwner, emitter);
+      return { status: 'stopped', release: 'none' };
     }
     if (drainResult.status === 'not_active') {
       return { status: 'waiting', release: 'none' };
@@ -1714,6 +1662,15 @@ export async function runExecutionLoop(
       cursorIsOnSubstep &&
       readPersistedReEntryFrontier(currentState).length > 0
     ) {
+      const refusal = {
+        reason: 'actor_context_required',
+        message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
+        code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED,
+        runId: runbookId,
+      } as const satisfies InlineParentAdvanceRefusal;
+      if (!loopOwnsRelease(releaseOwner)) {
+        return { status: 'refused', refusal };
+      }
       // A missing deriver is a refusal of this continuation, not a crash.
       // Throwing unwound past both the emitter and the release, so the caller
       // got a bare Error carrying no code and the refused run stayed on the
@@ -1739,7 +1696,7 @@ export async function runExecutionLoop(
           reason: 'actor_context_required',
         },
       });
-      return await releaseRefusedContinuation(sessionService, runbookId, releaseOwner, emitter);
+      return { status: 'stopped', release: 'none' };
     }
 
     // Core owns the re-entry frontier decision — validation of the persisted
@@ -1775,6 +1732,15 @@ export async function runExecutionLoop(
       // The core detail is safe to surface — it names the frontier id or the
       // issuer-claim divergence, never a bearer.
       const message = `${FRONTIER_PROJECTION_REFUSED_MESSAGE}: ${reentry.message}`;
+      const refusal = {
+        reason: 'projection_refused',
+        message,
+        code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
+        runId: runbookId,
+      } as const satisfies InlineParentAdvanceRefusal;
+      if (!loopOwnsRelease(releaseOwner)) {
+        return { status: 'refused', refusal };
+      }
       emitter.emit({
         type: 'ERROR_OCCURRED',
         payload: { message, code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code },
@@ -1783,10 +1749,19 @@ export async function runExecutionLoop(
         type: 'RUNBOOK_STOPPED',
         payload: { position: stepPosition, message },
       });
-      return await releaseRefusedContinuation(sessionService, runbookId, releaseOwner, emitter);
+      return { status: 'stopped', release: 'none' };
     }
 
     if (reentry.status === 'consume_failed') {
+      const refusal = {
+        reason: 'consume_failed',
+        message: FRONTIER_CONSUME_FAILED_MESSAGE,
+        code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
+        runId: runbookId,
+      } as const satisfies InlineParentAdvanceRefusal;
+      if (!loopOwnsRelease(releaseOwner)) {
+        return { status: 'refused', refusal };
+      }
       // Transient, and distinct from the refusal above: the frontier projected
       // but the machine did not accept the consume, so it is still persisted and
       // no bearer was disclosed. Same code as `collect` reports for the same
@@ -1803,7 +1778,7 @@ export async function runExecutionLoop(
         type: 'RUNBOOK_STOPPED',
         payload: { position: stepPosition, message: FRONTIER_CONSUME_FAILED_MESSAGE },
       });
-      return await releaseRefusedContinuation(sessionService, runbookId, releaseOwner, emitter);
+      return { status: 'stopped', release: 'none' };
     }
 
     // One classified entry either way. A projected frontier was entered by the

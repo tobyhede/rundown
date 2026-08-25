@@ -54,18 +54,13 @@ export interface AdvanceInlineParentInput {
  *
  * Carries `message` and `code` for the same reason {@link LinkageCycleTrip}
  * does: the frontend renders, it does not decide what the condition says. The
- * only member today is core's completion drain refusing a persisted completion
- * that is not for the active cursor — a fact `RunbookCompletionService` has
- * already diagnosed and worded, which used to be re-thrown as a bare `Error`
- * and reached the operator as RD-999 "Unknown error" (#802).
+ * Members cover every refusal the CLI execution loop can hand back without
+ * applying a terminal transition. Keeping each reason paired with its code
+ * makes a new condition a type-level addition instead of an untyped message.
  */
-export interface InlineParentAdvanceRefusal {
-  /** Why the advance refused. Mirrors `CompletionTargetMismatch.reason`. */
-  readonly reason: 'target_mismatch';
+interface InlineParentAdvanceRefusalBase {
   /** Operator-facing message, composed by core at the point of diagnosis. */
   readonly message: string;
-  /** Operator-facing error code. */
-  readonly code: typeof COMPLETION_TARGET_MISMATCH_CODE;
   /**
    * The run whose drain refused.
    *
@@ -79,6 +74,30 @@ export interface InlineParentAdvanceRefusal {
    */
   readonly runId: RunId;
 }
+
+export type InlineParentAdvanceRefusal = InlineParentAdvanceRefusalBase &
+  (
+    | {
+        /** Completion did not address the active cursor. */
+        readonly reason: 'target_mismatch';
+        readonly code: typeof COMPLETION_TARGET_MISMATCH_CODE;
+      }
+    | {
+        /** A persisted frontier cannot be disclosed without verified authority. */
+        readonly reason: 'actor_context_required';
+        readonly code: 'ACTOR_CONTEXT_REQUIRED';
+      }
+    | {
+        /** Verified authority could not reproduce the persisted frontier. */
+        readonly reason: 'projection_refused';
+        readonly code: 'RD-821';
+      }
+    | {
+        /** The projected frontier could not be consumed and remains pending. */
+        readonly reason: 'consume_failed';
+        readonly code: 'RD-829';
+      }
+  );
 
 /**
  * Collapsed outcome of one inline parent-advance.

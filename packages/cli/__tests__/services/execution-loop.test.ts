@@ -1329,7 +1329,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result.status).toBe('stopped');
+    expect(result).toEqual({ status: 'stopped', release: 'released' });
     expect(mockEmitter.emit).toHaveBeenCalledWith({
       type: 'POLICY_DENIED',
       payload: expect.objectContaining({
@@ -2264,7 +2264,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result.status).toBe('stopped');
+    expect(result).toEqual({ status: 'stopped', release: 'released' });
 
     // ERROR_OCCURRED is emitted with the RETRY_ERROR lastAction payload fields.
     expect(mockEmitter.emit).toHaveBeenCalledWith({
@@ -3042,7 +3042,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result.status).toBe('stopped');
+    expect(result).toEqual({ status: 'stopped', release: 'none' });
     expect(mockEmitter.emit).toHaveBeenCalledWith({
       type: 'ERROR_OCCURRED',
       payload: {
@@ -3057,13 +3057,8 @@ describe('runExecutionLoop', () => {
         message: 'Completion targets substep 2, cursor is on 1',
       },
     });
-    // The release the throw used to skip. Without it the refused run stays on
-    // the session stack and every later bare command still resolves it.
-    // `addressed`: the run is still RUNNING here, and the refusal's remediation
-    // is to retry, so the authority a retry needs must survive (#789).
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'addressed' },
-    ]);
+    // The mismatch committed no terminal state, so it has no Run Release.
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
   });
 
   // The drain's mismatch arm reports `applied: 0` and carries no state, so a
@@ -3294,12 +3289,12 @@ describe('runExecutionLoop', () => {
     );
   });
 
-  it('releases the run from the session stack when the frontier refusal fires', async () => {
+  it('keeps the running run targeted when the missing-authority refusal fires', async () => {
     mockManager.load.mockResolvedValue(
       frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
     );
 
-    await runExecutionLoop(
+    const result = await runExecutionLoop(
       asManager(mockManager),
       runbookId,
       asSteps(singleDelegateFrontierSteps()),
@@ -3307,22 +3302,17 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    // The stranding assertion: the release must have run, so the refused run is
-    // no longer targeted by the session. Asserted by exact arguments — the run
-    // is still RUNNING on this path, so `collateral` would revoke the authority
-    // the prescribed retry needs (#789), and a role that silently swapped would
-    // still satisfy a bare call-count check.
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledTimes(1);
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'addressed' },
-    ]);
+    expect(result).toEqual({ status: 'stopped', release: 'none' });
+    // No terminal transition committed, so Position A has no Run Release to
+    // pair with it. Keeping the running run targeted is what makes retry real.
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
   });
 
-  it('releases nothing on the frontier refusal when the caller owns the release', async () => {
-    // The other side of the refused-continuation release: an inline
-    // parent-advance continuation names its caller as release owner, and the
-    // refusal arms stand down with it. Releasing here would take a run off the
-    // session stack behind the seam that owns it.
+  it('hands a missing-authority refusal back without claiming a terminal', async () => {
+    // Caller ownership means the inline parent-advance seam acts on the status
+    // it receives. This refusal applied nothing and left the run RUNNING, so a
+    // stopped status would make that seam release a live run and recurse upward
+    // on a terminal that never happened.
     mockManager.load.mockResolvedValue(
       frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
     );
@@ -3336,8 +3326,17 @@ describe('runExecutionLoop', () => {
       { releaseOwner: 'caller' },
     );
 
-    expect(result.status).toBe('stopped');
+    expect(result).toEqual({
+      status: 'refused',
+      refusal: {
+        reason: 'actor_context_required',
+        message: 'Delegation frontier cannot be projected without verified claim authority',
+        code: 'ACTOR_CONTEXT_REQUIRED',
+        runId: runbookId,
+      },
+    });
     expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+    expect(mockEmitter.emit).not.toHaveBeenCalled();
   });
 
   // The projection refusal is the sibling failure of the missing-deriver one
@@ -3434,12 +3433,12 @@ describe('runExecutionLoop', () => {
     );
   });
 
-  it('releases the run from the session stack when the frontier projection is refused', async () => {
+  it('keeps the running run targeted when frontier projection is refused', async () => {
     mockManager.load.mockResolvedValue(
       frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
     );
 
-    await runExecutionLoop(
+    const result = await runExecutionLoop(
       asManager(mockManager),
       runbookId,
       asSteps(singleDelegateFrontierSteps()),
@@ -3448,18 +3447,11 @@ describe('runExecutionLoop', () => {
       { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_other') },
     );
 
-    // The stranding assertion: the release must have run, so the refused run is
-    // no longer targeted by the session. Asserted by exact arguments — the run
-    // is still RUNNING on this path, so `collateral` would revoke the authority
-    // the prescribed retry needs (#789), and a role that silently swapped would
-    // still satisfy a bare call-count check.
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledTimes(1);
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'addressed' },
-    ]);
+    expect(result).toEqual({ status: 'stopped', release: 'none' });
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
   });
 
-  it('releases the rotated-issuer projection refusal exactly like the hash mismatch', async () => {
+  it('keeps the rotated-issuer projection refusal targeted like the hash mismatch', async () => {
     mockManager.load.mockResolvedValue(
       frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
     );
@@ -3475,10 +3467,38 @@ describe('runExecutionLoop', () => {
       { delegationRuntime: frontierProjectionRuntime(rotatedIssuerDeriver) },
     );
 
-    expect(result.status).toBe('stopped');
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'addressed' },
-    ]);
+    expect(result).toEqual({ status: 'stopped', release: 'none' });
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+  });
+
+  it('hands a projection refusal back without claiming a terminal', async () => {
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
+    );
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(singleDelegateFrontierSteps()),
+      '/tmp',
+      asEmitter(mockEmitter),
+      {
+        releaseOwner: 'caller',
+        delegationRuntime: frontierProjectionRuntime(() => 'rdtk_other'),
+      },
+    );
+
+    expect(result).toEqual({
+      status: 'refused',
+      refusal: {
+        reason: 'projection_refused',
+        message: `${FRONTIER_PROJECTION_PREFIX}: Derived delegation credential does not match frontier 1.1`,
+        code: 'RD-821',
+        runId: runbookId,
+      },
+    });
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+    expect(mockEmitter.emit).not.toHaveBeenCalled();
   });
 
   // ---------------------------------------------------------------------------
@@ -3535,10 +3555,39 @@ describe('runExecutionLoop', () => {
     expect(mockEmitter.emit).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'STEP_ENTERED' }),
     );
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledTimes(1);
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'addressed' },
-    ]);
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+  });
+
+  it('hands a frontier consume failure back without claiming a terminal', async () => {
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_retry_a')]),
+    );
+    mockActorService.sendAndSync.mockResolvedValue(null);
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(singleDelegateFrontierSteps()),
+      '/tmp',
+      asEmitter(mockEmitter),
+      {
+        releaseOwner: 'caller',
+        delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a'),
+      },
+    );
+
+    expect(result).toEqual({
+      status: 'refused',
+      refusal: {
+        reason: 'consume_failed',
+        message:
+          'Failed to consume delegation frontier after re-entry; the frontier is still pending, retry the run',
+        code: 'RD-829',
+        runId: runbookId,
+      },
+    });
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+    expect(mockEmitter.emit).not.toHaveBeenCalled();
   });
 
   it('rejects a structurally malformed persisted frontier rather than projecting it', async () => {
