@@ -5,8 +5,9 @@
  * both linkage kinds. Inline composition is synchronous: the seam invokes the
  * CLI-supplied {@link AdvanceInlineParent} callable to drain and advance the
  * composing parent (subprocess execution is Category A and stays in the CLI),
- * then — if that drives the parent terminal — releases it and recurses ONE level
- * up. Delegation is report-only: the seam records one outcome row and stops,
+ * then — if that drives the parent terminal — recurses ONE level up. The
+ * callable's terminal transaction already commits the parent's Run Release.
+ * Delegation is report-only: the seam records one outcome row and stops,
  * leaving the delegating run collection pending.
  *
  * The `advanceInlineParent` callable is a runtime function reference. It flows
@@ -25,8 +26,6 @@ import type {
   COMPLETION_TARGET_MISMATCH_CODE,
   RunbookCompletionService,
 } from './completion-service.js';
-import type { RunRelease } from './session-release.js';
-import type { SessionMutationResult } from './storage/runbook-store.js';
 import type { FrameKey } from './targeting.js';
 import type { RunId } from './run-id.js';
 import type { DelegationOutcome, RunbookState } from './types.js';
@@ -102,12 +101,12 @@ export type InlineParentAdvanceRefusal = InlineParentAdvanceRefusalBase &
 /**
  * Collapsed outcome of one inline parent-advance.
  *
- * `stopped` / `done` mean the advance drove the parent to that terminal (the
- * seam then releases it and recurses one level). `active` means the parent is
- * still running or waiting on sibling substeps (no release, no recursion).
+ * `stopped` / `done` mean the advance drove the parent to that terminal and
+ * atomically released it (the seam then recurses one level). `active` means the
+ * parent is still running or waiting on sibling substeps (no recursion).
  *
  * `refused` is the fail-closed arm (#802). The advance applied nothing, so the
- * seam performs NO release and NO recursion and hands the refusal back on its
+ * seam performs NO recursion and hands the refusal back on its
  * own return value — the same shape `linkage-cycle` uses, and for the same
  * reason: a refusal thrown as an exception unwinds past the frontend's
  * renderer and its `flush`, arriving as an undiagnosed envelope with the
@@ -126,8 +125,8 @@ export type AdvanceInlineParentOutcome =
  * CLI-supplied Category-C callable that drains and advances an inline parent.
  *
  * The seam invokes this to run the parent's execution loop (subprocess spawn —
- * Category A). It performs NO terminal session release: release is owned by the
- * seam so it happens once (idempotent + PID-stale-reclaimable).
+ * Category A). A terminal transition commits its addressed Run Release in the
+ * same transaction; no later frame owns cleanup.
  *
  * @param input - Parent identity + terminal result. Data only.
  * @returns The collapsed advance status.
@@ -216,17 +215,6 @@ export interface InlineParentAdvanceStateReader {
    * @returns The persisted state, or `null`.
    */
   load(id: string): Promise<RunbookState | null>;
-}
-
-/** Narrow session capability used for terminal release. Satisfied by `SessionService`. */
-export interface InlineParentAdvanceSessionService {
-  /**
-   * Release runs from every session targeting structure that names them.
-   *
-   * @param releases - Runs to release, each with the role that explains it.
-   * @returns The committed envelope, unused by the seam.
-   */
-  releaseRuns(releases: readonly RunRelease[]): Promise<SessionMutationResult<void>>;
 }
 
 /**
@@ -333,9 +321,9 @@ export type LinkageCycleTrip =
 /**
  * Dependencies for {@link propagateTerminalChildUpward}.
  *
- * `manager` / `sessionService` / `completionService` are already-constructed
- * core services; `advanceInlineParent` is the CLI-supplied runtime callable
- * (Category C). None of these are persisted.
+ * `manager` / `completionService` are already-constructed core services;
+ * `advanceInlineParent` is the CLI-supplied runtime callable (Category C). None
+ * of these are persisted.
  *
  * There is deliberately NO diagnostic sink here (#603). Rendering a trip is a
  * Category A (frontend) side effect, but so is deciding WHEN to render it — and a
@@ -347,8 +335,6 @@ export type LinkageCycleTrip =
 export interface PropagateTerminalChildUpwardDeps {
   /** State reader for reload-on-recursion. */
   readonly manager: InlineParentAdvanceStateReader;
-  /** Session service for uniform terminal release. */
-  readonly sessionService: InlineParentAdvanceSessionService;
   /** Completion service for recording the child's outcome against its parent. */
   readonly completionService: Pick<RunbookCompletionService, 'recordChildCompletion'>;
   /** CLI-supplied inline parent-advance execution callable. */
@@ -359,7 +345,7 @@ export interface PropagateTerminalChildUpwardDeps {
  * Upper bound on the number of runs one upward propagation walk may visit.
  *
  * Backstop for the acyclic-but-corrupt case the visited-set cannot bound: a chain
- * of N DISTINCT run ids costs N advances + N releases + N reloads before it ends.
+ * of N DISTINCT run ids costs N advances + N reloads before it ends.
  * Legitimate inline nesting is a handful of levels (a runbook composing a child
  * that composes a child), so 64 leaves ~2 orders of magnitude of headroom while
  * bounding worst-case side effects at 63 (the 64th run trips the guard BEFORE any
@@ -378,14 +364,14 @@ export const MAX_INLINE_PROPAGATION_CHAIN = 64;
  * Propagate a terminal child run's outcome to its parent, dispatching on linkage.
  *
  * Inline: record the child's outcome, then invoke {@link AdvanceInlineParent}. If
- * the parent reaches terminal (`stopped`/`done`), release it and recurse ONE
- * level up (single-level: inline chains advance synchronously; a delegation
+ * the parent reaches terminal (`stopped`/`done`), recurse ONE level up
+ * (single-level: inline chains advance synchronously; a delegation
  * boundary takes the report-only arm). Delegation: record report-only and stop.
  *
  * @remarks
  * The walk is guarded (#602): this wrapper seeds the visited-run set with the
  * child's own id and the depth at 1, then delegates to the private recursion. The
- * set is a recursion ARGUMENT, so it survives the release/reload of each parent —
+ * set is a recursion ARGUMENT, so it survives the reload of each parent —
  * a reloaded parent carries no memory of the walk that produced it. On a repeat, or
  * past {@link MAX_INLINE_PROPAGATION_CHAIN} levels, the walk returns
  * `{ kind: 'linkage-cycle', trip }` having performed no propagation side effects
@@ -445,7 +431,7 @@ async function propagateTerminalChildUpwardInner(
   // #602 guard — BEFORE any side effect, and before the kind dispatch, so a
   // cyclic delegation linkage is refused as firmly as a cyclic inline one. A
   // repeat means the persisted graph is not the tree it is built as; refuse
-  // rather than re-run record → advance → release on a run already walked.
+  // rather than re-run record → advance on a run already walked.
   //
   // The trip is composed HERE, at the level that found it, so it names the true
   // offending run; the severity collapse below returns the arm UNCHANGED so the
@@ -509,49 +495,20 @@ async function propagateTerminalChildUpwardInner(
     result: projection.result,
   });
 
-  // A refused advance applied nothing, so there is no terminal to release and
-  // nothing to recurse into — the fail-closed shape `linkage-cycle` already
+  // A refused advance applied nothing, so there is no terminal and nothing to
+  // recurse into — the fail-closed shape `linkage-cycle` already
   // uses, and the reason this arm exists at all (#802). The refusal rides the
   // return value UNCHANGED so the frontend that owns the emitter renders it
   // before its own flush; the alternative it replaces was the callable throwing,
   // which unwound past both.
   if (outcome.status === 'refused') return { kind: 'advance-refused', refusal: outcome.refusal };
 
-  // Parent is still running / waiting on sibling substeps: nothing to release.
+  // Parent is still running / waiting on sibling substeps: nothing to recurse.
   if (outcome.status === 'active') return { kind: 'handled' };
 
-  // Parent reached a terminal (stopped/done) via the callable. This seam is the
-  // SOLE release owner (the callable names the caller as release owner), so
-  // release here exactly once and recurse ONE level up. reportTerminalChild
-  // self-guards when the fresh parent has no linkage of its own.
-  //
-  // RELEASE ROLE (RD-598 verification): `addressed` — this seam drove the parent
-  // to terminal, matching the collect terminal branch in `collection-service.ts`,
-  // so a later `--claim-id` confirm/conflict against the terminal parent resolves
-  // `terminal`, not `missing`. Deciding disposition once, in one owner,
-  // eliminates the old drain-deletes / loop-retains inconsistency.
-  try {
-    const release = await deps.sessionService.releaseRuns([
-      { runId: linkage.parentRunId, role: 'addressed' },
-    ]);
-    // Same best-effort disposition as the swallowed rejection below, narrowed
-    // exhaustively so a future refusal arm cannot inherit silence by default.
-    switch (release.kind) {
-      case 'committed':
-      case 'execution_in_progress':
-      case 'recovery_required':
-        break;
-      default: {
-        const _exhaustive: never = release;
-        return _exhaustive;
-      }
-    }
-  } catch {
-    // Terminal state is already committed by the callable; a failed release only
-    // leaks a self-healing session-stack entry (reclaimed by the next acquirer
-    // via PID-aware stale detection). Never let cleanup mask the committed
-    // upward propagation (RD-102, matching the collect terminal branch).
-  }
+  // Parent reached a terminal through the callable. Its terminal transaction
+  // already committed the addressed Run Release atomically; this seam owns only
+  // upward propagation. Reload and recurse one level without a second release.
   const freshParent = await deps.manager.load(linkage.parentRunId);
   const propagated: TerminalUpwardPropagationResult = freshParent
     ? await propagateTerminalChildUpwardInner(

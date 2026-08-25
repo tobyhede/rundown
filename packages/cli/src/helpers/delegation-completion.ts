@@ -204,6 +204,7 @@ export function buildAdvanceInlineParent(
       computeActionResult: transitionConfig.computeActionResult,
       frameOverride: exactFrame(parentFrameKey, parentEntry),
       issueDelegationCredential: delegationRuntime?.issueDelegationCredential,
+      terminalRelease: { role: 'addressed' },
     });
 
     if (drained.status === 'stopped') {
@@ -418,14 +419,11 @@ export async function buildInlineParentAdvanceDeps(
   commandStreamOptions?: CommandExecutionStreamOptions,
   parentDelegationRuntime?: RunScopedDelegationRuntime,
 ): Promise<PropagateTerminalChildUpwardDeps> {
-  const { SessionService } = await import('@rundown-org/core');
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
   const completionService = new RunbookCompletionService(manager, actorService);
-  const sessionService = new SessionService(manager);
   return {
     manager,
-    sessionService,
     completionService,
     advanceInlineParent: buildAdvanceInlineParent(
       cwd,

@@ -1186,7 +1186,7 @@ Child prompt.
     expect(parentAfter?.retryCount).toBe(0);
   });
 
-  it('releases each run once when a second inline child completes inside upward propagation', async () => {
+  it('issues no standalone ancestor release when nested inline propagation completes', async () => {
     await writeFile(
       join(workspace.rootRunbooksDir(), 'outer.runbook.md'),
       `# Outer
@@ -1264,11 +1264,10 @@ echo finished
       const releaseCount = (runId: string) =>
         releasedRunIds.filter((releasedRunId) => releasedRunId === runId).length;
 
-      // The inner run's own drain folds its release directly into the state
-      // transaction, so it does not call this session-service seam. The two
-      // ancestors are the runs the nested upward walks used to release twice.
-      expect(releaseCount(middleRunId!)).toBe(1);
-      expect(releaseCount(outerRunId!)).toBe(1);
+      // Every terminal transaction projects its own release directly in the
+      // store. No ancestor should reach the standalone session-service seam.
+      expect(releaseCount(middleRunId!)).toBe(0);
+      expect(releaseCount(outerRunId!)).toBe(0);
 
       const completionEvents = flattenEvents(parseConcatenatedJson(pass.stdout)).filter(
         (event) => event.type === 'runbook_completed',

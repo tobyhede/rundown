@@ -319,7 +319,6 @@ export {
   type AdvanceInlineParentInput,
   type AdvanceInlineParentOutcome,
   type InlineParentAdvanceRefusal,
-  type InlineParentAdvanceSessionService,
   type InlineParentAdvanceStateReader,
   type InlineUpwardPropagationResult,
   type LinkageCycleTrip,
