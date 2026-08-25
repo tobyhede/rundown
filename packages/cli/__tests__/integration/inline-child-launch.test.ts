@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   deletePersistedRunState,
   patchPersistedRunState,
 } from '@rundown-org/core/testing/session-fixtures';
-import { recordInlineLaunchStart, type InlineLaunchStart } from '@rundown-org/core';
+import { recordInlineLaunchStart, SessionService, type InlineLaunchStart } from '@rundown-org/core';
 import {
   createTestWorkspace,
   parseConcatenatedJson,
@@ -1185,6 +1185,104 @@ Child prompt.
     expect(parentAfter?.step).toBe('3');
     expect(parentAfter?.retryCount).toBe(0);
   });
+
+  // RED witness for #842: before the atomic fold the middle and outer runs are
+  // each released twice. Unskip in the fold commit that deletes call-frame
+  // release ownership.
+  it.skip('releases each run once when a second inline child completes inside upward propagation', async () => {
+    await writeFile(
+      join(workspace.rootRunbooksDir(), 'outer.runbook.md'),
+      `# Outer
+
+## 1. Compose middle
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+- middle.runbook.md
+`,
+    );
+    await writeFile(
+      join(workspace.runbooksDir(), 'middle.runbook.md'),
+      `# Middle
+
+## 1. First child
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- inner-manual.runbook.md
+
+## 2. Second child
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+- inner-command.runbook.md
+`,
+    );
+    await writeFile(
+      join(workspace.runbooksDir(), 'inner-manual.runbook.md'),
+      `# Manual inner
+
+## 1. Wait
+- PASS COMPLETE
+- FAIL STOP
+
+Waiting for one pass.
+`,
+    );
+    await writeFile(
+      join(workspace.runbooksDir(), 'inner-command.runbook.md'),
+      `# Command inner
+
+## 1. Finish automatically
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`bash
+echo finished
+\`\`\`
+`,
+    );
+
+    const releaseSpy = jest.spyOn(SessionService.prototype, 'releaseRuns');
+    try {
+      const start = await runCliInProcess('run runbooks/outer.runbook.md --allow-all', workspace);
+      expect(start.exitCode).toBe(0);
+      const before = await readSession(workspace);
+      expect(before.defaultStack).toHaveLength(3);
+      const [outerRunId, middleRunId, manualInnerRunId] = before.defaultStack;
+      expect(outerRunId).toBeDefined();
+      expect(middleRunId).toBeDefined();
+      expect(manualInnerRunId).toBeDefined();
+
+      const pass = await runCliInProcess(
+        await withRunTarget(['pass', '--allow-all'], workspace),
+        workspace,
+      );
+      expect(pass.exitCode).toBe(0);
+      expect((await readSession(workspace)).defaultStack).toEqual([]);
+
+      const releasedRunIds = releaseSpy.mock.calls.flatMap(([releases]) =>
+        releases.map((release) => release.runId),
+      );
+      const releaseCount = (runId: string) =>
+        releasedRunIds.filter((releasedRunId) => releasedRunId === runId).length;
+
+      // The inner run's own drain folds its release directly into the state
+      // transaction, so it does not call this session-service seam. The two
+      // ancestors are the runs the nested upward walks used to release twice.
+      expect(releaseCount(middleRunId!)).toBe(1);
+      expect(releaseCount(outerRunId!)).toBe(1);
+
+      for (const runId of [manualInnerRunId!, middleRunId!, outerRunId!]) {
+        const completedEvents = flattenEvents(parseConcatenatedJson(pass.stdout)).filter(
+          (event) => event.type === 'runbook_completed' && event.runbookId === runId,
+        );
+        expect(completedEvents).toHaveLength(1);
+      }
+    } finally {
+      releaseSpy.mockRestore();
+    }
+  }, 30_000);
 
   it('rejects automatic inline launch inside a claimed child delegation scope', async () => {
     await writeFile(
