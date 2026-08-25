@@ -7524,7 +7524,7 @@ describe('RunbookLifecycleCommandService', () => {
       it('claim complete on a stopped child conflicts (no FORCE, still retains)', async () => {
         const claimId = await setupClaim('stopped');
         const sendSpy = jest.spyOn(actorService, 'sendAndSync');
-        const releaseSpy = jest.spyOn(sessionService, 'releaseRuns');
+        const releaseSpy = jest.spyOn(sessionService, 'releaseAlreadyTerminal');
         const out = await seam.runTerminal({
           command: 'complete',
           callerEvidence: presentedBy(claimId),
@@ -7532,7 +7532,42 @@ describe('RunbookLifecycleCommandService', () => {
         });
         expect(out.kind).toBe('terminal_claim_conflict');
         expect(sendSpy).not.toHaveBeenCalled();
-        expect(releaseSpy).toHaveBeenCalledWith([{ runId: claimChildRunId, role: 'addressed' }]);
+        // The conflict arm addresses the run it refused to re-terminalize, so it
+        // releases through the same fenced seam as the confirmed arm (#734).
+        expect(releaseSpy).toHaveBeenCalledWith(
+          {
+            runId: claimChildRunId,
+            lifecycle: 'stopped',
+            claim: { claimKey: claimKeyFromBearer(claimId), controlledRunId: claimChildRunId },
+          },
+          [{ runId: claimChildRunId, role: 'addressed' }],
+        );
+      });
+
+      it('refuses the conflict release when the claim rotates between resolution and commit', async () => {
+        const claimId = await setupClaim('stopped');
+        await sessionService.pushRunbook(claimChildRunId);
+        // Same window as the confirmed-arm witness: `recordClaimSeen` runs
+        // between `resolveTerminalTarget`'s read and the release commit.
+        jest.spyOn(sessionService, 'recordClaimSeen').mockImplementationOnce(async () => {
+          unwrapSessionMutation(await sessionService.issueRunControlClaim(claimChildRunId));
+          return { kind: 'no-claim' };
+        });
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: presentedBy(claimId),
+          targetSelector: { kind: 'claim', claimId },
+        });
+        expect(out).toMatchObject({
+          kind: 'stale_claim',
+          claimId,
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        });
+        const session = await manager.loadSession();
+        expect(session.defaultStack).toContain(claimChildRunId);
+        expect(
+          Object.values(session.claims).some((claim) => claim.controlledRunId === claimChildRunId),
+        ).toBe(true);
       });
 
       it('claim stop atomically forces, reports, and releases the running child', async () => {

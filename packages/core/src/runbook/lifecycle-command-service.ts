@@ -3091,10 +3091,24 @@ export class RunbookLifecycleCommandService {
         if (input.callerEvidence.kind === 'claim_bearer') {
           await sessionService.recordClaimSeen(input.callerEvidence.claimId);
         }
-        const release = await sessionService.releaseRuns([
-          { runId: resolution.state.id, role: 'addressed' },
-        ]);
+        // Fenced (#734) exactly as the confirmed arm: the conflict still
+        // addresses the run the bearer acted on, so its Run Release rests on the
+        // same determination facts and must be refused when they lapse.
+        const release = await sessionService.releaseAlreadyTerminal(
+          {
+            runId: resolution.state.id,
+            lifecycle: resolution.lifecycle,
+            claim: {
+              claimKey: resolution.claim.claimKey,
+              controlledRunId: resolution.claim.controlledRunId,
+            },
+          },
+          [{ runId: resolution.state.id, role: 'addressed' }],
+        );
         if (release.kind !== 'committed') return release;
+        if (release.value.kind !== 'released') {
+          return staleClaimFromFenceRefusal(resolution.claimId, release.value);
+        }
         return {
           kind: 'terminal_claim_conflict',
           claimId: resolution.claimId,
