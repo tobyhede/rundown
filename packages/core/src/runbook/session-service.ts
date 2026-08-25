@@ -302,6 +302,60 @@ export type ClaimSeenRecordResult =
     };
 
 /**
+ * The determination facts a fenced already-terminal Run Release revalidates
+ * inside the transaction that projects it.
+ *
+ * Carried as data from the caller's read to the commit, CAS-style: each field
+ * names a fact established at resolution time whose lapse must refuse the
+ * release, never be silently overwritten.
+ */
+export interface AlreadyTerminalReleaseFence {
+  /** Run whose observed terminal state underwrites the whole batch. */
+  readonly runId: RunId;
+  /** Terminal lifecycle observed at determination, revalidated at commit. */
+  readonly lifecycle: 'completed' | 'stopped';
+  /**
+   * Presented bearer authority to revalidate, when the caller is a claim
+   * bearer. The claim must still exist at `claimKey` and still control
+   * `controlledRunId` — which for a descendant-authorized inline force is a
+   * chain member, not necessarily `runId` itself.
+   */
+  readonly claim?: {
+    /** Non-secret lookup key of the presented claim. */
+    readonly claimKey: ClaimLookupKey;
+    /** Run the claim controlled when the caller authorized against it. */
+    readonly controlledRunId: RunId;
+  };
+}
+
+/**
+ * Outcome of {@link SessionService.releaseAlreadyTerminal}.
+ *
+ * The refusal arms are PERMANENT for the presented authority — callers surface
+ * them as no-retry refusals (stale/superseded vocabulary), never as
+ * `concurrent_modification`.
+ */
+export type AlreadyTerminalReleaseOutcome =
+  | {
+      /** Every fence fact held; the batch was projected in this transaction. */
+      readonly kind: 'released';
+    }
+  | {
+      /** The presented claim stopped being authority after the caller's read. */
+      readonly kind: 'claim_rotated';
+      /** Lookup key of the lapsed claim. */
+      readonly claimKey: ClaimLookupKey;
+    }
+  | {
+      /** The fenced run no longer holds the observed terminal lifecycle. */
+      readonly kind: 'determination_lost';
+      /** The fenced run. */
+      readonly runId: RunId;
+      /** Lifecycle read at commit; absent when the run no longer exists. */
+      readonly lifecycle?: RunbookState['lifecycle'];
+    };
+
+/**
  * Result of restoring a stashed delegated child by claim id.
  *
  * `claim` is a {@link VerifiedClaim}, not the persisted {@link ClaimRecord}:
@@ -1849,6 +1903,79 @@ export class SessionService {
       releases.map(({ runId }) => runId),
       (ctx) => {
         projectRunReleases(ctx.session, releases);
+      },
+    );
+  }
+
+  /**
+   * Session-only Run Release for a run that was already terminal on entry,
+   * fenced by the facts the caller's determination rests on.
+   *
+   * An already-terminal run has no terminal state write to fold a release into
+   * (ADR 0001), so this is the separately fenced path: the fence facts —
+   * presented claim authority and the run's terminal lifecycle — are revalidated
+   * INSIDE the guarded session transaction that projects the batch, so the
+   * determination and the permission to release share one linearization point
+   * with the write itself. A claim rotated, or a run pruned, between the
+   * caller's read and this commit is refused rather than released under.
+   *
+   * Both refusals are permanent for the presented authority: a rotated claim
+   * never becomes authority again, and a lost determination means the run the
+   * caller resolved no longer exists as resolved. Callers must surface them as
+   * no-retry refusals, never as `concurrent_modification`.
+   *
+   * A refused fence commits nothing: every targeting structure and claim is
+   * left exactly as the concurrent writer left it, preserving Terminal
+   * Evidence and the rotated-in holder's authority.
+   *
+   * @param fence - The determination to revalidate at commit: the root run, its
+   *   observed terminal lifecycle, and the presented bearer authority when the
+   *   caller is a claim bearer.
+   * @param releases - Runs to release with their roles, as for
+   *   {@link releaseRuns}. Must include `fence.runId`.
+   * @returns Committed `released` after projecting the batch; committed
+   *   `claim_rotated` / `determination_lost` when a fence fact no longer holds
+   *   (nothing projected). Refused `execution_in_progress` or
+   *   `recovery_required` when a named run is execution-owned or awaiting
+   *   recovery.
+   * @throws {Error} When two members name the same run, a role is outside
+   *   `ReleaseRole`, or the batch does not include the fenced run — each a
+   *   caller defect, not a runtime condition.
+   */
+  async releaseAlreadyTerminal(
+    fence: AlreadyTerminalReleaseFence,
+    releases: readonly RunRelease[],
+  ): Promise<SessionMutationResult<AlreadyTerminalReleaseOutcome>> {
+    // Same pre-transaction refusal contract as `releaseRuns`.
+    assertValidReleaseBatch(releases);
+    if (!releases.some(({ runId }) => runId === fence.runId)) {
+      throw new Error(`Fenced release batch does not include the fenced run ${fence.runId}.`);
+    }
+    return this.mutateGuarded(
+      releases.map(({ runId }) => runId),
+      (ctx): AlreadyTerminalReleaseOutcome => {
+        if (fence.claim !== undefined) {
+          const record = ctx.session.claims[fence.claim.claimKey];
+          // Presence at the same key AND unchanged controlled run: a rotation
+          // deletes the record (a fresh mint lives at a fresh key), so either
+          // check failing means the presented bearer stopped being authority
+          // after the caller's read.
+          if (record === undefined || record.controlledRunId !== fence.claim.controlledRunId) {
+            return { kind: 'claim_rotated', claimKey: fence.claim.claimKey };
+          }
+        }
+        const state = ctx.readState(fence.runId);
+        // Terminal is a sink, so a mismatch here means the run was pruned (or
+        // the caller's determination never held) — not that it "un-terminated".
+        if (state === null || state.lifecycle !== fence.lifecycle) {
+          return {
+            kind: 'determination_lost',
+            runId: fence.runId,
+            ...(state === null ? {} : { lifecycle: state.lifecycle }),
+          };
+        }
+        projectRunReleases(ctx.session, releases);
+        return { kind: 'released' };
       },
     );
   }

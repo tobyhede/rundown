@@ -7461,7 +7461,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       it('claim complete on a completed child confirms and retains the tombstone', async () => {
         const claimId = await setupClaim('completed');
-        const releaseSpy = jest.spyOn(sessionService, 'releaseRuns');
+        const releaseSpy = jest.spyOn(sessionService, 'releaseAlreadyTerminal');
         const out = await seam.runTerminal({
           command: 'complete',
           callerEvidence: presentedBy(claimId),
@@ -7469,8 +7469,56 @@ describe('RunbookLifecycleCommandService', () => {
         });
         expect(out.kind).toBe('terminal_claim_confirmed');
         // Idempotent path STILL releases as addressed, retaining the claim
-        // (item 4, second site).
-        expect(releaseSpy).toHaveBeenCalledWith([{ runId: claimChildRunId, role: 'addressed' }]);
+        // (item 4, second site) — through the fenced seam, whose fence names the
+        // resolved terminal fact and the presented bearer (#734).
+        expect(releaseSpy).toHaveBeenCalledWith(
+          {
+            runId: claimChildRunId,
+            lifecycle: 'completed',
+            claim: { claimKey: claimKeyFromBearer(claimId), controlledRunId: claimChildRunId },
+          },
+          [{ runId: claimChildRunId, role: 'addressed' }],
+        );
+        // The claim survives the addressed release as Terminal Evidence.
+        expect(
+          (await manager.loadSession()).claims[claimKeyFromBearer(claimId)]?.controlledRunId,
+        ).toBe(claimChildRunId);
+      });
+
+      it('refuses the confirmed release when the claim rotates between resolution and commit', async () => {
+        const claimId = await setupClaim('completed');
+        // Make the release's damage observable: target the terminal child so a
+        // Run Release projected under lapsed authority would visibly deactivate it.
+        await sessionService.pushRunbook(claimChildRunId);
+        // Rotate the presented claim AFTER `resolveTerminalTarget`'s read and
+        // BEFORE the release commits. `recordClaimSeen` runs exactly between the
+        // two on this arm, so hooking it is a real interleaving into the window
+        // this fence exists to close, not a fake seam. The hook itself stays
+        // authority-inert, like the call it stands in for: re-issuing run
+        // control for the child supersedes (rotates) the delegated claim.
+        jest.spyOn(sessionService, 'recordClaimSeen').mockImplementationOnce(async () => {
+          unwrapSessionMutation(await sessionService.issueRunControlClaim(claimChildRunId));
+          return { kind: 'no-claim' };
+        });
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: presentedBy(claimId),
+          targetSelector: { kind: 'claim', claimId },
+        });
+        // Permanent refusal, never `concurrent_modification`: a rotated claim can
+        // never become authority again, so "Retry." would be a lie.
+        expect(out).toMatchObject({
+          kind: 'stale_claim',
+          claimId,
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        });
+        // Nothing was released under the rotated-out claim: the run is still
+        // targeted, and the rotated-in run-control claim survives as authority.
+        const session = await manager.loadSession();
+        expect(session.defaultStack).toContain(claimChildRunId);
+        expect(
+          Object.values(session.claims).some((claim) => claim.controlledRunId === claimChildRunId),
+        ).toBe(true);
       });
 
       it('claim complete on a stopped child conflicts (no FORCE, still retains)', async () => {

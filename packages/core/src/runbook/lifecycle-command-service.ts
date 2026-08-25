@@ -54,6 +54,7 @@ import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
 import {
+  describeSupersededClaim,
   resolveCommandTarget,
   resolveMutationAuthority,
   resolveTerminalTarget,
@@ -79,6 +80,7 @@ import {
 } from './manual-completion-cursor.js';
 import type {
   ActiveInlineForceTerminalPlan,
+  AlreadyTerminalReleaseOutcome,
   SessionMutationRefusalOutcome,
   SessionService,
 } from './session-service.js';
@@ -1322,6 +1324,45 @@ function releasesForInlineChain(
     runId,
     role: runId === plan.targetState.id ? 'addressed' : 'collateral',
   }));
+}
+
+/**
+ * Surface a fenced already-terminal release refusal as the claim-path
+ * `stale_claim` outcome.
+ *
+ * Both fence refusals are permanent for the presented bearer, so both map onto
+ * the no-retry stale-claim vocabulary — never `concurrent_modification`, whose
+ * "Retry." remediation would be a lie for a claim that can never be authority
+ * again or a run that no longer exists as resolved.
+ *
+ * @param claimId - The presented bearer, echoed for the caller.
+ * @param refusal - The fence refusal returned by
+ *   {@link SessionService.releaseAlreadyTerminal}.
+ * @returns The stale-claim refusal outcome for the terminal claim path.
+ */
+function staleClaimFromFenceRefusal(
+  claimId: ClaimId,
+  refusal: Exclude<AlreadyTerminalReleaseOutcome, { readonly kind: 'released' }>,
+): StaleClaimRefusal {
+  switch (refusal.kind) {
+    case 'claim_rotated': {
+      const { message, code } = describeSupersededClaim(refusal.claimKey, 'claim-rotated');
+      return { kind: 'stale_claim', claimId, message, code };
+    }
+    case 'determination_lost':
+      return {
+        kind: 'stale_claim',
+        claimId,
+        message:
+          `Claim id ${claimKeyFromBearer(claimId)} names run ${refusal.runId}, which is no ` +
+          `longer available as resolved. Nothing was released.`,
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+      };
+    default: {
+      const _exhaustive: never = refusal;
+      return _exhaustive;
+    }
+  }
 }
 
 /**
@@ -3018,10 +3059,25 @@ export class RunbookLifecycleCommandService {
         if (input.callerEvidence.kind === 'claim_bearer') {
           await sessionService.recordClaimSeen(input.callerEvidence.claimId);
         }
-        const release = await sessionService.releaseRuns([
-          { runId: resolution.state.id, role: 'addressed' },
-        ]);
+        // Fenced (#734): the resolver's terminal determination and the bearer's
+        // authority are revalidated inside the transaction that projects this
+        // addressed Run Release, so a claim rotated after resolution is refused
+        // rather than released under.
+        const release = await sessionService.releaseAlreadyTerminal(
+          {
+            runId: resolution.state.id,
+            lifecycle: resolution.lifecycle,
+            claim: {
+              claimKey: resolution.claim.claimKey,
+              controlledRunId: resolution.claim.controlledRunId,
+            },
+          },
+          [{ runId: resolution.state.id, role: 'addressed' }],
+        );
         if (release.kind !== 'committed') return release;
+        if (release.value.kind !== 'released') {
+          return staleClaimFromFenceRefusal(resolution.claimId, release.value);
+        }
         return {
           kind: 'terminal_claim_confirmed',
           claimId: resolution.claimId,
