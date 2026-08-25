@@ -982,7 +982,9 @@ describe('collect command', () => {
       expect(collectedParent!.step).toBe('2');
     }, 20_000);
 
-    async function setupCollectAdvancesIntoCommand(): Promise<{ claimId: string }> {
+    async function setupCollectAdvancesIntoCommand(
+      commandExit = 0,
+    ): Promise<{ claimId: string; runId: string }> {
       const parent = [
         '# Parent',
         '',
@@ -1003,8 +1005,12 @@ describe('collect command', () => {
         '- FAIL STOP',
         '',
         '```bash',
-        "printf '\\103\\117\\115\\115\\101\\116\\104\\137\\123\\124\\104\\117\\125\\124\\012'",
-        "printf '\\103\\117\\115\\115\\101\\116\\104\\137\\123\\124\\104\\105\\122\\122\\012' >&2",
+        ...(commandExit === 0
+          ? [
+              "printf '\\103\\117\\115\\115\\101\\116\\104\\137\\123\\124\\104\\117\\125\\124\\012'",
+              "printf '\\103\\117\\115\\115\\101\\116\\104\\137\\123\\124\\104\\105\\122\\122\\012' >&2",
+            ]
+          : ['rd echo --result fail']),
         '```',
         '',
       ].join('\n');
@@ -1061,14 +1067,14 @@ describe('collect command', () => {
       const passed = runCli(`pass --claim-id ${claimId}`, workspace);
       expect(passed.exitCode).toBe(0);
 
-      return { claimId: parentClaimId };
+      return { claimId: parentClaimId, runId };
     }
 
     it('keeps JSON stdout parseable when collect advances into a command that writes stdout and stderr', async () => {
       const { claimId } = await setupCollectAdvancesIntoCommand();
 
-      const collected = runCli(
-        `collect --claim-id ${claimId} --allow-run printf --no-sandbox`,
+      const collected = await runCliInProcess(
+        ['collect', '--claim-id', claimId, '--allow-run', 'printf', '--no-sandbox'],
         workspace,
       );
       expect(collected.exitCode).toBe(0);
@@ -1099,6 +1105,18 @@ describe('collect command', () => {
       expect(collected.stderr).toContain('COMMAND_STDERR');
       expect(collected.stderr).not.toContain('COMMAND_STDOUT');
     });
+
+    it('exits non-zero when the continuation loop stops after collection', async () => {
+      const { claimId, runId } = await setupCollectAdvancesIntoCommand(7);
+
+      const collected = await runCliInProcess(
+        ['collect', '--claim-id', claimId, '--allow-all', '--no-sandbox'],
+        workspace,
+      );
+
+      expect(collected.exitCode).not.toBe(0);
+      expect((await readPersistedRunState(workspace.cwd, runId))?.lifecycle).toBe('stopped');
+    }, 20_000);
 
     it('forwards the collector-bound delegation capabilities when the loop reaches a later DELEGATE step', async () => {
       // Core verifies the collector's bearer behind the collection seam and hands

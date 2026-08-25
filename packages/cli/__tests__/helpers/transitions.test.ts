@@ -969,6 +969,17 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
     expect(result.exitError).toBe(true);
   });
 
+  it('does not mark a non-stopped execution-loop result as stopped', async () => {
+    const output = makeOutput();
+    mockRunExecutionLoop.mockResolvedValue({ status: 'waiting', release: 'none' });
+    mockRunTransition.mockResolvedValue(appliedOutcome({ loop: { kind: 'run' } }));
+
+    const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
+
+    expect(result.applied).not.toMatchObject({ status: 'stopped' });
+    expect(result.exitError).toBe(false);
+  });
+
   it('threads the presented bearer into the execution loop as a lookup key', async () => {
     // The bearer is what lets the loop's fenced command mutation commit under the
     // caller's authority. Derived once here — never forwarded as the raw bearer,

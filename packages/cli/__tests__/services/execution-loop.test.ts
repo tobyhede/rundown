@@ -1147,6 +1147,28 @@ describe('runExecutionLoop', () => {
     expect(result.status).toBe('waiting');
   });
 
+  it('returns waiting without release when the completion drain targets an inactive frame', async () => {
+    const current = makeLoopState();
+    mockManager.load.mockResolvedValue(current);
+    mockCompletionService.applyNextResolvedCompletion.mockResolvedValue({
+      kind: 'not_active',
+      state: current,
+      frameKey: '1|',
+      activeFrameKey: '2|',
+      unresolved: 0,
+    });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      asEmitter(mockEmitter),
+    );
+
+    expect(result).toEqual({ status: 'waiting', release: 'none' });
+  });
+
   it('executes command and advances to next step', async () => {
     mockManager.load
       .mockResolvedValueOnce(makeLoopState('1'))
@@ -1180,7 +1202,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result.status).toBe('waiting');
+    expect(result).toEqual({ status: 'waiting', release: 'none' });
     expect(mockActorService.sendAndSync).toHaveBeenCalledWith(
       runbookId,
       asSteps(testSteps),
@@ -1502,7 +1524,7 @@ describe('runExecutionLoop', () => {
         asEmitter(mockEmitter),
       );
 
-      expect(result.status).toBe('stopped');
+      expect(result).toEqual({ status: 'stopped', release: 'none' });
       expect(mockEmitter.emit).toHaveBeenCalledWith({
         type: 'ERROR_OCCURRED',
         payload: { message: refusal.message, code },
@@ -1584,7 +1606,7 @@ describe('runExecutionLoop', () => {
         asEmitter(mockEmitter),
       );
 
-      expect(result.status).toBe('stopped');
+      expect(result).toEqual({ status: 'stopped', release: 'none' });
       expect(mockEmitter.emit).toHaveBeenCalledWith({
         type: 'ERROR_OCCURRED',
         payload: { message: refusal.message, code: 'STALE_CLAIM' },
@@ -1892,6 +1914,65 @@ describe('runExecutionLoop', () => {
         expect(fenceInput).toMatchObject({ terminalRelease: { role: 'addressed' } });
       }
     });
+
+    it('returns a stopped command transition with its folded release', async () => {
+      mockManager.load.mockResolvedValue(makeLoopState());
+      jest.mocked(core.executeCommand).mockResolvedValue({ success: false, exitCode: 1 });
+      mockActorService.sendAndSync.mockResolvedValue({
+        state: makeLoopState('1', { lifecycle: 'stopped' }),
+        snapshot: {
+          status: 'done',
+          value: 'STOPPED',
+          context: { lastAction: { type: 'STOP', origin: 'direct' } },
+        },
+        effects: [commandCompletedEffect('fail')],
+      });
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toEqual({ status: 'stopped', release: 'released' });
+    });
+
+    it.each([
+      { lifecycle: 'completed' as const, status: 'done' as const, result: 'pass' as const },
+      { lifecycle: 'stopped' as const, status: 'stopped' as const, result: 'fail' as const },
+    ])(
+      'reports the committed $lifecycle lifecycle when the snapshot observation remains active',
+      async ({ lifecycle, status, result: commandResult }) => {
+        mockManager.load.mockResolvedValue(makeLoopState());
+        jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
+        mockActorService.sendAndSync.mockResolvedValue({
+          state: makeLoopState('1', { lifecycle }),
+          snapshot: {
+            status: 'active',
+            value: { 'step::1': 'idle' },
+            context: { lastAction: { type: 'CONTINUE', origin: 'direct' } },
+          },
+          effects: [commandCompletedEffect(commandResult)],
+        });
+
+        const result = await runExecutionLoop(
+          asManager(mockManager),
+          runbookId,
+          asSteps(steps),
+          '/tmp',
+          asEmitter(mockEmitter),
+        );
+
+        expect(result).toEqual({ status, release: 'released' });
+        expect(mockEmitter.emit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: status === 'done' ? 'RUNBOOK_COMPLETED' : 'RUNBOOK_STOPPED',
+          }),
+        );
+      },
+    );
 
     it('releases a pre-loaded stopped run when refusals would be returned', async () => {
       mockManager.load.mockResolvedValue(
@@ -2281,7 +2362,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result.status).toBe('stopped');
+    expect(result).toEqual({ status: 'stopped', release: 'released' });
 
     // ERROR_OCCURRED is emitted with the OUTPUT_CAPTURE_FAILED message.
     expect(mockEmitter.emit).toHaveBeenCalledWith({
@@ -3474,7 +3555,7 @@ describe('runExecutionLoop', () => {
       { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a') },
     );
 
-    expect(result.status).toBe('stopped');
+    expect(result).toEqual({ status: 'stopped', release: 'none' });
     const consumeFailedMessage =
       'Failed to consume delegation frontier after re-entry; the frontier is still pending, retry the run';
     expect(mockEmitter.emit).toHaveBeenCalledWith({
@@ -3550,6 +3631,60 @@ describe('runExecutionLoop', () => {
         { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a') },
       ),
     ).rejects.toBeInstanceOf(actualCore.InvalidRunbookStateError);
+  });
+
+  it('stops without release when an inline launch has no output emitter', async () => {
+    const inlineSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent step',
+        substeps: [
+          {
+            id: '1',
+            description: 'Inline child',
+            runbooks: ['child.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+    const parentState = makeLoopState('1', {
+      substep: '1',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+    mockManager.load.mockResolvedValue(parentState);
+    mockActorService.enterExecutionUnit.mockResolvedValue({
+      kind: 'inline-launch',
+      launch: {
+        parentRunId: runbookId,
+        parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: '1|',
+        parentEntry: 1,
+        childRunId: actualCore.assertRunId(`rd_${'2'.repeat(32)}`),
+        childRunbookPath: 'child.runbook.md',
+        childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+        contextSnapshot: {},
+      },
+      effects: [],
+    });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(inlineSteps),
+      '/tmp',
+      asEmitter(mockEmitter),
+    );
+
+    expect(result).toEqual({ status: 'stopped', release: 'none' });
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'ERROR_OCCURRED',
+      payload: { message: 'Inline launch requires an output emitter', code: 'RD-816' },
+    });
   });
 
   it('rolls back existing inline child session activation when intent consumption fails', async () => {

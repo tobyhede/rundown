@@ -261,9 +261,9 @@ export function buildAdvanceInlineParent(
       // that both arms carry `status`, the exhaustive `never` below refuses a
       // new member outright instead of forwarding it as a refusal.
       //
-      // What the loop released is deliberately not read here. Terminalization
-      // already committed its own release atomically; this callable only maps
-      // lifecycle status into the core upward-propagation outcome.
+      // A terminal status only propagates upward when THIS frame committed its
+      // release. A nested inline frame can finish the shared loop first; mapping
+      // that terminal status to active prevents a second ancestor walk.
       switch (loopResult.status) {
         case 'stopped':
           return { status: loopResult.release === 'released' ? 'stopped' : 'active' };
@@ -271,17 +271,8 @@ export function buildAdvanceInlineParent(
           return { status: loopResult.release === 'released' ? 'done' : 'active' };
         case 'waiting':
           return { status: 'active' };
-        case 'refused':
-          return { status: 'refused', refusal: loopResult.refusal };
-        default: {
-          // Returned rather than thrown, matching `describeInlineChildLinkageRefusal`
-          // in the execution service: the arm is unreachable, and a throw here
-          // would be an untestable branch on a callable whose every other exit
-          // is data.
-          const _exhaustive: never = loopResult;
-          return _exhaustive;
-        }
       }
+      return loopResult;
     }
 
     // applied === 0: waiting for sibling substeps to resolve.

@@ -247,11 +247,12 @@ describe('propagateTerminalChildUpward — inline arm', () => {
 
   it('active advance (parent waiting on siblings) returns handled', async () => {
     const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
+    const load = jest.fn<(id: string) => Promise<RunbookState | null>>().mockResolvedValue(null);
     const advanceInlineParent = jest
       .fn<AdvanceInlineParent>()
       .mockResolvedValue({ status: 'active' });
     const result = await propagateTerminalChildUpward(
-      makeDeps({ advanceInlineParent }),
+      makeDeps({ advanceInlineParent, manager: { load } }),
       child,
       'pass',
     );
@@ -262,6 +263,7 @@ describe('propagateTerminalChildUpward — inline arm', () => {
       parentEntry: 1,
       result: 'pass',
     });
+    expect(load).not.toHaveBeenCalled();
   });
 
   // #802: a drain that refused a persisted completion not meant for the active

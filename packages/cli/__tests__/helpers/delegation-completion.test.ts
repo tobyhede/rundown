@@ -942,6 +942,9 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.flush).toHaveBeenCalled();
     expect(runExecutionLoop).not.toHaveBeenCalled();
+    expect(jest.mocked(drainResolvedCompletions).mock.calls[0]?.[0].terminalRelease).toEqual({
+      role: 'addressed',
+    });
   });
 
   // The nested arm: this callable's OWN drain applied, so it runs the parent's
@@ -1033,6 +1036,30 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     });
     expect(runExecutionLoop).toHaveBeenCalledTimes(1);
     expect(outcome).toEqual({ status: 'stopped' });
+  });
+
+  it('does not propagate a loop terminal already released by a nested frame', async () => {
+    const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
+    const manager = makeManager(new Map([[parentState.id, parentState]]));
+    const output = makeOutput();
+    wireMocks(manager, makeLifecycleService());
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
+      status: 'continue',
+      applied: 1,
+      state: parentState,
+    });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'stopped', release: 'none' });
+
+    const advance = buildAdvanceInlineParent('/test', output);
+    await expect(
+      advance({
+        parentRunId: PARENT_RUN_ID,
+        parentFrameKey: FRAME,
+        parentEntry: 1,
+        result: 'pass',
+      }),
+    ).resolves.toEqual({ status: 'active' });
   });
 
   // The loop's non-terminal exit. It used to be this callable's fall-through, so
