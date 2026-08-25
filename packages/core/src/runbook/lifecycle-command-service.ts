@@ -3307,19 +3307,22 @@ export class RunbookLifecycleCommandService {
     // is the same active inline execution, not authority over an unrelated run.
     const presentedClaimId =
       input.callerEvidence.kind === 'claim_bearer' ? input.callerEvidence.claimId : undefined;
-    const descendantAuthority =
+    // Hoisted so the already-terminal release fence below can name the verified
+    // claim's coordinates, not just the authorization verdict derived from them.
+    const verifiedPresented =
       presentedClaimId !== undefined
-        ? await (async () => {
-            const verified = await sessionService.verifyClaimId(presentedClaimId);
-            if (verified.status !== 'verified') return false;
-            return plan.forceOrder.some(
-              (state) =>
-                state.id !== plan.targetState.id &&
-                authorizeClaim(verified.claim, { action: 'mutate-run', runId: state.id }).kind ===
-                  'allowed',
-            );
-          })()
-        : false;
+        ? await sessionService.verifyClaimId(presentedClaimId)
+        : undefined;
+    const presentedClaim =
+      verifiedPresented?.status === 'verified' ? verifiedPresented.claim : undefined;
+    const descendantAuthority =
+      presentedClaim !== undefined &&
+      plan.forceOrder.some(
+        (state) =>
+          state.id !== plan.targetState.id &&
+          authorizeClaim(presentedClaim, { action: 'mutate-run', runId: state.id }).kind ===
+            'allowed',
+      );
     const authority =
       input.callerEvidence.kind === 'claim_bearer' && !descendantAuthority
         ? await this.#resolveMutationActorContext({
@@ -3340,17 +3343,40 @@ export class RunbookLifecycleCommandService {
     }
 
     if (plan.targetState.lifecycle !== 'running') {
+      const observedLifecycle =
+        plan.targetState.lifecycle === 'stopped' ? ('stopped' as const) : ('completed' as const);
       // Preserve the pre-existing already-terminal outcome for every caller. Clean
       // up for ambient/no-bearer or authorized bearer requests only; an unauthorized
       // bearer receives the same outcome without mutating the resolved chain.
       if (input.callerEvidence.kind !== 'claim_bearer' || presenterAuthorized) {
-        const release = await sessionService.releaseRuns(releasesForInlineChain(plan));
+        // Fenced (#734): the plan's terminal determination — and, for a bearer,
+        // the authority it authorized with — are revalidated inside the
+        // transaction that projects the chain release. A fence that lapsed
+        // (bearer rotated after authorizing, resolved root gone) SKIPS the
+        // cleanup rather than releasing the chain under facts that no longer
+        // hold; the pre-existing outcome still stands, exactly as it does for
+        // an unauthorized bearer, and the rotating writer's claims survive.
+        const release = await sessionService.releaseAlreadyTerminal(
+          {
+            runId: plan.targetState.id,
+            lifecycle: observedLifecycle,
+            ...(presentedClaim !== undefined
+              ? {
+                  claim: {
+                    claimKey: presentedClaim.claimKey,
+                    controlledRunId: presentedClaim.controlledRunId,
+                  },
+                }
+              : {}),
+          },
+          releasesForInlineChain(plan),
+        );
         if (release.kind !== 'committed') return release;
       }
       return {
         kind: 'already_terminal',
         targetRunId: plan.targetState.id,
-        lifecycle: plan.targetState.lifecycle === 'stopped' ? 'stopped' : 'completed',
+        lifecycle: observedLifecycle,
       };
     }
 
@@ -3421,12 +3447,10 @@ export class RunbookLifecycleCommandService {
 
     const eventType = terminalForceEvent(input.command);
     const externalParentRunId = plan.targetState.parentLinkage?.parentRunId;
-    const presentedClaim =
-      input.callerEvidence.kind === 'claim_bearer'
-        ? await sessionService.verifyClaimId(input.callerEvidence.claimId)
-        : undefined;
-    const controlledRunId =
-      presentedClaim?.status === 'verified' ? presentedClaim.claim.controlledRunId : undefined;
+    // The hoisted verification above supplies the controlled run; the aggregate
+    // re-validates every capture inside its own transaction, so a fresher read
+    // here would add nothing the fence does not already re-establish.
+    const controlledRunId = presentedClaim?.controlledRunId;
     const claimKey =
       input.callerEvidence.kind === 'claim_bearer'
         ? claimKeyFromBearer(input.callerEvidence.claimId)
