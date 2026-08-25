@@ -623,7 +623,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
       // terminal state INSIDE the loop and still owe its parent a propagation
       // (the run loop does not propagate the executed run's own terminal). Defer
       // the exit decision until after the terminal-propagation pass below.
-      loopStopped = loopResult === 'stopped';
+      loopStopped = loopResult.status === 'stopped';
     }
   }
 

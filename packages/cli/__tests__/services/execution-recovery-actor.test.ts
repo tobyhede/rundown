@@ -121,7 +121,7 @@ describe('runExecutionLoop interrupted fenced command', () => {
       actorService,
     });
 
-    expect(result).toBe('stopped');
+    expect(result.status).toBe('stopped');
     expect(prepare).toHaveBeenCalled();
     // The loop's own closure, invoked by the fence with the interrupted state
     // and the loop's steps. `() => undefined` in its place never calls this.

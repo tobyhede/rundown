@@ -187,7 +187,7 @@ beforeEach(() => {
     from: '1',
     at: target.step,
   }));
-  jest.mocked(runExecutionLoop).mockResolvedValue('done');
+  jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'released' });
 });
 
 // ACCEPTED MUTATION SURVIVORS in goto-workflow.ts (#485).
@@ -810,7 +810,7 @@ describe('executeGoto', () => {
       snapshot: {},
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('done');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'released' });
 
     const action = jest.fn();
     const ctx = {
@@ -867,7 +867,7 @@ describe('executeGoto', () => {
       snapshot: {},
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('done');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'released' });
 
     const outputAction = jest.fn();
     const output = {
@@ -913,7 +913,7 @@ describe('executeGoto', () => {
       snapshot: {},
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'stopped', release: 'released' });
 
     const ctx = {
       output: {
@@ -956,7 +956,7 @@ describe('executeGoto', () => {
       snapshot: {},
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting', release: 'none' });
 
     const issueDelegationCredential = jest.fn() as unknown as DelegationCredentialIssuer;
     const deriveDelegationToken = jest.fn() as unknown as DelegationTokenDeriver;

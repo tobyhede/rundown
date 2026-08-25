@@ -188,7 +188,7 @@ describe('runExecutionLoop command transition into a DELEGATE frontier', () => {
     });
 
     // The DELEGATE substep carries no command, so the loop parks on it.
-    expect(result).toBe('waiting');
+    expect(result.status).toBe('waiting');
 
     // Issuance happened inside the fenced EXECUTE_COMMAND mutation, under the
     // issuer the loop forwarded. With `{}` in its place the machine has no

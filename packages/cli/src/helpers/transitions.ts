@@ -528,7 +528,7 @@ async function renderApplied(
         commandStreamOptions,
         delegationRuntime: outcome.delegationRuntime,
       });
-      if (loopResult === 'stopped') status = 'stopped';
+      if (loopResult.status === 'stopped') status = 'stopped';
     }
   }
 

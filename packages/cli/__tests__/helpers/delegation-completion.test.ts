@@ -449,7 +449,7 @@ beforeEach(() => {
     applied: 0,
     state: makeState(PARENT_RUN_ID),
   });
-  jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+  jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting', release: 'none' });
   // resetAllMocks() wipes the lazy-import stubs the inline path needs; restore
   // them each run so advanceParentForInlineChild resolves steps/emitter/config.
   // The values pass straight through to the mocked drain/loop, so structural
@@ -962,7 +962,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       state: parentState,
     } as never);
     jest.mocked(runExecutionLoop).mockResolvedValue({
-      kind: 'refused',
+      status: 'refused',
       refusal: {
         reason: 'target_mismatch',
         message: 'loop drain blew up',
@@ -1023,7 +1023,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'stopped', release: 'deferred' });
     const advance = buildAdvanceInlineParent('/test', output);
     const outcome = await advance({
       parentRunId: PARENT_RUN_ID,
@@ -1050,7 +1050,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting', release: 'none' });
     const advance = buildAdvanceInlineParent('/test', output);
     const outcome = await advance({
       parentRunId: PARENT_RUN_ID,
@@ -1074,7 +1074,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('done');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'deferred' });
     const advance = buildAdvanceInlineParent('/test', output);
     await advance({
       parentRunId: PARENT_RUN_ID,
@@ -1103,7 +1103,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('done');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'deferred' });
     const advance = buildAdvanceInlineParent('/test', output);
     const outcome = await advance({
       parentRunId: PARENT_RUN_ID,
@@ -1176,7 +1176,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
         applied: 1,
         state: parentState,
       });
-      jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+      jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting', release: 'none' });
       return manager;
     }
 
@@ -1285,7 +1285,7 @@ describe('propagateChildTerminal run-scoped delegation runtime', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting', release: 'none' });
 
     await deps.advanceInlineParent({
       parentRunId: PARENT_RUN_ID,

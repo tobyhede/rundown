@@ -265,20 +265,38 @@ export function buildAdvanceInlineParent(
       // have the seam release a still-running parent and recurse upward on a
       // terminal that never happened.
       //
+      // One discriminant across both arms, exhausted by a switch. It replaced a
+      // fall-through that reached the refusal by ELIMINATING the three terminal
+      // strings, which was the best available shape while the terminal arm was
+      // a bare string and the refusal an object: a `typeof` test would have said
+      // only "not one of these strings", swallowing any second object-shaped arm
+      // as `{status: 'refused', refusal: undefined}` with no compile error. Now
+      // that both arms carry `status`, the exhaustive `never` below refuses a
+      // new member outright instead of forwarding it as a refusal.
       //
-      // The three TERMINAL statuses are exhausted first and the refusal is what
-      // is left, rather than the refusal being picked off by a `typeof` test. A
-      // shape test says only "not one of these strings", so a second
-      // object-shaped arm added to the deferred result would be swallowed and
-      // forwarded as `{status: 'refused', refusal: undefined}` with no compile
-      // error. Reaching the refusal by exclusion makes that a type error at
-      // `.refusal` instead — and, unlike an explicit `kind === 'refused'`
-      // check, it does not read as a redundant test of the union's only object
-      // member.
-      if (loopResult === 'stopped') return { status: 'stopped' };
-      if (loopResult === 'done') return { status: 'done' };
-      if (loopResult === 'waiting') return { status: 'active' };
-      return { status: 'refused', refusal: loopResult.refusal };
+      // What the loop RELEASED is deliberately not read here. This callable
+      // invokes the loop under `releaseOwner: 'caller'`, so the disposition can
+      // only be `'deferred'` — and it is the core seam, not this callable, that
+      // acts on the terminal by releasing. Reading it here would put a second
+      // release decision one frame below the sole owner.
+      switch (loopResult.status) {
+        case 'stopped':
+          return { status: 'stopped' };
+        case 'done':
+          return { status: 'done' };
+        case 'waiting':
+          return { status: 'active' };
+        case 'refused':
+          return { status: 'refused', refusal: loopResult.refusal };
+        default: {
+          // Returned rather than thrown, matching `describeInlineChildLinkageRefusal`
+          // in the execution service: the arm is unreachable, and a throw here
+          // would be an untestable branch on a callable whose every other exit
+          // is data.
+          const _exhaustive: never = loopResult;
+          return _exhaustive;
+        }
+      }
     }
 
     // applied === 0: waiting for sibling substeps to resolve.

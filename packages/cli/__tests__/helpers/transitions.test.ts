@@ -19,6 +19,7 @@ import type {
 import type { ResolvedStep } from '@rundown-org/parser';
 import { makeClaimRecord } from '@rundown-org/core/testing/claim-fixtures';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
+import type { ExecutionLoopResult } from '../../src/services/execution.js';
 
 // The unit-under-test (runSeamTransition, renderRefusal, renderApplied,
 // buildActionSink, renderTransitionEvents, the config + emit helpers,
@@ -112,8 +113,12 @@ jest.unstable_mockModule('../../src/helpers/caller-evidence', () => ({
   readLifecycleCallerEvidence: mockReadCallerEvidence,
 }));
 
-const mockRunExecutionLoop =
-  mockFn<(...args: unknown[]) => Promise<string>>().mockResolvedValue('done');
+const mockRunExecutionLoop = mockFn<
+  (...args: unknown[]) => Promise<ExecutionLoopResult>
+>().mockResolvedValue({
+  status: 'done',
+  release: 'released',
+});
 const mockFindStepOrThrow =
   mockFn<(steps: readonly ResolvedStep[], name: string) => ResolvedStep>();
 jest.unstable_mockModule('../../src/services/execution', () => ({
@@ -241,7 +246,7 @@ beforeEach(() => {
   mockReadCallerEvidence.mockReturnValue({ kind: 'direct_cli' });
   mockManagerLoad.mockResolvedValue(makeState());
   jest.mocked(getRunbookFromState).mockReturnValue([]);
-  mockRunExecutionLoop.mockResolvedValue('done');
+  mockRunExecutionLoop.mockResolvedValue({ status: 'done', release: 'released' });
 });
 
 // ACCEPTED MUTATION SURVIVORS in transitions.ts (#485).
@@ -942,7 +947,7 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
 
   it('drives the execution loop for a run directive and propagates a stopped loop result', async () => {
     const output = makeOutput();
-    mockRunExecutionLoop.mockResolvedValue('stopped');
+    mockRunExecutionLoop.mockResolvedValue({ status: 'stopped', release: 'released' });
     mockRunTransition.mockResolvedValue(
       appliedOutcome({
         loop: { kind: 'run' },

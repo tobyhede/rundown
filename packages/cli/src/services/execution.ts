@@ -146,8 +146,47 @@ interface RenderTerminalObservationArgs {
  */
 export type ExecutionReleaseOwner = 'loop' | 'caller';
 
-/** Terminal status an execution loop reports when it owns its own release. */
-export type ExecutionLoopResult = 'done' | 'stopped' | 'waiting';
+/** Status an execution loop reports for the run it drove. */
+export type ExecutionLoopStatus = 'done' | 'stopped' | 'waiting';
+
+/**
+ * What a loop did about the Run Release of the run it drove.
+ *
+ * A statement about this loop's own action, never about the run's session
+ * targeting as a whole: a run can be off targeting because a frame this loop
+ * invoked released it, which is `'none'` here because THIS loop released
+ * nothing. That distinction is the point — the two questions were the same
+ * word until now, and being unable to ask the narrow one is why 31 mock
+ * assertions stayed green through the double release of #842.
+ *
+ * - `released` — this loop's `addressed` Run Release committed, whether folded
+ *   into the terminal state's own transaction (#794) or issued standalone.
+ * - `refused` — this loop asked for the release and the session refused it. The
+ *   run is terminal and still targeted, which is why every status carrying this
+ *   disposition is `'stopped'` rather than a clean `'done'`.
+ * - `deferred` — this loop released nothing because its CALLER owns the release
+ *   ({@link ExecutionReleaseOwner} `'caller'`). The one disposition that
+ *   disappears when release becomes a property of the committing transaction.
+ * - `none` — this loop released nothing and owed nothing: the run did not reach
+ *   a terminal under this loop, or it vanished before the loop could drive it.
+ */
+export type ExecutionReleaseDisposition = 'released' | 'refused' | 'deferred' | 'none';
+
+/**
+ * What an execution loop reports about the run it drove.
+ *
+ * Two facts, because they are two facts. The status is what the RUN reached;
+ * the disposition is what this loop did about the run's Run Release. A caller
+ * deciding whether to release cannot answer that from the status — `'done'` is
+ * `'done'` whether this loop released the run or left it targeted — and every
+ * caller of this loop that releases is deciding exactly that.
+ */
+export interface ExecutionLoopResult {
+  /** Discriminant against {@link ExecutionLoopRefusal}, and the run's outcome. */
+  readonly status: ExecutionLoopStatus;
+  /** What this loop did about the run's Run Release. */
+  readonly release: ExecutionReleaseDisposition;
+}
 
 /**
  * A diagnosed refusal the loop ended on, reported ONLY under `caller` ownership.
@@ -160,14 +199,20 @@ export type ExecutionLoopResult = 'done' | 'stopped' | 'waiting';
  * so reporting it as `'stopped'` there made the seam release a live parent and
  * report a terminal to ITS parent that never happened.
  *
- * An object rather than a fourth string member: a loop-owned release cannot
- * produce it, and the overloads below are what make that unrepresentable rather
- * than merely documented — their callers keep the three-member union and so
- * cannot silently fall through an arm they can never receive.
+ * A separate arm rather than a fourth {@link ExecutionLoopStatus} member: a
+ * loop-owned release cannot produce it, and the overloads below are what make
+ * that unrepresentable rather than merely documented — their callers keep the
+ * three-member status and so cannot silently fall through an arm they can never
+ * receive.
+ *
+ * It carries no {@link ExecutionReleaseDisposition}, and the absence is the
+ * statement: a Refusal Hand-back applied nothing, so there is no terminal to
+ * release and no disposition to report. A field that could only ever hold
+ * `'none'` would invite a reader to check it.
  */
 export interface ExecutionLoopRefusal {
   /** Discriminant, and the reason this is not a terminal. */
-  readonly kind: 'refused';
+  readonly status: 'refused';
   /** What to tell the operator, and under which code. Composed by core. */
   readonly refusal: InlineParentAdvanceRefusal;
 }
@@ -209,6 +254,18 @@ export interface ExecutionLoopOptions {
   readonly releaseOwner?: ExecutionReleaseOwner;
   /** Optional actor service test seam. */
   readonly actorService?: RunbookActorService;
+  /**
+   * Optional session service seam.
+   *
+   * The loop constructs its own over `manager` when absent, which is the
+   * production path and stays the default. Injectable because a Run Release
+   * this loop takes is otherwise unobservable from outside it: every existing
+   * assertion about ownership is an assertion about what the loop RETURNS, and
+   * a second owner releasing the same run changes nothing it returns. A caller
+   * that supplies this one sees every release the loop and its inline launch
+   * take, against the same session the rest of the process is using.
+   */
+  readonly sessionService?: SessionService;
   /** Exact claim authority retained by a claim-authenticated continuation. */
   readonly claimKey?: ClaimLookupKey;
   /**
@@ -412,29 +469,33 @@ async function applyAddressedRunRelease(
     type: 'ERROR_OCCURRED',
     payload: { message: released.message, code: sessionMutationRefusalCode(released) },
   });
-  // Stryker disable next-line StringLiteral: equivalent — the sole consumer
-  // tests `=== 'committed'`, so every other string reports a refusal exactly as
-  // this one does, and `releaseRefusedContinuation` discards the value
-  // entirely. Killing it would need a second comparison against a state the
-  // union already makes unreachable.
+  // Stryker disable next-line StringLiteral: equivalent — both consumers test
+  // `=== 'committed'` and take the other arm otherwise, so every other string
+  // reports a refusal exactly as this one does. Killing it would need a
+  // comparison against a state the union already makes unreachable.
   return 'refused';
 }
 
 /**
  * Release a run this loop drove to terminal, and report the loop's outcome.
  *
- * Returns `terminal` once the release commits, or when the caller owns it. A
- * refused release downgrades the outcome to `'stopped'`: the terminal side
+ * Reports `terminal` once the release commits, or when the caller owns it. A
+ * refused release downgrades the status to `'stopped'`: the terminal side
  * effect this loop owed did not happen, so it must not report a clean `'done'`.
  * That downgrade is the whole difference from
  * {@link releaseRefusedContinuation}, which has no clean outcome to protect.
+ *
+ * The downgrade is lossy on its own — `'stopped'` says a run stopped, not that
+ * a release was refused — which is why the disposition travels beside it rather
+ * than being inferred from it.
  *
  * @param sessionService - Session service performing the release.
  * @param runbookId - Run whose session targeting is being released.
  * @param owner - Who owns this loop's Run Release.
  * @param emitter - Execution emitter receiving the refusal events.
- * @param terminal - Outcome to report when the release commits.
- * @returns `terminal`, or `'stopped'` when the release was refused.
+ * @param terminal - Status to report when the release commits.
+ * @returns `terminal` with `'released'`, `'stopped'` with `'refused'` when the
+ *   release was refused, or `terminal` with `'deferred'` when the caller owns it.
  */
 async function releaseTerminalRun(
   sessionService: SessionService,
@@ -442,13 +503,15 @@ async function releaseTerminalRun(
   owner: ExecutionReleaseOwner,
   emitter: ExecutionEventEmitter,
   terminal: 'done' | 'stopped',
-): Promise<'done' | 'stopped'> {
+): Promise<ExecutionLoopResult> {
   // The caller (inline parent-advance core seam) owns the single terminal
   // release. The loop releases nothing but still returns 'done'/'stopped', which
   // the caller maps to one seam release. See RD-598 verification.
-  if (!loopOwnsRelease(owner)) return terminal;
+  if (!loopOwnsRelease(owner)) return { status: terminal, release: 'deferred' };
   const released = await applyAddressedRunRelease(sessionService, runbookId, emitter);
-  return released === 'committed' ? terminal : 'stopped';
+  return released === 'committed'
+    ? { status: terminal, release: 'released' }
+    : { status: 'stopped', release: 'refused' };
 }
 
 /**
@@ -478,16 +541,22 @@ async function releaseTerminalRun(
  * @param runbookId - Run whose session targeting is being released.
  * @param owner - Who owns this loop's Run Release.
  * @param emitter - Execution emitter receiving the refusal events.
- * @returns `'stopped'`.
+ * @returns `'stopped'`, with the disposition of the release this loop took —
+ *   `'deferred'` under caller ownership, where it took none.
  */
 async function releaseRefusedContinuation(
   sessionService: SessionService,
   runbookId: RunId,
   owner: ExecutionReleaseOwner,
   emitter: ExecutionEventEmitter,
-): Promise<'stopped'> {
-  if (loopOwnsRelease(owner)) await applyAddressedRunRelease(sessionService, runbookId, emitter);
-  return 'stopped';
+): Promise<ExecutionLoopResult> {
+  if (!loopOwnsRelease(owner)) return { status: 'stopped', release: 'deferred' };
+  // Reported, not acted on. The refusal already decided the status, so this
+  // value changes nothing the loop does — which is exactly why it was
+  // discarded before, and exactly why discarding it left "the release was
+  // refused" indistinguishable from "the release committed" at every caller.
+  const released = await applyAddressedRunRelease(sessionService, runbookId, emitter);
+  return { status: 'stopped', release: released === 'committed' ? 'released' : 'refused' };
 }
 
 function createCliCommandServices(
@@ -549,15 +618,33 @@ function describeInlineChildLinkageRefusal(
   }
 }
 
+/**
+ * Advance the composing parent for a terminal inline child, and report a status.
+ *
+ * Statuses only, never an {@link ExecutionLoopResult}. The run this frame is
+ * reporting on is the CHILD, and the release this frame's caller cares about is
+ * the PARENT's — taken out of band by the seam `propagateChildTerminal` enters,
+ * one level deeper, with no channel back. Carrying a disposition through here
+ * would therefore have to describe one run with the other's release. #842 is
+ * that confusion made concrete: the seam releases the parent here and the outer
+ * seam, seeing only `'done'` come back, releases it again.
+ *
+ * @param args - The terminal child, its loop status, and the composing parent's
+ *   run-scoped delegation authority.
+ * @returns The child's status, downgraded to `'stopped'` when advancing the
+ *   parent reached a STOP or a blocked terminal.
+ * @throws {Error} If the parent's state cannot be loaded, or the inline
+ *   parent-advance seam rejects for a reason it has not diagnosed.
+ */
 async function propagateInlineChildTerminalResult(args: {
   readonly manager: RunbookStateManager;
   readonly childRunId: RunId;
-  readonly loopResult: ExecutionLoopResult;
+  readonly loopResult: ExecutionLoopStatus;
   readonly cwd: string;
   readonly output: OutputEmitter;
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
   readonly parentDelegationRuntime?: RunScopedDelegationRuntime;
-}): Promise<ExecutionLoopResult> {
+}): Promise<ExecutionLoopStatus> {
   const {
     manager,
     childRunId,
@@ -633,7 +720,7 @@ async function launchInlineChildFromIntent({
   output,
   commandStreamOptions,
   parentDelegationRuntime,
-}: InlineLaunchArgs): Promise<ExecutionLoopResult> {
+}: InlineLaunchArgs): Promise<ExecutionLoopStatus> {
   // Both projections of the one intent, and derived through the same helper the
   // latch derives its own from, so this span and the latch cannot disagree about
   // which child under which parent frame is being launched.
@@ -845,6 +932,7 @@ async function launchInlineChildFromIntent({
       {
         output,
         commandStreamOptions,
+        sessionService,
         ...(adoption.kind === 'adopted'
           ? {
               delegationRuntime: adoption.runtime.delegationRuntime,
@@ -855,7 +943,7 @@ async function launchInlineChildFromIntent({
     return await propagateInlineChildTerminalResult({
       manager,
       childRunId,
-      loopResult,
+      loopResult: loopResult.status,
       cwd,
       output,
       commandStreamOptions,
@@ -1281,8 +1369,13 @@ export async function drainResolvedCompletions({
  * @param cwd - Current working directory for command execution
  * @param emitter - Event emitter for execution events
  * @param options - Optional execution loop behavior overrides
- * @returns 'done' if completed, 'stopped' if stopped, 'waiting' if prompt-only
- *   step reached. A persisted delegation frontier that cannot be projected
+ * @returns An {@link ExecutionLoopResult}: `status` is 'done' if completed,
+ *   'stopped' if stopped, 'waiting' if a prompt-only step was reached, and
+ *   `release` is what this loop did about the run's Run Release — `'released'`,
+ *   `'refused'`, `'deferred'` under `caller` ownership, or `'none'` where none
+ *   was owed. The two are independent: a `'done'` says nothing about whether
+ *   the run is still targeted, which is the question every caller that releases
+ *   is actually asking. A persisted delegation frontier that cannot be projected
  *   without verified claim authority returns 'stopped' after an
  *   `ACTOR_CONTEXT_REQUIRED` `ERROR_OCCURRED` and the terminal release — it is
  *   a refusal, not a throw, so the run is never left on the session stack. A
@@ -1336,7 +1429,10 @@ export async function runExecutionLoop(
   options: ExecutionLoopOptions = {},
 ): Promise<ExecutionLoopResult | ExecutionLoopRefusal> {
   const state = await manager.load(runbookId);
-  if (!state) return 'stopped';
+  // A run that is not there owes no release, and this is the one arm where
+  // `'none'` means the run was never driven at all rather than driven and left
+  // running.
+  if (!state) return { status: 'stopped', release: 'none' };
 
   // The run owns this fact. It is written once at creation and never varies
   // across the loop, so it is read once here rather than re-derived per
@@ -1361,7 +1457,7 @@ export async function runExecutionLoop(
     options.actorService ?? createCliRunbookActorService(manager, commandServices);
   const actorMutationRunner =
     options.actorMutationRunner ?? createEffectfulActorMutationRunner(cwd);
-  const sessionService = new SessionService(manager);
+  const sessionService = options.sessionService ?? new SessionService(manager);
   let currentState: RunbookState = state;
 
   if (currentState.lifecycle === 'stopped') {
@@ -1432,7 +1528,7 @@ export async function runExecutionLoop(
       emitter,
       'done',
     );
-    if (terminal !== 'done') {
+    if (terminal.status !== 'done') {
       emitter.emit({
         type: 'RUNBOOK_STOPPED',
         payload: {
@@ -1528,7 +1624,14 @@ export async function runExecutionLoop(
       // there is no longer a second operation to refuse: a rolled-back
       // projection rolls back the terminal state with it, so this arm is not
       // reached at all. That is the whole point of one transaction.
-      return drainResult.status;
+      //
+      // `'released'` under loop ownership therefore states a commit, not an
+      // attempt: reaching this arm IS the transaction having committed, and the
+      // release committed with it.
+      return {
+        status: drainResult.status,
+        release: loopOwnsRelease(releaseOwner) ? 'released' : 'deferred',
+      };
     }
     if (drainResult.status === 'failed') {
       // A REFUSAL, not a crash — the same treatment the three frontier arms
@@ -1557,7 +1660,7 @@ export async function runExecutionLoop(
       // owns. Emitting here as well would announce a `RUNBOOK_STOPPED` for a run
       // that is still running, and would print the diagnostic twice.
       if (!loopOwnsRelease(releaseOwner)) {
-        return { kind: 'refused', refusal };
+        return { status: 'refused', refusal };
       }
       emitter.emit({
         type: 'ERROR_OCCURRED',
@@ -1579,7 +1682,7 @@ export async function runExecutionLoop(
       return await releaseRefusedContinuation(sessionService, runbookId, releaseOwner, emitter);
     }
     if (drainResult.status === 'not_active') {
-      return 'waiting';
+      return { status: 'waiting', release: 'none' };
     }
     if (drainResult.applied > 0) {
       currentState = drainResult.state;
@@ -1737,9 +1840,18 @@ export async function runExecutionLoop(
             code: ErrorCodes.LAUNCH_FAILED.code,
           },
         });
-        return 'stopped';
+        return { status: 'stopped', release: 'none' };
       }
-      return launchInlineChildFromIntent({
+      // `'none'` on every arm of this launch, and NOT because nothing was
+      // released. The status that comes back describes the CHILD; the release
+      // this loop is reporting on is its own run's, and this loop took none.
+      // The parent may nonetheless be off targeting by the time this returns —
+      // the child's terminal flow-back enters the inline parent-advance seam,
+      // which advances and releases this very run one frame deeper. That gap is
+      // #842. Stating `'none'` here is what makes it a visible discrepancy
+      // rather than an invisible one; closing it is the fold's work, not this
+      // step's.
+      const childStatus = await launchInlineChildFromIntent({
         manager,
         actorService,
         sessionService,
@@ -1756,13 +1868,14 @@ export async function runExecutionLoop(
         // further up the inline chain can be advanced under it.
         parentDelegationRuntime: { runId: runbookId, runtime: options.delegationRuntime },
       });
+      return { status: childStatus, release: 'none' };
     }
 
     // Prompted mode, a prompted-FOR step, and a unit with no command are one arm
     // now, decided by core. The loop no longer reads an undefined rendered
     // command as its signal for "nothing to run".
     if (entered.kind !== 'runnable') {
-      return 'waiting';
+      return { status: 'waiting', release: 'none' };
     }
     const { code: expandedCommandCode, displayCommand, rdInjected } = entered.command;
     let previousState = currentState;
@@ -1822,9 +1935,21 @@ export async function runExecutionLoop(
       });
       // This invocation did not commit and therefore owns no terminal cleanup.
       // Releasing here would let a stale claimant remove the winner's run.
-      return 'stopped';
+      return { status: 'stopped', release: 'none' };
     }
     const cmdSync = fencedCommand.value;
+    // Derived from the state the fence COMMITTED, and by the same test the
+    // runner applies: an armed `terminalRelease` projects only when the
+    // committed lifecycle is terminal, so a fence that committed an ordinary
+    // transition released nothing and owed nothing. Read once here because
+    // three of the arms below report on this one commit.
+    const fenceCommittedTerminal =
+      cmdSync.state.lifecycle === 'completed' || cmdSync.state.lifecycle === 'stopped';
+    const fenceRelease: ExecutionReleaseDisposition = !fenceCommittedTerminal
+      ? 'none'
+      : loopOwnsRelease(releaseOwner)
+        ? 'released'
+        : 'deferred';
     const syncEffects = cmdSync.effects;
     for (const effect of syncEffects) {
       emitter.emit(effect.event);
@@ -1848,7 +1973,7 @@ export async function runExecutionLoop(
         snapshot: cmdSync.snapshot,
         position: stepPosition,
       });
-      return 'stopped';
+      return { status: 'stopped', release: fenceRelease };
     }
 
     const transitionResult = observeCommandTransition({
@@ -1862,10 +1987,10 @@ export async function runExecutionLoop(
       command: displayCommand,
     });
     if (transitionResult.status === 'done') {
-      return 'done';
+      return { status: 'done', release: fenceRelease };
     }
     if (transitionResult.status === 'stopped') {
-      return 'stopped';
+      return { status: 'stopped', release: fenceRelease };
     }
     // The fenced commit released this run on `state.lifecycle`, which is assigned
     // from the snapshot VALUE alone while the orchestrated observation also
@@ -1873,7 +1998,7 @@ export async function runExecutionLoop(
     // the loop must still stop and emit the matching terminal event — continuing
     // would drive the next step of a run this process already released.
     const lifecycle = cmdSync.state.lifecycle;
-    if (lifecycle === 'completed' || lifecycle === 'stopped') {
+    if (fenceCommittedTerminal) {
       emitter.emit(
         deriveTerminalDrainObservationEvent({
           steps,
@@ -1885,7 +2010,7 @@ export async function runExecutionLoop(
           result: commandOutput.result,
         }),
       );
-      return lifecycle === 'completed' ? 'done' : 'stopped';
+      return { status: lifecycle === 'completed' ? 'done' : 'stopped', release: fenceRelease };
     }
     currentState = transitionResult.state;
   }

@@ -25,7 +25,7 @@ import {
   type DelegationRuntimeCapabilities,
   claimKeyFromBearer,
 } from '@rundown-org/core';
-import { runExecutionLoop, type ExecutionLoopResult } from '../services/execution.js';
+import { runExecutionLoop, type ExecutionLoopStatus } from '../services/execution.js';
 import {
   propagateDrivenRunTerminal,
   propagationRequiresFailureExit,
@@ -82,7 +82,7 @@ export type GotoValidationResult =
  * Result of goto execution.
  */
 export type GotoExecutionResult =
-  | { ok: true; loopResult: ExecutionLoopResult; propagation?: DrivenRunPropagation }
+  | { ok: true; loopResult: ExecutionLoopStatus; propagation?: DrivenRunPropagation }
   | { ok: false; error: string; code: string };
 
 /**
@@ -406,5 +406,8 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     ctx.commandStreamOptions,
   );
 
-  return { ok: true, loopResult, propagation };
+  // The status alone. `goto` drives a run it owns the release of, and the
+  // loop has already taken it by the time this returns; nothing downstream of
+  // here decides a release, so nothing downstream needs the disposition.
+  return { ok: true, loopResult: loopResult.status, propagation };
 }

@@ -58,7 +58,7 @@ import {
 } from '@rundown-org/parser';
 import { buildRunbookRef, resolveRunbookFile, resolveRunbookRef } from './resolve-runbook.js';
 import type { ResolvedRunbook as ResolvedRunbookFile } from './resolve-runbook.js';
-import { runExecutionLoop, type ExecutionLoopResult } from '../services/execution.js';
+import { runExecutionLoop, type ExecutionLoopStatus } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import {
@@ -193,7 +193,7 @@ export interface SessionRefusedFailure {
 export type RunbookStartResult =
   | {
       ok: true;
-      loopResult: ExecutionLoopResult;
+      loopResult: ExecutionLoopStatus;
       stateId: RunId;
       claimId?: ClaimId;
       /** Process-only capabilities bound to the exact run-control claim. */
@@ -316,7 +316,7 @@ export type ClaimResult =
       /** Step (or substep) ID on the parent that holds the delegation. */
       stepId: string;
       /** Terminal state of the child execution loop. */
-      loopResult: ExecutionLoopResult;
+      loopResult: ExecutionLoopStatus;
     }
   | ({ readonly ok: false } & ClaimFailure);
 
@@ -1152,6 +1152,11 @@ async function launchRunbook(
   const loopResult = await runExecutionLoop(manager, launchedStateId, runbookSteps, cwd, emitter, {
     output,
     commandStreamOptions: ctx.commandStreamOptions,
+    // The same session the rest of this launch used, so a caller watching the
+    // session sees the loop's own Run Release alongside the pushes and claims
+    // taken to get here. `SessionService` holds no state beyond its clock, so
+    // sharing the instance is the loop constructing the same thing one frame up.
+    sessionService,
     ...(preparedRunControlClaim === undefined
       ? {}
       : {
@@ -1161,7 +1166,11 @@ async function launchRunbook(
 
   return {
     ok: true,
-    loopResult,
+    // The status alone: this result travels to `rundown run`'s and
+    // `rundown claim`'s exit decisions, and to the inline flow-back — none of
+    // which decides a release. A disposition carried past the frame that can
+    // act on it is a field readers must work out they should ignore.
+    loopResult: loopResult.status,
     stateId: launchedStateId,
     ...(issuedRunControlClaimId !== undefined ? { claimId: issuedRunControlClaimId } : {}),
     ...(preparedRunControlClaim === undefined
@@ -1574,7 +1583,7 @@ function emitClaimedSuccess(args: {
   readonly parentRunId: RunId;
   readonly stepId: string;
   readonly parentStepAt: string | undefined;
-  readonly loopResult: ExecutionLoopResult;
+  readonly loopResult: ExecutionLoopStatus;
 }): Extract<ClaimResult, { ok: true }> {
   const payload = buildClaimedPayload(args);
   emitClaimedOutput(
