@@ -1266,8 +1266,8 @@ echo finished
 
       // Every terminal transaction projects its own release directly in the
       // store. No ancestor should reach the standalone session-service seam.
-      expect(releaseCount(middleRunId!)).toBe(0);
-      expect(releaseCount(outerRunId!)).toBe(0);
+      expect(releaseCount(middleRunId)).toBe(0);
+      expect(releaseCount(outerRunId)).toBe(0);
 
       const completionEvents = flattenEvents(parseConcatenatedJson(pass.stdout)).filter(
         (event) => event.type === 'runbook_completed',
@@ -1275,16 +1275,16 @@ echo finished
       const countCompletions = (runId: string) =>
         completionEvents.filter((event) => event.runbookId === runId).length;
       const completionCounts = {
-        middle: countCompletions(middleRunId!),
-        outer: countCompletions(outerRunId!),
+        middle: countCompletions(middleRunId),
+        outer: countCompletions(outerRunId),
       };
       expect(completionCounts).toEqual({
         middle: 1,
         outer: 1,
       });
-      expect((await readRunbookState(workspace, manualInnerRunId!))?.lifecycle).toBe('completed');
-      expect((await readRunbookState(workspace, middleRunId!))?.lifecycle).toBe('completed');
-      expect((await readRunbookState(workspace, outerRunId!))?.lifecycle).toBe('completed');
+      expect((await readRunbookState(workspace, manualInnerRunId))?.lifecycle).toBe('completed');
+      expect((await readRunbookState(workspace, middleRunId))?.lifecycle).toBe('completed');
+      expect((await readRunbookState(workspace, outerRunId))?.lifecycle).toBe('completed');
     } finally {
       releaseSpy.mockRestore();
     }

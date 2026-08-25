@@ -74,6 +74,13 @@ interface InlineParentAdvanceRefusalBase {
   readonly runId: RunId;
 }
 
+/**
+ * The typed refusal union handed back by the inline parent-advance seam.
+ *
+ * Each member pairs a `reason` discriminant with its stable diagnostic code on
+ * top of {@link InlineParentAdvanceRefusalBase}'s message and refusing run, so
+ * frontends narrow on `reason` and render without re-deriving the condition.
+ */
 export type InlineParentAdvanceRefusal = InlineParentAdvanceRefusalBase &
   (
     | {

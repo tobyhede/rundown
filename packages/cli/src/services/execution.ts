@@ -477,6 +477,15 @@ function describeInlineChildLinkageRefusal(
  *
  * @param args - The terminal child, its loop status, and the composing parent's
  *   run-scoped delegation authority.
+ * @param args.manager - State manager for the workspace being executed.
+ * @param args.childRunId - The terminal inline child whose parent advances.
+ * @param args.loopResult - The child's own execution-loop status.
+ * @param args.cwd - Current working directory.
+ * @param args.output - Output emitter for streamed parent events.
+ * @param args.commandStreamOptions - Runtime-only routing for command
+ *   subprocess I/O.
+ * @param args.parentDelegationRuntime - Verified delegation capabilities bound
+ *   to the composing parent run.
  * @returns The child's status when it has no inline parent, otherwise
  *   `'handled'` after the synchronous parent flow-back returns.
  * @throws {Error} If the parent's state cannot be loaded, or the inline

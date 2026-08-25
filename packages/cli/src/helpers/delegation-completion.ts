@@ -393,10 +393,6 @@ export function renderInlinePropagationRefusal(
  * Construct the core seam deps bag bound to one command's `cwd`, wiring the
  * CLI-supplied {@link buildAdvanceInlineParent} callable.
  *
- * `SessionService` is imported lazily (like the callable's core symbols) so this
- * module keeps a minimal static `@rundown-org/core` surface; the function is
- * therefore async.
- *
  * @param cwd - Current working directory.
  * @param output - Output emitter for streamed parent events.
  * @param commandStreamOptions - Runtime-only routing for command subprocess I/O.
@@ -404,12 +400,12 @@ export function renderInlinePropagationRefusal(
  *   run, forwarded to {@link buildAdvanceInlineParent}.
  * @returns Deps for the core `propagateTerminalChildUpward` seam.
  */
-export async function buildInlineParentAdvanceDeps(
+export function buildInlineParentAdvanceDeps(
   cwd: string,
   output: OutputEmitter,
   commandStreamOptions?: CommandExecutionStreamOptions,
   parentDelegationRuntime?: RunScopedDelegationRuntime,
-): Promise<PropagateTerminalChildUpwardDeps> {
+): PropagateTerminalChildUpwardDeps {
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
   const completionService = new RunbookCompletionService(manager, actorService);
@@ -456,7 +452,7 @@ export async function reportTerminalToDelegatingRun(
   if (linkage?.kind !== 'delegation') return 'not-applicable';
   const { propagateTerminalChildUpward } = await import('@rundown-org/core');
   const outcome = await propagateTerminalChildUpward(
-    await buildInlineParentAdvanceDeps(cwd, output),
+    buildInlineParentAdvanceDeps(cwd, output),
     childState,
     result,
   );
@@ -535,7 +531,7 @@ export async function advanceParentForInlineChild(
   if (linkage?.kind !== 'inline') return 'not-applicable';
   const { propagateTerminalChildUpward } = await import('@rundown-org/core');
   const outcome = await propagateTerminalChildUpward(
-    await buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions),
+    buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions),
     childState,
     result,
   );
@@ -607,7 +603,7 @@ export async function propagateChildTerminal(
   if (!linkage) return 'not-applicable';
   const { propagateTerminalChildUpward } = await import('@rundown-org/core');
   const outcome = await propagateTerminalChildUpward(
-    await buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions, parentDelegationRuntime),
+    buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions, parentDelegationRuntime),
     childState,
     result,
   );
