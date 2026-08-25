@@ -180,6 +180,8 @@ export {
 export {
   SessionService,
   type ActiveInlineForceTerminalPlan,
+  type AlreadyTerminalReleaseFence,
+  type AlreadyTerminalReleaseOutcome,
   type ClaimAndInitialLinkInput,
   type ClaimAndInitialLinkResult,
   type RollbackInitialLinkInput,
