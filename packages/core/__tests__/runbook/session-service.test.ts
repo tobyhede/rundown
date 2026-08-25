@@ -673,6 +673,122 @@ describe('SessionService', () => {
       expect(session.claims[minted.claim.claimKey]).toBeDefined();
     });
 
+    describe('releaseAlreadyTerminal', () => {
+      it('projects the batch when every fence fact still holds, retaining the addressed claim', async () => {
+        const state = await manager.create({ source: 'project', path: 'done.md' }, mockRunbook, {
+          runbookPath: 'done.md',
+        });
+        const minted = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(state.id),
+        );
+        await manager.update(state.id, { lifecycle: 'completed' });
+
+        const out = unwrapSessionMutation(
+          await sessionService.releaseAlreadyTerminal(
+            {
+              runId: state.id,
+              lifecycle: 'completed',
+              claim: { claimKey: minted.claim.claimKey, controlledRunId: state.id },
+            },
+            [{ runId: state.id, role: 'addressed' }],
+          ),
+        );
+
+        expect(out).toEqual({ kind: 'released' });
+        const session = await manager.loadSession();
+        // Released from targeting, retained as Terminal Evidence.
+        expect(session.defaultStack).toEqual([]);
+        expect(session.claims[minted.claim.claimKey]).toBeDefined();
+      });
+
+      it('refuses claim_rotated and projects nothing when the fenced claim lapsed', async () => {
+        const state = await manager.create({ source: 'project', path: 'rotated.md' }, mockRunbook, {
+          runbookPath: 'rotated.md',
+        });
+        const minted = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(state.id),
+        );
+        await manager.update(state.id, { lifecycle: 'completed' });
+        // Rotate: re-issuing run control supersedes the fenced claim.
+        const rotated = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
+
+        const out = unwrapSessionMutation(
+          await sessionService.releaseAlreadyTerminal(
+            {
+              runId: state.id,
+              lifecycle: 'completed',
+              claim: { claimKey: minted.claim.claimKey, controlledRunId: state.id },
+            },
+            [{ runId: state.id, role: 'addressed' }],
+          ),
+        );
+
+        expect(out).toEqual({ kind: 'claim_rotated', claimKey: minted.claim.claimKey });
+        const session = await manager.loadSession();
+        // Nothing was projected: the run stays targeted and the rotated-in
+        // holder keeps its authority.
+        expect(session.defaultStack).toEqual([state.id]);
+        expect(session.claims[rotated.claim.claimKey]).toBeDefined();
+      });
+
+      it('refuses determination_lost when the fenced run does not hold the observed lifecycle', async () => {
+        const state = await manager.create(
+          { source: 'project', path: 'still-on.md' },
+          mockRunbook,
+          {
+            runbookPath: 'still-on.md',
+          },
+        );
+        await sessionService.pushRunbook(state.id);
+
+        // The run is still running, so a fence claiming it completed never held.
+        const out = unwrapSessionMutation(
+          await sessionService.releaseAlreadyTerminal({ runId: state.id, lifecycle: 'completed' }, [
+            { runId: state.id, role: 'addressed' },
+          ]),
+        );
+
+        expect(out).toEqual({
+          kind: 'determination_lost',
+          runId: state.id,
+          lifecycle: 'running',
+        });
+        expect((await manager.loadSession()).defaultStack).toEqual([state.id]);
+      });
+
+      it('refuses determination_lost without a lifecycle when the fenced run is gone', async () => {
+        const state = await manager.create({ source: 'project', path: 'pruned.md' }, mockRunbook, {
+          runbookPath: 'pruned.md',
+        });
+        await manager.update(state.id, { lifecycle: 'completed' });
+        await manager.delete(state.id);
+
+        const out = unwrapSessionMutation(
+          await sessionService.releaseAlreadyTerminal({ runId: state.id, lifecycle: 'completed' }, [
+            { runId: state.id, role: 'addressed' },
+          ]),
+        );
+
+        expect(out).toEqual({ kind: 'determination_lost', runId: state.id });
+      });
+
+      it('throws when the batch does not include the fenced run', async () => {
+        const fenced = await manager.create({ source: 'project', path: 'fenced.md' }, mockRunbook, {
+          runbookPath: 'fenced.md',
+        });
+        const other = await manager.create({ source: 'project', path: 'other.md' }, mockRunbook, {
+          runbookPath: 'other.md',
+        });
+        await manager.update(fenced.id, { lifecycle: 'completed' });
+
+        await expect(
+          sessionService.releaseAlreadyTerminal({ runId: fenced.id, lifecycle: 'completed' }, [
+            { runId: other.id, role: 'collateral' },
+          ]),
+        ).rejects.toThrow(/does not include the fenced run/);
+      });
+    });
+
     it('supports arbitrary nesting depth', async () => {
       const wf1 = await manager.create({ source: 'project', path: 'level1.md' }, mockRunbook, {
         runbookPath: 'level1.md',
