@@ -1675,12 +1675,7 @@ describe('runExecutionLoop', () => {
       },
     );
 
-    it('arms no drain release when the caller owns it', async () => {
-      // The counterpart to the fence's own deferral. The inline parent-advance
-      // seam owns the single release for a parent it drives, so an armed apply
-      // here would release behind that owner — the same double-release the
-      // fence avoids by omitting `terminalRelease`. Deferral is spelled by
-      // absence, so it is asserted as absence, over every apply.
+    it('arms the drain release when the caller requests refusal hand-back', async () => {
       mockManager.load.mockResolvedValue(makeLoopState());
       mockCompletionService.applyNextResolvedCompletion.mockResolvedValue({
         kind: 'applied',
@@ -1701,13 +1696,13 @@ describe('runExecutionLoop', () => {
         asSteps(steps),
         '/tmp',
         asEmitter(mockEmitter),
-        { releaseOwner: 'caller' },
+        { returnRefusals: true },
       );
 
-      expect(result.status).toBe('done');
+      expect(result).toEqual({ status: 'done', release: 'released' });
       expect(mockCompletionService.applyNextResolvedCompletion).toHaveBeenCalled();
       for (const [applyInput] of mockCompletionService.applyNextResolvedCompletion.mock.calls) {
-        expect(applyInput).not.toHaveProperty('terminalRelease');
+        expect(applyInput).toMatchObject({ terminalRelease: { role: 'addressed' } });
       }
       expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
     });
@@ -1856,13 +1851,8 @@ describe('runExecutionLoop', () => {
     });
   });
 
-  describe("releaseOwner 'caller' (#598)", () => {
-    it('drives a run to done without releasing — caller owns release', async () => {
-      // Mirror the "completes the runbook" fixture: an in-loop command drive to
-      // a 'done' terminal. Under caller ownership the fence carries no
-      // terminal release AND every loop release site stands down, so NO session
-      // release fires — the caller (the inline parent-advance core seam) owns
-      // the single terminal release.
+  describe('transaction-owned release (#838)', () => {
+    it('folds a command terminal release even when the caller requests refusal hand-back', async () => {
       mockManager.load.mockResolvedValue(makeLoopState());
       jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
       mockActorService.sendAndSync.mockResolvedValue({
@@ -1892,32 +1882,18 @@ describe('runExecutionLoop', () => {
         asSteps(steps),
         '/tmp',
         asEmitter(mockEmitter),
-        { releaseOwner: 'caller' },
+        { returnRefusals: true },
       );
 
-      // `'deferred'`, not `'none'`: a release IS owed on this terminal and this
-      // loop declined to take it. The two are the same absence of a session
-      // call and different facts, which is why the status alone could never
-      // distinguish "the caller must release" from "nobody need release".
-      expect(result).toEqual({ status: 'done', release: 'deferred' });
+      expect(result).toEqual({ status: 'done', release: 'released' });
       expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
-      // The release is folded INTO the fenced command mutation, so "the caller
-      // owns it" has to be visible in the request the fence received — not only
-      // in the absence of a separate session call, which would also hold if the
-      // fence had released it inside its own transaction. `terminalRelease` is
-      // presence-means-release, so deferring is spelled by its absence — and
-      // asserted over EVERY fence request, since a single non-releasing call
-      // would satisfy a `toHaveBeenCalledWith` that any other call contradicts.
       expect(mockActorMutationRunner.run).toHaveBeenCalled();
       for (const [fenceInput] of mockActorMutationRunner.run.mock.calls) {
-        expect(fenceInput).not.toHaveProperty('terminalRelease');
+        expect(fenceInput).toMatchObject({ terminalRelease: { role: 'addressed' } });
       }
     });
 
-    it('drives a run to stopped without releasing', async () => {
-      // Pre-loaded stopped state (CLI-owned stop recovery). Under caller
-      // ownership `releaseTerminalRun` stands down, so the terminal return
-      // releases nothing.
+    it('releases a pre-loaded stopped run when refusals would be returned', async () => {
       mockManager.load.mockResolvedValue(
         makeLoopState('1', {
           lifecycle: 'stopped',
@@ -1935,11 +1911,13 @@ describe('runExecutionLoop', () => {
         asSteps(steps),
         '/tmp',
         asEmitter(mockEmitter),
-        { releaseOwner: 'caller' },
+        { returnRefusals: true },
       );
 
-      expect(result).toEqual({ status: 'stopped', release: 'deferred' });
-      expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+      expect(result).toEqual({ status: 'stopped', release: 'released' });
+      expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
+        { runId: runbookId, role: 'addressed' },
+      ]);
     });
 
     it('loop ownership releases the run and retains the claim as terminal evidence', async () => {
@@ -1971,41 +1949,6 @@ describe('runExecutionLoop', () => {
       expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
         { runId: runbookId, role: 'addressed' },
       ]);
-    });
-
-    it('refuses an unrecognized release owner instead of releasing anyway', async () => {
-      // The ownership dispatch must not treat "not the caller" as "the loop": a
-      // future ExecutionReleaseOwner added to the union would then have the loop
-      // release behind whoever actually owns it, taking the release twice. The
-      // `never` check makes the compiler the primary gate; this pins the runtime
-      // half, which is what a cast at a call site would slip past.
-      mockManager.load.mockResolvedValue(
-        makeLoopState('1', {
-          lifecycle: 'stopped',
-          snapshot: {
-            status: 'active',
-            value: { 'step::1': 'idle' },
-            context: { lastAction: { type: 'CONTINUE', origin: 'direct' } },
-          },
-        }),
-      );
-
-      await expect(
-        runExecutionLoop(
-          asManager(mockManager),
-          runbookId,
-          asSteps(steps),
-          '/tmp',
-          asEmitter(mockEmitter),
-          // Cast against the LOOP-OWNING overload: `runExecutionLoop` is
-          // overloaded on the owner, so a bare `ExecutionReleaseOwner` matches
-          // neither signature. An unknown owner reaches the runtime
-          // exhaustiveness guard in `loopOwnsRelease`.
-          { releaseOwner: 'future-owner' as 'loop' },
-        ),
-      ).rejects.toThrow(/future-owner/);
-
-      expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
     });
   });
 
@@ -3149,7 +3092,7 @@ describe('runExecutionLoop', () => {
       asSteps(steps),
       '/tmp',
       asEmitter(mockEmitter),
-      { releaseOwner: 'caller' },
+      { returnRefusals: true },
     );
 
     expect(result).toEqual({
@@ -3164,7 +3107,7 @@ describe('runExecutionLoop', () => {
   // run and recurses one level up on 'stopped'. A refusal applied nothing and
   // left the run RUNNING, so 'stopped' there released a live parent and reported
   // a terminal to ITS parent that never happened.
-  it('hands the refusal back instead of a terminal when the release is deferred', async () => {
+  it('hands the refusal back instead of a terminal when requested', async () => {
     const currentState = makeLoopState('1', {
       lifecycle: 'running',
       activeFrameKey: '1|',
@@ -3189,7 +3132,7 @@ describe('runExecutionLoop', () => {
       asSteps(steps),
       '/tmp',
       asEmitter(mockEmitter),
-      { releaseOwner: 'caller' },
+      { returnRefusals: true },
     );
 
     expect(result).toEqual({
@@ -3323,7 +3266,7 @@ describe('runExecutionLoop', () => {
       asSteps(singleDelegateFrontierSteps()),
       '/tmp',
       asEmitter(mockEmitter),
-      { releaseOwner: 'caller' },
+      { returnRefusals: true },
     );
 
     expect(result).toEqual({
@@ -3483,7 +3426,7 @@ describe('runExecutionLoop', () => {
       '/tmp',
       asEmitter(mockEmitter),
       {
-        releaseOwner: 'caller',
+        returnRefusals: true,
         delegationRuntime: frontierProjectionRuntime(() => 'rdtk_other'),
       },
     );
@@ -3571,7 +3514,7 @@ describe('runExecutionLoop', () => {
       '/tmp',
       asEmitter(mockEmitter),
       {
-        releaseOwner: 'caller',
+        returnRefusals: true,
         delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a'),
       },
     );

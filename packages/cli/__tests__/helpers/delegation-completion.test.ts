@@ -950,7 +950,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
   // `'stopped'`. Forwarding a `'stopped'` here would have the core seam release
   // a parent that is still running and recurse one level up reporting a
   // terminal that never happened.
-  it('forwards a refusal from the deferred execution loop without claiming a terminal', async () => {
+  it('forwards a requested refusal without claiming a terminal', async () => {
     const parentState = makeState(PARENT_RUN_ID);
     const manager = makeManager(new Map([[parentState.id, parentState]]));
     const output = makeOutput();
@@ -1023,7 +1023,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'stopped', release: 'deferred' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'stopped', release: 'released' });
     const advance = buildAdvanceInlineParent('/test', output);
     const outcome = await advance({
       parentRunId: PARENT_RUN_ID,
@@ -1063,7 +1063,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     expect(outcome).toEqual({ status: 'active' });
   });
 
-  it('drives the loop with caller-owned release (no self-release)', async () => {
+  it('drives the loop with atomic release and refusal hand-back', async () => {
     const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
     const manager = makeManager(new Map([[parentState.id, parentState]]));
     const output = makeOutput();
@@ -1074,7 +1074,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'deferred' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'released' });
     const advance = buildAdvanceInlineParent('/test', output);
     await advance({
       parentRunId: PARENT_RUN_ID,
@@ -1088,7 +1088,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       expect.anything(),
       '/test',
       expect.anything(),
-      expect.objectContaining({ releaseOwner: 'caller' }),
+      expect.objectContaining({ returnRefusals: true }),
     );
   });
 
@@ -1103,7 +1103,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'deferred' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'released' });
     const advance = buildAdvanceInlineParent('/test', output);
     const outcome = await advance({
       parentRunId: PARENT_RUN_ID,
@@ -1112,6 +1112,33 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       result: 'pass',
     });
     expect(outcome).toEqual({ status: 'done' });
+  });
+
+  it('does not report a terminal twice when a nested entry already completed the parent', async () => {
+    const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
+    const manager = makeManager(new Map([[parentState.id, parentState]]));
+    const output = makeOutput();
+    wireMocks(manager, makeLifecycleService());
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
+      status: 'continue',
+      applied: 1,
+      state: parentState,
+    });
+    // The outer loop observed `done`, but the nested inline flow-back was the
+    // frame that committed the parent's terminal state and release. Reporting
+    // another terminal here would start the upward walk a second time (#842).
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'none' });
+
+    const advance = buildAdvanceInlineParent('/test', output);
+    const outcome = await advance({
+      parentRunId: PARENT_RUN_ID,
+      parentFrameKey: FRAME,
+      parentEntry: 1,
+      result: 'pass',
+    });
+
+    expect(outcome).toEqual({ status: 'active' });
   });
 
   it('returns status active when completions applied but the parent still waits', async () => {

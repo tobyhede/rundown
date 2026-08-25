@@ -1186,10 +1186,7 @@ Child prompt.
     expect(parentAfter?.retryCount).toBe(0);
   });
 
-  // RED witness for #842: before the atomic fold the middle and outer runs are
-  // each released twice. Unskip in the fold commit that deletes call-frame
-  // release ownership.
-  it.skip('releases each run once when a second inline child completes inside upward propagation', async () => {
+  it('releases each run once when a second inline child completes inside upward propagation', async () => {
     await writeFile(
       join(workspace.rootRunbooksDir(), 'outer.runbook.md'),
       `# Outer
@@ -1273,12 +1270,22 @@ echo finished
       expect(releaseCount(middleRunId!)).toBe(1);
       expect(releaseCount(outerRunId!)).toBe(1);
 
-      for (const runId of [manualInnerRunId!, middleRunId!, outerRunId!]) {
-        const completedEvents = flattenEvents(parseConcatenatedJson(pass.stdout)).filter(
-          (event) => event.type === 'runbook_completed' && event.runbookId === runId,
-        );
-        expect(completedEvents).toHaveLength(1);
-      }
+      const completionEvents = flattenEvents(parseConcatenatedJson(pass.stdout)).filter(
+        (event) => event.type === 'runbook_completed',
+      );
+      const countCompletions = (runId: string) =>
+        completionEvents.filter((event) => event.runbookId === runId).length;
+      const completionCounts = {
+        middle: countCompletions(middleRunId!),
+        outer: countCompletions(outerRunId!),
+      };
+      expect(completionCounts).toEqual({
+        middle: 1,
+        outer: 1,
+      });
+      expect((await readRunbookState(workspace, manualInnerRunId!))?.lifecycle).toBe('completed');
+      expect((await readRunbookState(workspace, middleRunId!))?.lifecycle).toBe('completed');
+      expect((await readRunbookState(workspace, outerRunId!))?.lifecycle).toBe('completed');
     } finally {
       releaseSpy.mockRestore();
     }

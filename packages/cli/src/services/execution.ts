@@ -125,27 +125,6 @@ interface RenderTerminalObservationArgs {
   position: ReturnType<typeof buildStepPosition>;
 }
 
-/**
- * Who owns the Run Release for the run this loop drives.
- *
- * Ownership, and nothing else. The union it replaced spelled three independent
- * facts as one word — who releases, whether release fires, and what happens to
- * the claims — and each of its two releasing arms was derived from session
- * contents that no longer describe any of the three. A default-stack root
- * carries a run-control claim, so the arm that read "unclaimed, therefore
- * revoke" asserted the exact inverse of the truth (#781).
- *
- * What a release DOES to claims is not spelled here at all: the loop addresses
- * the run it drove, and {@link ReleaseRole} owns the disposition that follows
- * from that fact.
- *
- * - `loop` — this loop performs its own release.
- * - `caller` — release NOTHING. The caller (the inline parent-advance core
- *   seam) is the sole release owner. The loop still returns its terminal status
- *   so the caller can release exactly once (RD-598).
- */
-export type ExecutionReleaseOwner = 'loop' | 'caller';
-
 /** Status an execution loop reports for the run it drove. */
 export type ExecutionLoopStatus = 'done' | 'stopped' | 'waiting';
 
@@ -164,13 +143,10 @@ export type ExecutionLoopStatus = 'done' | 'stopped' | 'waiting';
  * - `refused` — this loop asked for the release and the session refused it. The
  *   run is terminal and still targeted, which is why every status carrying this
  *   disposition is `'stopped'` rather than a clean `'done'`.
- * - `deferred` — this loop released nothing because its CALLER owns the release
- *   ({@link ExecutionReleaseOwner} `'caller'`). The one disposition that
- *   disappears when release becomes a property of the committing transaction.
  * - `none` — this loop released nothing and owed nothing: the run did not reach
  *   a terminal under this loop, or it vanished before the loop could drive it.
  */
-export type ExecutionReleaseDisposition = 'released' | 'refused' | 'deferred' | 'none';
+export type ExecutionReleaseDisposition = 'released' | 'refused' | 'none';
 
 /**
  * What an execution loop reports about the run it drove.
@@ -189,21 +165,16 @@ export interface ExecutionLoopResult {
 }
 
 /**
- * A diagnosed refusal the loop ended on, reported ONLY under `caller` ownership.
+ * A diagnosed refusal returned to a caller that requested Refusal Hand-back.
  *
- * A loop that owns its release has already taken it by the time it reports, so
- * `'stopped'` is true of the run there: it is off the session stack. Under
- * `caller` the loop releases nothing and hands its status to a caller that acts
- * on it — the inline parent-advance seam releases the run and recurses one
- * level up on `'stopped'`. A refusal applied nothing and left the run RUNNING,
- * so reporting it as `'stopped'` there made the seam release a live parent and
- * report a terminal to ITS parent that never happened.
+ * The inline parent-advance adapter needs the refusal as data so it can stop the
+ * upward walk. Ordinary command drivers ask the loop to render it and receive a
+ * stopped status with no release. This reporting choice is independent of Run
+ * Release ownership: every terminalizing transaction owns its own release.
  *
- * A separate arm rather than a fourth {@link ExecutionLoopStatus} member: a
- * loop-owned release cannot produce it, and the overloads below are what make
- * that unrepresentable rather than merely documented — their callers keep the
- * three-member status and so cannot silently fall through an arm they can never
- * receive.
+ * A separate arm rather than a fourth {@link ExecutionLoopStatus} member keeps
+ * ordinary callers on the three-member status union while the overload below
+ * exposes this arm only to callers that request it.
  *
  * It carries no {@link ExecutionReleaseDisposition}, and the absence is the
  * statement: a Refusal Hand-back applied nothing, so there is no terminal to
@@ -249,9 +220,11 @@ export function refusalFromDrainFailure(
  */
 export interface ExecutionLoopOptions {
   /**
-   * Who performs the Run Release for this run. Defaults to `'loop'`.
+   * Return diagnosed refusals as data instead of rendering a stopped result.
+   * Used by inline parent advancement, which must stop its upward walk when no
+   * terminal transition was applied.
    */
-  readonly releaseOwner?: ExecutionReleaseOwner;
+  readonly returnRefusals?: true;
   /** Optional actor service test seam. */
   readonly actorService?: RunbookActorService;
   /**
@@ -343,42 +316,6 @@ interface InlineLaunchArgs {
    * re-runs THIS run — see {@link propagateInlineChildTerminalResult}.
    */
   readonly parentDelegationRuntime?: RunScopedDelegationRuntime;
-}
-
-/**
- * Does this loop perform its own Run Release?
- *
- * A `switch` rather than `owner === 'loop'`, and the ONLY place the question is
- * asked, so that "not the caller" can never come to mean "the loop". A third
- * owner added to the union is a compile error here — the `never` arm — rather
- * than an owner that silently inherits the loop's release and takes it a second
- * time behind whoever actually owns it. The throwing default is unreachable from
- * typed code; the only way to arrive there is a cast or a JS caller, and that
- * must not be answered by releasing.
- *
- * "Only place" is load-bearing and includes the three sites that are not
- * release calls. Two arm a `terminalRelease` — the fence's, and the drain's
- * (#794) — each a release folded into a transaction rather than issued here,
- * and so the pair that would double-release a new owner most quietly. The third
- * is the drain refusal's hand-back, where owning the terminal is the same fact
- * as owning the report of it. An inline `owner === 'caller'` at any of them
- * would leave the `never` arm here pointing at none.
- *
- * @param owner - Who owns this loop's Run Release.
- * @returns `true` when this loop releases, `false` when its caller does.
- * @throws {Error} When `owner` is not an {@link ExecutionReleaseOwner}.
- */
-function loopOwnsRelease(owner: ExecutionReleaseOwner): boolean {
-  switch (owner) {
-    case 'loop':
-      return true;
-    case 'caller':
-      return false;
-    default: {
-      const _exhaustive: never = owner;
-      throw new Error(`unhandled execution release owner: ${String(_exhaustive)}`);
-    }
-  }
 }
 
 /**
@@ -475,32 +412,26 @@ async function applyAddressedRunRelease(
 /**
  * Release a run this loop drove to terminal, and report the loop's outcome.
  *
- * Reports `terminal` once the release commits, or when the caller owns it. A
- * refused release downgrades the status to `'stopped'`: the terminal side
- * effect this loop owed did not happen, so it must not report a clean `'done'`.
+ * Reports `terminal` once the release commits. A refused release downgrades the
+ * status to `'stopped'`: the terminal side effect this loop owed did not happen,
+ * so it must not report a clean `'done'`.
  * The downgrade is lossy on its own — `'stopped'` says a run stopped, not that
  * a release was refused — which is why the disposition travels beside it rather
  * than being inferred from it.
  *
  * @param sessionService - Session service performing the release.
  * @param runbookId - Run whose session targeting is being released.
- * @param owner - Who owns this loop's Run Release.
  * @param emitter - Execution emitter receiving the refusal events.
  * @param terminal - Status to report when the release commits.
  * @returns `terminal` with `'released'`, `'stopped'` with `'refused'` when the
- *   release was refused, or `terminal` with `'deferred'` when the caller owns it.
+ *   release was refused.
  */
 async function releaseTerminalRun(
   sessionService: SessionService,
   runbookId: RunId,
-  owner: ExecutionReleaseOwner,
   emitter: ExecutionEventEmitter,
   terminal: 'done' | 'stopped',
 ): Promise<ExecutionLoopResult> {
-  // The caller (inline parent-advance core seam) owns the single terminal
-  // release. The loop releases nothing but still returns 'done'/'stopped', which
-  // the caller maps to one seam release. See RD-598 verification.
-  if (!loopOwnsRelease(owner)) return { status: terminal, release: 'deferred' };
   const released = await applyAddressedRunRelease(sessionService, runbookId, emitter);
   return released === 'committed'
     ? { status: terminal, release: 'released' }
@@ -1320,13 +1251,13 @@ export async function drainResolvedCompletions({
  * @returns An {@link ExecutionLoopResult}: `status` is 'done' if completed,
  *   'stopped' if stopped, 'waiting' if a prompt-only step was reached, and
  *   `release` is what this loop did about the run's Run Release — `'released'`,
- *   `'refused'`, `'deferred'` under `caller` ownership, or `'none'` where none
- *   was owed. The two are independent: a `'done'` says nothing about whether
+ *   `'refused'`, or `'none'` where none was owed. The two are independent: a
+ *   `'done'` says nothing about whether
  *   the run is still targeted, which is the question every caller that releases
  *   is actually asking. A persisted delegation frontier that cannot be projected
  *   without verified claim authority returns 'stopped' after an
- *   `ACTOR_CONTEXT_REQUIRED` `ERROR_OCCURRED` and the terminal release — it is
- *   a refusal, not a throw, so the run is never left on the session stack. A
+ *   `ACTOR_CONTEXT_REQUIRED` `ERROR_OCCURRED` and no release — it is a refusal,
+ *   not a terminal, so the still-running run remains targeted for retry. A
  *   frontier the *present* authority cannot reproduce — a rotated issuing claim,
  *   or a derived bearer that does not match its persisted verifier — returns
  *   'stopped' the same way, coded `RD-821` (`DELEGATION_INVARIANT_VIOLATED`); a
@@ -1358,7 +1289,7 @@ export async function runExecutionLoop(
   steps: ResolvedStep[],
   cwd: string,
   emitter: ExecutionEventEmitter,
-  options: ExecutionLoopOptions & { readonly releaseOwner: 'caller' },
+  options: ExecutionLoopOptions & { readonly returnRefusals: true },
 ): Promise<ExecutionLoopResult | ExecutionLoopRefusal>;
 export async function runExecutionLoop(
   manager: RunbookStateManager,
@@ -1366,7 +1297,7 @@ export async function runExecutionLoop(
   steps: ResolvedStep[],
   cwd: string,
   emitter: ExecutionEventEmitter,
-  options?: ExecutionLoopOptions & { readonly releaseOwner?: 'loop' },
+  options?: ExecutionLoopOptions & { readonly returnRefusals?: undefined },
 ): Promise<ExecutionLoopResult>;
 export async function runExecutionLoop(
   manager: RunbookStateManager,
@@ -1397,7 +1328,7 @@ export async function runExecutionLoop(
   // state refused upstream rather than a mode this read has to guess at.
   const prompted = state.prompted;
 
-  const releaseOwner = options.releaseOwner ?? 'loop';
+  const returnRefusals = options.returnRefusals === true;
 
   const commandServices =
     options.commandServices ?? createCliCommandServices(options.commandStreamOptions);
@@ -1459,7 +1390,7 @@ export async function runExecutionLoop(
       emitter.emit(event);
     }
 
-    return await releaseTerminalRun(sessionService, runbookId, releaseOwner, emitter, 'stopped');
+    return await releaseTerminalRun(sessionService, runbookId, emitter, 'stopped');
   }
 
   if (currentState.lifecycle === 'completed') {
@@ -1469,13 +1400,7 @@ export async function runExecutionLoop(
     // Resolve the release BEFORE announcing completion. A refusal leaves the run
     // on the session stack, so a stream that already emitted RUNBOOK_COMPLETED
     // would assert a clean finish that the returned 'stopped' contradicts.
-    const terminal = await releaseTerminalRun(
-      sessionService,
-      runbookId,
-      releaseOwner,
-      emitter,
-      'done',
-    );
+    const terminal = await releaseTerminalRun(sessionService, runbookId, emitter, 'done');
     if (terminal.status !== 'done') {
       emitter.emit({
         type: 'RUNBOOK_STOPPED',
@@ -1551,16 +1476,12 @@ export async function runExecutionLoop(
       steps,
       currentState,
       issueDelegationCredential: options.delegationRuntime?.issueDelegationCredential,
-      // Same ownership question, same single answer as the fence below — and
-      // the same spelling: presence means this loop's release, absence means
-      // the caller's. `addressed` because the loop acted on the run it names.
-      ...(loopOwnsRelease(releaseOwner) ? { terminalRelease: { role: 'addressed' as const } } : {}),
+      terminalRelease: { role: 'addressed' },
     });
     if (drainResult.status === 'done' || drainResult.status === 'stopped') {
-      // Nothing to release here, on either ownership. The apply that carried
+      // Nothing to release here. The apply that carried
       // this run to terminal committed its Run Release in the SAME transaction
-      // as the terminal state (#794), armed above; a caller-owned drain armed
-      // nothing and its caller releases once. Either way the loop only reports.
+      // as the terminal state (#794), armed above. The loop only reports.
       //
       // The gap this closes was a real one, not a theoretical ordering nicety:
       // the terminal state committed, the loop returned through several frames,
@@ -1573,12 +1494,12 @@ export async function runExecutionLoop(
       // projection rolls back the terminal state with it, so this arm is not
       // reached at all. That is the whole point of one transaction.
       //
-      // `'released'` under loop ownership therefore states a commit, not an
-      // attempt: reaching this arm IS the transaction having committed, and the
-      // release committed with it.
+      // `'released'` therefore states a commit, not an attempt: reaching this
+      // arm IS the transaction having committed, and the release committed with
+      // it.
       return {
         status: drainResult.status,
-        release: loopOwnsRelease(releaseOwner) ? 'released' : 'deferred',
+        release: 'released',
       };
     }
     if (drainResult.status === 'failed') {
@@ -1607,7 +1528,7 @@ export async function runExecutionLoop(
       // the adapter renders this exact code and message through the emitter it
       // owns. Emitting here as well would announce a `RUNBOOK_STOPPED` for a run
       // that is still running, and would print the diagnostic twice.
-      if (!loopOwnsRelease(releaseOwner)) {
+      if (returnRefusals) {
         return { status: 'refused', refusal };
       }
       emitter.emit({
@@ -1668,7 +1589,7 @@ export async function runExecutionLoop(
         code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED,
         runId: runbookId,
       } as const satisfies InlineParentAdvanceRefusal;
-      if (!loopOwnsRelease(releaseOwner)) {
+      if (returnRefusals) {
         return { status: 'refused', refusal };
       }
       // A missing deriver is a refusal of this continuation, not a crash.
@@ -1738,7 +1659,7 @@ export async function runExecutionLoop(
         code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
         runId: runbookId,
       } as const satisfies InlineParentAdvanceRefusal;
-      if (!loopOwnsRelease(releaseOwner)) {
+      if (returnRefusals) {
         return { status: 'refused', refusal };
       }
       emitter.emit({
@@ -1759,7 +1680,7 @@ export async function runExecutionLoop(
         code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
         runId: runbookId,
       } as const satisfies InlineParentAdvanceRefusal;
-      if (!loopOwnsRelease(releaseOwner)) {
+      if (returnRefusals) {
         return { status: 'refused', refusal };
       }
       // Transient, and distinct from the refusal above: the frontier projected
@@ -1858,10 +1779,6 @@ export async function runExecutionLoop(
       runId: runbookId,
       ...(options.claimKey === undefined ? {} : { claimKey: options.claimKey }),
       makeRecoveryActor: (state) => actorService.createRecoveryActor(state, steps),
-      // Present whenever the loop owns the release, and omitted only when the
-      // caller does — the inline parent-advance seam then owns the single
-      // release.
-      //
       // `addressed`, matching the natural pass/fail release this fence replaced
       // and every other release this loop takes. Explicit teardown —
       // abort/stop/complete — is what revokes a claim; a run reaching terminal
@@ -1870,7 +1787,7 @@ export async function runExecutionLoop(
       // `missing`. That applies to the run-control claim `rundown run` mints
       // over a default-stack root just as much as to a delegated child's
       // bearer.
-      ...(loopOwnsRelease(releaseOwner) ? { terminalRelease: { role: 'addressed' as const } } : {}),
+      terminalRelease: { role: 'addressed' },
       compute: async (capturedState) => {
         previousState = capturedState;
         const prepared = await actorService.prepareActorMutation(
@@ -1920,11 +1837,7 @@ export async function runExecutionLoop(
     // three of the arms below report on this one commit.
     const fenceCommittedTerminal =
       cmdSync.state.lifecycle === 'completed' || cmdSync.state.lifecycle === 'stopped';
-    const fenceRelease: ExecutionReleaseDisposition = !fenceCommittedTerminal
-      ? 'none'
-      : loopOwnsRelease(releaseOwner)
-        ? 'released'
-        : 'deferred';
+    const fenceRelease: ExecutionReleaseDisposition = !fenceCommittedTerminal ? 'none' : 'released';
     const syncEffects = cmdSync.effects;
     for (const effect of syncEffects) {
       emitter.emit(effect.event);

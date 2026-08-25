@@ -131,15 +131,11 @@ function delegationRuntimeFor(
  * completions on the target frame, and — when completions applied but the parent
  * is still active — runs the execution loop (spawning command subprocesses). It
  * collapses the drain/loop statuses into the seam's `AdvanceInlineParentOutcome`.
- * It performs NO terminal session release on ANY path — the core seam is the SOLE
- * release owner and releases parentRunId once, as `addressed`, on terminal. The
- * drain performs no release of its own, and the execution loop is invoked with
- * `releaseOwner: 'caller'` so it too skips release — and, under that ownership,
- * hands back its own drain refusal as data rather than a `'stopped'` this
- * callable would forward as a terminal (#802). This closes the ownership gap:
- * there is exactly one release site with one deliberate claim disposition, so
- * the tombstone-destruction hazard the old two-owner code carried (drain
- * deleted, loop retained) cannot recur (RD-598).
+ * It performs no standalone terminal session release. Each drain or command
+ * fence folds the parent's addressed release into the transaction that commits
+ * the parent's terminal state. The loop is invoked with `returnRefusals: true`
+ * so a refusal that applied no terminal transition comes back as typed data
+ * instead of a false terminal status (#802, #833).
  *
  * The heavy CLI collaborators are imported LAZILY to avoid a static
  * delegation-completion ↔ execution import cycle.
@@ -242,25 +238,15 @@ export function buildAdvanceInlineParent(
       const freshParent = await manager.load(parentRunId);
       const loopState = freshParent ?? drained.state;
       const loopSteps = [...getRunbookFromState(loopState, cwd)];
-      const loopResult = await runExecutionLoop(
-        manager,
-        parentRunId,
-        loopSteps,
-        cwd,
-        emitter,
-        // Caller-owned release: the loop does NOT release parentRunId — the core
-        // seam is the sole release owner and releases once, as `addressed`, on
-        // terminal. See RD-598 verification for why single-owner.
-        {
-          releaseOwner: 'caller',
-          output,
-          commandStreamOptions,
-          delegationRuntime,
-        },
-      );
+      const loopResult = await runExecutionLoop(manager, parentRunId, loopSteps, cwd, emitter, {
+        returnRefusals: true,
+        output,
+        commandStreamOptions,
+        delegationRuntime,
+      });
       output.flush();
       // The loop's own drain can refuse the same way this callable's did, and
-      // under caller ownership it hands the refusal back rather than reporting
+      // with Refusal Hand-back it returns the refusal rather than reporting
       // a `'stopped'` this callable would forward as a terminal — which would
       // have the seam release a still-running parent and recurse upward on a
       // terminal that never happened.
@@ -274,16 +260,14 @@ export function buildAdvanceInlineParent(
       // that both arms carry `status`, the exhaustive `never` below refuses a
       // new member outright instead of forwarding it as a refusal.
       //
-      // What the loop RELEASED is deliberately not read here. This callable
-      // invokes the loop under `releaseOwner: 'caller'`, so the disposition can
-      // only be `'deferred'` — and it is the core seam, not this callable, that
-      // acts on the terminal by releasing. Reading it here would put a second
-      // release decision one frame below the sole owner.
+      // What the loop released is deliberately not read here. Terminalization
+      // already committed its own release atomically; this callable only maps
+      // lifecycle status into the core upward-propagation outcome.
       switch (loopResult.status) {
         case 'stopped':
-          return { status: 'stopped' };
+          return { status: loopResult.release === 'released' ? 'stopped' : 'active' };
         case 'done':
-          return { status: 'done' };
+          return { status: loopResult.release === 'released' ? 'done' : 'active' };
         case 'waiting':
           return { status: 'active' };
         case 'refused':
