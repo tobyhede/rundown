@@ -337,7 +337,11 @@ export interface SeamTransitionResult {
   /** State manager bound to this command's cwd. */
   readonly manager: RunbookStateManager;
   /** Present when a transition was applied; drives parent propagation. */
-  readonly applied?: { readonly status: 'continue' | 'stopped'; readonly runId: RunId };
+  readonly applied?: {
+    readonly status: 'continue' | 'stopped';
+    readonly runId: RunId;
+    readonly terminalPropagationHandled: boolean;
+  };
   /** Whether the transition itself requests a non-zero exit (before propagation). */
   readonly exitError: boolean;
 }
@@ -487,7 +491,11 @@ async function renderApplied(
   outcome: Extract<LifecycleTransitionOutcome, { kind: 'applied' }>,
   commandStreamOptions?: CommandExecutionStreamOptions,
   claimKey?: ClaimLookupKey,
-): Promise<{ readonly status: 'continue' | 'stopped'; readonly runId: RunId }> {
+): Promise<{
+  readonly status: 'continue' | 'stopped';
+  readonly runId: RunId;
+  readonly terminalPropagationHandled: boolean;
+}> {
   if (outcome.duplicate) {
     output.status(config.commandName, `Completion already recorded for ${outcome.duplicate.at}`, {
       status: 'already-resolved',
@@ -498,6 +506,7 @@ async function renderApplied(
   }
 
   let status: 'continue' | 'stopped' = outcome.status === 'stopped' ? 'stopped' : 'continue';
+  let terminalPropagationHandled = false;
   let emitter: ExecutionEventEmitter | undefined;
   let liveState: RunbookState | null = outcome.updatedState ?? null;
   const loadLive = async (): Promise<RunbookState | null> => {
@@ -528,11 +537,13 @@ async function renderApplied(
         commandStreamOptions,
         delegationRuntime: outcome.delegationRuntime,
       });
-      if (loopResult.status === 'stopped') status = 'stopped';
+      if (loopResult.status === 'stopped' || loopResult.status === 'blocked') status = 'stopped';
+      terminalPropagationHandled =
+        loopResult.status === 'handled' || loopResult.status === 'blocked';
     }
   }
 
-  return { status, runId: outcome.runId };
+  return { status, runId: outcome.runId, terminalPropagationHandled };
 }
 
 /**

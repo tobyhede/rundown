@@ -1251,13 +1251,12 @@ describe('RunbookCompletionService', () => {
       expect(session.claims[claimKey]).toBeDefined();
     });
 
-    it('releases nothing when the caller owns the release', async () => {
+    it('releases nothing when terminal release is not armed', async () => {
       const claimKey = await seedTargetedRun(state({ substep: '1' }));
       await persistCompletion(state({ substep: '1' }), 'pass');
 
-      // No `terminalRelease`: the inline parent-advance seam owns the single
-      // release for this run, and a second one here would take it behind that
-      // owner.
+      // Deliberately exercise the optional trigger. Production terminalizing
+      // drivers arm it; without it even a terminal apply changes no targeting.
       const applied = await service.applyNextResolvedCompletion({
         runbookId,
         steps: completingSteps,

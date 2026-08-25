@@ -319,7 +319,8 @@ export function registerClaimCommand(program: Command): void {
             // reaches terminal during launch, report its terminal outcome to
             // the delegating parent. Reporting is side-effect-only; the child's
             // own loopResult governs this command's exit code.
-            const shouldExitWithError = result.loopResult === 'stopped';
+            const shouldExitWithError =
+              result.loopResult === 'stopped' || result.loopResult === 'blocked';
             if (result.loopResult === 'done' || result.loopResult === 'stopped') {
               await propagateDrivenRunTerminal(
                 manager,

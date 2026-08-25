@@ -601,6 +601,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   }
 
   let loopStopped = false;
+  let loopHandledPropagation = false;
   if (advancesIntoLoop) {
     const { runExecutionLoop } = await import('../services/execution.js');
     // `advancesIntoLoop` already narrowed `outcome` to `collection_applied`.
@@ -623,7 +624,8 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
       // terminal state INSIDE the loop and still owe its parent a propagation
       // (the run loop does not propagate the executed run's own terminal). Defer
       // the exit decision until after the terminal-propagation pass below.
-      loopStopped = loopResult.status === 'stopped';
+      loopStopped = loopResult.status === 'stopped' || loopResult.status === 'blocked';
+      loopHandledPropagation = loopResult.status === 'handled' || loopResult.status === 'blocked';
     }
   }
 
@@ -642,7 +644,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   //    have reached terminal INSIDE the loop, which never propagates the executed
   //    run's own terminal — so the CLI still owns this propagation.
   let exitWithError = loopStopped || shouldExitWithError;
-  if (advancesIntoLoop) {
+  if (advancesIntoLoop && !loopHandledPropagation) {
     const propagation = await propagateDrivenRunTerminal(
       manager,
       state.id,

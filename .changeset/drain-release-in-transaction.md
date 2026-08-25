@@ -46,13 +46,11 @@ once for a whole drain and every non-terminal iteration still touches no session
 row — and cannot fail on one either, since a corrupt claim row elsewhere in the
 session is only ever read when a release is actually due.
 
-## Ownership, not terminality
+## Atomic projection, not predicted terminality
 
-`terminalRelease` says who owns the release, and nothing else. The execution
-loop arms it exactly where it arms the fence's — under loop ownership — and
-leaves it absent under caller ownership, where the inline parent-advance seam
-releases once for the parent it drives. An armed release is inert on every
-non-terminal apply, so a drain arms it once and lets each transaction decide.
+Every terminalizing driver arms `terminalRelease`; the inline upward seam owns
+no later cleanup. An armed release is inert on every non-terminal apply, so a
+drain arms it once and lets each transaction decide.
 
 The trigger cannot be spelled the same way. Whether an apply reaches terminal is
 decided by the transition prepared inside the transaction, long after the
@@ -82,23 +80,12 @@ The entry-time terminal checks still release through
 `SessionService.releaseRuns`. An already-terminal run has no state write to fold
 a release into; fencing that one against captured authority is #734.
 
-## What this does not close
+## Inline progression uses the same atomic boundary
 
-The drain has a second call site, and it is deliberately not folded. The inline
-parent-advance seam drains a parent under CALLER ownership, so it arms no
-`terminalRelease`: the parent's terminal state commits in the drain's own
-compare-and-swap, and the seam releases afterwards through
-`SessionService.releaseRuns`, in a separate transaction several frames later. A
-process that dies in between leaves the parent committed terminal and still on
-the session stack — structurally the same gap this change closes for the loop.
-
-It is left alone on purpose rather than overlooked. #794 separates ownership
-migration from transaction folding precisely because doing both at once risks a
-double release, and folding here would need the parent-advance seam to stop
-owning the release first — it is the sole release owner for three distinct
-terminal routes, only one of which is a drain that could be folded today.
-Tracked as #838, which carries the ownership migration as its first step. Naming
-it is the point: the gap is now one path, not an unbounded set, and it is
-written down rather than inferred.
+The inline parent-advance drain also arms `terminalRelease`. If it reaches
+terminal, parent state and addressed release commit together; the upward seam
+then reloads and continues progression without a standalone release. Re-entrant
+flow-back returns an ownership-neutral handled/blocked status so an enclosing
+frame stands down without losing failure severity.
 
 Closes #794. Part of #781.

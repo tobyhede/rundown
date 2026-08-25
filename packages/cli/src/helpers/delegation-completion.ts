@@ -261,16 +261,16 @@ export function buildAdvanceInlineParent(
       // that both arms carry `status`, the exhaustive `never` below refuses a
       // new member outright instead of forwarding it as a refusal.
       //
-      // A terminal status only propagates upward when THIS frame committed its
-      // release. A nested inline frame can finish the shared loop first; mapping
-      // that terminal status to active prevents a second ancestor walk.
       switch (loopResult.status) {
         case 'stopped':
-          return { status: loopResult.release === 'released' ? 'stopped' : 'active' };
+          return { status: 'stopped' };
         case 'done':
-          return { status: loopResult.release === 'released' ? 'done' : 'active' };
+          return { status: 'done' };
         case 'waiting':
+        case 'handled':
           return { status: 'active' };
+        case 'blocked':
+          return { status: 'blocked' };
       }
       return loopResult;
     }

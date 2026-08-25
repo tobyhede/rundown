@@ -266,6 +266,21 @@ describe('propagateTerminalChildUpward — inline arm', () => {
     expect(load).not.toHaveBeenCalled();
   });
 
+  it('blocked re-entrant advance preserves failure without recursing', async () => {
+    const child = makeState(CHILD, { parentLinkage: inlineLinkage() });
+    const load = jest.fn<(id: string) => Promise<RunbookState | null>>();
+    const advanceInlineParent = jest
+      .fn<AdvanceInlineParent>()
+      .mockResolvedValue({ status: 'blocked' });
+    const result = await propagateTerminalChildUpward(
+      makeDeps({ advanceInlineParent, manager: { load } }),
+      child,
+      'pass',
+    );
+    expect(result).toEqual({ kind: 'blocked' });
+    expect(load).not.toHaveBeenCalled();
+  });
+
   // #802: a drain that refused a persisted completion not meant for the active
   // cursor is a diagnosed, permanent refusal. It travels as data on the return
   // value — the shape `linkage-cycle` already uses — and the seam performs no

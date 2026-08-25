@@ -1468,13 +1468,12 @@ returned through several frames, and a second transaction took the run off
 session targeting. A process that died in between left a finished run the
 session still resolved to, and no healing path removes a loadable terminal run.
 
-Ownership is what the caller declares, never terminality. `terminalRelease`'s
-presence says "this caller owns this run's release" — the loop arms it, the
-inline parent-advance path leaves it absent because the core seam releases once
-for a parent it drives — and every non-terminal iteration releases nothing
-regardless. Whether an apply is terminal is decided by the transition prepared
-inside the transaction, long after the argument is built, which is why the
-trigger cannot be folded into the argument the way the role is. The option is
+Atomicity is what the driver declares, never terminality. Every execution path
+capable of making the addressed run terminal arms `terminalRelease`, and every
+non-terminal iteration releases nothing regardless. Whether an apply is terminal
+is decided by the transition prepared inside the transaction, long after the
+argument is built. The inline upward seam owns no later cleanup: it reloads and
+continues progression after the terminal callable returns. The option is
 release-shaped rather than a free-form session projection for two reasons the
 owned-commit methods do not share: this cycle owns exactly ONE run, so the store
 states and enforces the owned-set rule itself instead of trusting each caller to

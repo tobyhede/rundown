@@ -449,7 +449,7 @@ beforeEach(() => {
     applied: 0,
     state: makeState(PARENT_RUN_ID),
   });
-  jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting', release: 'none' });
+  jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
   // resetAllMocks() wipes the lazy-import stubs the inline path needs; restore
   // them each run so advanceParentForInlineChild resolves steps/emitter/config.
   // The values pass straight through to the mocked drain/loop, so structural
@@ -947,12 +947,10 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     });
   });
 
-  // The nested arm: this callable's OWN drain applied, so it runs the parent's
-  // execution loop — whose drain can hit the same refusal. Under caller
-  // ownership the loop hands that back as data instead of reporting
-  // `'stopped'`. Forwarding a `'stopped'` here would have the core seam release
-  // a parent that is still running and recurse one level up reporting a
-  // terminal that never happened.
+  // The re-entrant arm: this callable's drain applied, so it runs the parent's
+  // execution loop — whose drain can hit the same refusal. Refusal Hand-back
+  // returns data instead of a false `'stopped'`; the upward seam then performs
+  // no recursion for a terminal that never happened.
   it('forwards a requested refusal without claiming a terminal', async () => {
     const parentState = makeState(PARENT_RUN_ID);
     const manager = makeManager(new Map([[parentState.id, parentState]]));
@@ -1026,7 +1024,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'stopped', release: 'released' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'stopped' });
     const advance = buildAdvanceInlineParent('/test', output);
     const outcome = await advance({
       parentRunId: PARENT_RUN_ID,
@@ -1038,7 +1036,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     expect(outcome).toEqual({ status: 'stopped' });
   });
 
-  it('does not propagate a loop terminal already released by a nested frame', async () => {
+  it('preserves blocked severity without repeating nested flow-back', async () => {
     const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
     const manager = makeManager(new Map([[parentState.id, parentState]]));
     const output = makeOutput();
@@ -1049,7 +1047,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'stopped', release: 'none' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'blocked' });
 
     const advance = buildAdvanceInlineParent('/test', output);
     await expect(
@@ -1059,7 +1057,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
         parentEntry: 1,
         result: 'pass',
       }),
-    ).resolves.toEqual({ status: 'active' });
+    ).resolves.toEqual({ status: 'blocked' });
   });
 
   // The loop's non-terminal exit. It used to be this callable's fall-through, so
@@ -1077,7 +1075,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting', release: 'none' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
     const advance = buildAdvanceInlineParent('/test', output);
     const outcome = await advance({
       parentRunId: PARENT_RUN_ID,
@@ -1101,7 +1099,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'released' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
     const advance = buildAdvanceInlineParent('/test', output);
     await advance({
       parentRunId: PARENT_RUN_ID,
@@ -1130,7 +1128,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'released' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
     const advance = buildAdvanceInlineParent('/test', output);
     const outcome = await advance({
       parentRunId: PARENT_RUN_ID,
@@ -1152,10 +1150,9 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    // The outer loop observed `done`, but the nested inline flow-back was the
-    // frame that committed the parent's terminal state and release. Reporting
-    // another terminal here would start the upward walk a second time (#842).
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'none' });
+    // The nested inline flow-back already drove the parent progression.
+    // Reporting another terminal here would start the upward walk twice (#842).
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'handled' });
 
     const advance = buildAdvanceInlineParent('/test', output);
     const outcome = await advance({
@@ -1230,7 +1227,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
         applied: 1,
         state: parentState,
       });
-      jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting', release: 'none' });
+      jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
       return manager;
     }
 
@@ -1339,7 +1336,7 @@ describe('propagateChildTerminal run-scoped delegation runtime', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting', release: 'none' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
 
     await deps.advanceInlineParent({
       parentRunId: PARENT_RUN_ID,

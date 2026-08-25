@@ -125,43 +125,28 @@ interface RenderTerminalObservationArgs {
   position: ReturnType<typeof buildStepPosition>;
 }
 
-/** Status an execution loop reports for the run it drove. */
-export type ExecutionLoopStatus = 'done' | 'stopped' | 'waiting';
-
 /**
- * What a loop did about the Run Release of the run it drove.
+ * Status an execution loop reports for the run it drove.
  *
- * A statement about this loop's own action, never about the run's session
- * targeting as a whole: a run can be off targeting because a frame this loop
- * invoked released it, which is `'none'` here because THIS loop released
- * nothing. That distinction is the point — the two questions were the same
- * word until now, and being unable to ask the narrow one is why 31 mock
- * assertions stayed green through the double release of #842.
- *
- * - `released` — this loop's `addressed` Run Release committed, whether folded
- *   into the terminal state's own transaction (#794) or issued standalone.
- * - `refused` — this loop asked for the release and the session refused it. The
- *   run is terminal and still targeted, which is why every status carrying this
- *   disposition is `'stopped'` rather than a clean `'done'`.
- * - `none` — this loop released nothing and owed nothing: the run did not reach
- *   a terminal under this loop, or it vanished before the loop could drive it.
+ * `handled` is the successful re-entrant inline-composition arm: a child completed and its
+ * synchronous flow-back already drove this run's parent progression. The
+ * enclosing frame must stand down instead of reporting the same terminal a
+ * second time. `blocked` is the same handled control-flow shape when that
+ * progression stopped/refused and must also produce a failing process outcome.
+ * Neither says anything about session release ownership.
  */
-export type ExecutionReleaseDisposition = 'released' | 'refused' | 'none';
+export type ExecutionLoopStatus = 'done' | 'stopped' | 'waiting' | 'handled' | 'blocked';
 
 /**
  * What an execution loop reports about the run it drove.
  *
- * Two facts, because they are two facts. The status is what the RUN reached;
- * the disposition is what this loop did about the run's Run Release. A caller
- * deciding whether to release cannot answer that from the status — `'done'` is
- * `'done'` whether this loop released the run or left it targeted — and every
- * caller of this loop that releases is deciding exactly that.
+ * Run Release is transaction-owned and is intentionally absent from this
+ * interface. Callers observe progression; they do not participate in release
+ * ownership.
  */
 export interface ExecutionLoopResult {
   /** Discriminant against {@link ExecutionLoopRefusal}, and the run's outcome. */
   readonly status: ExecutionLoopStatus;
-  /** What this loop did about the run's Run Release. */
-  readonly release: ExecutionReleaseDisposition;
 }
 
 /**
@@ -169,17 +154,13 @@ export interface ExecutionLoopResult {
  *
  * The inline parent-advance adapter needs the refusal as data so it can stop the
  * upward walk. Ordinary command drivers ask the loop to render it and receive a
- * stopped status with no release. This reporting choice is independent of Run
- * Release ownership: every terminalizing transaction owns its own release.
+ * stopped status while the still-running run remains targeted.
  *
- * A separate arm rather than a fourth {@link ExecutionLoopStatus} member keeps
- * ordinary callers on the three-member status union while the overload below
- * exposes this arm only to callers that request it.
+ * A separate arm keeps the refusal reason out of ordinary progression statuses;
+ * the overload below exposes it only to callers that request it.
  *
- * It carries no {@link ExecutionReleaseDisposition}, and the absence is the
- * statement: a Refusal Hand-back applied nothing, so there is no terminal to
- * release and no disposition to report. A field that could only ever hold
- * `'none'` would invite a reader to check it.
+ * A Refusal Hand-back applied nothing, so there is no terminal progression to
+ * report.
  */
 export interface ExecutionLoopRefusal {
   /** Discriminant, and the reason this is not a terminal. */
@@ -231,12 +212,9 @@ export interface ExecutionLoopOptions {
    * Optional session service seam.
    *
    * The loop constructs its own over `manager` when absent, which is the
-   * production path and stays the default. Injectable because a Run Release
-   * this loop takes is otherwise unobservable from outside it: every existing
-   * assertion about ownership is an assertion about what the loop RETURNS, and
-   * a second owner releasing the same run changes nothing it returns. A caller
-   * that supplies this one sees every release the loop and its inline launch
-   * take, against the same session the rest of the process is using.
+   * production path and stays the default. Injectable so integration tests can
+   * observe launch/session effects through the same service instance; release
+   * ownership remains transaction-internal and never enters the loop result.
    */
   readonly sessionService?: SessionService;
   /** Exact claim authority retained by a claim-authenticated continuation. */
@@ -415,16 +393,11 @@ async function applyAddressedRunRelease(
  * Reports `terminal` once the release commits. A refused release downgrades the
  * status to `'stopped'`: the terminal side effect this loop owed did not happen,
  * so it must not report a clean `'done'`.
- * The downgrade is lossy on its own — `'stopped'` says a run stopped, not that
- * a release was refused — which is why the disposition travels beside it rather
- * than being inferred from it.
- *
  * @param sessionService - Session service performing the release.
  * @param runbookId - Run whose session targeting is being released.
  * @param emitter - Execution emitter receiving the refusal events.
  * @param terminal - Status to report when the release commits.
- * @returns `terminal` with `'released'`, `'stopped'` with `'refused'` when the
- *   release was refused.
+ * @returns `terminal` once release commits, or `'stopped'` when it is refused.
  */
 async function releaseTerminalRun(
   sessionService: SessionService,
@@ -433,9 +406,7 @@ async function releaseTerminalRun(
   terminal: 'done' | 'stopped',
 ): Promise<ExecutionLoopResult> {
   const released = await applyAddressedRunRelease(sessionService, runbookId, emitter);
-  return released === 'committed'
-    ? { status: terminal, release: 'released' }
-    : { status: 'stopped', release: 'refused' };
+  return released === 'committed' ? { status: terminal } : { status: 'stopped' };
 }
 
 function createCliCommandServices(
@@ -500,18 +471,14 @@ function describeInlineChildLinkageRefusal(
 /**
  * Advance the composing parent for a terminal inline child, and report a status.
  *
- * Statuses only, never an {@link ExecutionLoopResult}. The run this frame is
- * reporting on is the CHILD, and the release this frame's caller cares about is
- * the PARENT's — taken out of band by the seam `propagateChildTerminal` enters,
- * one level deeper, with no channel back. Carrying a disposition through here
- * would therefore have to describe one run with the other's release. #842 is
- * that confusion made concrete: the seam releases the parent here and the outer
- * seam, seeing only `'done'` come back, releases it again.
+ * `handled` reports that synchronous inline flow-back already drove the parent
+ * progression. It is a control-flow result, not a release disposition: the
+ * terminal mutation owns its atomic Run Release and no frame claims it.
  *
  * @param args - The terminal child, its loop status, and the composing parent's
  *   run-scoped delegation authority.
- * @returns The child's status, downgraded to `'stopped'` when advancing the
- *   parent reached a STOP or a blocked terminal.
+ * @returns The child's status when it has no inline parent, otherwise
+ *   `'handled'` after the synchronous parent flow-back returns.
  * @throws {Error} If the parent's state cannot be loaded, or the inline
  *   parent-advance seam rejects for a reason it has not diagnosed.
  */
@@ -542,13 +509,13 @@ async function propagateInlineChildTerminalResult(args: {
   // same orchestrator that ran the child advances the parent here. Drain and
   // advance the parent immediately (there is no separate `rd collect` for
   // inline). The child's own loopResult governs the result here unless advancing
-  // the parent reaches a STOP or blocked terminal, both of which surface to the
-  // execution loop as 'stopped'.
+  // the parent fails closed, which surfaces as `blocked` after the synchronous
+  // flow-back has already handled progression.
   //
   // The composing parent IS the run whose loop launched this child, so its
   // verified run-control authority is live in this process. Hand it on: the
-  // advance can step the parent into a DELEGATE step, and a continuation without
-  // an issuer refuses that valid nested workflow `actor_context_required`.
+  // advance can step the parent into a later DELEGATE step, and a continuation
+  // without an issuer refuses `actor_context_required`.
   // `parentDelegationRuntime` names the run it belongs to, so the seam's walk up
   // the remaining inline chain cannot borrow it for an ancestor.
   const { propagateChildTerminal } = await import('../helpers/delegation-completion.js');
@@ -560,7 +527,7 @@ async function propagateInlineChildTerminalResult(args: {
     commandStreamOptions,
     parentDelegationRuntime,
   );
-  return propagated === 'stopped' || propagated === 'blocked' ? 'stopped' : loopResult;
+  return propagated === 'stopped' || propagated === 'blocked' ? 'blocked' : 'handled';
 }
 
 async function consumeInlineLaunchIntent(args: {
@@ -1059,13 +1026,12 @@ export interface DrainResolvedCompletionsArgs {
   /** Verified runtime-only issuer for completion transitions entering delegation. */
   issueDelegationCredential?: DelegationCredentialIssuer;
   /**
-   * Run Release the drain folds into whichever apply reaches terminal, or absent
-   * when another seam owns this run's release.
+   * Run Release the drain folds into whichever apply reaches terminal.
    *
    * Passed through to the core apply unread. Whether a given apply is terminal
    * is decided inside that apply's own transaction, so arming it here is a
-   * statement about OWNERSHIP and nothing else — every non-terminal iteration
-   * releases nothing regardless.
+   * statement about atomic projection and nothing else — every non-terminal
+   * iteration releases nothing regardless.
    */
   terminalRelease?: { readonly role: ReleaseRole };
 }
@@ -1121,7 +1087,7 @@ export type DrainResolvedCompletionsResult =
  * @param args.frameOverride - Optional frame override for frame-scoped lookups (e.g., prompted-for with explicit --index)
  * @param args.issueDelegationCredential - Verified runtime issuer for transitions entering delegation
  * @param args.terminalRelease - Run Release folded into whichever apply reaches
- *   terminal; omit it when another seam owns this run's release
+ *   terminal; omit it only for a drain that cannot terminalize its run
  * @returns Drain result indicating continue/done/stopped with counts of applied and unresolved completions
  * @throws {Error} If the core completion service, session update, or transition event handling fails
  */
@@ -1250,11 +1216,9 @@ export async function drainResolvedCompletions({
  * @param options - Optional execution loop behavior overrides
  * @returns An {@link ExecutionLoopResult}: `status` is 'done' if completed,
  *   'stopped' if stopped, 'waiting' if a prompt-only step was reached, and
- *   `release` is what this loop did about the run's Run Release — `'released'`,
- *   `'refused'`, or `'none'` where none was owed. The two are independent: a
- *   `'done'` says nothing about whether
- *   the run is still targeted, which is the question every caller that releases
- *   is actually asking. A persisted delegation frontier that cannot be projected
+ *   'handled' when re-entrant inline flow-back already drove the enclosing
+ *   progression, and 'blocked' when that handled progression refused/stopped.
+ *   A persisted delegation frontier that cannot be projected
  *   without verified claim authority returns 'stopped' after an
  *   `ACTOR_CONTEXT_REQUIRED` `ERROR_OCCURRED` and no release — it is a refusal,
  *   not a terminal, so the still-running run remains targeted for retry. A
@@ -1269,9 +1233,8 @@ export async function drainResolvedCompletions({
  *   active cursor returns 'stopped' the same way, coded
  *   `COMPLETION_TARGET_MISMATCH` — permanent, and the same code the inline
  *   parent-advance seam reports for the identical drain refusal (#802). Under
- *   `caller` ownership that ONE arm returns {@link ExecutionLoopRefusal} instead
- *   of `'stopped'`, and emits nothing: a caller that owns the terminal owns
- *   reporting it, and nothing terminal happened.
+ *   Refusal Hand-back makes that ONE arm return {@link ExecutionLoopRefusal}
+ *   instead of `'stopped'` and emit nothing, because nothing terminal happened.
  * @throws {Error} If the core actor/lifecycle/session services throw while
  *   advancing transitions, entering an execution unit cannot render it (a
  *   `--helpers` helper raising), command execution rejects, or the emitter
@@ -1308,10 +1271,9 @@ export async function runExecutionLoop(
   options: ExecutionLoopOptions = {},
 ): Promise<ExecutionLoopResult | ExecutionLoopRefusal> {
   const state = await manager.load(runbookId);
-  // A run that is not there owes no release, and this is the one arm where
-  // `'none'` means the run was never driven at all rather than driven and left
-  // running.
-  if (!state) return { status: 'stopped', release: 'none' };
+  // A missing run was never driven; progression reports stopped without
+  // implying anything about release ownership.
+  if (!state) return { status: 'stopped' };
 
   // The run owns this fact. It is written once at creation and never varies
   // across the loop, so it is read once here rather than re-derived per
@@ -1494,13 +1456,7 @@ export async function runExecutionLoop(
       // projection rolls back the terminal state with it, so this arm is not
       // reached at all. That is the whole point of one transaction.
       //
-      // `'released'` therefore states a commit, not an attempt: reaching this
-      // arm IS the transaction having committed, and the release committed with
-      // it.
-      return {
-        status: drainResult.status,
-        release: 'released',
-      };
+      return { status: drainResult.status };
     }
     if (drainResult.status === 'failed') {
       // A REFUSAL, not a crash — the same treatment the three frontier arms
@@ -1514,19 +1470,14 @@ export async function runExecutionLoop(
       // The code names the CONDITION, so this loop and the inline
       // parent-advance seam report the identical drain refusal identically.
       const refusal = refusalFromDrainFailure(runbookId, drainResult);
-      // A caller-owned release means the loop releases NOTHING, so its caller
-      // acts on the status it is given: the inline parent-advance seam releases
-      // the run and recurses one level up on `'stopped'`. This refusal applied
-      // nothing and left the run RUNNING, so reporting `'stopped'` here made the
-      // seam release a live parent and report a terminal to that parent's own
-      // parent that never happened. Hand the refusal back instead — the callable
-      // turns it into
-      // the seam's `refused` arm, which releases nothing and walks nowhere.
+      // This refusal applied nothing and left the run RUNNING. Reporting
+      // `'stopped'` here would report a terminal to that parent's own parent
+      // that never happened. Hand the refusal back instead; the callable turns
+      // it into the seam's `refused` arm, which walks nowhere.
       //
       // Nothing is emitted on this path either, for the same reason and by the
-      // same division: a caller that owns the terminal owns REPORTING it, and
-      // the adapter renders this exact code and message through the emitter it
-      // owns. Emitting here as well would announce a `RUNBOOK_STOPPED` for a run
+      // same division: the adapter renders this exact code and message through
+      // its emitter. Emitting here as well would announce a `RUNBOOK_STOPPED` for a run
       // that is still running, and would print the diagnostic twice.
       if (returnRefusals) {
         return { status: 'refused', refusal };
@@ -1537,9 +1488,9 @@ export async function runExecutionLoop(
       });
       // Resolved eagerly, and safely so: this IS the refusal path, so the
       // position is consumed rather than conditionally needed, and the read sits
-      // BEHIND the ownership return above. Order matters there — `load` throws
+      // BEHIND the refusal hand-back above. Order matters there — `load` throws
       // on structurally invalid persisted state, so hoisting this read above
-      // that return would turn a caller-owned refusal into an escaping
+      // that return would turn a handed-back refusal into an escaping
       // `InvalidRunbookStateError` instead of the typed hand-back.
       emitter.emit({
         type: 'RUNBOOK_STOPPED',
@@ -1548,10 +1499,10 @@ export async function runExecutionLoop(
           message: refusal.message,
         },
       });
-      return { status: 'stopped', release: 'none' };
+      return { status: 'stopped' };
     }
     if (drainResult.status === 'not_active') {
-      return { status: 'waiting', release: 'none' };
+      return { status: 'waiting' };
     }
     if (drainResult.applied > 0) {
       currentState = drainResult.state;
@@ -1617,7 +1568,7 @@ export async function runExecutionLoop(
           reason: 'actor_context_required',
         },
       });
-      return { status: 'stopped', release: 'none' };
+      return { status: 'stopped' };
     }
 
     // Core owns the re-entry frontier decision — validation of the persisted
@@ -1670,7 +1621,7 @@ export async function runExecutionLoop(
         type: 'RUNBOOK_STOPPED',
         payload: { position: stepPosition, message },
       });
-      return { status: 'stopped', release: 'none' };
+      return { status: 'stopped' };
     }
 
     if (reentry.status === 'consume_failed') {
@@ -1699,7 +1650,7 @@ export async function runExecutionLoop(
         type: 'RUNBOOK_STOPPED',
         payload: { position: stepPosition, message: FRONTIER_CONSUME_FAILED_MESSAGE },
       });
-      return { status: 'stopped', release: 'none' };
+      return { status: 'stopped' };
     }
 
     // One classified entry either way. A projected frontier was entered by the
@@ -1736,17 +1687,12 @@ export async function runExecutionLoop(
             code: ErrorCodes.LAUNCH_FAILED.code,
           },
         });
-        return { status: 'stopped', release: 'none' };
+        return { status: 'stopped' };
       }
-      // `'none'` on every arm of this launch, and NOT because nothing was
-      // released. The status that comes back describes the CHILD; the release
-      // this loop is reporting on is its own run's, and this loop took none.
-      // The parent may nonetheless be off targeting by the time this returns —
-      // the child's terminal flow-back enters the inline parent-advance seam,
-      // which advances and releases this very run one frame deeper. That gap is
-      // #842. Stating `'none'` here is what makes it a visible discrepancy
-      // rather than an invisible one; closing it is the fold's work, not this
-      // step's.
+      // A terminal child can synchronously flow back through this very run and
+      // drive its parent progression before this frame resumes. The launch
+      // returns `handled` in that case so this frame stands down; no release
+      // ownership crosses the call graph.
       const childStatus = await launchInlineChildFromIntent({
         manager,
         actorService,
@@ -1764,14 +1710,14 @@ export async function runExecutionLoop(
         // further up the inline chain can be advanced under it.
         parentDelegationRuntime: { runId: runbookId, runtime: options.delegationRuntime },
       });
-      return { status: childStatus, release: 'none' };
+      return { status: childStatus };
     }
 
     // Prompted mode, a prompted-FOR step, and a unit with no command are one arm
     // now, decided by core. The loop no longer reads an undefined rendered
     // command as its signal for "nothing to run".
     if (entered.kind !== 'runnable') {
-      return { status: 'waiting', release: 'none' };
+      return { status: 'waiting' };
     }
     const { code: expandedCommandCode, displayCommand, rdInjected } = entered.command;
     let previousState = currentState;
@@ -1818,16 +1764,19 @@ export async function runExecutionLoop(
           code,
         },
       });
-      emitter.emit({
-        type: 'RUNBOOK_STOPPED',
-        payload: {
-          position: stepPosition,
-          message: 'Runbook command execution was not committed',
-        },
-      });
-      // This invocation did not commit and therefore owns no terminal cleanup.
-      // Releasing here would let a stale claimant remove the winner's run.
-      return { status: 'stopped', release: 'none' };
+      if (!returnRefusals) {
+        emitter.emit({
+          type: 'RUNBOOK_STOPPED',
+          payload: {
+            position: stepPosition,
+            message: 'Runbook command execution was not committed',
+          },
+        });
+      }
+      // This invocation committed no terminal. Under Refusal Hand-back the
+      // inline adapter must stand down without reporting a false terminal, but
+      // still preserve fail-closed severity through `blocked`.
+      return { status: returnRefusals ? 'blocked' : 'stopped' };
     }
     const cmdSync = fencedCommand.value;
     // Derived from the state the fence COMMITTED, and by the same test the
@@ -1860,7 +1809,7 @@ export async function runExecutionLoop(
         snapshot: cmdSync.snapshot,
         position: stepPosition,
       });
-      return { status: 'stopped', release: 'released' };
+      return { status: 'stopped' };
     }
 
     const transitionResult = observeCommandTransition({
@@ -1874,11 +1823,11 @@ export async function runExecutionLoop(
       command: displayCommand,
     });
     if (transitionResult.status === 'done') {
-      return { status: 'done', release: 'released' };
+      return { status: 'done' };
     }
-    // Stryker disable next-line ConditionalExpression,StringLiteral,BlockStatement: equivalent — a stopped transition commits a stopped lifecycle, so the fence-terminal fallback below returns the identical stopped/released result; this branch supplies TypeScript narrowing and avoids deriving a duplicate terminal observation.
+    // Stryker disable next-line ConditionalExpression,StringLiteral,BlockStatement: equivalent — a stopped transition commits a stopped lifecycle, so the fence-terminal fallback below returns the identical stopped result; this branch supplies TypeScript narrowing and avoids deriving a duplicate terminal observation.
     if (transitionResult.status === 'stopped') {
-      return { status: 'stopped', release: 'released' };
+      return { status: 'stopped' };
     }
     // The fenced commit released this run on `state.lifecycle`, which is assigned
     // from the snapshot VALUE alone while the orchestrated observation also
@@ -1899,7 +1848,7 @@ export async function runExecutionLoop(
           result: commandOutput.result,
         }),
       );
-      return { status: terminalStatus, release: 'released' };
+      return { status: terminalStatus };
     }
     currentState = transitionResult.state;
   }

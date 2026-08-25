@@ -102,6 +102,7 @@ export function gotoResultRequiresFailureExit(
 ): boolean {
   return (
     result.loopResult === 'stopped' ||
+    result.loopResult === 'blocked' ||
     (result.propagation !== undefined && propagationRequiresFailureExit(result.propagation))
   );
 }
@@ -397,17 +398,23 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
   // `loop-inferred` trigger and let lifecycle inference decide the outcome (same
   // as the natural loop). Without this, `goto` completing an inline child left
   // the parent's substep 'running' forever (#553).
-  const propagation = await propagateDrivenRunTerminal(
-    manager,
-    state.id,
-    cwd,
-    output,
-    { kind: 'loop-inferred' },
-    ctx.commandStreamOptions,
-  );
+  const propagation =
+    loopResult.status === 'handled' || loopResult.status === 'blocked'
+      ? undefined
+      : await propagateDrivenRunTerminal(
+          manager,
+          state.id,
+          cwd,
+          output,
+          { kind: 'loop-inferred' },
+          ctx.commandStreamOptions,
+        );
 
-  // The status alone. `goto` drives a run it owns the release of, and the
-  // loop has already taken it by the time this returns; nothing downstream of
-  // here decides a release, so nothing downstream needs the disposition.
-  return { ok: true, loopResult: loopResult.status, propagation };
+  // Progression status only. Terminal state owns its atomic Run Release;
+  // nothing downstream decides or observes release ownership.
+  return {
+    ok: true,
+    loopResult: loopResult.status,
+    ...(propagation === undefined ? {} : { propagation }),
+  };
 }

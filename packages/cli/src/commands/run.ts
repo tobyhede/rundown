@@ -321,7 +321,11 @@ export function registerRunCommand(program: Command): void {
             // back synchronously — advance the composing parent immediately
             // (drain-and-advance), unlike delegation's report-then-collect. If
             // advancing the parent reaches a STOP terminal, exit 1.
-            if (parentLinkage) {
+            if (
+              parentLinkage &&
+              result.loopResult !== 'handled' &&
+              result.loopResult !== 'blocked'
+            ) {
               const propagation = await propagateDrivenRunTerminal(
                 manager,
                 result.stateId,
@@ -396,7 +400,7 @@ export function registerRunCommand(program: Command): void {
             }
 
             output.flush();
-            if (result.loopResult === 'stopped') {
+            if (result.loopResult === 'stopped' || result.loopResult === 'blocked') {
               process.exit(1);
             }
             return;

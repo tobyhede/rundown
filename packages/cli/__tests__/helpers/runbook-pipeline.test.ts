@@ -415,9 +415,9 @@ jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => {
 
 // Mock execution service
 jest.unstable_mockModule('../../src/services/execution', () => ({
-  runExecutionLoop: mockFn<
-    (...args: unknown[]) => Promise<{ status: string; release: string }>
-  >().mockResolvedValue({ status: 'done', release: 'released' }),
+  runExecutionLoop: mockFn<(...args: unknown[]) => Promise<{ status: string }>>().mockResolvedValue(
+    { status: 'done' },
+  ),
 }));
 
 // Mock execution-emitter
@@ -631,7 +631,7 @@ function makeLifecycle(overrides: Record<string, unknown> = {}): Record<string, 
 beforeEach(() => {
   jest.resetAllMocks();
   // Re-establish default mock implementations after reset
-  jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'released' });
+  jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
   jest
     .mocked(core.deriveExecutionAt)
     .mockImplementation(
@@ -2031,7 +2031,7 @@ describe('startRunbook', () => {
     const mockPushRunbookWithRunControlClaim = mockFn<
       SessionService['pushRunbookWithPreparedRunControlClaim']
     >().mockResolvedValue(committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(MOCK_RUN_ID) }));
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'released' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
 
     const ctx = makeRunPipelineContext({
       manager: {
@@ -2126,7 +2126,7 @@ describe('startRunbook', () => {
     const mockInitState =
       mockFn<RunbookActorService['initializeState']>().mockResolvedValue(initializedState);
 
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'released' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
 
     const ctx = makeRunPipelineContext({
       manager: {
@@ -2337,7 +2337,7 @@ describe('startRunbook', () => {
       title: 'T',
       substeps: undefined,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'released' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
 
     const ctx = {
       output: { flush: jest.fn() } as unknown as OutputEmitter,
@@ -2410,7 +2410,7 @@ describe('startRunbook', () => {
       title: 'T',
       substeps: undefined,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'released' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
 
     const ctx = {
       output: { flush: jest.fn() } as unknown as OutputEmitter,
@@ -2492,7 +2492,7 @@ describe('startRunbook', () => {
       title: 'Sub Test',
     });
 
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done', release: 'released' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
 
     const mockLoad = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
       id: 'sub-id',
@@ -3559,7 +3559,7 @@ describe('claimAndLaunch', () => {
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting', release: 'none' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
 
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
@@ -3691,7 +3691,7 @@ describe('claimAndLaunch', () => {
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting', release: 'none' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
 
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
@@ -3822,7 +3822,7 @@ describe('claimAndLaunch', () => {
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting', release: 'none' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
 
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
@@ -3998,7 +3998,7 @@ describe('claimAndLaunch', () => {
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting', release: 'none' });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
 
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,

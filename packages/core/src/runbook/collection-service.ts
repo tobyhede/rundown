@@ -1113,7 +1113,7 @@ export function narrowInlineUpwardPropagation(
  * Drive the INLINE upward walk for a collect target that committed terminal.
  *
  * Delegates to the shared {@link propagateTerminalChildUpward} seam so the
- * cycle/depth guards, release disposition, and one-level recursion stay in one
+ * cycle/depth guards, progression severity, and one-level recursion stay in one
  * owner. Narrows the seam's union to the inline subset without a cast (see
  * {@link narrowInlineUpwardPropagation}), keeping the `linkage-cycle` arm INTACT
  * (#603): core holds no emitter, so the trip has to reach the frontend as data

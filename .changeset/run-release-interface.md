@@ -37,7 +37,7 @@ reader of either was the batch method building a list nobody read.
 `SessionService.releaseRunbook` and `releaseRunbooks` collapse into
 `releaseRuns(releases)`. On the transaction route,
 `EffectfulActorMutationRunnerInput.terminalRelease` becomes `{ role }`, present
-when the release fires on terminal and absent when the caller owns it, and
+when this mutation projects release on terminal and absent when it does not, and
 `AggregateTerminalRelease` becomes `AggregateRunRelease` carrying a role beside
 its existing `when` trigger. `runAll` now also refuses a release batch that
 names one owned run twice, before it captures authority.

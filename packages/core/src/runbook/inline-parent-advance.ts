@@ -104,6 +104,8 @@ export type InlineParentAdvanceRefusal = InlineParentAdvanceRefusalBase &
  * `stopped` / `done` mean the advance drove the parent to that terminal and
  * atomically released it (the seam then recurses one level). `active` means the
  * parent is still running or waiting on sibling substeps (no recursion).
+ * `blocked` means re-entrant inline flow-back already handled progression but
+ * failed closed; it preserves failure severity without starting a second walk.
  *
  * `refused` is the fail-closed arm (#802). The advance applied nothing, so the
  * seam performs NO recursion and hands the refusal back on its
@@ -113,7 +115,7 @@ export type InlineParentAdvanceRefusal = InlineParentAdvanceRefusalBase &
  * buffered output already discarded.
  */
 export type AdvanceInlineParentOutcome =
-  | { readonly status: 'stopped' | 'done' | 'active' }
+  | { readonly status: 'stopped' | 'done' | 'active' | 'blocked' }
   | {
       /** The advance refused; nothing was applied. */
       readonly status: 'refused';
@@ -502,6 +504,10 @@ async function propagateTerminalChildUpwardInner(
   // before its own flush; the alternative it replaces was the callable throwing,
   // which unwound past both.
   if (outcome.status === 'refused') return { kind: 'advance-refused', refusal: outcome.refusal };
+
+  // Re-entrant inline flow-back already walked this branch. Preserve its
+  // fail-closed severity, but do not reload or recurse a second time.
+  if (outcome.status === 'blocked') return { kind: 'blocked' };
 
   // Parent is still running / waiting on sibling substeps: nothing to recurse.
   if (outcome.status === 'active') return { kind: 'handled' };
