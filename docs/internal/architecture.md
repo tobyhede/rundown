@@ -1481,6 +1481,9 @@ restate it; and an empty answer then costs nothing, so an ordinary non-terminal
 iteration reads no session and rewrites none even though the option is armed for
 the whole drain.
 
+For the choice of physical release over lifecycle-derived targetability, see
+[ADR 0001: Fold Run Release into the owning transaction](../adr/0001-fold-run-release-into-owning-transaction.md).
+
 The run-start `afterInit` callback in `commands/run.ts` was the fourth site, and
 the first CLI one. It is the same shape as the recorders — load the parent,
 derive the substep row for the substep this launch targets, commit — folded the
