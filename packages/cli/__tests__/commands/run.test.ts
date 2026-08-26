@@ -782,7 +782,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
         this: RunbookStateManager,
         ...args
       ) {
-        if (args[0]?.runId === parentRunId && !injected) {
+        if (args[0].runId === parentRunId && !injected) {
           injected = true;
           const sideband = new SessionService(new RunbookStateManager(workspace.cwd));
           await sideband.issueRunControlClaim(assertRunId(parentRunId));
@@ -888,7 +888,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
         this: RunbookStateManager,
         ...args
       ) {
-        if (args[0]?.runId === parentRunId) {
+        if (args[0].runId === parentRunId) {
           bump += 1;
           const sideband = new RunbookStateManager(workspace.cwd);
           await sideband.updateWithState(assertRunId(parentRunId), (current) => ({
@@ -940,7 +940,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
           this: RunbookStateManager,
           ...args
         ) {
-          if (args[0]?.runId === parentRunId) return envelope;
+          if (args[0].runId === parentRunId) return envelope;
           throw new Error('unexpected saveState target');
         });
 
@@ -976,6 +976,8 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       const refusal = result.stdout + result.stderr;
       expect(refusal).toContain('INLINE_PARENT_CLAIM_SUPERSEDED');
       expect(refusal).toContain('run not found');
+      // The refusal names the parent the session still points at.
+      expect(refusal).toContain(parentRunId);
       // Refused at determination: no child run was created.
       expect((await listPersistedRunIds(workspace.cwd)).length).toBe(runsBefore);
     });
@@ -1033,7 +1035,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
         this: RunbookStateManager,
         ...args
       ) {
-        if (args[0]?.runId !== parentRunId) return await realSaveState.apply(this, args);
+        if (args[0].runId !== parentRunId) return await realSaveState.apply(this, args);
         launchCommitAttempts.push('marked');
         // Land the sibling write inside the window: this attempt has captured
         // its row and derived from it, and the commit has not happened yet. Only
@@ -1110,7 +1112,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
         this: RunbookStateManager,
         ...args
       ) {
-        if (args[0]?.runId === parentRunId) await injectTargetResolution();
+        if (args[0].runId === parentRunId) await injectTargetResolution();
         return await realSaveState.apply(this, args);
       });
 

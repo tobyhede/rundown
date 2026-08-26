@@ -486,6 +486,8 @@ export function textModeAgentAdvisory(
  * frontier, and constructs an {@link InlineLinkage} for the child run.
  *
  * @param sessionService - Session service for loading active runbook
+ * @param manager - State manager whose determination-time capture the fenced
+ *   substep mark commits against (ADR 0002)
  * @param cwd - Current working directory
  * @param output - Output emitter for error reporting
  * @param stepId - Target step ID (e.g., "1.1" for step 1, substep 1)
