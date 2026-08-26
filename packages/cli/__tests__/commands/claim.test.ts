@@ -794,6 +794,97 @@ rd echo --result fail
     });
   });
 
+  describe('exit contract', () => {
+    // `claim` maps the launched child's loop status onto this command's exit
+    // code: a child that STOPPED during launch, and one whose inline flow-back
+    // came back `blocked`, both exit 1. The two arms are witnessed separately —
+    // a single scenario cannot distinguish them, and asserting only the
+    // successful-claim exit 0 leaves the whole mapping free to be deleted.
+    it('exits non-zero when the claimed child stops during launch', async () => {
+      await writeParentRunbook('stop-child.runbook.md');
+      const stopChild = `## 1. Execute
+- FAIL STOP
+
+\`\`\`bash
+rd echo --result fail
+\`\`\`
+`;
+      await writeFile(join(workspace.cwd, 'stop-child.runbook.md'), stopChild);
+
+      await runCliInProcess('run parent.runbook.md', workspace);
+      const token = await getAutoIssuedToken();
+
+      const claimed = await runCliInProcess(`claim ${token}`, workspace);
+
+      expect(claimed.exitCode).toBe(1);
+      const emitted = parseConcatenatedJson(claimed.stdout).filter(
+        (v): v is Record<string, unknown> => typeof v === 'object' && v !== null,
+      );
+      expect(emitted.some((event) => event.type === 'runbook_stopped')).toBe(true);
+    });
+
+    it('refuses automatic inline launch inside a claimed child scope and exits non-zero', async () => {
+      // Pins the mechanism that makes the `blocked` arm of this command's exit
+      // mapping unreachable: `blocked` has exactly one producer that a claimed
+      // launch can reach — the inline flow-back in `runExecutionLoop` — and core
+      // refuses automatic inline launch for any run whose parent linkage is a
+      // delegation. The claimed child therefore STOPs on the refusal instead of
+      // flowing a child terminal back, and `claim` exits 1 through the `stopped`
+      // arm. If this refusal is ever lifted, the `blocked` arm becomes live and
+      // the Stryker disable on it in `claim.ts` must go.
+      await writeParentRunbook('inline-parent.runbook.md');
+      const inlineParent = `# Inline parent
+
+## 1. Warmup
+
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`bash
+rd echo --result pass
+\`\`\`
+
+## 2. Gate
+
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+- inline-gate.runbook.md
+
+## 3. Done
+
+- PASS COMPLETE
+`;
+      const inlineGate = `# Inline gate
+
+## 1. Check
+
+- FAIL STOP
+
+\`\`\`bash
+rd echo --result fail
+\`\`\`
+`;
+      await writeFile(join(workspace.cwd, 'inline-parent.runbook.md'), inlineParent);
+      await writeFile(join(workspace.cwd, 'inline-gate.runbook.md'), inlineGate);
+
+      await runCliInProcess('run parent.runbook.md', workspace);
+      const token = await getAutoIssuedToken();
+
+      const claimed = await runCliInProcess(`claim ${token}`, workspace);
+
+      expect(claimed.exitCode).toBe(1);
+      const emitted = parseConcatenatedJson(claimed.stdout).filter(
+        (v): v is Record<string, unknown> => typeof v === 'object' && v !== null,
+      );
+      expect(emitted.some((event) => event.code === 'INLINE_LAUNCH_FORBIDDEN')).toBe(true);
+      expect(
+        emitted.some(
+          (event) => event.type === 'runbook_stopped' && event.reason === 'inline_launch_forbidden',
+        ),
+      ).toBe(true);
+    });
+  });
+
   describe('edge cases', () => {
     it('handles claim when parent runbook file is missing', async () => {
       await writeParentRunbook();
