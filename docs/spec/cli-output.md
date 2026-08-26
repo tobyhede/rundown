@@ -366,14 +366,25 @@ such as `INLINE_CHILD_LAUNCH_FAILED`, `INLINE_CHILD_LINKAGE_MISMATCH`,
 `INLINE_CHILD_FRAME_SUPERSEDED`, or `INLINE_LAUNCH_FORBIDDEN`; consumers should
 treat these as terminal workflow failures for the active runbook.
 
-The two linkage refusals are registered error codes —
-`INLINE_CHILD_FRAME_SUPERSEDED` is **RD-830** and
-`INLINE_CHILD_LINKAGE_MISMATCH` is **RD-831** — so each carries a title,
-remediation description, and doc slug in the registry, and the emitting switch
-is typed against `ErrorCodeKey` rather than against bare strings. The emitted
-`code` value remains the symbolic name, which is what consumers match on.
-`INLINE_CHILD_LAUNCH_FAILED` and `INLINE_LAUNCH_FORBIDDEN` are not yet
-registered.
+Three linkage refusals are registered error codes —
+`INLINE_CHILD_FRAME_SUPERSEDED` is **RD-830**, `INLINE_CHILD_LINKAGE_MISMATCH`
+is **RD-831**, and `INLINE_PARENT_CLAIM_SUPERSEDED` is **RD-834** — so each
+carries a title, remediation description, and doc slug in the registry, and the
+emitting switch is typed against `ErrorCodeKey` rather than against bare
+strings. The emitted `code` value remains the symbolic name, which is what
+consumers match on. `INLINE_CHILD_LAUNCH_FAILED` and `INLINE_LAUNCH_FORBIDDEN`
+are not yet registered.
+
+`INLINE_PARENT_CLAIM_SUPERSEDED` is the inline-launch authority fence (ADR
+0002): the launch captures the composing parent's controlling run-control claim
+at linkage determination, and the substep mark commits only under that claim
+generation. The refusal fires when no live claim controls the parent at
+determination, or when the parent is re-claimed between determination and the
+fenced commit. It is permanent for the launch that received it — nothing was
+attached, the child run is rolled back, and the parent's current orchestrator
+owns its progression. `DELEGATION_ALREADY_RESOLVED` remains the refusal for a
+target substep that resolved in the same window; the two are distinct facts (the
+parent changed hands vs. the work was already done).
 
 `INLINE_CHILD_FRAME_SUPERSEDED` is the one refusal in that set an ordinary
 gesture reaches. A self-targeting `GOTO` or `RETRY` re-enters the parent's frame
