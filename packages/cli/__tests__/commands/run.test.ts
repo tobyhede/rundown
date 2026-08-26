@@ -4,9 +4,13 @@ import { listPersistedRunIds } from '@rundown-org/core/testing/session-fixtures'
 import { join } from 'node:path';
 import {
   appendArtifactManifestRecordSync,
+  assertExecutionEpoch,
   assertRunId,
+  buildFrameKey,
   deriveActiveFrame,
+  type GuardedMutationResult,
   RunbookStateManager,
+  SessionService,
   upsertSubstepState,
   type FrameKey,
   type RunbookState,
@@ -684,16 +688,16 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       // goes through the state machine and never took the delegation file lock
       // this site used to hold, so that lock never excluded them.
       //
-      // The hook sits on the manager's WRITE seam, not its read seam: a read
-      // seam only exists while the derivation is outside the compare-and-swap,
-      // so hooking it would make this test vacuous the moment the derivation
-      // moves inside. Every builder the launch could use is wrapped — the
-      // patch-shaped `update`, and the two derive-inside-the-CAS forms
-      // `updateWithStateIfExists` and `updateWithStateReturning` — so the sibling
-      // row lands immediately before the commit whichever one the launch picks.
-      // `injected` below is what keeps that list honest: swapping the launch to a
-      // builder that is not wrapped here fails the test rather than silently
-      // making it vacuous.
+      // The hook covers every seam the launch could reach the parent through:
+      // the patch-shaped `update`, the two derive-inside-the-CAS forms
+      // `updateWithStateIfExists` and `updateWithStateReturning`, and the fenced
+      // launch path's per-attempt capture `captureAuthorityState` (#714) — for
+      // the fenced path the injection lands before the FIRST capture, which is
+      // the "outside the cycle" placement this test is about: the derivation
+      // then reads a row that already carries the sibling and commits first
+      // time. `injected` below is what keeps that list honest: swapping the
+      // launch to a seam that is not wrapped here fails the test rather than
+      // silently making it vacuous.
       let injected = false;
       const injectSiblingSubstepWrite = async (): Promise<void> => {
         if (injected) return;
@@ -734,6 +738,14 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
           if (args[0] === parentRunId) await injectSiblingSubstepWrite();
           return await realUpdateWithStateReturning.apply(this, args);
         });
+      /* eslint-disable-next-line @typescript-eslint/unbound-method -- captured to re-apply with the spy's `this` */
+      const realCaptureAuthorityState = RunbookStateManager.prototype.captureAuthorityState;
+      jest
+        .spyOn(RunbookStateManager.prototype, 'captureAuthorityState')
+        .mockImplementation(async function (this: RunbookStateManager, ...args) {
+          if (args[0] === parentRunId) await injectSiblingSubstepWrite();
+          return await realCaptureAuthorityState.apply(this, args);
+        });
 
       const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
@@ -748,6 +760,234 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       // ...and it does not carry a pre-read snapshot of the array over the top
       // of the sibling row that committed in between.
       expect(substeps.find((s) => s.id === '2')?.status).toBe('running');
+    });
+
+    it('refuses the launch when the parent claim rotates inside the linkage window', async () => {
+      // ADR 0002 (#714): the launch captures the parent's controlling claim at
+      // linkage determination, and the substep mark commits only under that
+      // claim generation. A second orchestrator re-claiming the parent in the
+      // window — between determination and the fenced commit — must refuse the
+      // launch permanently rather than attach a child under the new authority.
+      const parentRunId = await startSubstepParent();
+      await writePassingChild();
+      const runsBefore = (await listPersistedRunIds(workspace.cwd)).length;
+
+      // Rotate through the real session seam immediately before the fenced
+      // commit's write. `injected` keeps the hook honest: a launch that stops
+      // reaching the fenced write seam fails here instead of passing vacuously.
+      let injected = false;
+      /* eslint-disable-next-line @typescript-eslint/unbound-method -- captured to re-apply with the spy's `this` */
+      const realSaveState = RunbookStateManager.prototype.saveState;
+      jest.spyOn(RunbookStateManager.prototype, 'saveState').mockImplementation(async function (
+        this: RunbookStateManager,
+        ...args
+      ) {
+        if (args[0].runId === parentRunId && !injected) {
+          injected = true;
+          const sideband = new SessionService(new RunbookStateManager(workspace.cwd));
+          await sideband.issueRunControlClaim(assertRunId(parentRunId));
+        }
+        return await realSaveState.apply(this, args);
+      });
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(injected).toBe(true);
+
+      // Permanent refusal with its own code — never the generic LAUNCH_FAILED,
+      // whose remediation reads as retryable. The message names the fact: the
+      // parent changed hands, and its progression belongs to the new holder.
+      expect(result.exitCode).toBe(1);
+      const refusal = result.stdout + result.stderr;
+      expect(refusal).toContain('INLINE_PARENT_CLAIM_SUPERSEDED');
+      expect(refusal).toContain('re-claimed before the');
+      expect(refusal).toContain('current orchestrator owns its progression');
+
+      // Nothing attached under the rotated-out authority: the pre-seeded row
+      // never advanced to running, the child run rolled back, and the parent
+      // stays active for the rotated-in holder.
+      const parent = await readRunbookState(workspace, parentRunId);
+      expect((parent!.substepStates ?? []).find((s) => s.id === '1')?.status).toBe('pending');
+      expect((await listPersistedRunIds(workspace.cwd)).length).toBe(runsBefore);
+      expect((await getActiveState(workspace))?.id).toBe(parentRunId);
+    });
+
+    it('refuses at determination when no live claim controls the active parent', async () => {
+      // The other half of the fence's entry contract (ADR 0002): a parent the
+      // session still targets but that no run-control claim controls cannot be
+      // attached to at all — refused BEFORE any child run is created, under the
+      // same code as the commit-time rotation.
+      //
+      // This is also the fence-still-fires witness for the refusal ordering:
+      // the target here is VALID, so it clears every check in the linkage
+      // builder and reaches the capture, which is ordered last among the
+      // refusals so a target error can never be reported as a claim problem
+      // (see 'target refusals outrank the parent-authority fence'). If a
+      // reordering ever makes this test need editing to stay green, the fence
+      // has stopped covering a valid target.
+      const parentRunId = await startSubstepParent();
+      await writePassingChild();
+      const runsBefore = (await listPersistedRunIds(workspace.cwd)).length;
+      // Remove the parent's claim WITHOUT releasing the run from targeting —
+      // the claim-GC seam does exactly that.
+      const sideband = new SessionService(new RunbookStateManager(workspace.cwd));
+      await sideband.pruneClaimsForChildren([parentRunId]);
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+
+      expect(result.exitCode).toBe(1);
+      const refusal = result.stdout + result.stderr;
+      expect(refusal).toContain('INLINE_PARENT_CLAIM_SUPERSEDED');
+      expect(refusal).toContain('no live controlling claim');
+      expect(refusal).toContain('claim superseded');
+      expect(refusal).toContain('cannot attach under absent authority');
+      // Refused before creation: no child run exists to roll back.
+      expect((await listPersistedRunIds(workspace.cwd)).length).toBe(runsBefore);
+    });
+
+    it('proceeds unlinked when the parent run vanishes after determination', async () => {
+      // A parent pruned between linkage determination and the substep mark is
+      // the pre-existing "nothing to do" outcome: the mark writes nothing and
+      // the launch completes without a parent to advance. The fence must keep
+      // that contract rather than convert it into a refusal.
+      const parentRunId = await startSubstepParent();
+      await writePassingChild();
+
+      let injected = false;
+      /* eslint-disable-next-line @typescript-eslint/unbound-method -- captured to re-apply with the spy's `this` */
+      const realCapture = RunbookStateManager.prototype.captureAuthorityState;
+      jest
+        .spyOn(RunbookStateManager.prototype, 'captureAuthorityState')
+        .mockImplementation(async function (this: RunbookStateManager, ...args) {
+          // This seam is the fence's per-attempt re-capture (determination goes
+          // through `captureRunAuthorityState`). Hand the first attempt its
+          // valid capture, then delete the parent, so the commit that follows
+          // finds no row — the vanished-parent arm at its real window.
+          if (args[0] === parentRunId && !injected) {
+            const determination = await realCapture.apply(this, args);
+            injected = true;
+            const sideband = new RunbookStateManager(workspace.cwd);
+            await sideband.delete(assertRunId(parentRunId));
+            return determination;
+          }
+          return await realCapture.apply(this, args);
+        });
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(injected).toBe(true);
+
+      // The launch neither refused nor crashed: the child ran to completion
+      // with no parent left to mark.
+      expect(result.exitCode).toBe(0);
+      expect(await readRunbookState(workspace, parentRunId)).toBeNull();
+    });
+
+    it('reports sustained parent contention as a launch failure, not a false attach', async () => {
+      // Every fenced commit attempt loses to a sibling write: the fence spends
+      // the store's budget and hands back `concurrent_modification`, which the
+      // launch surfaces as a failure — the child must not report attached when
+      // the mark never landed.
+      const parentRunId = await startSubstepParent();
+      await writePassingChild();
+
+      /* eslint-disable-next-line @typescript-eslint/unbound-method -- captured to re-apply with the spy's `this` */
+      const realSaveState = RunbookStateManager.prototype.saveState;
+      let bump = 0;
+      jest.spyOn(RunbookStateManager.prototype, 'saveState').mockImplementation(async function (
+        this: RunbookStateManager,
+        ...args
+      ) {
+        if (args[0].runId === parentRunId) {
+          bump += 1;
+          const sideband = new RunbookStateManager(workspace.cwd);
+          await sideband.updateWithState(assertRunId(parentRunId), (current) => ({
+            substepStates: upsertSubstepState(
+              current.substepStates ?? [],
+              '2',
+              buildFrameKey('2'),
+              { status: bump % 2 ? 'running' : 'pending' },
+            ),
+          }));
+        }
+        return await realSaveState.apply(this, args);
+      });
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+
+      expect(bump).toBeGreaterThan(1);
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout + result.stderr).toContain('modified concurrently');
+    }, 20_000);
+
+    it.each([
+      ['execution_in_progress', 'has an execution in progress'],
+      ['recovery_required', 'requires recovery'],
+    ] as const)(
+      'surfaces a fenced %s envelope through the generic launch failure',
+      async (kind, phrase) => {
+        // Ownership envelopes pass through as themselves: the fence hands them back as
+        // themselves and the launch surfaces them through the generic rollback,
+        // whose retry-once-freed remediation is the right one. Injected at the
+        // commit seam — the real store cannot be made to refuse these arms
+        // without an execution lease or recovery flag mid-window.
+        const parentRunId = await startSubstepParent();
+        await writePassingChild();
+        const envelope: GuardedMutationResult<RunbookState> =
+          kind === 'execution_in_progress'
+            ? {
+                kind,
+                runId: assertRunId(parentRunId),
+                message: `Run ${parentRunId} ${phrase}.`,
+              }
+            : {
+                kind,
+                runId: assertRunId(parentRunId),
+                epoch: assertExecutionEpoch(1),
+                message: `Run ${parentRunId} ${phrase}.`,
+              };
+        jest.spyOn(RunbookStateManager.prototype, 'saveState').mockImplementation(async function (
+          this: RunbookStateManager,
+          ...args
+        ) {
+          if (args[0].runId === parentRunId) return envelope;
+          throw new Error('unexpected saveState target');
+        });
+
+        const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+
+        expect(result.exitCode).toBe(1);
+        expect(result.stdout + result.stderr).toContain(phrase);
+      },
+    );
+
+    it('names the vanished run when determination finds no parent row to capture', async () => {
+      // The determination capture's OTHER refusal arm: the session still names
+      // the parent but its run row is gone. Same code as the no-claim arm; the
+      // message states which fact failed. Injected at the capture seam — the
+      // active-session read and the capture are adjacent, so the window is not
+      // reachable through public seams alone.
+      const parentRunId = await startSubstepParent();
+      await writePassingChild();
+      const runsBefore = (await listPersistedRunIds(workspace.cwd)).length;
+      jest
+        .spyOn(RunbookStateManager.prototype, 'captureRunAuthorityState')
+        .mockImplementation(async function (this: RunbookStateManager, ...args) {
+          return {
+            kind: 'missing',
+            runId: args[0],
+            message: `Run ${args[0]} does not exist.`,
+          };
+        });
+
+      const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+
+      expect(result.exitCode).toBe(1);
+      const refusal = result.stdout + result.stderr;
+      expect(refusal).toContain('INLINE_PARENT_CLAIM_SUPERSEDED');
+      expect(refusal).toContain('run not found');
+      // The refusal names the parent the session still points at.
+      expect(refusal).toContain(parentRunId);
+      // Refused at determination: no child run was created.
+      expect((await listPersistedRunIds(workspace.cwd)).length).toBe(runsBefore);
     });
 
     it('re-derives the launch row when a sibling write invalidates the version it read', async () => {
@@ -790,45 +1030,38 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
         });
       };
 
-      // Counts the LAUNCH's derivations specifically, keyed on the decision it
-      // reports rather than on call ordering: the parent is written through this
-      // seam more than once across a run, so a positional guess would rebind
-      // silently to whichever write a later change happens to put first. The
-      // sideband cannot inflate the count either — that write goes through
-      // `updateWithState` → `updateWithStateIfExists`, a different seam from the
-      // one wrapped here.
-      const launchDecisions: unknown[] = [];
+      // Counts the LAUNCH's commit attempts specifically: the fenced write seam
+      // (#714) is called once per derivation with the derived next state, and
+      // only the launch commits the parent through it, keyed by the captured
+      // authority's runId. The sideband cannot inflate the count — its write
+      // goes through `updateWithState` → `updateWithStateIfExists`, a different
+      // seam from the one wrapped here.
+      const launchCommitAttempts: unknown[] = [];
       /* eslint-disable-next-line @typescript-eslint/unbound-method -- captured to re-apply with the spy's `this` */
-      const realUpdateWithStateReturning = RunbookStateManager.prototype.updateWithStateReturning;
-      jest
-        .spyOn(RunbookStateManager.prototype, 'updateWithStateReturning')
-        .mockImplementation(async function (this: RunbookStateManager, ...args) {
-          const [id, build] = args;
-          if (id !== parentRunId) return await realUpdateWithStateReturning.apply(this, args);
-          return await realUpdateWithStateReturning.call(this, id, async (current) => {
-            const built = await build(current);
-            if (built.value !== 'marked' && built.value !== 'already-resolved') return built;
-            launchDecisions.push(built.value);
-            // Land the sibling write inside the window: this attempt has read its
-            // row and derived from it, and the commit has not happened yet. Only
-            // the first attempt is invalidated — injecting on every one would
-            // spend the store's retry budget and report `concurrent_modification`
-            // instead of the re-derivation under test.
-            if (launchDecisions.length === 1) await injectSiblingSubstepWrite();
-            return built;
-          });
-        });
+      const realSaveState = RunbookStateManager.prototype.saveState;
+      jest.spyOn(RunbookStateManager.prototype, 'saveState').mockImplementation(async function (
+        this: RunbookStateManager,
+        ...args
+      ) {
+        if (args[0].runId !== parentRunId) return await realSaveState.apply(this, args);
+        launchCommitAttempts.push('marked');
+        // Land the sibling write inside the window: this attempt has captured
+        // its row and derived from it, and the commit has not happened yet. Only
+        // the first attempt is invalidated — injecting on every one would spend
+        // the store's retry budget and report `concurrent_modification` instead
+        // of the re-derivation under test.
+        if (launchCommitAttempts.length === 1) await injectSiblingSubstepWrite();
+        return await realSaveState.apply(this, args);
+      });
 
       const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
       expect(result.exitCode).toBe(0);
       expect(injected).toBe(true);
-      // Two derivations for one commit: the first lost the compare-and-swap to
-      // the sideband write and was discarded, the second committed. One would
-      // mean the write landed outside the cycle and this test degenerated into
-      // the sibling case above. Both derivations reached the same decision —
-      // the re-derivation is a repeat of the same judgement against a newer
-      // row, not a different launch.
-      expect(launchDecisions).toEqual(['marked', 'marked']);
+      // Two commit attempts for one landing: the first lost the compare-and-swap
+      // to the sideband write and was discarded, the second re-derived against
+      // the committed row and won. One would mean the write landed outside the
+      // cycle and this test degenerated into the sibling case above.
+      expect(launchCommitAttempts).toEqual(['marked', 'marked']);
 
       const parent = await readRunbookState(workspace, parentRunId);
       const substeps = parent!.substepStates ?? [];
@@ -877,14 +1110,19 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
         }));
       };
 
+      // The launch's write seam is the fenced commit (#714): injecting before
+      // the FIRST commit attempt lands the resolution inside the cycle, so the
+      // stale first attempt is discarded and the re-capture must see the done
+      // row and refuse rather than merge `running` over it.
       /* eslint-disable-next-line @typescript-eslint/unbound-method -- captured to re-apply with the spy's `this` */
-      const realUpdateWithStateReturning = RunbookStateManager.prototype.updateWithStateReturning;
-      jest
-        .spyOn(RunbookStateManager.prototype, 'updateWithStateReturning')
-        .mockImplementation(async function (this: RunbookStateManager, ...args) {
-          if (args[0] === parentRunId) await injectTargetResolution();
-          return await realUpdateWithStateReturning.apply(this, args);
-        });
+      const realSaveState = RunbookStateManager.prototype.saveState;
+      jest.spyOn(RunbookStateManager.prototype, 'saveState').mockImplementation(async function (
+        this: RunbookStateManager,
+        ...args
+      ) {
+        if (args[0].runId === parentRunId) await injectTargetResolution();
+        return await realSaveState.apply(this, args);
+      });
 
       const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
       expect(injected).toBe(true);
@@ -1047,6 +1285,92 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       const out = result.stdout + result.stderr;
       expect(out).toContain('--step requires an active parent runbook');
       expect(out).toContain('NO_ACTIVE_RUNBOOK');
+    });
+
+    // A parent that is session-active but controlled by no live run-control
+    // claim is where the authority fence (ADR 0002) and target validation both
+    // have something to say. The fence must not answer first: a caller who
+    // named a step that does not exist, is not at the frontier, or takes no
+    // --index has a target bug, and telling them their parent's claim was
+    // superseded sends them to diagnose the wrong system entirely. Target
+    // validation reads only `parentState` from `getActive()`, so it is
+    // decidable without the capture and must be decided ahead of it.
+    //
+    // No ordinary gesture reaches this state; these tests reach it the same way
+    // the fence's own witness does, through the claim-GC seam.
+    describe('target refusals outrank the parent-authority fence', () => {
+      /**
+       * Strip the parent's run-control claim while leaving the session still
+       * targeting it — the state in which the fence can mask a target error.
+       */
+      async function dropParentClaim(parentRunId: string): Promise<void> {
+        const sideband = new SessionService(new RunbookStateManager(workspace.cwd));
+        await sideband.pruneClaimsForChildren([parentRunId]);
+      }
+
+      it('reports the unknown step, not the absent claim (RD-801)', async () => {
+        const parentRunId = await startSubstepParent();
+        await writePassingChild();
+        await dropParentClaim(parentRunId);
+
+        const result = await runCliInProcess('run child.runbook.md --step 9.9', workspace);
+
+        expect(result.exitCode).toBe(1);
+        const out = result.stdout + result.stderr;
+        expect(out).toContain('RD-801');
+        expect(out).not.toContain('INLINE_PARENT_CLAIM_SUPERSEDED');
+      });
+
+      it('reports the off-frontier step, not the absent claim (RD-802)', async () => {
+        // Both steps carry substeps so the substep-shape checks pass and only
+        // the frontier check can reject step 2 — same shape as the RD-802 test
+        // above, with the parent's claim removed underneath it.
+        const content = createRunbook({
+          title: 'Parent',
+          steps: [
+            {
+              title: 'Review',
+              pass: 'CONTINUE',
+              substeps: [{ title: 'Code review', content: 'Do code review.' }],
+            },
+            {
+              title: 'Verify',
+              pass: 'COMPLETE',
+              substeps: [{ title: 'Final check', content: 'Do final check.' }],
+            },
+          ],
+        });
+        await writeFile(join(workspace.cwd, 'parent.runbook.md'), content);
+        const start = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+        expect(start.exitCode).toBe(0);
+        const parentRunId = (await getActiveState(workspace))!.id;
+        await writePassingChild();
+        await dropParentClaim(parentRunId);
+
+        const result = await runCliInProcess('run child.runbook.md --step 2.1', workspace);
+
+        expect(result.exitCode).toBe(1);
+        const out = result.stdout + result.stderr;
+        expect(out).toContain('RD-802');
+        expect(out).not.toContain('INLINE_PARENT_CLAIM_SUPERSEDED');
+      });
+
+      it('reports the non-FOR --index, not the absent claim (INVALID_INDEX)', async () => {
+        const parentRunId = await startSubstepParent();
+        await writePassingChild();
+        await dropParentClaim(parentRunId);
+
+        const result = await runCliInProcess(
+          'run child.runbook.md --step 1.1 --index 2',
+          workspace,
+        );
+
+        expect(result.exitCode).toBe(1);
+        const out = result.stdout + result.stderr;
+        expect(out).toContain('INVALID_INDEX');
+        expect(out).toContain('FOR step');
+        expect(out).not.toContain('INLINE_PARENT_CLAIM_SUPERSEDED');
+      });
     });
   });
 });

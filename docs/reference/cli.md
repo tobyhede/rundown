@@ -220,7 +220,11 @@ rundown run my-runbook.runbook.md --step 2.1 --index 3  # Target FOR iteration 3
   is an error. There is intentionally **no `--artifacts-file`** and no
   `KEY`-only env-inherit form (both deferred).
 - `--step <stepId>` — Link this run to a parent substep for inline nested
-  execution; with `--prompted`, jumps to the step after starting.
+  execution; with `--prompted`, jumps to the step after starting. The attachment
+  commits under the parent's controlling claim generation captured at linkage
+  time; a parent re-claimed before the mark commits refuses
+  `INLINE_PARENT_CLAIM_SUPERSEDED` (RD-834) and rolls the child back (see
+  [security.md](security.md) § Inline composition trust boundary).
 - `--index <number>` — FOR loop iteration to target (requires `--step`).
 
 **Behavior:**
