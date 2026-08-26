@@ -173,6 +173,54 @@ describe('inline launch fence (#714)', () => {
     expect(findSubstepState(state?.substepStates ?? [], SUBSTEP, FRAME)).toBeUndefined();
   }, 15_000);
 
+  it('touches only the linkage-named substep row of the named parent (#714 write scope)', async () => {
+    const { parentId, authority } = await makeClaimedParent();
+    // Pre-existing sibling rows and an unrelated run: the exemption this fence
+    // replaced must not silently widen — the mark may change exactly one row of
+    // exactly one run.
+    await manager.update(parentId, {
+      substepStates: [
+        { id: '1.2', frameKey: FRAME, status: 'pending' },
+        { id: '1.3', frameKey: FRAME, status: 'done', result: 'fail' },
+      ],
+    });
+    const bystander = await manager.create(
+      { source: 'project', path: 'bystander.md' },
+      mockRunbook,
+      { runbookPath: 'bystander.md' },
+    );
+    const bystanderBefore = await manager.load(bystander.id);
+    const parentBefore = await manager.load(parentId);
+    if (parentBefore === null) throw new Error('expected parent state');
+    // Re-capture: the seeding write above bumped the version the fence commits
+    // against; the claim generation is unchanged, which is the fenced fact.
+    const recaptured = await manager.captureRunAuthorityState(parentId);
+    if (recaptured.kind !== 'captured') throw new Error('expected captured authority');
+    expect(recaptured.authority.claimGeneration).toBe(authority.claimGeneration);
+
+    const out = await markInlineSubstepLaunched(manager, markInput(recaptured.authority));
+    expect(out).toEqual({ kind: 'marked' });
+
+    const parentAfter = await manager.load(parentId);
+    // Guard the comparison's own strictness: this fixture never ran the actor,
+    // so there is no snapshot for the deep-equal to silently skip over.
+    expect(parentBefore.snapshot).toBeUndefined();
+    // The whole committed state equals the pre-state with EXACTLY the target
+    // row appended and the write timestamp moved — sibling rows verbatim, every
+    // other field byte-identical.
+    expect(parentAfter).toEqual({
+      ...parentBefore,
+      substepStates: [
+        { id: '1.2', frameKey: FRAME, status: 'pending' },
+        { id: '1.3', frameKey: FRAME, status: 'done', result: 'fail' },
+        { id: SUBSTEP, frameKey: FRAME, status: 'running' },
+      ],
+      updatedAt: parentAfter?.updatedAt,
+    });
+    // No other run changed.
+    expect(await manager.load(bystander.id)).toEqual(bystanderBefore);
+  });
+
   it('refuses missing when the parent run no longer exists', async () => {
     const { parentId, authority } = await makeClaimedParent();
     await manager.delete(parentId);
