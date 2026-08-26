@@ -559,6 +559,21 @@ export const ErrorCodes = {
       `delegations the lost bearers addressed must be re-issued.`,
     docSlug: 'delegation-frontier-disclosure-failed',
   },
+  INLINE_PARENT_CLAIM_SUPERSEDED: {
+    code: 'RD-834',
+    category: ErrorCategory.DELEGATION,
+    title: 'Inline parent re-claimed before the launch attached',
+    description:
+      `The inline launch captured the composing parent's controlling run-control ` +
+      `claim when it resolved the linkage, and by the time the substep mark ` +
+      `committed that claim had been rotated or no longer controlled the parent — ` +
+      `the parent now belongs to a different orchestrator (ADR 0002). Nothing was ` +
+      `attached and the child run was rolled back. Do not retry blindly: the ` +
+      `orchestrator that now holds the parent owns its progression. If this ` +
+      `process should own the parent, re-acquire control (claim or restart the ` +
+      `parent) and launch again.`,
+    docSlug: 'inline-parent-claim-superseded',
+  },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
   // canonical-at requirements). Kept as EXECUTION rather than a dedicated

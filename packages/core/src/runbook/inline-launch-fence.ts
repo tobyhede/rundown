@@ -92,6 +92,14 @@ export type InlineLaunchMarkOutcome =
 /**
  * Decide whether an inline-launch target substep is already resolved.
  *
+ * Two independent ways a substep is spent, and both must be checked:
+ *
+ * 1. Its row is `done` — a completion was recorded against it.
+ * 2. The parent cursor has advanced past it. Drain consumes the resolved
+ *    completion and advances the cursor WITHOUT marking the row `done`, so (1)
+ *    does not catch it. Only meaningful on the active frame: `state.substep` is
+ *    the current iteration's cursor, not the target iteration's.
+ *
  * Pure and synchronous by construction, because it is evaluated in two places
  * that impose different constraints: once as the caller-facing pre-read
  * refusal, and again inside the fenced commit cycle, which may re-run its

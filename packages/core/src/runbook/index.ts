@@ -72,9 +72,11 @@ export type {
 } from './storage/execution-lease.js';
 export {
   assertExecutionEpoch,
+  type CapturedAuthority,
   type ExecutionEpoch,
   type GuardedMutationResult,
 } from './storage/mutation-result.js';
+export type { CapturedRunStateResult } from './storage/runbook-store.js';
 export {
   extractUnitOutputs,
   findStepOrThrow,
