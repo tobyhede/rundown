@@ -332,6 +332,14 @@ export {
   recordInlineLaunchStart,
   type InlineLaunchOwnership,
 } from './inline-launch-start.js';
+export {
+  inlineTargetAlreadyResolved,
+  markInlineSubstepLaunched,
+  type InlineLaunchFenceDeps,
+  type InlineLaunchMarkInput,
+  type InlineLaunchMarkOutcome,
+  type InlineLaunchMarkRefusal,
+} from './inline-launch-fence.js';
 // The DI seam of the two above. Type-only, and exported so their signatures are
 // nameable by the CLI that calls them; the liveness readers behind it stay
 // internal to core.

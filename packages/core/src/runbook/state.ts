@@ -24,6 +24,7 @@ import {
   type VariablesOp,
 } from './state-update-ops.js';
 import type { ClaimLookupKey, ClaimRecord } from './claim-id.js';
+import type { CapturedAuthority, GuardedMutationResult } from './storage/mutation-result.js';
 import type { RunbookRef } from './runbook-ref.js';
 import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
 import { getErrorMessage, isError, isNodeError } from '../errors.js';
@@ -1036,6 +1037,48 @@ export class RunbookStateManager {
   async captureRunAuthorityState(runId: RunId): Promise<CapturedRunStateResult> {
     const store = await this.store();
     return store.captureRunAuthorityState(runId);
+  }
+
+  /**
+   * Capture a named claim's authority and the run state it controls atomically.
+   *
+   * The re-capture half of a capture-then-commit span: a caller holding an
+   * earlier {@link CapturedAuthority} re-reads under the SAME claim key so a
+   * rotation surfaces as `claim_superseded` rather than silently resolving to
+   * whichever claim controls the run now.
+   *
+   * @param runId - Run the claim must control.
+   * @param claimKey - Lookup key of the previously captured claim.
+   * @returns Captured authority plus the exact state read with it, or a typed refusal.
+   * @throws {Error} When persisted run state fails schema validation.
+   */
+  async captureAuthorityState(
+    runId: RunId,
+    claimKey: ClaimLookupKey,
+  ): Promise<CapturedRunStateResult> {
+    const store = await this.store();
+    return store.captureAuthorityState(runId, claimKey);
+  }
+
+  /**
+   * Commit a whole next state under a previously captured authority.
+   *
+   * Re-classifies the commit row inside the write transaction, so the commit is
+   * compare-and-swapped against BOTH the captured state version and the captured
+   * claim generation — unlike {@link updateWithStateReturning}, whose cycle is
+   * version-only. A moved state version refuses `concurrent_modification`; a
+   * rotated or advanced claim refuses `claim_superseded`.
+   *
+   * @param captured - Authority captured earlier in the same span.
+   * @param next - The complete state to persist.
+   * @returns The committed state, or the first typed refusal.
+   */
+  async saveState(
+    captured: CapturedAuthority,
+    next: RunbookState,
+  ): Promise<GuardedMutationResult<RunbookState>> {
+    const store = await this.store();
+    return store.saveState(captured, next);
   }
 
   /**
