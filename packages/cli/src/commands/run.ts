@@ -516,22 +516,6 @@ async function buildInlineLinkage(
     process.exit(1);
   }
 
-  // 1b. Capture the parent's controlling authority at determination time
-  // (ADR 0002, #714). This claim generation is the fact the fenced substep
-  // mark commits against; a parent no live run-control claim controls cannot
-  // be attached to at all — refused BEFORE any child run is created.
-  const capturedParent = await manager.captureRunAuthorityState(parentState.id);
-  if (capturedParent.kind !== 'captured') {
-    output.error(
-      `Inline parent ${parentState.id} has no live controlling claim ` +
-        `(${capturedParent.kind === 'missing' ? 'run not found' : 'claim superseded'}); ` +
-        `the launch cannot attach under absent authority.`,
-      'INLINE_PARENT_CLAIM_SUPERSEDED',
-    );
-    output.flush();
-    process.exit(1);
-  }
-
   // 2. Parse step ID
   const parsed = parseStepIdFromString(stepId);
   if (!parsed) {
@@ -618,6 +602,30 @@ async function buildInlineLinkage(
     output.error(
       `Substep ${substepId} already has an active delegation`,
       'DELEGATION_ALREADY_EXISTS',
+    );
+    output.flush();
+    process.exit(1);
+  }
+
+  // 8b. Capture the parent's controlling authority at determination time
+  // (ADR 0002, #714). This claim generation is the fact the fenced substep
+  // mark commits against; a parent no live run-control claim controls cannot
+  // be attached to at all — refused BEFORE any child run is created.
+  //
+  // Ordered LAST among the refusals on purpose. Every check above decides a
+  // property of the *target* and reads only `parentState`, so none of them
+  // needs the capture; running the fence ahead of them would report a
+  // superseded claim for what is really an unknown step or a bad --index.
+  // The window the fence guards is unchanged by the position: nothing between
+  // here and the fenced commit awaits, so no capture-invalidating write can
+  // interleave in either ordering.
+  const capturedParent = await manager.captureRunAuthorityState(parentState.id);
+  if (capturedParent.kind !== 'captured') {
+    output.error(
+      `Inline parent ${parentState.id} has no live controlling claim ` +
+        `(${capturedParent.kind === 'missing' ? 'run not found' : 'claim superseded'}); ` +
+        `the launch cannot attach under absent authority.`,
+      'INLINE_PARENT_CLAIM_SUPERSEDED',
     );
     output.flush();
     process.exit(1);

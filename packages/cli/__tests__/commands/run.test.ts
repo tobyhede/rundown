@@ -816,6 +816,14 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       // session still targets but that no run-control claim controls cannot be
       // attached to at all — refused BEFORE any child run is created, under the
       // same code as the commit-time rotation.
+      //
+      // This is also the fence-still-fires witness for the refusal ordering:
+      // the target here is VALID, so it clears every check in the linkage
+      // builder and reaches the capture, which is ordered last among the
+      // refusals so a target error can never be reported as a claim problem
+      // (see 'target refusals outrank the parent-authority fence'). If a
+      // reordering ever makes this test need editing to stay green, the fence
+      // has stopped covering a valid target.
       const parentRunId = await startSubstepParent();
       await writePassingChild();
       const runsBefore = (await listPersistedRunIds(workspace.cwd)).length;
@@ -1277,6 +1285,92 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       const out = result.stdout + result.stderr;
       expect(out).toContain('--step requires an active parent runbook');
       expect(out).toContain('NO_ACTIVE_RUNBOOK');
+    });
+
+    // A parent that is session-active but controlled by no live run-control
+    // claim is where the authority fence (ADR 0002) and target validation both
+    // have something to say. The fence must not answer first: a caller who
+    // named a step that does not exist, is not at the frontier, or takes no
+    // --index has a target bug, and telling them their parent's claim was
+    // superseded sends them to diagnose the wrong system entirely. Target
+    // validation reads only `parentState` from `getActive()`, so it is
+    // decidable without the capture and must be decided ahead of it.
+    //
+    // No ordinary gesture reaches this state; these tests reach it the same way
+    // the fence's own witness does, through the claim-GC seam.
+    describe('target refusals outrank the parent-authority fence', () => {
+      /**
+       * Strip the parent's run-control claim while leaving the session still
+       * targeting it — the state in which the fence can mask a target error.
+       */
+      async function dropParentClaim(parentRunId: string): Promise<void> {
+        const sideband = new SessionService(new RunbookStateManager(workspace.cwd));
+        await sideband.pruneClaimsForChildren([parentRunId]);
+      }
+
+      it('reports the unknown step, not the absent claim (RD-801)', async () => {
+        const parentRunId = await startSubstepParent();
+        await writePassingChild();
+        await dropParentClaim(parentRunId);
+
+        const result = await runCliInProcess('run child.runbook.md --step 9.9', workspace);
+
+        expect(result.exitCode).toBe(1);
+        const out = result.stdout + result.stderr;
+        expect(out).toContain('RD-801');
+        expect(out).not.toContain('INLINE_PARENT_CLAIM_SUPERSEDED');
+      });
+
+      it('reports the off-frontier step, not the absent claim (RD-802)', async () => {
+        // Both steps carry substeps so the substep-shape checks pass and only
+        // the frontier check can reject step 2 — same shape as the RD-802 test
+        // above, with the parent's claim removed underneath it.
+        const content = createRunbook({
+          title: 'Parent',
+          steps: [
+            {
+              title: 'Review',
+              pass: 'CONTINUE',
+              substeps: [{ title: 'Code review', content: 'Do code review.' }],
+            },
+            {
+              title: 'Verify',
+              pass: 'COMPLETE',
+              substeps: [{ title: 'Final check', content: 'Do final check.' }],
+            },
+          ],
+        });
+        await writeFile(join(workspace.cwd, 'parent.runbook.md'), content);
+        const start = await runCliInProcess('run --prompted parent.runbook.md', workspace);
+        expect(start.exitCode).toBe(0);
+        const parentRunId = (await getActiveState(workspace))!.id;
+        await writePassingChild();
+        await dropParentClaim(parentRunId);
+
+        const result = await runCliInProcess('run child.runbook.md --step 2.1', workspace);
+
+        expect(result.exitCode).toBe(1);
+        const out = result.stdout + result.stderr;
+        expect(out).toContain('RD-802');
+        expect(out).not.toContain('INLINE_PARENT_CLAIM_SUPERSEDED');
+      });
+
+      it('reports the non-FOR --index, not the absent claim (INVALID_INDEX)', async () => {
+        const parentRunId = await startSubstepParent();
+        await writePassingChild();
+        await dropParentClaim(parentRunId);
+
+        const result = await runCliInProcess(
+          'run child.runbook.md --step 1.1 --index 2',
+          workspace,
+        );
+
+        expect(result.exitCode).toBe(1);
+        const out = result.stdout + result.stderr;
+        expect(out).toContain('INVALID_INDEX');
+        expect(out).toContain('FOR step');
+        expect(out).not.toContain('INLINE_PARENT_CLAIM_SUPERSEDED');
+      });
     });
   });
 });
