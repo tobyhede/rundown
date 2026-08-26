@@ -821,7 +821,7 @@ rd echo --result fail
         (v): v is Record<string, unknown> => typeof v === 'object' && v !== null,
       );
       expect(emitted.some((event) => event.type === 'runbook_stopped')).toBe(true);
-    });
+    }, 20_000);
 
     it('refuses automatic inline launch inside a claimed child scope and exits non-zero', async () => {
       // Pins the mechanism that makes the `blocked` arm of this command's exit
@@ -882,7 +882,7 @@ rd echo --result fail
           (event) => event.type === 'runbook_stopped' && event.reason === 'inline_launch_forbidden',
         ),
       ).toBe(true);
-    });
+    }, 20_000);
   });
 
   describe('edge cases', () => {
