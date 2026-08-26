@@ -601,6 +601,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   }
 
   let loopStopped = false;
+  // Stryker disable next-line BooleanLiteral: equivalent — this initializer is only read when `advancesIntoLoop` is true AND the reload below returned null, which requires the run to vanish between core's collection commit and the reload two statements later. Both values behave identically there: the propagation pass the `false` value enables reloads the same missing run and returns `{ kind: 'skipped' }`.
   let loopHandledPropagation = false;
   if (advancesIntoLoop) {
     const { runExecutionLoop } = await import('../services/execution.js');
