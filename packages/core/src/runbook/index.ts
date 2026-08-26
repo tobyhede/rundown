@@ -338,6 +338,7 @@ export {
 export type { ProcessIdentity } from './process-identity.js';
 export {
   RunbookLifecycleCommandService,
+  type AlreadyTerminalCleanup,
   type AttributedTerminalObservation,
   type DelegationIssuanceInput,
   type DelegationIssuanceOutcome,

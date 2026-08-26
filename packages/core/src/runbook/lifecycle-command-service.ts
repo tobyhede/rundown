@@ -847,6 +847,41 @@ export type TerminalReportOutcome = Awaited<
 >;
 
 /**
+ * What became of the chain cleanup an `already_terminal` outcome owed.
+ *
+ * The already-terminal arms report a pre-existing terminal state, so their only
+ * effect is the fenced chain release — and every way that release can NOT happen
+ * is invisible in the outcome's other fields. A refused fence commits nothing:
+ * the whole inline chain stays targeted in `session.defaultStack` with its
+ * descendant claims un-revoked, which is byte-for-byte what a clean teardown
+ * leaves behind minus the teardown. Carrying the disposition as a REQUIRED field
+ * is what makes dropping it a compile error rather than a review finding.
+ *
+ * `refused` reproduces the fence refusal as itself — never folded into
+ * `concurrent_modification`, whose "Retry." remediation would be a lie for a
+ * claim that can never be authority again or a run that no longer exists as
+ * resolved (see {@link SessionService.releaseAlreadyTerminal}).
+ */
+export type AlreadyTerminalCleanup =
+  | {
+      /** The fence held and the chain release was projected. */
+      readonly kind: 'released';
+    }
+  | {
+      /**
+       * No release was attempted: an unauthorized bearer receives the
+       * pre-existing outcome without the resolved chain being mutated.
+       */
+      readonly kind: 'not_attempted';
+    }
+  | {
+      /** A fence fact lapsed between the caller's read and the commit. */
+      readonly kind: 'refused';
+      /** The permanent, no-retry refusal, passed through unchanged. */
+      readonly refusal: Exclude<AlreadyTerminalReleaseOutcome, { readonly kind: 'released' }>;
+    };
+
+/**
  * Result of a complete/stop transition through the terminal seam.
  *
  * Refusal variants reuse the {@link TerminalTargetResolution} / policy shapes so
@@ -904,6 +939,11 @@ export type LifecycleTerminalOutcome =
       readonly kind: 'already_terminal';
       readonly targetRunId: RunId;
       readonly lifecycle: 'completed' | 'stopped';
+      /**
+       * What became of the chain cleanup this outcome owed. Required, so a call
+       * site cannot drop the disposition the way the unfenced arms once did.
+       */
+      readonly cleanup: AlreadyTerminalCleanup;
     }
   | {
       /** Bare cascade could not resolve a running root to force. */
@@ -1368,6 +1408,36 @@ function staleClaimFromFenceRefusal(
     }
   }
 }
+
+/**
+ * Project a fenced already-terminal release outcome onto the bare path's
+ * cleanup disposition.
+ *
+ * The bare arms have no `stale_claim` vocabulary to map onto — the caller may
+ * be ambient, with no claim to call stale — so the refusal travels as itself
+ * inside the outcome instead. Shared by the plan-time and capture-time arms so
+ * the two cannot classify the same refusal differently.
+ *
+ * @param outcome - The fenced release outcome from
+ *   {@link SessionService.releaseAlreadyTerminal}.
+ * @returns `released` when the fence held, else the refusal passed through.
+ */
+function cleanupFromFenceOutcome(outcome: AlreadyTerminalReleaseOutcome): AlreadyTerminalCleanup {
+  return outcome.kind === 'released' ? { kind: 'released' } : { kind: 'refused', refusal: outcome };
+}
+
+/**
+ * What the bare inline-cascade aggregate itself is able to decide.
+ *
+ * Deliberately the `already_terminal` outcome MINUS `cleanup`. The aggregate's
+ * `beforeEffect` returns write-free, BEFORE the fenced chain release is even
+ * attempted, so it cannot know the disposition — and narrowing the generic here
+ * means it cannot assert one either. `#driveTerminalBare` attaches `cleanup`
+ * after the release, the only point at which the answer exists.
+ */
+type BareAggregateOutcome =
+  | Omit<Extract<LifecycleTerminalOutcome, { readonly kind: 'already_terminal' }>, 'cleanup'>
+  | Extract<LifecycleTerminalOutcome, { readonly kind: 'applied_bare' }>;
 
 /**
  * Core seam for direct lifecycle command mutations (pass / fail) and the
@@ -3350,14 +3420,20 @@ export class RunbookLifecycleCommandService {
       // Preserve the pre-existing already-terminal outcome for every caller. Clean
       // up for ambient/no-bearer or authorized bearer requests only; an unauthorized
       // bearer receives the same outcome without mutating the resolved chain.
+      //
+      // Whether the chain cleanup happened is carried OUT with the outcome
+      // rather than dropped: an unauthorized bearer never attempts it, and a
+      // lapsed fence refuses it, and neither is visible in the outcome's other
+      // fields. `not_attempted` is the unauthorized-bearer default below.
+      let cleanup: AlreadyTerminalCleanup = { kind: 'not_attempted' };
       if (input.callerEvidence.kind !== 'claim_bearer' || presenterAuthorized) {
         // Fenced (#734): the plan's terminal determination — and, for a bearer,
         // the authority it authorized with — are revalidated inside the
         // transaction that projects the chain release. A fence that lapsed
         // (bearer rotated after authorizing, resolved root gone) SKIPS the
         // cleanup rather than releasing the chain under facts that no longer
-        // hold; the pre-existing outcome still stands, exactly as it does for
-        // an unauthorized bearer, and the rotating writer's claims survive.
+        // hold; the pre-existing outcome still stands and the rotating writer's
+        // claims survive, with `cleanup` naming the refusal that got it there.
         const release = await sessionService.releaseAlreadyTerminal(
           {
             runId: plan.targetState.id,
@@ -3374,11 +3450,13 @@ export class RunbookLifecycleCommandService {
           releasesForInlineChain(plan),
         );
         if (release.kind !== 'committed') return release;
+        cleanup = cleanupFromFenceOutcome(release.value);
       }
       return {
         kind: 'already_terminal',
         targetRunId: plan.targetState.id,
         lifecycle: observedLifecycle,
+        cleanup,
       };
     }
 
@@ -3476,9 +3554,7 @@ export class RunbookLifecycleCommandService {
         (await this.#deps.loadRun(target.runId));
       if (targetState !== undefined) await stepsFor(targetState);
     }
-    const aggregate = await this.#deps.actorMutationRunner.runAll<
-      Extract<LifecycleTerminalOutcome, { readonly kind: 'already_terminal' | 'applied_bare' }>
-    >({
+    const aggregate = await this.#deps.actorMutationRunner.runAll<BareAggregateOutcome>({
       targets,
       releases: releasesForInlineChain(plan),
       makeRecoveryActor: (runId, recoveryState) => {
@@ -3618,6 +3694,11 @@ export class RunbookLifecycleCommandService {
         releasesForInlineChain(plan),
       );
       if (release.kind !== 'committed') return release;
+      // The write-free `beforeEffect` return means NOTHING happened for this
+      // command — no force, no release. A refusal here leaves even the cleanup
+      // undone, so the disposition is the only thing separating this outcome
+      // from a clean teardown.
+      return { ...aggregate.value, cleanup: cleanupFromFenceOutcome(release.value) };
     }
     return aggregate.value;
   }

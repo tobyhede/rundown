@@ -387,16 +387,55 @@ describe('renderTerminalOutcome', () => {
     expect(codeOf(calls, 'error')).toBe('DELEGATION_RESULT_CONFLICT');
   });
 
-  it('renders already_terminal as RUNBOOK_NOT_RUNNING and exits 0', async () => {
-    const { exitError, calls } = await render({
-      kind: 'already_terminal',
-      targetRunId: RUN_ID,
-      lifecycle: 'completed',
-    });
-    expect(exitError).toBe(false);
-    // noActiveRunbook(command, 'RUNBOOK_NOT_RUNNING')
-    expect(codeOf(calls, 'noActiveRunbook')).toBe('RUNBOOK_NOT_RUNNING');
-  });
+  it.each([['released'], ['not_attempted']] as const)(
+    'renders already_terminal (cleanup %s) as RUNBOOK_NOT_RUNNING and exits 0',
+    async (cleanupKind) => {
+      // A completed cleanup and a cleanup that was never attempted (unauthorized
+      // bearer) both leave the pre-existing outcome standing: the command asked
+      // about a run that is already terminal, which is not an error.
+      const { exitError, calls } = await render({
+        kind: 'already_terminal',
+        targetRunId: RUN_ID,
+        lifecycle: 'completed',
+        cleanup: { kind: cleanupKind },
+      });
+      expect(exitError).toBe(false);
+      // noActiveRunbook(command, 'RUNBOOK_NOT_RUNNING')
+      expect(codeOf(calls, 'noActiveRunbook')).toBe('RUNBOOK_NOT_RUNNING');
+      expect(calls.some((c) => c.method === 'error')).toBe(false);
+    },
+  );
+
+  it.each([
+    [
+      'claim_rotated',
+      'CLAIMED_RUNBOOK_UNAVAILABLE',
+      { kind: 'claim_rotated', claimKey: redactClaimId(CLAIM_ID) } as const,
+    ],
+    [
+      'determination_lost',
+      'RUN_TARGET_UNAVAILABLE',
+      { kind: 'determination_lost', runId: RUN_ID } as const,
+    ],
+  ] as const)(
+    'renders a refused already_terminal cleanup (%s) as %s and exits non-zero',
+    async (_label, code, refusal) => {
+      // A refused fence means NOTHING was released — the chain is still targeted
+      // and its claims are still live. Rendered at exit 0 that is indistinguishable
+      // from a clean teardown, so the refusal gets its own error envelope. Both
+      // codes are no-retry: neither a rotated claim nor a lost determination can
+      // succeed on a repeat under the same presentation.
+      const { exitError, calls } = await render({
+        kind: 'already_terminal',
+        targetRunId: RUN_ID,
+        lifecycle: 'completed',
+        cleanup: { kind: 'refused', refusal },
+      });
+      expect(exitError).toBe(true);
+      expect(codeOf(calls, 'error')).toBe(code);
+      expect(calls.some((c) => c.method === 'noActiveRunbook')).toBe(false);
+    },
+  );
 
   it.each([
     ['missing-inline-parent', 'INLINE_PARENT_UNAVAILABLE'],

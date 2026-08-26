@@ -8451,6 +8451,7 @@ describe('RunbookLifecycleCommandService', () => {
           kind: 'already_terminal',
           targetRunId: ROOT,
           lifecycle: 'completed',
+          cleanup: { kind: 'released' },
         });
         expect(releaseSpy).toHaveBeenCalled();
       });
@@ -8512,6 +8513,7 @@ describe('RunbookLifecycleCommandService', () => {
           kind: 'already_terminal',
           targetRunId: ROOT,
           lifecycle: 'completed',
+          cleanup: { kind: 'released' },
         });
         // No presented bearer means no claim fact to fence: the fence carries
         // exactly the terminal determination and nothing else.
@@ -8583,10 +8585,25 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'default' },
         });
 
+        // The skipped cleanup is part of the OUTCOME, not a silent side effect:
+        // the chain is still targeted and the descendant's claim is still live,
+        // so a caller told a bare `already_terminal` would be told the teardown
+        // happened. `cleanup` carries the fence refusal through as itself.
+        const rotatedOutClaimId = issuedRunControlClaims.get(ROOT);
+        if (rotatedOutClaimId === undefined) {
+          throw new Error(`expected run-control claim for ${ROOT}`);
+        }
         expect(out).toEqual({
           kind: 'already_terminal',
           targetRunId: ROOT,
           lifecycle: 'completed',
+          cleanup: {
+            kind: 'refused',
+            refusal: {
+              kind: 'claim_rotated',
+              claimKey: claimKeyFromBearer(rotatedOutClaimId),
+            },
+          },
         });
         const session = await manager.loadSession();
         // Nothing was released under the rotated-out bearer: the root is still
@@ -8598,6 +8615,45 @@ describe('RunbookLifecycleCommandService', () => {
             (claim) => claim.controlledRunId === ROOT || claim.controlledRunId === CHILD,
           ),
         ).toHaveLength(2);
+      });
+
+      it('surfaces a lost determination to an ambient caller as a refused cleanup', async () => {
+        // `determination_lost` is NOT an authority question. An ambient caller
+        // presents no claim at all, so the terminal determination is the only
+        // fence fact there is — and a concurrent `rundown prune` between plan
+        // resolution and the release transaction lapses exactly that. Reported
+        // as a bare `already_terminal`, the caller is told a teardown happened
+        // for a run that no longer exists; `cleanup` is what makes the
+        // released-nothing outcome legible.
+        //
+        // Injected at the fenced boundary: the seam's own refusal behaviour is
+        // pinned in `session-service.test.ts`, and racing a real prune into
+        // this window is not constructible from here.
+        const root = baseState({ id: ROOT, lifecycle: 'completed' });
+        await manager.save(root);
+        installResolvedPlan(root, [root]);
+        jest.spyOn(sessionService, 'releaseAlreadyTerminal').mockResolvedValueOnce({
+          kind: 'committed',
+          value: { kind: 'determination_lost', runId: ROOT },
+        });
+
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: { kind: 'plugin', agentId: 'a' },
+          targetSelector: { kind: 'default' },
+        });
+
+        // The refusal travels as ITSELF — `determination_lost` naming the run,
+        // not folded into the rotation vocabulary and not dropped.
+        expect(out).toEqual({
+          kind: 'already_terminal',
+          targetRunId: ROOT,
+          lifecycle: 'completed',
+          cleanup: {
+            kind: 'refused',
+            refusal: { kind: 'determination_lost', runId: ROOT },
+          },
+        });
       });
 
       it('returns already_terminal before the effect boundary when the captured root became terminal', async () => {
@@ -8624,6 +8680,7 @@ describe('RunbookLifecycleCommandService', () => {
           kind: 'already_terminal',
           targetRunId: ROOT,
           lifecycle: 'completed',
+          cleanup: { kind: 'released' },
         });
         expect(prepare).not.toHaveBeenCalled();
         // Single-member chain: the root is the addressed run and there are no
@@ -8675,6 +8732,7 @@ describe('RunbookLifecycleCommandService', () => {
           kind: 'already_terminal',
           targetRunId: ROOT,
           lifecycle: 'completed',
+          cleanup: { kind: 'released' },
         });
         // No presented bearer, so the fence carries only the captured terminal
         // determination — exactly as the plan-time ambient arm.
@@ -8708,6 +8766,47 @@ describe('RunbookLifecycleCommandService', () => {
         expect(out).toEqual(envelope);
       });
 
+      it('surfaces a committed capture-time fence refusal as a refused cleanup', async () => {
+        // The capture-time arm's COMMITTED refusal, which the non-committed
+        // envelope test above does not reach. Here the aggregate returned
+        // write-free from `beforeEffect` — no force, no release, nothing
+        // happened for this command at all — and the fence then lapsed, so the
+        // chain cleanup was refused too. Without `cleanup` that is byte-for-byte
+        // the clean-teardown outcome.
+        //
+        // Mocked at the seam because a real rotation is not injectable here: it
+        // trips `claim_superseded` at capture before the release is reached.
+        const root = baseState({ id: ROOT });
+        await manager.save(root);
+        await issueRunControlClaimFor(ROOT);
+        installResolvedPlan(root, [root]);
+        const runAll = actorMutationRunner.runAll.bind(actorMutationRunner);
+        jest.spyOn(actorMutationRunner, 'runAll').mockImplementationOnce(async (input) => {
+          await manager.updateWithState(ROOT, () => ({ lifecycle: 'completed' as const }));
+          return await runAll(input);
+        });
+        const rootClaimId = issuedRunControlClaims.get(ROOT);
+        if (rootClaimId === undefined) throw new Error(`expected run-control claim for ${ROOT}`);
+        const claimKey = claimKeyFromBearer(rootClaimId);
+        jest.spyOn(sessionService, 'releaseAlreadyTerminal').mockResolvedValueOnce({
+          kind: 'committed',
+          value: { kind: 'claim_rotated', claimKey },
+        });
+
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: runControlEvidence(ROOT),
+          targetSelector: { kind: 'default' },
+        });
+
+        expect(out).toEqual({
+          kind: 'already_terminal',
+          targetRunId: ROOT,
+          lifecycle: 'completed',
+          cleanup: { kind: 'refused', refusal: { kind: 'claim_rotated', claimKey } },
+        });
+      });
+
       it('preserves already_terminal without releasing for a foreign run-control bearer', async () => {
         // A MULTI-member chain matters here: the descendant-authority probe asks
         // the presented claim about every non-root member, so a chain with only
@@ -8730,10 +8829,15 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'default' },
         });
 
+        // `not_attempted`, not `released`: the unauthorized bearer's skip used
+        // to be as invisible in the outcome as a refused fence — the caller was
+        // told the chain had been torn down when the release was never even
+        // attempted. It is a distinct disposition and reads as one.
         expect(out).toEqual({
           kind: 'already_terminal',
           targetRunId: ROOT,
           lifecycle: 'completed',
+          cleanup: { kind: 'not_attempted' },
         });
         expect((await sessionService.getActive())?.id).toBe(ROOT);
         expect(releaseSpy).not.toHaveBeenCalled();
@@ -8752,7 +8856,12 @@ describe('RunbookLifecycleCommandService', () => {
           callerEvidence: runControlEvidence(ROOT),
           targetSelector: { kind: 'default' },
         });
-        expect(out).toEqual({ kind: 'already_terminal', targetRunId: ROOT, lifecycle: 'stopped' });
+        expect(out).toEqual({
+          kind: 'already_terminal',
+          targetRunId: ROOT,
+          lifecycle: 'stopped',
+          cleanup: { kind: 'released' },
+        });
       });
 
       it('skips a non-running descendant in the force loop but still forces the root', async () => {
