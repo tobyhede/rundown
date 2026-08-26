@@ -204,6 +204,15 @@ export interface ExecutionLoopOptions {
    * Return diagnosed refusals as data instead of rendering a stopped result.
    * Used by inline parent advancement, which must stop its upward walk when no
    * terminal transition was applied.
+   *
+   * One hand-back path is deliberately exempt, and a reader should not assume
+   * every refusal travels as data: a transactional fence refusal stays a
+   * diagnostic-emitting `blocked` result. It emits `ERROR_OCCURRED` carrying
+   * `transactionalRefusalCode(...)` and returns `blocked` rather than a typed
+   * refusal, so its code reaches the caller through the event stream instead of
+   * the return value. The drain-mismatch and frontier paths do the reverse —
+   * they return `{ status: 'refused', refusal }` and emit nothing. Both channels
+   * preserve fail-closed severity; they differ only in where the code is read.
    */
   readonly returnRefusals?: true;
   /** Optional actor service test seam. */
