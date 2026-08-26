@@ -7481,7 +7481,7 @@ describe('RunbookLifecycleCommandService', () => {
         );
         // The claim survives the addressed release as Terminal Evidence.
         expect(
-          (await manager.loadSession()).claims[claimKeyFromBearer(claimId)]?.controlledRunId,
+          (await manager.loadSession()).claims[claimKeyFromBearer(claimId)].controlledRunId,
         ).toBe(claimChildRunId);
       });
 
@@ -8519,7 +8519,7 @@ describe('RunbookLifecycleCommandService', () => {
         await issueRunControlClaimFor(CHILD);
         installResolvedPlan(root, [root]);
         const releaseSpy = jest.spyOn(sessionService, 'releaseAlreadyTerminal');
-        const legacyReleaseSpy = jest.spyOn(sessionService, 'releaseRuns');
+        const unfencedReleaseSpy = jest.spyOn(sessionService, 'releaseRuns');
 
         const out = await seam.runTerminal({
           command: 'stop',
@@ -8534,7 +8534,7 @@ describe('RunbookLifecycleCommandService', () => {
         });
         expect((await sessionService.getActive())?.id).toBe(ROOT);
         expect(releaseSpy).not.toHaveBeenCalled();
-        expect(legacyReleaseSpy).not.toHaveBeenCalled();
+        expect(unfencedReleaseSpy).not.toHaveBeenCalled();
       });
 
       it('bare stop maps an already-stopped resolved root to already_terminal (stopped)', async () => {

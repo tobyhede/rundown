@@ -1955,19 +1955,21 @@ export class SessionService {
       releases.map(({ runId }) => runId),
       (ctx): AlreadyTerminalReleaseOutcome => {
         if (fence.claim !== undefined) {
-          const record = ctx.session.claims[fence.claim.claimKey];
           // Presence at the same key AND unchanged controlled run: a rotation
           // deletes the record (a fresh mint lives at a fresh key), so either
           // check failing means the presented bearer stopped being authority
           // after the caller's read.
-          if (record === undefined || record.controlledRunId !== fence.claim.controlledRunId) {
+          if (
+            !Object.hasOwn(ctx.session.claims, fence.claim.claimKey) ||
+            ctx.session.claims[fence.claim.claimKey].controlledRunId !== fence.claim.controlledRunId
+          ) {
             return { kind: 'claim_rotated', claimKey: fence.claim.claimKey };
           }
         }
         const state = ctx.readState(fence.runId);
         // Terminal is a sink, so a mismatch here means the run was pruned (or
         // the caller's determination never held) — not that it "un-terminated".
-        if (state === null || state.lifecycle !== fence.lifecycle) {
+        if (state?.lifecycle !== fence.lifecycle) {
           return {
             kind: 'determination_lost',
             runId: fence.runId,

@@ -17,6 +17,7 @@ import {
 import type {
   ClaimAuthorizationRequest,
   ClaimId,
+  ClaimLookupKey,
   ClaimRecord,
   VerifiedClaimAuthority,
 } from './claim-id.js';
@@ -3031,6 +3032,43 @@ export class RunbookLifecycleCommandService {
     return this.#driveTerminalBare(input, member.state);
   }
 
+  // The shared fenced addressed Run Release for a resolved already-terminal
+  // claim (#734): observe the holder, then revalidate the resolver's terminal
+  // determination and the bearer's authority inside the transaction that
+  // projects the release, so a claim rotated after resolution is refused rather
+  // than released under. Returns the refusal outcome, or undefined when the
+  // release committed and the arm should report its own success shape.
+  async #releaseResolvedTerminalClaim(
+    callerEvidence: CallerEvidence,
+    resolution: {
+      readonly claimId: ClaimId;
+      readonly claim: { readonly claimKey: ClaimLookupKey; readonly controlledRunId: RunId };
+      readonly state: RunbookState;
+      readonly lifecycle: 'completed' | 'stopped';
+    },
+  ): Promise<LifecycleTerminalOutcome | undefined> {
+    const { sessionService } = this.#deps;
+    if (callerEvidence.kind === 'claim_bearer') {
+      await sessionService.recordClaimSeen(callerEvidence.claimId);
+    }
+    const release = await sessionService.releaseAlreadyTerminal(
+      {
+        runId: resolution.state.id,
+        lifecycle: resolution.lifecycle,
+        claim: {
+          claimKey: resolution.claim.claimKey,
+          controlledRunId: resolution.claim.controlledRunId,
+        },
+      },
+      [{ runId: resolution.state.id, role: 'addressed' }],
+    );
+    if (release.kind !== 'committed') return release;
+    if (release.value.kind !== 'released') {
+      return staleClaimFromFenceRefusal(resolution.claimId, release.value);
+    }
+    return undefined;
+  }
+
   // Claim-path terminal: resolve confirm/conflict, else FORCE the live child,
   // record its outcome (core-derived) BEFORE releasing with a retained tombstone.
   async #driveTerminalClaim(
@@ -3056,28 +3094,8 @@ export class RunbookLifecycleCommandService {
         // later --claim-id can confirm/conflict again (item 4, second site).
         // The resolver verified and authorized the bearer before confirming the
         // prior terminal outcome, so the presentation still proves liveness.
-        if (input.callerEvidence.kind === 'claim_bearer') {
-          await sessionService.recordClaimSeen(input.callerEvidence.claimId);
-        }
-        // Fenced (#734): the resolver's terminal determination and the bearer's
-        // authority are revalidated inside the transaction that projects this
-        // addressed Run Release, so a claim rotated after resolution is refused
-        // rather than released under.
-        const release = await sessionService.releaseAlreadyTerminal(
-          {
-            runId: resolution.state.id,
-            lifecycle: resolution.lifecycle,
-            claim: {
-              claimKey: resolution.claim.claimKey,
-              controlledRunId: resolution.claim.controlledRunId,
-            },
-          },
-          [{ runId: resolution.state.id, role: 'addressed' }],
-        );
-        if (release.kind !== 'committed') return release;
-        if (release.value.kind !== 'released') {
-          return staleClaimFromFenceRefusal(resolution.claimId, release.value);
-        }
+        const refusal = await this.#releaseResolvedTerminalClaim(input.callerEvidence, resolution);
+        if (refusal !== undefined) return refusal;
         return {
           kind: 'terminal_claim_confirmed',
           claimId: resolution.claimId,
@@ -3088,27 +3106,10 @@ export class RunbookLifecycleCommandService {
       case 'terminal_claim_conflict': {
         // A confirmed terminal conflict is also post-authorization evidence from
         // the claim's holder, despite refusing the requested terminal result.
-        if (input.callerEvidence.kind === 'claim_bearer') {
-          await sessionService.recordClaimSeen(input.callerEvidence.claimId);
-        }
-        // Fenced (#734) exactly as the confirmed arm: the conflict still
-        // addresses the run the bearer acted on, so its Run Release rests on the
-        // same determination facts and must be refused when they lapse.
-        const release = await sessionService.releaseAlreadyTerminal(
-          {
-            runId: resolution.state.id,
-            lifecycle: resolution.lifecycle,
-            claim: {
-              claimKey: resolution.claim.claimKey,
-              controlledRunId: resolution.claim.controlledRunId,
-            },
-          },
-          [{ runId: resolution.state.id, role: 'addressed' }],
-        );
-        if (release.kind !== 'committed') return release;
-        if (release.value.kind !== 'released') {
-          return staleClaimFromFenceRefusal(resolution.claimId, release.value);
-        }
+        // The conflict still addresses the run the bearer acted on, so its Run
+        // Release rests on the same determination facts as the confirmed arm.
+        const refusal = await this.#releaseResolvedTerminalClaim(input.callerEvidence, resolution);
+        if (refusal !== undefined) return refusal;
         return {
           kind: 'terminal_claim_conflict',
           claimId: resolution.claimId,
