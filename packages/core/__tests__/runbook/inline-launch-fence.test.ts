@@ -4,12 +4,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { SessionService } from '../../src/runbook/session-service.js';
-import type { Runbook } from '../../src/runbook/types.js';
+import type { Runbook, RunbookState } from '../../src/runbook/types.js';
 import { buildFrameKey, findSubstepState } from '../../src/runbook/targeting.js';
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
 import type { CapturedAuthority } from '../../src/runbook/storage/mutation-result.js';
-import { markInlineSubstepLaunched } from '../../src/runbook/inline-launch-fence.js';
+import {
+  inlineTargetAlreadyResolved,
+  markInlineSubstepLaunched,
+} from '../../src/runbook/inline-launch-fence.js';
+import { DEFAULT_MUTATE_ATTEMPTS } from '../../src/runbook/storage/runbook-store.js';
+import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
 
 describe('inline launch fence (#714)', () => {
   let testDir: string;
@@ -36,7 +41,10 @@ describe('inline launch fence (#714)', () => {
     await rm(testDir, { recursive: true, force: true });
   });
 
-  async function makeClaimedParent(): Promise<{ parentId: string; authority: CapturedAuthority }> {
+  async function makeClaimedParent(): Promise<{
+    parentId: RunbookState['id'];
+    authority: CapturedAuthority;
+  }> {
     const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
       runbookPath: 'parent.md',
     });
@@ -98,6 +106,55 @@ describe('inline launch fence (#714)', () => {
     expect(findSubstepState(state?.substepStates ?? [], SUBSTEP, FRAME)).toBeUndefined();
   });
 
+  it('refuses claim_superseded when the generation advances under the SAME claim key', async () => {
+    const { parentId, authority } = await makeClaimedParent();
+    // The tombstoning rotation above is caught by the capture itself; this is
+    // the other rotation class — the run's claim generation moves while the
+    // original key still resolves active. Any update of a claim's guarded
+    // columns bumps the run's counter (`claims_bump_gen_update`), so touch the
+    // claim row directly, exactly as a grant rewrite would.
+    const store = await getRunbookStore(testDir);
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare('UPDATE claims SET grants_json = grants_json WHERE controlled_run = :runId')
+        .run({ runId: parentId });
+      return 'committed' as const;
+    });
+
+    const out = await markInlineSubstepLaunched(manager, markInput(authority));
+
+    expect(out).toMatchObject({ kind: 'claim_superseded', runId: parentId });
+    const state = await manager.load(parentId);
+    expect(findSubstepState(state?.substepStates ?? [], SUBSTEP, FRAME)).toBeUndefined();
+  });
+
+  it('returns a permanent commit refusal after exactly one attempt', async () => {
+    const { parentId, authority } = await makeClaimedParent();
+    // Only the ambiguous `concurrent_modification` arm may retry; a permanent
+    // refusal retried under the same facts is the shape CLAUDE.md forbids. The
+    // deps seam is the injection point, so a structural double is the honest
+    // witness here — the real store cannot be made to refuse this arm without
+    // an execution lease the fixture has no business taking.
+    const envelope = {
+      kind: 'execution_in_progress',
+      runId: parentId,
+      message: `Run ${parentId} has an execution in progress.`,
+    } as const;
+    let saveCalls = 0;
+    const deps = {
+      captureAuthorityState: manager.captureAuthorityState.bind(manager),
+      saveState: async () => {
+        saveCalls += 1;
+        return envelope;
+      },
+    };
+
+    const out = await markInlineSubstepLaunched(deps, markInput(authority));
+
+    expect(out).toEqual(envelope);
+    expect(saveCalls).toBe(1);
+  });
+
   it('derives against the committed row when an unrelated write lands before the mark', async () => {
     const { parentId, authority } = await makeClaimedParent();
     // Same claim generation, new state version and a sibling substep row: the
@@ -153,7 +210,7 @@ describe('inline launch fence (#714)', () => {
     // observe.
     let bump = 0;
     const realSave = manager.saveState.bind(manager);
-    jest.spyOn(manager, 'saveState').mockImplementation(async (captured, next) => {
+    const saveSpy = jest.spyOn(manager, 'saveState').mockImplementation(async (captured, next) => {
       bump += 1;
       // Any authoritative rewrite bumps the version via the state_json trigger,
       // so a rotating sibling row keeps every attempt stale without touching
@@ -169,9 +226,72 @@ describe('inline launch fence (#714)', () => {
     const out = await markInlineSubstepLaunched(manager, markInput(authority));
 
     expect(out).toMatchObject({ kind: 'concurrent_modification', runId: parentId });
+    // Exactly the store's exported budget — not one attempt more (the pacing
+    // and the budget both come from the store, so a drift here is a drift from
+    // the cycle this loop mirrors).
+    expect(saveSpy).toHaveBeenCalledTimes(DEFAULT_MUTATE_ATTEMPTS);
     const state = await manager.load(parentId);
     expect(findSubstepState(state?.substepStates ?? [], SUBSTEP, FRAME)).toBeUndefined();
   }, 15_000);
+
+  describe('inlineTargetAlreadyResolved', () => {
+    // The decision table, pinned directly: the fence consults this on every
+    // attempt, and run.ts's pre-read guard shares it, so its arms must hold
+    // independently of either caller.
+    async function parentStateWith(
+      overrides: Partial<Pick<RunbookState, 'substepStates' | 'activeFrameKey' | 'substep'>>,
+    ): Promise<RunbookState> {
+      const { parentId } = await makeClaimedParent();
+      const state = await manager.load(parentId);
+      if (state === null) throw new Error('expected parent state');
+      return { ...state, ...overrides };
+    }
+
+    it('resolves done rows and respects frame identity', async () => {
+      const done = await parentStateWith({
+        substepStates: [{ id: SUBSTEP, frameKey: FRAME, status: 'done', result: 'pass' }],
+      });
+      expect(inlineTargetAlreadyResolved(done, SUBSTEP, FRAME, ORDERED)).toBe(true);
+      // A running row is not resolved.
+      const running = await parentStateWith({
+        substepStates: [{ id: SUBSTEP, frameKey: FRAME, status: 'running' }],
+      });
+      expect(inlineTargetAlreadyResolved(running, SUBSTEP, FRAME, ORDERED)).toBe(false);
+      // A done row in ANOTHER frame does not resolve this frame's target.
+      const otherFrame = await parentStateWith({
+        substepStates: [
+          { id: SUBSTEP, frameKey: buildFrameKey('9'), status: 'done', result: 'pass' },
+        ],
+      });
+      expect(inlineTargetAlreadyResolved(otherFrame, SUBSTEP, FRAME, ORDERED)).toBe(false);
+    });
+
+    it('applies the cursor check only inside the active frame with a known cursor', async () => {
+      // Cursor past the target: resolved.
+      const past = await parentStateWith({ activeFrameKey: FRAME, substep: '1.2' });
+      expect(inlineTargetAlreadyResolved(past, SUBSTEP, FRAME, ORDERED)).toBe(true);
+      // Cursor AT the target: not resolved.
+      const at = await parentStateWith({ activeFrameKey: FRAME, substep: SUBSTEP });
+      expect(inlineTargetAlreadyResolved(at, SUBSTEP, FRAME, ORDERED)).toBe(false);
+      // Inactive frame: the cursor says nothing about this frame.
+      const inactive = await parentStateWith({
+        activeFrameKey: buildFrameKey('9'),
+        substep: '1.2',
+      });
+      expect(inlineTargetAlreadyResolved(inactive, SUBSTEP, FRAME, ORDERED)).toBe(false);
+      // No cursor at all: nothing to compare.
+      const cursorless = await parentStateWith({ activeFrameKey: FRAME });
+      expect(inlineTargetAlreadyResolved(cursorless, SUBSTEP, FRAME, ORDERED)).toBe(false);
+      // No substeps on the step: the check is disabled.
+      const noOrder = await parentStateWith({ activeFrameKey: FRAME, substep: '1.2' });
+      expect(inlineTargetAlreadyResolved(noOrder, SUBSTEP, FRAME, [])).toBe(false);
+      // Unknown cursor or target id (-1): state may be mid-transition — skip.
+      const unknownCursor = await parentStateWith({ activeFrameKey: FRAME, substep: '9.9' });
+      expect(inlineTargetAlreadyResolved(unknownCursor, SUBSTEP, FRAME, ORDERED)).toBe(false);
+      const unknownTarget = await parentStateWith({ activeFrameKey: FRAME, substep: '1.2' });
+      expect(inlineTargetAlreadyResolved(unknownTarget, '9.9', FRAME, ORDERED)).toBe(false);
+    });
+  });
 
   it('touches only the linkage-named substep row of the named parent (#714 write scope)', async () => {
     const { parentId, authority } = await makeClaimedParent();

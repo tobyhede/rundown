@@ -162,7 +162,15 @@ export async function markInlineSubstepLaunched(
   input: InlineLaunchMarkInput,
 ): Promise<InlineLaunchMarkOutcome> {
   const { authority, parentStepId, parentFrameKey, targetSubstepIds } = input;
-  let lastRefusal: InlineLaunchMarkRefusal | undefined;
+  // Initialized to the outcome an exhausted budget reports. Every committed or
+  // permanent arm returns out of the loop, so this value survives only when
+  // all attempts refused `concurrent_modification` — and each such refusal
+  // replaces it, so the store's own last refusal is what the caller receives.
+  let lastRefusal: InlineLaunchMarkRefusal = {
+    kind: 'concurrent_modification',
+    runId: authority.runId,
+    message: `Run ${authority.runId} was modified concurrently.`,
+  };
   // Zero-based, exactly as the store paces its own cycle: `mutateBackoffMs`
   // documents a zero-based index, and there is no pause after the final
   // attempt — a sleep nothing follows would only delay the refusal.
@@ -204,16 +212,12 @@ export async function markInlineSubstepLaunched(
       return result;
     }
     lastRefusal = result;
+    // Stryker disable next-line ConditionalExpression: timing-only — this guard
+    // paces the retries and skips the pause nothing follows; it can never
+    // change which outcome is returned.
     if (attempt < DEFAULT_MUTATE_ATTEMPTS - 1) {
       await delay(mutateBackoffMs(attempt));
     }
   }
-  // The loop always assigns before exhausting, but the compiler cannot see it.
-  return (
-    lastRefusal ?? {
-      kind: 'concurrent_modification',
-      runId: authority.runId,
-      message: `Run ${authority.runId} was modified concurrently.`,
-    }
-  );
+  return lastRefusal;
 }
