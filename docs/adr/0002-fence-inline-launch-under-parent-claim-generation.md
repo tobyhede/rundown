@@ -20,12 +20,12 @@ exemption: it resolved the parent from the active session and wrote its
 exemption was implicit, which is how it survived a design issue that ostensibly
 covered it (#574 criterion 6 passed literally while the property a reader would
 infer did not hold). Issue #714 requires the decision to be explicit: documented
-trust boundary, or authorised path.
+trust boundary, or authorized path.
 
 ## Decision
 
 The mutation is fenced under the parent's own run-control claim generation —
-authorised minimally, with the trust boundary that remains documented
+authorized minimally, with the trust boundary that remains documented
 explicitly.
 
 - At linkage determination, the launch captures the parent's active controlling

@@ -489,3 +489,5 @@ terminality
 terminalize
 terminalizing
 targetability
+parentless
+cursorless

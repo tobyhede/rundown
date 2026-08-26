@@ -916,7 +916,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
     ] as const)(
       'surfaces a fenced %s envelope through the generic launch failure',
       async (kind, phrase) => {
-        // Ownership envelopes are pass-throughs: the fence hands them back as
+        // Ownership envelopes pass through as themselves: the fence hands them back as
         // themselves and the launch surfaces them through the generic rollback,
         // whose retry-once-freed remediation is the right one. Injected at the
         // commit seam — the real store cannot be made to refuse these arms
