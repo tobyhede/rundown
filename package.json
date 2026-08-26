@@ -101,7 +101,7 @@
     "node": ">=24.0.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.7",
+    "@biomejs/biome": "2.5.8",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.2.0",
     "glob": "^13.0.6",
@@ -113,17 +113,17 @@
     "@astrojs/react": "^6.0.1",
     "cspell": "^10.0.1",
     "eslint": "^10.8.1",
-    "eslint-plugin-jsdoc": "^64.1.0",
-    "globals": "^17.7.0",
-    "astro": "^7.2.0",
+    "eslint-plugin-jsdoc": "^64.2.0",
+    "globals": "^17.11.0",
+    "astro": "^7.2.2",
     "husky": "^9.1.7",
     "lint-staged": "^17.1.0",
     "npm-run-all2": "^9.0.2",
     "prettier": "^3.9.5",
     "tsx": "^4.23.12",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.64.0",
-    "@typescript-eslint/utils": "^8.64.0",
+    "typescript-eslint": "^8.67.0",
+    "@typescript-eslint/utils": "^8.67.0",
     "xstate": "^5.32.5"
   }
 }
