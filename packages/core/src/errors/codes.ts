@@ -562,13 +562,16 @@ export const ErrorCodes = {
   INLINE_PARENT_CLAIM_SUPERSEDED: {
     code: 'RD-834',
     category: ErrorCategory.DELEGATION,
-    title: 'Inline parent re-claimed before the launch attached',
+    title: "Inline parent's controlling authority lapsed before the launch attached",
     description:
-      `The inline launch captured the composing parent's controlling run-control ` +
-      `claim when it resolved the linkage, and by the time the substep mark ` +
-      `committed that claim had been rotated or no longer controlled the parent — ` +
-      `the parent now belongs to a different orchestrator (ADR 0002). Nothing was ` +
-      `attached and the child run was rolled back. Do not retry blindly: the ` +
+      `The inline launch fences its substep mark under the composing parent's ` +
+      `controlling run-control claim, captured when the linkage is resolved ` +
+      `(ADR 0002). This refusal fires when that authority cannot be established ` +
+      `or does not hold: at determination, when no live claim controls the ` +
+      `parent (or the parent run itself is gone) — refused before any child run ` +
+      `is created; or at commit, when the captured claim was rotated in the ` +
+      `window — the parent now belongs to a different orchestrator, nothing was ` +
+      `attached, and the child run was rolled back. Do not retry blindly: the ` +
       `orchestrator that now holds the parent owns its progression. If this ` +
       `process should own the parent, re-acquire control (claim or restart the ` +
       `parent) and launch again.`,

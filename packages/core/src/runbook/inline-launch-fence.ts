@@ -163,7 +163,10 @@ export async function markInlineSubstepLaunched(
 ): Promise<InlineLaunchMarkOutcome> {
   const { authority, parentStepId, parentFrameKey, targetSubstepIds } = input;
   let lastRefusal: InlineLaunchMarkRefusal | undefined;
-  for (let attempt = 1; attempt <= DEFAULT_MUTATE_ATTEMPTS; attempt += 1) {
+  // Zero-based, exactly as the store paces its own cycle: `mutateBackoffMs`
+  // documents a zero-based index, and there is no pause after the final
+  // attempt — a sleep nothing follows would only delay the refusal.
+  for (let attempt = 0; attempt < DEFAULT_MUTATE_ATTEMPTS; attempt += 1) {
     const captured = await deps.captureAuthorityState(authority.runId, authority.claimKey);
     if (captured.kind !== 'captured') {
       // 'missing' or 'claim_superseded' — permanent for this launch.
@@ -201,7 +204,9 @@ export async function markInlineSubstepLaunched(
       return result;
     }
     lastRefusal = result;
-    await delay(mutateBackoffMs(attempt));
+    if (attempt < DEFAULT_MUTATE_ATTEMPTS - 1) {
+      await delay(mutateBackoffMs(attempt));
+    }
   }
   // The loop always assigns before exhausting, but the compiler cannot see it.
   return (

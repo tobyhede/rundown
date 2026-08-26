@@ -11,9 +11,7 @@ import {
   getErrorMessage,
   deriveActiveFrame,
   buildFrameKey,
-  type FrameKey,
   findSubstepState,
-  upsertSubstepState,
   buildContextSnapshot,
   reconstituteContextVars,
   extractInheritedUserVars,
@@ -22,6 +20,7 @@ import {
   markInlineSubstepLaunched,
   Errors,
   type CapturedAuthority,
+  type ErrorCodeKey,
   type InlineLinkage,
   type IterationBinding,
   type ParentLinkage,
@@ -235,7 +234,13 @@ export function registerRunCommand(program: Command): void {
             // happens inside the `afterInit` closure, which control-flow analysis
             // does not track, so a plain field reads as permanently unset at the
             // check.
-            const inlineLaunchRefusal: { message: string | null; code: string } = {
+            const inlineLaunchRefusal: {
+              message: string | null;
+              code: Extract<
+                ErrorCodeKey,
+                'DELEGATION_ALREADY_RESOLVED' | 'INLINE_PARENT_CLAIM_SUPERSEDED'
+              >;
+            } = {
               message: null,
               code: 'DELEGATION_ALREADY_RESOLVED',
             };

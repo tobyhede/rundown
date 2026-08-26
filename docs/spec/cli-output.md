@@ -381,10 +381,11 @@ at linkage determination, and the substep mark commits only under that claim
 generation. The refusal fires when no live claim controls the parent at
 determination, or when the parent is re-claimed between determination and the
 fenced commit. It is permanent for the launch that received it — nothing was
-attached, the child run is rolled back, and the parent's current orchestrator
-owns its progression. `DELEGATION_ALREADY_RESOLVED` remains the refusal for a
-target substep that resolved in the same window; the two are distinct facts (the
-parent changed hands vs. the work was already done).
+attached; a determination-time refusal fires before any child run is created,
+and a commit-time refusal rolls the created child run back. The parent's current
+orchestrator owns its progression. `DELEGATION_ALREADY_RESOLVED` remains the
+refusal for a target substep that resolved in the same window; the two are
+distinct facts (the parent changed hands vs. the work was already done).
 
 `INLINE_CHILD_FRAME_SUPERSEDED` is the one refusal in that set an ordinary
 gesture reaches. A self-targeting `GOTO` or `RETRY` re-enters the parent's frame
