@@ -3594,7 +3594,29 @@ export class RunbookLifecycleCommandService {
     });
     if (aggregate.kind !== 'committed') return aggregate;
     if (aggregate.value.kind === 'already_terminal') {
-      const release = await sessionService.releaseRuns(releasesForInlineChain(plan));
+      // The aggregate's write-free `already_terminal` return skips the
+      // declarative `releases:` commit, so the cleanup happens here — through
+      // the SAME fenced seam as the plan-time already-terminal arm, so no
+      // already-terminal Run Release is left on the unfenced path (#597). The
+      // fence names the lifecycle the capture observed and the hoisted
+      // presented bearer; a fence that lapsed between capture and this commit
+      // skips the cleanup and preserves the pre-existing outcome, exactly as
+      // the plan-time arm does.
+      const release = await sessionService.releaseAlreadyTerminal(
+        {
+          runId: plan.targetState.id,
+          lifecycle: aggregate.value.lifecycle,
+          ...(presentedClaim !== undefined
+            ? {
+                claim: {
+                  claimKey: presentedClaim.claimKey,
+                  controlledRunId: presentedClaim.controlledRunId,
+                },
+              }
+            : {}),
+        },
+        releasesForInlineChain(plan),
+      );
       if (release.kind !== 'committed') return release;
     }
     return aggregate.value;
