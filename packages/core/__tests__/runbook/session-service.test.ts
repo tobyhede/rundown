@@ -731,6 +731,38 @@ describe('SessionService', () => {
         expect(session.claims[rotated.claim.claimKey]).toBeDefined();
       });
 
+      it('refuses claim_rotated when the surviving record controls a different run than captured', async () => {
+        const state = await manager.create({ source: 'project', path: 'moved.md' }, mockRunbook, {
+          runbookPath: 'moved.md',
+        });
+        const other = await manager.create({ source: 'project', path: 'other.md' }, mockRunbook, {
+          runbookPath: 'other.md',
+        });
+        const minted = unwrapSessionMutation(
+          await sessionService.pushRunbookWithRunControlClaim(state.id),
+        );
+        await manager.update(state.id, { lifecycle: 'completed' });
+
+        // The record survives at the fenced key but the capture named a
+        // different controlled run: the fence facts do not describe the live
+        // claim, so the release must refuse — presence alone is not authority.
+        const out = unwrapSessionMutation(
+          await sessionService.releaseAlreadyTerminal(
+            {
+              runId: state.id,
+              lifecycle: 'completed',
+              claim: { claimKey: minted.claim.claimKey, controlledRunId: other.id },
+            },
+            [{ runId: state.id, role: 'addressed' }],
+          ),
+        );
+
+        expect(out).toEqual({ kind: 'claim_rotated', claimKey: minted.claim.claimKey });
+        const session = await manager.loadSession();
+        expect(session.defaultStack).toEqual([state.id]);
+        expect(session.claims[minted.claim.claimKey]).toBeDefined();
+      });
+
       it('refuses determination_lost when the fenced run does not hold the observed lifecycle', async () => {
         const state = await manager.create(
           { source: 'project', path: 'still-on.md' },

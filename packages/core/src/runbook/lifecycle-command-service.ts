@@ -1359,8 +1359,11 @@ function staleClaimFromFenceRefusal(
           `longer available as resolved. Nothing was released.`,
         code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
       };
+    // Stryker disable next-line all: unreachable — the exhaustive `never` arm
     default: {
+      // Stryker disable next-line all: unreachable — the exhaustive `never` arm
       const _exhaustive: never = refusal;
+      // Stryker disable next-line all: unreachable — the exhaustive `never` arm
       return _exhaustive;
     }
   }
@@ -3038,19 +3041,17 @@ export class RunbookLifecycleCommandService {
   // projects the release, so a claim rotated after resolution is refused rather
   // than released under. Returns the refusal outcome, or undefined when the
   // release committed and the arm should report its own success shape.
-  async #releaseResolvedTerminalClaim(
-    callerEvidence: CallerEvidence,
-    resolution: {
-      readonly claimId: ClaimId;
-      readonly claim: { readonly claimKey: ClaimLookupKey; readonly controlledRunId: RunId };
-      readonly state: RunbookState;
-      readonly lifecycle: 'completed' | 'stopped';
-    },
-  ): Promise<LifecycleTerminalOutcome | undefined> {
+  // `resolution.claimId` IS the presented bearer: `reconcileClaimTarget` refuses
+  // `claim_bearer_mismatch` before dispatch unless the caller's evidence names
+  // exactly this claim, so the holder observation needs no evidence re-check.
+  async #releaseResolvedTerminalClaim(resolution: {
+    readonly claimId: ClaimId;
+    readonly claim: { readonly claimKey: ClaimLookupKey; readonly controlledRunId: RunId };
+    readonly state: RunbookState;
+    readonly lifecycle: 'completed' | 'stopped';
+  }): Promise<LifecycleTerminalOutcome | undefined> {
     const { sessionService } = this.#deps;
-    if (callerEvidence.kind === 'claim_bearer') {
-      await sessionService.recordClaimSeen(callerEvidence.claimId);
-    }
+    await sessionService.recordClaimSeen(resolution.claimId);
     const release = await sessionService.releaseAlreadyTerminal(
       {
         runId: resolution.state.id,
@@ -3094,7 +3095,7 @@ export class RunbookLifecycleCommandService {
         // later --claim-id can confirm/conflict again (item 4, second site).
         // The resolver verified and authorized the bearer before confirming the
         // prior terminal outcome, so the presentation still proves liveness.
-        const refusal = await this.#releaseResolvedTerminalClaim(input.callerEvidence, resolution);
+        const refusal = await this.#releaseResolvedTerminalClaim(resolution);
         if (refusal !== undefined) return refusal;
         return {
           kind: 'terminal_claim_confirmed',
@@ -3108,7 +3109,7 @@ export class RunbookLifecycleCommandService {
         // the claim's holder, despite refusing the requested terminal result.
         // The conflict still addresses the run the bearer acted on, so its Run
         // Release rests on the same determination facts as the confirmed arm.
-        const refusal = await this.#releaseResolvedTerminalClaim(input.callerEvidence, resolution);
+        const refusal = await this.#releaseResolvedTerminalClaim(resolution);
         if (refusal !== undefined) return refusal;
         return {
           kind: 'terminal_claim_conflict',

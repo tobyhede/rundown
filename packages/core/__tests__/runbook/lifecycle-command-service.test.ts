@@ -7506,12 +7506,19 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'claim', claimId },
         });
         // Permanent refusal, never `concurrent_modification`: a rotated claim can
-        // never become authority again, so "Retry." would be a lie.
+        // never become authority again, so "Retry." would be a lie. The message
+        // is the rotation wording, not the lost-determination one — the two
+        // share a code, so the sentence is what tells the holder which fact
+        // lapsed.
         expect(out).toMatchObject({
           kind: 'stale_claim',
           claimId,
           code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
         });
+        expect(out).toHaveProperty(
+          'message',
+          expect.stringContaining('released or replaced and is no longer authority'),
+        );
         // Nothing was released under the rotated-out claim: the run is still
         // targeted, and the rotated-in run-control claim survives as authority.
         const session = await manager.loadSession();
@@ -7519,6 +7526,55 @@ describe('RunbookLifecycleCommandService', () => {
         expect(
           Object.values(session.claims).some((claim) => claim.controlledRunId === claimChildRunId),
         ).toBe(true);
+      });
+
+      it('maps a lost terminal determination onto the no-retry stale-claim refusal', async () => {
+        const claimId = await setupClaim('completed');
+        // `determination_lost` with a claim-carrying fence is defensive: pruning
+        // the run cascades its claims away, so the rotation check fires first on
+        // every constructible interleaving. The mapping is still part of the
+        // seam's contract, so inject the outcome at the fenced release boundary
+        // itself and pin how the claim path surfaces it.
+        jest.spyOn(sessionService, 'releaseAlreadyTerminal').mockResolvedValueOnce({
+          kind: 'committed',
+          value: { kind: 'determination_lost', runId: claimChildRunId, lifecycle: 'completed' },
+        });
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: presentedBy(claimId),
+          targetSelector: { kind: 'claim', claimId },
+        });
+        // Permanent refusal: the run is no longer available as resolved, and a
+        // retry under the same presentation cannot succeed.
+        expect(out).toMatchObject({
+          kind: 'stale_claim',
+          claimId,
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+        });
+        expect(out).toHaveProperty(
+          'message',
+          expect.stringContaining(`names run ${claimChildRunId}`),
+        );
+        expect(out).toHaveProperty('message', expect.stringContaining('Nothing was released.'));
+      });
+
+      it('passes a non-committed release envelope through as itself', async () => {
+        const claimId = await setupClaim('completed');
+        // The guarded session mutation can refuse `execution_in_progress` /
+        // `recovery_required`; the claim path must hand that envelope back
+        // unwrapped rather than reading a value it does not carry.
+        const envelope = {
+          kind: 'execution_in_progress',
+          runId: claimChildRunId,
+          message: `Run ${claimChildRunId} has an execution in progress.`,
+        } as const;
+        jest.spyOn(sessionService, 'releaseAlreadyTerminal').mockResolvedValueOnce(envelope);
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: presentedBy(claimId),
+          targetSelector: { kind: 'claim', claimId },
+        });
+        expect(out).toEqual(envelope);
       });
 
       it('claim complete on a stopped child conflicts (no FORCE, still retains)', async () => {
@@ -7965,6 +8021,7 @@ describe('RunbookLifecycleCommandService', () => {
     describe('bare path', () => {
       const ROOT = assertRunId('rd_77777777777777777777777777777777');
       const CHILD = assertRunId('rd_88888888888888888888888888888888');
+      const INNER = assertRunId('rd_99999999999999999999999999999999');
       // A delegating parent OUTSIDE the inline force order. The bare cascade
       // owns the inline chain; a run that delegated the chain's root is not a
       // member of it, and appending it opportunistically is the arm below.
@@ -8431,6 +8488,69 @@ describe('RunbookLifecycleCommandService', () => {
         );
       });
 
+      it('cleans up the already-terminal chain for an ambient caller with a claim-free fence', async () => {
+        // Multi-member on purpose: an ambient caller must never be probed for
+        // descendant authority (there is no claim to consult), and only a chain
+        // with a non-root member can observe that probe being skipped.
+        const inner = baseState({ id: INNER, lifecycle: 'completed' });
+        const root = baseState({ id: ROOT, lifecycle: 'completed' });
+        await manager.save(inner);
+        await manager.save(root);
+        installResolvedPlan(root, [inner, root]);
+        const releaseSpy = jest.spyOn(sessionService, 'releaseAlreadyTerminal');
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: { kind: 'plugin', agentId: 'a' },
+          targetSelector: { kind: 'default' },
+        });
+        expect(out).toEqual({
+          kind: 'already_terminal',
+          targetRunId: ROOT,
+          lifecycle: 'completed',
+        });
+        // No presented bearer means no claim fact to fence: the fence carries
+        // exactly the terminal determination and nothing else.
+        expect(releaseSpy).toHaveBeenCalledWith({ runId: ROOT, lifecycle: 'completed' }, [
+          { runId: INNER, role: 'collateral' },
+          { runId: ROOT, role: 'addressed' },
+        ]);
+      });
+
+      it("authorizes an inline descendant's run-control bearer to clean up its chain", async () => {
+        // A run-control claim for an inline DESCENDANT may also force the chain
+        // it is executing within — that is the same active inline execution, not
+        // authority over an unrelated run. The fence then names the descendant
+        // claim's own coordinates, so a rotation of THAT claim is what refuses.
+        const child = baseState({ id: CHILD, lifecycle: 'completed' });
+        const root = baseState({ id: ROOT, lifecycle: 'completed' });
+        await manager.save(child);
+        await manager.save(root);
+        await issueRunControlClaimFor(CHILD);
+        installResolvedPlan(root, [child, root]);
+        const releaseSpy = jest.spyOn(sessionService, 'releaseAlreadyTerminal');
+
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: runControlEvidence(CHILD),
+          targetSelector: { kind: 'default' },
+        });
+
+        expect(out).toMatchObject({ kind: 'already_terminal', targetRunId: ROOT });
+        const childClaimId = issuedRunControlClaims.get(CHILD);
+        if (childClaimId === undefined) throw new Error(`expected run-control claim for ${CHILD}`);
+        expect(releaseSpy).toHaveBeenCalledWith(
+          {
+            runId: ROOT,
+            lifecycle: 'completed',
+            claim: { claimKey: claimKeyFromBearer(childClaimId), controlledRunId: CHILD },
+          },
+          [
+            { runId: CHILD, role: 'collateral' },
+            { runId: ROOT, role: 'addressed' },
+          ],
+        );
+      });
+
       it('skips the already-terminal chain release when the bearer rotates mid-window', async () => {
         // The bearer authorizes against the resolved root, then its claim is
         // rotated in the window between authorization and the release commit —
@@ -8512,12 +8632,18 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       it('preserves already_terminal without releasing for a foreign run-control bearer', async () => {
+        // A MULTI-member chain matters here: the descendant-authority probe asks
+        // the presented claim about every non-root member, so a chain with only
+        // the root would never consult the claim's grants at all and could not
+        // distinguish a foreign bearer from an authorized descendant.
+        const inner = baseState({ id: INNER, lifecycle: 'completed' });
         const root = baseState({ id: ROOT, lifecycle: 'completed' });
+        await manager.save(inner);
         await manager.save(root);
         await sessionService.pushRunbook(ROOT);
         await manager.save(baseState({ id: CHILD }));
         await issueRunControlClaimFor(CHILD);
-        installResolvedPlan(root, [root]);
+        installResolvedPlan(root, [inner, root]);
         const releaseSpy = jest.spyOn(sessionService, 'releaseAlreadyTerminal');
         const unfencedReleaseSpy = jest.spyOn(sessionService, 'releaseRuns');
 
