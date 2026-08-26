@@ -120,16 +120,21 @@ export function inlineTargetAlreadyResolved(
   frameKey: FrameKey,
   orderedSubstepIds: readonly string[],
 ): boolean {
+  // Stryker disable next-line ArrayDeclaration: equivalent — a non-empty junk
+  // default contains no row shaped like a substep, so the lookup misses either way.
   if (findSubstepState(state.substepStates ?? [], substepId, frameKey)?.status === 'done') {
     return true;
   }
-  if (frameKey !== state.activeFrameKey || !state.substep || orderedSubstepIds.length === 0) {
+  if (frameKey !== state.activeFrameKey || !state.substep) {
     return false;
   }
   const cursorIndex = orderedSubstepIds.indexOf(state.substep);
   const targetIndex = orderedSubstepIds.indexOf(substepId);
-  // If either ID is not found (-1), skip — state may be corrupt or mid-transition.
-  return cursorIndex !== -1 && targetIndex !== -1 && cursorIndex > targetIndex;
+  // An unknown target (-1) never resolves — state may be corrupt or
+  // mid-transition. An unknown or absent cursor needs no guard of its own:
+  // -1 is never greater than a found target's index, and an empty
+  // `orderedSubstepIds` yields -1 for both, so those arms fall out here too.
+  return targetIndex !== -1 && cursorIndex > targetIndex;
 }
 
 /**
@@ -138,6 +143,8 @@ export function inlineTargetAlreadyResolved(
  * @param ms - Milliseconds to pause, from {@link mutateBackoffMs}.
  * @returns A promise resolving after the pause.
  */
+// Stryker disable next-line BlockStatement: timing-only — a pause that resolves
+// immediately changes pacing, never which outcome the fence returns.
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -166,11 +173,15 @@ export async function markInlineSubstepLaunched(
   // permanent arm returns out of the loop, so this value survives only when
   // all attempts refused `concurrent_modification` — and each such refusal
   // replaces it, so the store's own last refusal is what the caller receives.
+  // Stryker disable ObjectLiteral,StringLiteral: unreachable — every iteration
+  // either returns or overwrites this before the tail can read it; the
+  // initializer exists so the loop tail types without a non-null assertion.
   let lastRefusal: InlineLaunchMarkRefusal = {
     kind: 'concurrent_modification',
     runId: authority.runId,
     message: `Run ${authority.runId} was modified concurrently.`,
   };
+  // Stryker restore ObjectLiteral,StringLiteral
   // Zero-based, exactly as the store paces its own cycle: `mutateBackoffMs`
   // documents a zero-based index, and there is no pause after the final
   // attempt — a sleep nothing follows would only delay the refusal.
@@ -212,9 +223,9 @@ export async function markInlineSubstepLaunched(
       return result;
     }
     lastRefusal = result;
-    // Stryker disable next-line ConditionalExpression: timing-only — this guard
-    // paces the retries and skips the pause nothing follows; it can never
-    // change which outcome is returned.
+    // Stryker disable next-line all: timing-only — this guard paces the retries
+    // and skips the pause nothing follows; it can never change which outcome is
+    // returned.
     if (attempt < DEFAULT_MUTATE_ATTEMPTS - 1) {
       await delay(mutateBackoffMs(attempt));
     }

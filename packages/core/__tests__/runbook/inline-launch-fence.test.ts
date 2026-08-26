@@ -124,6 +124,9 @@ describe('inline launch fence (#714)', () => {
     const out = await markInlineSubstepLaunched(manager, markInput(authority));
 
     expect(out).toMatchObject({ kind: 'claim_superseded', runId: parentId });
+    expect(out).toMatchObject({
+      message: expect.stringContaining('claim generation advanced'),
+    });
     const state = await manager.load(parentId);
     expect(findSubstepState(state?.substepStates ?? [], SUBSTEP, FRAME)).toBeUndefined();
   });

@@ -235,15 +235,17 @@ export function registerRunCommand(program: Command): void {
             // does not track, so a plain field reads as permanently unset at the
             // check.
             const inlineLaunchRefusal: {
-              message: string | null;
-              code: Extract<
-                ErrorCodeKey,
-                'DELEGATION_ALREADY_RESOLVED' | 'INLINE_PARENT_CLAIM_SUPERSEDED'
-              >;
-            } = {
-              message: null,
-              code: 'DELEGATION_ALREADY_RESOLVED',
-            };
+              current: {
+                readonly message: string;
+                readonly code: Extract<
+                  ErrorCodeKey,
+                  'DELEGATION_ALREADY_RESOLVED' | 'INLINE_PARENT_CLAIM_SUPERSEDED'
+                >;
+              } | null;
+            } = { current: null };
+            // Stryker disable next-line all: equivalent — `buildInlineLinkage`
+            // assigns all three together or exits, so no reachable state
+            // distinguishes the conjuncts; the guard exists for TS narrowing.
             if (parentLinkage && parentState && parentAuthority) {
               const link = parentLinkage;
               const targetSubstepIds = orderedSubstepIds;
@@ -262,6 +264,8 @@ export function registerRunCommand(program: Command): void {
                   targetSubstepIds,
                 });
                 switch (outcome.kind) {
+                  // Stryker disable next-line all: equivalent — removing this
+                  // return falls through to `missing`, an adjacent bare return.
                   case 'marked':
                     return;
                   case 'missing':
@@ -275,8 +279,10 @@ export function registerRunCommand(program: Command): void {
                     // session activation happens after `afterInit`, so there is
                     // no session entry to leak.
                     const message = `Substep ${link.parentStepId} is already resolved`;
-                    inlineLaunchRefusal.message = message;
-                    inlineLaunchRefusal.code = 'DELEGATION_ALREADY_RESOLVED';
+                    inlineLaunchRefusal.current = {
+                      message,
+                      code: 'DELEGATION_ALREADY_RESOLVED',
+                    };
                     throw new Error(message);
                   }
                   case 'claim_superseded': {
@@ -286,8 +292,10 @@ export function registerRunCommand(program: Command): void {
                     const message =
                       `Inline parent ${link.parentRunId} was re-claimed before the ` +
                       `launch attached; its current orchestrator owns its progression.`;
-                    inlineLaunchRefusal.message = message;
-                    inlineLaunchRefusal.code = 'INLINE_PARENT_CLAIM_SUPERSEDED';
+                    inlineLaunchRefusal.current = {
+                      message,
+                      code: 'INLINE_PARENT_CLAIM_SUPERSEDED',
+                    };
                     throw new Error(message);
                   }
                   case 'concurrent_modification':
@@ -297,8 +305,11 @@ export function registerRunCommand(program: Command): void {
                     // generic launch-failed rollback, whose remediation (retry
                     // once the run frees up) is the right one here.
                     throw new Error(outcome.message);
+                  // Stryker disable next-line all: unreachable — the exhaustive `never` arm
                   default: {
+                    // Stryker disable next-line all: unreachable — the exhaustive `never` arm
                     const _exhaustive: never = outcome;
+                    // Stryker disable next-line all: unreachable — the exhaustive `never` arm
                     throw new Error(`Unexpected inline mark outcome: ${String(_exhaustive)}`);
                   }
                 }
@@ -316,8 +327,8 @@ export function registerRunCommand(program: Command): void {
               // Checked ahead of the generic envelope: this refusal is permanent
               // and has its own code, and reporting it as LAUNCH_FAILED would
               // invite a retry that can never succeed.
-              if (inlineLaunchRefusal.message !== null) {
-                output.error(inlineLaunchRefusal.message, inlineLaunchRefusal.code);
+              if (inlineLaunchRefusal.current !== null) {
+                output.error(inlineLaunchRefusal.current.message, inlineLaunchRefusal.current.code);
               } else if (result.reason === 'session-refused') {
                 renderSessionMutationRefusal(output, result.refusal);
               } else {
