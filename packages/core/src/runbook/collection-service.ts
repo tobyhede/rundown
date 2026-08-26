@@ -30,8 +30,6 @@ import type { Frame, FrameKey } from './targeting.js';
 import { completionTargetsFrame, findSubstepState } from './targeting.js';
 import { deriveActiveCompletionFrame } from './frame-entry.js';
 import type { ClaimSeenRecordResult } from './session-service.js';
-import type { RunRelease } from './session-release.js';
-import type { SessionMutationResult } from './storage/runbook-store.js';
 import type { ResolvedStep, RunbookState, RunId } from './types.js';
 import {
   delegationRuntimeCapabilities,
@@ -48,23 +46,8 @@ import {
   type TransitionObservationEvent,
 } from '../events/transition-observation.js';
 
-/** Session reader plus the writes the collection seam and the seams it calls perform. */
+/** Session reader plus the writes the collection seam performs. */
 export interface CollectionSessionService extends CommandTargetReader {
-  /**
-   * Release runs from every session targeting structure that names them.
-   *
-   * Not called anywhere in this module, and NOT dead: `advanceInlineParentAfterCommit`
-   * forwards this same service into `propagateTerminalChildUpward`, whose
-   * `InlineParentAdvanceSessionService` requires it and whose terminal branch
-   * calls it. Structural typing is what carries the requirement across, so
-   * deleting this member fails the type check at the hand-off rather than at any
-   * call site here — verified by deleting it.
-   *
-   * @param releases - Runs to release, each with the role that explains it.
-   * @returns The committed envelope, not consumed by the collection seam itself.
-   */
-  releaseRuns(releases: readonly RunRelease[]): Promise<SessionMutationResult<void>>;
-
   /**
    * Record best-effort liveness for a presented bearer claim after collection
    * authorization and before the operation. Never throws (#519).
@@ -1130,7 +1113,7 @@ export function narrowInlineUpwardPropagation(
  * Drive the INLINE upward walk for a collect target that committed terminal.
  *
  * Delegates to the shared {@link propagateTerminalChildUpward} seam so the
- * cycle/depth guards, release disposition, and one-level recursion stay in one
+ * cycle/depth guards, progression severity, and one-level recursion stay in one
  * owner. Narrows the seam's union to the inline subset without a cast (see
  * {@link narrowInlineUpwardPropagation}), keeping the `linkage-cycle` arm INTACT
  * (#603): core holds no emitter, so the trip has to reach the frontend as data
@@ -1149,7 +1132,6 @@ async function advanceInlineParentAfterCommit(
   const outcome: TerminalUpwardPropagationResult = await propagateTerminalChildUpward(
     {
       manager: input.manager,
-      sessionService: input.sessionService,
       completionService: input.completionService,
       advanceInlineParent: input.advanceInlineParent,
     },

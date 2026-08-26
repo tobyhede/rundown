@@ -3,7 +3,7 @@
 '@rundown-org/cli': major
 ---
 
-# Release ownership, and a finished run keeps its claim
+# Atomic Run Release, and a finished run keeps its claim
 
 An already-terminal `rundown run` entry revoked the run-control claim it had
 minted moments earlier. The orchestrator holding that bearer was told
@@ -21,10 +21,9 @@ arm asserted the exact inverse of the truth.
 
 ## What replaces it
 
-`ExecutionReleaseOwner` — `'loop' | 'caller'` — carries ownership and nothing
-else. What a release does to claims is not spelled at the loop at all: it
-addresses the run it drove, and `ReleaseRole` owns the disposition that follows.
-Three derivations are deleted, not translated onto another session-derived mode:
+No release owner crosses execution frames. A transition capable of terminalizing
+the addressed run arms its transaction-owned Run Release; `ReleaseRole` decides
+claim disposition. Three session-derived modes are deleted:
 
 - `runbook-pipeline`'s activation-kind ternary,
 - `goto-workflow`'s `resolveTerminalReleaseModeForRunbook`, which read the
@@ -39,33 +38,22 @@ ever branching on it — a CLI decision that had taken up residence in the seam.
 
 - An already-terminal loop entry resolves its run-control claim `terminal`, with
   the run's own lifecycle, rather than `superseded` / `claim-rotated`.
-- The three frontier refusal arms and the drain's cursor-mismatch refusal remove
-  the refused run from session targeting without revoking its claims. Each of
-  those refusals leaves the run RUNNING, and RD-829 documents its own
-  remediation as "retry" — destroying the authority a retry needs was never
-  intended, and followed only from the default arm omitting retention. Under
-  `caller` ownership these arms release nothing at all, exactly as they did
-  before: what they report there is #833's question, not this one's.
-- A drain that reaches terminal now releases whenever the loop owns the release.
+- Frontier and drain refusals apply no terminal transition, leave the running
+  run targeted, and preserve its authority for retry/recovery. Refusal Hand-back
+  changes reporting only; it never claims terminality or releases the run.
+- A drain that reaches terminal now projects its addressed release atomically.
   It used to be gated on the `release-runbook` arm alone, so on `stack-pop`
   nothing released at all: the drain writes no session state of its own, and no
   healing path removes a loadable terminal run, so a finished run kept resolving
   as the session default. The third arm was never part of that defect —
-  `defer-to-caller` released nothing because the inline parent-advance seam
-  released instead, which is the one arm of the old union that was right.
+  `defer-to-caller` was migration scaffolding and is removed by the atomic fold.
 
 ## Shape
 
-`applyExecutionTerminalRelease` splits into `releaseTerminalRun` and
-`releaseRefusedContinuation`, named for their callers rather than for a mode.
-They share one `addressed` release site — before terminality the preserved claim
-is live authority, after it the claim is terminal evidence — and differ only in
-what a refused release costs: the terminal helper downgrades a `'done'` it can
-no longer honour, and the refusal helper has no clean report to protect.
-
-One `loopOwnsRelease` predicate decides ownership for both, exhaustively, so
-"not the caller" can never come to mean "the loop" and have the loop release a
-second time behind whoever actually owns it.
+Terminal state and addressed release commit together. Re-entrant inline
+flow-back returns `handled` or fail-closed `blocked`, which makes enclosing
+frames stand down without repeating the upward walk. The public execution-loop
+result carries progression only, never a release disposition.
 
 Closes #781 and #789. No deprecated aliases, compatibility adapters or lint bans
 were added; the old names are simply gone.

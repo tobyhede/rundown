@@ -57,7 +57,7 @@ export interface EffectfulActorMutationRunnerInput {
    * One trigger, not one per terminal lifecycle. `completed` and `stopped` are
    * both "this run is finished", and no caller has ever wanted the release on
    * one and not the other — the pair of flags this replaced was equal at every
-   * production site. Absent means the caller owns the release itself.
+   * production site. Absent disables session projection for this mutation.
    */
   readonly terminalRelease?: {
     /** Why the run is released, which decides its claim disposition. */

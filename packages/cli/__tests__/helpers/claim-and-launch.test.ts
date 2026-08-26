@@ -1736,7 +1736,7 @@ describe('claimAndLaunch', () => {
     jest
       .mocked(createBridgedEmitter)
       .mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<typeof createBridgedEmitter>);
-    jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
 
     const mockCreate = mockFn<(...args: unknown[]) => Promise<{ id: RunId; title: string }>>();
     mockCreate.mockResolvedValue({
@@ -1888,7 +1888,7 @@ describe('claimAndLaunch', () => {
     jest
       .mocked(createBridgedEmitter)
       .mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<typeof createBridgedEmitter>);
-    jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
 
     const mockCreate = mockFn<(...args: unknown[]) => Promise<{ id: RunId; title: string }>>();
     mockCreate.mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' });

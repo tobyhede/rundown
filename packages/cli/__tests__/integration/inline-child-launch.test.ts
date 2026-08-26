@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   deletePersistedRunState,
   patchPersistedRunState,
 } from '@rundown-org/core/testing/session-fixtures';
-import { recordInlineLaunchStart, type InlineLaunchStart } from '@rundown-org/core';
+import { recordInlineLaunchStart, SessionService, type InlineLaunchStart } from '@rundown-org/core';
 import {
   createTestWorkspace,
   parseConcatenatedJson,
@@ -1185,6 +1185,110 @@ Child prompt.
     expect(parentAfter?.step).toBe('3');
     expect(parentAfter?.retryCount).toBe(0);
   });
+
+  it('issues no standalone ancestor release when nested inline propagation completes', async () => {
+    await writeFile(
+      join(workspace.rootRunbooksDir(), 'outer.runbook.md'),
+      `# Outer
+
+## 1. Compose middle
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+- middle.runbook.md
+`,
+    );
+    await writeFile(
+      join(workspace.runbooksDir(), 'middle.runbook.md'),
+      `# Middle
+
+## 1. First child
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- inner-manual.runbook.md
+
+## 2. Second child
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+- inner-command.runbook.md
+`,
+    );
+    await writeFile(
+      join(workspace.runbooksDir(), 'inner-manual.runbook.md'),
+      `# Manual inner
+
+## 1. Wait
+- PASS COMPLETE
+- FAIL STOP
+
+Waiting for one pass.
+`,
+    );
+    await writeFile(
+      join(workspace.runbooksDir(), 'inner-command.runbook.md'),
+      `# Command inner
+
+## 1. Finish automatically
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`bash
+echo finished
+\`\`\`
+`,
+    );
+
+    const releaseSpy = jest.spyOn(SessionService.prototype, 'releaseRuns');
+    try {
+      const start = await runCliInProcess('run runbooks/outer.runbook.md --allow-all', workspace);
+      expect(start.exitCode).toBe(0);
+      const before = await readSession(workspace);
+      expect(before.defaultStack).toHaveLength(3);
+      const [outerRunId, middleRunId, manualInnerRunId] = before.defaultStack;
+      expect(outerRunId).toBeDefined();
+      expect(middleRunId).toBeDefined();
+      expect(manualInnerRunId).toBeDefined();
+
+      const pass = await runCliInProcess(
+        await withRunTarget(['pass', '--allow-all'], workspace),
+        workspace,
+      );
+      expect(pass.exitCode).toBe(0);
+      expect((await readSession(workspace)).defaultStack).toEqual([]);
+
+      const releasedRunIds = releaseSpy.mock.calls.flatMap(([releases]) =>
+        releases.map((release) => release.runId),
+      );
+      const releaseCount = (runId: string) =>
+        releasedRunIds.filter((releasedRunId) => releasedRunId === runId).length;
+
+      // Every terminal transaction projects its own release directly in the
+      // store. No ancestor should reach the standalone session-service seam.
+      expect(releaseCount(middleRunId)).toBe(0);
+      expect(releaseCount(outerRunId)).toBe(0);
+
+      const completionEvents = flattenEvents(parseConcatenatedJson(pass.stdout)).filter(
+        (event) => event.type === 'runbook_completed',
+      );
+      const countCompletions = (runId: string) =>
+        completionEvents.filter((event) => event.runbookId === runId).length;
+      const completionCounts = {
+        middle: countCompletions(middleRunId),
+        outer: countCompletions(outerRunId),
+      };
+      expect(completionCounts).toEqual({
+        middle: 1,
+        outer: 1,
+      });
+      expect((await readRunbookState(workspace, manualInnerRunId))?.lifecycle).toBe('completed');
+      expect((await readRunbookState(workspace, middleRunId))?.lifecycle).toBe('completed');
+      expect((await readRunbookState(workspace, outerRunId))?.lifecycle).toBe('completed');
+    } finally {
+      releaseSpy.mockRestore();
+    }
+  }, 30_000);
 
   it('rejects automatic inline launch inside a claimed child delegation scope', async () => {
     await writeFile(

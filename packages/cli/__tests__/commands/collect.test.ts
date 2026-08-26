@@ -982,7 +982,9 @@ describe('collect command', () => {
       expect(collectedParent!.step).toBe('2');
     }, 20_000);
 
-    async function setupCollectAdvancesIntoCommand(): Promise<{ claimId: string }> {
+    async function setupCollectAdvancesIntoCommand(
+      commandExit = 0,
+    ): Promise<{ claimId: string; runId: string }> {
       const parent = [
         '# Parent',
         '',
@@ -1003,8 +1005,12 @@ describe('collect command', () => {
         '- FAIL STOP',
         '',
         '```bash',
-        "printf '\\103\\117\\115\\115\\101\\116\\104\\137\\123\\124\\104\\117\\125\\124\\012'",
-        "printf '\\103\\117\\115\\115\\101\\116\\104\\137\\123\\124\\104\\105\\122\\122\\012' >&2",
+        ...(commandExit === 0
+          ? [
+              "printf '\\103\\117\\115\\115\\101\\116\\104\\137\\123\\124\\104\\117\\125\\124\\012'",
+              "printf '\\103\\117\\115\\115\\101\\116\\104\\137\\123\\124\\104\\105\\122\\122\\012' >&2",
+            ]
+          : ['rd echo --result fail']),
         '```',
         '',
       ].join('\n');
@@ -1061,14 +1067,14 @@ describe('collect command', () => {
       const passed = runCli(`pass --claim-id ${claimId}`, workspace);
       expect(passed.exitCode).toBe(0);
 
-      return { claimId: parentClaimId };
+      return { claimId: parentClaimId, runId };
     }
 
     it('keeps JSON stdout parseable when collect advances into a command that writes stdout and stderr', async () => {
       const { claimId } = await setupCollectAdvancesIntoCommand();
 
-      const collected = runCli(
-        `collect --claim-id ${claimId} --allow-run printf --no-sandbox`,
+      const collected = await runCliInProcess(
+        ['collect', '--claim-id', claimId, '--allow-run', 'printf', '--no-sandbox'],
         workspace,
       );
       expect(collected.exitCode).toBe(0);
@@ -1099,6 +1105,18 @@ describe('collect command', () => {
       expect(collected.stderr).toContain('COMMAND_STDERR');
       expect(collected.stderr).not.toContain('COMMAND_STDOUT');
     });
+
+    it('exits non-zero when the continuation loop stops after collection', async () => {
+      const { claimId, runId } = await setupCollectAdvancesIntoCommand(7);
+
+      const collected = await runCliInProcess(
+        ['collect', '--claim-id', claimId, '--allow-all', '--no-sandbox'],
+        workspace,
+      );
+
+      expect(collected.exitCode).not.toBe(0);
+      expect((await readPersistedRunState(workspace.cwd, runId))?.lifecycle).toBe('stopped');
+    }, 20_000);
 
     it('forwards the collector-bound delegation capabilities when the loop reaches a later DELEGATE step', async () => {
       // Core verifies the collector's bearer behind the collection seam and hands
@@ -1722,7 +1740,296 @@ describe('collect command', () => {
         .map((o) => o.type)
         .filter((t): t is string => typeof t === 'string');
       expect(streamedTypes).toContain('runbook_completed');
+      // Exactly once: core's drain-terminal branch already advanced the parent
+      // and set `terminalInlineAdvance`, so the CLI owes no propagation pass of
+      // its own here. Running one anyway re-advances the parent and emits its
+      // terminal a second time.
+      expect(countRunEvents(collect2.stdout, 'runbook_completed', parentRunId)).toBe(1);
     }, 40_000);
+
+    // The three tests below pin the split the CLI makes AFTER the execution
+    // loop: whether the loop already handled the collected run's terminal
+    // propagation, or still owes it. Both arms must be witnessed separately —
+    // one scenario cannot distinguish "the loop handled it" from "nobody
+    // handled it", and the failure mode of getting it wrong is a SECOND
+    // propagation of a terminal the loop already flowed back (#598 finding 1),
+    // which shows up as duplicated parent lifecycle events on this command's
+    // stream even where the state mutation itself is absorbed.
+    const AUTO_PIPELINE = [
+      '# Auto Pipeline',
+      '',
+      '## 1. Plan',
+      '',
+      '- DELEGATE',
+      '- PASS ALL CONTINUE',
+      '- FAIL ANY STOP',
+      '',
+      '### 1.1 Write plan',
+      '',
+      '- DELEGATE',
+      '- worker.runbook.md',
+      '',
+      '## 2. Review',
+      '',
+      '- PASS ALL COMPLETE',
+      '- FAIL ANY STOP',
+      '- auto-gate.runbook.md',
+      '',
+    ].join('\n');
+
+    function autoGate(result: 'pass' | 'fail'): string {
+      return [
+        '# Auto Gate',
+        '',
+        '## 1. Check',
+        '',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        '```bash',
+        `rd echo --result ${result}`,
+        '```',
+        '',
+      ].join('\n');
+    }
+
+    /**
+     * Start `AUTO_PIPELINE` NON-prompted (so the inline gate it later launches
+     * also runs unattended and flows back inside the collect loop), report the
+     * delegated stage-1 worker, and return the pipeline run id — parked with the
+     * stage-1 outcome pending collection.
+     */
+    async function driveAutoPipelineToPendingCollect(gateResult: 'pass' | 'fail'): Promise<string> {
+      await writeFile(join(workspace.runbooksDir(), 'pipeline.runbook.md'), AUTO_PIPELINE);
+      await writeFile(join(workspace.runbooksDir(), 'worker.runbook.md'), WORKER);
+      await writeFile(join(workspace.runbooksDir(), 'auto-gate.runbook.md'), autoGate(gateResult));
+
+      const start = await runCliInProcess('run pipeline.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const parentRunId = (await getActiveState(workspace))!.id;
+
+      const token = requireFrontierToken(start.stdout, '1.1');
+      const claim = await runCliInProcess(`claim ${token}`, workspace);
+      expect(claim.exitCode).toBe(0);
+      const claimId = String(findActionOutput(claim.stdout)!.claim_id);
+      const closed = await runCliInProcess(['complete', '--claim-id', claimId], workspace);
+      expect(closed.exitCode).toBe(0);
+
+      return parentRunId;
+    }
+
+    /** Count streamed execution events of `type` carrying `runbookId`. */
+    function countRunEvents(stdout: string, type: string, runbookId: string): number {
+      return parseConcatenatedJson(stdout).filter(
+        (v): v is Record<string, unknown> =>
+          typeof v === 'object' &&
+          v !== null &&
+          (v as Record<string, unknown>).type === type &&
+          (v as Record<string, unknown>).runbookId === runbookId,
+      ).length;
+    }
+
+    it('does not re-propagate a terminal the loop already flowed back', async () => {
+      const parentRunId = await driveAutoPipelineToPendingCollect('pass');
+
+      const collected = await runCliInProcess(
+        await withRunTarget(['collect'], workspace),
+        workspace,
+      );
+
+      expect(collected.exitCode).toBe(0);
+      // The inline gate ran to terminal INSIDE the loop and its flow-back
+      // completed the pipeline, so the loop reports that it handled the
+      // propagation and the CLI must not run a second pass over the same run.
+      const parentAfter = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter!.lifecycle).toBe('completed');
+      expect(countRunEvents(collected.stdout, 'runbook_completed', parentRunId)).toBe(1);
+    }, 20_000);
+
+    it('exits non-zero and propagates once when the loop flow-back stops the run', async () => {
+      const parentRunId = await driveAutoPipelineToPendingCollect('fail');
+
+      const collected = await runCliInProcess(
+        await withRunTarget(['collect'], workspace),
+        workspace,
+      );
+
+      // A flow-back that STOPs the composing run comes back as `blocked`: it
+      // both flips the exit code and counts as propagation already handled.
+      expect(collected.exitCode).toBe(1);
+      const parentAfter = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter!.lifecycle).toBe('stopped');
+      expect(countRunEvents(collected.stdout, 'runbook_stopped', parentRunId)).toBe(1);
+    }, 20_000);
+
+    // The "loop already handled it" arm is only OBSERVABLE one level deeper:
+    // when the collected run is itself an inline child, a second propagation
+    // re-advances ITS parent. Collecting a top-level run cannot show it — the
+    // redundant pass finds no linkage and skips, so every mutation of the guard
+    // is equivalent there.
+    const NESTED_PIPELINE = [
+      '# Nested Pipeline',
+      '',
+      '## 1. Plan',
+      '',
+      '- DELEGATE',
+      '- PASS ALL CONTINUE',
+      '- FAIL ANY STOP',
+      '',
+      '### 1.1 Write plan',
+      '',
+      '- DELEGATE',
+      '- worker.runbook.md',
+      '',
+      '## 2. Review',
+      '',
+      '- PASS ALL COMPLETE',
+      '- FAIL ANY STOP',
+      '- mid.runbook.md',
+      '',
+    ].join('\n');
+
+    /**
+     * Drive `NESTED_PIPELINE` to the point where the INLINE middle run is parked
+     * on its own delegation, ready to be collected. Returns both run ids.
+     */
+    async function driveNestedPipelineToMidCollect(
+      gateResult: 'pass' | 'fail',
+    ): Promise<{ topRunId: string; midRunId: string }> {
+      await writeFile(join(workspace.runbooksDir(), 'pipeline.runbook.md'), NESTED_PIPELINE);
+      await writeFile(join(workspace.runbooksDir(), 'mid.runbook.md'), AUTO_PIPELINE);
+      await writeFile(join(workspace.runbooksDir(), 'worker.runbook.md'), WORKER);
+      await writeFile(join(workspace.runbooksDir(), 'auto-gate.runbook.md'), autoGate(gateResult));
+
+      const start = await runCliInProcess('run pipeline.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const topRunId = (await getActiveState(workspace))!.id;
+
+      // Stage 1 of the top run: report + collect -> it CONTINUEs into the inline
+      // middle run, which parks on its own DELEGATE step.
+      await claimAndReportActiveDelegation();
+      const collect1 = await runCliInProcess(
+        await withRunTarget(['collect'], workspace),
+        workspace,
+      );
+      expect(collect1.exitCode).toBe(0);
+
+      const mid = await getActiveState(workspace);
+      expect(mid!.id).not.toBe(topRunId);
+      expect(mid!.parentLinkage?.kind).toBe('inline');
+
+      await claimAndReportActiveDelegation();
+      return { topRunId, midRunId: mid!.id };
+    }
+
+    it('does not re-propagate an inline child terminal the loop already flowed back', async () => {
+      const { topRunId, midRunId } = await driveNestedPipelineToMidCollect('pass');
+
+      // Collecting the MIDDLE run advances it into the loop, where its own
+      // inline gate runs to terminal and flows back — completing the middle run
+      // and, through it, the top run. All of that propagation happened inside
+      // the loop, so the CLI must not run a second pass: the middle run is
+      // terminal and still linked, and a redundant pass re-advances the top.
+      const collected = await runCliInProcess(
+        await withRunTarget(['collect'], workspace),
+        workspace,
+      );
+      expect(collected.exitCode).toBe(0);
+
+      expect((await readRunbookState(workspace, midRunId))!.lifecycle).toBe('completed');
+      expect((await readRunbookState(workspace, topRunId))!.lifecycle).toBe('completed');
+      expect(countRunEvents(collected.stdout, 'runbook_completed', midRunId)).toBe(1);
+      expect(countRunEvents(collected.stdout, 'runbook_completed', topRunId)).toBe(1);
+    }, 20_000);
+
+    it('does not re-propagate an inline child the loop already flowed back as blocked', async () => {
+      const { topRunId, midRunId } = await driveNestedPipelineToMidCollect('fail');
+
+      // Same shape, failing gate: the flow-back STOPs the middle run and, through
+      // it, the top run, and comes back as `blocked`. `blocked` counts as
+      // propagation already handled just as `handled` does — treating only
+      // `handled` that way re-propagates a terminal that was already flowed back.
+      const collected = await runCliInProcess(
+        await withRunTarget(['collect'], workspace),
+        workspace,
+      );
+      expect(collected.exitCode).toBe(1);
+
+      expect((await readRunbookState(workspace, midRunId))!.lifecycle).toBe('stopped');
+      expect((await readRunbookState(workspace, topRunId))!.lifecycle).toBe('stopped');
+      expect(countRunEvents(collected.stdout, 'runbook_stopped', midRunId)).toBe(1);
+      expect(countRunEvents(collected.stdout, 'runbook_stopped', topRunId)).toBe(1);
+    }, 20_000);
+
+    // The complement: the collected run reaches terminal INSIDE the loop as its
+    // OWN result (no inline child flowed back), which the loop never propagates.
+    // Here the CLI still owns the pass, and skipping it strands the parent.
+    const LOOPING_GATE = [
+      '# Looping Gate',
+      '',
+      '## 1. Delegate check',
+      '',
+      '- DELEGATE',
+      '- PASS ALL CONTINUE',
+      '- FAIL ANY STOP',
+      '',
+      '### 1.1 Check',
+      '',
+      '- DELEGATE',
+      '- worker.runbook.md',
+      '',
+      '## 2. Finish',
+      '',
+      '- PASS COMPLETE',
+      '- FAIL STOP',
+      '',
+      '```bash',
+      'rd echo --result pass',
+      '```',
+      '',
+    ].join('\n');
+
+    it('propagates a terminal the collected run reached inside the loop', async () => {
+      await writeFile(join(workspace.runbooksDir(), 'pipeline.runbook.md'), COLLECTING_PIPELINE);
+      await writeFile(join(workspace.runbooksDir(), 'worker.runbook.md'), WORKER);
+      await writeFile(join(workspace.runbooksDir(), 'collecting-gate.runbook.md'), LOOPING_GATE);
+
+      // NON-prompted, so the gate's own trailing command step runs unattended
+      // inside the second collect's loop rather than parking for an operator.
+      const start = await runCliInProcess('run pipeline.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const parentRunId = (await getActiveState(workspace))!.id;
+
+      // Stage 1: report + collect -> parent CONTINUEs into the inline gate child.
+      await claimAndReportActiveDelegation();
+      const collect1 = await runCliInProcess(
+        await withRunTarget(['collect'], workspace),
+        workspace,
+      );
+      expect(collect1.exitCode).toBe(0);
+
+      const gate = await getActiveState(workspace);
+      expect(gate!.id).not.toBe(parentRunId);
+      expect(gate!.parentLinkage?.kind).toBe('inline');
+
+      // Report G's worker, then collect on G. Unlike the `PASS ALL COMPLETE`
+      // gate above, this one CONTINUEs into a command step, so the drain leaves
+      // G running and the collect advances into the loop; G reaches terminal
+      // there, and the loop does NOT propagate the executed run's own terminal.
+      await claimAndReportActiveDelegation();
+      const collect2 = await runCliInProcess(
+        await withRunTarget(['collect'], workspace),
+        workspace,
+      );
+      expect(collect2.exitCode).toBe(0);
+
+      const gateAfter = await readRunbookState(workspace, gate!.id);
+      expect(gateAfter!.lifecycle).toBe('completed');
+      // The CLI's own propagation pass resolved the parent's stage-2 substep.
+      const parentAfter = await readRunbookState(workspace, parentRunId);
+      expect(parentAfter!.lifecycle).toBe('completed');
+      expect(countRunEvents(collect2.stdout, 'runbook_completed', parentRunId)).toBe(1);
+    }, 20_000);
 
     it('propagates a STOPPED inline child terminal to the parent and exits non-zero', async () => {
       await writeFile(join(workspace.runbooksDir(), 'pipeline.runbook.md'), COLLECTING_PIPELINE);

@@ -316,11 +316,9 @@ export interface ApplyNextResolvedCompletionArgs {
    * Run Release folded into this apply's own transaction, fired only when the
    * PREPARED state reaches terminal.
    *
-   * Present when the caller owns the release for this run, absent when another
-   * seam does — the inline parent-advance seam owns the single release for a
-   * parent it drives, and a release here as well would take it behind that
-   * owner. An armed release is inert on every non-terminal apply, so a drain
-   * arms it once and lets the transaction decide.
+   * A terminalizing driver arms it on every apply. It is inert on every
+   * non-terminal transition; when the prepared transition is terminal, state
+   * and release commit atomically.
    *
    * The role, and NOT the trigger: whether this apply reaches terminal is
    * decided by the transition prepared inside the transaction, long after this

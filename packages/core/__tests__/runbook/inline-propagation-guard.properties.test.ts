@@ -19,9 +19,9 @@
  * The one graph that tests "the guard precedes the kind dispatch" has the
  * delegation linkage on the node that CLOSES the cycle.
  *
- * "No repeated side effects" is asserted over all THREE of the seam's side effects
- * — advance, release, and record — not just the advance callable: they ride one
- * recursion, so a guard that failed to bound the walk would repeat each alike.
+ * "No repeated side effects" is asserted over both seam side effects — advance
+ * and record — not just the advance callable: they ride one recursion, so a
+ * guard that failed to bound the walk would repeat each alike.
  */
 
 import { describe, it, expect } from '@jest/globals';
@@ -37,7 +37,6 @@ import {
   assertRunId,
   type RunbookState,
   type RunId,
-  type RunRelease,
 } from '../../src/runbook/index.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import {
@@ -152,8 +151,6 @@ interface Run {
   readonly result: TerminalUpwardPropagationResult;
   /** Every `parentRunId` passed to advanceInlineParent, in call order. */
   readonly advanced: readonly RunId[];
-  /** Every `runId` passed to releaseRuns, flattened, in call order. */
-  readonly released: readonly RunId[];
   /** Every `childState.id` passed to recordChildCompletion, in call order. */
   readonly recorded: readonly RunId[];
 }
@@ -183,8 +180,7 @@ type LinkageKinds = 'inline' | 'delegation' | readonly ('inline' | 'delegation')
  * @param kinds - One kind for every node, or a per-node array (default
  *   `'inline'`; `'delegation'` takes the report-only arm, which the guard still
  *   precedes). Per-node arrays build mixed graphs.
- * @returns The walk's result plus every id advanced, released, and recorded, in
- *   call order.
+ * @returns The walk's result plus every id advanced and recorded, in call order.
  */
 async function walk(
   graph: LinkageGraph,
@@ -192,7 +188,6 @@ async function walk(
   kinds: LinkageKinds = 'inline',
 ): Promise<Run> {
   const advanced: RunId[] = [];
-  const released: RunId[] = [];
   const recorded: RunId[] = [];
   const index = new Map<string, number>(graph.map((_, i) => [nodeRunId(i), i]));
   const deps: PropagateTerminalChildUpwardDeps = {
@@ -200,15 +195,6 @@ async function walk(
       load: async (id: string) => {
         const i = index.get(id);
         return i === undefined ? null : makeState(nodeRunId(i), graph[i] ?? null, kindAt(kinds, i));
-      },
-    },
-    sessionService: {
-      releaseRuns: async (releases: readonly RunRelease[]) => {
-        for (const { runId } of releases) released.push(runId);
-        // The committed arm specifically: the seam narrows the release result
-        // exhaustively, so an untyped stub would fall through its `never` guard
-        // and become the propagation result.
-        return { kind: 'committed', value: undefined } as const;
       },
     },
     completionService: {
@@ -227,7 +213,7 @@ async function walk(
     makeState(nodeRunId(0), graph[0] ?? null, kindAt(kinds, 0)),
     'pass',
   );
-  return { result, advanced, released, recorded };
+  return { result, advanced, recorded };
 }
 
 // ---------------------------------------------------------------------------
@@ -296,16 +282,14 @@ describe('inline propagation guard — properties (#602)', () => {
     );
   });
 
-  it('no run is released or recorded twice — the AC binds every side effect, not just advance', async () => {
-    // 'no repeated side effects' was only ever proven for ONE of the seam's three
-    // side effects. Release and record ride the same recursion: if the visited set
-    // failed to bound the walk, a cyclic graph would re-release and re-record the
-    // same run exactly as it would re-advance it. Asserting only `advanced` left
-    // two thirds of the AC resting on a claim no property made.
+  it('no run is recorded twice — the AC binds both side effects, not just advance', async () => {
+    // Record and advance ride the same recursion: if the visited set failed to
+    // bound the walk, a cyclic graph would re-record the same run exactly as it
+    // would re-advance it. The release is no longer a seam side effect; it
+    // commits inside each parent's terminal transaction.
     await fc.assert(
       fc.asyncProperty(graphArb, advanceStatusArb, async (graph, status) => {
-        const { released, recorded } = await walk(graph, status);
-        expect(new Set(released).size).toBe(released.length);
+        const { recorded } = await walk(graph, status);
         expect(new Set(recorded).size).toBe(recorded.length);
       }),
       { numRuns: 200 },
@@ -337,7 +321,7 @@ describe('inline propagation guard — properties (#602)', () => {
     }));
     await fc.assert(
       fc.asyncProperty(inlineCycleClosedByDelegationArb, async ({ graph, kinds }) => {
-        const { result, advanced, released, recorded } = await walk(graph, 'done', kinds);
+        const { result, advanced, recorded } = await walk(graph, 'done', kinds);
         // If the kind dispatch ran FIRST, the closing node would record report-only
         // and return 'reported', which the severity collapse turns into 'handled' —
         // a corrupt graph reported as success. That is the regression this pins.
@@ -345,7 +329,6 @@ describe('inline propagation guard — properties (#602)', () => {
         // The at-most-once claim must hold on the mixed graph exactly as it does
         // on the uniform one.
         expect(new Set(advanced).size).toBe(advanced.length);
-        expect(new Set(released).size).toBe(released.length);
         expect(new Set(recorded).size).toBe(recorded.length);
       }),
       { numRuns: 300 },

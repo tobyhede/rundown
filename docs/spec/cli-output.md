@@ -1932,8 +1932,8 @@ The loop's command fence commits under captured authority, so it can lose the
 compare-and-swap that collect's own seam never performs. When it does, the
 refusal is observed as an `error_occurred` line carrying the same code
 vocabulary — `STALE_CLAIM`, `CONCURRENT_MODIFICATION`, `EXECUTION_IN_PROGRESS`,
-`RECOVERY_REQUIRED`, or `RUN_TARGET_UNAVAILABLE` — followed by
-`runbook_stopped`.
+`RECOVERY_REQUIRED`, or `RUN_TARGET_UNAVAILABLE`. It emits no `runbook_stopped`:
+the refused follow-on transition committed no terminal state.
 
 **The collection is already committed when this is observed.** Collect's own
 aggregate transaction — the drain's applies, any delegation re-entry frontier
@@ -1958,7 +1958,6 @@ the delegating run forward from where it now stands.
 
 ```jsonl
 {"type":"error_occurred","message":"Run rd_0123456789abcdef0123456789abcdef claim generation advanced since it was captured.","code":"STALE_CLAIM","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/parent.runbook.md"},"seq":3}
-{"type":"runbook_stopped","message":"Runbook command execution was not committed","position":{"current":"2","total":3},"timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/parent.runbook.md"},"seq":4}
 ```
 
 A `code` on an `error_occurred` line is drawn from the same registered

@@ -942,9 +942,10 @@ Delegation semantics:
   mid-transaction. Separately, when a collect's aggregation advances the
   delegating run into execution-loop work, that loop's own command fence can
   lose its compare-and-swap; that refusal is observed as a streamed
-  `error_occurred` event carrying the same code vocabulary followed by
-  `runbook_stopped`, which is an observation of follow-on work rather than
-  collect's own envelope. See
+  `error_occurred` event carrying the same code vocabulary. It is not followed
+  by `runbook_stopped`: the refused follow-on transition committed no terminal
+  state. This observation belongs to follow-on work rather than collect's own
+  envelope. See
   [docs/spec/cli-output.md](../spec/cli-output.md#transactional-refusals-under-rundown-collect).
 - Child runbook uses `rundown pass --claim-id <claim_id>` /
   `rundown fail --claim-id <claim_id>` to report its outcome. Other

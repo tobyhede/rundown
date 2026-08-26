@@ -131,15 +131,11 @@ function delegationRuntimeFor(
  * completions on the target frame, and — when completions applied but the parent
  * is still active — runs the execution loop (spawning command subprocesses). It
  * collapses the drain/loop statuses into the seam's `AdvanceInlineParentOutcome`.
- * It performs NO terminal session release on ANY path — the core seam is the SOLE
- * release owner and releases parentRunId once, as `addressed`, on terminal. The
- * drain performs no release of its own, and the execution loop is invoked with
- * `releaseOwner: 'caller'` so it too skips release — and, under that ownership,
- * hands back its own drain refusal as data rather than a `'stopped'` this
- * callable would forward as a terminal (#802). This closes the ownership gap:
- * there is exactly one release site with one deliberate claim disposition, so
- * the tombstone-destruction hazard the old two-owner code carried (drain
- * deleted, loop retained) cannot recur (RD-598).
+ * It performs no standalone terminal session release. Each drain or command
+ * fence folds the parent's addressed release into the transaction that commits
+ * the parent's terminal state. The loop is invoked with `returnRefusals: true`
+ * so a refusal that applied no terminal transition comes back as typed data
+ * instead of a false terminal status (#802, #833).
  *
  * The heavy CLI collaborators are imported LAZILY to avoid a static
  * delegation-completion ↔ execution import cycle.
@@ -208,6 +204,7 @@ export function buildAdvanceInlineParent(
       computeActionResult: transitionConfig.computeActionResult,
       frameOverride: exactFrame(parentFrameKey, parentEntry),
       issueDelegationCredential: delegationRuntime?.issueDelegationCredential,
+      terminalRelease: { role: 'addressed' },
     });
 
     if (drained.status === 'stopped') {
@@ -242,43 +239,40 @@ export function buildAdvanceInlineParent(
       const freshParent = await manager.load(parentRunId);
       const loopState = freshParent ?? drained.state;
       const loopSteps = [...getRunbookFromState(loopState, cwd)];
-      const loopResult = await runExecutionLoop(
-        manager,
-        parentRunId,
-        loopSteps,
-        cwd,
-        emitter,
-        // Caller-owned release: the loop does NOT release parentRunId — the core
-        // seam is the sole release owner and releases once, as `addressed`, on
-        // terminal. See RD-598 verification for why single-owner.
-        {
-          releaseOwner: 'caller',
-          output,
-          commandStreamOptions,
-          delegationRuntime,
-        },
-      );
+      const loopResult = await runExecutionLoop(manager, parentRunId, loopSteps, cwd, emitter, {
+        returnRefusals: true,
+        output,
+        commandStreamOptions,
+        delegationRuntime,
+      });
       output.flush();
       // The loop's own drain can refuse the same way this callable's did, and
-      // under caller ownership it hands the refusal back rather than reporting
+      // with Refusal Hand-back it returns the refusal rather than reporting
       // a `'stopped'` this callable would forward as a terminal — which would
       // have the seam release a still-running parent and recurse upward on a
       // terminal that never happened.
       //
+      // One discriminant across both arms, exhausted by a switch. It replaced a
+      // fall-through that reached the refusal by ELIMINATING the three terminal
+      // strings, which was the best available shape while the terminal arm was
+      // a bare string and the refusal an object: a `typeof` test would have said
+      // only "not one of these strings", swallowing any second object-shaped arm
+      // as `{status: 'refused', refusal: undefined}` with no compile error. Now
+      // that both arms carry `status`, the exhaustive `never` below refuses a
+      // new member outright instead of forwarding it as a refusal.
       //
-      // The three TERMINAL statuses are exhausted first and the refusal is what
-      // is left, rather than the refusal being picked off by a `typeof` test. A
-      // shape test says only "not one of these strings", so a second
-      // object-shaped arm added to the deferred result would be swallowed and
-      // forwarded as `{status: 'refused', refusal: undefined}` with no compile
-      // error. Reaching the refusal by exclusion makes that a type error at
-      // `.refusal` instead — and, unlike an explicit `kind === 'refused'`
-      // check, it does not read as a redundant test of the union's only object
-      // member.
-      if (loopResult === 'stopped') return { status: 'stopped' };
-      if (loopResult === 'done') return { status: 'done' };
-      if (loopResult === 'waiting') return { status: 'active' };
-      return { status: 'refused', refusal: loopResult.refusal };
+      switch (loopResult.status) {
+        case 'stopped':
+          return { status: 'stopped' };
+        case 'done':
+          return { status: 'done' };
+        case 'waiting':
+        case 'handled':
+          return { status: 'active' };
+        case 'blocked':
+          return { status: 'blocked' };
+      }
+      return loopResult;
     }
 
     // applied === 0: waiting for sibling substeps to resolve.
@@ -399,10 +393,6 @@ export function renderInlinePropagationRefusal(
  * Construct the core seam deps bag bound to one command's `cwd`, wiring the
  * CLI-supplied {@link buildAdvanceInlineParent} callable.
  *
- * `SessionService` is imported lazily (like the callable's core symbols) so this
- * module keeps a minimal static `@rundown-org/core` surface; the function is
- * therefore async.
- *
  * @param cwd - Current working directory.
  * @param output - Output emitter for streamed parent events.
  * @param commandStreamOptions - Runtime-only routing for command subprocess I/O.
@@ -410,20 +400,17 @@ export function renderInlinePropagationRefusal(
  *   run, forwarded to {@link buildAdvanceInlineParent}.
  * @returns Deps for the core `propagateTerminalChildUpward` seam.
  */
-export async function buildInlineParentAdvanceDeps(
+export function buildInlineParentAdvanceDeps(
   cwd: string,
   output: OutputEmitter,
   commandStreamOptions?: CommandExecutionStreamOptions,
   parentDelegationRuntime?: RunScopedDelegationRuntime,
-): Promise<PropagateTerminalChildUpwardDeps> {
-  const { SessionService } = await import('@rundown-org/core');
+): PropagateTerminalChildUpwardDeps {
   const manager = new RunbookStateManager(cwd);
   const actorService = createCliRunbookActorService(manager);
   const completionService = new RunbookCompletionService(manager, actorService);
-  const sessionService = new SessionService(manager);
   return {
     manager,
-    sessionService,
     completionService,
     advanceInlineParent: buildAdvanceInlineParent(
       cwd,
@@ -465,7 +452,7 @@ export async function reportTerminalToDelegatingRun(
   if (linkage?.kind !== 'delegation') return 'not-applicable';
   const { propagateTerminalChildUpward } = await import('@rundown-org/core');
   const outcome = await propagateTerminalChildUpward(
-    await buildInlineParentAdvanceDeps(cwd, output),
+    buildInlineParentAdvanceDeps(cwd, output),
     childState,
     result,
   );
@@ -544,7 +531,7 @@ export async function advanceParentForInlineChild(
   if (linkage?.kind !== 'inline') return 'not-applicable';
   const { propagateTerminalChildUpward } = await import('@rundown-org/core');
   const outcome = await propagateTerminalChildUpward(
-    await buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions),
+    buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions),
     childState,
     result,
   );
@@ -616,7 +603,7 @@ export async function propagateChildTerminal(
   if (!linkage) return 'not-applicable';
   const { propagateTerminalChildUpward } = await import('@rundown-org/core');
   const outcome = await propagateTerminalChildUpward(
-    await buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions, parentDelegationRuntime),
+    buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions, parentDelegationRuntime),
     childState,
     result,
   );

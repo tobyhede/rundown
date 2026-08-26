@@ -19,6 +19,7 @@ import type {
 import type { ResolvedStep } from '@rundown-org/parser';
 import { makeClaimRecord } from '@rundown-org/core/testing/claim-fixtures';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
+import type { ExecutionLoopResult } from '../../src/services/execution.js';
 
 // The unit-under-test (runSeamTransition, renderRefusal, renderApplied,
 // buildActionSink, renderTransitionEvents, the config + emit helpers,
@@ -112,8 +113,11 @@ jest.unstable_mockModule('../../src/helpers/caller-evidence', () => ({
   readLifecycleCallerEvidence: mockReadCallerEvidence,
 }));
 
-const mockRunExecutionLoop =
-  mockFn<(...args: unknown[]) => Promise<string>>().mockResolvedValue('done');
+const mockRunExecutionLoop = mockFn<
+  (...args: unknown[]) => Promise<ExecutionLoopResult>
+>().mockResolvedValue({
+  status: 'done',
+});
 const mockFindStepOrThrow =
   mockFn<(steps: readonly ResolvedStep[], name: string) => ResolvedStep>();
 jest.unstable_mockModule('../../src/services/execution', () => ({
@@ -241,7 +245,7 @@ beforeEach(() => {
   mockReadCallerEvidence.mockReturnValue({ kind: 'direct_cli' });
   mockManagerLoad.mockResolvedValue(makeState());
   jest.mocked(getRunbookFromState).mockReturnValue([]);
-  mockRunExecutionLoop.mockResolvedValue('done');
+  mockRunExecutionLoop.mockResolvedValue({ status: 'done' });
 });
 
 // ACCEPTED MUTATION SURVIVORS in transitions.ts (#485).
@@ -839,7 +843,11 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
     expect(block.forIndex).toBe(2);
     expect(block.forEnd).toBe(5);
     expect(block.command).toBe('pass');
-    expect(result.applied).toEqual({ status: 'continue', runId: PARENT_RUN_ID });
+    expect(result.applied).toEqual({
+      status: 'continue',
+      runId: PARENT_RUN_ID,
+      terminalPropagationHandled: false,
+    });
     expect(result.exitError).toBe(false);
   });
 
@@ -898,7 +906,11 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
 
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.stopped).toHaveBeenCalledWith('halted', { at: '1' });
-    expect(result.applied).toEqual({ status: 'stopped', runId: PARENT_RUN_ID });
+    expect(result.applied).toEqual({
+      status: 'stopped',
+      runId: PARENT_RUN_ID,
+      terminalPropagationHandled: false,
+    });
     expect(result.exitError).toBe(true);
   });
 
@@ -942,7 +954,7 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
 
   it('drives the execution loop for a run directive and propagates a stopped loop result', async () => {
     const output = makeOutput();
-    mockRunExecutionLoop.mockResolvedValue('stopped');
+    mockRunExecutionLoop.mockResolvedValue({ status: 'stopped' });
     mockRunTransition.mockResolvedValue(
       appliedOutcome({
         loop: { kind: 'run' },
@@ -960,9 +972,45 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
     // present-and-undefined: the loop spreads this object into the fence input,
     // where an explicit `claimKey: undefined` is a different request from no key.
     expect(Object.hasOwn(loopArgs[5] as object, 'claimKey')).toBe(false);
-    expect(result.applied).toEqual({ status: 'stopped', runId: PARENT_RUN_ID });
+    expect(result.applied).toEqual({
+      status: 'stopped',
+      runId: PARENT_RUN_ID,
+      terminalPropagationHandled: false,
+    });
     expect(result.exitError).toBe(true);
   });
+
+  it('does not mark a non-stopped execution-loop result as stopped', async () => {
+    const output = makeOutput();
+    mockRunExecutionLoop.mockResolvedValue({ status: 'waiting' });
+    mockRunTransition.mockResolvedValue(appliedOutcome({ loop: { kind: 'run' } }));
+
+    const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
+
+    expect(result.applied).not.toMatchObject({ status: 'stopped' });
+    expect(result.exitError).toBe(false);
+  });
+
+  it.each([
+    ['handled', 'continue'],
+    ['blocked', 'stopped'],
+  ] as const)(
+    'marks %s loop progression as already propagated with %s severity',
+    async (loopStatus, appliedStatus) => {
+      const output = makeOutput();
+      mockRunExecutionLoop.mockResolvedValue({ status: loopStatus });
+      mockRunTransition.mockResolvedValue(appliedOutcome({ loop: { kind: 'run' } }));
+
+      const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
+
+      expect(result.applied).toEqual({
+        status: appliedStatus,
+        runId: PARENT_RUN_ID,
+        terminalPropagationHandled: true,
+      });
+      expect(result.exitError).toBe(loopStatus === 'blocked');
+    },
+  );
 
   it('threads the presented bearer into the execution loop as a lookup key', async () => {
     // The bearer is what lets the loop's fenced command mutation commit under the

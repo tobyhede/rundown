@@ -486,3 +486,6 @@ decorrelate
 decorrelates
 characterisation
 terminality
+terminalize
+terminalizing
+targetability

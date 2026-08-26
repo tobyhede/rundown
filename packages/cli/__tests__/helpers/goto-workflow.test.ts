@@ -187,7 +187,7 @@ beforeEach(() => {
     from: '1',
     at: target.step,
   }));
-  jest.mocked(runExecutionLoop).mockResolvedValue('done');
+  jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
 });
 
 // ACCEPTED MUTATION SURVIVORS in goto-workflow.ts (#485).
@@ -810,7 +810,7 @@ describe('executeGoto', () => {
       snapshot: {},
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('done');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
 
     const action = jest.fn();
     const ctx = {
@@ -856,6 +856,41 @@ describe('executeGoto', () => {
     );
   });
 
+  it.each(['handled', 'blocked'] as const)(
+    'does not propagate a terminal again when loop result is %s',
+    async (loopStatus) => {
+      const runNavigationMutation =
+        mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
+      runNavigationMutation.mockResolvedValue({
+        kind: 'applied',
+        runId: DEFAULT_RUNBOOK_ID,
+        previousState: makeState(),
+        updatedState: makeState({ step: '2' }),
+        snapshot: {},
+        steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
+      });
+      jest.mocked(runExecutionLoop).mockResolvedValue({ status: loopStatus });
+      const load = mockFn<RunbookStateManager['load']>().mockRejectedValue(
+        new Error('post-loop propagation must not load'),
+      );
+      const ctx = {
+        output: { action: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
+        manager: { load } as unknown as RunbookStateManager,
+        seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
+        callerEvidence: { kind: 'direct_cli' as const },
+        state: makeState(),
+        steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
+        cwd: '/test',
+      };
+
+      const result = await executeGoto(ctx, { step: '2' });
+
+      expect(result).toMatchObject({ ok: true, loopResult: loopStatus });
+      expect(result).not.toHaveProperty('propagation');
+      expect(load).not.toHaveBeenCalled();
+    },
+  );
+
   it('does not call clearLastResult after core GOTO synchronization', async () => {
     const clearLastResult = jest.fn(async () => undefined);
     const runNavigationMutation = mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
@@ -867,7 +902,7 @@ describe('executeGoto', () => {
       snapshot: {},
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('done');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
 
     const outputAction = jest.fn();
     const output = {
@@ -913,7 +948,7 @@ describe('executeGoto', () => {
       snapshot: {},
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'stopped' });
 
     const ctx = {
       output: {
@@ -956,7 +991,7 @@ describe('executeGoto', () => {
       snapshot: {},
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
 
     const issueDelegationCredential = jest.fn() as unknown as DelegationCredentialIssuer;
     const deriveDelegationToken = jest.fn() as unknown as DelegationTokenDeriver;

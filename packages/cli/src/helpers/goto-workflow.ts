@@ -25,7 +25,7 @@ import {
   type DelegationRuntimeCapabilities,
   claimKeyFromBearer,
 } from '@rundown-org/core';
-import { runExecutionLoop, type ExecutionLoopResult } from '../services/execution.js';
+import { runExecutionLoop, type ExecutionLoopStatus } from '../services/execution.js';
 import {
   propagateDrivenRunTerminal,
   propagationRequiresFailureExit,
@@ -82,7 +82,7 @@ export type GotoValidationResult =
  * Result of goto execution.
  */
 export type GotoExecutionResult =
-  | { ok: true; loopResult: ExecutionLoopResult; propagation?: DrivenRunPropagation }
+  | { ok: true; loopResult: ExecutionLoopStatus; propagation?: DrivenRunPropagation }
   | { ok: false; error: string; code: string };
 
 /**
@@ -102,6 +102,7 @@ export function gotoResultRequiresFailureExit(
 ): boolean {
   return (
     result.loopResult === 'stopped' ||
+    result.loopResult === 'blocked' ||
     (result.propagation !== undefined && propagationRequiresFailureExit(result.propagation))
   );
 }
@@ -397,14 +398,23 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
   // `loop-inferred` trigger and let lifecycle inference decide the outcome (same
   // as the natural loop). Without this, `goto` completing an inline child left
   // the parent's substep 'running' forever (#553).
-  const propagation = await propagateDrivenRunTerminal(
-    manager,
-    state.id,
-    cwd,
-    output,
-    { kind: 'loop-inferred' },
-    ctx.commandStreamOptions,
-  );
+  const propagation =
+    loopResult.status === 'handled' || loopResult.status === 'blocked'
+      ? undefined
+      : await propagateDrivenRunTerminal(
+          manager,
+          state.id,
+          cwd,
+          output,
+          { kind: 'loop-inferred' },
+          ctx.commandStreamOptions,
+        );
 
-  return { ok: true, loopResult, propagation };
+  // Progression status only. Terminal state owns its atomic Run Release;
+  // nothing downstream decides or observes release ownership.
+  return {
+    ok: true,
+    loopResult: loopResult.status,
+    ...(propagation === undefined ? {} : { propagation }),
+  };
 }

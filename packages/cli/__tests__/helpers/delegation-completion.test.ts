@@ -449,7 +449,7 @@ beforeEach(() => {
     applied: 0,
     state: makeState(PARENT_RUN_ID),
   });
-  jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+  jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
   // resetAllMocks() wipes the lazy-import stubs the inline path needs; restore
   // them each run so advanceParentForInlineChild resolves steps/emitter/config.
   // The values pass straight through to the mocked drain/loop, so structural
@@ -942,15 +942,16 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.flush).toHaveBeenCalled();
     expect(runExecutionLoop).not.toHaveBeenCalled();
+    expect(jest.mocked(drainResolvedCompletions).mock.calls[0]?.[0].terminalRelease).toEqual({
+      role: 'addressed',
+    });
   });
 
-  // The nested arm: this callable's OWN drain applied, so it runs the parent's
-  // execution loop — whose drain can hit the same refusal. Under caller
-  // ownership the loop hands that back as data instead of reporting
-  // `'stopped'`. Forwarding a `'stopped'` here would have the core seam release
-  // a parent that is still running and recurse one level up reporting a
-  // terminal that never happened.
-  it('forwards a refusal from the deferred execution loop without claiming a terminal', async () => {
+  // The re-entrant arm: this callable's drain applied, so it runs the parent's
+  // execution loop — whose drain can hit the same refusal. Refusal Hand-back
+  // returns data instead of a false `'stopped'`; the upward seam then performs
+  // no recursion for a terminal that never happened.
+  it('forwards a requested refusal without claiming a terminal', async () => {
     const parentState = makeState(PARENT_RUN_ID);
     const manager = makeManager(new Map([[parentState.id, parentState]]));
     const output = makeOutput();
@@ -962,7 +963,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       state: parentState,
     } as never);
     jest.mocked(runExecutionLoop).mockResolvedValue({
-      kind: 'refused',
+      status: 'refused',
       refusal: {
         reason: 'target_mismatch',
         message: 'loop drain blew up',
@@ -1023,7 +1024,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('stopped');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'stopped' });
     const advance = buildAdvanceInlineParent('/test', output);
     const outcome = await advance({
       parentRunId: PARENT_RUN_ID,
@@ -1033,6 +1034,30 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     });
     expect(runExecutionLoop).toHaveBeenCalledTimes(1);
     expect(outcome).toEqual({ status: 'stopped' });
+  });
+
+  it('preserves blocked severity without repeating nested flow-back', async () => {
+    const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
+    const manager = makeManager(new Map([[parentState.id, parentState]]));
+    const output = makeOutput();
+    wireMocks(manager, makeLifecycleService());
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
+      status: 'continue',
+      applied: 1,
+      state: parentState,
+    });
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'blocked' });
+
+    const advance = buildAdvanceInlineParent('/test', output);
+    await expect(
+      advance({
+        parentRunId: PARENT_RUN_ID,
+        parentFrameKey: FRAME,
+        parentEntry: 1,
+        result: 'pass',
+      }),
+    ).resolves.toEqual({ status: 'blocked' });
   });
 
   // The loop's non-terminal exit. It used to be this callable's fall-through, so
@@ -1050,7 +1075,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
     const advance = buildAdvanceInlineParent('/test', output);
     const outcome = await advance({
       parentRunId: PARENT_RUN_ID,
@@ -1063,7 +1088,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
     expect(outcome).toEqual({ status: 'active' });
   });
 
-  it('drives the loop with caller-owned release (no self-release)', async () => {
+  it('drives the loop with atomic release and refusal hand-back', async () => {
     const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
     const manager = makeManager(new Map([[parentState.id, parentState]]));
     const output = makeOutput();
@@ -1074,7 +1099,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('done');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
     const advance = buildAdvanceInlineParent('/test', output);
     await advance({
       parentRunId: PARENT_RUN_ID,
@@ -1088,7 +1113,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       expect.anything(),
       '/test',
       expect.anything(),
-      expect.objectContaining({ releaseOwner: 'caller' }),
+      expect.objectContaining({ returnRefusals: true }),
     );
   });
 
@@ -1103,7 +1128,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('done');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
     const advance = buildAdvanceInlineParent('/test', output);
     const outcome = await advance({
       parentRunId: PARENT_RUN_ID,
@@ -1112,6 +1137,32 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       result: 'pass',
     });
     expect(outcome).toEqual({ status: 'done' });
+  });
+
+  it('does not report a terminal twice when a nested entry already completed the parent', async () => {
+    const parentState = makeState(PARENT_RUN_ID, { parentLinkage: undefined });
+    const manager = makeManager(new Map([[parentState.id, parentState]]));
+    const output = makeOutput();
+    wireMocks(manager, makeLifecycleService());
+    jest.mocked(drainResolvedCompletions).mockResolvedValue({
+      unresolved: 0,
+      status: 'continue',
+      applied: 1,
+      state: parentState,
+    });
+    // The nested inline flow-back already drove the parent progression.
+    // Reporting another terminal here would start the upward walk twice (#842).
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'handled' });
+
+    const advance = buildAdvanceInlineParent('/test', output);
+    const outcome = await advance({
+      parentRunId: PARENT_RUN_ID,
+      parentFrameKey: FRAME,
+      parentEntry: 1,
+      result: 'pass',
+    });
+
+    expect(outcome).toEqual({ status: 'active' });
   });
 
   it('returns status active when completions applied but the parent still waits', async () => {
@@ -1176,7 +1227,7 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
         applied: 1,
         state: parentState,
       });
-      jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+      jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
       return manager;
     }
 
@@ -1285,7 +1336,7 @@ describe('propagateChildTerminal run-scoped delegation runtime', () => {
       applied: 1,
       state: parentState,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue('waiting');
+    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
 
     await deps.advanceInlineParent({
       parentRunId: PARENT_RUN_ID,

@@ -154,7 +154,7 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             // lifecycle, captured in `shouldExitWithError` above when it locally
             // STOPped, governs). Re-pointed at the seam outcome's runId (reloaded
             // via the same manager) now that the resolve/drive lives in core.
-            if (applied) {
+            if (applied && !applied.terminalPropagationHandled) {
               const propagation = await propagateDrivenRunTerminal(
                 manager,
                 applied.runId,

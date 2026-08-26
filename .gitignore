@@ -58,3 +58,5 @@ packages/*/.stryker-tmp/
 
 # TypeScript incremental build
 *.tsbuildinfo
+# Agent scratch workspace (prototypes, notes); never part of the repo.
+.scratch/

@@ -16,6 +16,7 @@ import type {
   RunbookActorService,
   RunbookStateManager,
   RunId,
+  SessionService,
   RunRelease,
   SessionMutationResult,
 } from '@rundown-org/core';
@@ -634,7 +635,11 @@ describe('runExecutionLoop', () => {
       '/tmp',
       asEmitter(mockEmitter),
     );
-    expect(result).toBe('stopped');
+    // A run that is not there was never driven, so there is nothing to release
+    // and nothing deferred to a caller — the one arm where `'none'` means the
+    // loop never began rather than the run never reached a terminal.
+    expect(result).toEqual({ status: 'stopped' });
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
   });
 
   it('observes each drained completion before applying the next one', async () => {
@@ -1013,7 +1018,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('done');
+    expect(result.status).toBe('done');
     expect(mockEmitter.emit).toHaveBeenCalledWith({
       type: 'RUNBOOK_COMPLETED',
       payload: expect.objectContaining({
@@ -1044,7 +1049,9 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('waiting');
+    // A parked run is still RUNNING and targeted; the status carries no release
+    // ownership signal for a caller to misread.
+    expect(result).toEqual({ status: 'waiting' });
     expect(mockEmitter.emit).toHaveBeenCalledWith({
       type: 'STEP_ENTERED',
       payload: expect.objectContaining({
@@ -1137,7 +1144,29 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('waiting');
+    expect(result.status).toBe('waiting');
+  });
+
+  it('returns waiting without release when the completion drain targets an inactive frame', async () => {
+    const current = makeLoopState();
+    mockManager.load.mockResolvedValue(current);
+    mockCompletionService.applyNextResolvedCompletion.mockResolvedValue({
+      kind: 'not_active',
+      state: current,
+      frameKey: '1|',
+      activeFrameKey: '2|',
+      unresolved: 0,
+    });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(steps),
+      '/tmp',
+      asEmitter(mockEmitter),
+    );
+
+    expect(result).toEqual({ status: 'waiting' });
   });
 
   it('executes command and advances to next step', async () => {
@@ -1173,7 +1202,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('waiting');
+    expect(result).toEqual({ status: 'waiting' });
     expect(mockActorService.sendAndSync).toHaveBeenCalledWith(
       runbookId,
       asSteps(testSteps),
@@ -1322,7 +1351,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('stopped');
+    expect(result).toEqual({ status: 'stopped' });
     expect(mockEmitter.emit).toHaveBeenCalledWith({
       type: 'POLICY_DENIED',
       payload: expect.objectContaining({
@@ -1402,7 +1431,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('done');
+    expect(result.status).toBe('done');
     expect(mockEmitter.emit).toHaveBeenCalledWith({
       type: 'RUNBOOK_COMPLETED',
       payload: expect.objectContaining({
@@ -1483,7 +1512,7 @@ describe('runExecutionLoop', () => {
         },
         code: 'RECOVERY_REQUIRED',
       },
-    ])('reports $label and returns stopped instead of done', async ({ refusal, code }) => {
+    ])('reports $label without claiming a terminal under hand-back', async ({ refusal, code }) => {
       mockManager.load.mockResolvedValue(makeLoopState());
       mockActorMutationRunner.run.mockResolvedValueOnce(refusal);
 
@@ -1495,12 +1524,32 @@ describe('runExecutionLoop', () => {
         asEmitter(mockEmitter),
       );
 
-      expect(result).toBe('stopped');
+      expect(result).toEqual({ status: 'stopped' });
       expect(mockEmitter.emit).toHaveBeenCalledWith({
         type: 'ERROR_OCCURRED',
         payload: { message: refusal.message, code },
       });
       expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+
+      mockEmitter.emit.mockClear();
+      mockActorMutationRunner.run.mockResolvedValueOnce(refusal);
+      await expect(
+        runExecutionLoop(
+          asManager(mockManager),
+          runbookId,
+          asSteps(steps),
+          '/tmp',
+          asEmitter(mockEmitter),
+          { returnRefusals: true },
+        ),
+      ).resolves.toEqual({ status: 'blocked' });
+      expect(mockEmitter.emit).toHaveBeenCalledWith({
+        type: 'ERROR_OCCURRED',
+        payload: { message: refusal.message, code },
+      });
+      expect(mockEmitter.emit).not.toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'RUNBOOK_STOPPED' }),
+      );
     });
 
     it('reports a refused entry-time release and downgrades an already-completed run', async () => {
@@ -1532,7 +1581,9 @@ describe('runExecutionLoop', () => {
         asEmitter(mockEmitter),
       );
 
-      expect(result).toBe('stopped');
+      // A refused cleanup of an already-terminal entry reports stopped and
+      // emits the typed session refusal; release ownership is not returned.
+      expect(result).toEqual({ status: 'stopped' });
       expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
         { runId: runbookId, role: 'addressed' },
       ]);
@@ -1573,7 +1624,7 @@ describe('runExecutionLoop', () => {
         asEmitter(mockEmitter),
       );
 
-      expect(result).toBe('stopped');
+      expect(result).toEqual({ status: 'stopped' });
       expect(mockEmitter.emit).toHaveBeenCalledWith({
         type: 'ERROR_OCCURRED',
         payload: { message: refusal.message, code: 'STALE_CLAIM' },
@@ -1595,7 +1646,7 @@ describe('runExecutionLoop', () => {
         asEmitter(mockEmitter),
       );
 
-      expect(result).toBe('done');
+      expect(result.status).toBe('done');
       expect(mockActorMutationRunner.run).toHaveBeenCalledWith(
         expect.objectContaining({
           terminalRelease: { role: 'addressed' },
@@ -1645,7 +1696,9 @@ describe('runExecutionLoop', () => {
           asEmitter(mockEmitter),
         );
 
-        expect(result).toBe(terminal);
+        // `terminalRelease` is armed on every apply below; whichever apply
+        // reaches terminal commits the release in that same transaction.
+        expect(result).toEqual({ status: terminal });
         // Presence-means-release, so arming is asserted over EVERY apply the
         // drain made rather than over one of them: a single armed call would
         // satisfy a `toHaveBeenCalledWith` that any unarmed one contradicts.
@@ -1660,12 +1713,7 @@ describe('runExecutionLoop', () => {
       },
     );
 
-    it('arms no drain release when the caller owns it', async () => {
-      // The counterpart to the fence's own deferral. The inline parent-advance
-      // seam owns the single release for a parent it drives, so an armed apply
-      // here would release behind that owner — the same double-release the
-      // fence avoids by omitting `terminalRelease`. Deferral is spelled by
-      // absence, so it is asserted as absence, over every apply.
+    it('arms the drain release when the caller requests refusal hand-back', async () => {
       mockManager.load.mockResolvedValue(makeLoopState());
       mockCompletionService.applyNextResolvedCompletion.mockResolvedValue({
         kind: 'applied',
@@ -1686,13 +1734,13 @@ describe('runExecutionLoop', () => {
         asSteps(steps),
         '/tmp',
         asEmitter(mockEmitter),
-        { releaseOwner: 'caller' },
+        { returnRefusals: true },
       );
 
-      expect(result).toBe('done');
+      expect(result).toEqual({ status: 'done' });
       expect(mockCompletionService.applyNextResolvedCompletion).toHaveBeenCalled();
       for (const [applyInput] of mockCompletionService.applyNextResolvedCompletion.mock.calls) {
-        expect(applyInput).not.toHaveProperty('terminalRelease');
+        expect(applyInput).toMatchObject({ terminalRelease: { role: 'addressed' } });
       }
       expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
     });
@@ -1730,7 +1778,7 @@ describe('runExecutionLoop', () => {
         asEmitter(mockEmitter),
       );
 
-      expect(result).toBe('stopped');
+      expect(result.status).toBe('stopped');
       expect(mockEmitter.emit).toHaveBeenCalledWith({
         type: 'RUNBOOK_STOPPED',
         payload: {
@@ -1769,7 +1817,7 @@ describe('runExecutionLoop', () => {
         asEmitter(mockEmitter),
       );
 
-      expect(result).toBe('stopped');
+      expect(result.status).toBe('stopped');
       expect(mockEmitter.emit).toHaveBeenCalledWith({
         type: 'ERROR_OCCURRED',
         payload: { message: refusal.message, code: 'EXECUTION_IN_PROGRESS' },
@@ -1801,7 +1849,7 @@ describe('runExecutionLoop', () => {
         asEmitter(mockEmitter),
       );
 
-      expect(result).toBe('done');
+      expect(result.status).toBe('done');
       expect(mockEmitter.emit).toHaveBeenCalledWith({
         type: 'RUNBOOK_COMPLETED',
         payload: { message: 'Wrapped', finalPosition: { current: '2', total: 2 } },
@@ -1831,7 +1879,7 @@ describe('runExecutionLoop', () => {
         asEmitter(mockEmitter),
       );
 
-      expect(result).toBe('done');
+      expect(result.status).toBe('done');
       expect(mockEmitter.emit).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'RUNBOOK_COMPLETED' }),
       );
@@ -1841,13 +1889,8 @@ describe('runExecutionLoop', () => {
     });
   });
 
-  describe("releaseOwner 'caller' (#598)", () => {
-    it('drives a run to done without releasing — caller owns release', async () => {
-      // Mirror the "completes the runbook" fixture: an in-loop command drive to
-      // a 'done' terminal. Under caller ownership the fence carries no
-      // terminal release AND every loop release site stands down, so NO session
-      // release fires — the caller (the inline parent-advance core seam) owns
-      // the single terminal release.
+  describe('transaction-owned release (#838)', () => {
+    it('folds a command terminal release even when the caller requests refusal hand-back', async () => {
       mockManager.load.mockResolvedValue(makeLoopState());
       jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
       mockActorService.sendAndSync.mockResolvedValue({
@@ -1855,6 +1898,10 @@ describe('runExecutionLoop', () => {
           id: runbookId,
           step: '1',
           status: 'done',
+          // The lifecycle the fence COMMITS, and the fact an armed
+          // `terminalRelease` projects off — so the fixture has to carry it to
+          // describe the production path: entering COMPLETE assigns it.
+          lifecycle: 'completed',
           variables: {},
           runbookPath: '/tmp/test.md',
         },
@@ -1872,28 +1919,77 @@ describe('runExecutionLoop', () => {
         asSteps(steps),
         '/tmp',
         asEmitter(mockEmitter),
-        { releaseOwner: 'caller' },
+        { returnRefusals: true },
       );
 
-      expect(result).toBe('done');
+      expect(result).toEqual({ status: 'done' });
       expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
-      // The release is folded INTO the fenced command mutation, so "the caller
-      // owns it" has to be visible in the request the fence received — not only
-      // in the absence of a separate session call, which would also hold if the
-      // fence had released it inside its own transaction. `terminalRelease` is
-      // presence-means-release, so deferring is spelled by its absence — and
-      // asserted over EVERY fence request, since a single non-releasing call
-      // would satisfy a `toHaveBeenCalledWith` that any other call contradicts.
       expect(mockActorMutationRunner.run).toHaveBeenCalled();
       for (const [fenceInput] of mockActorMutationRunner.run.mock.calls) {
-        expect(fenceInput).not.toHaveProperty('terminalRelease');
+        expect(fenceInput).toMatchObject({ terminalRelease: { role: 'addressed' } });
       }
     });
 
-    it('drives a run to stopped without releasing', async () => {
-      // Pre-loaded stopped state (CLI-owned stop recovery). Under caller
-      // ownership `releaseTerminalRun` stands down, so the terminal return
-      // releases nothing.
+    it('returns a stopped command transition with its folded release', async () => {
+      mockManager.load.mockResolvedValue(makeLoopState());
+      jest.mocked(core.executeCommand).mockResolvedValue({ success: false, exitCode: 1 });
+      mockActorService.sendAndSync.mockResolvedValue({
+        state: makeLoopState('1', { lifecycle: 'stopped' }),
+        snapshot: {
+          status: 'done',
+          value: 'STOPPED',
+          context: { lastAction: { type: 'STOP', origin: 'direct' } },
+        },
+        effects: [commandCompletedEffect('fail')],
+      });
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toEqual({ status: 'stopped' });
+    });
+
+    it.each([
+      { lifecycle: 'completed' as const, status: 'done' as const, result: 'pass' as const },
+      { lifecycle: 'stopped' as const, status: 'stopped' as const, result: 'fail' as const },
+    ])(
+      'reports the committed $lifecycle lifecycle when the snapshot observation remains active',
+      async ({ lifecycle, status, result: commandResult }) => {
+        mockManager.load.mockResolvedValue(makeLoopState());
+        jest.mocked(core.executeCommand).mockResolvedValue({ success: true, exitCode: 0 });
+        mockActorService.sendAndSync.mockResolvedValue({
+          state: makeLoopState('1', { lifecycle }),
+          snapshot: {
+            status: 'active',
+            value: { 'step::1': 'idle' },
+            context: { lastAction: { type: 'CONTINUE', origin: 'direct' } },
+          },
+          effects: [commandCompletedEffect(commandResult)],
+        });
+
+        const result = await runExecutionLoop(
+          asManager(mockManager),
+          runbookId,
+          asSteps(steps),
+          '/tmp',
+          asEmitter(mockEmitter),
+        );
+
+        expect(result).toEqual({ status });
+        expect(mockEmitter.emit).toHaveBeenCalledWith(
+          expect.objectContaining({
+            type: status === 'done' ? 'RUNBOOK_COMPLETED' : 'RUNBOOK_STOPPED',
+          }),
+        );
+      },
+    );
+
+    it('releases a pre-loaded stopped run when refusals would be returned', async () => {
       mockManager.load.mockResolvedValue(
         makeLoopState('1', {
           lifecycle: 'stopped',
@@ -1911,15 +2007,17 @@ describe('runExecutionLoop', () => {
         asSteps(steps),
         '/tmp',
         asEmitter(mockEmitter),
-        { releaseOwner: 'caller' },
+        { returnRefusals: true },
       );
 
-      expect(result).toBe('stopped');
-      expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+      expect(result).toEqual({ status: 'stopped' });
+      expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
+        { runId: runbookId, role: 'addressed' },
+      ]);
     });
 
-    it('loop ownership releases the run and retains the claim as terminal evidence', async () => {
-      // The other side of the same branch, at the default ownership. The role is
+    it('already-terminal cleanup retains the claim as terminal evidence', async () => {
+      // The successful side of the already-terminal cleanup. The role is
       // load-bearing: retaining the tombstone is what lets a later `--claim-id`
       // confirm-or-conflict resolve `terminal` rather than `missing` (RD-598),
       // and it is what an already-terminal `rundown run` entry used to get wrong
@@ -1943,18 +2041,29 @@ describe('runExecutionLoop', () => {
         asEmitter(mockEmitter),
       );
 
-      expect(result).toBe('stopped');
+      expect(result).toEqual({ status: 'stopped' });
       expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
         { runId: runbookId, role: 'addressed' },
       ]);
     });
+  });
 
-    it('refuses an unrecognized release owner instead of releasing anyway', async () => {
-      // The ownership dispatch must not treat "not the caller" as "the loop": a
-      // future ExecutionReleaseOwner added to the union would then have the loop
-      // release behind whoever actually owns it, taking the release twice. The
-      // `never` check makes the compiler the primary gate; this pins the runtime
-      // half, which is what a cast at a call site would slip past.
+  // The loop's Run Release was unobservable from outside it: every assertion
+  // about ownership was an assertion about what the loop RETURNED, and a second
+  // owner releasing the same run changes nothing it returns. That is how the
+  // double release of #842 stayed green through 31 of them.
+  describe('the session service seam (#838)', () => {
+    /** A second session double, distinguishable from the module-level one. */
+    function injectedSessionDouble() {
+      return {
+        releaseRuns: mockFn<
+          (releases: readonly RunRelease[]) => Promise<SessionMutationResult<void>>
+        >().mockResolvedValue(committed<void>(undefined)),
+      };
+    }
+
+    it('takes its Run Release through the injected session service', async () => {
+      const injected = injectedSessionDouble();
       mockManager.load.mockResolvedValue(
         makeLoopState('1', {
           lifecycle: 'stopped',
@@ -1966,22 +2075,84 @@ describe('runExecutionLoop', () => {
         }),
       );
 
-      await expect(
-        runExecutionLoop(
-          asManager(mockManager),
-          runbookId,
-          asSteps(steps),
-          '/tmp',
-          asEmitter(mockEmitter),
-          // Cast against the LOOP-OWNING overload: `runExecutionLoop` is
-          // overloaded on the owner, so a bare `ExecutionReleaseOwner` matches
-          // neither signature. An unknown owner reaches the runtime
-          // exhaustiveness guard in `loopOwnsRelease`.
-          { releaseOwner: 'future-owner' as 'loop' },
-        ),
-      ).rejects.toThrow(/future-owner/);
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        asEmitter(mockEmitter),
+        { sessionService: injected as unknown as SessionService },
+      );
 
+      expect(result).toEqual({ status: 'stopped' });
+      expect(injected.releaseRuns).toHaveBeenCalledWith([{ runId: runbookId, role: 'addressed' }]);
+      // Both halves. The loop reaching the injected double is only half the
+      // seam: if it ALSO constructed its own, a caller counting releases would
+      // see one of two and conclude single ownership from a split view.
       expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+      expect(jest.mocked(core.SessionService)).not.toHaveBeenCalled();
+    });
+
+    it('constructs its own session service when none is injected', async () => {
+      // The production path, pinned so the seam cannot become mandatory by
+      // accident: an option that every caller must remember to pass is a
+      // release site waiting to be forgotten.
+      mockManager.load.mockResolvedValue(
+        makeLoopState('1', {
+          lifecycle: 'stopped',
+          snapshot: {
+            status: 'active',
+            value: { 'step::1': 'idle' },
+            context: { lastAction: { type: 'CONTINUE', origin: 'direct' } },
+          },
+        }),
+      );
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        asEmitter(mockEmitter),
+      );
+
+      expect(result).toEqual({ status: 'stopped' });
+      expect(jest.mocked(core.SessionService)).toHaveBeenCalledWith(asManager(mockManager));
+      expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
+        { runId: runbookId, role: 'addressed' },
+      ]);
+    });
+
+    it('reports a refused release through the injected service too', async () => {
+      // An injected observer sees the actual attempted release and typed error;
+      // the loop result carries no ownership claim.
+      const injected = injectedSessionDouble();
+      injected.releaseRuns.mockResolvedValue({
+        kind: 'execution_in_progress' as const,
+        runId: runbookId,
+        message: `Run ${runbookId} has an execution in progress.`,
+      });
+      mockManager.load.mockResolvedValue(
+        makeLoopState('2', {
+          lifecycle: 'completed',
+          snapshot: {
+            status: 'done',
+            value: 'COMPLETE',
+            context: { lastAction: { type: 'COMPLETE', origin: 'direct' } },
+          },
+        }),
+      );
+
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(steps),
+        '/tmp',
+        asEmitter(mockEmitter),
+        { sessionService: injected as unknown as SessionService },
+      );
+
+      expect(result).toEqual({ status: 'stopped' });
     });
   });
 
@@ -2131,7 +2302,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('stopped');
+    expect(result).toEqual({ status: 'stopped' });
 
     // ERROR_OCCURRED is emitted with the RETRY_ERROR lastAction payload fields.
     expect(mockEmitter.emit).toHaveBeenCalledWith({
@@ -2205,7 +2376,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('stopped');
+    expect(result).toEqual({ status: 'stopped' });
 
     // ERROR_OCCURRED is emitted with the OUTPUT_CAPTURE_FAILED message.
     expect(mockEmitter.emit).toHaveBeenCalledWith({
@@ -2262,7 +2433,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('stopped');
+    expect(result.status).toBe('stopped');
     expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
 
     expect(mockEmitter.emit).toHaveBeenCalledWith({
@@ -2314,7 +2485,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('stopped');
+    expect(result.status).toBe('stopped');
     expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
     expect(mockEmitter.emit).toHaveBeenCalledWith({
       type: 'RUNBOOK_STOPPED',
@@ -2361,7 +2532,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('stopped');
+    expect(result.status).toBe('stopped');
     expect(mockEmitter.emit).toHaveBeenCalledWith({
       type: 'RUNBOOK_STOPPED',
       payload: expect.objectContaining({
@@ -2392,7 +2563,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('stopped');
+    expect(result.status).toBe('stopped');
     expect(mockEmitter.emit).toHaveBeenCalledWith({
       type: 'RUNBOOK_STOPPED',
       payload: expect.objectContaining({ position: expect.any(Object) }),
@@ -2433,7 +2604,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('waiting');
+    expect(result.status).toBe('waiting');
   });
 
   it('prompted-for step emits STEP_ENTERED with prompted: true', async () => {
@@ -2579,7 +2750,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('waiting');
+    expect(result.status).toBe('waiting');
     expect(mockEmitter.emit).toHaveBeenCalledWith({
       type: 'STEP_ENTERED',
       payload: expect.objectContaining({
@@ -2647,7 +2818,7 @@ describe('runExecutionLoop', () => {
       // OUTPUTS evaluation lives in the state machine; this is a regression
       // guard that the CLI auto-execution path still runs to completion when
       // a step declares outputs. Behavioral coverage is in integration tests.
-      expect(result).not.toBe('stopped');
+      expect(result.status).not.toBe('stopped');
     });
 
     it('sends COMMAND_RESULT, not SET_VARIABLES or PASS, after a successful command with OUTPUTS', async () => {
@@ -2712,7 +2883,7 @@ describe('runExecutionLoop', () => {
         asEmitter(mockEmitter),
       );
 
-      expect(result).not.toBe('stopped');
+      expect(result.status).not.toBe('stopped');
       const events = mockActorService.sendAndSync.mock.calls.map((call: unknown[]) => call[2]);
       expect(events).toEqual([
         // The event names the command only. Which OUTPUTS this unit captures
@@ -2909,7 +3080,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('stopped');
+    expect(result).toEqual({ status: 'stopped' });
     expect(mockEmitter.emit).toHaveBeenCalledWith({
       type: 'ERROR_OCCURRED',
       payload: {
@@ -2924,13 +3095,8 @@ describe('runExecutionLoop', () => {
         message: 'Completion targets substep 2, cursor is on 1',
       },
     });
-    // The release the throw used to skip. Without it the refused run stays on
-    // the session stack and every later bare command still resolves it.
-    // `addressed`: the run is still RUNNING here, and the refusal's remediation
-    // is to retry, so the authority a retry needs must survive (#789).
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'addressed' },
-    ]);
+    // The mismatch committed no terminal state, so it has no Run Release.
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
   });
 
   // The drain's mismatch arm reports `applied: 0` and carries no state, so a
@@ -2982,12 +3148,11 @@ describe('runExecutionLoop', () => {
     });
   });
 
-  // The ordering the caller-ownership hand-back BELOW depends on, and the only
+  // The ordering the Refusal Hand-back BELOW depends on, and the only
   // remaining consumer of the committed-cursor re-read. `RunbookStateManager.load`
   // THROWS on structurally invalid persisted state, so hoisting that read above
-  // the ownership return would turn that typed hand-back into an escaping
-  // `InvalidRunbookStateError` — a caller that owns the terminal would get a
-  // bare error carrying no code where it expects `refused`.
+  // the hand-back return would turn that typed result into an escaping
+  // `InvalidRunbookStateError` carrying no refusal code.
   //
   // Driven by making the read fail rather than by counting calls: a call count
   // pins that the read did not happen, while a rejection pins the consequence of
@@ -3021,22 +3186,20 @@ describe('runExecutionLoop', () => {
       asSteps(steps),
       '/tmp',
       asEmitter(mockEmitter),
-      { releaseOwner: 'caller' },
+      { returnRefusals: true },
     );
 
     expect(result).toEqual({
-      kind: 'refused',
+      status: 'refused',
       refusal: expect.objectContaining({ code: 'COMPLETION_TARGET_MISMATCH' }),
     });
     expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
   });
 
-  // Caller ownership is where the loop releases NOTHING and its caller
-  // acts on the status it is handed: the inline parent-advance seam releases the
-  // run and recurses one level up on 'stopped'. A refusal applied nothing and
-  // left the run RUNNING, so 'stopped' there released a live parent and reported
-  // a terminal to ITS parent that never happened.
-  it('hands the refusal back instead of a terminal when the release is deferred', async () => {
+  // Refusal Hand-back changes reporting only. A refusal applied nothing and
+  // left the run RUNNING, so returning a terminal status would start an upward
+  // walk for a terminal that never happened.
+  it('hands the refusal back instead of a terminal when requested', async () => {
     const currentState = makeLoopState('1', {
       lifecycle: 'running',
       activeFrameKey: '1|',
@@ -3061,11 +3224,11 @@ describe('runExecutionLoop', () => {
       asSteps(steps),
       '/tmp',
       asEmitter(mockEmitter),
-      { releaseOwner: 'caller' },
+      { returnRefusals: true },
     );
 
     expect(result).toEqual({
-      kind: 'refused',
+      status: 'refused',
       refusal: {
         reason: 'target_mismatch',
         message: 'Completion targets substep 2, cursor is on 1',
@@ -3076,11 +3239,10 @@ describe('runExecutionLoop', () => {
         runId: runbookId,
       },
     });
-    // Nothing released — that is what caller ownership means, and what makes
-    // reporting a terminal here a lie the caller would act on.
+    // Nothing released because the refusal applied no terminal transition;
+    // reporting a terminal here would be a lie the caller acts on.
     expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
-    // And nothing announced: a caller that owns the terminal owns reporting it,
-    // and the adapter renders this same code and message. A RUNBOOK_STOPPED
+    // And nothing announced: the adapter renders this same code and message. A RUNBOOK_STOPPED
     // here would announce a stop for a run that is still running.
     expect(mockEmitter.emit).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'ERROR_OCCURRED' }),
@@ -3130,7 +3292,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('stopped');
+    expect(result.status).toBe('stopped');
     expect(mockEmitter.emit).toHaveBeenCalledWith({
       type: 'ERROR_OCCURRED',
       payload: {
@@ -3161,35 +3323,7 @@ describe('runExecutionLoop', () => {
     );
   });
 
-  it('releases the run from the session stack when the frontier refusal fires', async () => {
-    mockManager.load.mockResolvedValue(
-      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
-    );
-
-    await runExecutionLoop(
-      asManager(mockManager),
-      runbookId,
-      asSteps(singleDelegateFrontierSteps()),
-      '/tmp',
-      asEmitter(mockEmitter),
-    );
-
-    // The stranding assertion: the release must have run, so the refused run is
-    // no longer targeted by the session. Asserted by exact arguments — the run
-    // is still RUNNING on this path, so `collateral` would revoke the authority
-    // the prescribed retry needs (#789), and a role that silently swapped would
-    // still satisfy a bare call-count check.
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledTimes(1);
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'addressed' },
-    ]);
-  });
-
-  it('releases nothing on the frontier refusal when the caller owns the release', async () => {
-    // The other side of the refused-continuation release: an inline
-    // parent-advance continuation names its caller as release owner, and the
-    // refusal arms stand down with it. Releasing here would take a run off the
-    // session stack behind the seam that owns it.
+  it('keeps the running run targeted when the missing-authority refusal fires', async () => {
     mockManager.load.mockResolvedValue(
       frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
     );
@@ -3200,11 +3334,43 @@ describe('runExecutionLoop', () => {
       asSteps(singleDelegateFrontierSteps()),
       '/tmp',
       asEmitter(mockEmitter),
-      { releaseOwner: 'caller' },
     );
 
-    expect(result).toBe('stopped');
+    expect(result).toEqual({ status: 'stopped' });
+    // No terminal transition committed, so Position A has no Run Release to
+    // pair with it. Keeping the running run targeted is what makes retry real.
     expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+  });
+
+  it('hands a missing-authority refusal back without claiming a terminal', async () => {
+    // Caller ownership means the inline parent-advance seam acts on the status
+    // it receives. This refusal applied nothing and left the run RUNNING, so a
+    // stopped status would make that seam release a live run and recurse upward
+    // on a terminal that never happened.
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
+    );
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(singleDelegateFrontierSteps()),
+      '/tmp',
+      asEmitter(mockEmitter),
+      { returnRefusals: true },
+    );
+
+    expect(result).toEqual({
+      status: 'refused',
+      refusal: {
+        reason: 'actor_context_required',
+        message: 'Delegation frontier cannot be projected without verified claim authority',
+        code: 'ACTOR_CONTEXT_REQUIRED',
+        runId: runbookId,
+      },
+    });
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+    expect(mockEmitter.emit).not.toHaveBeenCalled();
   });
 
   // The projection refusal is the sibling failure of the missing-deriver one
@@ -3241,7 +3407,7 @@ describe('runExecutionLoop', () => {
       { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_other') },
     );
 
-    expect(result).toBe('stopped');
+    expect(result.status).toBe('stopped');
     // RD-821 (DELEGATION_INVARIANT_VIOLATED) — the same code core already
     // attaches to this exact pair of conditions on the delegation echo seam.
     // The detail names the frontier id and never the bearer.
@@ -3281,7 +3447,7 @@ describe('runExecutionLoop', () => {
       { delegationRuntime: frontierProjectionRuntime(rotatedIssuerDeriver) },
     );
 
-    expect(result).toBe('stopped');
+    expect(result.status).toBe('stopped');
     const message = `${FRONTIER_PROJECTION_PREFIX}: Delegation credential belongs to a different issuer claim`;
     expect(mockEmitter.emit).toHaveBeenCalledWith({
       type: 'ERROR_OCCURRED',
@@ -3301,12 +3467,12 @@ describe('runExecutionLoop', () => {
     );
   });
 
-  it('releases the run from the session stack when the frontier projection is refused', async () => {
+  it('keeps the running run targeted when frontier projection is refused', async () => {
     mockManager.load.mockResolvedValue(
       frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
     );
 
-    await runExecutionLoop(
+    const result = await runExecutionLoop(
       asManager(mockManager),
       runbookId,
       asSteps(singleDelegateFrontierSteps()),
@@ -3315,18 +3481,11 @@ describe('runExecutionLoop', () => {
       { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_other') },
     );
 
-    // The stranding assertion: the release must have run, so the refused run is
-    // no longer targeted by the session. Asserted by exact arguments — the run
-    // is still RUNNING on this path, so `collateral` would revoke the authority
-    // the prescribed retry needs (#789), and a role that silently swapped would
-    // still satisfy a bare call-count check.
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledTimes(1);
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'addressed' },
-    ]);
+    expect(result).toEqual({ status: 'stopped' });
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
   });
 
-  it('releases the rotated-issuer projection refusal exactly like the hash mismatch', async () => {
+  it('keeps the rotated-issuer projection refusal targeted like the hash mismatch', async () => {
     mockManager.load.mockResolvedValue(
       frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
     );
@@ -3342,10 +3501,38 @@ describe('runExecutionLoop', () => {
       { delegationRuntime: frontierProjectionRuntime(rotatedIssuerDeriver) },
     );
 
-    expect(result).toBe('stopped');
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'addressed' },
-    ]);
+    expect(result).toEqual({ status: 'stopped' });
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+  });
+
+  it('hands a projection refusal back without claiming a terminal', async () => {
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_pending')]),
+    );
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(singleDelegateFrontierSteps()),
+      '/tmp',
+      asEmitter(mockEmitter),
+      {
+        returnRefusals: true,
+        delegationRuntime: frontierProjectionRuntime(() => 'rdtk_other'),
+      },
+    );
+
+    expect(result).toEqual({
+      status: 'refused',
+      refusal: {
+        reason: 'projection_refused',
+        message: `${FRONTIER_PROJECTION_PREFIX}: Derived delegation credential does not match frontier 1.1`,
+        code: 'RD-821',
+        runId: runbookId,
+      },
+    });
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+    expect(mockEmitter.emit).not.toHaveBeenCalled();
   });
 
   // ---------------------------------------------------------------------------
@@ -3378,7 +3565,7 @@ describe('runExecutionLoop', () => {
       { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a') },
     );
 
-    expect(result).toBe('stopped');
+    expect(result).toEqual({ status: 'stopped' });
     const consumeFailedMessage =
       'Failed to consume delegation frontier after re-entry; the frontier is still pending, retry the run';
     expect(mockEmitter.emit).toHaveBeenCalledWith({
@@ -3402,10 +3589,39 @@ describe('runExecutionLoop', () => {
     expect(mockEmitter.emit).not.toHaveBeenCalledWith(
       expect.objectContaining({ type: 'STEP_ENTERED' }),
     );
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledTimes(1);
-    expect(mockSessionService.releaseRuns).toHaveBeenCalledWith([
-      { runId: runbookId, role: 'addressed' },
-    ]);
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+  });
+
+  it('hands a frontier consume failure back without claiming a terminal', async () => {
+    mockManager.load.mockResolvedValue(
+      frontierLoopState([persistedFrontierEntry('1.1', 'child-a.runbook.md', 'rdtk_retry_a')]),
+    );
+    mockActorService.sendAndSync.mockResolvedValue(null);
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(singleDelegateFrontierSteps()),
+      '/tmp',
+      asEmitter(mockEmitter),
+      {
+        returnRefusals: true,
+        delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a'),
+      },
+    );
+
+    expect(result).toEqual({
+      status: 'refused',
+      refusal: {
+        reason: 'consume_failed',
+        message:
+          'Failed to consume delegation frontier after re-entry; the frontier is still pending, retry the run',
+        code: 'RD-829',
+        runId: runbookId,
+      },
+    });
+    expect(mockSessionService.releaseRuns).not.toHaveBeenCalled();
+    expect(mockEmitter.emit).not.toHaveBeenCalled();
   });
 
   it('rejects a structurally malformed persisted frontier rather than projecting it', async () => {
@@ -3425,6 +3641,60 @@ describe('runExecutionLoop', () => {
         { delegationRuntime: frontierProjectionRuntime(() => 'rdtk_retry_a') },
       ),
     ).rejects.toBeInstanceOf(actualCore.InvalidRunbookStateError);
+  });
+
+  it('stops without release when an inline launch has no output emitter', async () => {
+    const inlineSteps: LooseStep[] = [
+      {
+        kind: 'substeps',
+        name: '1',
+        description: 'Parent step',
+        substeps: [
+          {
+            id: '1',
+            description: 'Inline child',
+            runbooks: ['child.runbook.md'],
+            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+          },
+        ],
+        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+      },
+    ];
+    const parentState = makeLoopState('1', {
+      substep: '1',
+      activeFrameKey: '1|',
+      activeEntry: 1,
+    });
+    mockManager.load.mockResolvedValue(parentState);
+    mockActorService.enterExecutionUnit.mockResolvedValue({
+      kind: 'inline-launch',
+      launch: {
+        parentRunId: runbookId,
+        parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: '1|',
+        parentEntry: 1,
+        childRunId: actualCore.assertRunId(`rd_${'2'.repeat(32)}`),
+        childRunbookPath: 'child.runbook.md',
+        childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+        contextSnapshot: {},
+      },
+      effects: [],
+    });
+
+    const result = await runExecutionLoop(
+      asManager(mockManager),
+      runbookId,
+      asSteps(inlineSteps),
+      '/tmp',
+      asEmitter(mockEmitter),
+    );
+
+    expect(result).toEqual({ status: 'stopped' });
+    expect(mockEmitter.emit).toHaveBeenCalledWith({
+      type: 'ERROR_OCCURRED',
+      payload: { message: 'Inline launch requires an output emitter', code: 'RD-816' },
+    });
   });
 
   it('rolls back existing inline child session activation when intent consumption fails', async () => {
@@ -3537,7 +3807,7 @@ describe('runExecutionLoop', () => {
       { output: { executionEvent: jest.fn() } as never },
     );
 
-    expect(result).toBe('stopped');
+    expect(result.status).toBe('stopped');
     // Activated conditionally in the store. The positional `pushRunbook` behind
     // an unlocked `getActive` is the shape this replaced: its answer decided
     // whether the rollback below would fire, and a concurrent push between the
@@ -3726,7 +3996,7 @@ describe('runExecutionLoop', () => {
 
       // The refused pop is absorbed: the consume failure stays the outcome, and
       // the loop is answered with a loop result rather than a session envelope.
-      expect(result).toBe('stopped');
+      expect(result.status).toBe('stopped');
       expect(mockSessionService.popRunbookIfActive).toHaveBeenCalledWith(childRunId);
       expect(mockEmitter.emit).toHaveBeenCalledWith({
         type: 'ERROR_OCCURRED',
@@ -3863,7 +4133,7 @@ describe('runExecutionLoop', () => {
     );
 
     // The consume failure is still the outcome; only the session is spared.
-    expect(result).toBe('stopped');
+    expect(result.status).toBe('stopped');
     expect(mockEmitter.emit).toHaveBeenCalledWith({
       type: 'ERROR_OCCURRED',
       payload: expect.objectContaining({
@@ -3987,7 +4257,7 @@ describe('runExecutionLoop', () => {
       { output: { executionEvent: jest.fn() } as never },
     );
 
-    expect(result).toBe('waiting');
+    expect(result.status).toBe('waiting');
     expect(mockActorService.sendAndSync).toHaveBeenNthCalledWith(
       1,
       runbookId,
@@ -4180,7 +4450,7 @@ describe('runExecutionLoop', () => {
       );
 
     let injected = false;
-    let contender: 'done' | 'stopped' | 'waiting' | undefined;
+    let contender: Awaited<ReturnType<typeof driveLoop>> | undefined;
     mockedResolveRunbookRef.mockImplementation(async () => {
       if (!injected) {
         injected = true;
@@ -4202,8 +4472,8 @@ describe('runExecutionLoop', () => {
     // The contender saw the latch already taken and stood down without
     // launching. It reports `waiting`, exactly as an observer of a superseded
     // intent does — the launch is someone else's, not this observer's failure.
-    expect(contender).toBe('waiting');
-    expect(first).toBe('stopped');
+    expect(contender).toEqual({ status: 'waiting' });
+    expect(first).toEqual({ status: 'stopped' });
   });
 
   // The latch's own decisions now have a home of their own: every arm is
@@ -4445,7 +4715,7 @@ describe('runExecutionLoop', () => {
 
       const result = await driveLoop();
 
-      expect(result).toBe('stopped');
+      expect(result.status).toBe('stopped');
       // The callback never ran, so no arm was decided and nothing was written.
       expect(latchOutcomes).toEqual([]);
       expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
@@ -4476,7 +4746,7 @@ describe('runExecutionLoop', () => {
 
         const result = await driveLoop();
 
-        expect(result).toBe('stopped');
+        expect(result.status).toBe('stopped');
         // Refused, and refused before the latch write: a spurious `started`
         // would make every later re-entry of this frame report a launch that
         // never happened.
@@ -4552,7 +4822,7 @@ describe('runExecutionLoop', () => {
 
         const result = await driveLoop();
 
-        expect(result).toBe('stopped');
+        expect(result.status).toBe('stopped');
         // The parent's `started` is null, so an absent linkage check would have
         // reached `won` and written the latch. `next: null` is what proves the
         // refusal is decided ahead of the write, and the untouched `sendAndSync`
@@ -4659,7 +4929,7 @@ describe('runExecutionLoop', () => {
       // Entered the launch span exactly once; the ref resolution then fails, so
       // this stops without creating a child.
       expect(mockedResolveRunbookRef).toHaveBeenCalledTimes(1);
-      expect(result).toBe('stopped');
+      expect(result.status).toBe('stopped');
     });
 
     // The two stand-down arms, which differ only in what they carry. Swapping
@@ -4681,7 +4951,7 @@ describe('runExecutionLoop', () => {
       expect(latchOutcomes).toEqual([{ next: null, value: { kind: 'superseded' } }]);
       expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
       expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
-      expect(result).toBe('waiting');
+      expect(result.status).toBe('waiting');
     });
 
     it('stands down as already-latched when a LIVE owner holds the latch and the child is not there yet', async () => {
@@ -4701,7 +4971,7 @@ describe('runExecutionLoop', () => {
       // the span the other observer owns — one `manager.create` for this intent.
       expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
       expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
-      expect(result).toBe('waiting');
+      expect(result.status).toBe('waiting');
       // The wait is named rather than opaque: the operator is told which process
       // holds the launch, so a launch that never finishes is diagnosable.
       expect(mockOutput.warning).toHaveBeenCalledWith(
@@ -4735,7 +5005,7 @@ describe('runExecutionLoop', () => {
       expect(latchOutcomes).toEqual([
         { next: null, value: { kind: 'already-latched', ownerPid: process.pid } },
       ]);
-      expect(result).toBe('waiting');
+      expect(result.status).toBe('waiting');
       // The three things adoption would have done to a run this observer does
       // not own, none of which are undone by standing down afterwards.
       expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
@@ -4872,7 +5142,8 @@ describe('runExecutionLoop', () => {
         mockSessionService.getActive.mockResolvedValue({ id: childRunId });
         stage();
 
-        expect(await driveLoop()).toBe(expected);
+        // Stand-down reports the child status without implying release ownership.
+        expect(await driveLoop()).toEqual({ status: expected });
 
         // The arm this row is named for, before the property it is here to
         // assert: the session assertions below are only about a stand-down if
@@ -4927,7 +5198,7 @@ describe('runExecutionLoop', () => {
     ])('reports the wait when $name', async ({ stage, message }) => {
       stage();
 
-      expect(await driveLoop()).toBe('waiting');
+      expect(await driveLoop()).toEqual({ status: 'waiting' });
 
       expect(mockOutput.warning).toHaveBeenCalledWith(message);
     });
@@ -4972,7 +5243,7 @@ describe('runExecutionLoop', () => {
       // is performed rather than waited on. The default ref resolution then
       // fails, so this stops without creating a child.
       expect(mockedResolveRunbookRef).toHaveBeenCalledTimes(1);
-      expect(result).toBe('stopped');
+      expect(result.status).toBe('stopped');
       // And the latch this span took is released on the way out. Without it the
       // record would name THIS process — alive, and with no self-pid exemption
       // in the ownership classifier — so the next observation, in this process
@@ -5051,7 +5322,7 @@ describe('runExecutionLoop', () => {
       expect(mockSessionService.pushRunbookIfNotActive).toHaveBeenCalledWith(childRunId);
       expect(mockSessionService.pushRunbook).not.toHaveBeenCalled();
       expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
-      expect(result).toBe('stopped');
+      expect(result.status).toBe('stopped');
       expect(mockOutput.warning).toHaveBeenCalledWith(
         `Reclaimed the inline launch of ${childRunId} from process ${String(DEAD_PID)}, which is no longer running.`,
       );
@@ -5115,7 +5386,7 @@ describe('runExecutionLoop', () => {
         // second `manager.create` could happen — is never entered.
         expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
         expect(mockedResolveRunbookRef).not.toHaveBeenCalled();
-        expect(result).toBe('stopped');
+        expect(result.status).toBe('stopped');
         // Named as inconsistent state with a remedy, not reported as a wait that
         // would never end.
         expect(mockEmitter.emit).toHaveBeenCalledWith({
@@ -5141,7 +5412,7 @@ describe('runExecutionLoop', () => {
         { next: null, value: { kind: 'unrecorded', reason: 'no-inline-metadata' } },
       ]);
       expect(mockActorService.sendAndSync).not.toHaveBeenCalled();
-      expect(result).toBe('stopped');
+      expect(result.status).toBe('stopped');
     });
 
     // The latch is read from the intent's OWN substep and frame. Every other
@@ -5338,136 +5609,142 @@ describe('runExecutionLoop', () => {
     );
   });
 
-  it('propagates blocked inline child terminal instead of treating child completion as success', async () => {
-    const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
-    const inlineLaunch = {
-      parentRunId: runbookId,
-      parentStepId: '1',
-      parentStep: '1',
-      parentFrameKey: '1|',
-      parentEntry: 1,
-      childRunId,
-      childRunbookPath: 'child.runbook.md',
-      childRunbookRef: { source: 'project', path: 'child.runbook.md' },
-      contextSnapshot: {
-        RunId: runbookId,
-        ContextId: 'ctx-unit',
-        WorkPath: '.rundown/work',
-      },
-    };
-    const inlineSteps: LooseStep[] = [
-      {
-        kind: 'substeps',
-        name: '1',
-        description: 'Parent step',
-        substeps: [
+  it.each([
+    { propagated: 'blocked', expected: 'blocked' },
+    { propagated: 'recorded', expected: 'handled' },
+  ] as const)(
+    'reports $expected when inline completion recording returns $propagated',
+    async ({ propagated, expected }) => {
+      const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
+      const inlineLaunch = {
+        parentRunId: runbookId,
+        parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: '1|',
+        parentEntry: 1,
+        childRunId,
+        childRunbookPath: 'child.runbook.md',
+        childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+        contextSnapshot: {
+          RunId: runbookId,
+          ContextId: 'ctx-unit',
+          WorkPath: '.rundown/work',
+        },
+      };
+      const inlineSteps: LooseStep[] = [
+        {
+          kind: 'substeps',
+          name: '1',
+          description: 'Parent step',
+          substeps: [
+            {
+              id: '1',
+              description: 'Inline child',
+              runbooks: ['child.runbook.md'],
+              transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+            },
+          ],
+          transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
+        },
+      ];
+      const parentLinkage = {
+        kind: 'inline',
+        parentRunId: runbookId,
+        parentStepId: '1',
+        parentStep: '1',
+        parentFrameKey: '1|',
+        parentEntry: 1,
+      };
+      const parentState = makeLoopState('1', {
+        lifecycle: 'running',
+        substep: '1',
+        activeFrameKey: '1|',
+        activeEntry: 1,
+        substepStates: [
           {
             id: '1',
-            description: 'Inline child',
-            runbooks: ['child.runbook.md'],
-            transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
-          },
-        ],
-        transitions: { pass: { next: 'COMPLETE' }, fail: { next: 'STOP' } },
-      },
-    ];
-    const parentLinkage = {
-      kind: 'inline',
-      parentRunId: runbookId,
-      parentStepId: '1',
-      parentStep: '1',
-      parentFrameKey: '1|',
-      parentEntry: 1,
-    };
-    const parentState = makeLoopState('1', {
-      lifecycle: 'running',
-      substep: '1',
-      activeFrameKey: '1|',
-      activeEntry: 1,
-      substepStates: [
-        {
-          id: '1',
-          frameKey: '1|',
-          status: 'running',
-          inline: {
-            childRunbookPath: 'child.runbook.md',
-            childRunbookRef: { source: 'project', path: 'child.runbook.md' },
-            contextSnapshot: inlineLaunch.contextSnapshot,
-            childRunId,
-            createdAt: '2026-05-30T00:00:00.000Z',
-            // The interrupted launch that got as far as creating the child and
-            // never recorded its latch — the state the adoption branch below
-            // exists for. Held unlatched rather than dead-owned so this test
-            // stays about what it is about; reclaiming a dead owner into the
-            // same branch has its own test above.
-            started: null,
-          },
-        },
-      ],
-      snapshot: { context: { inlineLaunchIntent: inlineLaunch } },
-    });
-    const existingChild = {
-      ...makeLoopState('1', {
-        id: childRunId,
-        lifecycle: 'completed',
-        parentLinkage,
-      }),
-      runbookSrc: '## 1. Child\nDone',
-    };
-
-    mockManager.load
-      .mockResolvedValueOnce(parentState)
-      .mockResolvedValueOnce(parentState)
-      .mockResolvedValueOnce(existingChild)
-      .mockResolvedValue(existingChild);
-    mockSessionService.getActive.mockResolvedValueOnce({ id: runbookId });
-    mockActorService.enterExecutionUnit.mockResolvedValueOnce({
-      kind: 'inline-launch',
-      launch: inlineLaunch,
-      effects: [
-        {
-          kind: 'execution_observation',
-          event: {
-            type: 'STEP_ENTERED',
-            payload: {
-              position: { current: '1.1', total: 1 },
-              stepName: '1',
-              description: 'Inline child',
-              hasCommand: false,
-              isSubstep: true,
-              prompted: false,
-              artifacts: {},
-              inlineLaunch,
+            frameKey: '1|',
+            status: 'running',
+            inline: {
+              childRunbookPath: 'child.runbook.md',
+              childRunbookRef: { source: 'project', path: 'child.runbook.md' },
+              contextSnapshot: inlineLaunch.contextSnapshot,
+              childRunId,
+              createdAt: '2026-05-30T00:00:00.000Z',
+              // The interrupted launch that got as far as creating the child and
+              // never recorded its latch — the state the adoption branch below
+              // exists for. Held unlatched rather than dead-owned so this test
+              // stays about what it is about; reclaiming a dead owner into the
+              // same branch has its own test above.
+              started: null,
             },
           },
-        },
-      ],
-    });
-    // Twice: the latch write this observer now performs (it took an unlatched
-    // launch), then the intent consumption after the child is activated.
-    mockActorService.sendAndSync.mockResolvedValue({ state: parentState, snapshot: {} });
-    mockCompletionService.recordChildCompletion.mockResolvedValueOnce('blocked');
-    const output = {
-      executionEvent: jest.fn(),
-      flush: jest.fn(),
-    };
+        ],
+        snapshot: { context: { inlineLaunchIntent: inlineLaunch } },
+      });
+      const existingChild = {
+        ...makeLoopState('1', {
+          id: childRunId,
+          lifecycle: 'completed',
+          parentLinkage,
+        }),
+        runbookSrc: '## 1. Child\nDone',
+      };
 
-    const result = await runExecutionLoop(
-      asManager(mockManager),
-      runbookId,
-      asSteps(inlineSteps),
-      mockManager.cwd,
-      asEmitter(mockEmitter),
-      { output: output as never },
-    );
+      mockManager.load
+        .mockResolvedValueOnce(parentState)
+        .mockResolvedValueOnce(parentState)
+        .mockResolvedValueOnce(existingChild)
+        .mockResolvedValue(existingChild);
+      mockSessionService.getActive.mockResolvedValueOnce({ id: runbookId });
+      mockActorService.enterExecutionUnit.mockResolvedValueOnce({
+        kind: 'inline-launch',
+        launch: inlineLaunch,
+        effects: [
+          {
+            kind: 'execution_observation',
+            event: {
+              type: 'STEP_ENTERED',
+              payload: {
+                position: { current: '1.1', total: 1 },
+                stepName: '1',
+                description: 'Inline child',
+                hasCommand: false,
+                isSubstep: true,
+                prompted: false,
+                artifacts: {},
+                inlineLaunch,
+              },
+            },
+          },
+        ],
+      });
+      // Twice: the latch write this observer now performs (it took an unlatched
+      // launch), then the intent consumption after the child is activated.
+      mockActorService.sendAndSync.mockResolvedValue({ state: parentState, snapshot: {} });
+      mockCompletionService.recordChildCompletion.mockResolvedValueOnce(propagated);
+      const output = {
+        executionEvent: jest.fn(),
+        flush: jest.fn(),
+      };
 
-    expect(result).toBe('stopped');
-    expect(mockCompletionService.recordChildCompletion).toHaveBeenCalledWith({
-      childState: existingChild,
-      result: 'pass',
-    });
-    expect(output.flush).toHaveBeenCalled();
-  });
+      const result = await runExecutionLoop(
+        asManager(mockManager),
+        runbookId,
+        asSteps(inlineSteps),
+        mockManager.cwd,
+        asEmitter(mockEmitter),
+        { output: output as never },
+      );
+
+      expect(result.status).toBe(expected);
+      expect(mockCompletionService.recordChildCompletion).toHaveBeenCalledWith({
+        childState: existingChild,
+        result: 'pass',
+      });
+      expect(output.flush).toHaveBeenCalled();
+    },
+  );
 
   it('does not consume existing inline child intent when session activation fails', async () => {
     const childRunId = actualCore.assertRunId(`rd_${'3'.repeat(32)}`);
@@ -5672,7 +5949,7 @@ describe('runExecutionLoop', () => {
       { output: { warning } as never },
     );
 
-    expect(result).toBe('waiting');
+    expect(result.status).toBe('waiting');
     expect(mockActorService.sendAndSync).not.toHaveBeenCalledWith(runbookId, inlineSteps, {
       type: 'INLINE_LAUNCH_CONSUMED',
     });
@@ -5811,7 +6088,7 @@ describe('runExecutionLoop', () => {
     expect(mockActorService.sendAndSync).toHaveBeenCalledWith(runbookId, delegateSteps, {
       type: 'DELEGATE_FRONTIER_CONSUMED',
     });
-    expect(result).toBe('waiting');
+    expect(result.status).toBe('waiting');
   });
 
   it('STEP_ENTERED does not issue delegations when delegateFrontier is absent', async () => {
@@ -5901,7 +6178,7 @@ describe('runExecutionLoop', () => {
       asEmitter(mockEmitter),
     );
 
-    expect(result).toBe('stopped');
+    expect(result.status).toBe('stopped');
 
     // RUNBOOK_STOPPED carries the discriminated reason — not the generic
     // 'delegation_resolution_failed' fallback.
