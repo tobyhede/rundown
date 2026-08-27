@@ -325,12 +325,19 @@ describe('inline launch fence (#714)', () => {
     expect(out).toEqual({ kind: 'marked' });
 
     const parentAfter = await manager.load(parentId);
+    if (parentAfter === null) throw new Error('expected parent state');
     // Guard the comparison's own strictness: this fixture never ran the actor,
     // so there is no snapshot for the deep-equal to silently skip over.
     expect(parentBefore.snapshot).toBeUndefined();
+    // The write timestamp MOVED. Asserted against the PRE-state: comparing it
+    // to `parentAfter`'s own value could never disagree with the code, so a
+    // commit that left `updatedAt` frozen would pass unnoticed.
+    expect(parentAfter.updatedAt).not.toBe(parentBefore.updatedAt);
+    expect(Date.parse(parentAfter.updatedAt)).toBeGreaterThan(Date.parse(parentBefore.updatedAt));
     // The whole committed state equals the pre-state with EXACTLY the target
-    // row appended and the write timestamp moved — sibling rows verbatim, every
-    // other field byte-identical.
+    // row appended — sibling rows verbatim, every other field byte-identical.
+    // `updatedAt` is the one field carried across rather than compared, because
+    // the two assertions above already pin it.
     expect(parentAfter).toEqual({
       ...parentBefore,
       substepStates: [
@@ -338,7 +345,7 @@ describe('inline launch fence (#714)', () => {
         { id: '1.3', frameKey: FRAME, status: 'done', result: 'fail' },
         { id: SUBSTEP, frameKey: FRAME, status: 'running' },
       ],
-      updatedAt: parentAfter?.updatedAt,
+      updatedAt: parentAfter.updatedAt,
     });
     // No other run changed.
     expect(await manager.load(bystander.id)).toEqual(bystanderBefore);
