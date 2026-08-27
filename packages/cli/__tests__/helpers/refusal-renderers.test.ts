@@ -11,6 +11,7 @@ import {
   renderActorContextRequiredRefusal,
   renderClaimBearerMismatchRefusal,
   renderClaimGrantRequiredRefusal,
+  renderRefusedTerminalCleanup,
   renderStaleClaimRefusal,
   renderTerminalClaimConfirmed,
   renderTerminalClaimConflict,
@@ -245,6 +246,18 @@ describe('every refusal renderer emits a registered error code', () => {
     renderTerminalClaimConflict: [
       (output) => renderTerminalClaimConflict(output, CLAIM_ID, 'completed', 'stopped'),
     ],
+    renderRefusedTerminalCleanup: [
+      (output) =>
+        renderRefusedTerminalCleanup(output, RUN_ID, {
+          kind: 'claim_rotated',
+          claimKey: redactClaimId(CLAIM_ID),
+        }),
+      (output) =>
+        renderRefusedTerminalCleanup(output, RUN_ID, {
+          kind: 'determination_lost',
+          runId: RUN_ID,
+        }),
+    ],
   };
 
   it('drives every renderer this module exports', () => {
@@ -290,6 +303,7 @@ describe('every refusal renderer emits a registered error code', () => {
       'CLAIM_GRANT_REQUIRED',
       'DELEGATION_RESULT_CONFLICT',
       'DELEGATION_SUPERSEDED',
+      'RUN_TARGET_UNAVAILABLE',
     ]);
   });
 });

@@ -12,11 +12,59 @@
 
 import {
   redactClaimId,
+  type AlreadyTerminalReleaseOutcome,
   type ClaimId,
   type RunId,
   type StaleClaimRefusalCode,
 } from '@rundown-org/core';
 import type { OutputEmitter } from '../services/output-emitter.js';
+
+/**
+ * Render a refused already-terminal chain cleanup as a no-retry error envelope.
+ *
+ * The bare complete/stop path reports `already_terminal` for a run that was
+ * already terminal on entry, so the fenced chain release is the ONLY effect the
+ * command owed. A refused fence commits nothing — the inline chain stays
+ * targeted and its descendant claims stay live — which is indistinguishable
+ * from a clean teardown unless the refusal gets its own envelope and a non-zero
+ * exit.
+ *
+ * Both arms are PERMANENT for the presented authority, so neither renders
+ * `CONCURRENT_MODIFICATION`: "Retry." would be a lie for a claim that can never
+ * be authority again or a run that no longer exists as resolved. Unlike the
+ * claim path's {@link renderStaleClaimRefusal}, the caller here may be ambient
+ * with no claim to call stale, which is why `determination_lost` renders as a
+ * run-target refusal rather than a claim one.
+ *
+ * @param output - Output emitter for CLI output.
+ * @param targetRunId - The already-terminal run whose chain went unreleased.
+ * @param refusal - The fence refusal core passed through unchanged.
+ * @returns `true` — a refused cleanup always requests a non-zero exit code.
+ */
+export function renderRefusedTerminalCleanup(
+  output: OutputEmitter,
+  targetRunId: RunId,
+  refusal: Exclude<AlreadyTerminalReleaseOutcome, { readonly kind: 'released' }>,
+): boolean {
+  switch (refusal.kind) {
+    case 'claim_rotated':
+      output.error(
+        `Run ${targetRunId} is already terminal, but the claim authorizing its cleanup was released or replaced and is no longer authority. Nothing was released.`,
+        'CLAIMED_RUNBOOK_UNAVAILABLE',
+      );
+      return true;
+    case 'determination_lost':
+      output.error(
+        `Run ${refusal.runId} is no longer available as resolved, so its chain was not released. Nothing was released.`,
+        'RUN_TARGET_UNAVAILABLE',
+      );
+      return true;
+    default: {
+      const _exhaustive: never = refusal;
+      return _exhaustive;
+    }
+  }
+}
 
 /**
  * Render a stale-claim refusal under the code core assigned to it.

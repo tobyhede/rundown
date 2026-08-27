@@ -68,6 +68,24 @@ User
 The user is trusted to approve prompts, configure policy files, and choose CLI
 overrides. A runbook is not inherently trusted.
 
+### Inline composition trust boundary
+
+Same-user processes sharing one working directory are trusted to cooperate: the
+SQLite state file (`.rundown/rundown.db`) is the actual access boundary, and any
+local process that can open it is already inside every claim the system tracks.
+Claims exist to keep cooperating orchestrators from driving each other's runs by
+accident, not to defend against a hostile local process.
+
+Within that boundary, `rundown run --step` attaches a child to the active
+composing parent without presenting a claim, and the attachment is fenced rather
+than bearer-gated (ADR 0002): the launch captures the parent's controlling
+run-control claim when it resolves the linkage, and the substep mark commits
+only under that claim generation. A parent re-claimed in the window refuses
+`INLINE_PARENT_CLAIM_SUPERSEDED` and rolls the child back. The fence records
+which authority was current — it does not prove the caller held it. A sibling
+process that launches first still attaches, under the then-current generation;
+that residual is this documented boundary.
+
 <a id="sandbox-usage"></a>
 
 ## 4. Security Layers

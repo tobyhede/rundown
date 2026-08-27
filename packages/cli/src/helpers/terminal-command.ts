@@ -32,6 +32,7 @@ import {
   renderActorContextRequiredRefusal,
   renderClaimBearerMismatchRefusal,
   renderClaimGrantRequiredRefusal,
+  renderRefusedTerminalCleanup,
   renderStaleClaimRefusal,
   renderTerminalClaimConfirmed,
   renderTerminalClaimConflict,
@@ -164,6 +165,15 @@ export async function renderTerminalOutcome(
         outcome.requestedCommand,
       );
     case 'already_terminal':
+      // The run was already terminal, so the ONLY thing this command owed was
+      // the chain cleanup. A refused fence committed nothing — the inline chain
+      // is still targeted and its descendant claims are still live — so
+      // rendering that at exit 0 would report a teardown that did not happen.
+      // `released` and `not_attempted` both leave a coherent pre-existing state
+      // and stay the idempotent no-op they have always been.
+      if (outcome.cleanup.kind === 'refused') {
+        return renderRefusedTerminalCleanup(output, outcome.targetRunId, outcome.cleanup.refusal);
+      }
       output.noActiveRunbook(command, 'RUNBOOK_NOT_RUNNING');
       return false;
     case 'unknown_run':

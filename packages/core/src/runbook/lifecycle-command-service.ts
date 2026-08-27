@@ -17,6 +17,7 @@ import {
 import type {
   ClaimAuthorizationRequest,
   ClaimId,
+  ClaimLookupKey,
   ClaimRecord,
   VerifiedClaimAuthority,
 } from './claim-id.js';
@@ -54,6 +55,7 @@ import { Errors } from '../errors/factory.js';
 import type { RundownError } from '../errors/rundown-error.js';
 import { sameRunbookRef, type RunbookRef } from './runbook-ref.js';
 import {
+  describeSupersededClaim,
   resolveCommandTarget,
   resolveMutationAuthority,
   resolveTerminalTarget,
@@ -79,6 +81,7 @@ import {
 } from './manual-completion-cursor.js';
 import type {
   ActiveInlineForceTerminalPlan,
+  AlreadyTerminalReleaseOutcome,
   SessionMutationRefusalOutcome,
   SessionService,
 } from './session-service.js';
@@ -844,6 +847,41 @@ export type TerminalReportOutcome = Awaited<
 >;
 
 /**
+ * What became of the chain cleanup an `already_terminal` outcome owed.
+ *
+ * The already-terminal arms report a pre-existing terminal state, so their only
+ * effect is the fenced chain release — and every way that release can NOT happen
+ * is invisible in the outcome's other fields. A refused fence commits nothing:
+ * the whole inline chain stays targeted in `session.defaultStack` with its
+ * descendant claims un-revoked, which is byte-for-byte what a clean teardown
+ * leaves behind minus the teardown. Carrying the disposition as a REQUIRED field
+ * is what makes dropping it a compile error rather than a review finding.
+ *
+ * `refused` reproduces the fence refusal as itself — never folded into
+ * `concurrent_modification`, whose "Retry." remediation would be a lie for a
+ * claim that can never be authority again or a run that no longer exists as
+ * resolved (see {@link SessionService.releaseAlreadyTerminal}).
+ */
+export type AlreadyTerminalCleanup =
+  | {
+      /** The fence held and the chain release was projected. */
+      readonly kind: 'released';
+    }
+  | {
+      /**
+       * No release was attempted: an unauthorized bearer receives the
+       * pre-existing outcome without the resolved chain being mutated.
+       */
+      readonly kind: 'not_attempted';
+    }
+  | {
+      /** A fence fact lapsed between the caller's read and the commit. */
+      readonly kind: 'refused';
+      /** The permanent, no-retry refusal, passed through unchanged. */
+      readonly refusal: Exclude<AlreadyTerminalReleaseOutcome, { readonly kind: 'released' }>;
+    };
+
+/**
  * Result of a complete/stop transition through the terminal seam.
  *
  * Refusal variants reuse the {@link TerminalTargetResolution} / policy shapes so
@@ -901,6 +939,11 @@ export type LifecycleTerminalOutcome =
       readonly kind: 'already_terminal';
       readonly targetRunId: RunId;
       readonly lifecycle: 'completed' | 'stopped';
+      /**
+       * What became of the chain cleanup this outcome owed. Required, so a call
+       * site cannot drop the disposition the way the unfenced arms once did.
+       */
+      readonly cleanup: AlreadyTerminalCleanup;
     }
   | {
       /** Bare cascade could not resolve a running root to force. */
@@ -1323,6 +1366,78 @@ function releasesForInlineChain(
     role: runId === plan.targetState.id ? 'addressed' : 'collateral',
   }));
 }
+
+/**
+ * Surface a fenced already-terminal release refusal as the claim-path
+ * `stale_claim` outcome.
+ *
+ * Both fence refusals are permanent for the presented bearer, so both map onto
+ * the no-retry stale-claim vocabulary — never `concurrent_modification`, whose
+ * "Retry." remediation would be a lie for a claim that can never be authority
+ * again or a run that no longer exists as resolved.
+ *
+ * @param claimId - The presented bearer, echoed for the caller.
+ * @param refusal - The fence refusal returned by
+ *   {@link SessionService.releaseAlreadyTerminal}.
+ * @returns The stale-claim refusal outcome for the terminal claim path.
+ */
+function staleClaimFromFenceRefusal(
+  claimId: ClaimId,
+  refusal: Exclude<AlreadyTerminalReleaseOutcome, { readonly kind: 'released' }>,
+): StaleClaimRefusal {
+  switch (refusal.kind) {
+    case 'claim_rotated': {
+      const { message, code } = describeSupersededClaim(refusal.claimKey, 'claim-rotated');
+      return { kind: 'stale_claim', claimId, message, code };
+    }
+    case 'determination_lost':
+      return {
+        kind: 'stale_claim',
+        claimId,
+        message:
+          `Claim id ${claimKeyFromBearer(claimId)} names run ${refusal.runId}, which is no ` +
+          `longer available as resolved. Nothing was released.`,
+        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+      };
+    // Stryker disable next-line all: unreachable — the exhaustive `never` arm
+    default: {
+      // Stryker disable next-line all: unreachable — the exhaustive `never` arm
+      const _exhaustive: never = refusal;
+      // Stryker disable next-line all: unreachable — the exhaustive `never` arm
+      return _exhaustive;
+    }
+  }
+}
+
+/**
+ * Project a fenced already-terminal release outcome onto the bare path's
+ * cleanup disposition.
+ *
+ * The bare arms have no `stale_claim` vocabulary to map onto — the caller may
+ * be ambient, with no claim to call stale — so the refusal travels as itself
+ * inside the outcome instead. Shared by the plan-time and capture-time arms so
+ * the two cannot classify the same refusal differently.
+ *
+ * @param outcome - The fenced release outcome from
+ *   {@link SessionService.releaseAlreadyTerminal}.
+ * @returns `released` when the fence held, else the refusal passed through.
+ */
+function cleanupFromFenceOutcome(outcome: AlreadyTerminalReleaseOutcome): AlreadyTerminalCleanup {
+  return outcome.kind === 'released' ? { kind: 'released' } : { kind: 'refused', refusal: outcome };
+}
+
+/**
+ * What the bare inline-cascade aggregate itself is able to decide.
+ *
+ * Deliberately the `already_terminal` outcome MINUS `cleanup`. The aggregate's
+ * `beforeEffect` returns write-free, BEFORE the fenced chain release is even
+ * attempted, so it cannot know the disposition — and narrowing the generic here
+ * means it cannot assert one either. `#driveTerminalBare` attaches `cleanup`
+ * after the release, the only point at which the answer exists.
+ */
+type BareAggregateOutcome =
+  | Omit<Extract<LifecycleTerminalOutcome, { readonly kind: 'already_terminal' }>, 'cleanup'>
+  | Extract<LifecycleTerminalOutcome, { readonly kind: 'applied_bare' }>;
 
 /**
  * Core seam for direct lifecycle command mutations (pass / fail) and the
@@ -2990,6 +3105,41 @@ export class RunbookLifecycleCommandService {
     return this.#driveTerminalBare(input, member.state);
   }
 
+  // The shared fenced addressed Run Release for a resolved already-terminal
+  // claim (#734): observe the holder, then revalidate the resolver's terminal
+  // determination and the bearer's authority inside the transaction that
+  // projects the release, so a claim rotated after resolution is refused rather
+  // than released under. Returns the refusal outcome, or undefined when the
+  // release committed and the arm should report its own success shape.
+  // `resolution.claimId` IS the presented bearer: `reconcileClaimTarget` refuses
+  // `claim_bearer_mismatch` before dispatch unless the caller's evidence names
+  // exactly this claim, so the holder observation needs no evidence re-check.
+  async #releaseResolvedTerminalClaim(resolution: {
+    readonly claimId: ClaimId;
+    readonly claim: { readonly claimKey: ClaimLookupKey; readonly controlledRunId: RunId };
+    readonly state: RunbookState;
+    readonly lifecycle: 'completed' | 'stopped';
+  }): Promise<LifecycleTerminalOutcome | undefined> {
+    const { sessionService } = this.#deps;
+    await sessionService.recordClaimSeen(resolution.claimId);
+    const release = await sessionService.releaseAlreadyTerminal(
+      {
+        runId: resolution.state.id,
+        lifecycle: resolution.lifecycle,
+        claim: {
+          claimKey: resolution.claim.claimKey,
+          controlledRunId: resolution.claim.controlledRunId,
+        },
+      },
+      [{ runId: resolution.state.id, role: 'addressed' }],
+    );
+    if (release.kind !== 'committed') return release;
+    if (release.value.kind !== 'released') {
+      return staleClaimFromFenceRefusal(resolution.claimId, release.value);
+    }
+    return undefined;
+  }
+
   // Claim-path terminal: resolve confirm/conflict, else FORCE the live child,
   // record its outcome (core-derived) BEFORE releasing with a retained tombstone.
   async #driveTerminalClaim(
@@ -3015,13 +3165,8 @@ export class RunbookLifecycleCommandService {
         // later --claim-id can confirm/conflict again (item 4, second site).
         // The resolver verified and authorized the bearer before confirming the
         // prior terminal outcome, so the presentation still proves liveness.
-        if (input.callerEvidence.kind === 'claim_bearer') {
-          await sessionService.recordClaimSeen(input.callerEvidence.claimId);
-        }
-        const release = await sessionService.releaseRuns([
-          { runId: resolution.state.id, role: 'addressed' },
-        ]);
-        if (release.kind !== 'committed') return release;
+        const refusal = await this.#releaseResolvedTerminalClaim(resolution);
+        if (refusal !== undefined) return refusal;
         return {
           kind: 'terminal_claim_confirmed',
           claimId: resolution.claimId,
@@ -3032,13 +3177,10 @@ export class RunbookLifecycleCommandService {
       case 'terminal_claim_conflict': {
         // A confirmed terminal conflict is also post-authorization evidence from
         // the claim's holder, despite refusing the requested terminal result.
-        if (input.callerEvidence.kind === 'claim_bearer') {
-          await sessionService.recordClaimSeen(input.callerEvidence.claimId);
-        }
-        const release = await sessionService.releaseRuns([
-          { runId: resolution.state.id, role: 'addressed' },
-        ]);
-        if (release.kind !== 'committed') return release;
+        // The conflict still addresses the run the bearer acted on, so its Run
+        // Release rests on the same determination facts as the confirmed arm.
+        const refusal = await this.#releaseResolvedTerminalClaim(resolution);
+        if (refusal !== undefined) return refusal;
         return {
           kind: 'terminal_claim_conflict',
           claimId: resolution.claimId,
@@ -3237,19 +3379,22 @@ export class RunbookLifecycleCommandService {
     // is the same active inline execution, not authority over an unrelated run.
     const presentedClaimId =
       input.callerEvidence.kind === 'claim_bearer' ? input.callerEvidence.claimId : undefined;
-    const descendantAuthority =
+    // Hoisted so the already-terminal release fence below can name the verified
+    // claim's coordinates, not just the authorization verdict derived from them.
+    const verifiedPresented =
       presentedClaimId !== undefined
-        ? await (async () => {
-            const verified = await sessionService.verifyClaimId(presentedClaimId);
-            if (verified.status !== 'verified') return false;
-            return plan.forceOrder.some(
-              (state) =>
-                state.id !== plan.targetState.id &&
-                authorizeClaim(verified.claim, { action: 'mutate-run', runId: state.id }).kind ===
-                  'allowed',
-            );
-          })()
-        : false;
+        ? await sessionService.verifyClaimId(presentedClaimId)
+        : undefined;
+    const presentedClaim =
+      verifiedPresented?.status === 'verified' ? verifiedPresented.claim : undefined;
+    const descendantAuthority =
+      presentedClaim !== undefined &&
+      plan.forceOrder.some(
+        (state) =>
+          state.id !== plan.targetState.id &&
+          authorizeClaim(presentedClaim, { action: 'mutate-run', runId: state.id }).kind ===
+            'allowed',
+      );
     const authority =
       input.callerEvidence.kind === 'claim_bearer' && !descendantAuthority
         ? await this.#resolveMutationActorContext({
@@ -3270,17 +3415,48 @@ export class RunbookLifecycleCommandService {
     }
 
     if (plan.targetState.lifecycle !== 'running') {
+      const observedLifecycle =
+        plan.targetState.lifecycle === 'stopped' ? ('stopped' as const) : ('completed' as const);
       // Preserve the pre-existing already-terminal outcome for every caller. Clean
       // up for ambient/no-bearer or authorized bearer requests only; an unauthorized
       // bearer receives the same outcome without mutating the resolved chain.
+      //
+      // Whether the chain cleanup happened is carried OUT with the outcome
+      // rather than dropped: an unauthorized bearer never attempts it, and a
+      // lapsed fence refuses it, and neither is visible in the outcome's other
+      // fields. `not_attempted` is the unauthorized-bearer default below.
+      let cleanup: AlreadyTerminalCleanup = { kind: 'not_attempted' };
       if (input.callerEvidence.kind !== 'claim_bearer' || presenterAuthorized) {
-        const release = await sessionService.releaseRuns(releasesForInlineChain(plan));
+        // Fenced (#734): the plan's terminal determination — and, for a bearer,
+        // the authority it authorized with — are revalidated inside the
+        // transaction that projects the chain release. A fence that lapsed
+        // (bearer rotated after authorizing, resolved root gone) SKIPS the
+        // cleanup rather than releasing the chain under facts that no longer
+        // hold; the pre-existing outcome still stands and the rotating writer's
+        // claims survive, with `cleanup` naming the refusal that got it there.
+        const release = await sessionService.releaseAlreadyTerminal(
+          {
+            runId: plan.targetState.id,
+            lifecycle: observedLifecycle,
+            ...(presentedClaim !== undefined
+              ? {
+                  claim: {
+                    claimKey: presentedClaim.claimKey,
+                    controlledRunId: presentedClaim.controlledRunId,
+                  },
+                }
+              : {}),
+          },
+          releasesForInlineChain(plan),
+        );
         if (release.kind !== 'committed') return release;
+        cleanup = cleanupFromFenceOutcome(release.value);
       }
       return {
         kind: 'already_terminal',
         targetRunId: plan.targetState.id,
-        lifecycle: plan.targetState.lifecycle === 'stopped' ? 'stopped' : 'completed',
+        lifecycle: observedLifecycle,
+        cleanup,
       };
     }
 
@@ -3351,12 +3527,10 @@ export class RunbookLifecycleCommandService {
 
     const eventType = terminalForceEvent(input.command);
     const externalParentRunId = plan.targetState.parentLinkage?.parentRunId;
-    const presentedClaim =
-      input.callerEvidence.kind === 'claim_bearer'
-        ? await sessionService.verifyClaimId(input.callerEvidence.claimId)
-        : undefined;
-    const controlledRunId =
-      presentedClaim?.status === 'verified' ? presentedClaim.claim.controlledRunId : undefined;
+    // The hoisted verification above supplies the controlled run; the aggregate
+    // re-validates every capture inside its own transaction, so a fresher read
+    // here would add nothing the fence does not already re-establish.
+    const controlledRunId = presentedClaim?.controlledRunId;
     const claimKey =
       input.callerEvidence.kind === 'claim_bearer'
         ? claimKeyFromBearer(input.callerEvidence.claimId)
@@ -3380,9 +3554,7 @@ export class RunbookLifecycleCommandService {
         (await this.#deps.loadRun(target.runId));
       if (targetState !== undefined) await stepsFor(targetState);
     }
-    const aggregate = await this.#deps.actorMutationRunner.runAll<
-      Extract<LifecycleTerminalOutcome, { readonly kind: 'already_terminal' | 'applied_bare' }>
-    >({
+    const aggregate = await this.#deps.actorMutationRunner.runAll<BareAggregateOutcome>({
       targets,
       releases: releasesForInlineChain(plan),
       makeRecoveryActor: (runId, recoveryState) => {
@@ -3498,8 +3670,35 @@ export class RunbookLifecycleCommandService {
     });
     if (aggregate.kind !== 'committed') return aggregate;
     if (aggregate.value.kind === 'already_terminal') {
-      const release = await sessionService.releaseRuns(releasesForInlineChain(plan));
+      // The aggregate's write-free `already_terminal` return skips the
+      // declarative `releases:` commit, so the cleanup happens here — through
+      // the SAME fenced seam as the plan-time already-terminal arm, so no
+      // already-terminal Run Release is left on the unfenced path (#597). The
+      // fence names the lifecycle the capture observed and the hoisted
+      // presented bearer; a fence that lapsed between capture and this commit
+      // skips the cleanup and preserves the pre-existing outcome, exactly as
+      // the plan-time arm does.
+      const release = await sessionService.releaseAlreadyTerminal(
+        {
+          runId: plan.targetState.id,
+          lifecycle: aggregate.value.lifecycle,
+          ...(presentedClaim !== undefined
+            ? {
+                claim: {
+                  claimKey: presentedClaim.claimKey,
+                  controlledRunId: presentedClaim.controlledRunId,
+                },
+              }
+            : {}),
+        },
+        releasesForInlineChain(plan),
+      );
       if (release.kind !== 'committed') return release;
+      // The write-free `beforeEffect` return means NOTHING happened for this
+      // command — no force, no release. A refusal here leaves even the cleanup
+      // undone, so the disposition is the only thing separating this outcome
+      // from a clean teardown.
+      return { ...aggregate.value, cleanup: cleanupFromFenceOutcome(release.value) };
     }
     return aggregate.value;
   }

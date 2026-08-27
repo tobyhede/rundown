@@ -559,6 +559,24 @@ export const ErrorCodes = {
       `delegations the lost bearers addressed must be re-issued.`,
     docSlug: 'delegation-frontier-disclosure-failed',
   },
+  INLINE_PARENT_CLAIM_SUPERSEDED: {
+    code: 'RD-834',
+    category: ErrorCategory.DELEGATION,
+    title: "Inline parent's controlling authority lapsed before the launch attached",
+    description:
+      `The inline launch fences its substep mark under the composing parent's ` +
+      `controlling run-control claim, captured when the linkage is resolved ` +
+      `(ADR 0002). This refusal fires when that authority cannot be established ` +
+      `or does not hold: at determination, when no live claim controls the ` +
+      `parent (or the parent run itself is gone) — refused before any child run ` +
+      `is created; or at commit, when the captured claim was rotated in the ` +
+      `window — the parent now belongs to a different orchestrator, nothing was ` +
+      `attached, and the child run was rolled back. Do not retry blindly: the ` +
+      `orchestrator that now holds the parent owns its progression. If this ` +
+      `process should own the parent, re-acquire control (claim or restart the ` +
+      `parent) and launch again.`,
+    docSlug: 'inline-parent-claim-superseded',
+  },
   // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
   // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
   // canonical-at requirements). Kept as EXECUTION rather than a dedicated
