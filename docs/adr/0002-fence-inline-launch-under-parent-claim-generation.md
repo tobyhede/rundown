@@ -29,8 +29,8 @@ authorized minimally, with the trust boundary that remains documented
 explicitly.
 
 - At linkage determination, the launch captures the parent's active controlling
-  claim (`captureRunAuthority`); a parent with no active controlling claim
-  refuses the launch.
+  claim (`manager.captureRunAuthorityState`); a parent with no active
+  controlling claim refuses the launch.
 - The `substepStates` write commits only under that captured claim generation
   and state version. A parent claim rotated between determination and commit is
   a permanent refusal: the parent now belongs to a different orchestrator, and
