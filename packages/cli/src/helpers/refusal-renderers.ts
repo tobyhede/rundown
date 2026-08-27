@@ -49,15 +49,13 @@ export function renderRefusedTerminalCleanup(
   switch (refusal.kind) {
     case 'claim_rotated':
       output.error(
-        `Run ${targetRunId} is already terminal, but the claim authorizing its cleanup ` +
-          `was released or replaced and is no longer authority. Nothing was released.`,
+        `Run ${targetRunId} is already terminal, but the claim authorizing its cleanup was released or replaced and is no longer authority. Nothing was released.`,
         'CLAIMED_RUNBOOK_UNAVAILABLE',
       );
       return true;
     case 'determination_lost':
       output.error(
-        `Run ${refusal.runId} is no longer available as resolved, so its chain was not ` +
-          `released. Nothing was released.`,
+        `Run ${refusal.runId} is no longer available as resolved, so its chain was not released. Nothing was released.`,
         'RUN_TARGET_UNAVAILABLE',
       );
       return true;
