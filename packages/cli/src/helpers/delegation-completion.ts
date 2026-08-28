@@ -44,11 +44,13 @@ import {
   RunbookStateManager,
   RunbookCompletionService,
   type AdvanceInlineParent,
+  type InlineAdvanceRecoveryByReason,
   type InlineParentAdvanceRefusal,
   type LinkageCycleTrip,
   type PropagateTerminalChildUpwardDeps,
   type RunbookState,
   type ParentLinkage,
+  type RunProgressionRecovery,
   type TerminalUpwardPropagationResult,
   type CommandExecutionStreamOptions,
   type DelegationOutcome,
@@ -362,6 +364,78 @@ export function isInlinePropagationRefusal(
 }
 
 /**
+ * The typed identity of a propagation refusal, preserved through the folds.
+ *
+ * The flat `'blocked'` members of {@link InlinePropagationResult} and
+ * {@link TerminalPropagationResult} collapse WHICH refusal happened, and a
+ * wrapper that folds a refusal into a generic envelope re-labels it
+ * (CLAUDE.md § Concurrent write synchronization): a retryable RD-829
+ * consume-failed reported `permanent` with its code stripped told an
+ * orchestrator to abandon a recoverable composition (#853 review F3). The
+ * detailed propagation variants carry this alongside the flat result so the
+ * Run Progression outcome keeps the refusing condition's code and
+ * boundary-derived recovery.
+ */
+export interface InlinePropagationRefusalDetail {
+  /** Registered code of the refusing condition. */
+  readonly code: string;
+  /** Operator-facing message composed at the point of diagnosis. */
+  readonly message: string;
+  /** Boundary-derived recovery classification for the refusing condition. */
+  readonly recovery: RunProgressionRecovery;
+}
+
+/**
+ * Derive the preserved refusal detail from a seam refusal.
+ *
+ * The boundary derivation site: `advance-refused` carries core's typed
+ * {@link InlineParentAdvanceRefusal}, whose reason maps through core's own
+ * `recoveryForInlineAdvanceRefusal` so the same condition classifies
+ * identically here and on the activation's direct turns; a linkage cycle is
+ * structurally permanent under its established code.
+ *
+ * @param outcome - A refusal narrowed by {@link isInlinePropagationRefusal}.
+ * @returns The preserved detail.
+ */
+export function inlinePropagationRefusalDetail(
+  outcome: Extract<
+    TerminalUpwardPropagationResult,
+    { readonly kind: 'linkage-cycle' | 'advance-refused' }
+  >,
+): InlinePropagationRefusalDetail {
+  if (outcome.kind === 'linkage-cycle') {
+    return {
+      code: outcome.trip.code,
+      message: outcome.trip.message,
+      recovery: 'permanent',
+    };
+  }
+  return {
+    code: outcome.refusal.code,
+    message: outcome.refusal.message,
+    recovery: INLINE_ADVANCE_RECOVERY[outcome.refusal.reason],
+  };
+}
+
+/**
+ * The reason → recovery half of the boundary derivation, restated as a local
+ * literal.
+ *
+ * `satisfies InlineAdvanceRecoveryByReason` pins every reason and every
+ * recovery string to core's canonical `INLINE_ADVANCE_RECOVERY_BY_REASON` at
+ * compile time while keeping this module free of new core VALUE imports: this
+ * file is loaded under partial barrel mocks in several suites (the same
+ * constraint `session-mutation-result.ts` documents), so a value import here
+ * breaks those suites at load.
+ */
+const INLINE_ADVANCE_RECOVERY = {
+  target_mismatch: 'permanent',
+  actor_context_required: 'provide_authority',
+  projection_refused: 'permanent',
+  consume_failed: 'retryable',
+} as const satisfies InlineAdvanceRecoveryByReason;
+
+/**
  * Render whichever refusal the seam returned, and say whether it refused.
  *
  * The shared refusal-renderer protocol (`refusal-renderers.ts`,
@@ -522,13 +596,49 @@ export async function advanceParentForInlineChild(
   output: OutputEmitter,
   commandStreamOptions?: CommandExecutionStreamOptions,
 ): Promise<InlinePropagationResult> {
+  const advanced = await advanceParentForInlineChildDetailed(
+    childState,
+    result,
+    cwd,
+    output,
+    commandStreamOptions,
+  );
+  return advanced.result;
+}
+
+/**
+ * The detailed twin of {@link advanceParentForInlineChild}: same walk, same
+ * rendering, same flat result — plus the preserved
+ * {@link InlinePropagationRefusalDetail} when the seam refused, for consumers
+ * (the Run Progression propagation fold) that must not re-label the refusal.
+ *
+ * @param childState - The terminal inline child's state (must carry parentLinkage)
+ * @param result - Terminal result of the child ('pass' or 'fail')
+ * @param cwd - Current working directory
+ * @param output - Output emitter for CLI output
+ * @param commandStreamOptions - Runtime-only routing for command subprocess
+ * stdout/stderr while inline propagation continues the parent
+ * @returns The flat result plus the refusal's preserved identity when it refused.
+ * @throws {Error} If parent state I/O fails, or the advance fails for a reason
+ *   it has not diagnosed.
+ */
+export async function advanceParentForInlineChildDetailed(
+  childState: RunbookState,
+  result: 'pass' | 'fail' | undefined,
+  cwd: string,
+  output: OutputEmitter,
+  commandStreamOptions?: CommandExecutionStreamOptions,
+): Promise<{
+  readonly result: InlinePropagationResult;
+  readonly refusal?: InlinePropagationRefusalDetail;
+}> {
   const linkage = extractParentLinkage(childState);
   // This is the INLINE flow-back path only. Delegation linkage shares the same
   // base fields (parentRunId/parentFrameKey/parentEntry), so a delegation-linked
   // child would otherwise be drained and advanced here — bypassing the
   // report-then-collect contract that leaves a delegating parent collection
   // pending until `rd collect`. Narrow to inline and refuse anything else.
-  if (linkage?.kind !== 'inline') return 'not-applicable';
+  if (linkage?.kind !== 'inline') return { result: 'not-applicable' };
   const { propagateTerminalChildUpward } = await import('@rundown-org/core');
   const outcome = await propagateTerminalChildUpward(
     buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions),
@@ -546,11 +656,15 @@ export async function advanceParentForInlineChild(
   output.flush();
   // An inline linkage never yields the delegation-only 'reported' / 'duplicate';
   // narrow them away without a cast. #602/#802: a refusal is fail-closed onto
-  // this adapter's pre-existing 'blocked'.
-  if (isInlinePropagationRefusal(outcome)) return 'blocked';
-  return outcome.kind === 'reported' || outcome.kind === 'duplicate'
-    ? 'not-applicable'
-    : outcome.kind;
+  // this adapter's pre-existing 'blocked' — with its typed identity preserved
+  // alongside rather than re-labeled away.
+  if (isInlinePropagationRefusal(outcome)) {
+    return { result: 'blocked', refusal: inlinePropagationRefusalDetail(outcome) };
+  }
+  return {
+    result:
+      outcome.kind === 'reported' || outcome.kind === 'duplicate' ? 'not-applicable' : outcome.kind,
+  };
 }
 
 /**
@@ -599,8 +713,48 @@ export async function propagateChildTerminal(
   commandStreamOptions?: CommandExecutionStreamOptions,
   parentDelegationRuntime?: RunScopedDelegationRuntime,
 ): Promise<TerminalPropagationResult> {
+  const propagated = await propagateChildTerminalDetailed(
+    childState,
+    result,
+    cwd,
+    output,
+    commandStreamOptions,
+    parentDelegationRuntime,
+  );
+  return propagated.result;
+}
+
+/**
+ * The detailed twin of {@link propagateChildTerminal}: same dispatch, same
+ * rendering, same flat result — plus the preserved
+ * {@link InlinePropagationRefusalDetail} when the walk refused, for consumers
+ * (the inline flow-back fold behind the Run Progression dispatch result) that
+ * must not re-label the refusal.
+ *
+ * @param childState - The terminal child run's state
+ * @param result - Terminal result of the child ('pass' or 'fail')
+ * @param cwd - Current working directory
+ * @param output - Output emitter for CLI output
+ * @param commandStreamOptions - Runtime-only routing for command subprocess
+ * stdout/stderr while inline propagation continues the parent
+ * @param parentDelegationRuntime - Verified delegation capabilities the caller
+ *   holds for one specific run (see {@link propagateChildTerminal}).
+ * @returns The flat result plus the refusal's preserved identity when it refused.
+ * @throws {Error} If state I/O fails or drain execution fails.
+ */
+export async function propagateChildTerminalDetailed(
+  childState: RunbookState,
+  result: 'pass' | 'fail' | undefined,
+  cwd: string,
+  output: OutputEmitter,
+  commandStreamOptions?: CommandExecutionStreamOptions,
+  parentDelegationRuntime?: RunScopedDelegationRuntime,
+): Promise<{
+  readonly result: TerminalPropagationResult;
+  readonly refusal?: InlinePropagationRefusalDetail;
+}> {
   const linkage = extractParentLinkage(childState);
-  if (!linkage) return 'not-applicable';
+  if (!linkage) return { result: 'not-applicable' };
   const { propagateTerminalChildUpward } = await import('@rundown-org/core');
   const outcome = await propagateTerminalChildUpward(
     buildInlineParentAdvanceDeps(cwd, output, commandStreamOptions, parentDelegationRuntime),
@@ -616,10 +770,13 @@ export async function propagateChildTerminal(
   output.flush();
   // TerminalPropagationResult has no 'duplicate' member (the CLI never
   // distinguished it); collapse to 'reported' (finding 2). #602/#802: nor a
-  // refusal member; collapse those to the fail-closed 'blocked'. All other
+  // refusal member; collapse those to the fail-closed 'blocked' — with the
+  // typed identity preserved alongside rather than re-labeled away. All other
   // members are shared between the seam union and TerminalPropagationResult.
-  if (isInlinePropagationRefusal(outcome)) return 'blocked';
-  return outcome.kind === 'duplicate' ? 'reported' : outcome.kind;
+  if (isInlinePropagationRefusal(outcome)) {
+    return { result: 'blocked', refusal: inlinePropagationRefusalDetail(outcome) };
+  }
+  return { result: outcome.kind === 'duplicate' ? 'reported' : outcome.kind };
 }
 
 /**
@@ -644,7 +801,16 @@ export type PropagationTrigger =
  */
 export type DrivenRunPropagation =
   | { readonly kind: 'skipped' }
-  | { readonly kind: 'inline-advanced'; readonly result: InlinePropagationResult }
+  | {
+      readonly kind: 'inline-advanced';
+      readonly result: InlinePropagationResult;
+      /**
+       * The refusal's preserved identity, present exactly when `result` is a
+       * refusal-caused `'blocked'` — a re-entrant fail-closed conclusion also
+       * reports `'blocked'` but carries no refusal to preserve.
+       */
+      readonly refusal?: InlinePropagationRefusalDetail;
+    }
   | { readonly kind: 'delegation-reported'; readonly result: DelegationPropagationResult };
 
 /**
@@ -767,14 +933,18 @@ export async function propagateDrivenRunTerminal(
   if (!linkage) return { kind: 'skipped' };
   const explicitResult = trigger.kind === 'operator-result' ? trigger.result : undefined;
   if (linkage.kind === 'inline') {
-    const result = await advanceParentForInlineChild(
+    const advanced = await advanceParentForInlineChildDetailed(
       driven,
       explicitResult,
       cwd,
       output,
       commandStreamOptions,
     );
-    return { kind: 'inline-advanced', result };
+    return {
+      kind: 'inline-advanced',
+      result: advanced.result,
+      ...(advanced.refusal !== undefined ? { refusal: advanced.refusal } : {}),
+    };
   }
   const result = await reportTerminalToDelegatingRun(driven, explicitResult, cwd, output);
   return { kind: 'delegation-reported', result };

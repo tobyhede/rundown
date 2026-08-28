@@ -76,6 +76,8 @@ import { countNumberedSteps } from './step-utils.js';
 import { buildStepPosition } from './targeting.js';
 import { extractLastMessage } from './transition-kernel.js';
 import type { InlineLaunchIntent } from '../events/types.js';
+import type { InlineParentAdvanceRefusal } from './inline-parent-advance.js';
+import { getErrorMessage } from '../errors.js';
 import type { ResolvedStep, RunbookState } from './types.js';
 
 /**
@@ -89,6 +91,50 @@ import type { ResolvedStep, RunbookState } from './types.js';
  *   different explicit action (finish, stop, prune, or restart the run).
  */
 export type RunProgressionRecovery = 'retryable' | 'provide_authority' | 'permanent';
+
+/**
+ * The one inline parent-advance refusal reason → recovery mapping.
+ *
+ * The boundary derivation frontend propagation folds use when an
+ * {@link InlineParentAdvanceRefusal} is what refused: each reason maps to the
+ * same classification the activation gives the identical condition on its own
+ * direct turns, so one condition cannot report two recoveries depending on the
+ * path that surfaced it (#853 review F3). Keys are exhaustive over the refusal
+ * reasons by the `satisfies` check.
+ *
+ * Frontends that must not value-import the core barrel (the CLI's
+ * `delegation-completion.ts` is loaded under partial barrel mocks in several
+ * suites) restate this literal locally and pin it with
+ * `satisfies InlineAdvanceRecoveryByReason`, exactly as the refusal-code maps
+ * are restated against `refusal-codes.ts`.
+ */
+export const INLINE_ADVANCE_RECOVERY_BY_REASON = {
+  target_mismatch: 'permanent',
+  actor_context_required: 'provide_authority',
+  projection_refused: 'permanent',
+  consume_failed: 'retryable',
+} as const satisfies Record<InlineParentAdvanceRefusal['reason'], RunProgressionRecovery>;
+
+/**
+ * Shape of {@link INLINE_ADVANCE_RECOVERY_BY_REASON}, for compile-time-only
+ * derivations in frontends that restate the literal (see its doc).
+ */
+export type InlineAdvanceRecoveryByReason = typeof INLINE_ADVANCE_RECOVERY_BY_REASON;
+
+/**
+ * Derive the recovery classification for an inline parent-advance refusal.
+ *
+ * A lookup into the canonical map above; a reason added to the refusal union
+ * fails compilation at the map rather than absorbing into a default arm.
+ *
+ * @param reason - The typed reason on the refusal.
+ * @returns The core recovery classification for that condition.
+ */
+export function recoveryForInlineAdvanceRefusal(
+  reason: InlineParentAdvanceRefusal['reason'],
+): RunProgressionRecovery {
+  return INLINE_ADVANCE_RECOVERY_BY_REASON[reason];
+}
 
 /**
  * Why an activation yielded without a terminal.
@@ -131,9 +177,11 @@ export type RunProgressionRefusalReason =
 /**
  * Enumerated invocation-layer disruption.
  *
- * Reserved: observation-delivery failure is wired by the observation commit
- * gate (#853). The arm exists so the closed outcome is complete from the first
- * slice; no path constructs it yet.
+ * Live since #853: the observation commit gate constructs the
+ * `observation_delivery_failed` arm whenever the caller's sink throws during
+ * synchronous post-commit delivery — a broken renderer ends every activation
+ * this way, so frontends must handle it. The run itself is untouched at its
+ * last committed boundary.
  */
 export type RunProgressionFailureReason = 'observation_delivery_failed';
 
@@ -199,6 +247,18 @@ export interface InlineChildDispatchInput {
   readonly intent: InlineLaunchIntent;
   /** The composing run's own prompted flag, inherited by a fresh child. */
   readonly prompted: boolean;
+  /**
+   * The activation's GATED observation sink, supplied by core at invocation.
+   *
+   * Every parent-stream emission the callable makes must go through this sink
+   * (never a raw emitter captured by closure), and the callable's own deeper
+   * rendering should surface a broken reporting channel as
+   * {@link ObservationDeliveryError} — that is what keeps the observation
+   * commit gate (#853) uniform across the inline-child turn: a renderer
+   * failure inside the dispatch ends the activation with the typed `failed`
+   * outcome instead of an untyped escape.
+   */
+  readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
 }
 
 /**
@@ -220,6 +280,16 @@ export type InlineChildDispatchResult =
   | {
       /** Flow-back handled progression but concluded fail-closed; diagnostics already observed. */
       readonly kind: 'flow_back_refused';
+      /** Registered code of the refusing condition, when its fold preserved one. */
+      readonly code?: string;
+      /** Operator-facing message, when the fold preserved one. */
+      readonly message?: string;
+      /**
+       * Boundary-derived recovery for the refusing condition. `permanent` when
+       * the fold had no typed refusal to derive from — a fail-closed
+       * conclusion whose diagnostics already streamed.
+       */
+      readonly recovery: RunProgressionRecovery;
     }
   | {
       /** The launch itself refused fail-closed; diagnostics already observed. */
@@ -259,6 +329,14 @@ export type InlineChildDispatch = (
 export interface TerminalPropagationInput {
   /** The run this activation drove to terminal. */
   readonly runId: RunId;
+  /**
+   * The activation's GATED observation sink, supplied by core at invocation —
+   * same contract as {@link InlineChildDispatchInput.sink}: the propagation's
+   * rendering surfaces a broken reporting channel as
+   * {@link ObservationDeliveryError}, keeping the commit gate uniform across
+   * the propagation turn.
+   */
+  readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
 }
 
 /**
@@ -280,6 +358,16 @@ export type TerminalPropagationResult =
       readonly code?: string;
       /** Operator-facing message. */
       readonly message: string;
+      /**
+       * Boundary-derived recovery for the refusing condition, mirroring
+       * {@link InlineChildDispatchResult}'s `launch_refused` arm: derived from
+       * the refusing arm's typed shape at the boundary that diagnosed it (a
+       * consume-failed frontier is `retryable`, an absent deriver is
+       * `provide_authority`, a target mismatch or linkage cycle is
+       * `permanent`) — never re-stamped by the activation and never inferred
+       * from message text.
+       */
+      readonly recovery: RunProgressionRecovery;
     };
 
 /**
@@ -592,25 +680,43 @@ async function drainResolvedCompletionsPass(args: {
  * @param args.runId - The run that reached terminal.
  * @param args.terminal - Which terminal lifecycle it committed.
  * @param args.propagateTerminal - Frontend propagation callable.
+ * @param args.sink - The gated observation sink, handed to the callable.
  * @returns The terminal outcome, or `refused` when propagation failed closed.
  */
 async function concludeTerminal(args: {
   readonly runId: RunId;
   readonly terminal: 'completed' | 'stopped';
   readonly propagateTerminal: TerminalPropagation;
+  readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
 }): Promise<RunProgressionOutcome> {
-  const propagated = await args.propagateTerminal({ runId: args.runId });
+  const propagated = await args.propagateTerminal({ runId: args.runId, sink: args.sink });
   if (propagated.kind === 'refused') {
-    return {
-      kind: 'refused',
-      runId: args.runId,
-      reason: 'terminal_propagation_refused',
-      ...(propagated.code !== undefined ? { code: propagated.code } : {}),
-      message: propagated.message,
-      recovery: 'permanent',
-    };
+    return propagationRefusalOutcome(args.runId, propagated);
   }
   return { kind: args.terminal, runId: args.runId };
+}
+
+/**
+ * Build the `terminal_propagation_refused` outcome from a propagation
+ * callable's refusal, honoring the code and boundary-derived recovery the
+ * refusing arm carried.
+ *
+ * @param runId - Run whose terminal propagation refused.
+ * @param refused - The callable's refusal arm.
+ * @returns The refused outcome.
+ */
+function propagationRefusalOutcome(
+  runId: RunId,
+  refused: Extract<TerminalPropagationResult, { kind: 'refused' }>,
+): RunProgressionOutcome {
+  return {
+    kind: 'refused',
+    runId,
+    reason: 'terminal_propagation_refused',
+    ...(refused.code !== undefined ? { code: refused.code } : {}),
+    message: refused.message,
+    recovery: refused.recovery,
+  };
 }
 
 /**
@@ -662,9 +768,10 @@ async function releaseTerminalTarget(args: {
  *   the healing pass the old collect path performed unconditionally after its
  *   loop.
  *
- * @param args - Manager, run, wait reason, and the optional propagation posture.
+ * @param args - Manager, run, sink, wait reason, and the optional propagation posture.
  * @param args.manager - State manager used to reload the durable state.
  * @param args.runId - The run whose rest state is reported.
+ * @param args.sink - Synchronous observation sink receiving a refusal's diagnostic.
  * @param args.runningReason - Wait reason reported when the run is still running.
  * @param args.propagateTerminal - Present when a discovered terminal still owes
  *   its parent the advance; absent when flow-back already owned it.
@@ -673,19 +780,13 @@ async function releaseTerminalTarget(args: {
 async function outcomeFromDurableState(args: {
   readonly manager: RunbookStateManager;
   readonly runId: RunId;
+  readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
   readonly runningReason: RunProgressionWaitReason;
   readonly propagateTerminal?: TerminalPropagation;
 }): Promise<RunProgressionOutcome> {
   const state = await args.manager.load(args.runId);
   if (!state) {
-    return {
-      kind: 'refused',
-      runId: args.runId,
-      reason: 'run_missing',
-      code: 'RUN_TARGET_UNAVAILABLE',
-      message: `Run ${args.runId} no longer exists`,
-      recovery: 'permanent',
-    };
+    return runMissingRefusal(args.runId, args.sink);
   }
   if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
     const terminal =
@@ -695,11 +796,129 @@ async function outcomeFromDurableState(args: {
         runId: args.runId,
         terminal,
         propagateTerminal: args.propagateTerminal,
+        sink: args.sink,
       });
     }
     return { kind: terminal, runId: args.runId };
   }
   return { kind: 'waiting', runId: args.runId, reason: args.runningReason };
+}
+
+/**
+ * Refuse a continuation whose target run no longer exists, emitting the
+ * diagnostic before returning.
+ *
+ * The emit is not optional (#853 review F2): this refusal flips the caller's
+ * exit code, and a refusal with no diagnostic in the stream leaves
+ * success-shaped output beside a failure exit. The code is the canonical
+ * missing-target mapping, so a remap of that code changes this arm with every
+ * other storage-refusal seam.
+ *
+ * @param runId - The run that no longer exists.
+ * @param sink - Synchronous observation sink receiving the diagnostic.
+ * @returns The refused outcome.
+ */
+function runMissingRefusal(
+  runId: RunId,
+  sink: Pick<ExecutionEventEmitter, 'emit'>,
+): RunProgressionOutcome {
+  const message = `Run ${runId} no longer exists`;
+  sink.emit({
+    type: 'ERROR_OCCURRED',
+    payload: { message, code: TRANSACTIONAL_REFUSAL_CODE_BY_KIND.missing },
+  });
+  return {
+    kind: 'refused',
+    runId,
+    reason: 'run_missing',
+    code: TRANSACTIONAL_REFUSAL_CODE_BY_KIND.missing,
+    message,
+    recovery: 'permanent',
+  };
+}
+
+/**
+ * A synchronous observation-delivery failure: the reporting channel threw
+ * while an observation (or other rendering) was being delivered.
+ *
+ * Raised by the activation's delivery gate, and — since the gate must hold
+ * uniformly across the frontend-supplied composition callables (#853 review
+ * F1) — also the type a Category-C callable (or the frontend plumbing beneath
+ * it) throws to signal that ITS reporting channel failed mid-turn. The
+ * activation boundary is the only catcher; there it becomes the closed
+ * outcome's `failed` arm (`observation_delivery_failed`). Any other error
+ * escaping the activation is a real defect and deliberately propagates.
+ */
+export class ObservationDeliveryError extends Error {
+  /** The run whose observation could not be delivered, when the thrower knew it. */
+  readonly runId?: RunId;
+
+  /**
+   * Wrap a reporting-channel failure as the typed delivery-failure signal.
+   *
+   * @param cause - What the reporting channel threw.
+   * @param runId - The run whose observation could not be delivered, if known
+   *   at the throw site (the activation's gate knows it; adapters may not).
+   */
+  constructor(
+    /** What the reporting channel threw. */
+    cause: unknown,
+    /** The run whose observation could not be delivered, if known. */
+    runId?: RunId,
+  ) {
+    super(
+      runId === undefined
+        ? 'Observation delivery failed'
+        : `Observation delivery failed for run ${runId}`,
+      { cause },
+    );
+    this.name = 'ObservationDeliveryError';
+    if (runId !== undefined) this.runId = runId;
+  }
+}
+
+/**
+ * The observation commit gate (#853): wrap the caller's sink so a delivery
+ * failure is one typed condition raised at the emit site.
+ *
+ * Every emission inside the activation flows through this one wrapper, so the
+ * gate holds uniformly: a throwing sink unwinds the current turn before any
+ * subsequent effect can begin, and the activation boundary converts the unwind
+ * into the `failed` outcome. The preceding durable commit is untouched — the
+ * gate sits strictly after commits, so nothing is rolled back and no lifecycle
+ * is rewritten.
+ *
+ * The gate wraps refusal-diagnostic emissions too, and that is ADR 0003's
+ * specified semantics, not an oversight: a delivery failure fails only the
+ * INVOCATION, and the `failed` outcome's `retryable` classifies the reporting
+ * channel — never the condition whose diagnostic was being delivered. A sink
+ * that deterministically throws on a permanent refusal's diagnostic therefore
+ * yields `failed`/`retryable` on every activation: nothing was committed, so
+ * re-activation re-diagnoses the same refusal and re-attempts the same
+ * delivery. The caller's remedy is to repair the reporting channel; the
+ * underlying refusal is re-reported, not lost, once delivery succeeds.
+ *
+ * @param sink - The caller's synchronous observation sink.
+ * @param runId - The run whose observations are being delivered.
+ * @returns A sink whose `emit` raises {@link ObservationDeliveryFailure}.
+ */
+function gateObservationDelivery(
+  sink: Pick<ExecutionEventEmitter, 'emit'>,
+  runId: RunId,
+): Pick<ExecutionEventEmitter, 'emit'> {
+  return {
+    emit(event) {
+      try {
+        sink.emit(event);
+      } catch (cause) {
+        // A rethrown gate failure keeps its identity: a callable that emitted
+        // through this gated sink surfaces the ORIGINAL typed failure, not a
+        // failure wrapped in a failure.
+        if (cause instanceof ObservationDeliveryError) throw cause;
+        throw new ObservationDeliveryError(cause, runId);
+      }
+    },
+  };
 }
 
 /**
@@ -711,6 +930,16 @@ async function outcomeFromDurableState(args: {
  * composition awaits external input, hands back a refusal, or reaches a
  * terminal. Loading and restoring state are inert; this call is the explicit
  * activation.
+ *
+ * Observation delivery is the commit gate: after each durable commit its
+ * observations are delivered synchronously through `deps.sink`, and no
+ * subsequent effect begins until delivery returns. A throwing sink ends the
+ * activation with the `failed` outcome (`observation_delivery_failed`,
+ * `retryable`): the committed turn stays durable, no terminal is synthesized,
+ * and the next activation resumes from current durable state without replaying
+ * delivered or failed observations — there is no outbox and no event log.
+ * `retryable` because re-activating with a working reporting channel is the
+ * defined remedy; the run itself rests at its last committed boundary.
  *
  * @param authority - The verified, run-bound authority for every mutating turn.
  * @param deps - Services, steps, sink, and frontend effect callables.
@@ -726,19 +955,46 @@ export async function activateRunProgression(
   authority: RunProgressionAuthority,
   deps: RunProgressionDeps,
 ): Promise<RunProgressionOutcome> {
-  const { manager, actorService, sessionService, actorMutationRunner, steps, sink } = deps;
+  try {
+    return await driveProgression(authority, deps);
+  } catch (error) {
+    if (error instanceof ObservationDeliveryError) {
+      // The sink's thrown cause is arbitrary frontend code — the exact
+      // cross-realm case the shared helper exists for (CLAUDE.md § helpers).
+      const cause = getErrorMessage(error.cause);
+      const runId = error.runId ?? authority.runId;
+      return {
+        kind: 'failed',
+        runId,
+        reason: 'observation_delivery_failed',
+        message: `Observation delivery failed for run ${runId}; the last committed turn is durable — inspect the run and re-activate (${cause})`,
+        recovery: 'retryable',
+      };
+    }
+    throw error;
+  }
+}
+
+/**
+ * The activation body: every emission goes through the gated sink constructed
+ * here, so {@link activateRunProgression}'s boundary catch is the single point
+ * where a delivery failure becomes the closed outcome.
+ *
+ * @param authority - The verified, run-bound authority for every mutating turn.
+ * @param deps - Services, steps, sink, and frontend effect callables.
+ * @returns The closed progression outcome.
+ */
+async function driveProgression(
+  authority: RunProgressionAuthority,
+  deps: RunProgressionDeps,
+): Promise<RunProgressionOutcome> {
+  const { manager, actorService, sessionService, actorMutationRunner, steps } = deps;
   const runId = authority.runId;
+  const sink = gateObservationDelivery(deps.sink, runId);
 
   const state = await manager.load(runId);
   if (!state) {
-    return {
-      kind: 'refused',
-      runId,
-      reason: 'run_missing',
-      code: 'RUN_TARGET_UNAVAILABLE',
-      message: `Run ${runId} does not exist`,
-      recovery: 'permanent',
-    };
+    return runMissingRefusal(runId, sink);
   }
   const prompted = state.prompted;
   const completionService = new RunbookCompletionService(manager, actorService);
@@ -760,16 +1016,27 @@ export async function activateRunProgression(
       // durable and the parent advance targets a DIFFERENT run, so propagation
       // is not blocked by the lease. The old collect path's unconditional
       // post-loop propagation ran here; dropping it would strand a waiting
-      // parent behind a refusal whose remedy names only the release. The
-      // release refusal stays the outcome: its diagnostics already streamed,
-      // and a propagation refusal's diagnostics stream from the callable.
-      await deps.propagateTerminal({ runId });
+      // parent behind a refusal whose remedy names only the release.
+      //
+      // When propagation ALSO refuses, the propagation refusal is the outcome:
+      // the release refusal is always retryable contention whose remedy —
+      // re-activate once the lease clears — retries the propagation too, while
+      // the propagation refusal may be permanent, and hiding it behind
+      // `retryable` would tell an orchestrator to spin on a composition whose
+      // real failure never reaches any machine-readable outcome (#853 review
+      // F5). Both conditions' diagnostics stream either way — the release's
+      // through this sink above, the propagation's from the callable.
+      const propagated = await deps.propagateTerminal({ runId, sink });
+      if (propagated.kind === 'refused') {
+        return propagationRefusalOutcome(runId, propagated);
+      }
       return refusedRelease;
     }
     return concludeTerminal({
       runId,
       terminal: 'stopped',
       propagateTerminal: deps.propagateTerminal,
+      sink,
     });
   }
   if (currentState.lifecycle === 'completed') {
@@ -778,9 +1045,13 @@ export async function activateRunProgression(
     // RUNBOOK_COMPLETED would assert a clean finish the outcome contradicts.
     const refusedRelease = await releaseTerminalTarget({ sessionService, runId, sink });
     if (refusedRelease) {
-      // Same reasoning as the stopped arm above: the durable terminal still
-      // owes its parent the advance even though this run's release refused.
-      await deps.propagateTerminal({ runId });
+      // Same composition as the stopped arm above: the durable terminal still
+      // owes its parent the advance, and a refused advance outranks the
+      // retryable release refusal in the outcome.
+      const propagated = await deps.propagateTerminal({ runId, sink });
+      if (propagated.kind === 'refused') {
+        return propagationRefusalOutcome(runId, propagated);
+      }
       return refusedRelease;
     }
     emitTerminalAtActivation({ sink, steps, state: currentState, terminal: 'completed' });
@@ -788,6 +1059,7 @@ export async function activateRunProgression(
       runId,
       terminal: 'completed',
       propagateTerminal: deps.propagateTerminal,
+      sink,
     });
   }
 
@@ -812,6 +1084,7 @@ export async function activateRunProgression(
         runId,
         terminal: drained.status === 'done' ? 'completed' : 'stopped',
         propagateTerminal: deps.propagateTerminal,
+        sink,
       });
     }
     if (drained.status === 'refused') {
@@ -835,6 +1108,7 @@ export async function activateRunProgression(
       return outcomeFromDurableState({
         manager,
         runId,
+        sink,
         runningReason: 'completion_frame_inactive',
         propagateTerminal: deps.propagateTerminal,
       });
@@ -944,12 +1218,13 @@ export async function activateRunProgression(
     // path the seam's consume already committed, so acting on an intent here
     // would launch a child the re-entry never armed.
     if (reentry.status === 'none' && entered.kind === 'inline-launch') {
-      const dispatched = await deps.dispatchInlineChild({ intent: entered.launch, prompted });
+      const dispatched = await deps.dispatchInlineChild({ intent: entered.launch, prompted, sink });
       switch (dispatched.kind) {
         case 'waiting':
           return outcomeFromDurableState({
             manager,
             runId,
+            sink,
             runningReason: 'inline_child_active',
             propagateTerminal: deps.propagateTerminal,
           });
@@ -960,6 +1235,7 @@ export async function activateRunProgression(
           return outcomeFromDurableState({
             manager,
             runId,
+            sink,
             runningReason: 'inline_flow_back_settled',
           });
         case 'flow_back_refused':
@@ -967,9 +1243,11 @@ export async function activateRunProgression(
             kind: 'refused',
             runId,
             reason: 'inline_flow_back_refused',
+            ...(dispatched.code !== undefined ? { code: dispatched.code } : {}),
             message:
+              dispatched.message ??
               'Inline flow-back concluded fail-closed; see the preceding diagnostics for the refusing run',
-            recovery: 'permanent',
+            recovery: dispatched.recovery,
           };
         case 'launch_refused':
           return {
@@ -988,13 +1266,23 @@ export async function activateRunProgression(
               // no linkage drove flow-back, so the composing run cannot
               // advance. Fail closed: `waiting` would report a composition at
               // rest that is actually wedged. The child's own diagnostics
-              // already streamed from its execution; recovery is explicit
-              // action on the child, not a retry of this continuation.
+              // already streamed from its execution, but the WEDGE is diagnosed
+              // here and nowhere else, so its guidance must reach the stream
+              // too (#853 review F2) — this refusal flips the exit code, and an
+              // exit-flipping refusal with no diagnostic leaves success-shaped
+              // output beside a failure exit. Recovery is explicit action on
+              // the child, not a retry of this continuation.
+              const wedgeMessage = `Inline child of run ${runId} stopped without linked flow-back; inspect the child run, then finish, stop, or prune it before re-running`;
+              sink.emit({
+                type: 'ERROR_OCCURRED',
+                payload: { message: wedgeMessage, code: ErrorCodes.LAUNCH_FAILED.code },
+              });
               return {
                 kind: 'refused',
                 runId,
                 reason: 'inline_child_stopped',
-                message: `Inline child of run ${runId} stopped without linked flow-back; inspect the child run, then finish, stop, or prune it before re-running`,
+                code: ErrorCodes.LAUNCH_FAILED.code,
+                message: wedgeMessage,
                 recovery: 'permanent',
               };
             }
@@ -1004,6 +1292,7 @@ export async function activateRunProgression(
           return outcomeFromDurableState({
             manager,
             runId,
+            sink,
             runningReason: 'inline_child_active',
             propagateTerminal: deps.propagateTerminal,
           });
@@ -1021,6 +1310,7 @@ export async function activateRunProgression(
       return outcomeFromDurableState({
         manager,
         runId,
+        sink,
         runningReason: 'awaiting_input',
         propagateTerminal: deps.propagateTerminal,
       });
@@ -1116,6 +1406,7 @@ export async function activateRunProgression(
           runId,
           terminal: 'stopped',
           propagateTerminal: deps.propagateTerminal,
+          sink,
         });
       }
       if (cmdSync.state.lifecycle === 'completed') {
@@ -1123,6 +1414,7 @@ export async function activateRunProgression(
           runId,
           terminal: 'completed',
           propagateTerminal: deps.propagateTerminal,
+          sink,
         });
       }
       // Committed, still running, and no command output: the fenced
@@ -1165,6 +1457,7 @@ export async function activateRunProgression(
         runId,
         terminal: 'completed',
         propagateTerminal: deps.propagateTerminal,
+        sink,
       });
     }
     if (transitionResult.status === 'stopped') {
@@ -1172,6 +1465,7 @@ export async function activateRunProgression(
         runId,
         terminal: 'stopped',
         propagateTerminal: deps.propagateTerminal,
+        sink,
       });
     }
     // The fenced commit released this run on `state.lifecycle`; when only the
@@ -1195,6 +1489,7 @@ export async function activateRunProgression(
         runId,
         terminal: terminalStatus,
         propagateTerminal: deps.propagateTerminal,
+        sink,
       });
     }
     currentState = transitionResult.state;

@@ -187,9 +187,13 @@ export type TransactionalMutationRefusalCode =
 export function sessionMutationRefusalCode(
   refusal: SessionMutationRefusalOutcome,
 ): SessionMutationRefusalCode {
-  const code = (SESSION_REFUSAL_CODES as Record<string, SessionMutationRefusalCode | undefined>)[
-    refusal.kind
-  ];
+  // Own-key guard first: the map is a plain object literal, so a foreign
+  // envelope whose `kind` is an Object.prototype key ('constructor',
+  // 'toString', …) would otherwise find an inherited Function and skip the
+  // unknown-variant throw below.
+  const code = Object.hasOwn(SESSION_REFUSAL_CODES, refusal.kind)
+    ? (SESSION_REFUSAL_CODES as Record<string, SessionMutationRefusalCode>)[refusal.kind]
+    : undefined;
   if (code === undefined) {
     // Name the discriminant only, never the whole refusal: an unrecognized
     // variant is by definition one whose fields this build does not know, and
@@ -250,9 +254,14 @@ export function renderSessionMutationRefusal(
 export function transactionalRefusalCode(
   refusal: TransactionalMutationRefusal,
 ): TransactionalMutationRefusalCode {
-  const code = (
-    TRANSACTIONAL_REFUSAL_CODES as Record<string, TransactionalMutationRefusalCode | undefined>
-  )[refusal.kind];
+  // Own-key guard for the same reason as `sessionMutationRefusalCode`: a
+  // prototype-key `kind` must reach the unknown-variant throw, not inherit a
+  // Function from Object.prototype.
+  const code = Object.hasOwn(TRANSACTIONAL_REFUSAL_CODES, refusal.kind)
+    ? (TRANSACTIONAL_REFUSAL_CODES as Record<string, TransactionalMutationRefusalCode>)[
+        refusal.kind
+      ]
+    : undefined;
   if (code === undefined) {
     // Name the discriminant only, for the same reason
     // `sessionMutationRefusalCode` does: an unrecognized variant is one whose

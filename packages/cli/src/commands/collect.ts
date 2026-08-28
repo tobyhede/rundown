@@ -5,6 +5,7 @@ import {
   activateRunProgression,
   activeFrame,
   buildFrameKey,
+  CLIErrorCodes,
   createEffectfulActorMutationRunner,
   deriveActiveFrame,
   ExecutionEventEmitter,
@@ -641,7 +642,6 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
           manager,
           actorService: progressionActorService,
           sessionService: ctx.sessionService,
-          emitter,
           cwd,
           steps: loopSteps,
           output,
@@ -672,6 +672,18 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
         progression.kind === 'refused' ||
         progression.kind === 'failed' ||
         progression.kind === 'stopped';
+      if (progression.kind === 'failed') {
+        // The one arm whose diagnostic CANNOT ride the observation stream —
+        // the stream is the broken thing. Render a best-effort error envelope
+        // so the failure exit is diagnosed; if this render also fails, the
+        // exit code above still stands (the whole point of deciding it before
+        // rendering).
+        try {
+          output.error(progression.message, CLIErrorCodes.OBSERVATION_DELIVERY_FAILED);
+        } catch {
+          // The reporting channel is broken; the exit code carries the failure.
+        }
+      }
     }
   }
 

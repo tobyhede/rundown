@@ -110,6 +110,20 @@ describe('sessionMutationRefusalCode', () => {
     }
     expect.assertions(3);
   });
+
+  it('throws for a prototype-key kind instead of returning an inherited Function', () => {
+    // The map is a plain object literal, so a corrupted or foreign envelope
+    // whose `kind` is an Object.prototype key ('constructor', 'toString', …)
+    // finds an inherited Function at the lookup. The documented contract is a
+    // loud throw for every unrecognized kind; a Function flowing onward would
+    // reach output.error as a silently code-less envelope.
+    for (const protoKey of ['constructor', 'toString', 'hasOwnProperty']) {
+      const foreign = { kind: protoKey, runId: RUN_ID, message: 'nope' };
+      expect(() => sessionMutationRefusalCode(foreign as SessionMutationRefusalOutcome)).toThrow(
+        `Unhandled session mutation refusal: ${protoKey}`,
+      );
+    }
+  });
 });
 
 describe('renderSessionMutationRefusal', () => {
@@ -316,5 +330,17 @@ describe('transactionalRefusalCode', () => {
       expect(thrown.message).not.toContain(RUN_ID);
     }
     expect.assertions(3);
+  });
+
+  it('throws for a prototype-key kind instead of returning an inherited Function', () => {
+    // Same guard as the session mapping: a plain-object lookup inherits
+    // Object.prototype, so 'constructor' et al. would otherwise skip the
+    // documented unknown-variant throw and flow a Function out as the code.
+    for (const protoKey of ['constructor', 'toString', 'hasOwnProperty']) {
+      const foreign = { kind: protoKey, runId: RUN_ID, message: 'nope' };
+      expect(() => transactionalRefusalCode(foreign as TransactionalMutationRefusal)).toThrow(
+        `Unhandled transactional mutation refusal: ${protoKey}`,
+      );
+    }
   });
 });

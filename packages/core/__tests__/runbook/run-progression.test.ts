@@ -19,6 +19,7 @@ import type { CommandExecutionServices } from '../../src/runbook/actors/command-
 import type { ResolvedStep, RunbookState } from '../../src/runbook/types.js';
 import { createRunbook } from './fixtures.js';
 import { mintRunProgressionAuthority } from '../../src/runbook/run-progression-authority.js';
+import { TRANSACTIONAL_REFUSAL_CODE_BY_KIND } from '../../src/runbook/storage/refusal-codes.js';
 import {
   activateRunProgression,
   type InlineChildDispatch,
@@ -242,7 +243,7 @@ describe('activateRunProgression', () => {
 
     // The terminal-propagation decision is core's: the callable is invoked for
     // the terminal run (it internally skips an unlinked one).
-    expect(propagateTerminal).toHaveBeenCalledWith({ runId: state.id });
+    expect(propagateTerminal).toHaveBeenCalledWith(expect.objectContaining({ runId: state.id }));
   });
 
   it('continues across steps until the machine reaches terminal', async () => {
@@ -437,7 +438,7 @@ describe('activateRunProgression', () => {
       code: 'EXECUTION_IN_PROGRESS',
       recovery: 'retryable',
     });
-    expect(propagateTerminal).toHaveBeenCalledWith({ runId: state.id });
+    expect(propagateTerminal).toHaveBeenCalledWith(expect.objectContaining({ runId: state.id }));
     // The completion announcement is withheld: the stream must not assert a
     // clean finish the refusal outcome contradicts.
     expect(second.events.map((event) => event.type)).not.toContain('RUNBOOK_COMPLETED');
@@ -480,7 +481,7 @@ describe('activateRunProgression', () => {
     // advance. The replaced loop failed closed here (exit 1); a `waiting`
     // would report a composition at rest that is actually wedged.
     const { steps, actorService, state } = await seedInlineLaunchRun();
-    const { emitter } = recordingSink(state);
+    const { emitter, events } = recordingSink(state);
 
     const dispatchInlineChild = jest.fn<InlineChildDispatch>(async () => ({
       kind: 'child_terminal' as const,
@@ -498,8 +499,121 @@ describe('activateRunProgression', () => {
       reason: 'inline_child_stopped',
       recovery: 'permanent',
     });
+    // The operator guidance must reach the stream, not only the outcome (#853
+    // review F2): this arm's diagnostics are otherwise absent entirely, since
+    // the wedge is diagnosed here rather than by the inner machinery.
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'ERROR_OCCURRED',
+        payload: expect.objectContaining({
+          message: expect.stringContaining('stopped without linked flow-back'),
+        }),
+      }),
+    );
     // The composing run keeps its lifecycle: nothing terminal was applied.
     expect((await manager.load(state.id))?.lifecycle).toBe('running');
+  });
+
+  it('carries a propagation refusal code and boundary recovery into the outcome', async () => {
+    // #853 review F3: the propagation callable's refused arm carries the
+    // refusing condition's registered code and boundary-derived recovery
+    // (mirroring launch_refused). Core must honor them — a consume_failed
+    // (RD-829) refusal is retryable wherever it surfaces, and hardcoding
+    // `permanent` here contradicted the identical condition reached directly
+    // by the activation's own frontier turn.
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'propagation-refusal.runbook.md');
+    const { emitter } = recordingSink(state);
+
+    const propagateTerminal = jest.fn<TerminalPropagation>(async () => ({
+      kind: 'refused' as const,
+      code: 'RD-829',
+      message: 'Failed to consume delegation frontier after re-entry; retry the run',
+      recovery: 'retryable' as const,
+    }));
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { propagateTerminal }),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      runId: state.id,
+      reason: 'terminal_propagation_refused',
+      code: 'RD-829',
+      recovery: 'retryable',
+    });
+  });
+
+  it('supplies the gated sink to the composition callables and folds their delivery failures into the typed failed outcome', async () => {
+    // #853 review F1: the gate must hold across the frontend-supplied
+    // Category-C callables too — the inline-child and propagation turns are
+    // the largest turns, where a renderer failure is most likely. Core hands
+    // each callable the gated sink at invocation; a delivery failure inside
+    // the callable (surfaced as the exported ObservationDeliveryError) ends
+    // the activation with the same typed `failed`, never an untyped escape.
+    const { steps, actorService, state } = await seedInlineLaunchRun();
+    const emitter = new ExecutionEventEmitter(state.id, state.runbook);
+    const delivered: string[] = [];
+    emitter.subscribe((event) => {
+      if (event.type === 'ERROR_OCCURRED' && event.payload.message === 'from-dispatch') {
+        throw new Error('renderer broke');
+      }
+      delivered.push(event.type);
+    });
+
+    const dispatchInlineChild = jest.fn<InlineChildDispatch>(async ({ sink }) => {
+      // The callable streams a diagnostic through the sink core supplied; the
+      // broken renderer throws beneath it. The gate must convert that into
+      // the typed invocation failure rather than letting it escape.
+      sink.emit({ type: 'ERROR_OCCURRED', payload: { message: 'from-dispatch' } });
+      throw new Error('unreachable: the gated sink must have thrown');
+    });
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { dispatchInlineChild }),
+    );
+
+    expect(dispatchInlineChild).toHaveBeenCalledWith(
+      expect.objectContaining({ sink: expect.objectContaining({ emit: expect.any(Function) }) }),
+    );
+    expect(outcome).toMatchObject({
+      kind: 'failed',
+      runId: state.id,
+      reason: 'observation_delivery_failed',
+      recovery: 'retryable',
+    });
+    // The run keeps its lifecycle: a reporting failure rewrites nothing.
+    expect((await manager.load(state.id))?.lifecycle).toBe('running');
+  });
+
+  it('carries a flow-back refusal code and boundary recovery into the outcome', async () => {
+    // The flow-back sibling of the propagation-refusal pin above: the
+    // dispatch result's refused arm carries the refusing condition's code and
+    // boundary-derived recovery, and core honors them instead of stamping
+    // `permanent` (#853 review F3).
+    const { steps, actorService, state } = await seedInlineLaunchRun();
+    const { emitter } = recordingSink(state);
+
+    const dispatchInlineChild = jest.fn<InlineChildDispatch>(async () => ({
+      kind: 'flow_back_refused' as const,
+      code: 'RD-829',
+      message: 'Failed to consume delegation frontier after re-entry; retry the run',
+      recovery: 'retryable' as const,
+    }));
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { dispatchInlineChild }),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      runId: state.id,
+      reason: 'inline_flow_back_refused',
+      code: 'RD-829',
+      recovery: 'retryable',
+    });
   });
 
   it('heals a concurrently-committed terminal instead of reporting waiting', async () => {
@@ -532,7 +646,7 @@ describe('activateRunProgression', () => {
     );
 
     expect(outcome).toEqual({ kind: 'completed', runId: state.id });
-    expect(propagateTerminal).toHaveBeenCalledWith({ runId: state.id });
+    expect(propagateTerminal).toHaveBeenCalledWith(expect.objectContaining({ runId: state.id }));
   });
 
   it('refuses a persisted delegation frontier without verified claim authority, keeping the run running', async () => {
@@ -591,5 +705,284 @@ describe('activateRunProgression', () => {
 
     const after = await manager.load(state.id);
     expect(after?.lifecycle).toBe('running');
+  });
+
+  it('emits a diagnostic for a missing run instead of refusing silently', async () => {
+    // #853 review F2: an exit-flipping refusal with no diagnostic in the
+    // stream leaves success-shaped output beside a failure exit code. The
+    // run-pruned race (another process deletes the run between the caller's
+    // load and this activation's) must produce an ERROR_OCCURRED under the
+    // canonical missing-target code, then the typed refusal.
+    const missingRunId = generateRunId();
+    const emitter = new ExecutionEventEmitter(missingRunId, {
+      source: 'project',
+      path: 'gone.runbook.md',
+    });
+    const events: RunbookEventV1[] = [];
+    emitter.subscribe((event) => {
+      events.push(event);
+    });
+    const steps = createRunbook(MANUAL_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: missingRunId }),
+      depsFor(actorService, steps, emitter),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      runId: missingRunId,
+      reason: 'run_missing',
+      code: TRANSACTIONAL_REFUSAL_CODE_BY_KIND.missing,
+      recovery: 'permanent',
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'ERROR_OCCURRED',
+        payload: expect.objectContaining({ code: TRANSACTIONAL_REFUSAL_CODE_BY_KIND.missing }),
+      }),
+    );
+  });
+
+  it('surfaces the graver propagation refusal over a retryable release refusal', async () => {
+    // #853 review F5: when the terminal-at-activation release refuses AND the
+    // propagation callable refuses, the propagation refusal must not be
+    // silently discarded behind the release's `retryable` — an orchestrator
+    // honoring that field would retry forever while the composition's real,
+    // possibly permanent failure never reaches any machine-readable outcome.
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'coincident-refusal.runbook.md');
+
+    const first = recordingSink(state);
+    await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, first.emitter),
+    );
+    expect((await manager.load(state.id))?.lifecycle).toBe('completed');
+
+    unwrapSessionMutation(await sessionService.pushRunbookWithRunControlClaim(state.id));
+    jest.spyOn(sessionService, 'releaseRuns').mockResolvedValue({
+      kind: 'execution_in_progress',
+      runId: state.id,
+      message: `Run ${state.id} is being executed by another process`,
+    });
+
+    const second = recordingSink(state);
+    const propagateTerminal = jest.fn<TerminalPropagation>(async () => ({
+      kind: 'refused' as const,
+      code: 'RD-829',
+      message: 'Failed to consume delegation frontier after re-entry; retry the run',
+      recovery: 'retryable' as const,
+    }));
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, second.emitter, { propagateTerminal }),
+    );
+
+    expect(propagateTerminal).toHaveBeenCalledWith(expect.objectContaining({ runId: state.id }));
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'terminal_propagation_refused',
+      code: 'RD-829',
+      recovery: 'retryable',
+    });
+  });
+});
+
+describe('observation commit gate (#853)', () => {
+  /**
+   * Wire one shared timeline across the three seams the gate orders: command
+   * effects (the injected external runner), durable commits (the real
+   * `commitOwnedState` on the shared store prototype), and observations (the
+   * recording sink's subscriber).
+   */
+  function timelineRecorder(): {
+    timeline: string[];
+    commandServices: CommandExecutionServices;
+  } {
+    const timeline: string[] = [];
+    const commandServices: CommandExecutionServices = {
+      runExternalCommand: async (input: { command: string }) => {
+        timeline.push(`effect:${input.command}`);
+        return { success: true, exitCode: 0 };
+      },
+    };
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- captured only to `.apply(this, …)` inside the mock below; never invoked unbound
+    const realCommit = RunbookStore.prototype.commitOwnedState;
+    jest.spyOn(RunbookStore.prototype, 'commitOwnedState').mockImplementation(async function (
+      this: RunbookStore,
+      ...args
+    ) {
+      const result = await (
+        realCommit as (this: RunbookStore, ...a: typeof args) => Promise<{ kind: string }>
+      ).apply(this, args);
+      if (result.kind === 'committed') {
+        timeline.push('commit');
+      }
+      return result as never;
+    });
+    return { timeline, commandServices };
+  }
+
+  it('orders effect → commit → synchronous observation → next effect across successive turns', async () => {
+    const steps = createRunbook(TWO_COMMAND_RUNBOOK);
+    const { timeline, commandServices } = timelineRecorder();
+    const actorService = actorServiceWith(commandServices);
+    const state = await seedRun(steps, actorService, 'ordered.runbook.md');
+
+    const emitter = new ExecutionEventEmitter(state.id, state.runbook);
+    emitter.subscribe((event) => {
+      timeline.push(`observe:${event.type}`);
+    });
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter),
+    );
+    expect(outcome).toEqual({ kind: 'completed', runId: state.id });
+
+    // Two fenced turns, each: the command effect, then its one durable commit,
+    // then that commit's observation — all before the next turn's effect.
+    const firstEffect = timeline.indexOf('effect:echo first');
+    const secondEffect = timeline.indexOf('effect:echo second');
+    expect(firstEffect).toBeGreaterThanOrEqual(0);
+    expect(secondEffect).toBeGreaterThan(firstEffect);
+
+    const commitIndexes = timeline
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => entry === 'commit')
+      .map(({ index }) => index);
+    const firstCommitIndex = commitIndexes.find((index) => index > firstEffect);
+    if (firstCommitIndex === undefined) throw new Error('expected a commit after the first effect');
+    expect(firstCommitIndex).toBeLessThan(secondEffect);
+
+    // The first turn's observation (its command completion) lands after that
+    // commit and before the second turn's effect begins.
+    const firstCompletion = timeline.indexOf('observe:COMMAND_COMPLETED');
+    expect(firstCompletion).toBeGreaterThan(firstCommitIndex);
+    expect(firstCompletion).toBeLessThan(secondEffect);
+  });
+
+  it('returns failed and withholds the next effect when the sink throws after a commit', async () => {
+    const steps = createRunbook(TWO_COMMAND_RUNBOOK);
+    const effects: string[] = [];
+    const commandServices: CommandExecutionServices = {
+      runExternalCommand: async (input: { command: string }) => {
+        effects.push(input.command);
+        return { success: true, exitCode: 0 };
+      },
+    };
+    const actorService = actorServiceWith(commandServices);
+    const state = await seedRun(steps, actorService, 'broken-sink.runbook.md');
+
+    const emitter = new ExecutionEventEmitter(state.id, state.runbook);
+    const delivered: string[] = [];
+    emitter.subscribe((event) => {
+      if (event.type === 'COMMAND_COMPLETED') {
+        throw new Error('renderer pipe closed');
+      }
+      delivered.push(event.type);
+    });
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter),
+    );
+
+    // The typed invocation failure: responsible run, enumerated reason, and a
+    // recovery that says re-activation with a working channel can succeed.
+    expect(outcome).toEqual({
+      kind: 'failed',
+      runId: state.id,
+      reason: 'observation_delivery_failed',
+      message: expect.stringContaining(state.id),
+      recovery: 'retryable',
+    });
+
+    // The next effect never began: only the first command ran.
+    expect(effects).toEqual(['echo first']);
+
+    // The commit preceding the failed observation is durable — the transition
+    // to step 2 landed — and no terminal lifecycle was synthesized.
+    const after = await manager.load(state.id);
+    expect(after?.lifecycle).toBe('running');
+    expect(after?.step).toBe('2');
+    expect(delivered).not.toContain('RUNBOOK_STOPPED');
+    expect(delivered).not.toContain('RUNBOOK_COMPLETED');
+  });
+
+  it('resumes from the committed state without replaying delivered or failed observations', async () => {
+    const steps = createRunbook(TWO_COMMAND_RUNBOOK);
+    const commandRuns: string[] = [];
+    const commandServices: CommandExecutionServices = {
+      runExternalCommand: async (input: { command: string }) => {
+        commandRuns.push(input.command);
+        return { success: true, exitCode: 0 };
+      },
+    };
+    const actorService = actorServiceWith(commandServices);
+    const state = await seedRun(steps, actorService, 'no-replay.runbook.md');
+
+    // Activation N: the sink dies on the first turn's completion observation.
+    const broken = new ExecutionEventEmitter(state.id, state.runbook);
+    broken.subscribe((event) => {
+      if (event.type === 'COMMAND_COMPLETED') {
+        throw new Error('renderer pipe closed');
+      }
+    });
+    const first = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, broken),
+    );
+    expect(first.kind).toBe('failed');
+
+    // Activation N+1 with a healthy sink resumes from durable state: it drives
+    // only the remaining step and does not re-deliver the first turn's
+    // observations from any replay buffer.
+    const { emitter, events } = recordingSink(state);
+    const second = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter),
+    );
+
+    expect(second).toEqual({ kind: 'completed', runId: state.id });
+    expect(commandRuns).toEqual(['echo first', 'echo second']);
+
+    const commandEvents = events.filter((event) => event.type === 'COMMAND_STARTED');
+    expect(commandEvents).toHaveLength(1);
+    expect(commandEvents[0]).toMatchObject({ payload: { command: 'echo second' } });
+    expect(events.map((event) => event.type)).toContain('RUNBOOK_COMPLETED');
+  });
+
+  it('loads, restores, and inspects without delivering observations or performing effects', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const commandRunner = jest.fn(async () => ({ success: true, exitCode: 0 }));
+    const actorService = actorServiceWith({ runExternalCommand: commandRunner });
+    const state = await seedRun(steps, actorService, 'inert.runbook.md');
+
+    const { emitter, events } = recordingSink(state);
+    const dispatchInlineChild = jest.fn<InlineChildDispatch>(async () => ({
+      kind: 'waiting' as const,
+    }));
+    const propagateTerminal = jest.fn<TerminalPropagation>(async () => ({
+      kind: 'propagated' as const,
+    }));
+    // Constructing the deps IS not activation; neither is any read-only path.
+    depsFor(actorService, steps, emitter, { dispatchInlineChild, propagateTerminal });
+
+    const before = await manager.load(state.id);
+    if (!before) throw new Error('expected the seeded run to load');
+    const restored = actorService.createRecoveryActor(before, [...steps]);
+    expect(restored).toBeDefined();
+    await sessionService.getActive();
+    const after = await manager.load(state.id);
+
+    expect(events).toHaveLength(0);
+    expect(commandRunner).not.toHaveBeenCalled();
+    expect(dispatchInlineChild).not.toHaveBeenCalled();
+    expect(propagateTerminal).not.toHaveBeenCalled();
+    expect(after).toEqual(before);
   });
 });

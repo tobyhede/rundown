@@ -92,6 +92,7 @@ export const CLISymbolicErrorCodeValues = [
   'ENGINE_INIT_FAILED',
   'INVALID_AT_TARGET',
   'SCENARIO_NOT_FOUND',
+  'OBSERVATION_DELIVERY_FAILED',
   'UNKNOWN_ERROR',
 ] as const;
 
@@ -203,6 +204,12 @@ export const CLIErrorCodes = {
   DELEGATION_IN_FLIGHT: ErrorCodes.DELEGATION_IN_FLIGHT.code,
   /** Scenario not found */
   SCENARIO_NOT_FOUND: ErrorCodes.SCENARIO_NOT_FOUND.code,
+  /**
+   * A Run Progression activation ended because its observation reporting
+   * channel threw (#853). The run rests at its last committed boundary;
+   * re-activate once the reporting channel is repaired.
+   */
+  OBSERVATION_DELIVERY_FAILED: 'OBSERVATION_DELIVERY_FAILED',
   /** Unknown or unexpected error */
   UNKNOWN_ERROR: ErrorCodes.UNKNOWN_ERROR.code,
 } as const;

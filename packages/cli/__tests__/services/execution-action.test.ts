@@ -222,3 +222,24 @@ describe('execution action helpers', () => {
     });
   });
 });
+
+describe('CONTENTION_LAUNCH_CODES', () => {
+  it('classifies the registered run-start CAS code as contention', async () => {
+    // The set is keyed by REGISTERED code values, not symbolic names: the codes
+    // that reach the launch-refusal arm are `ErrorCodes.*.code` strings
+    // (RD-NNN). Pinned against the registry so a code remap cannot silently
+    // turn every contention-shaped launch loss permanent (#853 review F4) —
+    // when the #777 fix surfaces CONCURRENT_STATE_MODIFICATION from the
+    // run-start pipeline, this membership is what makes that arm retryable
+    // with no further change.
+    const { CONTENTION_LAUNCH_CODES } = await import('../../src/services/execution.js');
+    const { ErrorCodes, TRANSACTIONAL_REFUSAL_CODE_BY_KIND } = await import('@rundown-org/core');
+    expect(CONTENTION_LAUNCH_CODES.has(ErrorCodes.CONCURRENT_STATE_MODIFICATION.code)).toBe(true);
+    expect(
+      CONTENTION_LAUNCH_CODES.has(TRANSACTIONAL_REFUSAL_CODE_BY_KIND.concurrent_modification),
+    ).toBe(true);
+    // LAUNCH_FAILED is the pipeline's catch-all wrapper and must stay
+    // permanent until #777 unwraps the CAS code from it.
+    expect(CONTENTION_LAUNCH_CODES.has(ErrorCodes.LAUNCH_FAILED.code)).toBe(false);
+  });
+});
