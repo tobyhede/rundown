@@ -4,7 +4,6 @@ import {
   createRunbook,
   runCliInProcess,
   findActionOutput,
-  getActiveState,
   parseCliJsonObject,
   requireLatestFrontierToken,
   type TestWorkspace,
