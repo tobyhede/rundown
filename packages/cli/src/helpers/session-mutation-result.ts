@@ -9,11 +9,14 @@
 // it already names the run — rather than re-synthesized per command.
 //
 // The same applies to the wider transactional union a delegation seam returns.
-// `transactionalRefusalCode` is the ONE `kind` → code mapping for it; the sites
-// that need the emit call `renderTransactionalMutationRefusal`, the sites that
-// need the code alone (goto-workflow's structured result, execution.ts's
+// `transactionalRefusalCode` is the CLI's `kind` → code mapping for it; the
+// sites that need the emit call `renderTransactionalMutationRefusal`, the sites
+// that need the code alone (goto-workflow's structured result, execution.ts's
 // `ERROR_OCCURRED` payload) call the mapping directly. Restating the switch
-// locally is how the two aggregate renderings drifted apart.
+// locally is how the two aggregate renderings drifted apart — which is why the
+// literals below are pinned by `satisfies` against core's canonical
+// `refusal-codes` maps: core owns the kinds, so core owns the codes, and a
+// divergent restatement here no longer compiles.
 //
 // Deliberately NOT in `refusal-renderers.ts`: that module's renderers are swept
 // exhaustively by their own test, and this refusal is produced by the storage
@@ -30,6 +33,8 @@ import type {
   AbandonedAttemptSetOutcome,
   GuardedMutationResult,
   SessionMutationRefusalOutcome,
+  SessionRefusalCodeByKind,
+  TransactionalRefusalCodeByKind,
 } from '@rundown-org/core';
 import type { OutputEmitter } from '../services/output-emitter.js';
 
@@ -182,23 +187,33 @@ export type TransactionalMutationRefusalCode =
 export function sessionMutationRefusalCode(
   refusal: SessionMutationRefusalOutcome,
 ): SessionMutationRefusalCode {
-  switch (refusal.kind) {
-    case 'execution_in_progress':
-      return 'EXECUTION_IN_PROGRESS';
-    case 'recovery_required':
-      return 'RECOVERY_REQUIRED';
-    default: {
-      // Name the discriminant only, never the whole refusal: an unrecognized
-      // variant is by definition one whose fields this build does not know, and
-      // serializing it wholesale would put unreviewed payload into an error
-      // message (and thence into logs).
-      const _exhaustive: never = refusal;
-      throw new Error(
-        `Unhandled session mutation refusal: ${(_exhaustive as { kind: string }).kind}`,
-      );
-    }
+  const code = (SESSION_REFUSAL_CODES as Record<string, SessionMutationRefusalCode | undefined>)[
+    refusal.kind
+  ];
+  if (code === undefined) {
+    // Name the discriminant only, never the whole refusal: an unrecognized
+    // variant is by definition one whose fields this build does not know, and
+    // serializing it wholesale would put unreviewed payload into an error
+    // message (and thence into logs).
+    throw new Error(`Unhandled session mutation refusal: ${(refusal as { kind: string }).kind}`);
   }
+  return code;
 }
+
+/**
+ * The session half of the canonical map, restated as a local literal.
+ *
+ * `satisfies SessionRefusalCodeByKind` is what makes the restatement safe: the
+ * core type is derived from core's own canonical const, so a missing kind, an
+ * extra kind, or a remapped code string here fails compilation against core's
+ * literal values. The restatement (rather than a value import of the core
+ * const) preserves this module's type-only import contract — see the module
+ * header.
+ */
+const SESSION_REFUSAL_CODES = {
+  execution_in_progress: 'EXECUTION_IN_PROGRESS',
+  recovery_required: 'RECOVERY_REQUIRED',
+} as const satisfies SessionRefusalCodeByKind;
 
 /**
  * Render a session ownership refusal under its registered symbolic code.
@@ -235,30 +250,34 @@ export function renderSessionMutationRefusal(
 export function transactionalRefusalCode(
   refusal: TransactionalMutationRefusal,
 ): TransactionalMutationRefusalCode {
-  switch (refusal.kind) {
-    case 'execution_in_progress':
-    case 'recovery_required':
-      return sessionMutationRefusalCode(refusal);
-    case 'claim_superseded':
-      return 'STALE_CLAIM';
-    case 'concurrent_modification':
-      return 'CONCURRENT_MODIFICATION';
-    case 'missing':
-      return 'RUN_TARGET_UNAVAILABLE';
-    case 'aggregate_recovery_required':
-      return 'AGGREGATE_RECOVERY_REQUIRED';
-    default: {
-      // Name the discriminant only, for the same reason
-      // `sessionMutationRefusalCode` does: an unrecognized variant is one whose
-      // fields this build does not know, and serializing it wholesale would put
-      // unreviewed payload into an error message (and thence into logs).
-      const _exhaustive: never = refusal;
-      throw new Error(
-        `Unhandled transactional mutation refusal: ${(_exhaustive as { kind: string }).kind}`,
-      );
-    }
+  const code = (
+    TRANSACTIONAL_REFUSAL_CODES as Record<string, TransactionalMutationRefusalCode | undefined>
+  )[refusal.kind];
+  if (code === undefined) {
+    // Name the discriminant only, for the same reason
+    // `sessionMutationRefusalCode` does: an unrecognized variant is one whose
+    // fields this build does not know, and serializing it wholesale would put
+    // unreviewed payload into an error message (and thence into logs).
+    throw new Error(
+      `Unhandled transactional mutation refusal: ${(refusal as { kind: string }).kind}`,
+    );
   }
+  return code;
 }
+
+/**
+ * The full canonical map, restated as a local literal for the same reason as
+ * {@link SESSION_REFUSAL_CODES}: `satisfies TransactionalRefusalCodeByKind`
+ * pins every kind and every code string to core's canonical const at compile
+ * time while keeping this module's imports type-only.
+ */
+const TRANSACTIONAL_REFUSAL_CODES = {
+  ...SESSION_REFUSAL_CODES,
+  claim_superseded: 'STALE_CLAIM',
+  concurrent_modification: 'CONCURRENT_MODIFICATION',
+  missing: 'RUN_TARGET_UNAVAILABLE',
+  aggregate_recovery_required: 'AGGREGATE_RECOVERY_REQUIRED',
+} as const satisfies TransactionalRefusalCodeByKind;
 
 /**
  * Render a transactional delegation refusal under its registered symbolic code.

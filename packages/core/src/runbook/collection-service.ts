@@ -30,6 +30,7 @@ import type { Frame, FrameKey } from './targeting.js';
 import { completionTargetsFrame, findSubstepState } from './targeting.js';
 import { deriveActiveCompletionFrame } from './frame-entry.js';
 import type { ClaimSeenRecordResult } from './session-service.js';
+import { mintRunProgressionAuthority } from './run-progression-authority.js';
 import type { ResolvedStep, RunbookState, RunId } from './types.js';
 import {
   delegationRuntimeCapabilities,
@@ -835,7 +836,11 @@ async function prepareCollection(
       step: scope.stepName,
       applied,
       unresolved: drained.unresolved,
-      lifecycle: drained.state.lifecycle,
+      // Literal, not `drained.state.lifecycle`: this arm is only built when the
+      // drain concluded non-terminal (the terminal statuses branched to
+      // `prepareTerminalCollection` above), and the literal is what carries the
+      // running-arm narrowing of `DelegationPolicyOutcome`.
+      lifecycle: 'running',
       reportedTerminalOutcome: false,
       transitionObservations,
       // Placeholder: the real observations can only be derived from committed
@@ -848,6 +853,15 @@ async function prepareCollection(
       // over THIS run — runtime-only closures, never persisted, and carried only
       // on the non-terminal arm (a terminal target drives no continuation).
       delegationRuntime,
+      // The continuation's one run-bound authority (#851). Minted here — the
+      // point the collector's bearer was verified — and deliberately WITHOUT a
+      // claimKey: the follow-on's fenced command turn keeps the bare
+      // run-authority capture the pre-migration loop performed, so the fence
+      // semantics (and the #849 capture window) are unchanged by the migration.
+      progressionAuthority: mintRunProgressionAuthority({
+        runId: targetRunId,
+        delegationRuntime,
+      }),
     },
   };
 }
@@ -985,7 +999,15 @@ async function finishCollection(
   // implies the second. It is spelled out because `target` is optional on
   // `PreparedCollection` and TypeScript narrows on the check, not on the
   // invariant.
-  if (prepared.frontierDisclosure !== undefined && prepared.target !== undefined) {
+  // The lifecycle term narrows to the running arm of the split
+  // `collection_applied` union: `frontierDisclosure` is only set by
+  // `prepareCollection`'s projected arm, which always builds a running value,
+  // so the term is invariant-implied — spelled out for the narrowing.
+  if (
+    prepared.frontierDisclosure !== undefined &&
+    prepared.target !== undefined &&
+    value.lifecycle === 'running'
+  ) {
     try {
       // The SAME seam `rundown run` enters through, so the `STEP_ENTERED` a
       // collect emits carries every rendered field a run's does. The state is
@@ -1022,6 +1044,10 @@ async function finishCollection(
   }
 
   if (prepared.terminal === undefined || prepared.target === undefined) return value;
+  // Narrows to the terminal arm of the split union; `prepared.terminal` set
+  // means `prepareTerminalCollection` built this value, which is always the
+  // terminal arm.
+  if (value.lifecycle === 'running') return value;
 
   // INLINE only. The delegation report already committed with the terminal
   // state, so re-running the shared seam for it would attempt a duplicate write;
