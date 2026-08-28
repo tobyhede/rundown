@@ -30,6 +30,7 @@ import {
   countNumberedSteps,
   findStepOrThrow,
   type ExecutionEventEmitter,
+  type InlineChildDispatchResult,
   type InlineLaunchIntent,
   type ExecutionUnitEntry,
   type InlineLinkage,
@@ -39,6 +40,9 @@ import {
   type DelegationRuntimeCapabilities,
   type InlineParentAdvanceRefusal,
   COMPLETION_TARGET_MISMATCH_CODE,
+  FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
+  FRONTIER_CONSUME_FAILED_MESSAGE,
+  FRONTIER_PROJECTION_REFUSED_MESSAGE,
   projectAndConsumeReEntryFrontier,
   readPersistedReEntryFrontier,
   type ReEntryProjection,
@@ -250,43 +254,13 @@ export interface ExecutionLoopOptions {
   readonly output?: OutputEmitter;
 }
 
-/**
- * Refusal text for a persisted delegation frontier reached without the verified
- * claim authority needed to project it.
- *
- * Shared by the `ERROR_OCCURRED` and the corrective `RUNBOOK_STOPPED` so the two
- * halves of one refusal cannot describe it differently.
- */
-const FRONTIER_AUTHORITY_REQUIRED_MESSAGE =
-  'Delegation frontier cannot be projected without verified claim authority';
+// The three frontier refusal/failure messages are core-owned
+// (re-entry-frontier.ts, next to the seam they describe) and imported above,
+// so this loop's unmigrated paths and the core Run Progression activation
+// cannot describe one frontier condition differently.
 
-/**
- * Refusal prefix for a persisted delegation frontier that the claim authority
- * present on this continuation cannot reproduce.
- *
- * The sibling of {@link FRONTIER_AUTHORITY_REQUIRED_MESSAGE}: there the
- * authority is absent, here it is present but wrong for this frontier — a
- * rotated run-control claim whose successor no longer derives its predecessor's
- * credentials, or a derived bearer that does not hash to the persisted
- * verifier. Hoisted for the same reason: the `ERROR_OCCURRED` and the
- * `RUNBOOK_STOPPED` halves of one refusal must not describe it differently.
- */
-const FRONTIER_PROJECTION_REFUSED_MESSAGE =
-  'Delegation frontier cannot be projected by the presented claim authority';
-
-/**
- * Failure text for a projected delegation frontier whose
- * `DELEGATE_FRONTIER_CONSUMED` synchronization did not commit.
- *
- * Not a refusal: no authority was rejected and no credential failed
- * verification. The frontier is still persisted and no bearer was disclosed, so
- * the remediation is to run the step again. Hoisted for the same reason as its
- * two siblings above.
- */
-const FRONTIER_CONSUME_FAILED_MESSAGE =
-  'Failed to consume delegation frontier after re-entry; the frontier is still pending, retry the run';
-
-interface InlineLaunchArgs {
+/** Launch context for {@link launchInlineChildFromIntent}. */
+export interface InlineLaunchArgs {
   readonly manager: RunbookStateManager;
   readonly actorService: RunbookActorService;
   readonly sessionService: SessionService;
@@ -418,7 +392,17 @@ async function releaseTerminalRun(
   return released === 'committed' ? { status: terminal } : { status: 'stopped' };
 }
 
-function createCliCommandServices(
+/**
+ * Build the CLI's runtime command execution callables (Category A).
+ *
+ * Exported for the Run Progression adapters, which construct the same actor
+ * service wiring for the migrated core activation that this loop builds for
+ * itself.
+ *
+ * @param streamOptions - Runtime-only routing for command subprocess I/O.
+ * @returns Internal + external command runners for machine-owned execution.
+ */
+export function createCliCommandServices(
   streamOptions: CommandExecutionStreamOptions = {},
 ): CommandExecutionServices {
   return {
@@ -572,7 +556,35 @@ function assertActorSyncSucceeded(
   }
 }
 
-async function launchInlineChildFromIntent({
+/**
+ * Latch, create or resume, and drive one inline child launch (Category A + C).
+ *
+ * Exported for the Run Progression adapters: the migrated core activation
+ * decides WHEN an inline launch happens and folds this span's status into its
+ * closed outcome; the span itself — latch, child state, subprocess execution,
+ * synchronous flow-back — remains CLI machinery until its own migration slice.
+ *
+ * @param args - Launch context; see {@link InlineLaunchArgs}.
+ * @param args.manager - State manager for the workspace being executed.
+ * @param args.actorService - Actor service compiled for this project.
+ * @param args.sessionService - Session service owning run targeting.
+ * @param args.emitter - Execution emitter receiving launch events.
+ * @param args.cwd - Current working directory.
+ * @param args.steps - Parsed steps of the composing parent.
+ * @param args.intent - One-shot launch intent the machine prepared.
+ * @param args.prompted - The composing run's prompted flag, inherited by a fresh child.
+ * @param args.output - Output emitter for streamed child events.
+ * @param args.commandStreamOptions - Runtime-only routing for command subprocess I/O.
+ * @param args.parentDelegationRuntime - The composing run's verified delegation capabilities.
+ * @returns The typed conclusion of the launch span. Refusals carry the
+ *   registered code of the refusing condition and a boundary-derived recovery
+ *   classification; child-loop conclusions fold through
+ *   {@link dispatchResultFromFlowBack}. The legacy execution loop maps this
+ *   union back onto {@link ExecutionLoopStatus} via
+ *   {@link executionLoopStatusFromDispatch} until its remaining entry paths
+ *   migrate.
+ */
+export async function launchInlineChildFromIntent({
   manager,
   actorService,
   sessionService,
@@ -584,7 +596,7 @@ async function launchInlineChildFromIntent({
   output,
   commandStreamOptions,
   parentDelegationRuntime,
-}: InlineLaunchArgs): Promise<ExecutionLoopStatus> {
+}: InlineLaunchArgs): Promise<InlineChildDispatchResult> {
   // Both projections of the one intent, and derived through the same helper the
   // latch derives its own from, so this span and the latch cannot disagree about
   // which child under which parent frame is being launched.
@@ -598,14 +610,19 @@ async function launchInlineChildFromIntent({
   // compare-and-swap closes that gap by construction instead of by exclusion.
   const latch = await latchInlineLaunch({ manager, actorService, steps, intent });
   if (latch.kind === 'missing' || latch.kind === 'inactive') {
+    const message = `Inline parent run ${parentLinkage.parentRunId} is not active`;
     emitter.emit({
       type: 'ERROR_OCCURRED',
-      payload: {
-        message: `Inline parent run ${parentLinkage.parentRunId} is not active`,
-        code: ErrorCodes.LAUNCH_FAILED.code,
-      },
+      payload: { message, code: ErrorCodes.LAUNCH_FAILED.code },
     });
-    return 'stopped';
+    // Permanent: the parent run is gone or inactive, so repeating the same
+    // launch gesture cannot succeed.
+    return {
+      kind: 'launch_refused',
+      code: ErrorCodes.LAUNCH_FAILED.code,
+      message,
+      recovery: 'permanent',
+    };
   }
   if (latch.kind === 'superseded') {
     // Diagnosable for the same reason `already-latched` is: this arm returns
@@ -619,14 +636,19 @@ async function launchInlineChildFromIntent({
     output.warning(
       `Inline launch of ${childRunId} was superseded: run ${parentLinkage.parentRunId} no longer carries that launch. Re-run this command to observe its current state.`,
     );
-    return 'waiting';
+    return { kind: 'waiting' };
   }
   if (latch.kind === 'linkage-refused') {
-    emitter.emit({
-      type: 'ERROR_OCCURRED',
-      payload: describeInlineChildLinkageRefusal(childRunId, parentLinkage, latch.mismatch),
-    });
-    return 'stopped';
+    const payload = describeInlineChildLinkageRefusal(childRunId, parentLinkage, latch.mismatch);
+    emitter.emit({ type: 'ERROR_OCCURRED', payload });
+    // Permanent: a superseded frame or mismatched linkage needs explicit
+    // recovery on the recorded child, not a retry of this launch.
+    return {
+      kind: 'launch_refused',
+      code: payload.code,
+      message: payload.message,
+      recovery: 'permanent',
+    };
   }
   if (latch.kind === 'unrecorded') {
     // Fail closed. The intent says to launch this child and the parent's substep
@@ -635,17 +657,22 @@ async function launchInlineChildFromIntent({
     // row is what the machine writes the latch onto, so this is inconsistent
     // state rather than a race that resolves itself, and it is named as such
     // rather than reported as a wait that will never end.
+    const message =
+      latch.reason === 'no-inline-metadata'
+        ? `Inline launch of ${childRunId} cannot be recorded: substep ${intent.parentStep}.${intent.parentStepId} carries no inline child metadata. Finish, stop, or prune run ${parentLinkage.parentRunId}.`
+        : `Inline launch of ${childRunId} cannot be recorded: substep ${intent.parentStep}.${intent.parentStepId} records a different inline child. Finish, stop, or prune run ${parentLinkage.parentRunId}.`;
     emitter.emit({
       type: 'ERROR_OCCURRED',
-      payload: {
-        message:
-          latch.reason === 'no-inline-metadata'
-            ? `Inline launch of ${childRunId} cannot be recorded: substep ${intent.parentStep}.${intent.parentStepId} carries no inline child metadata. Finish, stop, or prune run ${parentLinkage.parentRunId}.`
-            : `Inline launch of ${childRunId} cannot be recorded: substep ${intent.parentStep}.${intent.parentStepId} records a different inline child. Finish, stop, or prune run ${parentLinkage.parentRunId}.`,
-        code: ErrorCodes.LAUNCH_FAILED.code,
-      },
+      payload: { message, code: ErrorCodes.LAUNCH_FAILED.code },
     });
-    return 'stopped';
+    // Permanent: inconsistent latch state, and the message names the explicit
+    // recovery (finish, stop, or prune) — not a retry.
+    return {
+      kind: 'launch_refused',
+      code: ErrorCodes.LAUNCH_FAILED.code,
+      message,
+      recovery: 'permanent',
+    };
   }
   if (latch.kind === 'already-latched') {
     // A LIVE process owns this launch, so nothing here is this observer's to do
@@ -673,7 +700,7 @@ async function launchInlineChildFromIntent({
     output.warning(
       `Inline child ${childRunId} is already being launched by process ${String(latch.ownerPid)}. Re-run this command once that launch finishes.`,
     );
-    return 'waiting';
+    return { kind: 'waiting' };
   }
   // Scoped from the first statement after `won`, so every exit below releases
   // the latch: the four `return 'stopped'` refusals, a throw out of any import
@@ -730,12 +757,10 @@ async function launchInlineChildFromIntent({
       // across it — nor released again at the end of it.
       latch.held.keep();
     } catch (error) {
+      const message = `Inline child launch failed: ${getErrorMessage(error)}`;
       emitter.emit({
         type: 'ERROR_OCCURRED',
-        payload: {
-          message: `Inline child launch failed: ${getErrorMessage(error)}`,
-          code: ErrorCodes.LAUNCH_FAILED.code,
-        },
+        payload: { message, code: ErrorCodes.LAUNCH_FAILED.code },
       });
       if (activation.status === 'pushed') {
         try {
@@ -760,7 +785,14 @@ async function launchInlineChildFromIntent({
           // Keep the consume failure as the user-facing launch error.
         }
       }
-      return 'stopped';
+      // Retryable: the one-shot intent is still persisted (the consume is what
+      // failed), so re-running re-observes the latch and retries the consume.
+      return {
+        kind: 'launch_refused',
+        code: ErrorCodes.LAUNCH_FAILED.code,
+        message,
+        recovery: 'retryable',
+      };
     }
     // A resumed child's own bearer died with the process that launched it, so
     // this continuation holds no authority for it. The composing parent's
@@ -804,15 +836,17 @@ async function launchInlineChildFromIntent({
           : {}),
       },
     );
-    return await propagateInlineChildTerminalResult({
-      manager,
-      childRunId,
-      loopResult: loopResult.status,
-      cwd,
-      output,
-      commandStreamOptions,
-      parentDelegationRuntime,
-    });
+    return dispatchResultFromFlowBack(
+      await propagateInlineChildTerminalResult({
+        manager,
+        childRunId,
+        loopResult: loopResult.status,
+        cwd,
+        output,
+        commandStreamOptions,
+        parentDelegationRuntime,
+      }),
+    );
   }
 
   const { resolveRunbookRef } = await import('../helpers/resolve-runbook.js');
@@ -822,17 +856,17 @@ async function launchInlineChildFromIntent({
       childResolution.reason === 'plugin-context-missing'
         ? `Plugin runbook context is unavailable for ${intent.childRunbookRef.source}:${intent.childRunbookRef.path}. Set CLAUDE_PLUGIN_ROOT or install the Rundown Claude Code plugin alongside the CLI.`
         : `Runbook not found: ${intent.childRunbookRef.source}:${intent.childRunbookRef.path}`;
+    const resolutionCode =
+      childResolution.reason === 'plugin-context-missing'
+        ? 'RUNBOOK_REF_RESOLUTION_ERROR'
+        : 'RUNBOOK_NOT_FOUND';
     emitter.emit({
       type: 'ERROR_OCCURRED',
-      payload: {
-        message,
-        code:
-          childResolution.reason === 'plugin-context-missing'
-            ? 'RUNBOOK_REF_RESOLUTION_ERROR'
-            : 'RUNBOOK_NOT_FOUND',
-      },
+      payload: { message, code: resolutionCode },
     });
-    return 'stopped';
+    // Permanent: the child runbook reference does not resolve; nothing about
+    // retrying the launch changes that.
+    return { kind: 'launch_refused', code: resolutionCode, message, recovery: 'permanent' };
   }
 
   const inheritedContextVars = reconstituteContextVars(intent.contextSnapshot);
@@ -863,7 +897,14 @@ async function launchInlineChildFromIntent({
         code: prepared.code,
       },
     });
-    return 'stopped';
+    // Permanent: preparation refused on the runbook's own content or
+    // configuration, which a retry of the same launch cannot change.
+    return {
+      kind: 'launch_refused',
+      code: prepared.code,
+      message: prepared.error,
+      recovery: 'permanent',
+    };
   }
 
   if (prepared.warnings?.length) {
@@ -913,32 +954,127 @@ async function launchInlineChildFromIntent({
   );
 
   if (!launchResult.ok) {
+    if (launchResult.reason === 'session-refused') {
+      const code = sessionMutationRefusalCode(launchResult.refusal);
+      emitter.emit({
+        type: 'ERROR_OCCURRED',
+        payload: { message: launchResult.refusal.message, code },
+      });
+      // Retryable: a session ownership refusal is contention — the same
+      // classification the fenced command turn gives these kinds.
+      return {
+        kind: 'launch_refused',
+        code,
+        message: launchResult.refusal.message,
+        recovery: 'retryable',
+      };
+    }
     emitter.emit({
       type: 'ERROR_OCCURRED',
-      payload:
-        launchResult.reason === 'session-refused'
-          ? {
-              message: launchResult.refusal.message,
-              code: sessionMutationRefusalCode(launchResult.refusal),
-            }
-          : { message: launchResult.error, code: launchResult.code },
+      payload: { message: launchResult.error, code: launchResult.code },
     });
-    return 'stopped';
+    // Classified by registered code: contention-shaped codes are retryable,
+    // everything else is permanent. NOTE (#777): a spent run-start CAS budget
+    // currently arrives here wrapped as LAUNCH_FAILED by the pipeline's
+    // catch-all, so it classifies permanent until that upstream
+    // misclassification is fixed in its own slice — at which point its
+    // CONCURRENT_STATE_MODIFICATION code makes this arm retryable with no
+    // change here.
+    return {
+      kind: 'launch_refused',
+      code: launchResult.code,
+      message: launchResult.error,
+      recovery: CONTENTION_LAUNCH_CODES.has(launchResult.code) ? 'retryable' : 'permanent',
+    };
   }
 
   if (launchResult.loopResult === 'done' || launchResult.loopResult === 'stopped') {
-    return await propagateInlineChildTerminalResult({
-      manager,
-      childRunId,
-      loopResult: launchResult.loopResult,
-      cwd,
-      output,
-      commandStreamOptions,
-      parentDelegationRuntime,
-    });
+    return dispatchResultFromFlowBack(
+      await propagateInlineChildTerminalResult({
+        manager,
+        childRunId,
+        loopResult: launchResult.loopResult,
+        cwd,
+        output,
+        commandStreamOptions,
+        parentDelegationRuntime,
+      }),
+    );
   }
 
-  return launchResult.loopResult;
+  return dispatchResultFromFlowBack(launchResult.loopResult);
+}
+
+/**
+ * Registered codes whose launch failures are contention-shaped and therefore
+ * retryable. `CONCURRENT_STATE_MODIFICATION` is the run-start CAS budget
+ * (RD-308); `CONCURRENT_MODIFICATION` is the general fenced-write refusal.
+ */
+const CONTENTION_LAUNCH_CODES: ReadonlySet<string> = new Set([
+  'CONCURRENT_STATE_MODIFICATION',
+  'CONCURRENT_MODIFICATION',
+]);
+
+/**
+ * Fold a child execution-loop conclusion into the core dispatch result.
+ *
+ * The launch span's inner machinery still speaks {@link ExecutionLoopStatus};
+ * this is the single boundary translation: `handled` (synchronous flow-back
+ * drove the composing run) becomes `flow_back_complete`, `blocked` becomes
+ * `flow_back_refused`, and a terminal that reached this frame without linkage
+ * becomes the degenerate `child_terminal` arm.
+ *
+ * @param status - The child loop or flow-back conclusion.
+ * @returns The core-typed dispatch result.
+ * @throws {Error} If an unrecognized loop status reaches the exhaustive guard.
+ */
+function dispatchResultFromFlowBack(status: ExecutionLoopStatus): InlineChildDispatchResult {
+  switch (status) {
+    case 'waiting':
+      return { kind: 'waiting' };
+    case 'handled':
+      return { kind: 'flow_back_complete' };
+    case 'blocked':
+      return { kind: 'flow_back_refused' };
+    case 'done':
+      return { kind: 'child_terminal', status: 'completed' };
+    case 'stopped':
+      return { kind: 'child_terminal', status: 'stopped' };
+    default: {
+      const _exhaustive: never = status;
+      throw new Error(`Unhandled loop status: ${String(_exhaustive)}`);
+    }
+  }
+}
+
+/**
+ * Map a launch span's dispatch result back onto the legacy loop status.
+ *
+ * The inverse boundary translation for the five entry paths still driving
+ * {@link runExecutionLoop}: refusals collapse to `stopped` (their diagnostics
+ * already streamed), exactly as the span reported before it was typed.
+ *
+ * @param result - The launch span's typed conclusion.
+ * @returns The status the legacy loop propagates.
+ * @throws {Error} If an unrecognized dispatch result reaches the exhaustive guard.
+ */
+function executionLoopStatusFromDispatch(result: InlineChildDispatchResult): ExecutionLoopStatus {
+  switch (result.kind) {
+    case 'waiting':
+      return 'waiting';
+    case 'flow_back_complete':
+      return 'handled';
+    case 'flow_back_refused':
+      return 'blocked';
+    case 'launch_refused':
+      return 'stopped';
+    case 'child_terminal':
+      return result.status === 'completed' ? 'done' : 'stopped';
+    default: {
+      const _exhaustive: never = result;
+      throw new Error(`Unhandled dispatch result: ${(_exhaustive as { kind: string }).kind}`);
+    }
+  }
 }
 
 function observeAndOrchestrate({
@@ -1711,7 +1847,7 @@ export async function runExecutionLoop(
       // drive its parent progression before this frame resumes. The launch
       // returns `handled` in that case so this frame stands down; no release
       // ownership crosses the call graph.
-      const childStatus = await launchInlineChildFromIntent({
+      const childDispatch = await launchInlineChildFromIntent({
         manager,
         actorService,
         sessionService,
@@ -1728,7 +1864,7 @@ export async function runExecutionLoop(
         // further up the inline chain can be advanced under it.
         parentDelegationRuntime: { runId: runbookId, runtime: options.delegationRuntime },
       });
-      return { status: childStatus };
+      return { status: executionLoopStatusFromDispatch(childDispatch) };
     }
 
     // Prompted mode, a prompted-FOR step, and a unit with no command are one arm

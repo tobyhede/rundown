@@ -305,6 +305,9 @@ export {
 // Shared re-entry frontier seam (F6). Consumed by `collectDelegationOutcomes`
 // above and by the CLI execution loop, which is why it is exported.
 export {
+  FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
+  FRONTIER_CONSUME_FAILED_MESSAGE,
+  FRONTIER_PROJECTION_REFUSED_MESSAGE,
   prepareReEntryFrontierConsume,
   projectAndConsumeReEntryFrontier,
   readPersistedReEntryFrontier,
@@ -315,6 +318,34 @@ export {
   type ReEntryFrontierActorService,
   type ReEntryProjection,
 } from './re-entry-frontier.js';
+// Canonical refusal-kind → symbolic-code maps. The value consts are for seams
+// that may value-import the barrel; frontends loaded under partial barrel
+// mocks restate the literal and pin it with the exported `…ByKind` types.
+export {
+  SESSION_REFUSAL_CODE_BY_KIND,
+  TRANSACTIONAL_REFUSAL_CODE_BY_KIND,
+  type SessionRefusalCodeByKind,
+  type TransactionalRefusalCodeByKind,
+} from './storage/refusal-codes.js';
+// XState-owned Run Progression activation (#851 / ADR 0003). The authority's
+// minting function is deliberately NOT exported: only core seams that verified
+// caller evidence may produce a RunProgressionAuthority.
+export {
+  activateRunProgression,
+  type InlineChildDispatch,
+  type InlineChildDispatchInput,
+  type InlineChildDispatchResult,
+  type RunProgressionDeps,
+  type RunProgressionFailureReason,
+  type RunProgressionOutcome,
+  type RunProgressionRecovery,
+  type RunProgressionRefusalReason,
+  type RunProgressionWaitReason,
+  type TerminalPropagation,
+  type TerminalPropagationInput,
+  type TerminalPropagationResult,
+} from './run-progression.js';
+export type { RunProgressionAuthority } from './run-progression-authority.js';
 export {
   propagateTerminalChildUpward,
   INLINE_PARENT_CYCLE_CODE,

@@ -12,6 +12,7 @@ import {
 } from './delegation-lifecycle-read-model.js';
 import type { InlineUpwardPropagationResult } from './inline-parent-advance.js';
 import type { RunId } from './run-id.js';
+import type { RunProgressionAuthority } from './run-progression-authority.js';
 import type { AbandonedAttemptSetOutcome } from './storage/execution-lease.js';
 import type { GuardedMutationResult } from './storage/mutation-result.js';
 import type { FrameKey } from './targeting.js';
@@ -234,7 +235,15 @@ export type DelegationPolicyOutcome =
       readonly unresolved: number;
     }
   | {
-      /** Collection applied one or more delegation outcomes. */
+      /**
+       * Collection applied one or more delegation outcomes and left the target
+       * running: the frontend drives a Run Progression continuation next.
+       *
+       * Split from the terminal arm on `lifecycle` so the continuation's
+       * requirements are unrepresentable-when-absent: a running outcome ALWAYS
+       * carries the verified runtime pair and the minted progression
+       * authority, and the frontend needs no runtime guard for their presence.
+       */
       readonly kind: 'collection_applied';
       /** Target run that received the collected outcomes. */
       readonly targetRunId: RunId;
@@ -244,20 +253,12 @@ export type DelegationPolicyOutcome =
       readonly applied: number;
       /** Number of outcomes still unresolved after this collection. */
       readonly unresolved: number;
-      /** Lifecycle of the target run after collection. */
-      readonly lifecycle: RunbookState['lifecycle'];
+      /** The target run is still running; a continuation follows. */
+      readonly lifecycle: 'running';
       /** True when collection reported this run's terminal delegation outcome upward. */
       readonly reportedTerminalOutcome: boolean;
-      /**
-       * Set only when a terminal collect target carried INLINE linkage and the
-       * seam advanced its composing parent. Carries the inline-advance outcome so
-       * the CLI can map it to an exit code via `inlineAdvanceRequiresFailureExit`,
-       * and — on the `linkage-cycle` arm — the trip naming the run to prune, which
-       * the CLI renders before collapsing it fail-closed (#603). Undefined for
-       * delegation targets and non-linked targets. In-memory command outcome only
-       * — never persisted.
-       */
-      readonly terminalInlineAdvance?: InlineUpwardPropagationResult;
+      /** Never present on a running outcome; the discriminant carries the arm. */
+      readonly terminalInlineAdvance?: undefined;
       /**
        * Ordered transition observations projected from the applied collection
        * transitions. This is an in-memory command outcome only; it is never
@@ -286,11 +287,62 @@ export type DelegationPolicyOutcome =
        * `delegationRuntimeCapabilities` can produce the value, so the pairing is
        * established by construction and a consumer cannot forward one half alone.
        *
-       * Runtime-only, and set only on a non-terminal (`running`) outcome: a
-       * closure cannot be serialised, and must never reach persisted context, a
-       * snapshot, or a diagnostic (CLAUDE.md § Actor dependencies).
+       * Runtime-only: a closure cannot be serialised, and must never reach
+       * persisted context, a snapshot, or a diagnostic (CLAUDE.md § Actor
+       * dependencies).
        */
-      readonly delegationRuntime?: DelegationRuntimeCapabilities;
+      readonly delegationRuntime: DelegationRuntimeCapabilities;
+      /**
+       * Run-bound authority for the Run Progression continuation the frontend
+       * drives next (#851 / ADR 0003). Minted by the collection seam from the
+       * same verified authority that produced {@link delegationRuntime}, so the
+       * continuation's target run, claim generation, and delegation
+       * capabilities cannot disagree. Runtime-only for the same reason as the
+       * runtime pair.
+       */
+      readonly progressionAuthority: RunProgressionAuthority;
+    }
+  | {
+      /**
+       * Collection applied one or more delegation outcomes and the target
+       * reached a terminal lifecycle: no continuation follows, so no runtime
+       * authority travels on this arm.
+       */
+      readonly kind: 'collection_applied';
+      /** Target run that received the collected outcomes. */
+      readonly targetRunId: RunId;
+      /** Step selected for collection. */
+      readonly step: string;
+      /** Number of delegation outcomes consumed. */
+      readonly applied: number;
+      /** Number of outcomes still unresolved after this collection. */
+      readonly unresolved: number;
+      /** Terminal lifecycle the target committed. */
+      readonly lifecycle: 'completed' | 'stopped';
+      /** True when collection reported this run's terminal delegation outcome upward. */
+      readonly reportedTerminalOutcome: boolean;
+      /**
+       * Set only when a terminal collect target carried INLINE linkage and the
+       * seam advanced its composing parent. Carries the inline-advance outcome so
+       * the CLI can map it to an exit code via `inlineAdvanceRequiresFailureExit`,
+       * and — on the `linkage-cycle` arm — the trip naming the run to prune, which
+       * the CLI renders before collapsing it fail-closed (#603). Undefined for
+       * delegation targets and non-linked targets. In-memory command outcome only
+       * — never persisted.
+       */
+      readonly terminalInlineAdvance?: InlineUpwardPropagationResult;
+      /**
+       * Ordered transition observations projected from the applied collection
+       * transitions. This is an in-memory command outcome only; it is never
+       * persisted into the SQLite run state.
+       */
+      readonly transitionObservations: readonly TransitionObservationEvent[];
+      /** Never present on a terminal outcome: no continuation re-enters a frontier. */
+      readonly reEntryObservations?: undefined;
+      /** Never present on a terminal outcome: no continuation needs authority. */
+      readonly delegationRuntime?: undefined;
+      /** Never present on a terminal outcome: no continuation needs authority. */
+      readonly progressionAuthority?: undefined;
     }
   | {
       /** Collection failed after core rejected a persisted delegation outcome. */
