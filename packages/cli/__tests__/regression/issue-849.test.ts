@@ -2,19 +2,17 @@ import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { RunbookStateManager, merge } from '@rundown-org/core';
-// Deep relative import into core's source is deliberate. `RunbookStore` is not
-// part of `@rundown-org/core`'s public export surface (its package.json
-// `exports` map only lists `.`, `./session-reader`, and three `./testing/*`
-// entries), but `RunbookStore.prototype.captureRunAuthorityState` is the exact
+// `RunbookStore` is not part of `@rundown-org/core`'s public barrel, but
+// `RunbookStore.prototype.captureRunAuthorityState` is the exact
 // capture-before-lease-acquisition boundary this test needs to hook — see the
-// long comment at the spy below for why no public seam reaches it. Core's own
-// `effectful-actor-mutation-runner.test.ts` (packages/core/__tests__/runbook/
-// effectful-actor-mutation-runner.test.ts:808-812) spies on the identical
-// method the identical way, from inside the package; this resolves to the
-// SAME file `@rundown-org/core` itself imports (Jest caches modules by
-// resolved path, not import specifier), so the spy reaches the one store
-// instance `runCliInProcess` actually uses.
-import { RunbookStore } from '../../../core/src/runbook/storage/runbook-store.js';
+// long comment at the spy below for why no public seam reaches it. The
+// dedicated testing entry resolves (via this package's jest moduleNameMapper)
+// to the SAME source file `@rundown-org/core` itself imports (Jest caches
+// modules by resolved path, not import specifier), so the spy reaches the one
+// store instance `runCliInProcess` actually uses. Core's own
+// `effectful-actor-mutation-runner.test.ts` spies on the identical method the
+// identical way from inside the package.
+import { RunbookStore } from '@rundown-org/core/testing/runbook-store';
 import {
   createTestWorkspace,
   findActionOutput,

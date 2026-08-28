@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { claimKeyFromBearer } from '@rundown-org/core';
+import { assertClaimId, claimKeyFromBearer } from '@rundown-org/core';
 import {
   patchPersistedClaim,
   patchPersistedRunState,
@@ -144,7 +144,7 @@ Child prompt.
     // Strip `delegate-from-run`, keeping `mutate-run` — the exact shape
     // `patchPersistedClaim`'s own doc calls out as the sanctioned way to stage
     // "a claim missing a grant" the public API will not mint.
-    await patchPersistedClaim(workspace.cwd, claimKeyFromBearer(parentClaimId), {
+    await patchPersistedClaim(workspace.cwd, claimKeyFromBearer(assertClaimId(parentClaimId)), {
       grants: [{ action: 'mutate-run', runId: parentRunId }],
     });
 
