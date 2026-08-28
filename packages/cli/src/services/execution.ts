@@ -47,6 +47,7 @@ import {
   readPersistedReEntryFrontier,
   type ReEntryProjection,
   CLIErrorCodes,
+  TRANSACTIONAL_REFUSAL_CODE_BY_KIND,
   reconstituteContextVars,
   extractInheritedUserVars,
   ErrorCodes,
@@ -80,7 +81,10 @@ import {
   transitionSinkFromEmitter,
 } from '../helpers/transition-orchestrator.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
-import type { RunScopedDelegationRuntime } from '../helpers/delegation-completion.js';
+import type {
+  InlinePropagationRefusalDetail,
+  RunScopedDelegationRuntime,
+} from '../helpers/delegation-completion.js';
 import {
   sessionMutationRefusalCode,
   transactionalRefusalCode,
@@ -264,7 +268,14 @@ export interface InlineLaunchArgs {
   readonly manager: RunbookStateManager;
   readonly actorService: RunbookActorService;
   readonly sessionService: SessionService;
-  readonly emitter: ExecutionEventEmitter;
+  /**
+   * Parent-stream sink for the span's own diagnostics. Narrowed to `emit` so
+   * the Run Progression adapter can hand in the activation's GATED sink
+   * (#853): a broken renderer beneath it surfaces as the typed
+   * `ObservationDeliveryError`, not an untyped escape. The legacy loop passes
+   * its full emitter, which satisfies the same shape.
+   */
+  readonly emitter: Pick<ExecutionEventEmitter, 'emit'>;
   readonly cwd: string;
   readonly steps: readonly ResolvedStep[];
   readonly intent: InlineLaunchIntent;
@@ -480,7 +491,9 @@ function describeInlineChildLinkageRefusal(
  * @param args.parentDelegationRuntime - Verified delegation capabilities bound
  *   to the composing parent run.
  * @returns The child's status when it has no inline parent, otherwise
- *   `'handled'` after the synchronous parent flow-back returns.
+ *   `'handled'` after the synchronous parent flow-back returns — plus the
+ *   preserved refusal identity when the flow-back refused, so the dispatch
+ *   fold does not re-label it.
  * @throws {Error} If the parent's state cannot be loaded, or the inline
  *   parent-advance seam rejects for a reason it has not diagnosed.
  */
@@ -492,7 +505,10 @@ async function propagateInlineChildTerminalResult(args: {
   readonly output: OutputEmitter;
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
   readonly parentDelegationRuntime?: RunScopedDelegationRuntime;
-}): Promise<ExecutionLoopStatus> {
+}): Promise<{
+  readonly status: ExecutionLoopStatus;
+  readonly refusal?: InlinePropagationRefusalDetail;
+}> {
   const {
     manager,
     childRunId,
@@ -502,10 +518,10 @@ async function propagateInlineChildTerminalResult(args: {
     commandStreamOptions,
     parentDelegationRuntime,
   } = args;
-  if (loopResult !== 'done' && loopResult !== 'stopped') return loopResult;
+  if (loopResult !== 'done' && loopResult !== 'stopped') return { status: loopResult };
 
   const childState = await manager.load(childRunId);
-  if (!childState?.parentLinkage) return loopResult;
+  if (!childState?.parentLinkage) return { status: loopResult };
 
   // Inline composition (Plan 5): inline children flow back synchronously — the
   // same orchestrator that ran the child advances the parent here. Drain and
@@ -520,8 +536,8 @@ async function propagateInlineChildTerminalResult(args: {
   // without an issuer refuses `actor_context_required`.
   // `parentDelegationRuntime` names the run it belongs to, so the seam's walk up
   // the remaining inline chain cannot borrow it for an ancestor.
-  const { propagateChildTerminal } = await import('../helpers/delegation-completion.js');
-  const propagated = await propagateChildTerminal(
+  const { propagateChildTerminalDetailed } = await import('../helpers/delegation-completion.js');
+  const propagated = await propagateChildTerminalDetailed(
     childState,
     undefined,
     cwd,
@@ -529,7 +545,13 @@ async function propagateInlineChildTerminalResult(args: {
     commandStreamOptions,
     parentDelegationRuntime,
   );
-  return propagated === 'stopped' || propagated === 'blocked' ? 'blocked' : 'handled';
+  if (propagated.result === 'stopped' || propagated.result === 'blocked') {
+    return {
+      status: 'blocked',
+      ...(propagated.refusal !== undefined ? { refusal: propagated.refusal } : {}),
+    };
+  }
+  return { status: 'handled' };
 }
 
 async function consumeInlineLaunchIntent(args: {
@@ -836,17 +858,16 @@ export async function launchInlineChildFromIntent({
           : {}),
       },
     );
-    return dispatchResultFromFlowBack(
-      await propagateInlineChildTerminalResult({
-        manager,
-        childRunId,
-        loopResult: loopResult.status,
-        cwd,
-        output,
-        commandStreamOptions,
-        parentDelegationRuntime,
-      }),
-    );
+    const propagated = await propagateInlineChildTerminalResult({
+      manager,
+      childRunId,
+      loopResult: loopResult.status,
+      cwd,
+      output,
+      commandStreamOptions,
+      parentDelegationRuntime,
+    });
+    return dispatchResultFromFlowBack(propagated.status, propagated.refusal);
   }
 
   const { resolveRunbookRef } = await import('../helpers/resolve-runbook.js');
@@ -989,17 +1010,16 @@ export async function launchInlineChildFromIntent({
   }
 
   if (launchResult.loopResult === 'done' || launchResult.loopResult === 'stopped') {
-    return dispatchResultFromFlowBack(
-      await propagateInlineChildTerminalResult({
-        manager,
-        childRunId,
-        loopResult: launchResult.loopResult,
-        cwd,
-        output,
-        commandStreamOptions,
-        parentDelegationRuntime,
-      }),
-    );
+    const propagated = await propagateInlineChildTerminalResult({
+      manager,
+      childRunId,
+      loopResult: launchResult.loopResult,
+      cwd,
+      output,
+      commandStreamOptions,
+      parentDelegationRuntime,
+    });
+    return dispatchResultFromFlowBack(propagated.status, propagated.refusal);
   }
 
   return dispatchResultFromFlowBack(launchResult.loopResult);
@@ -1007,12 +1027,22 @@ export async function launchInlineChildFromIntent({
 
 /**
  * Registered codes whose launch failures are contention-shaped and therefore
- * retryable. `CONCURRENT_STATE_MODIFICATION` is the run-start CAS budget
- * (RD-308); `CONCURRENT_MODIFICATION` is the general fenced-write refusal.
+ * retryable.
+ *
+ * Keyed by the registered code VALUES that actually reach the launch-refusal
+ * arm — `ErrorCodes.CONCURRENT_STATE_MODIFICATION.code` (RD-308, the run-start
+ * CAS budget) and the canonical symbolic fenced-write refusal code — never by
+ * symbolic constant names, which no `launchResult.code` ever carries. Today the
+ * pipeline's catch-all wraps the CAS loss as `LAUNCH_FAILED` (see the #777 note
+ * at the classification site), so the RD-308 membership is dormant until that
+ * upstream misclassification is fixed; its presence here is what makes the arm
+ * retryable the moment the real code surfaces. Exported for the membership pin
+ * in `execution-action.test.ts`, which fails on any remap that would silently
+ * re-classify contention as permanent.
  */
-const CONTENTION_LAUNCH_CODES: ReadonlySet<string> = new Set([
-  'CONCURRENT_STATE_MODIFICATION',
-  'CONCURRENT_MODIFICATION',
+export const CONTENTION_LAUNCH_CODES: ReadonlySet<string> = new Set([
+  ErrorCodes.CONCURRENT_STATE_MODIFICATION.code,
+  TRANSACTIONAL_REFUSAL_CODE_BY_KIND.concurrent_modification,
 ]);
 
 /**
@@ -1025,17 +1055,31 @@ const CONTENTION_LAUNCH_CODES: ReadonlySet<string> = new Set([
  * becomes the degenerate `child_terminal` arm.
  *
  * @param status - The child loop or flow-back conclusion.
+ * @param refusal - The preserved refusal identity, when a typed refusal is what
+ *   blocked the flow-back. Carried onto the `flow_back_refused` arm so the
+ *   refusing condition keeps its code and boundary-derived recovery; absent for
+ *   a fail-closed conclusion with no typed refusal, which stays `permanent`.
  * @returns The core-typed dispatch result.
  * @throws {Error} If an unrecognized loop status reaches the exhaustive guard.
  */
-function dispatchResultFromFlowBack(status: ExecutionLoopStatus): InlineChildDispatchResult {
+function dispatchResultFromFlowBack(
+  status: ExecutionLoopStatus,
+  refusal?: InlinePropagationRefusalDetail,
+): InlineChildDispatchResult {
   switch (status) {
     case 'waiting':
       return { kind: 'waiting' };
     case 'handled':
       return { kind: 'flow_back_complete' };
     case 'blocked':
-      return { kind: 'flow_back_refused' };
+      return refusal === undefined
+        ? { kind: 'flow_back_refused', recovery: 'permanent' }
+        : {
+            kind: 'flow_back_refused',
+            code: refusal.code,
+            message: refusal.message,
+            recovery: refusal.recovery,
+          };
     case 'done':
       return { kind: 'child_terminal', status: 'completed' };
     case 'stopped':

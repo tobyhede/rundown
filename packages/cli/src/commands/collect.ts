@@ -5,6 +5,7 @@ import {
   activateRunProgression,
   activeFrame,
   buildFrameKey,
+  CLIErrorCodes,
   createEffectfulActorMutationRunner,
   deriveActiveFrame,
   ExecutionEventEmitter,
@@ -281,6 +282,27 @@ function streamAppliedObservations(
   }
   for (const effect of outcome.reEntryObservations ?? []) {
     emitter.emit(effect.event);
+  }
+}
+
+/**
+ * Run a render whose reporting channel is already known to be broken, swallowing
+ * a further throw.
+ *
+ * Used ONLY after the Run Progression activation returned
+ * `observation_delivery_failed` (#853): at that point the channel has already
+ * failed once, the exit code is already decided, and a second throw would
+ * unwind the command into the RD-999 unknown-error envelope — replacing a typed
+ * failure with an untyped escape. Everywhere else a throwing renderer is a real
+ * defect and must propagate.
+ *
+ * @param render - The render to attempt.
+ */
+function renderBestEffort(render: () => void): void {
+  try {
+    render();
+  } catch {
+    // The reporting channel is broken; the caller's exit code carries the failure.
   }
 }
 
@@ -616,6 +638,11 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   }
 
   let progressionFailedClosed = false;
+  // True once the activation reported a broken reporting channel, which makes
+  // every remaining render on this command best-effort: a second throw would
+  // unwind `runCollect` into the RD-999 unknown-error envelope and replace the
+  // typed failure with an untyped escape.
+  let deliveryFailed = false;
   if (runningContinuation) {
     // Core minted the continuation's one run-bound authority at the point it
     // verified the collector's bearer, and the running arm of the split
@@ -654,7 +681,6 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
         manager,
         actorService: progressionActorService,
         sessionService: ctx.sessionService,
-        emitter,
         cwd,
         steps: loopSteps,
         output,
@@ -685,6 +711,26 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
       progression.kind === 'refused' ||
       progression.kind === 'failed' ||
       progression.kind === 'stopped';
+    if (progression.kind === 'failed') {
+      // The one arm whose diagnostic CANNOT ride the observation stream —
+      // the stream is the broken thing. Render a best-effort error envelope
+      // so the failure exit is diagnosed; if this render also fails, the
+      // exit code above still stands (the whole point of deciding it before
+      // rendering).
+      //
+      // FLUSHED here, not left to the trailing flush: `output.error` only
+      // accumulates into the JSON renderer, while `renderAppliedOutcome`
+      // writes the deferred action object straight through `output.json`.
+      // Without this flush the diagnostic lands AFTER the action object and
+      // breaks the "action object is the last line" contract
+      // (docs/spec/cli-output.md) — the same reason the inline-propagation
+      // refusal above flushes at its own render point.
+      deliveryFailed = true;
+      renderBestEffort(() => {
+        output.error(progression.message, CLIErrorCodes.OBSERVATION_DELIVERY_FAILED);
+        output.flush();
+      });
+    }
   }
 
   let exitWithError = progressionFailedClosed || shouldExitWithError;
@@ -711,7 +757,18 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   // Render the deferred collect action object exactly once, AFTER the loop's and
   // the inline propagation's streamed events, so it is the last JSON line on
   // every applied path (loop or non-loop, inline / delegation / non-terminal).
-  renderAppliedOutcome(output, outcome, options.text);
+  //
+  // Best-effort only on the delivery-failure arm: everywhere else a throwing
+  // renderer IS a defect and must reach the unknown-error envelope, but once
+  // the activation has already reported the channel broken, a throw here is
+  // the same known condition and must not overwrite the typed failure.
+  if (deliveryFailed) {
+    renderBestEffort(() => {
+      renderAppliedOutcome(output, outcome, options.text);
+    });
+  } else {
+    renderAppliedOutcome(output, outcome, options.text);
+  }
 
   return exitWithError;
 }

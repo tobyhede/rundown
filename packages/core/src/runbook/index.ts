@@ -332,6 +332,10 @@ export {
 // caller evidence may produce a RunProgressionAuthority.
 export {
   activateRunProgression,
+  INLINE_ADVANCE_RECOVERY_BY_REASON,
+  ObservationDeliveryError,
+  recoveryForInlineAdvanceRefusal,
+  type InlineAdvanceRecoveryByReason,
   type InlineChildDispatch,
   type InlineChildDispatchInput,
   type InlineChildDispatchResult,
