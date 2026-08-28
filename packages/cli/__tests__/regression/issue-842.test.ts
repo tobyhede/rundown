@@ -158,7 +158,7 @@ echo finished
         (event) =>
           event.type === 'runbook_started' &&
           typeof event.runbookId === 'string' &&
-          !knownRunIds.has(event.runbookId as string),
+          !knownRunIds.has(event.runbookId),
       );
       const child2RunId = child2Started?.runbookId;
       expect(typeof child2RunId).toBe('string');

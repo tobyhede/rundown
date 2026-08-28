@@ -139,6 +139,7 @@ describe('issue #849: collect fence refusal does not emit runbook_stopped', () =
     // `RunbookStore.prototype.captureRunAuthorityState` spy technique to
     // reproduce a superseded capture.
     let injected = false;
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- captured only to `.call(this, …)` inside the mock below; never invoked unbound
     const realCapture = RunbookStore.prototype.captureRunAuthorityState;
     jest
       .spyOn(RunbookStore.prototype, 'captureRunAuthorityState')
@@ -156,7 +157,7 @@ describe('issue #849: collect fence refusal does not emit runbook_stopped', () =
         ) {
           injected = true;
           const racer = new RunbookStateManager(workspace.cwd);
-          await racer.update(parentRunId as never, {
+          await racer.update(parentRunId, {
             variables: merge({ __issue849ConcurrentWrite: 'concurrent-writer' }),
           });
         }
