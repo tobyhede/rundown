@@ -8,12 +8,9 @@ import {
   findActionOutput,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import {
-  patchPersistedRunState,
-  seedSession,
-} from '@rundown-org/core/testing/session-fixtures';
+import { patchPersistedRunState, seedSession } from '@rundown-org/core/testing/session-fixtures';
 
-describe("issue #769: text status agrees with JSON for a terminal claim", () => {
+describe('issue #769: text status agrees with JSON for a terminal claim', () => {
   let workspace: TestWorkspace;
 
   beforeEach(async () => {

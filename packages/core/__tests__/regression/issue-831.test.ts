@@ -30,7 +30,21 @@ async function insertCorruptClaim(options: {
 }): Promise<{ store: RunbookStore; claimKey: ClaimLookupKey }> {
   const state = await manager.create(
     { source: 'project', path: 'test.runbook.md' },
-    { title: 'Test', description: 'A test', steps: [{ name: '1', description: 'Step' }] },
+    {
+      title: 'Test',
+      description: 'A test',
+      steps: [
+        {
+          kind: 'base',
+          name: '1',
+          description: 'Step',
+          transitions: {
+            pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+            fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+          },
+        },
+      ],
+    },
     { runbookPath: 'test.runbook.md' },
   );
   const store = await getRunbookStore(dir);

@@ -3,16 +3,10 @@ import {
   DelegationChildLinkPreparationError,
   deriveDelegationChildUnlinkedSubsteps,
 } from '../../src/runbook/compiler.js';
-import {
-  assertDelegationTokenHash,
-} from '../../src/runbook/delegation-token.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import {
-  brandRunIdForTest,
-} from '../../src/testing/effective-vars.js';
-import {
-  makeDelegatedSubstepState,
-} from '../../src/testing/delegation-fixtures.js';
+import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
+import { makeDelegatedSubstepState } from '../../src/testing/delegation-fixtures.js';
 
 describe('issue #754: unlink refusal classifies already_linked', () => {
   it('refuses unlink with already_linked (not concurrent_modification) when linked to a newer child', () => {

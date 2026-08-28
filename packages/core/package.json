@@ -29,6 +29,10 @@
     "./testing/session-fixtures": {
       "import": "./dist/testing/session-fixtures.js",
       "types": "./dist/testing/session-fixtures.d.ts"
+    },
+    "./testing/runbook-store": {
+      "import": "./dist/testing/runbook-store.js",
+      "types": "./dist/testing/runbook-store.d.ts"
     }
   },
   "files": [
