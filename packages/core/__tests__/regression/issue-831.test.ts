@@ -95,4 +95,28 @@ describe('issue #831: corrupt claim rows refuse as a typed class', () => {
     const caught = await loadAndCatch(store, claimKey);
     expect(caught).toBeInstanceOf(InvalidPersistedClaimError);
   });
+
+  // Second seam from the issue's acceptance: the session read (deserializeClaim
+  // behind readSession/loadSession). A fix that special-cases loadClaim alone
+  // must not pass this file. The third named seam — the in-transaction
+  // openDelegatedChildrenFor guard on the parent-advance write path — is not
+  // directly reachable from outside the store; all three sites funnel through
+  // the same deserializeClaim, but the fix should pin that seam where it lands.
+  it('loadSession refuses a corrupt claim row as InvalidPersistedClaimError, not SyntaxError', async () => {
+    const { store } = await insertCorruptClaim({
+      keySuffix: 'd',
+      grantsJson: 'not valid json {',
+    });
+    let caught: Error;
+    try {
+      await store.loadSession();
+      throw new Error('Expected loadSession to refuse the corrupt claim row');
+    } catch (e) {
+      caught = e as Error;
+    }
+    // The issue permits "InvalidPersistedClaimError (or a sibling in the same
+    // taxonomy)" — if the fix mints a sibling class, widen this assertion to
+    // the taxonomy rather than reverting the fix.
+    expect(caught).toBeInstanceOf(InvalidPersistedClaimError);
+  });
 });

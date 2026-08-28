@@ -149,16 +149,22 @@ describe('issue #847: already-terminal chain release spares a running descendant
 
     // THE PIN. No terminal transition was ever applied to the descendant —
     // it is still `running`, exactly as after step 1 — so its run-control
-    // claim record must be the SAME one, unrevoked, and it must still be
-    // reachable on the default stack. Under the traced defect,
+    // claim must survive (same claimKey, not re-minted) and the run must
+    // still be reachable on the default stack. Under the traced defect,
     // `releasesForInlineChain` marks the descendant `collateral`, and
     // `collateral` revokes: the claim entry is deleted and the descendant is
     // filtered off `defaultStack`, even though it was never forced terminal.
+    // Deliberately identity-and-liveness, not whole-record equality: the
+    // invariant is "not revoked", and a correct fix may legitimately refresh
+    // bookkeeping fields such as lastSeenAt. The root's own disposition is
+    // not re-asserted here — its release completed in step 1 and is not this
+    // pin's subject.
     const sessionAfterStepTwo = await readSession(workspace);
     const descendantClaimEntryAfterStepTwo = Object.entries(sessionAfterStepTwo.claims).find(
       ([, record]) => record.controlledRunId === descendant.id,
     );
-    expect(descendantClaimEntryAfterStepTwo).toEqual(descendantClaimEntryAfterStepOne);
+    expect(descendantClaimEntryAfterStepTwo).toBeDefined();
+    expect(descendantClaimEntryAfterStepTwo?.[0]).toBe(descendantClaimEntryAfterStepOne?.[0]);
     expect(sessionAfterStepTwo.defaultStack).toContain(descendant.id);
 
     // And its persisted state was never touched by either step: still
