@@ -10,6 +10,42 @@ import { InvalidRunbookStateError } from './state.js';
 import type { PersistedDelegateFrontierEntry, ResolvedStep, RunbookState } from './types.js';
 
 /**
+ * Refusal text for a persisted delegation frontier reached without the
+ * verified claim authority needed to project it.
+ *
+ * Owned here, next to the seam it describes, and imported by every consumer —
+ * the Run Progression activation and the CLI loop's not-yet-migrated paths —
+ * so the `ERROR_OCCURRED` and any accompanying outcome cannot describe one
+ * refusal differently across seams.
+ */
+export const FRONTIER_AUTHORITY_REQUIRED_MESSAGE =
+  'Delegation frontier cannot be projected without verified claim authority';
+
+/**
+ * Refusal prefix for a persisted delegation frontier that the claim authority
+ * present on this continuation cannot reproduce.
+ *
+ * The sibling of {@link FRONTIER_AUTHORITY_REQUIRED_MESSAGE}: there the
+ * authority is absent, here it is present but wrong for this frontier — a
+ * rotated run-control claim whose successor no longer derives its
+ * predecessor's credentials, or a derived bearer that does not hash to the
+ * persisted verifier.
+ */
+export const FRONTIER_PROJECTION_REFUSED_MESSAGE =
+  'Delegation frontier cannot be projected by the presented claim authority';
+
+/**
+ * Failure text for a projected delegation frontier whose
+ * `DELEGATE_FRONTIER_CONSUMED` synchronization did not commit.
+ *
+ * Not a refusal: no authority was rejected and no credential failed
+ * verification. The frontier is still persisted and no bearer was disclosed,
+ * so the remediation is to run the step again.
+ */
+export const FRONTIER_CONSUME_FAILED_MESSAGE =
+  'Failed to consume delegation frontier after re-entry; the frontier is still pending, retry the run';
+
+/**
  * Outcome of projecting and consuming a persisted delegation re-entry frontier.
  *
  * The four arms are the complete classification of the seam: every frontend
