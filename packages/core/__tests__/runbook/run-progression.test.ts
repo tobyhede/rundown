@@ -9,8 +9,9 @@ import {
   createEffectfulActorMutationRunner,
   type EffectfulActorMutationRunner,
 } from '../../src/runbook/effectful-actor-mutation-runner.js';
-import { closeRunbookStore } from '../../src/runbook/storage/store-registry.js';
+import { closeRunbookStore, openRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import { RunbookStore } from '../../src/runbook/storage/runbook-store.js';
+import { SqliteExecutionLeaseService } from '../../src/runbook/storage/execution-lease.js';
 import { ExecutionEventEmitter } from '../../src/events/emitter.js';
 import type { RunbookEventV1 } from '../../src/events/types.js';
 import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
@@ -19,7 +20,11 @@ import type { CommandExecutionServices } from '../../src/runbook/actors/command-
 import type { ResolvedStep, RunbookState } from '../../src/runbook/types.js';
 import { createRunbook } from './fixtures.js';
 import { mintRunProgressionAuthority } from '../../src/runbook/run-progression-authority.js';
+import type { PreparedRunControlClaim } from '../../src/runbook/session-service.js';
+import { readPersistedReEntryFrontier } from '../../src/runbook/re-entry-frontier.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { TRANSACTIONAL_REFUSAL_CODE_BY_KIND } from '../../src/runbook/storage/refusal-codes.js';
+import { InvalidRunbookStateError } from '../../src/runbook/persisted-state-guards.js';
 import {
   activateRunProgression,
   type InlineChildDispatch,
@@ -210,6 +215,54 @@ function depsFor(
   };
 }
 
+/** Rotate to a known live run-control claim whose runtime this test retains. */
+async function issueProgressionControl(
+  runId: RunbookState['id'],
+): Promise<PreparedRunControlClaim> {
+  return unwrapSessionMutation(await sessionService.issueRunControlClaim(runId));
+}
+
+/** Persist one real credential frontier and return its public bearer. */
+async function persistFrontier(
+  state: RunbookState,
+  control: PreparedRunControlClaim,
+): Promise<{ readonly token: string }> {
+  const issued = control.delegationRuntime.issueDelegationCredential({
+    parentRunId: state.id,
+    parentStepId: '1.1',
+    parentFrameKey: buildFrameKey('1'),
+    parentEntry: 1,
+  });
+  const current = await manager.load(state.id);
+  if (current === null) throw new Error('frontier target disappeared');
+  await manager.update(state.id, {
+    substep: '1',
+    snapshot: {
+      ...(current.snapshot as Record<string, unknown>),
+      context: {
+        ...((current.snapshot as { context?: Record<string, unknown> }).context ?? {}),
+        delegateFrontier: [
+          {
+            id: '1.1',
+            runbook: 'child.runbook.md',
+            credential: issued.credential,
+            tokenHash: issued.tokenHash,
+          },
+        ],
+      },
+    },
+  });
+  return { token: issued.token };
+}
+
+function progressionAuthority(state: RunbookState, control: PreparedRunControlClaim) {
+  return mintRunProgressionAuthority({
+    runId: state.id,
+    claimKey: control.claim.claimKey,
+    delegationRuntime: control.delegationRuntime,
+  });
+}
+
 describe('activateRunProgression', () => {
   it('drives a running run at a command step to completed through the real fence', async () => {
     const steps = createRunbook(COMMAND_RUNBOOK);
@@ -311,7 +364,9 @@ describe('activateRunProgression', () => {
     // The refusal is observed as an error, and no stopped lifecycle is
     // announced: the refused turn committed no terminal state (#849).
     const errorEvent = events.find((event) => event.type === 'ERROR_OCCURRED');
-    expect(errorEvent).toMatchObject({ payload: { code: 'CONCURRENT_MODIFICATION' } });
+    expect(errorEvent).toMatchObject({
+      payload: { code: 'CONCURRENT_MODIFICATION' },
+    });
     expect(events.map((event) => event.type)).not.toContain('RUNBOOK_STOPPED');
 
     // Durable state: still running, still session-targeted.
@@ -346,7 +401,9 @@ describe('activateRunProgression', () => {
 
     const outcome = await activateRunProgression(
       mintRunProgressionAuthority({ runId: state.id }),
-      depsFor(actorService, steps, emitter, { actorMutationRunner: anomalousRunner }),
+      depsFor(actorService, steps, emitter, {
+        actorMutationRunner: anomalousRunner,
+      }),
     );
 
     // Never a silent-success `waiting`: the replaced CLI loop failed closed
@@ -361,14 +418,18 @@ describe('activateRunProgression', () => {
       recovery: 'retryable',
     });
     const errorEvent = events.find((event) => event.type === 'ERROR_OCCURRED');
-    expect(errorEvent).toMatchObject({ payload: { code: 'CONCURRENT_MODIFICATION' } });
+    expect(errorEvent).toMatchObject({
+      payload: { code: 'CONCURRENT_MODIFICATION' },
+    });
     expect(events.map((event) => event.type)).not.toContain('RUNBOOK_STOPPED');
   });
 
   it('reports an already-completed run at activation without re-driving it', async () => {
     const steps = createRunbook(COMMAND_RUNBOOK);
     const commandRunner = jest.fn(async () => ({ success: true, exitCode: 0 }));
-    const actorService = actorServiceWith({ runExternalCommand: commandRunner });
+    const actorService = actorServiceWith({
+      runExternalCommand: commandRunner,
+    });
     const state = await seedRun(steps, actorService, 'terminal.runbook.md');
 
     // Drive the run terminal first through a plain activation.
@@ -567,7 +628,10 @@ describe('activateRunProgression', () => {
       // The callable streams a diagnostic through the sink core supplied; the
       // broken renderer throws beneath it. The gate must convert that into
       // the typed invocation failure rather than letting it escape.
-      sink.emit({ type: 'ERROR_OCCURRED', payload: { message: 'from-dispatch' } });
+      sink.emit({
+        type: 'ERROR_OCCURRED',
+        payload: { message: 'from-dispatch' },
+      });
       throw new Error('unreachable: the gated sink must have thrown');
     });
     const outcome = await activateRunProgression(
@@ -576,7 +640,9 @@ describe('activateRunProgression', () => {
     );
 
     expect(dispatchInlineChild).toHaveBeenCalledWith(
-      expect.objectContaining({ sink: expect.objectContaining({ emit: expect.any(Function) }) }),
+      expect.objectContaining({
+        sink: expect.objectContaining({ emit: expect.any(Function) }),
+      }),
     );
     expect(outcome).toMatchObject({
       kind: 'failed',
@@ -707,6 +773,328 @@ describe('activateRunProgression', () => {
     expect(after?.lifecycle).toBe('running');
   });
 
+  it('projects and consumes a real SQLite frontier before emitting its bearer entry', async () => {
+    const steps = createRunbook(SUBSTEP_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'frontier-success.runbook.md');
+    const control = await issueProgressionControl(state.id);
+    const { token } = await persistFrontier(state, control);
+    const { emitter, events } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      progressionAuthority(state, control),
+      depsFor(actorService, steps, emitter),
+    );
+
+    expect(outcome).toMatchObject({ kind: 'waiting', runId: state.id });
+    const entered = events.find((event) => event.type === 'STEP_ENTERED');
+    expect(entered).toMatchObject({
+      payload: {
+        delegateFrontier: [{ id: '1.1', runbook: 'child.runbook.md', token }],
+      },
+    });
+    const committed = await manager.load(state.id);
+    if (committed === null) throw new Error('frontier target disappeared');
+    expect(readPersistedReEntryFrontier(committed)).toEqual([]);
+    // The bearer is observation-only. COMMIT removed its descriptor before the
+    // machine exposed it, and no plaintext token entered durable state.
+    expect(JSON.stringify(committed)).not.toContain(token);
+  });
+
+  it('binds a projected bearer entry to the exact state its consume committed', async () => {
+    const steps = createRunbook(SUBSTEP_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'frontier-commit-boundary.runbook.md');
+    const control = await issueProgressionControl(state.id);
+    const { token } = await persistFrontier(state, control);
+    const { emitter, events } = recordingSink(state);
+    const runner = createEffectfulActorMutationRunner(dir);
+    const runAll = runner.runAll.bind(runner);
+    let raced = false;
+    jest.spyOn(runner, 'runAll').mockImplementation(async (input) => {
+      const result = await runAll(input);
+      if (!raced && result.kind === 'committed') {
+        raced = true;
+        const moved = await actorService.sendAndSync(state.id, steps, {
+          type: 'GOTO',
+          target: { step: '2' },
+        });
+        if (moved === null) throw new Error('concurrent GOTO target disappeared');
+      }
+      return result;
+    });
+
+    const outcome = await activateRunProgression(
+      progressionAuthority(state, control),
+      depsFor(actorService, steps, emitter, { actorMutationRunner: runner }),
+    );
+
+    expect(raced).toBe(true);
+    expect(outcome).toMatchObject({ kind: 'waiting', runId: state.id });
+    const entered = events.find((event) => event.type === 'STEP_ENTERED');
+    expect(entered).toMatchObject({
+      payload: {
+        stepName: '1',
+        delegateFrontier: [{ id: '1.1', runbook: 'child.runbook.md', token }],
+      },
+    });
+    expect((await manager.load(state.id))?.step).toBe('2');
+  });
+
+  it('reselects when the frontier changes before the fenced capture instead of entering it as empty', async () => {
+    const steps = createRunbook(SUBSTEP_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'frontier-reselection.runbook.md');
+    const control = await issueProgressionControl(state.id);
+    const { token } = await persistFrontier(state, control);
+    const withFrontier = await manager.load(state.id);
+    if (withFrontier === null) throw new Error('frontier target disappeared');
+    const persisted = readPersistedReEntryFrontier(withFrontier);
+    const { emitter, events } = recordingSink(state);
+    const runner = createEffectfulActorMutationRunner(dir);
+    const runAll = runner.runAll.bind(runner);
+    let raced = false;
+    let replaced = false;
+    jest.spyOn(runner, 'runAll').mockImplementation(async (input) => {
+      if (!raced) {
+        raced = true;
+        const consumed = await actorService.sendAndSync(state.id, steps, {
+          type: 'DELEGATE_FRONTIER_CONSUMED',
+        });
+        if (consumed === null) throw new Error('concurrent frontier target disappeared');
+      }
+      const result = await runAll(input);
+      if (result.kind === 'committed' && !replaced) {
+        replaced = true;
+        const current = await manager.load(state.id);
+        if (current === null) throw new Error('frontier target disappeared before replacement');
+        await manager.update(state.id, {
+          snapshot: {
+            ...(current.snapshot as Record<string, unknown>),
+            context: {
+              ...((current.snapshot as { context?: Record<string, unknown> }).context ?? {}),
+              delegateFrontier: persisted,
+            },
+          },
+        });
+      }
+      return result;
+    });
+
+    const outcome = await activateRunProgression(
+      progressionAuthority(state, control),
+      depsFor(actorService, steps, emitter, { actorMutationRunner: runner }),
+    );
+
+    expect(raced).toBe(true);
+    expect(replaced).toBe(true);
+    expect(outcome).toMatchObject({ kind: 'waiting', runId: state.id });
+    const entered = events.find((event) => event.type === 'STEP_ENTERED');
+    expect(entered).toMatchObject({
+      payload: {
+        stepName: '1',
+        delegateFrontier: [{ id: '1.1', runbook: 'child.runbook.md', token }],
+      },
+    });
+    const committed = await manager.load(state.id);
+    if (committed === null) throw new Error('frontier target disappeared');
+    expect(readPersistedReEntryFrontier(committed)).toEqual([]);
+  });
+
+  it('classifies projected-frontier entry failure as permanent RD-833 after the real consume commits', async () => {
+    const steps = createRunbook(SUBSTEP_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'frontier-disclosure-failure.runbook.md');
+    const control = await issueProgressionControl(state.id);
+    const { token } = await persistFrontier(state, control);
+    const { emitter, events } = recordingSink(state);
+    jest
+      .spyOn(actorService, 'enterExecutionUnit')
+      .mockRejectedValue(new Error('helper "slugify" threw: boom'));
+
+    const outcome = await activateRunProgression(
+      progressionAuthority(state, control),
+      depsFor(actorService, steps, emitter),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'frontier_disclosure_failed',
+      code: 'RD-833',
+      recovery: 'permanent',
+      message:
+        'Delegation frontier disclosure could not be rendered - helper "slugify" threw: boom',
+    });
+    const committed = await manager.load(state.id);
+    if (committed === null) throw new Error('frontier target disappeared');
+    expect(readPersistedReEntryFrontier(committed)).toEqual([]);
+    expect(JSON.stringify(committed)).not.toContain(token);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'ERROR_OCCURRED',
+        payload: expect.objectContaining({ code: 'RD-833' }),
+      }),
+    );
+    expect(events.map((event) => event.type)).not.toContain('STEP_ENTERED');
+  });
+
+  it('preserves InvalidRunbookStateError after a projected-frontier consume commits', async () => {
+    const steps = createRunbook(SUBSTEP_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'frontier-invalid-state.runbook.md');
+    const control = await issueProgressionControl(state.id);
+    await persistFrontier(state, control);
+    const { emitter } = recordingSink(state);
+    const invalid = new InvalidRunbookStateError('render state is invalid', {
+      runId: state.id,
+      reason: 'schema_validation_failed',
+    });
+    jest.spyOn(actorService, 'enterExecutionUnit').mockRejectedValue(invalid);
+
+    await expect(
+      activateRunProgression(
+        progressionAuthority(state, control),
+        depsFor(actorService, steps, emitter),
+      ),
+    ).rejects.toBe(invalid);
+
+    const committed = await manager.load(state.id);
+    if (committed === null) throw new Error('frontier target disappeared');
+    expect(readPersistedReEntryFrontier(committed)).toEqual([]);
+  });
+
+  it('classifies a real issuer mismatch as permanent RD-821 without consuming the frontier', async () => {
+    const steps = createRunbook(SUBSTEP_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'frontier-mismatch.runbook.md');
+    const issuer = await issueProgressionControl(state.id);
+    await persistFrontier(state, issuer);
+    const rotated = await issueProgressionControl(state.id);
+    const { emitter, events } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      progressionAuthority(state, rotated),
+      depsFor(actorService, steps, emitter),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'projection_refused',
+      code: 'RD-821',
+      recovery: 'permanent',
+    });
+    const committed = await manager.load(state.id);
+    if (committed === null) throw new Error('frontier target disappeared');
+    expect(readPersistedReEntryFrontier(committed)).toHaveLength(1);
+    expect(events.map((event) => event.type)).not.toContain('STEP_ENTERED');
+  });
+
+  it('classifies real lease contention as retryable RD-829 without consuming the frontier', async () => {
+    const steps = createRunbook(SUBSTEP_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'frontier-contention.runbook.md');
+    const control = await issueProgressionControl(state.id);
+    await persistFrontier(state, control);
+
+    const { driver, store } = await openRunbookStore(dir);
+    const captured = await store.captureAuthorityState(state.id, control.claim.claimKey);
+    if (captured.kind !== 'captured') throw new Error(`capture refused: ${captured.kind}`);
+    const held = await new SqliteExecutionLeaseService(driver).acquire(
+      captured.authority,
+      process.pid,
+    );
+    if (held.kind !== 'committed') throw new Error(`lease refused: ${held.kind}`);
+    const { emitter, events } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      progressionAuthority(state, control),
+      depsFor(actorService, steps, emitter),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'consume_failed',
+      code: 'RD-829',
+      recovery: 'retryable',
+    });
+    const committed = await manager.load(state.id);
+    if (committed === null) throw new Error('frontier target disappeared');
+    expect(readPersistedReEntryFrontier(committed)).toHaveLength(1);
+    expect(events.map((event) => event.type)).not.toContain('STEP_ENTERED');
+  });
+
+  it('preserves claim supersession as provide-authority rather than relabeling it as contention', async () => {
+    const steps = createRunbook(SUBSTEP_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'frontier-superseded.runbook.md');
+    const superseded = await issueProgressionControl(state.id);
+    await persistFrontier(state, superseded);
+    await issueProgressionControl(state.id);
+    const { emitter } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      progressionAuthority(state, superseded),
+      depsFor(actorService, steps, emitter),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'claim_superseded',
+      code: 'STALE_CLAIM',
+      recovery: 'provide_authority',
+    });
+  });
+
+  it.each([
+    {
+      runnerResult: {
+        kind: 'recovery_required',
+        runId: generateRunId(),
+        epoch: 1,
+        message: 'Interrupted frontier consume requires recovery.',
+      },
+      reason: 'recovery_required',
+      code: 'RECOVERY_REQUIRED',
+    },
+    {
+      runnerResult: {
+        kind: 'aggregate_recovery_required',
+        attempts: [{ runId: generateRunId(), epoch: 1 }],
+        message: 'Ambiguous aggregate frontier commit requires recovery.',
+      },
+      reason: 'aggregate_recovery_required',
+      code: 'AGGREGATE_RECOVERY_REQUIRED',
+    },
+  ] as const)(
+    'preserves $reason as its own permanent manual-recovery refusal',
+    async ({ runnerResult, reason, code }) => {
+      const steps = createRunbook(SUBSTEP_RUNBOOK);
+      const actorService = actorServiceWith(succeedingCommandServices());
+      const state = await seedRun(steps, actorService, `frontier-${reason}.runbook.md`);
+      const control = await issueProgressionControl(state.id);
+      await persistFrontier(state, control);
+      const { emitter } = recordingSink(state);
+      const refusingRunner = {
+        run: jest.fn(),
+        runAll: jest.fn(async () => ({ ...runnerResult, runId: state.id })),
+      } as unknown as EffectfulActorMutationRunner;
+
+      const outcome = await activateRunProgression(
+        progressionAuthority(state, control),
+        depsFor(actorService, steps, emitter, {
+          actorMutationRunner: refusingRunner,
+        }),
+      );
+
+      expect(outcome).toMatchObject({
+        kind: 'refused',
+        reason,
+        code,
+        recovery: 'permanent',
+      });
+    },
+  );
+
   it('emits a diagnostic for a missing run instead of refusing silently', async () => {
     // #853 review F2: an exit-flipping refusal with no diagnostic in the
     // stream leaves success-shaped output beside a failure exit code. The
@@ -740,7 +1128,9 @@ describe('activateRunProgression', () => {
     expect(events).toContainEqual(
       expect.objectContaining({
         type: 'ERROR_OCCURRED',
-        payload: expect.objectContaining({ code: TRANSACTIONAL_REFUSAL_CODE_BY_KIND.missing }),
+        payload: expect.objectContaining({
+          code: TRANSACTIONAL_REFUSAL_CODE_BY_KIND.missing,
+        }),
       }),
     );
   });
@@ -952,14 +1342,18 @@ describe('observation commit gate (#853)', () => {
 
     const commandEvents = events.filter((event) => event.type === 'COMMAND_STARTED');
     expect(commandEvents).toHaveLength(1);
-    expect(commandEvents[0]).toMatchObject({ payload: { command: 'echo second' } });
+    expect(commandEvents[0]).toMatchObject({
+      payload: { command: 'echo second' },
+    });
     expect(events.map((event) => event.type)).toContain('RUNBOOK_COMPLETED');
   });
 
   it('loads, restores, and inspects without delivering observations or performing effects', async () => {
     const steps = createRunbook(COMMAND_RUNBOOK);
     const commandRunner = jest.fn(async () => ({ success: true, exitCode: 0 }));
-    const actorService = actorServiceWith({ runExternalCommand: commandRunner });
+    const actorService = actorServiceWith({
+      runExternalCommand: commandRunner,
+    });
     const state = await seedRun(steps, actorService, 'inert.runbook.md');
 
     const { emitter, events } = recordingSink(state);
@@ -970,7 +1364,10 @@ describe('observation commit gate (#853)', () => {
       kind: 'propagated' as const,
     }));
     // Constructing the deps IS not activation; neither is any read-only path.
-    depsFor(actorService, steps, emitter, { dispatchInlineChild, propagateTerminal });
+    depsFor(actorService, steps, emitter, {
+      dispatchInlineChild,
+      propagateTerminal,
+    });
 
     const before = await manager.load(state.id);
     if (!before) throw new Error('expected the seeded run to load');

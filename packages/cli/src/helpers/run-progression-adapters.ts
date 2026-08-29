@@ -20,16 +20,23 @@
  */
 
 import {
+  activateRunProgression,
+  CLIErrorCodes,
+  createEffectfulActorMutationRunner,
+  ExecutionEventEmitter,
   ObservationDeliveryError,
+  SessionService,
   type CommandExecutionStreamOptions,
   type InlineChildDispatch,
   type RunbookActorService,
   type RunbookStateManager,
   type ResolvedStep,
-  type SessionService,
+  type RunProgressionDirective,
+  type RunProgressionOutcome,
   type TerminalPropagation,
 } from '@rundown-org/core';
-import { launchInlineChildFromIntent } from '../services/execution.js';
+import { createCliCommandServices, launchInlineChildFromIntent } from '../services/execution.js';
+import { createCliRunbookActorService } from './actor-service-factory.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 // Static on purpose: collect.ts already loads this module statically on the
 // same command path, and delegation-completion's documented cycle with
@@ -127,6 +134,92 @@ export interface TerminalPropagationContext {
   readonly cwd: string;
   readonly output: OutputEmitter;
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
+}
+
+/** Runtime-only dependencies shared by every directive-driven continuation. */
+export interface RunProgressionDriveContext {
+  readonly manager: RunbookStateManager;
+  readonly cwd: string;
+  readonly output: OutputEmitter;
+  readonly sink?: ExecutionEventEmitter;
+  readonly sessionService?: SessionService;
+  readonly commandStreamOptions?: CommandExecutionStreamOptions;
+}
+
+/**
+ * Activate one core-minted directive without reconstructing its authority.
+ *
+ * @param activation - Core-minted activation, including its exact graph and authority.
+ * @param ctx - Runtime-only CLI dependencies used to drive the activation.
+ * @returns The closed outcome selected by Run Progression.
+ */
+export async function driveRunProgression(
+  activation: Extract<RunProgressionDirective, { kind: 'activate' }>,
+  ctx: RunProgressionDriveContext,
+): Promise<RunProgressionOutcome> {
+  const commandServices = createCliCommandServices(ctx.commandStreamOptions);
+  const actorService = createCliRunbookActorService(ctx.manager, commandServices);
+  const sessionService = ctx.sessionService ?? new SessionService(ctx.manager);
+  const sink =
+    ctx.sink ?? new ExecutionEventEmitter(activation.authority.runId, activation.runbook);
+  if (ctx.sink === undefined) {
+    sink.subscribe((event) => {
+      ctx.output.executionEvent(event);
+    });
+  }
+  const outcome = await activateRunProgression(activation.authority, {
+    manager: ctx.manager,
+    actorService,
+    sessionService,
+    actorMutationRunner: createEffectfulActorMutationRunner(ctx.cwd),
+    steps: activation.steps,
+    sink,
+    dispatchInlineChild: buildInlineChildDispatch({
+      manager: ctx.manager,
+      actorService,
+      sessionService,
+      cwd: ctx.cwd,
+      steps: activation.steps,
+      output: ctx.output,
+      ...(ctx.commandStreamOptions === undefined
+        ? {}
+        : { commandStreamOptions: ctx.commandStreamOptions }),
+      ...(activation.authority.delegationRuntime === undefined
+        ? {}
+        : {
+            parentDelegationRuntime: {
+              runId: activation.authority.runId,
+              runtime: activation.authority.delegationRuntime,
+            },
+          }),
+    }),
+    propagateTerminal: buildTerminalPropagation({
+      manager: ctx.manager,
+      cwd: ctx.cwd,
+      output: ctx.output,
+      ...(ctx.commandStreamOptions === undefined
+        ? {}
+        : { commandStreamOptions: ctx.commandStreamOptions }),
+    }),
+  });
+  if (outcome.kind === 'failed') {
+    try {
+      ctx.output.error(outcome.message, CLIErrorCodes.OBSERVATION_DELIVERY_FAILED);
+    } catch {
+      // The reporting channel is broken; the caller's fail-closed result remains authoritative.
+    }
+  }
+  return outcome;
+}
+
+/**
+ * Whether a closed progression outcome fails the invoking command closed.
+ *
+ * @param outcome - Closed result returned by Run Progression.
+ * @returns True when the invoking CLI command must use a failure exit code.
+ */
+export function progressionFailedClosed(outcome: RunProgressionOutcome): boolean {
+  return outcome.kind === 'refused' || outcome.kind === 'failed' || outcome.kind === 'stopped';
 }
 
 /**

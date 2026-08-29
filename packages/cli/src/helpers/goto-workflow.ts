@@ -21,16 +21,9 @@ import {
   type RunId,
   type CommandExecutionStreamOptions,
   type RunbookLifecycleCommandService,
-  type CallerEvidence,
-  type DelegationRuntimeCapabilities,
-  claimKeyFromBearer,
+  type LifecycleNavigationCapability,
+  type RunProgressionOutcome,
 } from '@rundown-org/core';
-import { runExecutionLoop, type ExecutionLoopStatus } from '../services/execution.js';
-import {
-  propagateDrivenRunTerminal,
-  propagationRequiresFailureExit,
-  type DrivenRunPropagation,
-} from './delegation-completion.js';
 import {
   renderActorContextRequiredRefusal,
   renderClaimBearerMismatchRefusal,
@@ -41,6 +34,7 @@ import { createBridgedEmitter } from './execution-emitter.js';
 import { resolveIndexOption, IndexOptionError } from './index-option.js';
 import { buildNonDelegatingLifecycleSeam } from './lifecycle-seam-factory.js';
 import { readLifecycleCallerEvidence } from './caller-evidence.js';
+import { driveRunProgression, progressionFailedClosed } from './run-progression-adapters.js';
 
 /**
  * Context for executing a goto operation.
@@ -52,12 +46,8 @@ export interface GotoContext {
   manager: RunbookStateManager;
   /** Core lifecycle seam that owns the decisive GOTO mutation. */
   seam: RunbookLifecycleCommandService;
-  /** Evidence already accepted by the navigation policy seam. */
-  callerEvidence: CallerEvidence;
   /** Current active runbook state */
   state: RunbookState;
-  /** Parsed steps from the active runbook */
-  steps: ResolvedStep[];
   /** Current working directory for file resolution */
   cwd: string;
   /** Runtime-only routing for command subprocess stdout/stderr. */
@@ -68,7 +58,7 @@ export interface GotoContext {
    * One branded pair — `runNavigationMutation` takes only the issuer, so that
    * half is unpacked at the call site rather than carried apart from its twin.
    */
-  delegationRuntime?: DelegationRuntimeCapabilities;
+  navigation: LifecycleNavigationCapability;
 }
 
 /**
@@ -76,23 +66,25 @@ export interface GotoContext {
  */
 export type GotoValidationResult =
   | { ok: true; target: StepId }
-  | { ok: false; error: string; code: string; details?: Record<string, unknown> };
+  | {
+      ok: false;
+      error: string;
+      code: string;
+      details?: Record<string, unknown>;
+    };
 
 /**
  * Result of goto execution.
  */
 export type GotoExecutionResult =
-  | { ok: true; loopResult: ExecutionLoopStatus; propagation?: DrivenRunPropagation }
+  | { ok: true; progression: RunProgressionOutcome }
   | { ok: false; error: string; code: string };
 
 /**
- * Whether a successful goto execution must drive a non-zero process exit: either
- * the run itself stopped, or its terminal propagated to a parent with a
- * stopped/blocked outcome.
+ * Whether the shared Run Progression outcome fails the GOTO command closed.
  *
  * Shared by `rundown goto` and the `run --prompted --step` launch-local jump so
- * their exit decisions cannot drift — a bare `loopResult === 'stopped'` check
- * misses a propagation that stopped/blocked the parent (#553).
+ * their exit decisions cannot drift.
  *
  * @param result - A successful ({@link GotoExecutionResult} `ok: true`) result.
  * @returns `true` when the caller should exit non-zero.
@@ -100,11 +92,7 @@ export type GotoExecutionResult =
 export function gotoResultRequiresFailureExit(
   result: Extract<GotoExecutionResult, { ok: true }>,
 ): boolean {
-  return (
-    result.loopResult === 'stopped' ||
-    result.loopResult === 'blocked' ||
-    (result.propagation !== undefined && propagationRequiresFailureExit(result.propagation))
-  );
+  return progressionFailedClosed(result.progression);
 }
 
 /**
@@ -240,12 +228,10 @@ export async function buildGotoContext(
       output,
       manager,
       seam,
-      callerEvidence,
       state: outcome.state,
-      steps: [...outcome.steps],
       cwd,
       commandStreamOptions: options.commandStreamOptions,
-      delegationRuntime: outcome.delegationRuntime,
+      navigation: outcome.navigation,
     },
   };
 }
@@ -348,32 +334,34 @@ export function validateGotoTarget(
 }
 
 /**
- * Execute a goto operation: send GOTO event, update state, emit action, run loop.
+ * Execute a GOTO mutation, render its observation, then forward core's opaque
+ * continuation directive to shared Run Progression.
  *
  * @param ctx - Goto context with resolved state and services
  * @param target - Validated step target
  * @returns Execution result indicating success or failure
  */
 export async function executeGoto(ctx: GotoContext, target: StepId): Promise<GotoExecutionResult> {
-  const { output, manager, seam, callerEvidence, state, steps, cwd } = ctx;
+  const { output, manager, seam, state, navigation, cwd } = ctx;
 
   const mutation = await seam.runNavigationMutation({
-    runId: state.id,
-    callerEvidence,
-    steps,
+    navigation: ctx.navigation,
     target,
-    issueDelegationCredential: ctx.delegationRuntime?.issueDelegationCredential,
   });
   if (mutation.kind !== 'applied') {
     // This site needs the code rather than the rendering — the refusal travels
     // back to the caller as a structured result — so it calls the shared
     // mapping directly instead of restating it.
-    return { ok: false, error: mutation.message, code: transactionalRefusalCode(mutation) };
+    return {
+      ok: false,
+      error: mutation.message,
+      code: transactionalRefusalCode(mutation),
+    };
   }
 
   output.action(
     deriveGotoActionBlock({
-      steps,
+      steps: navigation.steps,
       previousState: mutation.previousState,
       updatedState: mutation.updatedState,
       target,
@@ -383,38 +371,14 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
   // Create emitter bridged to unified output
   const emitter = createBridgedEmitter(state, output);
 
-  // Continue with execution loop
-  const loopResult = await runExecutionLoop(manager, state.id, steps, cwd, emitter, {
-    ...(callerEvidence.kind === 'claim_bearer'
-      ? { claimKey: claimKeyFromBearer(callerEvidence.claimId) }
-      : {}),
+  const progression = await driveRunProgression(mutation.progression, {
+    manager,
+    cwd,
     output,
-    commandStreamOptions: ctx.commandStreamOptions,
-    delegationRuntime: ctx.delegationRuntime,
+    sink: emitter,
+    ...(ctx.commandStreamOptions === undefined
+      ? {}
+      : { commandStreamOptions: ctx.commandStreamOptions }),
   });
-
-  // Any driver that takes a run terminal must propagate that terminal to its
-  // parent — goto included. goto authors no operator RESULT, so use the
-  // `loop-inferred` trigger and let lifecycle inference decide the outcome (same
-  // as the natural loop). Without this, `goto` completing an inline child left
-  // the parent's substep 'running' forever (#553).
-  const propagation =
-    loopResult.status === 'handled' || loopResult.status === 'blocked'
-      ? undefined
-      : await propagateDrivenRunTerminal(
-          manager,
-          state.id,
-          cwd,
-          output,
-          { kind: 'loop-inferred' },
-          ctx.commandStreamOptions,
-        );
-
-  // Progression status only. Terminal state owns its atomic Run Release;
-  // nothing downstream decides or observes release ownership.
-  return {
-    ok: true,
-    loopResult: loopResult.status,
-    ...(propagation === undefined ? {} : { propagation }),
-  };
+  return { ok: true, progression };
 }

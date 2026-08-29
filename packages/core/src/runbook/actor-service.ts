@@ -56,7 +56,12 @@ import {
   type DelegationChildLinkRefusalReason,
   type RunbookEvent,
   type RunbookContext,
+  type RunProgressionMachineIntent,
+  type RunProgressionMachineIntentEvent,
 } from './compiler.js';
+import type { EffectfulActorMutationRunner } from './effectful-actor-mutation-runner.js';
+import type { RunProgressionAuthority } from './run-progression-authority.js';
+import { projectAndConsumeReEntryFrontierFenced } from './re-entry-frontier.js';
 import type { RecoveryActor } from './execution-recovery-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
 import { merge, replace, type ResolvedCompletionsOp } from './state-update-ops.js';
@@ -146,12 +151,18 @@ export type PrepareDelegationChildLinkRefusal = {
 
 /** Typed outcome of preparing an exact delegated child link. */
 export type PrepareDelegationChildLinkResult =
-  | { readonly kind: 'prepared'; readonly prepared: PreparedDelegationChildLink }
+  | {
+      readonly kind: 'prepared';
+      readonly prepared: PreparedDelegationChildLink;
+    }
   | PrepareDelegationChildLinkRefusal;
 
 /** Typed outcome of preparing an exact delegated child unlink. */
 export type PrepareDelegationChildUnlinkResult =
-  | { readonly kind: 'prepared'; readonly prepared: PreparedDelegationChildUnlink }
+  | {
+      readonly kind: 'prepared';
+      readonly prepared: PreparedDelegationChildUnlink;
+    }
   | PrepareDelegationChildLinkRefusal;
 
 /**
@@ -236,6 +247,11 @@ export interface RunbookActorServiceOptions {
 export interface RunbookActorRuntimeCapabilities {
   /** Verified claim-bound issuer for machine-owned delegation credentials. */
   readonly issueDelegationCredential?: DelegationCredentialIssuer;
+  /** One run-bound authority plus the fence used by explicit progression. */
+  readonly runProgression?: {
+    readonly authority: RunProgressionAuthority;
+    readonly actorMutationRunner: EffectfulActorMutationRunner;
+  };
 }
 
 /**
@@ -422,6 +438,7 @@ function lastResultSyncForEvent(
       return { kind: 'clear' };
     case 'RETRY':
     case 'SET_VARIABLES':
+    case 'SELECT_RUN_PROGRESSION':
     case 'DELEGATE_FRONTIER_CONSUMED':
     case 'INLINE_LAUNCH_CONSUMED':
     case 'INLINE_LAUNCH_ABANDONED':
@@ -814,7 +831,9 @@ function deriveActorStatePatch(
       ? {}
       : {
           activeEntry: contextFrameEntry.activeEntry,
-          frameEntryCounts: replace({ ...(contextFrameEntry.frameEntryCounts ?? {}) }),
+          frameEntryCounts: replace({
+            ...(contextFrameEntry.frameEntryCounts ?? {}),
+          }),
         };
   return {
     step: stepName, // string
@@ -880,7 +899,9 @@ export class RunbookActorService {
         // member this predicate needs. The cast is over the SHAPE only — the
         // question asked is fixed at RECOVERY_TAG and answered from the live
         // snapshot, never short-circuited on the caller's behalf.
-        const snapshot = actor.getSnapshot() as { hasTag(candidate: string): boolean };
+        const snapshot = actor.getSnapshot() as {
+          hasTag(candidate: string): boolean;
+        };
         return snapshot.hasTag(RECOVERY_TAG);
       },
       stop: () => {
@@ -898,8 +919,8 @@ export class RunbookActorService {
    * rather than a bare `Error`: the class is what routes them onto the CLI's
    * finish/stop/prune envelope instead of RD-999 "Unknown error", and what lets
    * a caller distinguish "this run is unusable" from "the operation failed".
-   * `finishCollection` reads exactly that distinction to decide whether a
-   * committed collect reports RD-309 or RD-833.
+   * Run Progression preserves that distinction when its machine-owned entry
+   * actor resolves the current execution unit.
    *
    * @param id - Run whose snapshot is being read.
    * @param snapshot - The persisted snapshot envelope.
@@ -994,6 +1015,7 @@ export class RunbookActorService {
         { runId: id, reason: 'missing_frontmatter_outputs' },
       );
     }
+    const progressionRuntime = runtime?.runProgression;
     return compileRunbookToMachine(steps, {
       templateVars: flattenTemplateVars(state.templateVars),
       sourceTemplateVars: state.templateVars,
@@ -1015,6 +1037,32 @@ export class RunbookActorService {
       now: this.options.inlineLaunchNow,
       commandServices: this.options.commandServices,
       executionObserver,
+      ...(progressionRuntime === undefined
+        ? {}
+        : {
+            runProgression: {
+              state,
+              authority: progressionRuntime.authority,
+              projectFrontier: (selectedState: RunbookState) =>
+                projectAndConsumeReEntryFrontierFenced({
+                  state: selectedState,
+                  authority: progressionRuntime.authority,
+                  actorMutationRunner: progressionRuntime.actorMutationRunner,
+                  actorService: this,
+                  manager: this.manager,
+                  steps,
+                }),
+              enterUnit: (
+                selectedState: RunbookState,
+                frontier?: readonly DelegateFrontierEntry[],
+              ) =>
+                this.enterExecutionUnit({
+                  state: selectedState,
+                  steps,
+                  ...(frontier === undefined ? {} : { delegateFrontier: frontier }),
+                }),
+            },
+          }),
     });
   }
 
@@ -1145,8 +1193,61 @@ export class RunbookActorService {
     const machine = this.compileMachineFromState(id, state, steps);
     const snapshot = hydrateSnapshot(machine, state);
     const actor = createActor(machine, { snapshot });
-    const snap = actor.getPersistedSnapshot() as unknown as { context: RunbookContext };
+    const snap = actor.getPersistedSnapshot() as unknown as {
+      context: RunbookContext;
+    };
     return snap.context;
+  }
+
+  /**
+   * Ask one restored compiled runbook machine to own the frontier/entry turn.
+   *
+   * The method contains no frontier policy. It binds the one authority and the
+   * project fence as runtime-only machine dependencies, sends the explicit
+   * activation event, and returns the intent emitted by the selected state.
+   *
+   * @param state - Persisted state to restore for the selected turn.
+   * @param steps - Exact compiled graph paired with the authority.
+   * @param authority - Single authority bound to frontier projection and entry.
+   * @param actorMutationRunner - Transactional fence used by frontier consumption.
+   * @returns The closed progression intent emitted by the compiled machine.
+   */
+  async selectRunProgressionIntent(
+    state: RunbookState,
+    steps: readonly ResolvedStep[],
+    authority: RunProgressionAuthority,
+    actorMutationRunner: EffectfulActorMutationRunner,
+  ): Promise<RunProgressionMachineIntent> {
+    if (state.id !== authority.runId) {
+      throw new Error(
+        `Run Progression authority for ${authority.runId} cannot select run ${state.id}`,
+      );
+    }
+    const actor = this.createActorForState(state.id, state, steps, undefined, {
+      runProgression: { authority, actorMutationRunner },
+    });
+    try {
+      return await new Promise<RunProgressionMachineIntent>((resolve, reject) => {
+        const emitted = actor.on(
+          'RUN_PROGRESSION_INTENT',
+          (event: RunProgressionMachineIntentEvent) => {
+            emitted.unsubscribe();
+            errors.unsubscribe();
+            resolve(event.intent);
+          },
+        );
+        const errors = actor.subscribe({
+          error: (error: unknown) => {
+            emitted.unsubscribe();
+            errors.unsubscribe();
+            reject(error instanceof Error ? error : new Error(String(error)));
+          },
+        });
+        actor.send({ type: 'SELECT_RUN_PROGRESSION' });
+      });
+    } finally {
+      this.stopActor(actor);
+    }
   }
 
   /**
@@ -1280,11 +1381,19 @@ export class RunbookActorService {
       const nextState = applyRunbookStateUpdate(previousState, patch, new Date().toISOString());
       if (event.type === 'EXECUTE_COMMAND' && collector.commandOutput?.kind === 'completed') {
         effects.push(
-          commandCompletedEffect({ ...collector.commandOutput, position: commandPosition }),
+          commandCompletedEffect({
+            ...collector.commandOutput,
+            position: commandPosition,
+          }),
         );
       }
       if (event.type === 'EXECUTE_COMMAND' && collector.commandOutput?.kind === 'policy_denied') {
-        effects.push(policyDeniedEffect({ ...collector.commandOutput, position: commandPosition }));
+        effects.push(
+          policyDeniedEffect({
+            ...collector.commandOutput,
+            position: commandPosition,
+          }),
+        );
       }
       return { previousState, nextState, snapshot, effects };
     } finally {
@@ -1429,7 +1538,11 @@ export class RunbookActorService {
       const { refusal } = error;
       const envelope = { runId: parent.id, message: error.message } as const;
       return refusal.reason === 'already_linked'
-        ? { ...envelope, kind: refusal.reason, occupyingChildRunId: refusal.occupyingChildRunId }
+        ? {
+            ...envelope,
+            kind: refusal.reason,
+            occupyingChildRunId: refusal.occupyingChildRunId,
+          }
         : { ...envelope, kind: refusal.reason };
     }
     const mutation = await this.prepareActorMutation(
@@ -1474,7 +1587,10 @@ export class RunbookActorService {
     if (result.kind !== 'prepared') return result;
     return {
       kind: 'prepared',
-      prepared: { operation: 'link', mutation: result.mutation } as PreparedDelegationChildLink,
+      prepared: {
+        operation: 'link',
+        mutation: result.mutation,
+      } as PreparedDelegationChildLink,
     };
   }
 

@@ -19,6 +19,7 @@ jest.unstable_mockModule('../../src/helpers/delegation-completion.js', () => ({
   propagateDrivenRunTerminal,
 }));
 jest.unstable_mockModule('../../src/services/execution.js', () => ({
+  createCliCommandServices: jest.fn(),
   launchInlineChildFromIntent,
 }));
 
@@ -67,7 +68,10 @@ describe('buildTerminalPropagation', () => {
     });
     const propagate = buildTerminalPropagation(propagationCtx(makeOutput()));
 
-    const result = await propagate({ runId: RUN_ID, sink: { emit: jest.fn() } });
+    const result = await propagate({
+      runId: RUN_ID,
+      sink: { emit: jest.fn() },
+    });
 
     expect(result).toEqual({
       kind: 'refused',
@@ -87,7 +91,10 @@ describe('buildTerminalPropagation', () => {
     });
     const propagate = buildTerminalPropagation(propagationCtx(makeOutput()));
 
-    const result = await propagate({ runId: RUN_ID, sink: { emit: jest.fn() } });
+    const result = await propagate({
+      runId: RUN_ID,
+      sink: { emit: jest.fn() },
+    });
 
     expect(result).toMatchObject({ kind: 'refused', recovery: 'permanent' });
   });

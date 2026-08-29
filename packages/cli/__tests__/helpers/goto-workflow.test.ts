@@ -7,6 +7,9 @@ import type {
   DelegationTokenDeriver,
   ExecutionEpoch,
   LifecycleNavigationMutationOutcome,
+  LifecycleNavigationCapability,
+  RunProgressionDirective,
+  RunProgressionOutcome,
   RunbookLifecycleCommandService,
   RunbookState,
   RunbookStateManager,
@@ -73,12 +76,13 @@ jest.unstable_mockModule('../../src/helpers/lifecycle-seam-factory', () => ({
   buildNonDelegatingLifecycleSeam: jest.fn(),
 }));
 
-// Mock execution service
-jest.unstable_mockModule('../../src/services/execution', () => ({
-  runExecutionLoop:
-    mockFn<(...args: unknown[]) => Promise<'done' | 'stopped' | 'waiting'>>().mockResolvedValue(
-      'done',
-    ),
+// GOTO owns only rendering and verbatim directive forwarding. Keep the shared
+// driver structural so these tests cannot accidentally pin its internal loop.
+jest.unstable_mockModule('../../src/helpers/run-progression-adapters', () => ({
+  driveRunProgression: mockFn<() => Promise<RunProgressionOutcome>>(),
+  progressionFailedClosed: jest.fn((outcome: RunProgressionOutcome) =>
+    ['refused', 'failed', 'stopped'].includes(outcome.kind),
+  ),
 }));
 
 // Mock runbook-loader
@@ -99,7 +103,9 @@ jest.unstable_mockModule('../../src/helpers/actor-service-factory', () => ({
 
 // Import after mocking
 const core = await import('@rundown-org/core');
-const { runExecutionLoop } = await import('../../src/services/execution.js');
+const { driveRunProgression, progressionFailedClosed } = await import(
+  '../../src/helpers/run-progression-adapters.js'
+);
 const {
   validateGotoTarget,
   executeGoto,
@@ -187,7 +193,14 @@ beforeEach(() => {
     from: '1',
     at: target.step,
   }));
-  jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
+  jest.mocked(driveRunProgression).mockResolvedValue({
+    kind: 'waiting',
+    runId: DEFAULT_RUNBOOK_ID,
+    reason: 'awaiting_input',
+  });
+  jest
+    .mocked(progressionFailedClosed)
+    .mockImplementation((outcome) => ['refused', 'failed', 'stopped'].includes(outcome.kind));
 });
 
 // ACCEPTED MUTATION SURVIVORS in goto-workflow.ts (#485).
@@ -234,7 +247,10 @@ describe('buildGotoContext claim-target coupling (#613)', () => {
       callerEvidence: { kind: string; claimId?: unknown };
       targetSelector: { kind: string; claimId?: unknown };
     };
-    expect(input.callerEvidence).toEqual({ kind: 'claim_bearer', claimId: CLAIM_ID });
+    expect(input.callerEvidence).toEqual({
+      kind: 'claim_bearer',
+      claimId: CLAIM_ID,
+    });
     expect(input.targetSelector).toEqual({ kind: 'claim', claimId: CLAIM_ID });
     // The invariant, stated as the seam's own gate states it: same id on both.
     expect(input.callerEvidence.claimId).toBe(input.targetSelector.claimId);
@@ -270,16 +286,10 @@ describe('buildGotoContext delegation authority propagation', () => {
   /**
    * Pin that the claim-bound capability pair reaches the goto context.
    *
-   * `resolveRunNavigation` mints `delegationRuntime` from one verified
-   * authority, or nothing at all — the branded pair is now what makes "only the
-   * deriver was dropped" unrepresentable rather than merely untested. The issuer
-   * lets the GOTO mutation enter a delegation frontier; the deriver is what
-   * `runExecutionLoop` needs to project that frontier onto STEP_ENTERED, so a
-   * goto that carried one without the other would author a frontier it cannot
-   * then render (the loop refuses `ACTOR_CONTEXT_REQUIRED` and stops the run it
-   * just navigated). What remains to assert — and is asserted below — is that
-   * the pair reaches the context at all, and that BOTH members survive the
-   * hand-off by identity rather than by shape.
+   * `resolveRunNavigation` mints one opaque capability containing authority and
+   * the graph it verified. The runtime pair remains nested inside that
+   * authority, making a separately threaded issuer, deriver, or graph
+   * impossible at the CLI boundary.
    */
   function seamReturning(outcome: unknown): void {
     jest.mocked(buildNonDelegatingLifecycleSeam).mockReturnValue({
@@ -289,13 +299,13 @@ describe('buildGotoContext delegation authority propagation', () => {
   }
 
   const allowedOutcome = (
-    capabilities: Record<string, unknown>,
+    navigation: LifecycleNavigationCapability,
   ): Record<string, unknown> & { kind: 'allowed' } => ({
     kind: 'allowed',
     runId: DEFAULT_RUNBOOK_ID,
     state: { id: DEFAULT_RUNBOOK_ID, step: '1' },
-    steps: [makeStep()],
-    ...capabilities,
+    steps: navigation.steps,
+    navigation,
   });
 
   it('carries both claim-bound delegation capabilities onto the context', async () => {
@@ -305,34 +315,41 @@ describe('buildGotoContext delegation authority propagation', () => {
       issueDelegationCredential,
       deriveDelegationToken,
     });
-    seamReturning(allowedOutcome({ delegationRuntime }));
+    const navigation = {
+      authority: { runId: DEFAULT_RUNBOOK_ID, delegationRuntime },
+      steps: [makeStep()],
+    } as unknown as LifecycleNavigationCapability;
+    seamReturning(allowedOutcome(navigation));
     const output = {} as unknown as OutputEmitter;
 
     const result = await buildGotoContext(output, '/cwd', {});
 
     expect(result.kind).toBe('ready');
     if (result.kind !== 'ready') return;
-    // Identity on the pair itself, then on each half: the first fails if the
-    // assembly reconstructs a look-alike object, the second two fail if it keeps
-    // the field but loses a member on the way through.
-    expect(result.ctx.delegationRuntime).toBe(delegationRuntime);
-    expect(result.ctx.delegationRuntime?.issueDelegationCredential).toBe(issueDelegationCredential);
-    expect(result.ctx.delegationRuntime?.deriveDelegationToken).toBe(deriveDelegationToken);
+    expect(result.ctx.navigation).toBe(navigation);
+    expect(result.ctx.navigation.authority.delegationRuntime).toBe(delegationRuntime);
+    expect(result.ctx.navigation.authority.delegationRuntime?.issueDelegationCredential).toBe(
+      issueDelegationCredential,
+    );
+    expect(result.ctx.navigation.authority.delegationRuntime?.deriveDelegationToken).toBe(
+      deriveDelegationToken,
+    );
   });
 
-  it('leaves both capabilities absent when the seam allowed without verified authority', async () => {
-    // Anti-vacuity for the case above, and the reason the field stays optional
-    // on `GotoContext`: a bare goto on a run with no delegation exposure is
-    // `allowed` carrying no capabilities at all, so requiring them on the context
-    // type would state a contract the seam does not honour.
-    seamReturning(allowedOutcome({}));
+  it('keeps the capability whole when verified authority has no delegation runtime', async () => {
+    const navigation = {
+      authority: { runId: DEFAULT_RUNBOOK_ID },
+      steps: [makeStep()],
+    } as unknown as LifecycleNavigationCapability;
+    seamReturning(allowedOutcome(navigation));
     const output = {} as unknown as OutputEmitter;
 
     const result = await buildGotoContext(output, '/cwd', {});
 
     expect(result.kind).toBe('ready');
     if (result.kind !== 'ready') return;
-    expect(result.ctx.delegationRuntime).toBeUndefined();
+    expect(result.ctx.navigation).toBe(navigation);
+    expect(result.ctx.navigation.authority.delegationRuntime).toBeUndefined();
   });
 });
 
@@ -407,7 +424,9 @@ describe('renderNavigationRefusal', () => {
   it('renders actor_context_required naming goto and echoing no run id', () => {
     const { output, errors } = refusalEmitter();
 
-    const exitError = renderNavigationRefusal(output, { kind: 'actor_context_required' });
+    const exitError = renderNavigationRefusal(output, {
+      kind: 'actor_context_required',
+    });
 
     expect(exitError).toBe(true);
     expect(errors[0]?.[1]).toBe('ACTOR_CONTEXT_REQUIRED');
@@ -421,7 +440,9 @@ describe('renderNavigationRefusal', () => {
   it('renders claim_bearer_mismatch under its own code, naming goto (#613)', () => {
     const { output, errors } = refusalEmitter();
 
-    const exitError = renderNavigationRefusal(output, { kind: 'claim_bearer_mismatch' });
+    const exitError = renderNavigationRefusal(output, {
+      kind: 'claim_bearer_mismatch',
+    });
 
     expect(exitError).toBe(true);
     expect(errors[0]?.[1]).toBe('CLAIM_BEARER_MISMATCH');
@@ -708,6 +729,35 @@ describe('executeGoto', () => {
     };
   }
 
+  const gotoSteps = [makeStep({ name: '1' }), makeStep({ name: '2' })];
+  const navigation = {
+    authority: { runId: DEFAULT_RUNBOOK_ID },
+    steps: gotoSteps,
+  } as unknown as LifecycleNavigationCapability;
+  const progressionDirective = {
+    kind: 'activate',
+    authority: navigation.authority,
+    runbook: makeState().runbook,
+    steps: navigation.steps,
+    entryBoundary: { kind: 'after_observed_transition', lifecycle: 'running' },
+  } as const satisfies Extract<RunProgressionDirective, { kind: 'activate' }>;
+  const waitingProgression = {
+    kind: 'waiting',
+    runId: DEFAULT_RUNBOOK_ID,
+    reason: 'awaiting_input',
+  } as const satisfies RunProgressionOutcome;
+
+  function appliedMutation(): Extract<LifecycleNavigationMutationOutcome, { kind: 'applied' }> {
+    return {
+      kind: 'applied',
+      runId: DEFAULT_RUNBOOK_ID,
+      previousState: makeState(),
+      updatedState: makeState({ step: '2' }),
+      snapshot: {},
+      progression: progressionDirective,
+    };
+  }
+
   // Every refusal the fenced navigation mutation can return, each mapped to its
   // own symbolic code. The codes are the branch an agent acts on — re-claim,
   // re-read, wait, recover, or give up — so the table asserts the message is
@@ -725,7 +775,11 @@ describe('executeGoto', () => {
   }>([
     {
       label: 'a vanished run target',
-      outcome: { kind: 'missing', runId: DEFAULT_RUNBOOK_ID, message: 'run disappeared' },
+      outcome: {
+        kind: 'missing',
+        runId: DEFAULT_RUNBOOK_ID,
+        message: 'run disappeared',
+      },
       code: 'RUN_TARGET_UNAVAILABLE',
     },
     {
@@ -779,11 +833,14 @@ describe('executeGoto', () => {
         update,
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
-      seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
+      seam: {
+        runNavigationMutation,
+      } as unknown as RunbookLifecycleCommandService,
       callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
       steps: [makeStep()],
       cwd: '/test',
+      navigation,
     };
 
     const result = await executeGoto(ctx, { step: '2' });
@@ -798,19 +855,12 @@ describe('executeGoto', () => {
     expect(update).not.toHaveBeenCalled();
   });
 
-  it('returns ok with loop result on success', async () => {
+  it('renders GOTO before forwarding the core directive verbatim to shared progression', async () => {
     const update = mockFn<RunbookStateManager['update']>();
     update.mockImplementation(async (_id, _patch) => makeState({ step: '2' }));
     const runNavigationMutation = mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
-    runNavigationMutation.mockResolvedValue({
-      kind: 'applied',
-      runId: DEFAULT_RUNBOOK_ID,
-      previousState: makeState(),
-      updatedState: makeState({ step: '2' }),
-      snapshot: {},
-      steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
-    });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
+    runNavigationMutation.mockResolvedValue(appliedMutation());
+    jest.mocked(driveRunProgression).mockResolvedValue(waitingProgression);
 
     const action = jest.fn();
     const ctx = {
@@ -822,11 +872,14 @@ describe('executeGoto', () => {
         update,
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
-      seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
+      seam: {
+        runNavigationMutation,
+      } as unknown as RunbookLifecycleCommandService,
       callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
+      navigation,
     };
 
     const target: StepId = { step: '2' };
@@ -834,10 +887,7 @@ describe('executeGoto', () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.loopResult).toBe('done');
-      // manager.load resolves null, so propagateDrivenRunTerminal short-circuits
-      // `skipped` without touching the (unmocked) delegation services.
-      expect(result.propagation).toEqual({ kind: 'skipped' });
+      expect(result.progression).toEqual(waitingProgression);
     }
     expect(action).toHaveBeenCalled();
     expect(runNavigationMutation).toHaveBeenCalledTimes(1);
@@ -845,64 +895,27 @@ describe('executeGoto', () => {
     // alone — the CLI performs no navigation write of its own — so an input that
     // silently lost a field would hand the fence a different mutation.
     expect(runNavigationMutation).toHaveBeenCalledWith({
-      runId: DEFAULT_RUNBOOK_ID,
-      callerEvidence: { kind: 'direct_cli' },
-      steps: ctx.steps,
+      navigation,
       target,
     });
+    expect(driveRunProgression).toHaveBeenCalledWith(
+      progressionDirective,
+      expect.objectContaining({ manager: ctx.manager, cwd: '/test' }),
+    );
+    expect(jest.mocked(driveRunProgression).mock.calls[0]?.[1]).not.toHaveProperty('steps');
+    expect(action.mock.invocationCallOrder[0]).toBeLessThan(
+      jest.mocked(driveRunProgression).mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+    );
     expect(update).not.toHaveBeenCalledWith(
       DEFAULT_RUNBOOK_ID,
       expect.objectContaining({ lastAction: expect.anything() }),
     );
   });
 
-  it.each(['handled', 'blocked'] as const)(
-    'does not propagate a terminal again when loop result is %s',
-    async (loopStatus) => {
-      const runNavigationMutation =
-        mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
-      runNavigationMutation.mockResolvedValue({
-        kind: 'applied',
-        runId: DEFAULT_RUNBOOK_ID,
-        previousState: makeState(),
-        updatedState: makeState({ step: '2' }),
-        snapshot: {},
-        steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
-      });
-      jest.mocked(runExecutionLoop).mockResolvedValue({ status: loopStatus });
-      const load = mockFn<RunbookStateManager['load']>().mockRejectedValue(
-        new Error('post-loop propagation must not load'),
-      );
-      const ctx = {
-        output: { action: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
-        manager: { load } as unknown as RunbookStateManager,
-        seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
-        callerEvidence: { kind: 'direct_cli' as const },
-        state: makeState(),
-        steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
-        cwd: '/test',
-      };
-
-      const result = await executeGoto(ctx, { step: '2' });
-
-      expect(result).toMatchObject({ ok: true, loopResult: loopStatus });
-      expect(result).not.toHaveProperty('propagation');
-      expect(load).not.toHaveBeenCalled();
-    },
-  );
-
   it('does not call clearLastResult after core GOTO synchronization', async () => {
     const clearLastResult = jest.fn(async () => undefined);
     const runNavigationMutation = mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
-    runNavigationMutation.mockResolvedValue({
-      kind: 'applied',
-      runId: DEFAULT_RUNBOOK_ID,
-      previousState: makeState(),
-      updatedState: makeState({ step: '2' }),
-      snapshot: {},
-      steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
-    });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
+    runNavigationMutation.mockResolvedValue(appliedMutation());
 
     const outputAction = jest.fn();
     const output = {
@@ -914,19 +927,21 @@ describe('executeGoto', () => {
       manager: {
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
-      seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
+      seam: {
+        runNavigationMutation,
+      } as unknown as RunbookLifecycleCommandService,
       callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
+      navigation,
     };
 
     const result = await executeGoto(ctx, { step: '2' });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      // manager.load resolves null → propagation short-circuits `skipped`.
-      expect(result.propagation).toEqual({ kind: 'skipped' });
+      expect(result.progression).toEqual(waitingProgression);
     }
     expect(clearLastResult).not.toHaveBeenCalled();
     expect(outputAction).toHaveBeenCalledWith({
@@ -936,19 +951,15 @@ describe('executeGoto', () => {
     });
   });
 
-  it('returns stopped when execution loop stops', async () => {
+  it('returns the shared progression stopped outcome without a second terminal branch', async () => {
     const update = mockFn<RunbookStateManager['update']>();
     update.mockImplementation(async (_id, _patch) => makeState({ step: '2' }));
     const runNavigationMutation = mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
-    runNavigationMutation.mockResolvedValue({
-      kind: 'applied',
+    runNavigationMutation.mockResolvedValue(appliedMutation());
+    jest.mocked(driveRunProgression).mockResolvedValue({
+      kind: 'stopped',
       runId: DEFAULT_RUNBOOK_ID,
-      previousState: makeState(),
-      updatedState: makeState({ step: '2' }),
-      snapshot: {},
-      steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'stopped' });
 
     const ctx = {
       output: {
@@ -959,45 +970,46 @@ describe('executeGoto', () => {
         update,
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
-      seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
+      seam: {
+        runNavigationMutation,
+      } as unknown as RunbookLifecycleCommandService,
       callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
+      navigation,
     };
 
     const result = await executeGoto(ctx, { step: '2' });
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.loopResult).toBe('stopped');
-      // The loop stopped locally; propagation still short-circuits `skipped`
-      // because manager.load resolves null (no parent linkage to report to).
-      expect(result.propagation).toEqual({ kind: 'skipped' });
+      expect(result.progression).toEqual({
+        kind: 'stopped',
+        runId: DEFAULT_RUNBOOK_ID,
+      });
     }
   });
 
-  it('forwards the delegation runtime into the continuation loop', async () => {
-    // The other half of the authority handoff: `buildGotoContext` puts the
-    // branded pair on the context, and this is the only place it reaches the
-    // loop. Without it the loop refuses `ACTOR_CONTEXT_REQUIRED` and stops the
-    // run the moment the navigated-to substep carries a persisted frontier.
+  it('does not unpack or reconstruct the authority used by mutation and continuation', async () => {
     const runNavigationMutation = mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
-    runNavigationMutation.mockResolvedValue({
-      kind: 'applied',
-      runId: DEFAULT_RUNBOOK_ID,
-      previousState: makeState(),
-      updatedState: makeState({ step: '2' }),
-      snapshot: {},
-      steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
-    });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
-
     const issueDelegationCredential = jest.fn() as unknown as DelegationCredentialIssuer;
     const deriveDelegationToken = jest.fn() as unknown as DelegationTokenDeriver;
     const delegationRuntime = delegationRuntimeDouble({
       issueDelegationCredential,
       deriveDelegationToken,
+    });
+    const navigationWithRuntime = {
+      authority: { runId: DEFAULT_RUNBOOK_ID, delegationRuntime },
+      steps: gotoSteps,
+    } as unknown as LifecycleNavigationCapability;
+    const directiveWithRuntime = {
+      ...progressionDirective,
+      authority: navigationWithRuntime.authority,
+    } satisfies Extract<RunProgressionDirective, { kind: 'activate' }>;
+    runNavigationMutation.mockResolvedValue({
+      ...appliedMutation(),
+      progression: directiveWithRuntime,
     });
     const ctx = {
       output: {
@@ -1007,78 +1019,49 @@ describe('executeGoto', () => {
       manager: {
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
-      seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
+      seam: {
+        runNavigationMutation,
+      } as unknown as RunbookLifecycleCommandService,
       callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
-      delegationRuntime,
+      navigation: navigationWithRuntime,
     };
 
     await executeGoto(ctx, { step: '2' });
 
-    const call = jest.mocked(runExecutionLoop).mock.calls.at(-1);
-    expect(call).toBeDefined();
-    expect(call?.slice(0, 4)).toEqual([ctx.manager, DEFAULT_RUNBOOK_ID, ctx.steps, '/test']);
-    // By reference, not by shape: a structural matcher would also accept a pair
-    // rebuilt from the same halves, and forwarding the caller's own runtime is
-    // the whole point of the assertion.
-    expect(call?.[5]?.delegationRuntime).toBe(delegationRuntime);
-    // The mutation takes only the issuer, so the pair is unpacked at that call
-    // site — pinned by identity so the unpack cannot silently take the wrong half.
-    expect(runNavigationMutation).toHaveBeenCalledWith(
-      expect.objectContaining({ issueDelegationCredential }),
-    );
+    expect(runNavigationMutation).toHaveBeenCalledWith({
+      navigation: navigationWithRuntime,
+      target: { step: '2' },
+    });
+    expect(driveRunProgression).toHaveBeenCalledWith(directiveWithRuntime, expect.anything());
+    expect(directiveWithRuntime.authority.delegationRuntime).toBe(delegationRuntime);
   });
 });
 
 describe('gotoResultRequiresFailureExit', () => {
-  // Pure predicate — the load-bearing half of #553: a successful goto must still
-  // exit non-zero when the run stopped locally OR its terminal propagated to a
-  // parent that stopped/blocked. `manager.load → null` in the executeGoto tests
-  // keeps `propagation` at `skipped`, so these cases pin the non-skipped arm the
-  // integration path never forced.
+  // GOTO delegates the exit decision to the same predicate used by every
+  // directive-driven frontend; it does not reinterpret terminal propagation.
   type OkResult = Parameters<typeof gotoResultRequiresFailureExit>[0];
 
-  it('requires failure exit when the loop stopped locally (no propagation)', () => {
-    const result: OkResult = { ok: true, loopResult: 'stopped' };
-    expect(gotoResultRequiresFailureExit(result)).toBe(true);
-  });
-
-  it('does not require failure exit when the run is still waiting with no propagation', () => {
-    const result: OkResult = { ok: true, loopResult: 'waiting' };
-    expect(gotoResultRequiresFailureExit(result)).toBe(false);
-  });
-
-  it('does not require failure exit when propagation was skipped', () => {
-    const result: OkResult = { ok: true, loopResult: 'done', propagation: { kind: 'skipped' } };
-    expect(gotoResultRequiresFailureExit(result)).toBe(false);
-  });
-
-  it('requires failure exit when an inline-advanced propagation stopped the parent', () => {
-    const result: OkResult = {
-      ok: true,
-      loopResult: 'done',
-      propagation: { kind: 'inline-advanced', result: 'stopped' },
-    };
-    expect(gotoResultRequiresFailureExit(result)).toBe(true);
-  });
-
-  it('requires failure exit when an inline-advanced propagation blocked the parent', () => {
-    const result: OkResult = {
-      ok: true,
-      loopResult: 'done',
-      propagation: { kind: 'inline-advanced', result: 'blocked' },
-    };
-    expect(gotoResultRequiresFailureExit(result)).toBe(true);
-  });
-
-  it('does not require failure exit when an inline-advanced propagation was handled', () => {
-    const result: OkResult = {
-      ok: true,
-      loopResult: 'done',
-      propagation: { kind: 'inline-advanced', result: 'handled' },
-    };
-    expect(gotoResultRequiresFailureExit(result)).toBe(false);
+  it.each([
+    [{ kind: 'waiting', runId: DEFAULT_RUNBOOK_ID, reason: 'awaiting_input' }, false],
+    [{ kind: 'completed', runId: DEFAULT_RUNBOOK_ID }, false],
+    [{ kind: 'stopped', runId: DEFAULT_RUNBOOK_ID }, true],
+    [
+      {
+        kind: 'refused',
+        runId: DEFAULT_RUNBOOK_ID,
+        reason: 'actor_context_required',
+        message: 'authority required',
+        recovery: 'provide_authority',
+      },
+      true,
+    ],
+  ] as const)('returns %s for progression %p', (progression, expected) => {
+    const result: OkResult = { ok: true, progression };
+    expect(gotoResultRequiresFailureExit(result)).toBe(expected);
+    expect(progressionFailedClosed).toHaveBeenLastCalledWith(progression);
   });
 });

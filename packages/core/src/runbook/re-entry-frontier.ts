@@ -4,8 +4,11 @@ import type { DelegateFrontierEntry } from '../events/types.js';
 import { PersistedDelegateFrontierEntrySchema } from '../schemas.js';
 import type { RunbookActorService } from './actor-service.js';
 import type { DelegationTokenDeriver } from './delegation-credential.js';
+import type { EffectfulActorMutationRunner } from './effectful-actor-mutation-runner.js';
 import { findStepOrThrow, resolveCurrentExecutionUnit } from './execution-units.js';
 import type { ExecutionUnitEntry } from './execution-unit-entry.js';
+import type { RunProgressionAuthority } from './run-progression-authority.js';
+import type { RunbookStateManager } from './state.js';
 import { InvalidRunbookStateError } from './state.js';
 import type { PersistedDelegateFrontierEntry, ResolvedStep, RunbookState } from './types.js';
 
@@ -151,6 +154,158 @@ export type PreparedReEntryProjection =
       readonly message: string;
     };
 
+/**
+ * Result of the fenced Run Progression frontier turn.
+ *
+ * Unlike the legacy unfenced projection, a consume refusal is a real
+ * execution-fence outcome. The frontier remains persisted and no bearer is
+ * disclosed. A vanished run is kept distinct: disappearance is not
+ * contention and retrying a consume cannot recreate it.
+ */
+export type FencedReEntryProjection =
+  | { readonly status: 'reselect'; readonly state: RunbookState }
+  | {
+      readonly status: 'projected';
+      readonly state: RunbookState;
+      /** Transient bearers supplied to the machine's post-commit entry state. */
+      readonly frontier: readonly DelegateFrontierEntry[];
+    }
+  | { readonly status: 'projection_refused'; readonly message: string }
+  | { readonly status: 'consume_failed' }
+  | {
+      readonly status: 'claim_superseded';
+      readonly message: string;
+    }
+  | { readonly status: 'recovery_required'; readonly message: string }
+  | { readonly status: 'aggregate_recovery_required'; readonly message: string }
+  | { readonly status: 'run_missing'; readonly message: string };
+
+/** Actor-service surface needed by the fenced progression turn. */
+export type FencedReEntryFrontierActorService = Pick<
+  RunbookActorService,
+  'prepareActorMutation' | 'createRecoveryActor'
+>;
+
+/** Inputs to {@link projectAndConsumeReEntryFrontierFenced}. */
+export interface ProjectAndConsumeReEntryFrontierFencedInput {
+  /** Exact state whose compiled machine selected this turn. */
+  readonly state: RunbookState;
+  /** One core-minted run-bound authority; its capabilities are never split. */
+  readonly authority: RunProgressionAuthority;
+  /** Project-bound SQLite execution fence. */
+  readonly actorMutationRunner: EffectfulActorMutationRunner;
+  /** Actor transition/entry seam. */
+  readonly actorService: FencedReEntryFrontierActorService;
+  /** State reader used only to reselect after a write-free frontier result. */
+  readonly manager: Pick<RunbookStateManager, 'load'>;
+  /** Parsed graph for the selected run. */
+  readonly steps: readonly ResolvedStep[];
+}
+
+/**
+ * Project, consume, and commit one re-entry frontier as a fenced turn.
+ *
+ * Projection is derived in `runAll.beforeEffect` against the exact state and
+ * claim generation captured by the runner. A write-free `none` result reloads
+ * the run and asks the compiled machine to reselect progression, while
+ * `projection_refused` is revalidated without acquiring an execution lease.
+ * A projected consume is then committed once under that capture; only
+ * after the commit does the result expose the reconstructed bearers to the
+ * compiled machine's explicit entry state. This preserves
+ * commit-before-disclosure while removing the stale `sendAndSync` path from
+ * migrated progression. This service deliberately does not enter the unit:
+ * entry selection remains XState-owned.
+ *
+ * @param input - Selected state, one authority, fence, actor seam, and graph.
+ * @returns The closed frontier turn for the compiled machine to classify.
+ */
+export async function projectAndConsumeReEntryFrontierFenced(
+  input: ProjectAndConsumeReEntryFrontierFencedInput,
+): Promise<FencedReEntryProjection> {
+  if (input.state.id !== input.authority.runId) {
+    throw new Error(
+      `Run Progression authority for ${input.authority.runId} cannot project frontier for ${input.state.id}`,
+    );
+  }
+  const deriveToken = input.authority.delegationRuntime?.deriveDelegationToken;
+  if (deriveToken === undefined) {
+    throw new Error('Run Progression selected frontier projection without delegation authority');
+  }
+
+  let prepared: Extract<PreparedReEntryProjection, { readonly status: 'projected' }> | undefined;
+  const result = await input.actorMutationRunner.runAll<PreparedReEntryProjection>({
+    targets: [
+      {
+        runId: input.authority.runId,
+        ...(input.authority.claimKey === undefined ? {} : { claimKey: input.authority.claimKey }),
+      },
+    ],
+    beforeEffect: async ([captured]) => {
+      const projection = await prepareReEntryFrontierConsume({
+        actorService: input.actorService,
+        steps: input.steps,
+        state: captured.state,
+        deriveToken,
+      });
+      if (projection.status !== 'projected') {
+        return { kind: 'return' as const, value: projection };
+      }
+      prepared = projection;
+      return { kind: 'continue' as const };
+    },
+    compute: ([captured]) => {
+      if (prepared === undefined) {
+        throw new Error('Frontier consume reached the commit turn without a prepared projection');
+      }
+      return Promise.resolve({
+        members: [{ runId: captured.state.id, nextState: prepared.nextState }],
+        value: prepared,
+      });
+    },
+    makeRecoveryActor: (_runId, state) =>
+      input.actorService.createRecoveryActor(state, [...input.steps]),
+  });
+
+  if (result.kind !== 'committed') {
+    if (result.kind === 'missing') {
+      return { status: 'run_missing', message: result.message };
+    }
+    if (result.kind === 'concurrent_modification' || result.kind === 'execution_in_progress') {
+      return { status: 'consume_failed' };
+    }
+    if (result.kind === 'claim_superseded') {
+      return { status: 'claim_superseded', message: result.message };
+    }
+    if (result.kind === 'recovery_required') {
+      return { status: 'recovery_required', message: result.message };
+    }
+    return { status: 'aggregate_recovery_required', message: result.message };
+  }
+  if (result.value.status === 'none') {
+    const current = await input.manager.load(input.authority.runId);
+    return current === null
+      ? {
+          status: 'run_missing',
+          message: `Run ${input.authority.runId} disappeared before frontier entry`,
+        }
+      : { status: 'reselect', state: current };
+  }
+  if (result.value.status === 'projection_refused') {
+    return result.value;
+  }
+
+  // Bind the transient bearer to the EXACT state its consume committed. A
+  // reload here can observe a later GOTO/PASS from another writer and attach
+  // this frontier's bearer to that newer cursor's STEP_ENTERED observation.
+  // Later durable state is observed after this committed turn is delivered;
+  // it cannot change which entry this bearer belongs to retroactively.
+  return {
+    status: 'projected',
+    state: result.value.nextState,
+    frontier: result.value.frontier,
+  };
+}
+
 /** Inputs for {@link prepareReEntryFrontierConsume}. */
 export interface PrepareReEntryFrontierConsumeInput {
   /** Actor service used to derive the consume transition. */
@@ -251,6 +406,20 @@ function cursorIsOnSubstep(state: RunbookState, steps: readonly ResolvedStep[]):
   return (
     'id' in resolveCurrentExecutionUnit(findStepOrThrow(steps, state.step, state.id), state.substep)
   );
+}
+
+/**
+ * Whether this exact run state carries a frontier its current unit may disclose.
+ *
+ * @param state - Run state whose persisted frontier is being inspected.
+ * @param steps - Exact parsed graph paired with the run state.
+ * @returns True when a frontier exists on the cursor's current substep.
+ */
+export function hasCurrentReEntryFrontier(
+  state: RunbookState,
+  steps: readonly ResolvedStep[],
+): boolean {
+  return readPersistedReEntryFrontier(state).length > 0 && cursorIsOnSubstep(state, steps);
 }
 
 /**

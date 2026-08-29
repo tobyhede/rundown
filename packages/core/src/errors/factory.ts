@@ -95,23 +95,22 @@ export const Errors = {
     new RundownError('STATE_STORE_UNAVAILABLE', { message: detail, driverCode }, cause),
 
   concurrentStateModification: (runId: string, detail: string): RundownError =>
-    new RundownError('CONCURRENT_STATE_MODIFICATION', { runId, message: detail }),
+    new RundownError('CONCURRENT_STATE_MODIFICATION', {
+      runId,
+      message: detail,
+    }),
 
-  // The one post-commit failure a collect can suffer. Spelled with the run id in
-  // context so an operator can name the run whose bearers were lost without
-  // parsing the message, and with the render failure's own text as `message` so
-  // the cause (usually a `--helpers` helper raising) is not swallowed by the
-  // envelope.
-  // Stryker disable next-line ArrowFunction: undetectable, not uncovered. Every
-  // member of this literal is evaluated at module load, so replacing this body
-  // with `() => undefined` is a STATIC mutant — jest's module registry has
-  // already cached `Errors` by the time the mutant is applied, and the mutated
-  // arrow is never the one the test calls. Verified by hand: editing the source
-  // to `() => undefined` DOES fail the RD-833 factory test. The two mutants on
-  // the same line that Stryker can observe (the code string and the context
-  // literal) are both killed by it.
+  // A Run Progression entry failure after its frontier consume committed.
+  // Context names the run whose transient bearers were lost and preserves the
+  // render failure that must be fixed before the step is explicitly re-issued.
+  // Stryker disable next-line ArrowFunction: module-literal arrows are cached
+  // before that static mutant is applied; the code and context mutants on this
+  // line remain covered by the factory test.
   frontierDisclosureFailed: (runId: string, detail: string): RundownError =>
-    new RundownError('DELEGATION_FRONTIER_DISCLOSURE_FAILED', { runId, message: detail }),
+    new RundownError('DELEGATION_FRONTIER_DISCLOSURE_FAILED', {
+      runId,
+      message: detail,
+    }),
 
   // The recovery is spelled into the MESSAGE, not left to the code's
   // `description`, for the same reason `walJournalModeUnavailable` spells its
@@ -207,7 +206,10 @@ export const Errors = {
     new RundownError('DELEGATION_STEP_NOT_CURRENT', { step, current }),
 
   delegationSubstepRequired: (step: string, substeps: string[]): RundownError =>
-    new RundownError('DELEGATION_SUBSTEP_REQUIRED', { step, substeps: substeps.join(', ') }),
+    new RundownError('DELEGATION_SUBSTEP_REQUIRED', {
+      step,
+      substeps: substeps.join(', '),
+    }),
 
   delegationAlreadyExists: (step: string, message?: string): RundownError =>
     new RundownError('DELEGATION_ALREADY_EXISTS', { step, message }),
@@ -237,13 +239,19 @@ export const Errors = {
   // the factory closes the class: no caller can reintroduce the leak by passing
   // the raw value, which is exactly how it was introduced.
   invalidToken: (token: string): RundownError =>
-    new RundownError('INVALID_TOKEN', { token: truncateDelegationToken(token) }),
+    new RundownError('INVALID_TOKEN', {
+      token: truncateDelegationToken(token),
+    }),
 
   tokenNotFound: (token: string): RundownError =>
-    new RundownError('TOKEN_NOT_FOUND', { token: truncateDelegationToken(token) }),
+    new RundownError('TOKEN_NOT_FOUND', {
+      token: truncateDelegationToken(token),
+    }),
 
   tokenCancelled: (token: string): RundownError =>
-    new RundownError('TOKEN_CANCELLED', { token: truncateDelegationToken(token) }),
+    new RundownError('TOKEN_CANCELLED', {
+      token: truncateDelegationToken(token),
+    }),
 
   delegationAlreadyClaimed: (step: string, childRunId: string): RundownError =>
     new RundownError('DELEGATION_ALREADY_CLAIMED', { step, childRunId }),

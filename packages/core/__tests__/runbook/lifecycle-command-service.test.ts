@@ -323,7 +323,10 @@ describe('RunbookLifecycleCommandService', () => {
       // Stubs: the pass/fail + precheck suites never call issueDelegation. The
       // issueDelegation suites build their own seam via startSeamOnDelegateStep.
       resolveChildRunbook: async () => undefined,
-      findDelegationsByTokenHash: async () => ({ current: undefined, superseding: [] }),
+      findDelegationsByTokenHash: async () => ({
+        current: undefined,
+        superseding: [],
+      }),
     });
   });
 
@@ -425,7 +428,12 @@ describe('RunbookLifecycleCommandService', () => {
       findDelegationsByTokenHash: (tokenHash) =>
         new DelegationScanService(manager).scanByTokenHash(tokenHash),
     };
-    return { seam: new RunbookLifecycleCommandService(deps), deps, manager, state };
+    return {
+      seam: new RunbookLifecycleCommandService(deps),
+      deps,
+      manager,
+      state,
+    };
   }
 
   /**
@@ -451,7 +459,11 @@ describe('RunbookLifecycleCommandService', () => {
              (run_id, exec_epoch, exec_token, phase, owner_pid, started_at)
            VALUES (:runId, 1, 'sha256:owned', 'claimed', :pid, :now)`,
         )
-        .run({ runId: ownedRunId, pid: process.pid, now: new Date().toISOString() });
+        .run({
+          runId: ownedRunId,
+          pid: process.pid,
+          now: new Date().toISOString(),
+        });
       txn.tx
         .prepare(
           `UPDATE runs SET exec_epoch = 1, exec_pid = :pid, exec_token = 'sha256:owned'
@@ -540,7 +552,14 @@ describe('RunbookLifecycleCommandService', () => {
       activeFrameKey: iterationFrameKey,
       frameEntryCounts: { [iterationFrameKey]: 1 },
       forStack: [
-        { stepId: '1', iteration: 2, start: 1, end: 2, implicit: false, source: { kind: 'range' } },
+        {
+          stepId: '1',
+          iteration: 2,
+          start: 1,
+          end: 2,
+          implicit: false,
+          source: { kind: 'range' },
+        },
       ],
     });
     await activate(state);
@@ -697,7 +716,10 @@ describe('RunbookLifecycleCommandService', () => {
       // A DIFFERENT run is then activated, so `runId` is controlled-but-not-active:
       // getActive() now returns this run, not `runId`.
       const otherRunId = assertRunId('rd_22222222222222222222222222222222');
-      const activeDefault = baseState({ id: otherRunId, runbookPath: 'other.md' });
+      const activeDefault = baseState({
+        id: otherRunId,
+        runbookPath: 'other.md',
+      });
       await activate(activeDefault);
 
       // Delegating with `runId`'s run-control claim (NO --run) must anchor on
@@ -721,7 +743,9 @@ describe('RunbookLifecycleCommandService', () => {
       // claim, then driven terminal — so the claim resolves to `terminal_claim`,
       // NOT `claim`. A different run is the active default.
       const { seam: localSeam } = await startSeamOnDelegateStep();
-      await manager.updateWithState(runId, () => ({ lifecycle: 'completed' as const }));
+      await manager.updateWithState(runId, () => ({
+        lifecycle: 'completed' as const,
+      }));
       const otherRunId = assertRunId('rd_33333333333333333333333333333333');
       await activate(baseState({ id: otherRunId, runbookPath: 'other.md' }));
 
@@ -759,7 +783,10 @@ describe('RunbookLifecycleCommandService', () => {
       // The authored substep targets "child.md"; resolve it to a DIFFERENT
       // canonical path so returning the authored alias is observably wrong.
       const { seam: localSeam, deps } = await startSeamOnDelegateStep();
-      deps.resolveChildRunbook = async (): Promise<{ path: string; ref: RunbookRef }> => ({
+      deps.resolveChildRunbook = async (): Promise<{
+        path: string;
+        ref: RunbookRef;
+      }> => ({
         path: 'runbooks/child.md',
         ref: { source: 'project', path: 'runbooks/child.md' },
       });
@@ -1968,7 +1995,9 @@ describe('RunbookLifecycleCommandService', () => {
       const terminalChild = await mgr.load(childRunId);
       if (!terminalChild) throw new Error('expected terminal child to remain for diagnostics');
       await expect(
-        deps.completionService.recordChildCompletion({ childState: terminalChild }),
+        deps.completionService.recordChildCompletion({
+          childState: terminalChild,
+        }),
       ).resolves.toBe('not-applicable');
       await expect(
         lifecycleService.getResolvedCompletion(state.id, keyForSubstep('1')),
@@ -2394,7 +2423,10 @@ describe('RunbookLifecycleCommandService', () => {
         findDelegationsByTokenHash: async () => ({
           current: {
             ...realScan,
-            delegation: { ...realScan.delegation, contextSnapshot: snapshotWithoutAt },
+            delegation: {
+              ...realScan.delegation,
+              contextSnapshot: snapshotWithoutAt,
+            },
           },
           superseding: [],
         }),
@@ -2461,7 +2493,10 @@ describe('RunbookLifecycleCommandService', () => {
       const outcome = await localSeam.issueDelegation({
         mode: 'retry',
         callerEvidence: runControlEvidence(runId),
-        locator: { kind: 'token', token: 'rdtk_unknown00000000000000000000000000' },
+        locator: {
+          kind: 'token',
+          token: 'rdtk_unknown00000000000000000000000000',
+        },
       });
       expect(outcome.kind).toBe('token-not-found');
     });
@@ -2716,7 +2751,10 @@ describe('RunbookLifecycleCommandService', () => {
       await mgr.updateWithState(state.id, () => ({
         activeFrameKey: iteration2Frame,
         activeEntry: 2,
-        frameEntryCounts: replace({ [iteration1Frame]: 1, [iteration2Frame]: 2 }),
+        frameEntryCounts: replace({
+          [iteration1Frame]: 1,
+          [iteration2Frame]: 2,
+        }),
         forStack: [
           {
             stepId: '1',
@@ -2787,7 +2825,10 @@ describe('RunbookLifecycleCommandService', () => {
       await mgr.updateWithState(state.id, () => ({
         activeFrameKey: iteration2Frame,
         activeEntry: 2,
-        frameEntryCounts: replace({ [iteration1Frame]: 1, [iteration2Frame]: 2 }),
+        frameEntryCounts: replace({
+          [iteration1Frame]: 1,
+          [iteration2Frame]: 2,
+        }),
         forStack: [
           {
             stepId: '1',
@@ -2882,7 +2923,9 @@ describe('RunbookLifecycleCommandService', () => {
         deps.actorMutationRunner = runnerWithAsyncFenceEntryHook(
           deps.actorMutationRunner,
           async () => {
-            await mgr.updateWithState(state.id, () => ({ activeFrameKey: iterationFrameKey }));
+            await mgr.updateWithState(state.id, () => ({
+              activeFrameKey: iterationFrameKey,
+            }));
           },
         );
 
@@ -3058,7 +3101,13 @@ describe('RunbookLifecycleCommandService', () => {
             await mgr.updateWithState(state.id, (current) => ({
               substepStates: (current.substepStates ?? []).map((entry) =>
                 entry.delegation
-                  ? { ...entry, delegation: { ...entry.delegation, childRunId: racingChildRunId } }
+                  ? {
+                      ...entry,
+                      delegation: {
+                        ...entry.delegation,
+                        childRunId: racingChildRunId,
+                      },
+                    }
                   : entry,
               ),
             }));
@@ -3114,7 +3163,9 @@ describe('RunbookLifecycleCommandService', () => {
         deps.actorMutationRunner = runnerWithAsyncFenceEntryHook(
           deps.actorMutationRunner,
           async () => {
-            await mgr.updateWithState(childRunId, () => ({ lifecycle: 'running' }));
+            await mgr.updateWithState(childRunId, () => ({
+              lifecycle: 'running',
+            }));
           },
         );
 
@@ -3155,7 +3206,10 @@ describe('RunbookLifecycleCommandService', () => {
       await mgr.updateWithState(state.id, () => ({
         step: '2',
         activeFrameKey: buildFrameKey('2'),
-        frameEntryCounts: replace({ [buildFrameKey('1')]: 1, [buildFrameKey('2')]: 1 }),
+        frameEntryCounts: replace({
+          [buildFrameKey('1')]: 1,
+          [buildFrameKey('2')]: 1,
+        }),
       }));
 
       const outcome = await localSeam.issueDelegation({
@@ -3272,7 +3326,10 @@ describe('RunbookLifecycleCommandService', () => {
         '1',
         buildFrameKey('1'),
       )?.delegation;
-      expect(delegation?.extraVars).toEqual({ environment: 'production', region: 'ap' });
+      expect(delegation?.extraVars).toEqual({
+        environment: 'production',
+        region: 'ap',
+      });
       expect(delegation?.contextSnapshot.vars).toEqual(
         expect.objectContaining({ environment: 'production', region: 'ap' }),
       );
@@ -3379,7 +3436,14 @@ describe('RunbookLifecycleCommandService', () => {
       // turn that into a TypeError escaping a seam whose contract is typed data.
       const { seam: localSeam, manager: mgr, state } = await startSeamOnMultiStepRunbook();
       await mgr.updateWithState(state.id, () => ({
-        substepStates: [{ id: '1', frameKey: buildFrameKey('2'), status: 'done', result: 'pass' }],
+        substepStates: [
+          {
+            id: '1',
+            frameKey: buildFrameKey('2'),
+            status: 'done',
+            result: 'pass',
+          },
+        ],
       }));
 
       const outcome = await localSeam.issueDelegation({
@@ -3797,7 +3861,11 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       expect(outcome).toEqual(
-        expect.objectContaining({ kind: 'cancelled', substepId: '1', cleanup: 'none' }),
+        expect.objectContaining({
+          kind: 'cancelled',
+          substepId: '1',
+          cleanup: 'none',
+        }),
       );
       expect(
         findSubstepState((await mgr.load(state.id))?.substepStates ?? [], '1', buildFrameKey('2'))
@@ -3840,7 +3908,9 @@ describe('RunbookLifecycleCommandService', () => {
       }
 
       it('refuses token_not_found when the captured run has no substep states at all', async () => {
-        const { outcome } = await abortAfterFenceMutation(() => () => ({ substepStates: [] }));
+        const { outcome } = await abortAfterFenceMutation(() => () => ({
+          substepStates: [],
+        }));
         expect(outcome).toEqual({ kind: 'token_not_found' });
       });
 
@@ -3867,7 +3937,13 @@ describe('RunbookLifecycleCommandService', () => {
         const { outcome, state, mgr } = await abortAfterFenceMutation(() => (current) => ({
           substepStates: (current.substepStates ?? []).map((entry) =>
             entry.delegation
-              ? { ...entry, delegation: { ...entry.delegation, childRunId: racingChildRunId } }
+              ? {
+                  ...entry,
+                  delegation: {
+                    ...entry.delegation,
+                    childRunId: racingChildRunId,
+                  },
+                }
               : entry,
           ),
         }));
@@ -3907,7 +3983,10 @@ describe('RunbookLifecycleCommandService', () => {
 
       it('maps an error preparation status to the machine error verbatim', async () => {
         const refusal = Errors.delegationInFlight('1', 'rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeee00');
-        const outcome = await abortWithPreparedStatus({ status: 'error', error: refusal });
+        const outcome = await abortWithPreparedStatus({
+          status: 'error',
+          error: refusal,
+        });
         expect(outcome).toEqual({ kind: 'error', error: refusal });
       });
 
@@ -3923,8 +4002,15 @@ describe('RunbookLifecycleCommandService', () => {
 
       it('maps a needs_force preparation status to the force-required outcome', async () => {
         const childRunId = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeee02');
-        const outcome = await abortWithPreparedStatus({ status: 'needs_force', childRunId });
-        expect(outcome).toEqual({ kind: 'needs_force', substepId: '1', childRunId });
+        const outcome = await abortWithPreparedStatus({
+          status: 'needs_force',
+          childRunId,
+        });
+        expect(outcome).toEqual({
+          kind: 'needs_force',
+          substepId: '1',
+          childRunId,
+        });
       });
     });
 
@@ -4064,7 +4150,10 @@ describe('RunbookLifecycleCommandService', () => {
                 entry.delegation?.tokenHash === issued.tokenHash
                   ? {
                       ...entry,
-                      delegation: { ...entry.delegation, tokenHash: replacementHash },
+                      delegation: {
+                        ...entry.delegation,
+                        tokenHash: replacementHash,
+                      },
                     }
                   : entry,
               ),
@@ -4131,7 +4220,10 @@ describe('RunbookLifecycleCommandService', () => {
        */
       async function forceAbortWithChildLinkage(
         linkage: (issuedTokenHash: string, parentRunId: RunId) => RunbookState['parentLinkage'],
-      ): Promise<{ outcome: DelegationAbortOutcome; cancelledAt: string | null | undefined }> {
+      ): Promise<{
+        outcome: DelegationAbortOutcome;
+        cancelledAt: string | null | undefined;
+      }> {
         const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
         const issued = await localSeam.issueDelegation({
           mode: 'fresh',
@@ -4187,7 +4279,10 @@ describe('RunbookLifecycleCommandService', () => {
       it('force-aborts a child whose linkage names this exact delegation', async () => {
         const { outcome, cancelledAt } = await forceAbortWithChildLinkage(matching);
         expect(outcome).toEqual(
-          expect.objectContaining({ kind: 'cancelled', cleanup: 'terminal_child_cleaned' }),
+          expect.objectContaining({
+            kind: 'cancelled',
+            cleanup: 'terminal_child_cleaned',
+          }),
         );
         expect(cancelledAt).toEqual(expect.any(String));
       });
@@ -4343,7 +4438,10 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       expect(outcome).toEqual(
-        expect.objectContaining({ kind: 'cancelled', cleanup: 'active_child_failed' }),
+        expect.objectContaining({
+          kind: 'cancelled',
+          cleanup: 'active_child_failed',
+        }),
       );
       // Driven terminal by the same commit, not merely unlinked.
       expect((await mgr.load(childRunId))?.lifecycle).toBe('stopped');
@@ -4397,7 +4495,10 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       expect(outcome).toEqual(
-        expect.objectContaining({ kind: 'cancelled', cleanup: 'terminal_child_cleaned' }),
+        expect.objectContaining({
+          kind: 'cancelled',
+          cleanup: 'terminal_child_cleaned',
+        }),
       );
       expect((await mgr.load(childRunId))?.lifecycle).toBe('stopped');
       expect((await mgr.loadSession()).claims[claimKeyFromBearer(childClaim)]).toBeUndefined();
@@ -4666,7 +4767,12 @@ describe('RunbookLifecycleCommandService', () => {
 
   describe('runTransition refusals', () => {
     const steps: ResolvedStep[] = [
-      { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
+      {
+        kind: 'base',
+        name: '1',
+        description: 'one',
+        transitions: tx('CONTINUE', 'STOP'),
+      },
     ];
 
     beforeEach(() => {
@@ -4793,7 +4899,9 @@ describe('RunbookLifecycleCommandService', () => {
 
       expect(recordSpy).toHaveBeenCalledTimes(1);
       expect(recordSpy).toHaveBeenCalledWith(
-        expect.objectContaining({ targetFrame: inactiveFrame(buildFrameKey('1', 5)) }),
+        expect.objectContaining({
+          targetFrame: inactiveFrame(buildFrameKey('1', 5)),
+        }),
       );
       expect(outcome.kind).toBe('applied');
     });
@@ -4815,8 +4923,18 @@ describe('RunbookLifecycleCommandService', () => {
     );
 
     const twoSteps: ResolvedStep[] = [
-      { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
-      { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      {
+        kind: 'base',
+        name: '1',
+        description: 'one',
+        transitions: tx('CONTINUE', 'STOP'),
+      },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'two',
+        transitions: tx('COMPLETE', 'STOP'),
+      },
     ];
 
     /**
@@ -4826,7 +4944,10 @@ describe('RunbookLifecycleCommandService', () => {
      * claim, so a seam that lost the claim selector would fall back to A rather
      * than coincidentally landing on the same run these cases assert about.
      */
-    async function activateTwoClaimedRuns(): Promise<{ claimA: ClaimId; claimB: ClaimId }> {
+    async function activateTwoClaimedRuns(): Promise<{
+      claimA: ClaimId;
+      claimB: ClaimId;
+    }> {
       loadStepsImpl = () => twoSteps;
       await activate(baseState({ id: runB, runbookPath: 'b.md' }));
       await activate(baseState({ id: runA, runbookPath: 'a.md' }));
@@ -5101,8 +5222,18 @@ describe('RunbookLifecycleCommandService', () => {
     const foreignRunId = assertRunId('rd_99999999999999999999999999999999');
 
     const twoSteps: ResolvedStep[] = [
-      { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
-      { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      {
+        kind: 'base',
+        name: '1',
+        description: 'one',
+        transitions: tx('CONTINUE', 'STOP'),
+      },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'two',
+        transitions: tx('COMPLETE', 'STOP'),
+      },
     ];
 
     it('applies a run-targeted pass to the named run even when a different run is stack-top', async () => {
@@ -5148,7 +5279,10 @@ describe('RunbookLifecycleCommandService', () => {
         const prepared = await realPrepare(...args);
         return {
           ...prepared,
-          nextState: { ...prepared.nextState, lifecycle: 'completed' as const },
+          nextState: {
+            ...prepared.nextState,
+            lifecycle: 'completed' as const,
+          },
           snapshot: { status: 'active', value: 'COMPLETE' },
         };
       });
@@ -5164,7 +5298,9 @@ describe('RunbookLifecycleCommandService', () => {
       if (outcome.kind !== 'applied') return;
       // The release committed with the state, so the outcome must agree.
       expect(await manager.loadSession()).toEqual(
-        expect.objectContaining({ defaultStack: expect.not.arrayContaining([namedRunId]) }),
+        expect.objectContaining({
+          defaultStack: expect.not.arrayContaining([namedRunId]),
+        }),
       );
       expect(outcome.status).toBe('done');
       expect(outcome.events.map((event) => event.type)).toContain('RUNBOOK_COMPLETED');
@@ -5224,7 +5360,11 @@ describe('RunbookLifecycleCommandService', () => {
       const linkage = linkageFor(namedRunId, 'a');
       await activate(baseState({ id: namedRunId }));
       await manager.save(
-        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+        baseState({
+          id: childRunId,
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        }),
       );
       await seedLiveDelegation(manager, linkage);
 
@@ -5257,10 +5397,21 @@ describe('RunbookLifecycleCommandService', () => {
           name: '1',
           description: 'Substeps',
           aggregation: { strategy: 'ALL' },
-          substeps: [{ id: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') }],
+          substeps: [
+            {
+              id: '1',
+              description: 'one',
+              transitions: tx('CONTINUE', 'STOP'),
+            },
+          ],
           transitions: tx('CONTINUE', 'STOP'),
         },
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'two',
+          transitions: tx('COMPLETE', 'STOP'),
+        },
       ];
       loadStepsImpl = () => substepSteps;
       await activate(
@@ -5429,8 +5580,18 @@ describe('RunbookLifecycleCommandService', () => {
     const childRunId = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeee11');
 
     const twoSteps: ResolvedStep[] = [
-      { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
-      { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      {
+        kind: 'base',
+        name: '1',
+        description: 'one',
+        transitions: tx('CONTINUE', 'STOP'),
+      },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'two',
+        transitions: tx('COMPLETE', 'STOP'),
+      },
     ];
 
     it('refuses a racing child claim on the run-control claim arm', async () => {
@@ -5441,7 +5602,11 @@ describe('RunbookLifecycleCommandService', () => {
       const linkage = linkageFor(parentRunId, 'a');
       await activate(baseState({ id: parentRunId }));
       await manager.save(
-        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+        baseState({
+          id: childRunId,
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        }),
       );
       await seedLiveDelegation(manager, linkage);
 
@@ -5481,7 +5646,11 @@ describe('RunbookLifecycleCommandService', () => {
       const linkage = linkageFor(parentRunId, 'a');
       await activate(baseState({ id: parentRunId }));
       await manager.save(
-        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+        baseState({
+          id: childRunId,
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        }),
       );
       const claimed = assertClaimed(
         await claimLiveDelegation(sessionService, manager, childRunId, linkage),
@@ -5524,8 +5693,18 @@ describe('RunbookLifecycleCommandService', () => {
 
   describe('resolveRunNavigation (goto seam)', () => {
     const twoSteps: ResolvedStep[] = [
-      { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
-      { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      {
+        kind: 'base',
+        name: '1',
+        description: 'one',
+        transitions: tx('CONTINUE', 'STOP'),
+      },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'two',
+        transitions: tx('COMPLETE', 'STOP'),
+      },
     ];
 
     it('bumps the active entry exactly once for a navigation onto the occupied frame', async () => {
@@ -5545,10 +5724,16 @@ describe('RunbookLifecycleCommandService', () => {
       const before = await manager.load(runId);
       const beforeEntry = before?.activeEntry ?? 1;
 
-      const outcome = await seam.runNavigationMutation({
-        runId,
+      const navigation = await seam.resolveRunNavigation({
+        command: 'goto',
         callerEvidence: runControlEvidence(runId),
-        steps: twoSteps,
+        targetSelector: { kind: 'run', runId },
+      });
+      if (navigation.kind !== 'allowed')
+        throw new Error(`expected allowed, got ${navigation.kind}`);
+
+      const outcome = await seam.runNavigationMutation({
+        navigation: navigation.navigation,
         target: { step: '1' },
       });
 
@@ -5571,10 +5756,16 @@ describe('RunbookLifecycleCommandService', () => {
       const store = await getRunbookStore(tmp);
       const keyedCapture = jest.spyOn(store, 'captureAuthorityState');
 
-      const outcome = await seam.runNavigationMutation({
-        runId,
+      const navigation = await seam.resolveRunNavigation({
+        command: 'goto',
         callerEvidence: DIRECT_CLI,
-        steps: twoSteps,
+        targetSelector: { kind: 'default' },
+      });
+      if (navigation.kind !== 'allowed')
+        throw new Error(`expected allowed, got ${navigation.kind}`);
+
+      const outcome = await seam.runNavigationMutation({
+        navigation: navigation.navigation,
         target: { step: '2' },
       });
 
@@ -5596,7 +5787,8 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('allowed');
       if (outcome.kind !== 'allowed') return;
       expect(outcome.runId).toBe(runId);
-      expect(outcome.steps).toEqual(twoSteps);
+      expect(outcome.navigation.steps).toBe(twoSteps);
+      expect(outcome).not.toHaveProperty('steps');
     });
 
     it('allows navigation when a bearer claim authorizes the run', async () => {
@@ -5611,8 +5803,8 @@ describe('RunbookLifecycleCommandService', () => {
 
       expect(outcome.kind).toBe('allowed');
       if (outcome.kind !== 'allowed') return;
-      expect(outcome.delegationRuntime).toBeDefined();
-      const runtime = outcome.delegationRuntime;
+      expect(outcome.navigation.authority.delegationRuntime).toBeDefined();
+      const runtime = outcome.navigation.authority.delegationRuntime;
       if (runtime === undefined) return;
       const issued = runtime.issueDelegationCredential({
         parentRunId: runId,
@@ -5710,12 +5902,19 @@ describe('RunbookLifecycleCommandService', () => {
       const childRunId = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeee20');
       const linkage = linkageFor(runId, 'a');
       await manager.save(
-        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+        baseState({
+          id: childRunId,
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        }),
       );
       const claimed = assertClaimed(
         await claimLiveDelegation(sessionService, manager, childRunId, linkage),
       );
-      const evidence: CallerEvidence = { kind: 'claim_bearer', claimId: claimed.claimId };
+      const evidence: CallerEvidence = {
+        kind: 'claim_bearer',
+        claimId: claimed.claimId,
+      };
 
       const navigation = await seam.resolveRunNavigation({
         command: 'goto',
@@ -5738,9 +5937,7 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       const outcome = await seam.runNavigationMutation({
-        runId: childRunId,
-        callerEvidence: evidence,
-        steps: navigation.steps,
+        navigation: navigation.navigation,
         target: { step: '2' },
       });
 
@@ -5787,7 +5984,11 @@ describe('RunbookLifecycleCommandService', () => {
       const linkage = linkageFor(runId, 'a');
       await activate(baseState());
       await manager.save(
-        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+        baseState({
+          id: childRunId,
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        }),
       );
       await seedLiveDelegation(manager, linkage);
 
@@ -5808,9 +6009,7 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       const outcome = await seam.runNavigationMutation({
-        runId,
-        callerEvidence: runControlEvidence(runId),
-        steps: navigation.steps,
+        navigation: navigation.navigation,
         target: { step: '2' },
       });
 
@@ -5848,8 +6047,18 @@ describe('RunbookLifecycleCommandService', () => {
   describe('top-level transition drive', () => {
     it('applies a PASS CONTINUE and instructs the loop to continue', async () => {
       const steps: ResolvedStep[] = [
-        { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+        {
+          kind: 'base',
+          name: '1',
+          description: 'one',
+          transitions: tx('CONTINUE', 'STOP'),
+        },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'two',
+          transitions: tx('COMPLETE', 'STOP'),
+        },
       ];
       loadStepsImpl = () => steps;
       await activate(baseState());
@@ -5873,7 +6082,12 @@ describe('RunbookLifecycleCommandService', () => {
 
     it('applies a PASS COMPLETE as a terminal done with no loop', async () => {
       const steps: ResolvedStep[] = [
-        { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+        {
+          kind: 'base',
+          name: '1',
+          description: 'one',
+          transitions: tx('COMPLETE', 'STOP'),
+        },
       ];
       loadStepsImpl = () => steps;
       await activate(baseState());
@@ -5897,8 +6111,18 @@ describe('RunbookLifecycleCommandService', () => {
       // continue + persisted `fail` proves the command drove the fail handler
       // rather than silently reusing the pass path.
       const steps: ResolvedStep[] = [
-        { kind: 'base', name: '1', description: 'one', transitions: tx('STOP', 'CONTINUE') },
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+        {
+          kind: 'base',
+          name: '1',
+          description: 'one',
+          transitions: tx('STOP', 'CONTINUE'),
+        },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'two',
+          transitions: tx('COMPLETE', 'STOP'),
+        },
       ];
       loadStepsImpl = () => steps;
       await activate(baseState());
@@ -5930,8 +6154,18 @@ describe('RunbookLifecycleCommandService', () => {
       // still persisting `fail` — asserting both is what separates "the callback
       // was threaded" from "the command was misread".
       loadStepsImpl = () => [
-        { kind: 'base', name: '1', description: 'one', transitions: tx('STOP', 'CONTINUE') },
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+        {
+          kind: 'base',
+          name: '1',
+          description: 'one',
+          transitions: tx('STOP', 'CONTINUE'),
+        },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'two',
+          transitions: tx('COMPLETE', 'STOP'),
+        },
       ];
       await activate(baseState());
 
@@ -5962,20 +6196,37 @@ describe('RunbookLifecycleCommandService', () => {
       // inside it both opens the race and witnesses that the key was used.
       // Modelled on the goto seam's witness, at the same fence point.
       const steps: ResolvedStep[] = [
-        { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+        {
+          kind: 'base',
+          name: '1',
+          description: 'one',
+          transitions: tx('CONTINUE', 'STOP'),
+        },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'two',
+          transitions: tx('COMPLETE', 'STOP'),
+        },
       ];
       loadStepsImpl = () => steps;
       await activate(baseState());
       const childRunId = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeee31');
       const linkage = linkageFor(runId, 'a');
       await manager.save(
-        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+        baseState({
+          id: childRunId,
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        }),
       );
       const claimed = assertClaimed(
         await claimLiveDelegation(sessionService, manager, childRunId, linkage),
       );
-      const evidence: CallerEvidence = { kind: 'claim_bearer', claimId: claimed.claimId };
+      const evidence: CallerEvidence = {
+        kind: 'claim_bearer',
+        claimId: claimed.claimId,
+      };
 
       const capturedRunIds = retireDuringCapture(
         await getRunbookStore(tmp),
@@ -6026,7 +6277,12 @@ describe('RunbookLifecycleCommandService', () => {
     // across. The issuer is exercised, not merely counted — a forwarded value
     // that cannot mint fails the same assertion an absent one does.
     const stepsLandingOnDelegate: ResolvedStep[] = [
-      { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
+      {
+        kind: 'base',
+        name: '1',
+        description: 'one',
+        transitions: tx('CONTINUE', 'STOP'),
+      },
       delegateStep('2', [delegateSubstep('1', 'child.md')]),
     ];
 
@@ -6100,17 +6356,12 @@ describe('RunbookLifecycleCommandService', () => {
       });
       expect(allowed.kind).toBe('allowed');
       if (allowed.kind !== 'allowed') return;
-      expect(allowed.delegationRuntime).toBeDefined();
+      expect(allowed.navigation.authority.delegationRuntime).toBeDefined();
       const runtimeArgs = captureRuntimeArgs();
 
       await seam.runNavigationMutation({
-        runId,
-        callerEvidence: runControlEvidence(runId),
-        steps: stepsLandingOnDelegate,
+        navigation: allowed.navigation,
         target: { step: '2' },
-        ...(allowed.delegationRuntime === undefined
-          ? {}
-          : { issueDelegationCredential: allowed.delegationRuntime.issueDelegationCredential }),
       });
 
       const seen = runtimeArgs();
@@ -6165,8 +6416,18 @@ describe('RunbookLifecycleCommandService', () => {
 
   describe('delegation runtime authority', () => {
     const twoSteps: ResolvedStep[] = [
-      { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
-      { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      {
+        kind: 'base',
+        name: '1',
+        description: 'one',
+        transitions: tx('CONTINUE', 'STOP'),
+      },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'two',
+        transitions: tx('COMPLETE', 'STOP'),
+      },
     ];
 
     /** Strip one grant action from the run's persisted run-control claim. */
@@ -6230,9 +6491,11 @@ describe('RunbookLifecycleCommandService', () => {
 
       expect(outcome.kind).toBe('allowed');
       if (outcome.kind !== 'allowed') return;
-      expect(outcome.delegationRuntime).toBeDefined();
-      expect(outcome.delegationRuntime?.issueDelegationCredential).toBeDefined();
-      expect(outcome.delegationRuntime?.deriveDelegationToken).toBeDefined();
+      expect(outcome.navigation.authority.delegationRuntime).toBeDefined();
+      expect(
+        outcome.navigation.authority.delegationRuntime?.issueDelegationCredential,
+      ).toBeDefined();
+      expect(outcome.navigation.authority.delegationRuntime?.deriveDelegationToken).toBeDefined();
     });
 
     it('withholds the delegation runtime from a navigation bearer without delegate-from-run', async () => {
@@ -6250,7 +6513,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       expect(outcome.kind).toBe('allowed');
       if (outcome.kind !== 'allowed') return;
-      expect(outcome.delegationRuntime).toBeUndefined();
+      expect(outcome.navigation.authority.delegationRuntime).toBeUndefined();
     });
   });
 
@@ -6261,7 +6524,12 @@ describe('RunbookLifecycleCommandService', () => {
 
     it('releases the runbook as addressed when the transition reaches a terminal done', async () => {
       const steps: ResolvedStep[] = [
-        { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+        {
+          kind: 'base',
+          name: '1',
+          description: 'one',
+          transitions: tx('COMPLETE', 'STOP'),
+        },
       ];
       loadStepsImpl = () => steps;
       await activate(baseState());
@@ -6293,7 +6561,12 @@ describe('RunbookLifecycleCommandService', () => {
     // still reaches the release rather than being dropped on the way there.
     it('releases the runbook as addressed when the transition reaches a terminal stopped', async () => {
       const steps: ResolvedStep[] = [
-        { kind: 'base', name: '1', description: 'one', transitions: tx('STOP', 'STOP') },
+        {
+          kind: 'base',
+          name: '1',
+          description: 'one',
+          transitions: tx('STOP', 'STOP'),
+        },
       ];
       loadStepsImpl = () => steps;
       await activate(baseState());
@@ -6328,7 +6601,12 @@ describe('RunbookLifecycleCommandService', () => {
         releaseOnTerminal: false,
       };
       const steps: ResolvedStep[] = [
-        { kind: 'base', name: '1', description: 'one', transitions: tx('STOP', 'STOP') },
+        {
+          kind: 'base',
+          name: '1',
+          description: 'one',
+          transitions: tx('STOP', 'STOP'),
+        },
       ];
       loadStepsImpl = () => steps;
       await activate(baseState());
@@ -6362,7 +6640,12 @@ describe('RunbookLifecycleCommandService', () => {
           substeps: [{ id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') }],
           transitions: tx('CONTINUE', 'STOP'),
         },
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'two',
+          transitions: tx('COMPLETE', 'STOP'),
+        },
       ];
       loadStepsImpl = () => steps;
       await activate(
@@ -6410,7 +6693,12 @@ describe('RunbookLifecycleCommandService', () => {
           substeps: [{ id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') }],
           transitions: tx('CONTINUE', 'STOP'),
         },
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'two',
+          transitions: tx('COMPLETE', 'STOP'),
+        },
       ];
       loadStepsImpl = () => steps;
       await activate(
@@ -6452,7 +6740,12 @@ describe('RunbookLifecycleCommandService', () => {
           substeps: [{ id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') }],
           transitions: tx('CONTINUE', 'STOP'),
         },
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'two',
+          transitions: tx('COMPLETE', 'STOP'),
+        },
       ];
       loadStepsImpl = () => steps;
       await activate(baseState());
@@ -6472,7 +6765,10 @@ describe('RunbookLifecycleCommandService', () => {
       const claimed = assertClaimed(
         await claimLiveDelegation(sessionService, manager, childRunId, linkage),
       );
-      const evidence: CallerEvidence = { kind: 'claim_bearer', claimId: claimed.claimId };
+      const evidence: CallerEvidence = {
+        kind: 'claim_bearer',
+        claimId: claimed.claimId,
+      };
 
       const capturedRunIds = retireDuringCapture(
         await getRunbookStore(tmp),
@@ -6509,7 +6805,12 @@ describe('RunbookLifecycleCommandService', () => {
           substeps: [{ id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') }],
           transitions: tx('CONTINUE', 'STOP'),
         },
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'two',
+          transitions: tx('COMPLETE', 'STOP'),
+        },
       ];
       loadStepsImpl = () => steps;
       await activate(
@@ -6554,7 +6855,12 @@ describe('RunbookLifecycleCommandService', () => {
           ],
           transitions: tx('CONTINUE', 'STOP'),
         },
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'two',
+          transitions: tx('COMPLETE', 'STOP'),
+        },
       ];
       loadStepsImpl = () => steps;
       const childRunId = assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeee33');
@@ -6573,7 +6879,11 @@ describe('RunbookLifecycleCommandService', () => {
         }),
       );
       await manager.save(
-        baseState({ id: childRunId, runbookPath: 'child.md', parentLinkage: linkage }),
+        baseState({
+          id: childRunId,
+          runbookPath: 'child.md',
+          parentLinkage: linkage,
+        }),
       );
       await seedLiveDelegation(manager, linkage);
 
@@ -6620,7 +6930,12 @@ describe('RunbookLifecycleCommandService', () => {
           ],
           transitions: tx('CONTINUE', 'STOP'),
         },
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'two',
+          transitions: tx('COMPLETE', 'STOP'),
+        },
       ];
       loadStepsImpl = () => steps;
       await activate(
@@ -6629,7 +6944,12 @@ describe('RunbookLifecycleCommandService', () => {
           stepName: 'Substeps',
           substep: '2',
           substepStates: [
-            { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' },
+            {
+              id: '1',
+              frameKey: buildFrameKey('1'),
+              status: 'done',
+              result: 'pass',
+            },
             { id: '2', frameKey: buildFrameKey('1'), status: 'running' },
           ],
         }),
@@ -6658,7 +6978,12 @@ describe('RunbookLifecycleCommandService', () => {
       expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
       expect(persisted?.substep).toBe('2');
       expect(persisted?.substepStates).toEqual([
-        { id: '1', frameKey: buildFrameKey('1'), status: 'done', result: 'pass' },
+        {
+          id: '1',
+          frameKey: buildFrameKey('1'),
+          status: 'done',
+          result: 'pass',
+        },
         { id: '2', frameKey: buildFrameKey('1'), status: 'running' },
       ]);
     });
@@ -6811,7 +7136,12 @@ describe('RunbookLifecycleCommandService', () => {
         ],
         transitions: tx('CONTINUE', 'STOP'),
       },
-      { kind: 'base', name: '2', description: 'done', transitions: tx('COMPLETE', 'STOP') },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'done',
+        transitions: tx('COMPLETE', 'STOP'),
+      },
     ];
 
     beforeEach(() => {
@@ -6895,7 +7225,13 @@ describe('RunbookLifecycleCommandService', () => {
           name: '1',
           description: 'Substeps',
           aggregation: { strategy: 'ALL' },
-          substeps: [{ id: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') }],
+          substeps: [
+            {
+              id: '1',
+              description: 'one',
+              transitions: tx('COMPLETE', 'STOP'),
+            },
+          ],
           transitions: tx('COMPLETE', 'STOP'),
         },
       ];
@@ -6936,7 +7272,12 @@ describe('RunbookLifecycleCommandService', () => {
         substeps: [{ id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') }],
         transitions: tx('CONTINUE', 'STOP'),
       },
-      { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'two',
+        transitions: tx('COMPLETE', 'STOP'),
+      },
     ];
 
     beforeEach(() => {
@@ -6961,7 +7302,11 @@ describe('RunbookLifecycleCommandService', () => {
         contextSnapshot: buildContextSnapshot(parent, '1'),
         childRunId,
         createdAt: '2026-06-28T00:00:00.000Z',
-        started: { at: '2026-06-28T00:00:01.000Z', ownerPid: 4242, ownerStartId: null },
+        started: {
+          at: '2026-06-28T00:00:01.000Z',
+          ownerPid: 4242,
+          ownerStartId: null,
+        },
       };
       const substepState: SubstepState = {
         id: '1',
@@ -7154,8 +7499,18 @@ describe('RunbookLifecycleCommandService', () => {
   describe('single-resolution loadSteps', () => {
     it('derives steps exactly once from the resolved active state', async () => {
       const steps: ResolvedStep[] = [
-        { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
-        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+        {
+          kind: 'base',
+          name: '1',
+          description: 'one',
+          transitions: tx('CONTINUE', 'STOP'),
+        },
+        {
+          kind: 'base',
+          name: '2',
+          description: 'two',
+          transitions: tx('COMPLETE', 'STOP'),
+        },
       ];
       loadStepsImpl = () => steps;
       await activate(baseState());
@@ -7179,7 +7534,12 @@ describe('RunbookLifecycleCommandService', () => {
       const parentRunId = assertRunId('rd_44444444444444444444444444444444');
       const claimChildRunId = assertRunId('rd_33333333333333333333333333333333');
       const childSteps: ResolvedStep[] = [
-        { kind: 'base', name: '1', description: 'child one', transitions: tx('COMPLETE', 'STOP') },
+        {
+          kind: 'base',
+          name: '1',
+          description: 'child one',
+          transitions: tx('COMPLETE', 'STOP'),
+        },
       ];
       loadStepsImpl = () => childSteps;
 
@@ -7364,7 +7724,12 @@ describe('RunbookLifecycleCommandService', () => {
       // A valid single-step graph so the pre-fix drive reaches (and mutates) the
       // run rather than throwing on step lookup — isolating the missing gate.
       loadStepsImpl = () => [
-        { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
+        {
+          kind: 'base',
+          name: '1',
+          description: 'one',
+          transitions: tx('CONTINUE', 'STOP'),
+        },
       ];
       const parentRunId = assertRunId('rd_77777777777777777777777777777777');
       await activate(baseState({ parentLinkage: linkageFor(parentRunId, 'a') }));
@@ -7455,7 +7820,10 @@ describe('RunbookLifecycleCommandService', () => {
           callerEvidence: presentedBy(missingClaimId),
           targetSelector: { kind: 'claim', claimId: missingClaimId },
         });
-        expect(out).toMatchObject({ kind: 'stale_claim', claimId: missingClaimId });
+        expect(out).toMatchObject({
+          kind: 'stale_claim',
+          claimId: missingClaimId,
+        });
         expect(sendSpy).not.toHaveBeenCalled();
       });
 
@@ -7475,7 +7843,10 @@ describe('RunbookLifecycleCommandService', () => {
           {
             runId: claimChildRunId,
             lifecycle: 'completed',
-            claim: { claimKey: claimKeyFromBearer(claimId), controlledRunId: claimChildRunId },
+            claim: {
+              claimKey: claimKeyFromBearer(claimId),
+              controlledRunId: claimChildRunId,
+            },
           },
           [{ runId: claimChildRunId, role: 'addressed' }],
         );
@@ -7537,7 +7908,11 @@ describe('RunbookLifecycleCommandService', () => {
         // itself and pin how the claim path surfaces it.
         jest.spyOn(sessionService, 'releaseAlreadyTerminal').mockResolvedValueOnce({
           kind: 'committed',
-          value: { kind: 'determination_lost', runId: claimChildRunId, lifecycle: 'completed' },
+          value: {
+            kind: 'determination_lost',
+            runId: claimChildRunId,
+            lifecycle: 'completed',
+          },
         });
         const out = await seam.runTerminal({
           command: 'complete',
@@ -7594,7 +7969,10 @@ describe('RunbookLifecycleCommandService', () => {
           {
             runId: claimChildRunId,
             lifecycle: 'stopped',
-            claim: { claimKey: claimKeyFromBearer(claimId), controlledRunId: claimChildRunId },
+            claim: {
+              claimKey: claimKeyFromBearer(claimId),
+              controlledRunId: claimChildRunId,
+            },
           },
           [{ runId: claimChildRunId, role: 'addressed' }],
         );
@@ -7718,7 +8096,10 @@ describe('RunbookLifecycleCommandService', () => {
         });
 
         // complete → FORCE_COMPLETE (not FORCE_STOP), status derived completed.
-        expect(out).toMatchObject({ kind: 'applied_claim', status: 'completed' });
+        expect(out).toMatchObject({
+          kind: 'applied_claim',
+          status: 'completed',
+        });
         // The message is forwarded into the FORCE event (not dropped).
         expect(prepareSpy).toHaveBeenCalledWith(
           claimChildRunId,
@@ -7756,7 +8137,9 @@ describe('RunbookLifecycleCommandService', () => {
           });
 
           expect(out).toMatchObject({ kind: 'applied_claim' });
-          expect(stepTransition(claimEvents(out))?.payload).toMatchObject({ result: expected });
+          expect(stepTransition(claimEvents(out))?.payload).toMatchObject({
+            result: expected,
+          });
         },
       );
 
@@ -7782,7 +8165,9 @@ describe('RunbookLifecycleCommandService', () => {
           computeActionResult: () => true,
         });
 
-        expect(stepTransition(claimEvents(out))?.payload).toMatchObject({ result: 'PASS' });
+        expect(stepTransition(claimEvents(out))?.payload).toMatchObject({
+          result: 'PASS',
+        });
       });
 
       it('records the presented bearer as seen before dispatching the force', async () => {
@@ -7896,7 +8281,10 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'claim', claimId },
         });
 
-        expect(out).toMatchObject({ kind: 'applied_claim', status: 'completed' });
+        expect(out).toMatchObject({
+          kind: 'applied_claim',
+          status: 'completed',
+        });
         expect((await manager.load(claimChildRunId))?.lifecycle).toBe('completed');
         // The parent target was DROPPED from the aggregate, not captured and
         // failed — so no report was attempted and the outcome says exactly that.
@@ -7929,7 +8317,10 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'claim', claimId },
         });
 
-        expect(out).toMatchObject({ kind: 'applied_claim', reported: 'recorded' });
+        expect(out).toMatchObject({
+          kind: 'applied_claim',
+          reported: 'recorded',
+        });
       });
 
       it('refuses a drifted claim rather than closing the child with no report', async () => {
@@ -7990,7 +8381,11 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'claim', claimId },
         });
 
-        expect(out).toEqual({ kind: 'claim_grant_required', claimId, runId: claimChildRunId });
+        expect(out).toEqual({
+          kind: 'claim_grant_required',
+          claimId,
+          runId: claimChildRunId,
+        });
         // Nothing is forced: the refusal precedes the aggregate entirely, so
         // neither the child nor the parent is captured or mutated.
         expect(aggregate).not.toHaveBeenCalled();
@@ -8013,7 +8408,11 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'claim', claimId },
         });
 
-        expect(out).toEqual({ kind: 'claim_grant_required', claimId, runId: claimChildRunId });
+        expect(out).toEqual({
+          kind: 'claim_grant_required',
+          claimId,
+          runId: claimChildRunId,
+        });
         expect(sendSpy).not.toHaveBeenCalled();
       });
     });
@@ -8062,7 +8461,12 @@ describe('RunbookLifecycleCommandService', () => {
 
       it('bare complete can force a standalone resolved root with unknown caller evidence', async () => {
         loadStepsImpl = () => [
-          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+          {
+            kind: 'base',
+            name: '1',
+            description: 'one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
         ];
         const root = baseState({ id: ROOT });
         await manager.save(root);
@@ -8162,7 +8566,12 @@ describe('RunbookLifecycleCommandService', () => {
 
       it('refuses bare direct-CLI terminal force when the resolved root has open delegated claims', async () => {
         loadStepsImpl = () => [
-          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+          {
+            kind: 'base',
+            name: '1',
+            description: 'one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
         ];
         const childRunId = assertRunId('rd_33333333333333333333333333333333');
         const root = baseState({ id: ROOT });
@@ -8204,7 +8613,12 @@ describe('RunbookLifecycleCommandService', () => {
         await issueRunControlClaimFor(CHILD);
         await issueRunControlClaimFor(ROOT);
         loadStepsImpl = () => [
-          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+          {
+            kind: 'base',
+            name: '1',
+            description: 'one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
         ];
         installResolvedPlan(rootState, [childState, rootState]);
 
@@ -8225,7 +8639,11 @@ describe('RunbookLifecycleCommandService', () => {
           callerEvidence: runControlEvidence(ROOT),
           targetSelector: { kind: 'default' },
         });
-        expect(out).toMatchObject({ kind: 'applied_bare', rootRunId: ROOT, status: 'completed' });
+        expect(out).toMatchObject({
+          kind: 'applied_bare',
+          rootRunId: ROOT,
+          status: 'completed',
+        });
         expect(prepared).toEqual([CHILD, ROOT]);
         expect(aggregate).toHaveBeenCalledTimes(1);
         expect((await manager.load(CHILD))?.lifecycle).toBe('completed');
@@ -8250,7 +8668,12 @@ describe('RunbookLifecycleCommandService', () => {
           await manager.save(root);
           await issueRunControlClaimFor(ROOT);
           loadStepsImpl = () => [
-            { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+            {
+              kind: 'base',
+              name: '1',
+              description: 'one',
+              transitions: tx('COMPLETE', 'STOP'),
+            },
           ];
           installResolvedPlan(root, [root]);
 
@@ -8261,7 +8684,9 @@ describe('RunbookLifecycleCommandService', () => {
           });
 
           expect(out).toMatchObject({ kind: 'applied_bare' });
-          expect(stepTransition(bareEvents(out))?.payload).toMatchObject({ result: expected });
+          expect(stepTransition(bareEvents(out))?.payload).toMatchObject({
+            result: expected,
+          });
         },
       );
 
@@ -8272,7 +8697,12 @@ describe('RunbookLifecycleCommandService', () => {
         await manager.save(root);
         await issueRunControlClaimFor(ROOT);
         loadStepsImpl = () => [
-          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+          {
+            kind: 'base',
+            name: '1',
+            description: 'one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
         ];
         installResolvedPlan(root, [root]);
 
@@ -8283,7 +8713,9 @@ describe('RunbookLifecycleCommandService', () => {
           computeActionResult: () => true,
         });
 
-        expect(stepTransition(bareEvents(out))?.payload).toMatchObject({ result: 'PASS' });
+        expect(stepTransition(bareEvents(out))?.payload).toMatchObject({
+          result: 'PASS',
+        });
       });
 
       it('keys the bare cascade capture to the run the presented claim controls', async () => {
@@ -8299,7 +8731,12 @@ describe('RunbookLifecycleCommandService', () => {
         await manager.save(root);
         await issueRunControlClaimFor(ROOT);
         loadStepsImpl = () => [
-          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+          {
+            kind: 'base',
+            name: '1',
+            description: 'one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
         ];
         installResolvedPlan(root, [root]);
 
@@ -8338,7 +8775,12 @@ describe('RunbookLifecycleCommandService', () => {
         await manager.save(root);
         await issueRunControlClaimFor(ROOT);
         loadStepsImpl = () => [
-          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+          {
+            kind: 'base',
+            name: '1',
+            description: 'one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
         ];
         installResolvedPlan(root, [root]);
 
@@ -8372,7 +8814,12 @@ describe('RunbookLifecycleCommandService', () => {
         await manager.save(root);
         await issueRunControlClaimFor(ROOT);
         loadStepsImpl = () => [
-          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+          {
+            kind: 'base',
+            name: '1',
+            description: 'one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
         ];
         installResolvedPlan(root, [root]);
 
@@ -8382,7 +8829,11 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'default' },
         });
 
-        expect(out).toMatchObject({ kind: 'applied_bare', rootRunId: ROOT, status: 'completed' });
+        expect(out).toMatchObject({
+          kind: 'applied_bare',
+          rootRunId: ROOT,
+          status: 'completed',
+        });
         // Dropped from the aggregate, not captured and failed — so no report was
         // attempted, and `reported` is the field that says which of the two
         // happened. Paired with the `recorded` case above this pins the spread.
@@ -8408,13 +8859,21 @@ describe('RunbookLifecycleCommandService', () => {
             parentEntry: 1,
           },
         });
-        const rootState = baseState({ id: ROOT, parentLinkage: linkageFor(CHILD, 'a') });
+        const rootState = baseState({
+          id: ROOT,
+          parentLinkage: linkageFor(CHILD, 'a'),
+        });
         await manager.save(childState);
         await manager.save(rootState);
         await issueRunControlClaimFor(CHILD);
         await issueRunControlClaimFor(ROOT);
         loadStepsImpl = () => [
-          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+          {
+            kind: 'base',
+            name: '1',
+            description: 'one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
         ];
         installResolvedPlan(rootState, [childState, rootState]);
 
@@ -8481,7 +8940,10 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'default' },
         });
 
-        expect(out).toMatchObject({ kind: 'already_terminal', targetRunId: ROOT });
+        expect(out).toMatchObject({
+          kind: 'already_terminal',
+          targetRunId: ROOT,
+        });
         // Descendant-to-root order, exactly as the plan lists it — through the
         // fenced seam, whose fence names the resolved root determination and the
         // presented bearer (#734).
@@ -8542,14 +9004,20 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'default' },
         });
 
-        expect(out).toMatchObject({ kind: 'already_terminal', targetRunId: ROOT });
+        expect(out).toMatchObject({
+          kind: 'already_terminal',
+          targetRunId: ROOT,
+        });
         const childClaimId = issuedRunControlClaims.get(CHILD);
         if (childClaimId === undefined) throw new Error(`expected run-control claim for ${CHILD}`);
         expect(releaseSpy).toHaveBeenCalledWith(
           {
             runId: ROOT,
             lifecycle: 'completed',
-            claim: { claimKey: claimKeyFromBearer(childClaimId), controlledRunId: CHILD },
+            claim: {
+              claimKey: claimKeyFromBearer(childClaimId),
+              controlledRunId: CHILD,
+            },
           },
           [
             { runId: CHILD, role: 'collateral' },
@@ -8663,7 +9131,9 @@ describe('RunbookLifecycleCommandService', () => {
         installResolvedPlan(root, [root]);
         const runAll = actorMutationRunner.runAll.bind(actorMutationRunner);
         jest.spyOn(actorMutationRunner, 'runAll').mockImplementationOnce(async (input) => {
-          await manager.updateWithState(ROOT, () => ({ lifecycle: 'completed' as const }));
+          await manager.updateWithState(ROOT, () => ({
+            lifecycle: 'completed' as const,
+          }));
           return await runAll(input);
         });
         const prepare = jest.spyOn(actorService, 'prepareActorMutation');
@@ -8695,7 +9165,10 @@ describe('RunbookLifecycleCommandService', () => {
           {
             runId: ROOT,
             lifecycle: 'completed',
-            claim: { claimKey: claimKeyFromBearer(rootClaimId), controlledRunId: ROOT },
+            claim: {
+              claimKey: claimKeyFromBearer(rootClaimId),
+              controlledRunId: ROOT,
+            },
           },
           [{ runId: ROOT, role: 'addressed' }],
         );
@@ -8717,7 +9190,9 @@ describe('RunbookLifecycleCommandService', () => {
         installResolvedPlan(root, [root]);
         const runAll = actorMutationRunner.runAll.bind(actorMutationRunner);
         jest.spyOn(actorMutationRunner, 'runAll').mockImplementationOnce(async (input) => {
-          await manager.updateWithState(ROOT, () => ({ lifecycle: 'completed' as const }));
+          await manager.updateWithState(ROOT, () => ({
+            lifecycle: 'completed' as const,
+          }));
           return await runAll(input);
         });
         const fencedRelease = jest.spyOn(sessionService, 'releaseAlreadyTerminal');
@@ -8748,7 +9223,9 @@ describe('RunbookLifecycleCommandService', () => {
         installResolvedPlan(root, [root]);
         const runAll = actorMutationRunner.runAll.bind(actorMutationRunner);
         jest.spyOn(actorMutationRunner, 'runAll').mockImplementationOnce(async (input) => {
-          await manager.updateWithState(ROOT, () => ({ lifecycle: 'completed' as const }));
+          await manager.updateWithState(ROOT, () => ({
+            lifecycle: 'completed' as const,
+          }));
           return await runAll(input);
         });
         const envelope = {
@@ -8782,7 +9259,9 @@ describe('RunbookLifecycleCommandService', () => {
         installResolvedPlan(root, [root]);
         const runAll = actorMutationRunner.runAll.bind(actorMutationRunner);
         jest.spyOn(actorMutationRunner, 'runAll').mockImplementationOnce(async (input) => {
-          await manager.updateWithState(ROOT, () => ({ lifecycle: 'completed' as const }));
+          await manager.updateWithState(ROOT, () => ({
+            lifecycle: 'completed' as const,
+          }));
           return await runAll(input);
         });
         const rootClaimId = issuedRunControlClaims.get(ROOT);
@@ -8803,7 +9282,10 @@ describe('RunbookLifecycleCommandService', () => {
           kind: 'already_terminal',
           targetRunId: ROOT,
           lifecycle: 'completed',
-          cleanup: { kind: 'refused', refusal: { kind: 'claim_rotated', claimKey } },
+          cleanup: {
+            kind: 'refused',
+            refusal: { kind: 'claim_rotated', claimKey },
+          },
         });
       });
 
@@ -8885,7 +9367,12 @@ describe('RunbookLifecycleCommandService', () => {
         await issueRunControlClaimFor(CHILD);
         await issueRunControlClaimFor(ROOT);
         loadStepsImpl = () => [
-          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+          {
+            kind: 'base',
+            name: '1',
+            description: 'one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
         ];
         installResolvedPlan(rootState, [childState, rootState]);
 
@@ -8971,7 +9458,12 @@ describe('RunbookLifecycleCommandService', () => {
         await manager.save(rootState);
         await issueRunControlClaimFor(ROOT);
         loadStepsImpl = () => [
-          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+          {
+            kind: 'base',
+            name: '1',
+            description: 'one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
         ];
         installResolvedPlan(rootState, [rootState]);
         jest.spyOn(actorMutationRunner, 'runAll').mockResolvedValue({
@@ -8998,7 +9490,12 @@ describe('RunbookLifecycleCommandService', () => {
         await manager.save(rootState);
         await issueRunControlClaimFor(ROOT);
         loadStepsImpl = () => [
-          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+          {
+            kind: 'base',
+            name: '1',
+            description: 'one',
+            transitions: tx('COMPLETE', 'STOP'),
+          },
         ];
         installResolvedPlan(rootState, [childState, rootState]);
 

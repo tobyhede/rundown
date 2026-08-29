@@ -190,7 +190,7 @@ export const ErrorCodes = {
     category: ErrorCategory.STATE,
     title: 'Invalid persisted run state',
     description:
-      'A run in the runbook database does not match the state contract this build reads: unparseable persisted state, a schema version other than 1, a missing required field such as templateVars, or a deprecated dynamic-step snapshot. Rundown never migrates persisted state, so the run cannot be resumed and is never silently repaired. Only that run is affected — the database and every other run in it are intact. Recover by finishing the run ("rundown complete"), stopping it ("rundown stop"), or discarding it ("rundown prune --inactive", which a bare "rundown prune" cannot do because its default completed/stopped selection never sees an invalid row), then re-run the runbook from source.',
+      'A run in the runbook database does not match the state contract this build reads: unparseable persisted state, a schema version other than 2, a missing required field such as templateVars, or a deprecated dynamic-step snapshot. Rundown never migrates persisted state, so the run cannot be resumed and is never silently repaired. Only that run is affected — the database and every other run in it are intact. Recover by finishing the run ("rundown complete"), stopping it ("rundown stop"), or discarding it ("rundown prune --inactive", which a bare "rundown prune" cannot do because its default completed/stopped selection never sees an invalid row), then re-run the runbook from source.',
     docSlug: 'invalid-persisted-run-state',
   },
 
@@ -548,15 +548,14 @@ export const ErrorCodes = {
     category: ErrorCategory.DELEGATION,
     title: 'Delegation frontier disclosure could not be rendered',
     description:
-      `A collect committed its aggregate and consumed the persisted re-entry ` +
-      `frontier, and then could not render the STEP_ENTERED entry the freshly ` +
-      `derived bearers ride on. The collection LANDED: the outcomes are drained ` +
-      `and the frontier is gone, so retrying answers the idempotent no-op rather ` +
-      `than re-deriving the bearers. Distinct from RD-829, where the consume ` +
-      `never committed and a retry does recover. The usual cause is a ` +
-      `\`--helpers\` helper raising while expanding the unit's description, ` +
-      `prompt, or command. Fix the helper, then re-delegate the step: the ` +
-      `delegations the lost bearers addressed must be re-issued.`,
+      `Run Progression consumed a persisted re-entry frontier, then could not ` +
+      `render the STEP_ENTERED entry the freshly derived bearers ride on. The ` +
+      `consume LANDED and the frontier is gone, so retrying cannot re-derive ` +
+      `the bearers. Distinct from RD-829, where the consume never committed and ` +
+      `a retry does recover. The usual cause is a \`--helpers\` helper raising ` +
+      `while expanding the unit's description, prompt, or command. Fix the ` +
+      `helper, then re-delegate the step: the delegations the lost bearers ` +
+      `addressed must be re-issued.`,
     docSlug: 'delegation-frontier-disclosure-failed',
   },
   INLINE_PARENT_CLAIM_SUPERSEDED: {
