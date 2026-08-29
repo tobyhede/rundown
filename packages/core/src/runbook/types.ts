@@ -797,7 +797,7 @@ export interface AncestorSnapshot {
  * Fields shared by all parent-linkage variants (delegation and inline).
  *
  * Both {@link DelegationLinkage} and {@link InlineLinkage} carry the same
- * parent identification fields needed by `propagateChildTerminal` to propagate
+ * parent identification fields needed by core terminal propagation to propagate
  * a child's terminal result back to the parent substep (synchronously for
  * inline linkage, report-only for delegation linkage).
  *

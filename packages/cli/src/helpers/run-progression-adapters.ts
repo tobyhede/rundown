@@ -25,8 +25,9 @@ import {
   CLIErrorCodes,
   createEffectfulActorMutationRunner,
   ExecutionEventEmitter,
-  flowBackInlineTerminal,
   ObservationDeliveryError,
+  propagateTerminalRun,
+  RunbookCompletionService,
   SessionService,
   type CommandExecutionStreamOptions,
   type InlineChildDispatch,
@@ -45,7 +46,6 @@ import type { OutputEmitter } from '../services/output-emitter.js';
 // same command path, and delegation-completion's documented cycle with
 // execution.ts is broken by its own lazy imports — laziness here would buy
 // nothing and cost an async module-registry hop per propagation.
-import { propagateDrivenRunTerminal } from './delegation-completion.js';
 
 /** Context captured by {@link buildInlineChildDispatch}. Runtime references only. */
 export interface InlineChildDispatchContext {
@@ -112,6 +112,7 @@ export function buildInlineChildDispatch(ctx: InlineChildDispatchContext): Inlin
   return async ({ intent, prompted, steps, sink }) =>
     launchInlineChildFromIntent({
       manager: ctx.manager,
+      authority: ctx.parentAuthority,
       actorService: ctx.actorService,
       sessionService: ctx.sessionService,
       emitter: sink,
@@ -135,14 +136,6 @@ export function buildInlineChildDispatch(ctx: InlineChildDispatchContext): Inlin
         }),
       ...(ctx.commandStreamOptions !== undefined
         ? { commandStreamOptions: ctx.commandStreamOptions }
-        : {}),
-      ...(ctx.parentAuthority.delegationRuntime !== undefined
-        ? {
-            parentDelegationRuntime: {
-              runId: ctx.parentAuthority.runId,
-              runtime: ctx.parentAuthority.delegationRuntime,
-            },
-          }
         : {}),
     });
 }
@@ -299,7 +292,7 @@ export function progressionFailedClosed(outcome: RunProgressionOutcome): boolean
  * Build the driven-terminal propagation callable over the CLI's single
  * post-drive trigger.
  *
- * `propagateDrivenRunTerminal` reloads the driven run and internally skips a
+ * Core reloads the driven run and skips a
  * missing, non-terminal, or unlinked one, so the activation may invoke this on
  * every terminal outcome. An inline advance returns the composing parent's
  * identity and stable `waiting` or `stopped` condition; only a genuine refusal
@@ -313,11 +306,15 @@ export function progressionFailedClosed(outcome: RunProgressionOutcome): boolean
  */
 export function buildTerminalPropagation(ctx: TerminalPropagationContext): TerminalPropagation {
   const gatedOutput = gateProgressionOutput(ctx.output);
-  return async ({ runId, source, sink }) => {
-    const inlineFlowBack = await flowBackInlineTerminal({
+  return async ({ source, sink }) => {
+    return propagateTerminalRun({
       authority: ctx.authority,
       manager: ctx.manager,
       actorService: createCliRunbookActorService(ctx.manager),
+      completionService: new RunbookCompletionService(
+        ctx.manager,
+        createCliRunbookActorService(ctx.manager),
+      ),
       loadSteps: (state) => getRunbookFromState(state, ctx.cwd),
       source,
       sink,
@@ -338,51 +335,5 @@ export function buildTerminalPropagation(ctx: TerminalPropagationContext): Termi
             : { commandStreamOptions: ctx.commandStreamOptions }),
         }),
     });
-    if (inlineFlowBack !== null) return inlineFlowBack;
-    const propagation = await propagateDrivenRunTerminal(
-      ctx.manager,
-      runId,
-      ctx.cwd,
-      gatedOutput,
-      source,
-      ctx.commandStreamOptions,
-    );
-    if (propagation.kind !== 'inline-advanced') return { kind: 'propagated' };
-    if (propagation.result === 'handled') {
-      return {
-        kind: 'advanced',
-        runId: propagation.parentRunId,
-        status: 'waiting' as const,
-      };
-    }
-    if (propagation.result === 'stopped') {
-      return {
-        kind: 'advanced',
-        runId: propagation.parentRunId,
-        status: 'stopped' as const,
-      };
-    }
-    if (propagation.refusal !== undefined) {
-      return {
-        kind: 'refused',
-        runId: propagation.refusal.runId,
-        code: propagation.refusal.code,
-        message: propagation.refusal.message,
-        recovery: propagation.refusal.recovery,
-      };
-    }
-    if (propagation.result === 'blocked') {
-      // Fail-closed without a typed refusal: a re-entrant flow-back concluded
-      // blocked after its own diagnostics streamed. No retry of this
-      // propagation can change that conclusion.
-      return {
-        kind: 'refused',
-        runId: propagation.parentRunId,
-        message:
-          'Advancing the composing inline parent concluded fail-closed; see the preceding diagnostics for the refusing run',
-        recovery: 'permanent',
-      };
-    }
-    return { kind: 'propagated' };
   };
 }

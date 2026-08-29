@@ -144,7 +144,7 @@ export { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
 /**
  * Tag applied to transient machine-owned side-effect states.
  *
- * `RunbookActorService.sendAndSync()` waits for this tag to clear before
+ * Prepared actor mutation waits for this tag to clear before
  * persisting the actor snapshot, so async invokes cannot be torn off by the
  * actor being stopped immediately after `.send()`.
  */
@@ -157,7 +157,7 @@ export const PENDING_MACHINE_EFFECT_TAG = 'pending-machine-effect' as const;
  * Deliberately distinct from {@link PENDING_MACHINE_EFFECT_TAG}: machine
  * effects are small transient reads bounded by a short timeout, whereas a
  * command step may legitimately run for minutes (build/verify gates).
- * `RunbookActorService.sendAndSync()` waits for this tag WITHOUT a timeout —
+ * Prepared actor mutation waits for this tag WITHOUT a timeout —
  * command duration semantics belong to the command layer, never to the
  * effects-wait budget. Subjecting command execution to the machine-effect
  * timeout terminally stopped any run whose command exceeded 30s (#536).
@@ -197,11 +197,9 @@ export interface RunbookMachineOutput {
 /**
  * Result of the immediately preceding mechanically-executed progression turn.
  *
- * `completion_*` feedback closes #854's machine-owned completion decision.
- * `awaiting_input` is deliberately transitional: until #857 migrates fresh,
- * prompted, and command resolution, the runtime classifies a non-runnable
- * execution-unit entry and the machine closes that classification into its
- * typed waiting intent. It is not evidence that XState chose the entry turn.
+ * `completion_*` feedback closes the machine-owned completion decision.
+ * `awaiting_input` closes a non-runnable execution-unit entry into the
+ * machine's typed waiting intent.
  */
 export type RunProgressionMachineFeedback =
   | { readonly kind: 'activation' }
@@ -1420,10 +1418,6 @@ export type RunbookEvent =
       parentFrameKey: FrameKey;
       tokenHash: DelegationTokenHash;
       childRunId: RunId;
-    }
-  | {
-      type: 'MANUAL_DELEGATION_ABORT_PREPARED';
-      substepStates: readonly SubstepState[];
     }
   | {
       type: 'APPLY_CURRENT_RESOLVED_COMPLETION';
@@ -4379,7 +4373,7 @@ function validateGraph(
       }
 
       // Command execution carries its own pending tag: it must never be
-      // subject to the machine-effect wait budget (#536), but sendAndSync
+      // subject to the machine-effect wait budget (#536), but progression
       // still needs a tag to know the invoke is in flight.
       const requiredTag =
         childName === '__execute-command'
@@ -5813,14 +5807,6 @@ export function compileRunbookToMachine(
           type: 'storeDelegationChildUnlinked',
           params: ({ event }) => event,
         },
-      },
-      MANUAL_DELEGATION_ABORT_PREPARED: {
-        actions: runbookSetup.assign({
-          substepStates: ({ event }) => {
-            assertEvent(event, 'MANUAL_DELEGATION_ABORT_PREPARED');
-            return event.substepStates;
-          },
-        }),
       },
     },
     context: {

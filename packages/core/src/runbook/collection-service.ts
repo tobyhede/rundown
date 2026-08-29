@@ -9,11 +9,6 @@ import type {
   CapturedActorMutationRun,
   EffectfulActorMutationRunner,
 } from './effectful-actor-mutation-runner.js';
-import type {
-  AdvanceInlineParent,
-  InlineUpwardPropagationResult,
-  TerminalUpwardPropagationResult,
-} from './inline-parent-advance.js';
 import { resolveMutationAuthority, type CommandTargetReader } from './command-target-resolver.js';
 import type { AppliedResolvedCompletion } from './completion-service.js';
 import type { RunbookCompletionService } from './completion-service.js';
@@ -70,7 +65,6 @@ export interface RunbookCollectionServiceDependencies {
    */
   readonly actorMutationRunner: EffectfulActorMutationRunner;
   /** @deprecated Ignored; terminal collection continues through Run Progression. */
-  readonly advanceInlineParent?: AdvanceInlineParent;
   /**
    * Derive the parsed steps of an OWNED aggregate member other than the collect
    * target, from that run's own in-memory state.
@@ -462,7 +456,7 @@ interface PreparedCollection {
  * Derive and commit a whole collection as ONE fenced aggregate transaction.
  *
  * WHAT CHANGED AND WHY. Collect used to authorize, then drain through one
- * `sendAndSync` transaction per completion, then release the session, then
+ * unfenced actor transaction per completion, then release the session, then
  * propagate upward — four or more separately committed writes, none of which
  * re-checked the collector's captured `claim_generation`. `writeStateAtVersion`
  * guards on `state_version` and its own docstring states that callers "MUST NOT
@@ -482,10 +476,8 @@ interface PreparedCollection {
  *   release, and a delegating parent's outcome row either all land or none do.
  *
  * WHAT STAYS OUTSIDE THE TRANSACTION, and why that is not a gap:
- * - The INLINE upward walk. `advanceInlineParent` is a CLI callable that spawns
- *   the composing parent's execution loop — Category A, an external effect that
- *   cannot be re-run inside a fence. It runs after the commit exactly as before,
- *   and its own writes remain owned by the loop it drives.
+ * - Upward continuation. Run Progression owns it after this commit and resumes
+ *   the composing parent through its verified activation authority.
  * - Frontier progression. The compiled runbook machine selects projection,
  *   consume, and entry in a separate fenced turn after this domain commit.
  *
@@ -857,37 +849,4 @@ function prepareTerminalCollection(
       },
     },
   };
-}
-
-/**
- * Preserve the legacy inline-only union narrowing until its public test surface
- * is removed with the remaining upward-walk implementation in #858.
- *
- * @param outcome - Legacy upward-propagation disposition.
- * @returns The same inline disposition.
- * @throws {Error} For delegation-only dispositions.
- * @internal
- */
-export function narrowInlineUpwardPropagation(
-  outcome: TerminalUpwardPropagationResult,
-): InlineUpwardPropagationResult {
-  switch (outcome.kind) {
-    case 'handled':
-    case 'stopped':
-    case 'blocked':
-    case 'not-applicable':
-    case 'linkage-cycle':
-    case 'advance-refused':
-      return outcome;
-    case 'reported':
-    case 'duplicate':
-      throw new Error(
-        `Inline upward propagation yielded the delegation-only disposition "${outcome.kind}"; ` +
-          'an inline-linked child cannot produce one, so this is a seam-contract violation.',
-      );
-    default: {
-      const _exhaustive: never = outcome;
-      return _exhaustive;
-    }
-  }
 }

@@ -5,9 +5,12 @@ import { join } from 'node:path';
 import { parseRunbookDocument, type ResolvedStep } from '@rundown-org/parser';
 import {
   assertRunId,
+  commitRunProgressionEvent,
   generateRunId,
+  progressionDirectiveForStartedRun,
   recordInlineLaunchStart,
   RunbookStateManager,
+  SessionService,
   type DelegationTokenHash,
   type FrameKey,
   type InlineLaunchIntent,
@@ -15,7 +18,7 @@ import {
   type InlineLinkage,
   type ParentLinkage,
   type RunbookActorService,
-  type RunbookState,
+  type RunProgressionAuthority,
   type RunId,
   type SubstepState,
 } from '@rundown-org/core';
@@ -208,6 +211,7 @@ Child prompt.
 interface LatchableParent {
   readonly manager: RunbookStateManager;
   readonly actorService: RunbookActorService;
+  readonly authority: RunProgressionAuthority;
   readonly parentRunId: RunId;
   readonly childRunId: RunId;
   readonly steps: readonly ResolvedStep[];
@@ -257,8 +261,19 @@ describe('latchInlineLaunch', () => {
     const { getRunbookFromState } = await import('../../src/helpers/runbook-loader.js');
     const steps = getRunbookFromState(created, cwd);
     await actorService.initializeState(parentRunId, steps);
+    const issued = await new SessionService(manager).issueRunControlClaim(parentRunId);
+    if (issued.kind !== 'committed') throw new Error(issued.message);
+    const authority = progressionDirectiveForStartedRun(created, steps, issued.value).authority;
     // Step 1 → step 2, whose substep entry invokes `inlineLaunchIntentActor`.
-    await actorService.sendAndSync(parentRunId, steps, { type: 'PASS' });
+    const initialized = await manager.load(parentRunId);
+    if (initialized === null) throw new Error('initialized parent disappeared');
+    const passed = await actorService.prepareActorMutation(parentRunId, initialized, steps, {
+      type: 'PASS',
+    });
+    const captured = await manager.captureRunAuthorityState(parentRunId);
+    if (captured.kind !== 'captured') throw new Error(captured.message);
+    const passCommit = await manager.saveState(captured.authority, passed.nextState);
+    if (passCommit.kind !== 'committed') throw new Error(passCommit.message);
 
     const state = await manager.load(parentRunId);
     const persisted = (
@@ -280,6 +295,7 @@ describe('latchInlineLaunch', () => {
     return {
       manager,
       actorService,
+      authority,
       parentRunId,
       childRunId: assertRunId(intent.childRunId),
       steps,
@@ -314,6 +330,7 @@ describe('latchInlineLaunch', () => {
     return latchInlineLaunch({
       manager: options?.manager ?? parent.manager,
       actorService: options?.actorService ?? parent.actorService,
+      authority: parent.authority,
       steps: parent.steps,
       intent: options?.intent ?? parent.intent,
     });
@@ -396,9 +413,13 @@ describe('latchInlineLaunch', () => {
     const parent = await seedLatchableParent();
     // Exactly what `INLINE_LAUNCH_CONSUMED` leaves behind: the winner of this
     // launch consumed the intent, so this observer's observation is stale.
-    await parent.actorService.sendAndSync(parent.parentRunId, parent.steps, {
-      type: 'INLINE_LAUNCH_CONSUMED',
-    });
+    await commitRunProgressionEvent(
+      parent.authority,
+      parent.manager,
+      parent.actorService,
+      parent.steps,
+      { type: 'INLINE_LAUNCH_CONSUMED' },
+    );
 
     await expect(latch(parent)).resolves.toEqual({ kind: 'superseded' });
     expect(await readLatch(parent)).toBeNull();
@@ -457,13 +478,24 @@ describe('latchInlineLaunch', () => {
   // FROM the intent, so an observed intent naming another parent selects that
   // parent, and the two can no longer be made to disagree. Its two reachable
   // states are pinned separately below.
-  it('reports the parent as missing when the observed intent names a run that does not exist', async () => {
+  it('refuses an intent naming a run outside the verified authority', async () => {
     const parent = await seedLatchableParent();
 
     await expect(
       latch(parent, { intent: { ...parent.intent, parentRunId: generateRunId() } }),
-    ).resolves.toEqual({ kind: 'missing' });
+    ).resolves.toEqual({ kind: 'superseded' });
     // The seeded parent is untouched: the latch never went near it.
+    expect(await readLatch(parent)).toBeNull();
+  });
+
+  it('refuses a superseded claim authority without writing the launch latch', async () => {
+    const parent = await seedLatchableParent();
+    const rotated = await new SessionService(parent.manager).issueRunControlClaim(
+      parent.parentRunId,
+    );
+    expect(rotated.kind).toBe('committed');
+
+    await expect(latch(parent)).resolves.toEqual({ kind: 'superseded' });
     expect(await readLatch(parent)).toBeNull();
   });
 
@@ -673,13 +705,24 @@ describe('latchInlineLaunch', () => {
       };
       // Exactly what a reclaiming observer commits: the same launch, at the same
       // coordinates, with the record overwritten by its own identity.
-      await parent.actorService.sendAndSync(parent.parentRunId, parent.steps, {
-        type: 'INLINE_CHILD_STARTED',
-        parentStepId: parent.intent.parentStepId,
-        parentFrameKey: parent.intent.parentFrameKey as FrameKey,
-        childRunId: parent.childRunId,
-        started: reclaimed,
-      });
+      const current = await parent.manager.load(parent.parentRunId);
+      if (current === null) throw new Error('inline parent disappeared');
+      const replaced = await parent.actorService.prepareActorMutation(
+        parent.parentRunId,
+        current,
+        parent.steps,
+        {
+          type: 'INLINE_CHILD_STARTED',
+          parentStepId: parent.intent.parentStepId,
+          parentFrameKey: parent.intent.parentFrameKey as FrameKey,
+          childRunId: parent.childRunId,
+          started: reclaimed,
+        },
+      );
+      const captured = await parent.manager.captureRunAuthorityState(parent.parentRunId);
+      if (captured.kind !== 'captured') throw new Error(captured.message);
+      const committed = await parent.manager.saveState(captured.authority, replaced.nextState);
+      if (committed.kind !== 'committed') throw new Error(committed.message);
 
       await outcome.held[Symbol.asyncDispose]();
 
@@ -1012,14 +1055,10 @@ describe('latchInlineLaunch', () => {
       const contender = new RunbookStateManager(cwd);
       const contenderActors = createCliRunbookActorService(contender);
 
-      // Hold the first reader inside its build callback until the second has
-      // also read, so both derive against the same version and the commit that
-      // lands second is genuinely stale. The two calls do interleave on their
-      // own today — measured — but only because both suspend at store awaits;
-      // the rendezvous removes the dependence on that scheduling rather than
-      // leaving a contention test to the event loop's discretion. `builds`
-      // below is what would catch it if they ever serialised anyway.
-      let builds = 0;
+      // Hold the first authority capture until the second has captured too, so
+      // both derive against the same verified version and one guarded commit is
+      // genuinely stale.
+      let captures = 0;
       let releaseFirstReader: (() => void) | undefined;
       // Bounded, so a run in which the second observer never reaches its build
       // fails on `builds` below rather than hanging the first observer until
@@ -1034,24 +1073,18 @@ describe('latchInlineLaunch', () => {
         clearTimeout(rendezvousTimer);
         releaseFirstReader?.();
       };
-      const gateBuild = (manager: RunbookStateManager): void => {
-        const real = manager.mutateStateReturning.bind(manager);
-        // Assigned without a cast, so the wrapper is checked against the real
-        // signature: a change to it fails here rather than silently un-gating
-        // the interleave and leaving a contention test that observes none.
-        manager.mutateStateReturning = async <R>(
-          id: string,
-          build: (current: RunbookState) => Promise<{ next: RunbookState | null; value: R }>,
-        ) =>
-          await real<R>(id, async (current) => {
-            builds += 1;
-            if (builds === 1) await bothRead;
-            if (builds === 2) releaseRendezvous();
-            return await build(current);
-          });
+      const gateCapture = (manager: RunbookStateManager): void => {
+        const real = manager.captureAuthorityState.bind(manager);
+        manager.captureAuthorityState = async (...args) => {
+          const captured = await real(...args);
+          captures += 1;
+          if (captures === 1) await bothRead;
+          if (captures === 2) releaseRendezvous();
+          return captured;
+        };
       };
-      gateBuild(parent.manager);
-      gateBuild(contender);
+      gateCapture(parent.manager);
+      gateCapture(contender);
 
       // Each winner performs the launch span's opening act, exactly as
       // `launchInlineChildFromIntent` does: one unconditional create for the
@@ -1096,10 +1129,7 @@ describe('latchInlineLaunch', () => {
         clearTimeout(rendezvousTimer);
       }
 
-      // The interleave happened: three build runs for two calls is the loser
-      // re-deriving against the row the winner committed. Two would mean the
-      // calls serialised and no compare-and-swap conflict was ever observed.
-      expect(builds).toBe(3);
+      expect(captures).toBeGreaterThanOrEqual(3);
       expect(outcomes.map((outcome) => outcome.kind).sort()).toEqual(['already-latched', 'won']);
       // The loser re-derived against the committed row and found a LIVE owner —
       // this process, since both observers run in it — rather than reclaiming a

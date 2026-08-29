@@ -1,9 +1,13 @@
 import {
   assertRunId,
   classifyInlineLaunchOwnership,
+  commitRunProgressionEvent,
+  ConcurrentStateModificationError,
+  DEFAULT_MUTATE_ATTEMPTS,
   getErrorMessage,
   isInlineLaunchIntentWithoutParentEntry,
   logger,
+  mutateBackoffMs,
   recordInlineLaunchStart,
   type FrameKey,
   type InlineLaunchIntent,
@@ -13,6 +17,7 @@ import {
   type ParentLinkage,
   type ResolvedStep,
   type RunbookActorService,
+  type RunProgressionAuthority,
   type RunbookState,
   type RunbookStateManager,
 } from '@rundown-org/core';
@@ -368,6 +373,8 @@ export function inlineLinkageFromIntent(intent: InlineLaunchIntent): InlineLinka
 export interface InlineLaunchLatchArgs {
   /** State manager owning the parent's compare-and-swap cycle. */
   readonly manager: RunbookStateManager;
+  /** Exact verified authority for the parent launch intent. */
+  readonly authority: RunProgressionAuthority;
   /** Actor service used to derive the `INLINE_CHILD_STARTED` transition. */
   readonly actorService: RunbookActorService;
   /** Parsed steps the parent machine is compiled from. */
@@ -453,98 +460,120 @@ export async function latchInlineLaunch(args: InlineLaunchLatchArgs): Promise<In
   let startedRecord: InlineLaunchStart | undefined;
   const started = (): InlineLaunchStart =>
     (startedRecord ??= recordInlineLaunchStart(new Date().toISOString()));
-  const { value } = await args.manager.mutateStateReturning<InlineLaunchLatch>(
-    parentLinkage.parentRunId,
-    async (current) => {
-      if (current.lifecycle === 'completed' || current.lifecycle === 'stopped') {
-        return { next: null, value: { kind: 'inactive' } };
+  const decide = async (
+    current: RunbookState,
+  ): Promise<{ readonly next: RunbookState | null; readonly value: InlineLaunchLatch }> => {
+    if (current.lifecycle === 'completed' || current.lifecycle === 'stopped') {
+      return { next: null, value: { kind: 'inactive' } };
+    }
+    if (!persistedInlineLaunchIntentMatches(current, args.intent)) {
+      return { next: null, value: { kind: 'superseded' } };
+    }
+    // Ownership first, and before the child load: a launch held by a live
+    // process is refused whatever the child looks like, so loading and
+    // classifying that child would be a round-trip per attempt for a decision
+    // this arm discards. Liveness, never age, and never the child run's
+    // absence — an observer that has latched and is still resolving the child
+    // runbook leaves exactly the state a crashed one leaves.
+    const ownership = classifyParentInlineLatch(current, args.intent);
+    if (ownership.kind === 'held') {
+      return { next: null, value: { kind: 'already-latched', ownerPid: ownership.ownerPid } };
+    }
+    if (ownership.kind === 'unrecorded') {
+      return { next: null, value: { kind: 'unrecorded', reason: ownership.reason } };
+    }
+    const existingChild = await args.manager.load(childRunId);
+    if (existingChild) {
+      const linkageMatch = classifyInlineChildLinkage(existingChild.parentLinkage, parentLinkage);
+      if (linkageMatch.kind !== 'matched') {
+        return { next: null, value: { kind: 'linkage-refused', mismatch: linkageMatch } };
       }
-      if (!persistedInlineLaunchIntentMatches(current, args.intent)) {
-        return { next: null, value: { kind: 'superseded' } };
-      }
-      // Ownership first, and before the child load: a launch held by a live
-      // process is refused whatever the child looks like, so loading and
-      // classifying that child would be a round-trip per attempt for a decision
-      // this arm discards. Liveness, never age, and never the child run's
-      // absence — an observer that has latched and is still resolving the child
-      // runbook leaves exactly the state a crashed one leaves.
-      const ownership = classifyParentInlineLatch(current, args.intent);
-      if (ownership.kind === 'held') {
-        return { next: null, value: { kind: 'already-latched', ownerPid: ownership.ownerPid } };
-      }
-      if (ownership.kind === 'unrecorded') {
-        return { next: null, value: { kind: 'unrecorded', reason: ownership.reason } };
-      }
-      const existingChild = await args.manager.load(childRunId);
-      if (existingChild) {
-        const linkageMatch = classifyInlineChildLinkage(existingChild.parentLinkage, parentLinkage);
-        if (linkageMatch.kind !== 'matched') {
-          return { next: null, value: { kind: 'linkage-refused', mismatch: linkageMatch } };
-        }
-      }
-      switch (ownership.kind) {
-        case 'unlatched':
-        case 'reclaimable': {
-          // The two arms that launch, and they differ only in what they report:
-          // one takes a free latch, the other takes over a dead owner's.
-          const mutation = await args.actorService.prepareActorMutation(
-            parentLinkage.parentRunId,
-            current,
-            args.steps,
-            {
-              type: 'INLINE_CHILD_STARTED',
-              parentStepId: args.intent.parentStepId,
-              parentFrameKey: parentLinkage.parentFrameKey,
-              childRunId,
-              // Overwrites a dead owner's record with this process's own, so the
-              // launch this observer is about to perform is the one a third
-              // observer finds held. Leaving the dead pid there would let the
-              // reclamation be reclaimed again, mid-span.
-              started: started(),
-            },
-          );
-          // Committed verbatim, so the latch this observer reads back is the
-          // latch that was written.
-          return {
-            next: mutation.nextState,
-            value: {
-              kind: 'won',
-              existingChild,
-              reclaimedFrom: ownership.kind === 'reclaimable' ? ownership.ownerPid : null,
-              // Built here rather than by the caller so that taking the latch
-              // and owning its release are one act: a `won` the caller could
-              // receive without a scope is a `won` the caller can forget to
-              // release. The thunk is not invoked inside this callback — it is
-              // stored for scope exit, which is outside the compare-and-swap
-              // and therefore free to send its own event.
-              held: heldInlineLatch(
-                async () => {
-                  await args.actorService.sendAndSync(parentLinkage.parentRunId, args.steps, {
+    }
+    switch (ownership.kind) {
+      case 'unlatched':
+      case 'reclaimable': {
+        // The two arms that launch, and they differ only in what they report:
+        // one takes a free latch, the other takes over a dead owner's.
+        const mutation = await args.actorService.prepareActorMutation(
+          parentLinkage.parentRunId,
+          current,
+          args.steps,
+          {
+            type: 'INLINE_CHILD_STARTED',
+            parentStepId: args.intent.parentStepId,
+            parentFrameKey: parentLinkage.parentFrameKey,
+            childRunId,
+            // Overwrites a dead owner's record with this process's own, so the
+            // launch this observer is about to perform is the one a third
+            // observer finds held. Leaving the dead pid there would let the
+            // reclamation be reclaimed again, mid-span.
+            started: started(),
+          },
+        );
+        // Committed verbatim, so the latch this observer reads back is the
+        // latch that was written.
+        return {
+          next: mutation.nextState,
+          value: {
+            kind: 'won',
+            existingChild,
+            reclaimedFrom: ownership.kind === 'reclaimable' ? ownership.ownerPid : null,
+            // Built here rather than by the caller so that taking the latch
+            // and owning its release are one act: a `won` the caller could
+            // receive without a scope is a `won` the caller can forget to
+            // release. The thunk is not invoked inside this callback — it is
+            // stored for scope exit, which is outside the compare-and-swap
+            // and therefore free to send its own event.
+            held: heldInlineLatch(
+              async () => {
+                await commitRunProgressionEvent(
+                  args.authority,
+                  args.manager,
+                  args.actorService,
+                  args.steps,
+                  {
                     type: 'INLINE_LAUNCH_ABANDONED',
                     // The record this attempt committed, not a fresh one: the
-                    // machine releases only while the row still holds it, so a
-                    // re-probed identity would name a latch nobody wrote and
-                    // release nothing. `started()` is memoized for that reason.
+                    // machine releases only while the row still holds it.
                     started: started(),
-                  });
-                },
-                () => ({
-                  parentRunId: parentLinkage.parentRunId,
-                  parentStepId: args.intent.parentStepId,
-                  childRunId,
-                }),
-              ),
-            },
-          };
-        }
-        default: {
-          const _exhaustive: never = ownership;
-          return _exhaustive;
-        }
+                  },
+                );
+              },
+              () => ({
+                parentRunId: parentLinkage.parentRunId,
+                parentStepId: args.intent.parentStepId,
+                childRunId,
+              }),
+            ),
+          },
+        };
       }
-    },
+      default: {
+        const _exhaustive: never = ownership;
+        return _exhaustive;
+      }
+    }
+  };
+
+  for (let attempt = 0; attempt < DEFAULT_MUTATE_ATTEMPTS; attempt += 1) {
+    const captured =
+      args.authority.claimKey === undefined
+        ? await args.manager.captureRunAuthorityState(args.authority.runId)
+        : await args.manager.captureAuthorityState(args.authority.runId, args.authority.claimKey);
+    if (captured.kind === 'missing') return { kind: 'missing' };
+    if (captured.kind !== 'captured') return { kind: 'superseded' };
+
+    const decision = await decide(captured.state);
+    if (decision.next === null) return decision.value;
+    const committed = await args.manager.saveState(captured.authority, decision.next);
+    if (committed.kind === 'committed') return decision.value;
+    if (committed.kind !== 'concurrent_modification') return { kind: 'superseded' };
+    if (attempt < DEFAULT_MUTATE_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, mutateBackoffMs(attempt)));
+    }
+  }
+  throw new ConcurrentStateModificationError(
+    parentLinkage.parentRunId,
+    `Run ${parentLinkage.parentRunId} changed while latching inline launch`,
   );
-  // `value` is null exactly when the callback never ran, which happens only for
-  // a missing run.
-  return value ?? { kind: 'missing' };
 }

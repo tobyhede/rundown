@@ -1468,7 +1468,7 @@ export class RunbookCompletionService {
    * construction instead of by exclusion. What the lock never prevented, and this
    * does, is the stale derivation itself: the compare-and-swap always stopped a
    * lost update, but the old drain selected against a caller-supplied state and
-   * let `sendAndSync` re-load a different one, so an apply could consume the row
+   * let an unfenced actor send re-load a different one, so an apply could consume the row
    * for the substep the caller captured while landing its PASS on the substep the
    * machine had since advanced to.
    *
