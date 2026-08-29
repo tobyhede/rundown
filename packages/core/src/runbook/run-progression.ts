@@ -23,14 +23,9 @@
  * {@link TerminalPropagation}) and render the observation stream; they do not
  * decide progression.
  *
- * TRANSITIONAL (#851 migration): completion selection now belongs to explicit
- * states in the compiled machine. The activation runtime still selects the
- * not-yet-deleted entry classifier through
- * machine-owned seams (`resolveCurrentExecutionUnit`,
- * `readPersistedReEntryFrontier`, `enterExecutionUnit`). Fresh runs and freshly
- * claimed children now enter this same activation; #858 removes the displaced
- * legacy loop and selection logic. This runtime must not grow new decisions;
- * it only shrinks.
+ * Completion selection and execution-unit entry are machine-owned turns. Fresh,
+ * claimed, resumed, and terminally propagated runs all enter this activation;
+ * there is no alternate frontend progression path.
  *
  * @module runbook/run-progression
  */
@@ -47,7 +42,7 @@ import { ErrorCodes } from '../errors/codes.js';
 import { Errors } from '../errors/factory.js';
 import { CLIErrorCodes } from '../output/zod-schemas.js';
 import type { RunbookActorService } from './actor-service.js';
-import type { RunProgressionMachineFeedback } from './compiler.js';
+import type { RunbookEvent, RunProgressionMachineFeedback } from './compiler.js';
 import { COMPLETION_TARGET_MISMATCH_CODE, RunbookCompletionService } from './completion-service.js';
 import type { EffectfulActorMutationRunner } from './effectful-actor-mutation-runner.js';
 import { findStepOrThrow } from './execution-units.js';
@@ -66,6 +61,7 @@ import type { RunProgressionAuthority } from './run-progression-authority.js';
 import { isConcurrentStateModificationError } from './state.js';
 import type { SessionMutationRefusal, SessionMutationResult } from './storage/runbook-store.js';
 import type { GuardedMutationResult } from './storage/mutation-result.js';
+import { DEFAULT_MUTATE_ATTEMPTS, mutateBackoffMs } from './storage/runbook-store.js';
 import type { SessionService } from './session-service.js';
 import {
   asTerminalSnapshotOrDefault,
@@ -79,7 +75,7 @@ import { inferFrameEntryFromState } from './frame-entry.js';
 import { extractLastMessage } from './transition-kernel.js';
 import type { InlineLaunchIntent } from '../events/types.js';
 import type { InlineParentAdvanceRefusal } from './inline-parent-advance.js';
-import { INLINE_PARENT_CYCLE_CODE } from './inline-parent-advance.js';
+import { INLINE_PARENT_CYCLE_CODE, reportDelegatedTerminal } from './inline-parent-advance.js';
 import { getErrorMessage } from '../errors.js';
 import { InvalidRunbookStateError } from './persisted-state-guards.js';
 import { inlineTerminalFlowBackActor } from './actors/inline-terminal-flow-back-actor.js';
@@ -596,6 +592,82 @@ export function progressionDirectiveForClaimedRun(
   };
 }
 
+/**
+ * Re-enter a terminal child through Run Progression so core owns upward flow-back.
+ *
+ * Terminality is already durable, so no caller claim is needed to mutate the
+ * child. The minted authority is restricted to inline-composition flow-back;
+ * ancestor authority is resolved and validated by core before any parent turn.
+ *
+ * @param state - Durable terminal child state.
+ * @param steps - Parsed graph corresponding to the terminal child.
+ * @returns A resume activation for terminal propagation.
+ * @throws {Error} When the supplied state is not terminal.
+ */
+export function progressionDirectiveForTerminalRun(
+  state: RunbookState,
+  steps: readonly ResolvedStep[],
+): Extract<RunProgressionDirective, { kind: 'activate' }> {
+  if (state.lifecycle !== 'completed' && state.lifecycle !== 'stopped') {
+    throw new Error(`Run ${state.id} is not terminal`);
+  }
+  return {
+    kind: 'activate',
+    authority: mintInlineCompositionProgressionAuthority(state.id),
+    runbook: state.runbook,
+    steps,
+    entryBoundary: { kind: 'resume' },
+  };
+}
+
+/**
+ * Commit one pure machine transition under exact Run Progression authority.
+ *
+ * Used for launch-intent consume/abandon feedback whose XState handlers contain
+ * only pure assigns. A loser re-captures authority and re-derives the transition;
+ * no stale actor snapshot is ever written over a concurrent terminal commit.
+ *
+ * @param authority - Core-minted authority for the exact run.
+ * @param manager - Durable state manager.
+ * @param actorService - Actor compiler used for pure transition derivation.
+ * @param steps - Parsed graph for the run.
+ * @param event - Pure internal machine event.
+ * @returns The guarded commit or typed refusal.
+ */
+export async function commitRunProgressionEvent(
+  authority: RunProgressionAuthority,
+  manager: RunbookStateManager,
+  actorService: RunbookActorService,
+  steps: readonly ResolvedStep[],
+  event: Extract<RunbookEvent, { type: 'INLINE_LAUNCH_CONSUMED' | 'INLINE_LAUNCH_ABANDONED' }>,
+): Promise<GuardedMutationResult<RunbookState>> {
+  let last: GuardedMutationResult<RunbookState> | undefined;
+  for (let attempt = 0; attempt < DEFAULT_MUTATE_ATTEMPTS; attempt += 1) {
+    const captured =
+      authority.claimKey === undefined
+        ? await manager.captureRunAuthorityState(authority.runId)
+        : await manager.captureAuthorityState(authority.runId, authority.claimKey);
+    if (captured.kind !== 'captured') return captured;
+    const prepared = await actorService.prepareActorMutation(
+      authority.runId,
+      captured.state,
+      steps,
+      event,
+    );
+    const committed = await manager.saveState(captured.authority, prepared.nextState);
+    if (committed.kind !== 'concurrent_modification') return committed;
+    last = committed;
+    if (attempt < DEFAULT_MUTATE_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, mutateBackoffMs(attempt)));
+    }
+  }
+  if (last === undefined) throw new Error('Run Progression event commit exhausted no attempts');
+  return last;
+}
+
+/** Maximum distinct inline ancestors one activation may validate. */
+export const MAX_INLINE_ANCESTOR_DEPTH = 64;
+
 /** A core-owned refusal while resolving one exact inline-composition edge. */
 export type InlineAncestorProgressionResolution =
   | { readonly kind: 'none' }
@@ -608,7 +680,11 @@ export type InlineAncestorProgressionResolution =
   | {
       readonly kind: 'refused';
       readonly runId: RunId;
-      readonly reason: 'missing_inline_parent' | 'inline_parent_cycle' | 'unrelated_inline_parent';
+      readonly reason:
+        | 'missing_inline_parent'
+        | 'inline_parent_cycle'
+        | 'inline_parent_depth'
+        | 'unrelated_inline_parent';
       readonly message: string;
     };
 
@@ -650,6 +726,14 @@ export async function resolveInlineAncestorProgression(args: {
   for (;;) {
     const linkage = descendant.parentLinkage;
     if (linkage?.kind !== 'inline') break;
+    if (ancestors.length >= MAX_INLINE_ANCESTOR_DEPTH) {
+      return {
+        kind: 'refused',
+        runId: descendant.id,
+        reason: 'inline_parent_depth',
+        message: `Parent linkage chain from ${descendant.id} exceeded the maximum propagation depth of ${String(MAX_INLINE_ANCESTOR_DEPTH)}`,
+      };
+    }
     if (seen.has(linkage.parentRunId)) {
       return {
         kind: 'refused',
@@ -755,6 +839,54 @@ export async function flowBackInlineTerminal(args: {
 }
 
 /**
+ * Propagate one terminal run through its core-owned composition relationship.
+ * Inline linkage takes precedence; a non-inline terminal is reported through
+ * delegation when applicable. Frontends supply effects but never select the
+ * upward path or translate its coordination outcomes.
+ */
+export async function propagateTerminalRun(args: {
+  readonly authority: RunProgressionAuthority;
+  readonly manager: RunbookStateManager;
+  readonly actorService: RunbookActorService;
+  readonly completionService: RunbookCompletionService;
+  readonly loadSteps: RunProgressionDeps['loadSteps'];
+  readonly source: TerminalPropagationSource;
+  readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
+  readonly ancestorAuthorities?: readonly RunProgressionAuthority[];
+  readonly activateParent: (
+    directive: Extract<RunProgressionDirective, { kind: 'activate' }>,
+  ) => Promise<RunProgressionOutcome>;
+}): Promise<TerminalPropagationResult> {
+  const inline = await flowBackInlineTerminal(args);
+  if (inline !== null) return inline;
+  const terminal = await args.manager.load(args.authority.runId);
+  if (terminal === null) return { kind: 'propagated' };
+  const reported = await reportDelegatedTerminal(
+    { completionService: args.completionService },
+    terminal,
+    args.source.kind === 'explicit-result' ? args.source.result : undefined,
+  );
+  if (reported.kind === 'refused') {
+    return {
+      kind: 'refused',
+      runId: args.authority.runId,
+      message: `Delegated terminal report for ${args.authority.runId} was blocked`,
+      recovery: 'permanent',
+    };
+  }
+  if (reported.kind === 'linkage-cycle') {
+    return {
+      kind: 'refused',
+      runId: args.authority.runId,
+      code: reported.trip.code,
+      message: reported.trip.message,
+      recovery: 'permanent',
+    };
+  }
+  return { kind: 'propagated' };
+}
+
+/**
  * Core operation invoked by {@link inlineTerminalFlowBackActor}.
  *
  * @param args - Exact child authority, services, source, and recursive activation port.
@@ -793,7 +925,10 @@ async function executeInlineTerminalFlowBack(args: {
   };
   const resolved = await resolveInlineAncestorProgression(resolutionArgs);
   if (resolved.kind === 'refused') {
-    const code = resolved.reason === 'inline_parent_cycle' ? INLINE_PARENT_CYCLE_CODE : undefined;
+    const code =
+      resolved.reason === 'inline_parent_cycle' || resolved.reason === 'inline_parent_depth'
+        ? INLINE_PARENT_CYCLE_CODE
+        : undefined;
     args.sink.emit({
       type: 'ERROR_OCCURRED',
       payload: {

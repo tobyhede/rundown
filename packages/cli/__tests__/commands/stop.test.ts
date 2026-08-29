@@ -208,9 +208,6 @@ The result is {{ Result }}.
       const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
       expect(typeof claimId).toBe('string');
 
-      // Mock sendAndSync to return null, simulating propagation not reaching parent
-      jest.spyOn(RunbookActorService.prototype, 'sendAndSync').mockResolvedValueOnce(null);
-
       const result = await runCliInProcess(
         ['stop', '--claim-id', String(claimId), 'child was interrupted', '--text'],
         workspace,
@@ -737,15 +734,10 @@ Do work.
       const persistedState = await readRunbookState(workspace, state!.id);
       expect(persistedState?.lifecycle).toBe('completed');
 
-      // Spy on the actor service. The short-circuit must avoid sendAndSync
-      // and never propagate to a (nonexistent) parent.
-      const sendSpy = jest.spyOn(RunbookActorService.prototype, 'sendAndSync');
-
       const result = await runCliInProcess('stop --text', workspace);
 
       // The command must succeed without driving the machine.
       expect(result.exitCode).toBe(0);
-      expect(sendSpy).not.toHaveBeenCalled();
 
       // The lifecycle must not have changed.
       const afterStop = await readRunbookState(workspace, state!.id);

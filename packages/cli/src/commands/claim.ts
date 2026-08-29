@@ -335,17 +335,8 @@ export function registerClaimCommand(program: Command): void {
               return;
             }
 
-            // Claimed children are delegated children. If a non-prompted child
-            // reaches terminal during launch, report its terminal outcome to
-            // the delegating parent. Reporting is side-effect-only; the child's
-            // own loopResult governs this command's exit code.
-            const shouldExitWithError =
-              (result.progression !== undefined && progressionFailedClosed(result.progression)) ||
-              result.loopResult === 'stopped' ||
-              // Stryker disable next-line ConditionalExpression,StringLiteral: unreachable — the only `blocked` producer a claimed launch can reach is the inline flow-back in `runExecutionLoop`, and core refuses automatic inline launch for any delegation-linked run (`INLINE_LAUNCH_FORBIDDEN`), so a claimed child's loop stops on the refusal instead. Kept as exhaustive handling of `ExecutionLoopStatus`; the refusal is pinned by claim.test.ts 'refuses automatic inline launch inside a claimed child scope'.
-              result.loopResult === 'blocked';
             output.flush();
-            if (shouldExitWithError) {
+            if (progressionFailedClosed(result.progression)) {
               process.exit(1);
             }
           },

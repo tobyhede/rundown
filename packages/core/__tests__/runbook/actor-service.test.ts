@@ -3,9 +3,14 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createActor, waitFor, type Snapshot } from 'xstate';
-import { InvalidRunbookStateError, RunbookStateManager } from '../../src/runbook/state.js';
+import {
+  CURRENT_SCHEMA_VERSION,
+  InvalidRunbookStateError,
+  RunbookStateManager,
+} from '../../src/runbook/state.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import {
+  type ActorSyncResult,
   extractEnteredArtifacts,
   RunbookActorService,
   stateValueAsString,
@@ -21,7 +26,7 @@ import type {
 import { makeBaseStep } from '../helpers/step-factories.js';
 import { createJsonArrayStream } from '../../src/runbook/types.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
-import type { RunbookContext } from '../../src/runbook/compiler.js';
+import type { RunbookContext, RunbookEvent } from '../../src/runbook/compiler.js';
 import {
   compileRunbookToMachine,
   MAX_SELF_GOTO_PASSES,
@@ -64,6 +69,21 @@ function mockActor(snapshot: {
   readonly context: Record<string, unknown>;
 }): AnyActorRef {
   return { getPersistedSnapshot: () => snapshot } as unknown as AnyActorRef;
+}
+
+async function sendPreparedForTest(
+  service: RunbookActorService,
+  manager: RunbookStateManager,
+  id: string,
+  steps: readonly ResolvedStep[],
+  event: RunbookEvent,
+  options: { readonly runtime?: Parameters<RunbookActorService['prepareActorMutation']>[4] } = {},
+): Promise<ActorSyncResult | null> {
+  const current = await manager.load(id);
+  if (current === null) return null;
+  const prepared = await service.prepareActorMutation(id, current, steps, event, options.runtime);
+  await manager.save(prepared.nextState);
+  return { state: prepared.nextState, snapshot: prepared.snapshot, effects: prepared.effects };
 }
 
 interface LifecycleHarness {
@@ -477,7 +497,7 @@ exit 1
       await writeFile(channelPath, 'persisted-value\n', 'utf-8');
 
       // Drive the actor through a FAIL-RETRY cycle
-      const result = await actorService.sendAndSync(state.id, steps, {
+      const result = await sendPreparedForTest(actorService, manager, state.id, steps, {
         type: 'COMMAND_RESULT',
         result: 'fail',
         channels: [{ name: 'Foo', path: channelPath }],
@@ -722,7 +742,7 @@ exit 1
 
   describe('sendAndSync', () => {
     it('returns null for nonexistent runbook', async () => {
-      const result = await actorService.sendAndSync('nonexistent', mockSteps, {
+      const result = await sendPreparedForTest(actorService, manager, 'nonexistent', mockSteps, {
         type: 'PASS',
       });
       expect(result).toBeNull();
@@ -732,7 +752,7 @@ exit 1
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
-      const result = await actorService.sendAndSync(state.id, mockSteps, {
+      const result = await sendPreparedForTest(actorService, manager, state.id, mockSteps, {
         type: 'PASS',
       });
 
@@ -762,7 +782,7 @@ exit 1
         { runbookPath: 'pass-result.md', frontmatterOutputs: [] },
       );
 
-      const result = await actorService.sendAndSync(state.id, steps, {
+      const result = await sendPreparedForTest(actorService, manager, state.id, steps, {
         type: 'PASS',
       });
 
@@ -784,7 +804,7 @@ exit 1
         { runbookPath: 'fail-result.md', frontmatterOutputs: [] },
       );
 
-      const result = await actorService.sendAndSync(state.id, steps, {
+      const result = await sendPreparedForTest(actorService, manager, state.id, steps, {
         type: 'FAIL',
       });
 
@@ -816,7 +836,7 @@ echo ok
         { runbookPath: 'command-result.md', frontmatterOutputs: [] },
       );
 
-      const result = await actorService.sendAndSync(state.id, steps, {
+      const result = await sendPreparedForTest(actorService, manager, state.id, steps, {
         type: 'COMMAND_RESULT',
         result: 'pass',
         channels: [],
@@ -852,7 +872,7 @@ echo ok
         },
       });
 
-      const sync = await service.sendAndSync(state.id, stepsWithOneCommand, {
+      const sync = await sendPreparedForTest(service, manager, state.id, stepsWithOneCommand, {
         type: 'EXECUTE_COMMAND',
         command: 'true',
         displayCommand: 'true',
@@ -903,7 +923,7 @@ echo ok
         },
       });
 
-      const sync = await service.sendAndSync(state.id, stepsWithOneCommand, {
+      const sync = await sendPreparedForTest(service, manager, state.id, stepsWithOneCommand, {
         type: 'EXECUTE_COMMAND',
         command: 'sleep-longer-than-machine-effect-timeout',
         displayCommand: 'sleep-longer-than-machine-effect-timeout',
@@ -941,7 +961,7 @@ echo ok
         },
       });
 
-      const sync = await service.sendAndSync(state.id, stepsWithOneCommand, {
+      const sync = await sendPreparedForTest(service, manager, state.id, stepsWithOneCommand, {
         type: 'EXECUTE_COMMAND',
         command: 'false',
         displayCommand: 'false',
@@ -978,7 +998,7 @@ echo ok
         },
       });
 
-      const sync = await service.sendAndSync(state.id, stepsWithOneCommand, {
+      const sync = await sendPreparedForTest(service, manager, state.id, stepsWithOneCommand, {
         type: 'EXECUTE_COMMAND',
         command: 'curl https://example.test',
         displayCommand: 'curl https://example.test',
@@ -1020,7 +1040,7 @@ echo ok
         },
       });
 
-      const sync = await service.sendAndSync(state.id, stepsWithOneCommand, {
+      const sync = await sendPreparedForTest(service, manager, state.id, stepsWithOneCommand, {
         type: 'EXECUTE_COMMAND',
         command: 'npm test',
         displayCommand: 'npm test',
@@ -1059,7 +1079,7 @@ echo ok
         },
       });
 
-      const sync = await service.sendAndSync(state.id, stepsWithOneCommand, {
+      const sync = await sendPreparedForTest(service, manager, state.id, stepsWithOneCommand, {
         type: 'EXECUTE_COMMAND',
         command: 'true',
         displayCommand: 'true',
@@ -1580,7 +1600,7 @@ echo ok
       if (!initialized) throw new Error('expected initialized state');
       const before = initialized.substepStates;
 
-      const result = await actorService.sendAndSync(state.id, steps, {
+      const result = await sendPreparedForTest(actorService, manager, state.id, steps, {
         type: 'INLINE_CHILD_STARTED',
         parentStepId: '1',
         parentFrameKey: buildFrameKey('1'),
@@ -1639,7 +1659,7 @@ echo ok
       });
       service.stopActor(prepared);
 
-      const result = await service.sendAndSync(state.id, steps, {
+      const result = await sendPreparedForTest(service, manager, state.id, steps, {
         type: 'INLINE_CHILD_STARTED',
         parentStepId: '1',
         parentFrameKey: frameKey,
@@ -2166,7 +2186,7 @@ echo ok
       );
       await manager.update(state.id, { lastResult: 'fail' });
 
-      const result = await actorService.sendAndSync(state.id, steps, {
+      const result = await sendPreparedForTest(actorService, manager, state.id, steps, {
         type: 'GOTO',
         target: { step: '2' },
       });
@@ -2342,73 +2362,33 @@ echo ok
       ).resolves.toEqual({ status: 'needs_force', childRunId });
     });
 
-    it('routes a prepared abort through the actor when a persisted snapshot exists', async () => {
+    it('patches snapshot-backed abort state without a bridge event', async () => {
       const issued = await issueDelegation();
-      const captured = { ...issued, snapshot: { value: 'persisted' } };
-      const actorNextState = { ...captured, stepName: 'actor-applied' };
-      const prepareSpy = jest.spyOn(actorService, 'prepareActorMutation').mockResolvedValue({
-        previousState: captured,
-        nextState: actorNextState,
-        snapshot: { value: 'next' },
-        effects: [],
-      });
-
+      const captured = {
+        ...issued,
+        schemaVersion: CURRENT_SCHEMA_VERSION,
+        snapshot: { value: 'persisted', context: { substepStates: issued.substepStates } },
+      };
       const result = await actorService.prepareManualDelegationMutation(
         captured,
         makeDelegationSteps(),
         { type: 'ABORT', substepId: '1', frameKey, force: false },
         makeDelegationCredentialIssuer(),
       );
-
-      expect(result).toEqual({ status: 'prepared', nextState: actorNextState });
-      expect(prepareSpy).toHaveBeenCalledTimes(1);
-      const preparedCall = prepareSpy.mock.calls[0];
-      const [preparedId, preparedState, , preparedEvent] = preparedCall;
-      expect(preparedId).toBe(captured.id);
-      expect(preparedState).toBe(captured);
-      expect(preparedEvent.type).toBe('MANUAL_DELEGATION_ABORT_PREPARED');
-      if (preparedEvent.type !== 'MANUAL_DELEGATION_ABORT_PREPARED') {
-        throw new Error('expected prepared abort event');
-      }
-      expect(preparedEvent.substepStates).toEqual(
+      expect(result.status).toBe('prepared');
+      if (result.status !== 'prepared') throw new Error('expected prepared abort');
+      expect(result.nextState.substepStates).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             id: '1',
-            delegation: expect.objectContaining({
-              cancelledAt: expect.any(String),
-            }),
+            delegation: expect.objectContaining({ cancelledAt: expect.any(String) }),
           }),
         ]),
       );
-    });
-
-    // The snapshot-backed abort re-enters the parent machine, and that machine
-    // can step into a DELEGATE frontier whose issuance actor needs the very
-    // issuer this method already holds. Dropping it on the round-trip hands the
-    // machine a bare continuation, so the frontier refuses
-    // `actor_context_required` for a caller whose authority was verified.
-    it('forwards the verified issuer as runtime capability on the prepared abort round-trip', async () => {
-      const issued = await issueDelegation();
-      const captured = { ...issued, snapshot: { value: 'persisted' } };
-      const prepareSpy = jest.spyOn(actorService, 'prepareActorMutation').mockResolvedValue({
-        previousState: captured,
-        nextState: captured,
-        snapshot: { value: 'next' },
-        effects: [],
-      });
-      const issueCredential = makeDelegationCredentialIssuer();
-
-      await actorService.prepareManualDelegationMutation(
-        captured,
-        makeDelegationSteps(),
-        { type: 'ABORT', substepId: '1', frameKey, force: false },
-        issueCredential,
-      );
-
-      expect(prepareSpy).toHaveBeenCalledTimes(1);
-      expect(prepareSpy.mock.calls[0][4]).toEqual({
-        issueDelegationCredential: issueCredential,
-      });
+      expect(
+        (result.nextState.snapshot as { context?: { substepStates?: unknown } }).context
+          ?.substepStates,
+      ).toEqual(result.nextState.substepStates);
     });
   });
 
@@ -2805,7 +2785,7 @@ echo ok
     });
   });
 
-  describe('sendAndSync pending machine effects', () => {
+  describe('prepared mutation machine effects', () => {
     it('waits for tagged machine-owned invokes before persisting', async () => {
       const steps = createRunbook(`## 1. capture
 - PASS COMPLETE
@@ -2827,7 +2807,7 @@ echo hi
       const channelPath = join(testDir, 'Foo');
       await writeFile(channelPath, 'persisted-value\n', 'utf-8');
 
-      const result = await actorService.sendAndSync(state.id, steps, {
+      const result = await sendPreparedForTest(actorService, manager, state.id, steps, {
         type: 'COMMAND_RESULT',
         result: 'pass',
         channels: [{ name: 'Foo', path: channelPath }],
@@ -2840,123 +2820,6 @@ echo hi
       expect(persisted?.lifecycle).toBe('completed');
       expect(persisted?.variables).toEqual({ Foo: 'persisted-value' });
       expect(JSON.stringify(persisted?.snapshot)).not.toContain('__capture');
-    });
-
-    it('persists stopped lifecycle when machine-owned effects fail after an event send', async () => {
-      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
-        runbookPath: 'test.md',
-      });
-      const effectsError = new Error('machine effect timed out');
-      (
-        actorService as unknown as {
-          waitForMachineEffects: () => Promise<void>;
-        }
-      ).waitForMachineEffects = async () => {
-        throw effectsError;
-      };
-
-      await expect(actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' })).rejects.toThrow(
-        effectsError,
-      );
-
-      await expect(manager.load(state.id)).resolves.toMatchObject({
-        lifecycle: 'stopped',
-      });
-    });
-
-    it('persists lastResult from COMMAND_RESULT when machine effects fail after event send', async () => {
-      const steps = createRunbook(`## 1. Command
-- PASS COMPLETE
-- FAIL STOP
-
-\`\`\`bash
-echo ok
-\`\`\`
-`);
-      const state = await manager.create(
-        { source: 'project', path: 'effects-fail-result.md' },
-        { title: 'Effects fail result', description: '', steps },
-        { runbookPath: 'effects-fail-result.md', frontmatterOutputs: [] },
-      );
-
-      const effectsError = new Error('machine effect timed out');
-      (
-        actorService as unknown as {
-          waitForMachineEffects: () => Promise<void>;
-        }
-      ).waitForMachineEffects = async () => {
-        throw effectsError;
-      };
-
-      await expect(
-        actorService.sendAndSync(state.id, steps, {
-          type: 'COMMAND_RESULT',
-          result: 'pass',
-          channels: [],
-        }),
-      ).rejects.toThrow(effectsError);
-
-      await expect(manager.load(state.id)).resolves.toMatchObject({
-        lifecycle: 'stopped',
-        lastResult: 'pass',
-      });
-    });
-
-    it('persists lastResult from COMMAND_RESULT fail when machine effects fail after event send', async () => {
-      const steps = createRunbook(`## 1. Command
-- PASS COMPLETE
-- FAIL STOP
-
-\`\`\`bash
-echo ok
-\`\`\`
-`);
-      const state = await manager.create(
-        { source: 'project', path: 'effects-fail-result-fail.md' },
-        { title: 'Effects fail result fail', description: '', steps },
-        { runbookPath: 'effects-fail-result-fail.md', frontmatterOutputs: [] },
-      );
-
-      const effectsError = new Error('machine effect timed out');
-      (
-        actorService as unknown as {
-          waitForMachineEffects: () => Promise<void>;
-        }
-      ).waitForMachineEffects = async () => {
-        throw effectsError;
-      };
-
-      await expect(
-        actorService.sendAndSync(state.id, steps, {
-          type: 'COMMAND_RESULT',
-          result: 'fail',
-          channels: [],
-        }),
-      ).rejects.toThrow(effectsError);
-
-      await expect(manager.load(state.id)).resolves.toMatchObject({
-        lifecycle: 'stopped',
-        lastResult: 'fail',
-      });
-    });
-
-    it('does not persist stopped lifecycle when post-effect actor sync rejects invalid state', async () => {
-      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
-        runbookPath: 'test.md',
-      });
-      const syncError = new Error('Persisted stateValue "step::missing" references missing step');
-      const updateFromActor = jest
-        .spyOn(actorService, 'updateFromActor')
-        .mockRejectedValue(syncError);
-
-      await expect(actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' })).rejects.toThrow(
-        syncError,
-      );
-
-      expect(updateFromActor).toHaveBeenCalled();
-      await expect(manager.load(state.id)).resolves.toMatchObject({
-        lifecycle: 'running',
-      });
     });
   });
 
@@ -3810,7 +3673,7 @@ echo ok
 
       // Drive the actor to STOPPED via FAIL on the first step (mockSteps' default
       // transitions are PASS COMPLETE / FAIL STOP — confirm in test setup).
-      const result = await actorService.sendAndSync(state.id, mockSteps, {
+      const result = await sendPreparedForTest(actorService, manager, state.id, mockSteps, {
         type: 'FAIL',
       });
       expect(result).not.toBeNull();
@@ -3825,7 +3688,7 @@ echo ok
         templateVars: { Result: 'passed-value' },
       });
 
-      const result = await actorService.sendAndSync(state.id, mockSteps, {
+      const result = await sendPreparedForTest(actorService, manager, state.id, mockSteps, {
         type: 'PASS',
       });
       expect((result!.snapshot as { value: string }).value).toBe('COMPLETE');
@@ -3839,7 +3702,7 @@ echo ok
         // No frontmatterOutputs declared → context.finalVars stays {}
       });
 
-      const result = await actorService.sendAndSync(state.id, mockSteps, {
+      const result = await sendPreparedForTest(actorService, manager, state.id, mockSteps, {
         type: 'FAIL',
       });
       expect(result!.state.finalVars).toBeUndefined();
@@ -3851,7 +3714,7 @@ echo ok
         frontmatterOutputs: [], // No frontmatterOutputs declared → context.finalVars stays {}
       });
 
-      const result = await actorService.sendAndSync(state.id, mockSteps, {
+      const result = await sendPreparedForTest(actorService, manager, state.id, mockSteps, {
         type: 'PASS',
       });
       expect(result!.state.finalVars).toBeUndefined();
@@ -3864,7 +3727,7 @@ echo ok
         templateVars: { Result: 'forced-stop-value' },
       });
 
-      const result = await actorService.sendAndSync(state.id, mockSteps, {
+      const result = await sendPreparedForTest(actorService, manager, state.id, mockSteps, {
         type: 'FORCE_STOP',
         message: 'Stopped by operator',
       });
@@ -3890,7 +3753,7 @@ echo ok
       });
       await manager.update(state.id, { lastResult: 'pass' });
 
-      const result = await actorService.sendAndSync(state.id, mockSteps, {
+      const result = await sendPreparedForTest(actorService, manager, state.id, mockSteps, {
         type: 'FORCE_STOP',
         message: 'Stopped by operator',
       });
@@ -3913,7 +3776,7 @@ echo ok
       });
       expect(state.step).toBe('1');
 
-      const result = await actorService.sendAndSync(state.id, mockSteps, {
+      const result = await sendPreparedForTest(actorService, manager, state.id, mockSteps, {
         type: 'FORCE_COMPLETE',
         message: 'Enough evidence collected',
       });
@@ -3943,7 +3806,7 @@ echo ok
         templateVars: { Result: 'prod' },
       });
 
-      const result = await helperActorService.sendAndSync(state.id, mockSteps, {
+      const result = await sendPreparedForTest(helperActorService, manager, state.id, mockSteps, {
         type: 'FORCE_COMPLETE',
       });
 
@@ -4496,7 +4359,7 @@ echo ok
         runId: 'rd_12121212121212121212121212121212',
       });
 
-      const afterPass = await actorService.sendAndSync(passState.id, steps, {
+      const afterPass = await sendPreparedForTest(actorService, manager, passState.id, steps, {
         type: 'PASS',
       });
       expect(JSON.stringify(afterPass?.state.snapshot)).not.toContain('__resolve-artifacts');
@@ -4508,7 +4371,7 @@ echo ok
         runbookPath: 'pending-effects-fail.md',
         runId: 'rd_14141414141414141414141414141414',
       });
-      const afterFail = await actorService.sendAndSync(failState.id, steps, {
+      const afterFail = await sendPreparedForTest(actorService, manager, failState.id, steps, {
         type: 'FAIL',
       });
       expect(JSON.stringify(afterFail?.state.snapshot)).not.toContain('__resolve-artifacts');
@@ -4520,7 +4383,7 @@ echo ok
         runbookPath: 'pending-effects-goto.md',
         runId: 'rd_15151515151515151515151515151515',
       });
-      const afterGoto = await actorService.sendAndSync(gotoState.id, steps, {
+      const afterGoto = await sendPreparedForTest(actorService, manager, gotoState.id, steps, {
         type: 'GOTO',
         target: { step: '4' },
       });

@@ -491,12 +491,9 @@ Do work.
     const persistedState = await readRunbookState(workspace, state!.id);
     expect(persistedState?.lifecycle).toBe('completed');
 
-    const sendSpy = jest.spyOn(RunbookActorService.prototype, 'sendAndSync');
-
     const result = await runCliInProcess('complete --text', workspace);
 
     expect(result.exitCode).toBe(0);
-    expect(sendSpy).not.toHaveBeenCalled();
 
     const afterComplete = await readRunbookState(workspace, state!.id);
     expect(afterComplete?.lifecycle).toBe('completed');
@@ -628,7 +625,9 @@ Waiting.
       // one path while exercising the other.
       expect(result.exitCode).not.toBe(0);
       const cycle = parseConcatenatedJson(result.stdout).find(
-        (entry) => (entry as Record<string, unknown>).code === 'INLINE_PARENT_CYCLE',
+        (entry) =>
+          (entry as Record<string, unknown>).code === 'INLINE_PARENT_CYCLE' &&
+          typeof (entry as Record<string, unknown>).error === 'string',
       ) as Record<string, unknown> | undefined;
       // The operator must be told WHICH run to prune: an unnamed refusal is
       // indistinguishable from any other block and carries no recovery path.
@@ -652,11 +651,8 @@ Waiting.
       const cycle = parseConcatenatedJson(result.stdout).find(
         (entry) => (entry as Record<string, unknown>).code === 'INLINE_PARENT_CYCLE',
       ) as Record<string, unknown> | undefined;
-      // `details` distinguishes this from the force-terminal path's identically
-      // worded refusal: only the propagation guard carries the cause + run id.
       expect(cycle).toMatchObject({
         code: 'INLINE_PARENT_CYCLE',
-        error: `Parent linkage cycle detected at ${childId}`,
         details: { cause: 'repeat', runId: childId },
       });
     });

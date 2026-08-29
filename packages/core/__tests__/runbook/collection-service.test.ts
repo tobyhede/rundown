@@ -13,16 +13,13 @@ import {
   assertDelegationTokenHash,
   assertRunId,
   createEffectfulActorMutationRunner,
-  type AdvanceInlineParent,
   type CallerEvidence,
   type ClaimLookupKey,
   type EffectfulActorMutationRunner,
   type EffectfulActorMutationRunnerInput,
   type EffectfulActorMutationSetRunnerInput,
-  type InlineUpwardPropagationResult,
   type RunbookState,
   type RunId,
-  type TerminalUpwardPropagationResult,
   type ClaimId,
   type ClaimSeenRecordResult,
 } from '../../src/runbook/index.js';
@@ -30,8 +27,6 @@ import { createDelegationCredentialIssuer } from '../../src/runbook/delegation-c
 import { readPersistedReEntryFrontier } from '../../src/runbook/re-entry-frontier.js';
 import { assertDelegationIssuanceNonce } from '../../src/runbook/delegation-token.js';
 import { claimCanReportDelegationResult } from '../../src/runbook/claim-id.js';
-import { narrowInlineUpwardPropagation } from '../../src/runbook/collection-service.js';
-import { COMPLETION_TARGET_MISMATCH_CODE } from '../../src/runbook/completion-service.js';
 import type {
   CollectionSessionService,
   RunbookCollectionServiceDependencies,
@@ -344,12 +339,6 @@ describe('RunbookCollectionService', () => {
       lifecycleService,
       completionService,
       actorMutationRunner,
-      // Default fake: pre-existing tests never drive a target terminal that
-      // carries INLINE linkage, so a never-resolving-terminal fake satisfies the
-      // required dep. Inline-advance tests below construct their own spy.
-      advanceInlineParent: jest
-        .fn<AdvanceInlineParent>()
-        .mockRejectedValue(new Error('advanceInlineParent must not be called by this test')),
       // Default loader for aggregate members other than the collect target.
       // Most fixtures here seed the parent from the SAME step graph, so the
       // shared fixture is the honest default; the recovery-wiring tests below
@@ -1550,10 +1539,7 @@ describe('RunbookCollectionService', () => {
       const { controlled } = await seedTerminalControlled('completed', 'pass', {
         parentLinkage: inlineLinkage,
       });
-      const advanceInlineParent = jest
-        .fn<AdvanceInlineParent>()
-        .mockResolvedValue({ status: 'active' });
-      const svc = makeCollectionService({ advanceInlineParent });
+      const svc = makeCollectionService();
 
       const outcome = await svc.collectDelegationOutcomes({
         targetState: controlled,
@@ -1572,7 +1558,6 @@ describe('RunbookCollectionService', () => {
         // Inline advance never reports a delegation outcome.
         expect(outcome.reportedTerminalOutcome).toBe(false);
       }
-      expect(advanceInlineParent).not.toHaveBeenCalled();
     });
 
     it('surfaces a self-linked (cyclic) inline target as a trip naming the run to prune (#602/#603)', async () => {
@@ -1585,8 +1570,7 @@ describe('RunbookCollectionService', () => {
       const { controlled } = await seedTerminalControlled('completed', 'pass', {
         parentLinkage: { ...inlineLinkage, parentRunId: controlledRunId },
       });
-      const advanceInlineParent = jest.fn<AdvanceInlineParent>();
-      const svc = makeCollectionService({ advanceInlineParent });
+      const svc = makeCollectionService();
 
       const outcome = await svc.collectDelegationOutcomes({
         targetState: controlled,
@@ -1600,7 +1584,6 @@ describe('RunbookCollectionService', () => {
         expect(outcome.progression).toMatchObject({ kind: 'activate' });
         expect(outcome.reportedTerminalOutcome).toBe(false);
       }
-      expect(advanceInlineParent).not.toHaveBeenCalled();
     });
 
     it('claim gate refuses a self-linked DELEGATION target BEFORE the #602 guard is reached', async () => {
@@ -1638,9 +1621,7 @@ describe('RunbookCollectionService', () => {
         }),
       ).toBe(true);
 
-      const svc = makeCollectionService({
-        advanceInlineParent: jest.fn<AdvanceInlineParent>(),
-      });
+      const svc = makeCollectionService({});
       // The report is now PREPARED into the same commit as the terminal state, so
       // the write the gate must skip is `prepareChildCompletion`, not the
       // standalone `recordChildCompletion` the old sequence used.
@@ -1668,8 +1649,7 @@ describe('RunbookCollectionService', () => {
       const { controlled } = await seedTerminalControlled('completed', 'pass', {
         parentLinkage: delegationLinkage,
       });
-      const advanceInlineParent = jest.fn<AdvanceInlineParent>();
-      const svc = makeCollectionService({ advanceInlineParent });
+      const svc = makeCollectionService();
 
       const outcome = await svc.collectDelegationOutcomes({
         targetState: controlled,
@@ -1684,7 +1664,6 @@ describe('RunbookCollectionService', () => {
         expect(outcome.progression).toMatchObject({ kind: 'activate' });
       }
       // The inline callable never runs for a delegation target.
-      expect(advanceInlineParent).not.toHaveBeenCalled();
     });
 
     it('does not report when the claim cannot report the delegation result', async () => {
@@ -1699,8 +1678,7 @@ describe('RunbookCollectionService', () => {
       const { controlled } = await seedTerminalControlled('completed', 'pass', {
         parentLinkage: unauthorizedLinkage,
       });
-      const advanceInlineParent = jest.fn<AdvanceInlineParent>();
-      const svc = makeCollectionService({ advanceInlineParent });
+      const svc = makeCollectionService();
       const prepareSpy = jest.spyOn(completionService, 'prepareChildCompletion');
 
       const outcome = await svc.collectDelegationOutcomes({
@@ -1721,7 +1699,6 @@ describe('RunbookCollectionService', () => {
       expect(
         Object.keys((await manager.load(ancestorRunId))?.resolvedCompletions ?? {}),
       ).toHaveLength(0);
-      expect(advanceInlineParent).not.toHaveBeenCalled();
     });
   });
 
@@ -2531,148 +2508,6 @@ describe('RunbookCollectionService', () => {
       ).toHaveLength(1);
     });
   });
-
-  // ---------------------------------------------------------------------------
-  // The INLINE narrowing at the collect boundary.
-  //
-  // `advanceInlineParentAfterCommit` narrows the shared seam's union down to the
-  // inline subset. It used to do that with
-  // `outcome.kind === 'reported' || outcome.kind === 'duplicate' ? { kind:
-  // 'not-applicable' } : outcome`, which silently remaps two DELEGATION
-  // dispositions the seam documents as load-bearing onto a third meaning
-  // ("there was nothing to propagate to"). CLAUDE.md forbids exactly that
-  // collapse, and a `?:` cannot be made exhaustive: a new member added to
-  // `TerminalUpwardPropagationResult` would fall into the pass-through arm and
-  // silently widen the declared `InlineUpwardPropagationResult` return.
-  // ---------------------------------------------------------------------------
-
-  describe('inline upward-propagation narrowing', () => {
-    const inlineArms: readonly [string, InlineUpwardPropagationResult][] = [
-      ['handled', { kind: 'handled' }],
-      ['stopped', { kind: 'stopped' }],
-      ['blocked', { kind: 'blocked' }],
-      ['not-applicable', { kind: 'not-applicable' }],
-      [
-        'linkage-cycle',
-        {
-          kind: 'linkage-cycle',
-          trip: {
-            cause: 'repeat',
-            repeatedRunId: ancestorRunId,
-            code: 'INLINE_PARENT_CYCLE',
-            message: `Parent linkage cycle detected at ${ancestorRunId}`,
-          },
-        },
-      ],
-      [
-        'advance-refused',
-        {
-          kind: 'advance-refused',
-          refusal: {
-            reason: 'target_mismatch',
-            code: COMPLETION_TARGET_MISMATCH_CODE,
-            message: 'Completion targets substep 2, cursor is on 1',
-            runId: ancestorRunId,
-          },
-        },
-      ],
-    ];
-
-    it.each(inlineArms)('passes the %s arm through by identity', (_name, arm) => {
-      // By IDENTITY, not by equality: the `linkage-cycle` arm carries the trip
-      // naming the run to prune, and rebuilding the arm here is precisely the
-      // loss #603 removed from the seam. Nothing on this boundary may rebuild it.
-      expect(narrowInlineUpwardPropagation(arm)).toBe(arm);
-    });
-
-    it.each<['reported' | 'duplicate']>([['reported'], ['duplicate']])(
-      'refuses the delegation-only %s disposition instead of remapping it to not-applicable',
-      (kind) => {
-        // The two arms an inline-linked child can never produce (proved by the
-        // scenario test below). Were one to arrive, it would mean the seam's
-        // contract had changed — an invariant violation, not an expected
-        // refusal, and never a `not-applicable`.
-        const outcome: TerminalUpwardPropagationResult = { kind };
-        expect(() => narrowInlineUpwardPropagation(outcome)).toThrow(
-          `Inline upward propagation yielded the delegation-only disposition "${kind}"`,
-        );
-      },
-    );
-
-    it('collapses a delegation-linked grandparent report INSIDE the seam, not at this boundary', async () => {
-      // The reachability question the narrowing turns on. `collect` only calls
-      // the seam for an INLINE-linked target, but the seam recurses upward, so a
-      // delegation boundary one level up DOES reach `recordChildCompletion` and
-      // DOES produce `{ kind: 'reported' }` — inside the recursion.
-      //
-      // The seam's own severity collapse then discards it: only `linkage-cycle`
-      // and `blocked` bubble out unchanged, `stopped` survives as `stopped`, and
-      // everything else becomes `handled`. So the value that reaches the collect
-      // boundary is `handled`, never `reported`. This test is the evidence for
-      // that claim — it walks child → inline parent → delegating grandparent and
-      // asserts BOTH halves: the grandparent's row was really written (so the
-      // delegation arm really ran) and the boundary still saw `handled`.
-      const greatGrand = state({
-        id: greatGrandRunId,
-        resolvedCompletions: {},
-      });
-      await manager.save(greatGrand);
-      // The inline parent, itself a delegated child of `greatGrandRunId`.
-      await manager.save(
-        state({
-          id: ancestorRunId,
-          lifecycle: 'completed',
-          resolvedCompletions: {},
-          parentLinkage: {
-            kind: 'delegation',
-            parentRunId: greatGrandRunId,
-            parentStepId: '1',
-            parentStep: '1',
-            parentFrameKey: buildFrameKey('1'),
-            parentEntry: 1,
-            tokenHash,
-          },
-        }),
-      );
-      const { controlled } = await seedTerminalControlled('completed', 'pass', {
-        parentLinkage: inlineLinkage,
-      });
-      // `done` drives the seam's release-and-recurse arm, which is the only way
-      // to reach the delegation level above the inline parent.
-      const advanceInlineParent = jest
-        .fn<AdvanceInlineParent>()
-        .mockResolvedValue({ status: 'done' });
-      const svc = makeCollectionService({ advanceInlineParent });
-
-      const outcome = await svc.collectDelegationOutcomes({
-        targetState: controlled,
-        steps: oneSubstepSteps,
-        callerEvidence: ORCHESTRATOR_EVIDENCE,
-        frame: activeFrame(buildFrameKey('1'), 1),
-      });
-
-      expect(outcome.kind).toBe('collection_applied');
-      if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
-      // Collection commits only its target transaction. Run Progression owns
-      // the later inline/delegation composition.
-      expect(
-        Object.keys((await manager.load(greatGrandRunId))?.resolvedCompletions ?? {}),
-      ).toHaveLength(0);
-      expect(outcome.progression).toMatchObject({ kind: 'activate' });
-      expect(advanceInlineParent).not.toHaveBeenCalled();
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // Aggregate recovery actors — one per OWNED member, not just the target.
-  //
-  // `runAll` records `recovery_pending` for EVERY attempt in the set when the
-  // aggregate effect fails ambiguously, then asks `makeRecoveryActor` to
-  // rehydrate each one. A member with no cached steps makes that factory throw,
-  // and the runner downgrades the throw to `logger.warn('aggregate member
-  // recovery failed; attempt left pending')` and continues — so the delegating
-  // parent could never be recovered through the collect path, silently.
-  // ---------------------------------------------------------------------------
 
   describe('aggregate recovery actors', () => {
     /** Inert stand-in so a factory call asserts wiring, not machine rehydration. */

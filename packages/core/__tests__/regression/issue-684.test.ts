@@ -1,74 +1,103 @@
-import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { RunbookStateManager } from '../../src/runbook/state.js';
-import { RunbookActorService, type AnyActorRef } from '../../src/runbook/actor-service.js';
-import type { ResolvedStep } from '../../src/runbook/types.js';
+import { RunbookActorService } from '../../src/runbook/actor-service.js';
+import { commitRunProgressionEvent } from '../../src/runbook/run-progression.js';
+import { mintRunProgressionAuthority } from '../../src/runbook/run-progression-authority.js';
+import { SessionService } from '../../src/runbook/session-service.js';
+import { RunbookStateManager, generateRunId } from '../../src/runbook/state.js';
+import { closeRunbookStore } from '../../src/runbook/storage/store-registry.js';
+import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
 import { createRunbook } from '../runbook/fixtures.js';
+
+const WAITING_RUNBOOK = `## 1. Wait
+- PASS COMPLETE
+- FAIL STOP
+
+Wait for input.
+`;
 
 let dir: string;
 let manager: RunbookStateManager;
-let actorService: RunbookActorService;
-let steps: ResolvedStep[];
-
-const TWO_STEP_CONTINUE = `## 1. First
-- PASS CONTINUE
-- FAIL STOP
-
-## 2. Second
-- PASS COMPLETE
-- FAIL STOP
-`;
 
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-regression-684-'));
   manager = new RunbookStateManager(dir);
-  actorService = new RunbookActorService(manager);
-  steps = createRunbook(TWO_STEP_CONTINUE);
 });
 
 afterEach(async () => {
   jest.restoreAllMocks();
+  await closeRunbookStore(dir);
   await fs.rm(dir, { recursive: true, force: true });
 });
 
-describe('issue #684: sendAndSync must not revert a concurrently committed terminal', () => {
-  it('preserves a concurrently committed terminal lifecycle across sendAndSync’s stale re-derivation', async () => {
-    const state = await manager.create(
-      { source: 'project', path: 'test.runbook.md' },
-      { title: 'Test', description: '', steps },
-      { runbookPath: 'test.runbook.md', frontmatterOutputs: [] },
+describe('issue #684: stale machine projections cannot overwrite terminal commits', () => {
+  it('re-captures and re-derives a pure Run Progression event after a competing terminal commit', async () => {
+    const steps = createRunbook(WAITING_RUNBOOK);
+    const actorService = new RunbookActorService(manager);
+    const runId = generateRunId();
+    const created = await manager.create(
+      { source: 'project', path: 'parent.runbook.md' },
+      { title: 'Parent', description: '', steps },
+      { runId, runbookPath: 'parent.runbook.md', frontmatterOutputs: [] },
     );
+    await actorService.initializeState(created.id, steps);
+    const session = new SessionService(manager);
+    unwrapSessionMutation(await session.pushRunbookWithRunControlClaim(created.id));
 
-    // `sendAndSync` loads its own actor snapshot at the top of the call and
-    // derives its persistence patch from THAT snapshot alone. Between the
-    // load and the eventual `manager.update` commit, `waitForMachineEffects`
-    // is the awaited gap the issue identifies as the open window. Wrap it so
-    // a second writer can land a committed terminal lifecycle inside that
-    // window, deterministically, without racing real processes.
-    const proto = actorService as unknown as {
-      waitForMachineEffects: (actor: AnyActorRef) => Promise<void>;
-    };
-    const original = proto.waitForMachineEffects.bind(actorService);
-    jest.spyOn(proto, 'waitForMachineEffects').mockImplementation(async (actor) => {
-      await original(actor);
-      // A concurrent writer (e.g. a competing sendAndSync/completion path)
-      // commits a terminal lifecycle first, through the same real API.
-      await manager.update(state.id, { lifecycle: 'completed' });
+    const realPrepare = actorService.prepareActorMutation.bind(actorService);
+    let preparations = 0;
+    let staleProjectionLifecycle: string | undefined;
+    jest.spyOn(actorService, 'prepareActorMutation').mockImplementation(async (...args) => {
+      const prepared = await realPrepare(...args);
+      preparations += 1;
+      if (preparations === 1) {
+        staleProjectionLifecycle = prepared.nextState.lifecycle;
+        // Land the competing terminal write after the first projection was
+        // derived but before its fenced commit. The first save must lose its
+        // CAS; the public seam must then re-read and re-derive.
+        const competingAuthority = await manager.captureRunAuthorityState(created.id);
+        if (competingAuthority.kind !== 'captured') {
+          throw new Error(`competing authority refused: ${competingAuthority.kind}`);
+        }
+        const competingActor = new RunbookActorService(manager);
+        const terminal = await competingActor.prepareActorMutation(
+          created.id,
+          competingAuthority.state,
+          steps,
+          { type: 'FAIL' },
+        );
+        const terminalCommit = await manager.saveState(
+          competingAuthority.authority,
+          terminal.nextState,
+        );
+        if (terminalCommit.kind !== 'committed') {
+          throw new Error(`competing terminal commit refused: ${terminalCommit.kind}`);
+        }
+      }
+      return prepared;
     });
 
-    // Step 1's PASS is a non-terminal CONTINUE: `deriveActorStatePatch`
-    // derives `lifecycle: 'running'` unconditionally from the actor's own
-    // (stale) snapshot, ignoring whatever the store now holds.
-    await actorService.sendAndSync(state.id, steps, { type: 'PASS' });
+    const result = await commitRunProgressionEvent(
+      mintRunProgressionAuthority({ runId: created.id }),
+      manager,
+      actorService,
+      steps,
+      { type: 'INLINE_LAUNCH_CONSUMED' },
+    );
 
-    const loaded = await manager.load(state.id);
+    expect(result.kind).toBe('committed');
+    expect(preparations).toBe(2);
+    expect(staleProjectionLifecycle).toBe('running');
+    expect((await manager.load(created.id))?.lifecycle).toBe('stopped');
+  });
 
-    // CORRECT behavior (issue #684): a stale derivation must never revert a
-    // committed terminal. Today the stale 'running' patch is re-applied
-    // verbatim on top of the freshly-read 'completed' row, so this fails
-    // with lifecycle 'running' where 'completed' was expected.
-    expect(loaded?.lifecycle).toBe('completed');
+  it('does not expose the unsafe load-derive-write API', () => {
+    const actorService = new RunbookActorService(manager);
+
+    // @ts-expect-error #684: the stale-snapshot mutation API must remain absent.
+    expect(actorService.sendAndSync).toBeUndefined();
+    expect(actorService).not.toHaveProperty('sendAndSync');
   });
 });

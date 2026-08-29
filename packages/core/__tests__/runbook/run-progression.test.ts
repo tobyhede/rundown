@@ -44,7 +44,10 @@ import {
 } from '../../src/runbook/targeting.js';
 import {
   activateRunProgression,
+  commitRunProgressionEvent,
+  MAX_INLINE_ANCESTOR_DEPTH,
   progressionDirectiveForClaimedRun,
+  progressionDirectiveForTerminalRun,
   resolveInlineAncestorProgression,
   type InlineChildDispatch,
   type RunProgressionDeps,
@@ -343,6 +346,48 @@ function progressionAuthority(state: RunbookState, control: PreparedRunControlCl
 }
 
 describe('resolveInlineAncestorProgression', () => {
+  it('refuses a corrupt distinct ancestry at the bounded depth', async () => {
+    const steps = createRunbook(MANUAL_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    let descendant = await seedRun(steps, actorService, 'depth-child.md');
+    const child = descendant;
+    const frameKey = buildFrameKey('1');
+
+    for (let index = 0; index <= MAX_INLINE_ANCESTOR_DEPTH; index += 1) {
+      const parent = await seedRun(steps, actorService, `depth-parent-${String(index)}.md`);
+      await manager.update(parent.id, {
+        lifecycle: 'running',
+        step: '1',
+        substep: '1',
+        activeFrameKey: frameKey,
+        activeEntry: 1,
+        substepStates: [{ id: '1', frameKey, status: 'running' }],
+      });
+      await manager.update(descendant.id, {
+        parentLinkage: {
+          kind: 'inline',
+          parentRunId: parent.id,
+          parentStep: '1',
+          parentStepId: '1',
+          parentFrameKey: frameKey,
+          parentEntry: 1,
+        },
+      });
+      descendant = parent;
+    }
+
+    const resolved = await resolveInlineAncestorProgression({
+      authority: mintRunProgressionAuthority({ runId: child.id }),
+      manager,
+      loadSteps: async () => steps,
+    });
+
+    expect(resolved).toMatchObject({
+      kind: 'refused',
+      reason: 'inline_parent_depth',
+    });
+  });
+
   it('refuses an inline linkage from a superseded parent entry (#856)', async () => {
     const { parent, child, parentSteps } = await seedPersistedInlineEdge({
       parentEntry: 2,
@@ -459,6 +504,44 @@ describe('progressionDirectiveForClaimedRun', () => {
       steps,
     });
     expect(directive.authority.delegationRuntime).toBeDefined();
+  });
+});
+
+describe('progressionDirectiveForTerminalRun', () => {
+  it('re-enters a terminal run through the public composition activation (#858)', async () => {
+    const steps = createRunbook(MANUAL_RUNBOOK);
+    const state = await seedRun(steps, actorServiceWith(succeedingCommandServices()), 'child.md');
+    await manager.update(state.id, { lifecycle: 'completed' });
+    const terminal = await manager.load(state.id);
+    if (terminal === null) throw new Error('terminal run disappeared');
+
+    const directive = progressionDirectiveForTerminalRun(terminal, steps);
+
+    expect(directive).toMatchObject({
+      kind: 'activate',
+      authority: { runId: terminal.id },
+      runbook: terminal.runbook,
+      steps,
+      entryBoundary: { kind: 'resume' },
+    });
+  });
+});
+
+describe('commitRunProgressionEvent', () => {
+  it('consumes an inline launch intent under exact run authority (#858/#684)', async () => {
+    const { state, steps, actorService } = await seedInlineLaunchRun();
+    const control = await issueProgressionControl(state.id);
+    const authority = progressionAuthority(state, control);
+
+    const committed = await commitRunProgressionEvent(authority, manager, actorService, steps, {
+      type: 'INLINE_LAUNCH_CONSUMED',
+    });
+
+    expect(committed.kind).toBe('committed');
+    const stored = await manager.load(state.id);
+    const context = (stored?.snapshot as { context?: { inlineLaunchIntent?: unknown } } | undefined)
+      ?.context;
+    expect(context?.inlineLaunchIntent).toBeUndefined();
   });
 });
 
@@ -1315,11 +1398,16 @@ describe('activateRunProgression', () => {
       const result = await runAll(input);
       if (!raced && result.kind === 'committed') {
         raced = true;
-        const moved = await actorService.sendAndSync(state.id, steps, {
+        const current = await manager.load(state.id);
+        if (current === null) throw new Error('concurrent GOTO target disappeared');
+        const moved = await actorService.prepareActorMutation(state.id, current, steps, {
           type: 'GOTO',
           target: { step: '2' },
         });
-        if (moved === null) throw new Error('concurrent GOTO target disappeared');
+        const captured = await manager.captureRunAuthorityState(state.id);
+        if (captured.kind !== 'captured') throw new Error(captured.message);
+        const committed = await manager.saveState(captured.authority, moved.nextState);
+        if (committed.kind !== 'committed') throw new Error(committed.message);
       }
       return result;
     });
@@ -1358,10 +1446,15 @@ describe('activateRunProgression', () => {
     jest.spyOn(runner, 'runAll').mockImplementation(async (input) => {
       if (!raced) {
         raced = true;
-        const consumed = await actorService.sendAndSync(state.id, steps, {
+        const current = await manager.load(state.id);
+        if (current === null) throw new Error('concurrent frontier target disappeared');
+        const consumed = await actorService.prepareActorMutation(state.id, current, steps, {
           type: 'DELEGATE_FRONTIER_CONSUMED',
         });
-        if (consumed === null) throw new Error('concurrent frontier target disappeared');
+        const captured = await manager.captureRunAuthorityState(state.id);
+        if (captured.kind !== 'captured') throw new Error(captured.message);
+        const committed = await manager.saveState(captured.authority, consumed.nextState);
+        if (committed.kind !== 'committed') throw new Error(committed.message);
       }
       const result = await runAll(input);
       if (result.kind === 'committed' && !replaced) {
