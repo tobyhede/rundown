@@ -5,14 +5,13 @@ import {
   type ClaimId,
   type ClaimRecord,
 } from './claim-id.js';
-import type { DelegationRuntimeCapabilities } from './delegation-credential.js';
 import {
   type DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
 } from './delegation-lifecycle-read-model.js';
 import type { InlineUpwardPropagationResult } from './inline-parent-advance.js';
 import type { RunId } from './run-id.js';
-import type { RunProgressionAuthority } from './run-progression-authority.js';
+import type { RunProgressionDirective } from './run-progression.js';
 import type { AbandonedAttemptSetOutcome } from './storage/execution-lease.js';
 import type { GuardedMutationResult } from './storage/mutation-result.js';
 import type { FrameKey } from './targeting.js';
@@ -239,10 +238,10 @@ export type DelegationPolicyOutcome =
        * Collection applied one or more delegation outcomes and left the target
        * running: the frontend drives a Run Progression continuation next.
        *
-       * Split from the terminal arm on `lifecycle` so the continuation's
-       * requirements are unrepresentable-when-absent: a running outcome ALWAYS
-       * carries the verified runtime pair and the minted progression
-       * authority, and the frontend needs no runtime guard for their presence.
+       * Split from the terminal arm on `lifecycle` so a running outcome always
+       * carries core's explicit progression decision. The directive itself
+       * decides whether activation is required; the frontend never infers that
+       * decision from lifecycle or observations.
        */
       readonly kind: 'collection_applied';
       /** Target run that received the collected outcomes. */
@@ -271,36 +270,8 @@ export type DelegationPolicyOutcome =
        * tokens. Present only after the one-shot frontier was consumed.
        */
       readonly reEntryObservations?: readonly ExecutionObservationEffect[];
-      /**
-       * Verified collector-bound delegation capabilities for the continuation
-       * the frontend drives next. Collection can leave the target run standing
-       * one transition short of a DELEGATE step, and machine-owned issuance needs
-       * a verified issuer at that moment; without one the continuation is refused
-       * `actor_context_required` rather than advanced. The following turn then
-       * projects the frontier that issuance stored, which needs the same-issuer
-       * deriver — a descriptor naming a different issuer claim is refused RD-821.
-       *
-       * The two travel as ONE branded value rather than two optional fields
-       * precisely because they are two halves of one authority: the bearer
-       * holding `collect-for-run` over `targetRunId`, which is a run-control
-       * claim and therefore also holds `delegate-from-run` over it. Only
-       * `delegationRuntimeCapabilities` can produce the value, so the pairing is
-       * established by construction and a consumer cannot forward one half alone.
-       *
-       * Runtime-only: a closure cannot be serialised, and must never reach
-       * persisted context, a snapshot, or a diagnostic (CLAUDE.md § Actor
-       * dependencies).
-       */
-      readonly delegationRuntime: DelegationRuntimeCapabilities;
-      /**
-       * Run-bound authority for the Run Progression continuation the frontend
-       * drives next (#851 / ADR 0003). Minted by the collection seam from the
-       * same verified authority that produced {@link delegationRuntime}, so the
-       * continuation's target run, claim generation, and delegation
-       * capabilities cannot disagree. Runtime-only for the same reason as the
-       * runtime pair.
-       */
-      readonly progressionAuthority: RunProgressionAuthority;
+      /** Core's explicit continuation decision; never inferred from observations. */
+      readonly progression: RunProgressionDirective;
     }
   | {
       /**
@@ -339,10 +310,8 @@ export type DelegationPolicyOutcome =
       readonly transitionObservations: readonly TransitionObservationEvent[];
       /** Never present on a terminal outcome: no continuation re-enters a frontier. */
       readonly reEntryObservations?: undefined;
-      /** Never present on a terminal outcome: no continuation needs authority. */
-      readonly delegationRuntime?: undefined;
-      /** Never present on a terminal outcome: no continuation needs authority. */
-      readonly progressionAuthority?: undefined;
+      /** Never present on a terminal outcome: no continuation follows. */
+      readonly progression?: undefined;
     }
   | {
       /** Collection failed after core rejected a persisted delegation outcome. */

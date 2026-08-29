@@ -185,6 +185,8 @@ export interface AppliedResolvedCompletion {
   readonly stateAfter: RunbookState;
   /** Raw actor snapshot after the completion was applied. */
   readonly snapshot: unknown;
+  /** Terminal intent carried by the machine output, when this apply ended the run. */
+  readonly progressionIntent?: { readonly kind: 'completed' | 'stopped' };
 }
 
 /**
@@ -468,6 +470,34 @@ function terminalLifecycleStatus(state: RunbookState): 'done' | 'stopped' | unde
   if (state.lifecycle === 'completed') return 'done';
   if (state.lifecycle === 'stopped') return 'stopped';
   return undefined;
+}
+
+/**
+ * Read the terminal Run Progression decision written by a final machine state.
+ *
+ * @param output - Unknown live machine output to inspect.
+ * @returns The terminal progression intent, or `undefined` for non-terminal output.
+ */
+function terminalProgressionIntent(
+  output: unknown,
+): { readonly kind: 'completed' | 'stopped' } | undefined {
+  if (typeof output !== 'object' || output === null) return undefined;
+  const progression = (output as { readonly progression?: unknown }).progression;
+  if (typeof progression !== 'object' || progression === null) return undefined;
+  const kind = (progression as { readonly kind?: unknown }).kind;
+  return kind === 'completed' || kind === 'stopped' ? { kind } : undefined;
+}
+
+/**
+ * Read terminal intent when the caller retained the final live machine output.
+ *
+ * @param machineOutput - Live machine output captured with the prepared mutation.
+ * @returns The terminal progression intent, or `undefined` before terminal.
+ */
+function progressionIntentForAppliedState(
+  machineOutput: unknown,
+): { readonly kind: 'completed' | 'stopped' } | undefined {
+  return terminalProgressionIntent(machineOutput);
 }
 
 /**
@@ -875,6 +905,28 @@ function selectNextResolvedCompletionApply(
     return { kind: 'mismatch', mismatch: validated, unresolved };
   }
   return { kind: 'apply', key: current.key, completion: validated, unresolved };
+}
+
+/**
+ * Test whether a completion turn is offered by a Run Progression activation.
+ *
+ * This is exported solely for the compiled machine's typed activation
+ * transition. The progression runtime must read the machine's emitted intent;
+ * it must never call this decision helper directly.
+ *
+ * A mismatch still returns true: the existing CAS operation owns current-
+ * version validation and the machine classifies its typed refusal on feedback.
+ *
+ * @param state - Exact durable state the machine activation is selecting from.
+ * @param steps - Compiled runbook graph derived from that same state.
+ * @returns Whether the machine should select one completion-application turn.
+ */
+export function hasApplicableRunProgressionCompletion(
+  state: RunbookState,
+  steps: readonly ResolvedStep[],
+): boolean {
+  const selection = selectNextResolvedCompletionApply(state, steps);
+  return selection.kind !== 'none' && selection.kind !== 'not_active';
 }
 
 /**
@@ -1385,12 +1437,14 @@ export class RunbookCompletionService {
         mutation.nextState,
       );
       if (progress.kind === 'stalled') throw Errors.delegationInvariantViolated(progress.reason);
+      const progressionIntent = progressionIntentForAppliedState(mutation.machineOutput);
       applied.push({
         key: selection.key,
         completion: selection.completion,
         stateBefore: state,
         stateAfter: mutation.nextState,
         snapshot: mutation.snapshot,
+        ...(progressionIntent === undefined ? {} : { progressionIntent }),
       });
       state = mutation.nextState;
       const terminal = terminalLifecycleStatus(state);
@@ -1422,9 +1476,10 @@ export class RunbookCompletionService {
    * state is stale by construction at this seam, and accepting one could only
    * reintroduce the disagreement this method exists to remove.
    *
-   * **Callers own the loop.** Draining a frame to exhaustion means calling this
-   * until it stops reporting `applied` — the CLI's job, because it must observe
-   * and emit each transition before the next apply (a Category A concern).
+   * **Run Progression owns the loop.** This primitive performs one
+   * machine-selected apply. Core delivers that turn's observation through the
+   * frontend-supplied synchronous sink before asking XState to select another;
+   * the frontend renders observations but does not decide completion order.
    * Nothing here batches, and there is no `maxApplied`.
    *
    * @remarks
@@ -1534,6 +1589,7 @@ export class RunbookCompletionService {
               throw Errors.delegationInvariantViolated(progress.reason);
             }
             const terminal = terminalLifecycleStatus(mutation.nextState);
+            const progressionIntent = progressionIntentForAppliedState(mutation.machineOutput);
             return {
               // `mutateStateReturning` commits this verbatim, so the state the
               // entry reports is the state that was written.
@@ -1549,6 +1605,7 @@ export class RunbookCompletionService {
                   stateBefore: current,
                   stateAfter: mutation.nextState,
                   snapshot: mutation.snapshot,
+                  ...(progressionIntent === undefined ? {} : { progressionIntent }),
                 },
                 ...(terminal === undefined ? {} : { terminal }),
               },

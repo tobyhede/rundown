@@ -20,6 +20,9 @@ jest.unstable_mockModule('../../src/helpers/delegation-completion.js', () => ({
 }));
 jest.unstable_mockModule('../../src/services/execution.js', () => ({
   launchInlineChildFromIntent,
+  // Imported by the driver (`driveRunProgression`) at module scope; these
+  // suites exercise the two builders only, so a bare fn satisfies the load.
+  createCliCommandServices: jest.fn(),
 }));
 
 const { buildTerminalPropagation, buildInlineChildDispatch } = await import(
@@ -53,13 +56,55 @@ beforeEach(() => {
 });
 
 describe('buildTerminalPropagation', () => {
+  it('preserves the resting parent when it absorbs a stopped child', async () => {
+    const parentRunId = 'rd_00000000000000000000000000000854' as never;
+    propagateDrivenRunTerminal.mockResolvedValue({
+      kind: 'inline-advanced',
+      parentRunId,
+      result: 'handled',
+    });
+    const propagate = buildTerminalPropagation(propagationCtx(makeOutput()));
+
+    const result = await propagate({
+      runId: RUN_ID,
+      source: { kind: 'explicit-result', result: 'fail' },
+      sink: { emit: jest.fn() },
+    });
+
+    expect(result).toEqual({ kind: 'advanced', runId: parentRunId, status: 'waiting' });
+    expect(propagateDrivenRunTerminal.mock.calls[0]?.[4]).toEqual({
+      kind: 'explicit-result',
+      result: 'fail',
+    });
+  });
+
+  it('reports the composing parent as stopped when inline flow-back reaches its STOP', async () => {
+    const parentRunId = 'rd_00000000000000000000000000000854' as never;
+    propagateDrivenRunTerminal.mockResolvedValue({
+      kind: 'inline-advanced',
+      parentRunId,
+      result: 'stopped',
+    });
+    const propagate = buildTerminalPropagation(propagationCtx(makeOutput()));
+
+    const result = await propagate({
+      runId: RUN_ID,
+      source: { kind: 'explicit-result', result: 'pass' },
+      sink: { emit: jest.fn() },
+    });
+
+    expect(result).toEqual({ kind: 'advanced', runId: parentRunId, status: 'stopped' });
+  });
+
   it('keeps a typed refusal code and boundary recovery through the fold (#853 F3)', async () => {
     // A consume_failed (RD-829) advance refusal is retryable wherever it
     // surfaces; the fold must not strip the code or re-stamp permanent.
     propagateDrivenRunTerminal.mockResolvedValue({
       kind: 'inline-advanced',
+      parentRunId: 'rd_00000000000000000000000000000854' as never,
       result: 'blocked',
       refusal: {
+        runId: 'rd_00000000000000000000000000000855' as never,
         code: 'RD-829',
         message: 'Failed to consume delegation frontier after re-entry; retry the run',
         recovery: 'retryable',
@@ -67,10 +112,15 @@ describe('buildTerminalPropagation', () => {
     });
     const propagate = buildTerminalPropagation(propagationCtx(makeOutput()));
 
-    const result = await propagate({ runId: RUN_ID, sink: { emit: jest.fn() } });
+    const result = await propagate({
+      runId: RUN_ID,
+      source: { kind: 'loop-inferred' },
+      sink: { emit: jest.fn() },
+    });
 
     expect(result).toEqual({
       kind: 'refused',
+      runId: 'rd_00000000000000000000000000000855',
       code: 'RD-829',
       message: 'Failed to consume delegation frontier after re-entry; retry the run',
       recovery: 'retryable',
@@ -78,31 +128,42 @@ describe('buildTerminalPropagation', () => {
   });
 
   it('reports a fail-closed conclusion with no typed refusal as permanent', async () => {
-    // A parent advance reaching a STOP terminal (or a re-entrant fail-closed
-    // flow-back) carries no refusal to preserve: diagnostics streamed, no
-    // retry of the propagation changes it.
+    // A re-entrant fail-closed flow-back carries no refusal to preserve:
+    // diagnostics streamed, and no retry of the propagation changes it.
     propagateDrivenRunTerminal.mockResolvedValue({
       kind: 'inline-advanced',
-      result: 'stopped',
+      parentRunId: 'rd_00000000000000000000000000000854' as never,
+      result: 'blocked',
     });
     const propagate = buildTerminalPropagation(propagationCtx(makeOutput()));
 
-    const result = await propagate({ runId: RUN_ID, sink: { emit: jest.fn() } });
+    const result = await propagate({
+      runId: RUN_ID,
+      source: { kind: 'loop-inferred' },
+      sink: { emit: jest.fn() },
+    });
 
-    expect(result).toMatchObject({ kind: 'refused', recovery: 'permanent' });
+    expect(result).toMatchObject({
+      kind: 'refused',
+      runId: 'rd_00000000000000000000000000000854',
+      recovery: 'permanent',
+    });
   });
 
   it('reports non-refusing propagation kinds as propagated', async () => {
     for (const propagation of [
       { kind: 'skipped' },
-      { kind: 'inline-advanced', result: 'handled' },
       { kind: 'delegation-reported', result: 'reported' },
     ] satisfies DrivenRunPropagation[]) {
       propagateDrivenRunTerminal.mockResolvedValue(propagation);
       const propagate = buildTerminalPropagation(propagationCtx(makeOutput()));
-      await expect(propagate({ runId: RUN_ID, sink: { emit: jest.fn() } })).resolves.toEqual({
-        kind: 'propagated',
-      });
+      await expect(
+        propagate({
+          runId: RUN_ID,
+          source: { kind: 'loop-inferred' },
+          sink: { emit: jest.fn() },
+        }),
+      ).resolves.toEqual({ kind: 'propagated' });
     }
   });
 
@@ -122,9 +183,13 @@ describe('buildTerminalPropagation', () => {
     });
     const propagate = buildTerminalPropagation(propagationCtx(output));
 
-    await expect(propagate({ runId: RUN_ID, sink: { emit: jest.fn() } })).rejects.toBeInstanceOf(
-      ObservationDeliveryError,
-    );
+    await expect(
+      propagate({
+        runId: RUN_ID,
+        source: { kind: 'loop-inferred' },
+        sink: { emit: jest.fn() },
+      }),
+    ).rejects.toBeInstanceOf(ObservationDeliveryError);
   });
 });
 
@@ -135,7 +200,6 @@ describe('buildInlineChildDispatch', () => {
       actorService: {} as never,
       sessionService: {} as never,
       cwd: '/test',
-      steps: [],
       output,
     };
   }
@@ -146,7 +210,7 @@ describe('buildInlineChildDispatch', () => {
     const sink = { emit: jest.fn() };
     const dispatch = buildInlineChildDispatch(dispatchCtx(makeOutput()));
 
-    await dispatch({ intent, prompted: false, sink });
+    await dispatch({ intent, prompted: false, steps: [], sink });
 
     expect(launchInlineChildFromIntent).toHaveBeenCalledWith(
       expect.objectContaining({ emitter: sink }),
@@ -166,7 +230,7 @@ describe('buildInlineChildDispatch', () => {
     const dispatch = buildInlineChildDispatch(dispatchCtx(output));
 
     await expect(
-      dispatch({ intent, prompted: false, sink: { emit: jest.fn() } }),
+      dispatch({ intent, prompted: false, steps: [], sink: { emit: jest.fn() } }),
     ).rejects.toBeInstanceOf(ObservationDeliveryError);
   });
 });

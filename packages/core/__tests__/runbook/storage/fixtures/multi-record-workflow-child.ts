@@ -61,6 +61,7 @@ import { SessionService } from '../../../../src/runbook/session-service.js';
 import {
   createEffectfulActorMutationRunner,
   type EffectfulActorMutationRunner,
+  type EffectfulActorMutationRunnerInput,
   type EffectfulActorMutationSetRunnerInput,
 } from '../../../../src/runbook/effectful-actor-mutation-runner.js';
 import { closeRunbookStores } from '../../../../src/runbook/storage/store-registry.js';
@@ -249,7 +250,7 @@ function runnerParkedAfterCapture(
   inner: EffectfulActorMutationRunner,
 ): EffectfulActorMutationRunner {
   return {
-    run: (input) => inner.run(input),
+    run: (input: EffectfulActorMutationRunnerInput) => inner.run(input),
     runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
       const beforeEffect = input.beforeEffect;
       return inner.runAll<TResult>({
