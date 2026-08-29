@@ -41,7 +41,11 @@ describe('report-then-collect (single delegation level)', () => {
           title: 'Delegate child',
           pass: 'CONTINUE',
           substeps: [
-            { title: 'Child work', delegate: true, runbooks: ['runbooks/child.runbook.md'] },
+            {
+              title: 'Child work',
+              delegate: true,
+              runbooks: ['runbooks/child.runbook.md'],
+            },
           ],
         },
         { title: 'Promote', pass: 'COMPLETE' },
@@ -117,15 +121,27 @@ describe('report-then-collect (single delegation level)', () => {
           title: 'Delegate first',
           pass: 'CONTINUE',
           substeps: [
-            { title: 'First child', delegate: true, runbooks: ['runbooks/child.runbook.md'] },
+            {
+              title: 'First child',
+              delegate: true,
+              runbooks: ['runbooks/child.runbook.md'],
+            },
           ],
         },
-        { title: 'Local work', pass: 'CONTINUE', command: 'rd echo --result pass' },
+        {
+          title: 'Local work',
+          pass: 'CONTINUE',
+          command: 'rd echo --result pass',
+        },
         {
           title: 'Delegate second',
           pass: 'CONTINUE',
           substeps: [
-            { title: 'Second child', delegate: true, runbooks: ['runbooks/child.runbook.md'] },
+            {
+              title: 'Second child',
+              delegate: true,
+              runbooks: ['runbooks/child.runbook.md'],
+            },
           ],
         },
         { title: 'Promote', pass: 'COMPLETE' },
@@ -140,7 +156,7 @@ describe('report-then-collect (single delegation level)', () => {
     await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
   }
 
-  it('collect drives the collecting run through the loop into its NEXT delegation frontier', async () => {
+  it('collect hands the collecting run to progression for its NEXT delegation frontier', async () => {
     await writeContinuingRunbooks();
     const start = await runCliInProcess('run runbooks/parent.runbook.md --allow-all', workspace);
     expect(start.exitCode).toBe(0);
@@ -166,7 +182,11 @@ describe('report-then-collect (single delegation level)', () => {
     expect(requireFrontierToken(collected.stdout, '3.1')).toMatch(/^rdtk_/);
 
     const parent = await getActiveState(workspace);
-    expect(parent).toMatchObject({ lifecycle: 'running', step: '3', substep: '1' });
+    expect(parent).toMatchObject({
+      lifecycle: 'running',
+      step: '3',
+      substep: '1',
+    });
   }, 30_000);
 
   it('still refuses RD-819 when a delegated CHILD reaches a DELEGATE step under its own bearer', async () => {
@@ -179,7 +199,11 @@ describe('report-then-collect (single delegation level)', () => {
           title: 'Delegate child',
           pass: 'CONTINUE',
           substeps: [
-            { title: 'Child work', delegate: true, runbooks: ['runbooks/child.runbook.md'] },
+            {
+              title: 'Child work',
+              delegate: true,
+              runbooks: ['runbooks/child.runbook.md'],
+            },
           ],
         },
         { title: 'Promote', pass: 'COMPLETE' },
@@ -194,7 +218,11 @@ describe('report-then-collect (single delegation level)', () => {
           title: 'Fan out again',
           pass: 'COMPLETE',
           substeps: [
-            { title: 'Grandchild', delegate: true, runbooks: ['runbooks/leaf.runbook.md'] },
+            {
+              title: 'Grandchild',
+              delegate: true,
+              runbooks: ['runbooks/leaf.runbook.md'],
+            },
           ],
         },
       ],

@@ -44,7 +44,10 @@ export { WalJournalModeUnavailableError } from './storage/native-sqlite-driver.j
 // sql.js path, every other host the native one), so a consumer classifying
 // "the database would not open" needs both arms or it still falls through to
 // RD-999 on exactly one class of host.
-export { NativeSqliteUnavailableError, SqljsUnavailableError } from './storage/driver-factory.js';
+export {
+  NativeSqliteUnavailableError,
+  SqljsUnavailableError,
+} from './storage/driver-factory.js';
 // A claim row whose mirrored run-id columns contradict its delegation blob is
 // the same kind of surface: it escapes on a session READ, so `rdpath` needs an
 // `instanceof` arm or a corrupt row turns a hook invocation whose base directory
@@ -60,7 +63,10 @@ export type {
 // front end that owns a read-derive-write span the store cannot hold (an async
 // derivation committed by a synchronous session transaction) must re-derive on
 // the same budget, and a mirrored constant is where that pacing drifts.
-export { DEFAULT_MUTATE_ATTEMPTS, mutateBackoffMs } from './storage/runbook-store.js';
+export {
+  DEFAULT_MUTATE_ATTEMPTS,
+  mutateBackoffMs,
+} from './storage/runbook-store.js';
 // `GuardedMutationResult` and `AbandonedAttemptSetOutcome` are public for the
 // same narrow reason: a CLI renderer must DERIVE the refusal union it renders
 // from these rather than re-declaring it. A hand-restatement compiles while
@@ -302,8 +308,8 @@ export {
   type CollectDelegationOutcomesOperationInput,
   type RunbookCollectionServiceDependencies,
 } from './collection-service.js';
-// Shared re-entry frontier seam (F6). Consumed by `collectDelegationOutcomes`
-// above and by the CLI execution loop, which is why it is exported.
+// Shared re-entry frontier seam (F6). Run Progression owns the fenced path;
+// the legacy CLI execution loop still consumes the unfenced seam until #858.
 export {
   FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
   FRONTIER_CONSUME_FAILED_MESSAGE,
@@ -340,6 +346,8 @@ export {
   type InlineChildDispatchInput,
   type InlineChildDispatchResult,
   type RunProgressionDeps,
+  type RunProgressionDirective,
+  type RunProgressionEntryBoundary,
   type RunProgressionFailureReason,
   type RunProgressionOutcome,
   type RunProgressionRecovery,
@@ -348,6 +356,7 @@ export {
   type TerminalPropagation,
   type TerminalPropagationInput,
   type TerminalPropagationResult,
+  type TerminalPropagationSource,
 } from './run-progression.js';
 export type { RunProgressionAuthority } from './run-progression-authority.js';
 export {
@@ -392,6 +401,7 @@ export {
   type DelegationAbortOutcome,
   type LifecycleLoopDirective,
   type LifecycleNavigationInput,
+  type LifecycleNavigationCapability,
   type LifecycleNavigationMutationInput,
   type LifecycleNavigationMutationOutcome,
   type LifecycleNavigationOutcome,
@@ -415,10 +425,18 @@ export {
   // eslint-disable-next-line @typescript-eslint/no-deprecated
   type ManualCompletionCursor,
 } from './manual-completion-cursor.js';
-export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';
+export {
+  compileRunbookToMachine,
+  runbookSetup,
+  MAX_FILE_ITERATIONS,
+} from './compiler.js';
 export type { RunbookMachine } from './compiler.js';
 export { runRetryHook } from './retry-hook.js';
-export type { RetryHookResult, RetryHookSuccess, RetryHookError } from './retry-hook.js';
+export type {
+  RetryHookResult,
+  RetryHookSuccess,
+  RetryHookError,
+} from './retry-hook.js';
 export {
   executeCommand,
   executeCommandWithPolicy,
@@ -435,10 +453,21 @@ export {
   renderLiteralArtifactPath,
   type RenderArtifactOptions,
 } from './renderer/artifact-helper.js';
-export { evaluateFailCondition, evaluatePassCondition } from './transition-handler.js';
-export { createFileProvider, computeFileSnapshot, validateFileSnapshot } from './file-provider.js';
+export {
+  evaluateFailCondition,
+  evaluatePassCondition,
+} from './transition-handler.js';
+export {
+  createFileProvider,
+  computeFileSnapshot,
+  validateFileSnapshot,
+} from './file-provider.js';
 export type { FileProvider } from './file-provider.js';
-export { resolveForValue, ForResolutionError, type ResolvedIteration } from './source-resolver.js';
+export {
+  resolveForValue,
+  ForResolutionError,
+  type ResolvedIteration,
+} from './source-resolver.js';
 export {
   // Deprecated inference helpers (superseded by resolveDelegationIssuance) are
   // retained on the public surface: @rundown-org/core is published and repo
@@ -625,7 +654,10 @@ export {
   type RdPathFindOptions,
   type RdPathOptions,
 } from './rdpath.js';
-export { ARTIFACT_ERROR_TEXT, formatArtifactManifestLineError } from './artifact-errors.js';
+export {
+  ARTIFACT_ERROR_TEXT,
+  formatArtifactManifestLineError,
+} from './artifact-errors.js';
 export {
   artifactUriToPath,
   assertConcreteRunId,

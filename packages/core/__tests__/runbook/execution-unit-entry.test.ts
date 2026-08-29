@@ -50,7 +50,11 @@ function forFrame(frame: {
 
 /** Template vars carrying the two required built-ins plus whatever a case needs. */
 function vars(extra: Record<string, string> = {}) {
-  return brandInitialTemplateVarsForTest({ ContextId: CONTEXT_ID, WorkPath: WORK_DIR, ...extra });
+  return brandInitialTemplateVarsForTest({
+    ContextId: CONTEXT_ID,
+    WorkPath: WORK_DIR,
+    ...extra,
+  });
 }
 
 /**
@@ -131,7 +135,12 @@ describe('deriveExecutionUnitEntry', () => {
       // must not, because the result reaches a reader. A mutant routing both
       // through one expander shows up here.
       const entered = enter(
-        [makeCommandStep({ description: 'about {{ who }}', command: { code: 'echo {{ who }}' } })],
+        [
+          makeCommandStep({
+            description: 'about {{ who }}',
+            command: { code: 'echo {{ who }}' },
+          }),
+        ],
         state({ templateVars: vars({ who: 'a b; rm -rf /' }) }),
       );
 
@@ -183,7 +192,10 @@ describe('deriveExecutionUnitEntry', () => {
       // The unit still ANNOUNCES its command — a prompted operator needs to see
       // what they are being asked to run. `hasCommand` is the unit's property;
       // `awaiting` is this process's instruction.
-      expect(payloadOf(entered)).toMatchObject({ hasCommand: true, prompted: true });
+      expect(payloadOf(entered)).toMatchObject({
+        hasCommand: true,
+        prompted: true,
+      });
       expect(payloadOf(entered).commandCode).toBe('echo {{ who }}');
     });
 
@@ -230,7 +242,10 @@ describe('deriveExecutionUnitEntry', () => {
     it('derives its own position when the caller supplies none', () => {
       const entered = enter([commandStep], state());
 
-      expect(payloadOf(entered).position).toMatchObject({ current: '1', total: 1 });
+      expect(payloadOf(entered).position).toMatchObject({
+        current: '1',
+        total: 1,
+      });
     });
   });
 
@@ -291,7 +306,12 @@ describe('deriveExecutionUnitEntry', () => {
   describe('the FOR frame', () => {
     const forStep = makeResolvedStepWithFor({
       forClause: { variable: 'i', start: 4, end: 9 },
-      substeps: [makeSubstep({ id: '1', description: 'iteration {{ i }} of {{ Index }}' })],
+      substeps: [
+        makeSubstep({
+          id: '1',
+          description: 'iteration {{ i }} of {{ Index }}',
+        }),
+      ],
     });
 
     it('seeds the frame from the FOR clause when no iteration is open yet', () => {
@@ -330,7 +350,10 @@ describe('deriveExecutionUnitEntry', () => {
 
       // Position describes where the run IS; `stepName` / `isSubstep` describe
       // what it entered. Two separate questions.
-      expect(payloadOf(entered).position).toMatchObject({ current: '1', substep: '1' });
+      expect(payloadOf(entered).position).toMatchObject({
+        current: '1',
+        substep: '1',
+      });
     });
   });
 
@@ -382,7 +405,11 @@ describe('deriveExecutionUnitEntry', () => {
 
     it('renders no prompt for a substep with none on a step that is not a prompted FOR', () => {
       const entered = enter(
-        [makeResolvedStepWithSubsteps({ substeps: [makeSubstep({ id: '1' })] })],
+        [
+          makeResolvedStepWithSubsteps({
+            substeps: [makeSubstep({ id: '1' })],
+          }),
+        ],
         state({ substep: '1' }),
       );
 
@@ -398,7 +425,9 @@ describe('deriveExecutionUnitEntry', () => {
       // the wrong tier would silently render every artifact path one segment
       // short, pointing at a directory the run does not own.
       const entered = enter([
-        makeCommandStep({ description: 'plan lives at {{ path "plan.json" }}' }),
+        makeCommandStep({
+          description: 'plan lives at {{ path "plan.json" }}',
+        }),
       ]);
 
       expect(payloadOf(entered).description).toContain(`${WORK_DIR}/.rd-${CONTEXT_ID}/${runId}/`);
@@ -420,7 +449,9 @@ describe('deriveExecutionUnitEntry', () => {
     it('projects entered artifacts under the run work path', () => {
       const entered = enter(
         [commandStep],
-        state({ snapshot: { context: { enteredArtifacts: { PlanPath: artifact } } } }),
+        state({
+          snapshot: { context: { enteredArtifacts: { PlanPath: artifact } } },
+        }),
       );
 
       const artifacts = payloadOf(entered).artifacts as Record<string, { path: string }>;
@@ -437,13 +468,19 @@ describe('deriveExecutionUnitEntry', () => {
       // rather than throw on a property access.
       const entered = enter([commandStep], state({ snapshot: 'not-an-object' }));
 
-      expect(payloadOf(entered)).toMatchObject({ stepName: '1', artifacts: {} });
+      expect(payloadOf(entered)).toMatchObject({
+        stepName: '1',
+        artifacts: {},
+      });
     });
 
     it('enters a run whose persisted snapshot carries no context', () => {
       const entered = enter([commandStep], state({ snapshot: { value: 'step::1' } }));
 
-      expect(payloadOf(entered)).toMatchObject({ stepName: '1', artifacts: {} });
+      expect(payloadOf(entered)).toMatchObject({
+        stepName: '1',
+        artifacts: {},
+      });
     });
 
     it('enters a run whose persisted context is not an object', () => {
@@ -452,13 +489,19 @@ describe('deriveExecutionUnitEntry', () => {
       // throws — so this is a refusal-to-read, not a nicety.
       const entered = enter([commandStep], state({ snapshot: { context: 'oops' } }));
 
-      expect(payloadOf(entered)).toMatchObject({ stepName: '1', artifacts: {} });
+      expect(payloadOf(entered)).toMatchObject({
+        stepName: '1',
+        artifacts: {},
+      });
     });
 
     it('enters a run whose persisted context is null', () => {
       const entered = enter([commandStep], state({ snapshot: { context: null } }));
 
-      expect(payloadOf(entered)).toMatchObject({ stepName: '1', artifacts: {} });
+      expect(payloadOf(entered)).toMatchObject({
+        stepName: '1',
+        artifacts: {},
+      });
     });
 
     it('enters a run that has never synced a snapshot', () => {
@@ -466,7 +509,10 @@ describe('deriveExecutionUnitEntry', () => {
       // observation reads `context.step` back off it.
       const entered = enter([commandStep], state({ snapshot: undefined }));
 
-      expect(payloadOf(entered)).toMatchObject({ stepName: '1', artifacts: {} });
+      expect(payloadOf(entered)).toMatchObject({
+        stepName: '1',
+        artifacts: {},
+      });
     });
 
     it('names the unit from the run columns, never from the snapshot blob', () => {
@@ -475,7 +521,9 @@ describe('deriveExecutionUnitEntry', () => {
       // would describe a unit the run has left.
       const entered = enter(
         [commandStep],
-        state({ snapshot: { context: { step: 'stale', enteredArtifacts: {} } } }),
+        state({
+          snapshot: { context: { step: 'stale', enteredArtifacts: {} } },
+        }),
       );
 
       expect(payloadOf(entered).stepName).toBe('1');
@@ -515,7 +563,11 @@ describe('deriveExecutionUnitEntry', () => {
     function enterWithIntent(inlineLaunchIntent: unknown, overrides: Partial<RunbookState> = {}) {
       return enter(
         inlineSteps,
-        state({ substep: '1', snapshot: { context: { inlineLaunchIntent } }, ...overrides }),
+        state({
+          substep: '1',
+          snapshot: { context: { inlineLaunchIntent } },
+          ...overrides,
+        }),
       );
     }
 
@@ -561,7 +613,10 @@ describe('deriveExecutionUnitEntry', () => {
       // re-project a stale prior-iteration intent onto the current frame.
       const entered = enterWithIntent(intent({ parentFrameKey: buildFrameKey('1', 4) }), {
         activeFrameKey: frameKey,
-        frameEntryCounts: { [buildFrameKey('1')]: 1, [buildFrameKey('1', 4)]: 3 },
+        frameEntryCounts: {
+          [buildFrameKey('1')]: 1,
+          [buildFrameKey('1', 4)]: 3,
+        },
       });
 
       expect(entered.kind).toBe('awaiting');
@@ -572,7 +627,10 @@ describe('deriveExecutionUnitEntry', () => {
       // naming no live substep is not the substep the intent addresses.
       const entered = enter(
         inlineSteps,
-        state({ substep: '9', snapshot: { context: { inlineLaunchIntent: intent() } } }),
+        state({
+          substep: '9',
+          snapshot: { context: { inlineLaunchIntent: intent() } },
+        }),
       );
 
       expect(entered.kind).toBe('awaiting');
@@ -613,7 +671,9 @@ describe('deriveExecutionUnitEntry', () => {
 
     it('refuses a run whose variables carry no WorkPath as invalid persisted state', () => {
       const noWorkPath = state({
-        templateVars: brandInitialTemplateVarsForTest({ ContextId: CONTEXT_ID }),
+        templateVars: brandInitialTemplateVarsForTest({
+          ContextId: CONTEXT_ID,
+        }),
       });
 
       expect(() => enter([commandStep], noWorkPath)).toThrow(InvalidRunbookStateError);
@@ -622,7 +682,9 @@ describe('deriveExecutionUnitEntry', () => {
 
     it('names the run in the refusal defect, not only in the prose', () => {
       const noWorkPath = state({
-        templateVars: brandInitialTemplateVarsForTest({ ContextId: CONTEXT_ID }),
+        templateVars: brandInitialTemplateVarsForTest({
+          ContextId: CONTEXT_ID,
+        }),
       });
 
       try {
@@ -640,9 +702,8 @@ describe('deriveExecutionUnitEntry', () => {
     it('refuses a cursor naming a step the parsed runbook does not define', () => {
       // Same class as the two render refusals above, and for the same reason: a
       // cursor that has diverged from the compiled steps is corrupt persisted
-      // state, whose recovery is prune or restart. A bare `Error` here would be
-      // relabelled RD-833 by the collect path's catch, which tells the operator
-      // to fix a helper and re-delegate instead.
+      // state, whose recovery is prune or restart. A bare `Error` here would
+      // lose that typed recovery at the progression boundary.
       expect(() => enter([commandStep], state({ step: '9' }))).toThrow(InvalidRunbookStateError);
       expect(() => enter([commandStep], state({ step: '9' }))).toThrow('Step "9" not found');
 

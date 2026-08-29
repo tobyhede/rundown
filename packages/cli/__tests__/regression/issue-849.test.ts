@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { RunbookStateManager, merge } from '@rundown-org/core';
 // `RunbookStore` is not part of `@rundown-org/core`'s public barrel, but
-// `RunbookStore.prototype.captureRunAuthorityState` is the exact
+// `RunbookStore.prototype.captureAuthorityState` is the exact
 // capture-before-lease-acquisition boundary this test needs to hook — see the
 // long comment at the spy below for why no public seam reaches it. The
 // dedicated testing entry resolves (via this package's jest moduleNameMapper)
@@ -38,15 +38,11 @@ function flattenEvents(events: unknown[]): Record<string, unknown>[] {
 
 // Issue #849. `docs/spec/cli-output.md:1947` and `docs/reference/cli.md:949-951`
 // both state that when a `rundown collect` aggregation advances the delegating
-// run into execution-loop work, and that loop's own command fence then loses
-// its compare-and-swap, the refusal streams as an `error_occurred` observation
-// and "emits no `runbook_stopped`: the refused follow-on transition committed
-// no terminal state." `collect.ts:612` calls `runExecutionLoop` WITHOUT
-// `returnRefusals`, so `execution.ts:1785-1792` takes the `!returnRefusals` arm
-// and DOES emit `RUNBOOK_STOPPED` with message
-// 'Runbook command execution was not committed' — the exact divergence #849
-// reports (`returnRefusals` has exactly one production caller,
-// `buildAdvanceInlineParent`, which `collect.ts` is not).
+// run into command work, and Run Progression's command fence then loses its
+// compare-and-swap, the refusal streams as an `error_occurred` observation and
+// emits no `runbook_stopped`: the refused follow-on transition committed no
+// terminal state. Since #855 collect hands a core-minted directive to the same
+// Run Progression driver as GOTO; this regression pins that shared path.
 //
 // This test provokes a genuine lost fence rather than mocking the refusal: a
 // parent with a DELEGATE substep resolved and ready to collect, followed by a
@@ -118,9 +114,8 @@ describe('issue #849: collect fence refusal does not emit runbook_stopped', () =
     expect(passed.exitCode).toBe(0);
 
     // Land a genuine concurrent writer inside the ONE window this fence can
-    // lose. `ProjectEffectfulActorMutationRunner.run`
-    // (packages/core/src/runbook/effectful-actor-mutation-runner.ts:342-360)
-    // captures authority via `store.captureRunAuthorityState` BEFORE
+    // lose. `ProjectEffectfulActorMutationRunner.run` captures the claim-bound
+    // authority via `store.captureAuthorityState` BEFORE
     // constructing the execution lease, and `CoreEffectfulMutationExecutor.run`
     // (packages/core/src/runbook/effectful-mutation-executor.ts:191-194)'s
     // FIRST await is `this.lease.acquire(input.captured, ...)`, which
@@ -133,36 +128,39 @@ describe('issue #849: collect fence refusal does not emit runbook_stopped', () =
     // landing (packages/core/src/runbook/storage/runbook-store.ts:1470-1490's
     // 'owned' outcome) — so the ONLY point at which an ordinary concurrent
     // writer can bump `state_version` out from under this fence is between
-    // capture and acquisition. Hooking `captureRunAuthorityState` itself is
+    // capture and acquisition. Hooking `captureAuthorityState` itself is
     // therefore the only way to land a real writer inside that window; core's
-    // own `effectful-actor-mutation-runner.test.ts` uses the identical
-    // `RunbookStore.prototype.captureRunAuthorityState` spy technique to
-    // reproduce a superseded capture.
+    // own effectful-actor-mutation-runner suite uses this capture-boundary spy
+    // technique to reproduce a superseded capture.
     let injected = false;
     // eslint-disable-next-line @typescript-eslint/unbound-method -- captured only to `.call(this, …)` inside the mock below; never invoked unbound
-    const realCapture = RunbookStore.prototype.captureRunAuthorityState;
-    jest
-      .spyOn(RunbookStore.prototype, 'captureRunAuthorityState')
-      .mockImplementation(async function (this: RunbookStore, runId: string) {
-        const result = await realCapture.call(this, runId as never);
-        // Target ONLY the follow-on loop's capture of the parent at step 2 —
-        // the initial `run`, `claim`, `pass`, and collect's own aggregation all
-        // capture the parent (or the child) at other steps and must pass
-        // through untouched, or this would corrupt unrelated writes.
-        if (
-          !injected &&
-          result.kind === 'captured' &&
-          result.state.id === parentRunId &&
-          result.state.step === '2'
-        ) {
-          injected = true;
-          const racer = new RunbookStateManager(workspace.cwd);
-          await racer.update(parentRunId, {
-            variables: merge({ __issue849ConcurrentWrite: 'concurrent-writer' }),
-          });
-        }
-        return result;
-      });
+    const realCapture = RunbookStore.prototype.captureAuthorityState;
+    jest.spyOn(RunbookStore.prototype, 'captureAuthorityState').mockImplementation(async function (
+      this: RunbookStore,
+      runId,
+      claimKey,
+    ) {
+      const result = await realCapture.call(this, runId, claimKey);
+      // Target ONLY Run Progression's follow-on capture of the parent at step 2 —
+      // the initial `run`, `claim`, `pass`, and collect's own aggregation all
+      // capture the parent (or the child) at other steps and must pass
+      // through untouched, or this would corrupt unrelated writes.
+      if (
+        !injected &&
+        result.kind === 'captured' &&
+        result.state.id === parentRunId &&
+        result.state.step === '2'
+      ) {
+        injected = true;
+        const racer = new RunbookStateManager(workspace.cwd);
+        await racer.update(parentRunId, {
+          variables: merge({
+            __issue849ConcurrentWrite: 'concurrent-writer',
+          }),
+        });
+      }
+      return result;
+    });
 
     const collected = await runCliInProcess(
       ['collect', '--claim-id', parentClaimId, '--allow-all'],

@@ -131,7 +131,7 @@ function toRundownError(error: unknown): RundownError {
   // reachable at all. Reproduced against the built CLI before it existed, when
   // the current version was 1:
   // RD-999 "Unknown error - Invalid runbook state for "rd_..." : invalid
-  // schemaVersion; expected schema version 1." An envelope titled "Unknown
+  // schemaVersion; expected schema version N." An envelope titled "Unknown
   // error" cannot carry a recovery instruction, so the documented path existed
   // only in the docs.
   //

@@ -1863,7 +1863,7 @@ it.
 **Text:**
 
 ```text
-Error RD-309: Invalid persisted run state - Invalid runbook state for "rd_9e725b142d81dabcefb9e04919568fcd": invalid schemaVersion; expected schema version 1. Rundown never migrates persisted state, so this run cannot be resumed: finish it with "rundown complete", stop it with "rundown stop", or discard it with "rundown prune --inactive", then re-run the runbook from source.
+Error RD-309: Invalid persisted run state - Invalid runbook state for "rd_9e725b142d81dabcefb9e04919568fcd": invalid schemaVersion; expected schema version 2. Rundown never migrates persisted state, so this run cannot be resumed: finish it with "rundown complete", stop it with "rundown stop", or discard it with "rundown prune --inactive", then re-run the runbook from source.
 ```
 
 **JSON:**
@@ -1871,7 +1871,7 @@ Error RD-309: Invalid persisted run state - Invalid runbook state for "rd_9e725b
 ```json
 {
   "kind": "error",
-  "error": "Invalid persisted run state - Invalid runbook state for \"rd_9e725b142d81dabcefb9e04919568fcd\": invalid schemaVersion; expected schema version 1. Rundown never migrates persisted state, so this run cannot be resumed: finish it with \"rundown complete\", stop it with \"rundown stop\", or discard it with \"rundown prune --inactive\", then re-run the runbook from source.",
+  "error": "Invalid persisted run state - Invalid runbook state for \"rd_9e725b142d81dabcefb9e04919568fcd\": invalid schemaVersion; expected schema version 2. Rundown never migrates persisted state, so this run cannot be resumed: finish it with \"rundown complete\", stop it with \"rundown stop\", or discard it with \"rundown prune --inactive\", then re-run the runbook from source.",
   "code": "RD-309",
   "command": "pass",
   "details": {
@@ -1923,14 +1923,20 @@ to lose. From the aggregate transaction a captured run vanished mid-flight. An
 agent cannot tell them apart from the envelope, and does not need to — the
 recovery is the same.
 
-`RD-829` (`frontier_consume_failed`) is **not** reachable from
-`rundown collect`. That code reports a frontier that projected but whose consume
-did not commit, leaving the frontier persisted and retryable. A collection
-derives its consume rather than committing one separately, so the only way it
-does not land is that the enclosing transaction refused — reported as the
-transactional code above, with the frontier likewise untouched. The code remains
-reachable from the execution loop, which still drives the unfenced projection
-seam.
+`RD-829` (`frontier_consume_failed`) is emitted by Run Progression after a
+frontier projects but its separate SQLite-fenced consume does not commit. The
+frontier remains persisted, no bearer is disclosed, and retrying re-projects it.
+`rundown collect` can therefore print a successful collection result followed by
+RD-829: collection owns and commits only its completion domain, then passes the
+core-minted activation directive to the same progression driver used by other
+entry points.
+
+If that consume commits but the following machine-owned entry actor cannot
+render the `STEP_ENTERED` payload, Run Progression reports permanent `RD-833`
+(`frontier_disclosure_failed`). The frontier is already gone and its bearer was
+transient, so retry cannot disclose it; repair the entry/helper failure and
+explicitly re-delegate the step. An `InvalidRunbookStateError` keeps RD-309 and
+its finish/stop/prune recovery instead of being relabelled RD-833.
 
 An `AGGREGATE_RECOVERY_REQUIRED` from collect names the collect target and, when
 the target is itself a delegated child whose grandparent received a terminal

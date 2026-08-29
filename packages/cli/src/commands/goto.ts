@@ -33,11 +33,19 @@ export function registerGotoCommand(program: Command): void {
     .action(
       async (
         stepArg: string,
-        options: { index?: string; claimId?: string; run?: string; text?: boolean },
+        options: {
+          index?: string;
+          claimId?: string;
+          run?: string;
+          text?: boolean;
+        },
       ) => {
         await withErrorHandling(
           async () => {
-            const output = new OutputEmitter({ text: options.text, command: 'goto' });
+            const output = new OutputEmitter({
+              text: options.text,
+              command: 'goto',
+            });
             const cwd = getCwd();
 
             const target = parseTransitionTarget(options, output);
@@ -58,7 +66,7 @@ export function registerGotoCommand(program: Command): void {
             }
             const ctx = contextResult.ctx;
 
-            const validation = validateGotoTarget(stepArg, ctx.steps, options.index);
+            const validation = validateGotoTarget(stepArg, ctx.navigation.steps, options.index);
             if (!validation.ok) {
               output.error(validation.error, validation.code, validation.details);
               output.flush();

@@ -12,12 +12,10 @@ import type { ResolvedStep, Substep } from './types.js';
  * that resolves an execution unit needs the same refusal, so it lives beside
  * {@link resolveCurrentExecutionUnit} rather than being re-declared per module.
  *
- * The class is the contract, not the message. `rundown collect` wraps any
- * non-`InvalidRunbookStateError` rejection out of the entry seam as RD-833,
- * whose recovery is "fix the helper and re-delegate" — the wrong instruction for
- * a diverged cursor, which is corrupt persisted state and recoverable only by
- * prune or restart. Raising the typed refusal is what routes it onto the CLI's
- * existing RD-309 finish/stop/prune path instead.
+ * The class is the contract, not the message. A diverged cursor is corrupt
+ * persisted state, recoverable only by prune or restart. Raising the typed
+ * refusal is what routes it onto the CLI's existing RD-309
+ * finish/stop/prune path instead of a generic invocation failure.
  *
  * @param steps - Parsed steps for the run.
  * @param stepName - Step name from the run's cursor.

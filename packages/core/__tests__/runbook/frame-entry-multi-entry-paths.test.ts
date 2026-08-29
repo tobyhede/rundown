@@ -64,12 +64,20 @@ const PARENT_RETRY_TRANSITIONS: Transitions = {
 };
 /** A parent whose PASS action sends the cursor back into its own step. */
 const PARENT_SELF_GOTO_TRANSITIONS: Transitions = {
-  pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '2' } } },
+  pass: {
+    kind: 'pass',
+    retry: 0,
+    action: { type: 'GOTO', target: { step: '2' } },
+  },
   fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
 };
 /** The same self-GOTO parent, for a fixture whose loop is step `1`. */
 const PARENT_SELF_GOTO_TRANSITIONS_STEP_1: Transitions = {
-  pass: { kind: 'pass', retry: 0, action: { type: 'GOTO', target: { step: '1' } } },
+  pass: {
+    kind: 'pass',
+    retry: 0,
+    action: { type: 'GOTO', target: { step: '1' } },
+  },
   fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
 };
 
@@ -197,13 +205,8 @@ describe('one mutation, one entry bump', () => {
       throw new Error(`expected allowed, got ${allowed.kind}`);
     }
     const outcome = await seam.runNavigationMutation({
-      runId,
-      callerEvidence: evidence(),
-      steps,
+      navigation: allowed.navigation,
       target,
-      ...(allowed.delegationRuntime === undefined
-        ? {}
-        : { issueDelegationCredential: allowed.delegationRuntime.issueDelegationCredential }),
     });
     if (outcome.kind !== 'applied') {
       throw new Error(`expected applied, got ${outcome.kind}: ${JSON.stringify(outcome)}`);
@@ -241,7 +244,12 @@ describe('one mutation, one entry bump', () => {
     // Step 2 declares ARTIFACTS and has substeps, so the GOTO routes
     // step::2::__parent-entry::1 -> step::2::1 — two state entries, one frame.
     steps = [
-      { kind: 'base', name: '1', description: 'Plain step', transitions: CONTINUE_TRANSITIONS },
+      {
+        kind: 'base',
+        name: '1',
+        description: 'Plain step',
+        transitions: CONTINUE_TRANSITIONS,
+      },
       {
         kind: 'substeps',
         name: '2',
@@ -265,7 +273,12 @@ describe('one mutation, one entry bump', () => {
 
   it('aggregation RETRY into firstSubstepStateId bumps by exactly 1', async () => {
     steps = [
-      { kind: 'base', name: '1', description: 'Plain step', transitions: CONTINUE_TRANSITIONS },
+      {
+        kind: 'base',
+        name: '1',
+        description: 'Plain step',
+        transitions: CONTINUE_TRANSITIONS,
+      },
       {
         kind: 'substeps',
         name: '2',
@@ -300,7 +313,12 @@ describe('one mutation, one entry bump', () => {
         aggregation: { strategy: 'ALL' },
         substeps: [{ id: '1', description: 'Body', transitions: DEFER_TRANSITIONS }],
       },
-      { kind: 'base', name: '2', description: 'Done', transitions: CONTINUE_TRANSITIONS },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'Done',
+        transitions: CONTINUE_TRANSITIONS,
+      },
     ] satisfies readonly ResolvedStep[];
     await activate(baseState({ activeFrameKey: buildFrameKey('1', 1) }));
 
@@ -334,7 +352,12 @@ describe('one mutation, one entry bump', () => {
         aggregation: { strategy: 'ALL' },
         substeps: [{ id: '1', description: 'Body', transitions: DEFER_TRANSITIONS }],
       },
-      { kind: 'base', name: '2', description: 'After the loop', transitions: CONTINUE_TRANSITIONS },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'After the loop',
+        transitions: CONTINUE_TRANSITIONS,
+      },
     ] satisfies readonly ResolvedStep[];
     await activate(baseState({ activeFrameKey: buildFrameKey('1', 1) }));
 
@@ -384,7 +407,12 @@ describe('one mutation, one entry bump', () => {
         aggregation: { strategy: 'ALL' },
         substeps: [{ id: '1', description: 'Body', transitions: DEFER_TRANSITIONS }],
       },
-      { kind: 'base', name: '2', description: 'Done', transitions: CONTINUE_TRANSITIONS },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'Done',
+        transitions: CONTINUE_TRANSITIONS,
+      },
     ] satisfies readonly ResolvedStep[];
     await activate(baseState({ activeFrameKey: buildFrameKey('1', 1) }));
 
@@ -431,7 +459,12 @@ describe('one mutation, one entry bump', () => {
     // live in a frame that has since reset its substep rows and re-fired
     // `__issue-delegations`.
     steps = [
-      { kind: 'base', name: '1', description: 'Plain step', transitions: CONTINUE_TRANSITIONS },
+      {
+        kind: 'base',
+        name: '1',
+        description: 'Plain step',
+        transitions: CONTINUE_TRANSITIONS,
+      },
       {
         kind: 'substeps',
         name: '2',
@@ -485,7 +518,12 @@ describe('one mutation, one entry bump', () => {
         transitions: PARENT_SELF_GOTO_TRANSITIONS_STEP_1,
         substeps: [{ id: '1', description: 'Body', transitions: DEFER_TRANSITIONS }],
       },
-      { kind: 'base', name: '2', description: 'After the loop', transitions: CONTINUE_TRANSITIONS },
+      {
+        kind: 'base',
+        name: '2',
+        description: 'After the loop',
+        transitions: CONTINUE_TRANSITIONS,
+      },
     ] satisfies readonly ResolvedStep[];
     await activate(baseState({ activeFrameKey: buildFrameKey('1', 1) }));
 

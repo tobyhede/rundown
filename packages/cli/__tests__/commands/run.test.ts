@@ -29,18 +29,6 @@ import {
 } from '../helpers/test-utils.js';
 import { textModeAgentAdvisory } from '../../src/commands/run.js';
 
-// ACCEPTED MUTATION SURVIVOR in run.ts (#485).
-//
-//  - `callerEvidence: { kind: 'direct_cli' }` on the `--prompted --step` goto
-//    context (`run.ts:312`), `ObjectLiteral -> {}`. Equivalent, not a gap:
-//    `runNavigationMutation` reads the evidence through exactly one predicate,
-//    `input.callerEvidence.kind === 'claim_bearer'`, so `{}` and `direct_cli`
-//    take the same branch and commit the same mutation. Confirmed against the
-//    broad (`--findRelatedTests`) tier, so this is not the dedicated-tier
-//    artifact — the integration path in `explicit-run-targeting.test.ts` does
-//    exercise this line. Killing it would mean asserting an object literal's
-//    shape rather than any behaviour it produces.
-
 describe('textModeAgentAdvisory', () => {
   it('warns when --text is captured (non-terminal stdout — the agent case)', () => {
     const advisory = textModeAgentAdvisory({ text: true }, undefined);
@@ -335,8 +323,18 @@ Bundled task.
       const runbook = createRunbook({
         title: 'Entry Bump',
         steps: [
-          { title: 'One', pass: 'CONTINUE', fail: 'STOP', command: 'rd echo --result pass' },
-          { title: 'Two', pass: 'COMPLETE', fail: 'STOP', command: 'rd echo --result pass' },
+          {
+            title: 'One',
+            pass: 'CONTINUE',
+            fail: 'STOP',
+            command: 'rd echo --result pass',
+          },
+          {
+            title: 'Two',
+            pass: 'COMPLETE',
+            fail: 'STOP',
+            command: 'rd echo --result pass',
+          },
         ],
       });
       await writeFile(join(workspace.cwd, 'runbooks', 'entries.runbook.md'), runbook);
@@ -460,7 +458,10 @@ required:
 
       const state = await getActiveState(workspace);
       expect(state).not.toBeNull();
-      expect(state!.variables.PlanPath).toMatchObject({ kind: 'artifact-record', uri });
+      expect(state!.variables.PlanPath).toMatchObject({
+        kind: 'artifact-record',
+        uri,
+      });
     });
   });
 });
@@ -530,7 +531,13 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
   async function writePassingChild(): Promise<void> {
     const content = createRunbook({
       title: 'Child',
-      steps: [{ title: 'Execute', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      steps: [
+        {
+          title: 'Execute',
+          pass: 'COMPLETE',
+          command: 'rd echo --result pass',
+        },
+      ],
     });
     await writeFile(join(workspace.cwd, 'child.runbook.md'), content);
   }
@@ -556,7 +563,12 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
     const content = createRunbook({
       title: 'Child',
       steps: [
-        { title: 'Execute', pass: 'COMPLETE', fail: 'STOP', command: 'rd echo --result fail' },
+        {
+          title: 'Execute',
+          pass: 'COMPLETE',
+          fail: 'STOP',
+          command: 'rd echo --result fail',
+        },
       ],
     });
     await writeFile(join(workspace.cwd, 'child.runbook.md'), content);

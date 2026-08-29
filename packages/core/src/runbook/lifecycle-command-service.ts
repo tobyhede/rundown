@@ -6,6 +6,11 @@ import {
   type CallerEvidence,
 } from './actor-context.js';
 import type { RunbookActorService } from './actor-service.js';
+import type { RunProgressionDirective } from './run-progression.js';
+import {
+  mintRunProgressionAuthority,
+  type RunProgressionAuthority,
+} from './run-progression-authority.js';
 import type { ParentAdvanceGuard } from './storage/runbook-store.js';
 import { INLINE_PARENT_CYCLE_CODE, inlineParentCycleMessage } from './inline-parent-advance.js';
 import {
@@ -217,7 +222,11 @@ export type FindDelegationsByTokenHash = (
  */
 export type RetryLocator =
   | { readonly kind: 'token'; readonly token: string }
-  | { readonly kind: 'step'; readonly step: string; readonly iteration?: number }
+  | {
+      readonly kind: 'step';
+      readonly step: string;
+      readonly iteration?: number;
+    }
   | { readonly kind: 'active' };
 
 /** Raw explicit fresh-issuance target parsed by a frontend. */
@@ -407,7 +416,9 @@ export type DelegationIssuanceOutcome =
   | SessionMutationRefusalOutcome
   | Extract<
       GuardedMutationResult<never>,
-      { readonly kind: 'claim_superseded' | 'concurrent_modification' | 'missing' }
+      {
+        readonly kind: 'claim_superseded' | 'concurrent_modification' | 'missing';
+      }
     >
   | AbandonedAttemptSetOutcome;
 
@@ -610,7 +621,10 @@ export type DelegationAbortOutcome =
         | 'terminal_child_cleaned'
         | 'missing_child_cleaned';
     }
-  | { readonly kind: 'refused'; readonly policy: MutationAuthorityRefusalPolicy }
+  | {
+      readonly kind: 'refused';
+      readonly policy: MutationAuthorityRefusalPolicy;
+    }
   | { readonly kind: 'error'; readonly error: RundownError }
   | Extract<
       GuardedMutationResult<never>,
@@ -669,7 +683,9 @@ export type LifecycleLoopDirective = { readonly kind: 'none' } | { readonly kind
  * and echoing either raw `claimId` would put a bearer secret in output. The
  * caller already holds both values it supplied, so it needs no echo to act.
  */
-export type ClaimBearerMismatchRefusal = { readonly kind: 'claim_bearer_mismatch' };
+export type ClaimBearerMismatchRefusal = {
+  readonly kind: 'claim_bearer_mismatch';
+};
 
 /** Input to {@link RunbookLifecycleCommandService.runTransition}. */
 export interface LifecycleTransitionInput {
@@ -755,7 +771,11 @@ export type LifecycleTransitionOutcome =
     }
   | { readonly kind: 'actor_context_required' }
   | ClaimBearerMismatchRefusal
-  | { readonly kind: 'claim_grant_required'; readonly claimId: ClaimId; readonly runId: RunId }
+  | {
+      readonly kind: 'claim_grant_required';
+      readonly claimId: ClaimId;
+      readonly runId: RunId;
+    }
   | UnknownRunRefusal
   | {
       readonly kind: 'applied';
@@ -896,7 +916,9 @@ export type LifecycleTerminalOutcome =
   | SessionMutationRefusalOutcome
   | Extract<
       GuardedMutationResult<never>,
-      { readonly kind: 'claim_superseded' | 'concurrent_modification' | 'missing' }
+      {
+        readonly kind: 'claim_superseded' | 'concurrent_modification' | 'missing';
+      }
     >
   /** Aggregate force crossed its effect boundary and every named attempt requires recovery. */
   | AbandonedAttemptSetOutcome
@@ -907,7 +929,11 @@ export type LifecycleTerminalOutcome =
   /** The caller did not present the bearer naming its claim-shaped terminal target. */
   | ClaimBearerMismatchRefusal
   /** The targeted claim proved possession but lacks the grant required for this terminal mutation. */
-  | { readonly kind: 'claim_grant_required'; readonly claimId: ClaimId; readonly runId: RunId }
+  | {
+      readonly kind: 'claim_grant_required';
+      readonly claimId: ClaimId;
+      readonly runId: RunId;
+    }
   | UnknownRunRefusal
   | {
       /** Refused: the resolved root has reported-but-uncollected delegation outcomes. */
@@ -997,14 +1023,22 @@ export interface LifecycleNavigationInput {
   readonly targetSelector: CommandTargetSelector;
 }
 
+const lifecycleNavigationCapabilityBrand: unique symbol = Symbol('lifecycleNavigationCapability');
+
+/** Opaque core-verified target, authority, and graph for one GOTO mutation. */
+export interface LifecycleNavigationCapability {
+  readonly authority: RunProgressionAuthority;
+  readonly steps: readonly ResolvedStep[];
+  readonly [lifecycleNavigationCapabilityBrand]: true;
+}
+
 /**
  * Outcome of {@link RunbookLifecycleCommandService.resolveRunNavigation}.
  *
  * Refusal variants mirror the base {@link CommandTargetResolution} shapes; the
- * `allowed` variant carries the resolved run, its parsed steps (derived
- * in-seam via `loadSteps`), and the terminal release mode a follow-on
- * execution loop should apply — everything the frontend needs to drive the
- * navigation without re-resolving or re-gating anything.
+ * `allowed` carries the resolved run plus one opaque navigation capability.
+ * That capability binds the verified authority to the exact parsed graph, so a
+ * frontend cannot pair either with unrelated steps.
  */
 export type LifecycleNavigationOutcome =
   /** No active runbook (bare path) to navigate. */
@@ -1033,24 +1067,16 @@ export type LifecycleNavigationOutcome =
       readonly runId: RunId;
       /** Resolved running state of the target run. */
       readonly state: RunbookState;
-      /** Parsed steps of the target run, derived in-seam. */
-      readonly steps: readonly ResolvedStep[];
       /**
-       * Verified runtime-only delegation capabilities for a navigation that
-       * lands on a DELEGATE frontier. One branded pair — see
-       * {@link TransitionDelegationRuntime}.
+       * One opaque authority for the fenced GOTO and its continuation.
        */
-      readonly delegationRuntime?: DelegationRuntimeCapabilities;
+      readonly navigation: LifecycleNavigationCapability;
     };
 
 /** Input to an already-authorized fenced GOTO mutation. */
 export interface LifecycleNavigationMutationInput {
-  readonly runId: RunId;
-  readonly callerEvidence: CallerEvidence;
-  readonly steps: readonly ResolvedStep[];
+  readonly navigation: LifecycleNavigationCapability;
   readonly target: StepId;
-  /** Verified runtime-only issuer for a GOTO that enters a delegation frontier. */
-  readonly issueDelegationCredential?: DelegationCredentialIssuer;
 }
 
 /** Result of applying an already-authorized GOTO through the execution fence. */
@@ -1062,7 +1088,8 @@ export type LifecycleNavigationMutationOutcome =
       readonly previousState: RunbookState;
       readonly updatedState: RunbookState;
       readonly snapshot: unknown;
-      readonly steps: readonly ResolvedStep[];
+      /** Opaque core-minted continuation consumed verbatim by the frontend. */
+      readonly progression: Extract<RunProgressionDirective, { readonly kind: 'activate' }>;
     };
 
 /**
@@ -1340,9 +1367,14 @@ function transitionDelegationRuntime(
   runId: RunId,
 ): TransitionDelegationRuntime {
   if (actorContext.kind !== 'verified_claim') return {};
-  const decision = authorizeClaim(actorContext.claim, { action: 'delegate-from-run', runId });
+  const decision = authorizeClaim(actorContext.claim, {
+    action: 'delegate-from-run',
+    runId,
+  });
   if (decision.kind !== 'allowed') return {};
-  return { delegationRuntime: delegationRuntimeCapabilities(actorContext.authority) };
+  return {
+    delegationRuntime: delegationRuntimeCapabilities(actorContext.authority),
+  };
 }
 
 /**
@@ -1475,7 +1507,10 @@ export class RunbookLifecycleCommandService {
         readonly actorContext: ActorContext;
         readonly authority: VerifiedClaimAuthority;
       }
-    | { readonly kind: 'refused'; readonly policy: MutationAuthorityRefusalPolicy }
+    | {
+        readonly kind: 'refused';
+        readonly policy: MutationAuthorityRefusalPolicy;
+      }
   > {
     const presentedClaimId =
       input.callerEvidence.kind === 'claim_bearer' ? input.callerEvidence.claimId : undefined;
@@ -1562,7 +1597,11 @@ export class RunbookLifecycleCommandService {
     if (input.requestedRunbook) {
       const requestedResolved = await this.#deps.resolveChildRunbook(input.requestedRunbook);
       requested = requestedResolved
-        ? { kind: 'resolved', ref: requestedResolved.ref, raw: input.requestedRunbook }
+        ? {
+            kind: 'resolved',
+            ref: requestedResolved.ref,
+            raw: input.requestedRunbook,
+          }
         : { kind: 'unresolvable', raw: input.requestedRunbook };
     }
 
@@ -1602,10 +1641,18 @@ export class RunbookLifecycleCommandService {
 
     const stepsByRun = new Map<RunId, readonly ResolvedStep[]>();
     let preparedFresh:
-      | { readonly nextState: RunbookState; readonly value: DelegationIssuanceOutcome }
+      | {
+          readonly nextState: RunbookState;
+          readonly value: DelegationIssuanceOutcome;
+        }
       | undefined;
     const aggregate = await this.#deps.actorMutationRunner.runAll<DelegationIssuanceOutcome>({
-      targets: [{ runId: activeId, claimKey: authority.actorContext.authority.claimKey }],
+      targets: [
+        {
+          runId: activeId,
+          claimKey: authority.actorContext.authority.claimKey,
+        },
+      ],
       makeRecoveryActor: (runId, recoveryState) => {
         const recoverySteps = stepsByRun.get(runId);
         // Unreachable invariant: recovery only runs for a member whose attempt
@@ -1625,7 +1672,11 @@ export class RunbookLifecycleCommandService {
         stepsByRun.set(captured.state.id, capturedSteps);
         const policy = resolveCommandIntent({
           actorContext: authority.actorContext,
-          intent: { kind: 'delegation-issuance', command: 'delegate', targeted },
+          intent: {
+            kind: 'delegation-issuance',
+            command: 'delegate',
+            targeted,
+          },
           // Equivalent mutants: `resolveCommandIntent` reads `targetSelector`
           // at exactly one place — `input.targetSelector.kind === 'run'`, one
           // disjunct of the `requiresBearer` OR whose EARLIER disjunct
@@ -1660,7 +1711,10 @@ export class RunbookLifecycleCommandService {
           // the persisted verifier — a refused echo returns data, not a token.
           const echoed = verifyEchoedDelegationToken(exact, deriveToken);
           if (echoed.kind === 'unverifiable') {
-            return { kind: 'return', value: { kind: 'error', error: echoed.error } };
+            return {
+              kind: 'return',
+              value: { kind: 'error', error: echoed.error },
+            };
           }
           return {
             kind: 'return',
@@ -1674,13 +1728,19 @@ export class RunbookLifecycleCommandService {
           };
         }
         if (exact.kind !== 'issuable') {
-          return { kind: 'return', value: { kind: 'error', error: exact.error } };
+          return {
+            kind: 'return',
+            value: { kind: 'error', error: exact.error },
+          };
         }
         const childResolved = await this.#deps.resolveChildRunbook(exact.runbookRef);
         if (!childResolved) {
           return {
             kind: 'return',
-            value: { kind: 'error', error: Errors.delegationRunbookNotFound(exact.runbookRef) },
+            value: {
+              kind: 'error',
+              error: Errors.delegationRunbookNotFound(exact.runbookRef),
+            },
           };
         }
         if (
@@ -1725,7 +1785,10 @@ export class RunbookLifecycleCommandService {
         );
         if (prepared.status !== 'prepared') {
           if (prepared.status === 'error' || prepared.status === 'child_in_flight') {
-            return { kind: 'return', value: { kind: 'error', error: prepared.error } };
+            return {
+              kind: 'return',
+              value: { kind: 'error', error: prepared.error },
+            };
           }
           throw new Error(`Issue preparation returned ${prepared.status}`);
         }
@@ -1844,7 +1907,10 @@ export class RunbookLifecycleCommandService {
       // through to `token-not-found`.
       const located = scan ?? supersedingScan.at(0);
       if (!located)
-        return { kind: 'token-not-found', tokenHint: truncateDelegationToken(locator.token) };
+        return {
+          kind: 'token-not-found',
+          tokenHint: truncateDelegationToken(locator.token),
+        };
       // Fail-closed: an explicit `--run` that names a different run than the
       // token's owner is refused, never silently discarded. The message echoes
       // only the caller-supplied id — never the token's actual owning run
@@ -1871,7 +1937,11 @@ export class RunbookLifecycleCommandService {
           error: Errors.delegationSnapshotStale(substepId, located.stepId),
         };
       }
-      cursor = { substepId, frameKey: located.frameKey, stepLabel: snapshot.at };
+      cursor = {
+        substepId,
+        frameKey: located.frameKey,
+        stepLabel: snapshot.at,
+      };
     } else {
       const anchored = await this.#resolveIssuanceAnchor(input);
       if (anchored.kind !== 'ok') {
@@ -1898,7 +1968,10 @@ export class RunbookLifecycleCommandService {
     const freshState = await this.#deps.loadRun(targetRunId);
     if (!freshState) {
       if (locator.kind === 'token')
-        return { kind: 'token-not-found', tokenHint: truncateDelegationToken(locator.token) };
+        return {
+          kind: 'token-not-found',
+          tokenHint: truncateDelegationToken(locator.token),
+        };
       return locator.kind === 'active'
         ? { kind: 'retry_target_required' }
         : { kind: 'no-active-runbook' };
@@ -1951,7 +2024,11 @@ export class RunbookLifecycleCommandService {
     const authority = await this.#resolveMutationActorContext({
       callerEvidence: input.callerEvidence,
       targetState: freshState,
-      request: { action: 'retry-delegation', runId: freshState.id, stepId: substepId },
+      request: {
+        action: 'retry-delegation',
+        runId: freshState.id,
+        stepId: substepId,
+      },
       intent: 'delegation-issuance',
     });
     if (authority.kind === 'refused') {
@@ -1991,20 +2068,28 @@ export class RunbookLifecycleCommandService {
     const stepsByRun = new Map<RunId, readonly ResolvedStep[]>();
     const hasTerminalChild = linkedChildRunId !== null && allowLinkedChildRun;
     let preparedRetry:
-      | { readonly nextState: RunbookState; readonly value: DelegationIssuanceOutcome }
+      | {
+          readonly nextState: RunbookState;
+          readonly value: DelegationIssuanceOutcome;
+        }
       | undefined;
     const aggregate = await this.#deps.actorMutationRunner.runAll<DelegationIssuanceOutcome>({
       targets: [
         ...(hasTerminalChild
           ? [{ runId: linkedChildRunId, optionalWhenClaimSuperseded: true }]
           : []),
-        { runId: freshState.id, claimKey: authority.actorContext.authority.claimKey },
+        {
+          runId: freshState.id,
+          claimKey: authority.actorContext.authority.claimKey,
+        },
       ],
       ...(hasTerminalChild
         ? // Collateral: the retry addresses the parent's delegation, and the dead
           // child is swept up so that retry can proceed. Its bearer is revoked
           // because nothing may present it against the run that replaces it.
-          { releases: [{ runId: linkedChildRunId, role: 'collateral' as const }] }
+          {
+            releases: [{ runId: linkedChildRunId, role: 'collateral' as const }],
+          }
         : {}),
       makeRecoveryActor: (runId, recoveryState) => {
         const recoverySteps = stepsByRun.get(runId);
@@ -2066,7 +2151,10 @@ export class RunbookLifecycleCommandService {
           };
         } else if (locator.kind === 'active') {
           if (parent.state.substep === undefined) {
-            return { kind: 'return', value: { kind: 'retry_target_required' } };
+            return {
+              kind: 'return',
+              value: { kind: 'retry_target_required' },
+            };
           }
           const activeDerived = deriveActiveFrame(parent.state);
           exactCursor = {
@@ -2207,7 +2295,10 @@ export class RunbookLifecycleCommandService {
               deriveToken,
             );
             if (echoed.kind === 'unverifiable') {
-              return { kind: 'return', value: { kind: 'error', error: echoed.error } };
+              return {
+                kind: 'return',
+                value: { kind: 'error', error: echoed.error },
+              };
             }
             return {
               kind: 'return',
@@ -2249,7 +2340,10 @@ export class RunbookLifecycleCommandService {
         );
         if (prepared.status !== 'prepared') {
           if (prepared.status === 'error' || prepared.status === 'child_in_flight') {
-            return { kind: 'return', value: { kind: 'error', error: prepared.error } };
+            return {
+              kind: 'return',
+              value: { kind: 'error', error: prepared.error },
+            };
           }
           throw new Error(`Retry preparation returned ${prepared.status}`);
         }
@@ -2342,7 +2436,11 @@ export class RunbookLifecycleCommandService {
     const authority = await this.#resolveMutationActorContext({
       callerEvidence: input.callerEvidence,
       targetState: scan.parentState,
-      request: { action: 'abort-delegation', runId: parentRunId, stepId: substepId },
+      request: {
+        action: 'abort-delegation',
+        runId: parentRunId,
+        stepId: substepId,
+      },
       intent: 'delegation-issuance',
     });
     if (authority.kind === 'refused') return { kind: 'refused', policy: authority.policy };
@@ -2408,7 +2506,9 @@ export class RunbookLifecycleCommandService {
         ? {}
         : // Collateral: the abort addresses the parent's delegation, and the
           // live child is force-stopped so that abort can complete.
-          { releases: [{ runId: scannedChild.id, role: 'collateral' as const }] }),
+          {
+            releases: [{ runId: scannedChild.id, role: 'collateral' as const }],
+          }),
       makeRecoveryActor: (runId, recoveryState) => {
         const recoverySteps = stepsByRun.get(runId);
         // Unreachable invariant: recovery only runs for a member whose attempt
@@ -2461,7 +2561,10 @@ export class RunbookLifecycleCommandService {
             break;
           case 'error':
           case 'child_in_flight':
-            return { kind: 'return', value: { kind: 'error', error: parentPrepared.error } };
+            return {
+              kind: 'return',
+              value: { kind: 'error', error: parentPrepared.error },
+            };
           case 'needs_force':
             return {
               kind: 'return',
@@ -2538,7 +2641,11 @@ export class RunbookLifecycleCommandService {
             frameKey,
           );
           const report = this.#deps.completionService.prepareChildCompletion(
-            { childState: nextChild, result: 'fail', ignoreCancellation: true },
+            {
+              childState: nextChild,
+              result: 'fail',
+              ignoreCancellation: true,
+            },
             nextParent,
           );
           if (report.kind !== 'recorded') {
@@ -2594,8 +2701,16 @@ export class RunbookLifecycleCommandService {
           members: [
             ...(exactPrepared.child === undefined
               ? []
-              : [{ runId: exactPrepared.child.id, nextState: exactPrepared.child }]),
-            { runId: exactPrepared.parent.id, nextState: exactPrepared.parent },
+              : [
+                  {
+                    runId: exactPrepared.child.id,
+                    nextState: exactPrepared.child,
+                  },
+                ]),
+            {
+              runId: exactPrepared.parent.id,
+              nextState: exactPrepared.parent,
+            },
           ],
           value: exactPrepared.value,
         });
@@ -2693,7 +2808,11 @@ export class RunbookLifecycleCommandService {
         case 'none':
           break;
         case 'unknown_run':
-          return { kind: 'unknown_run', runId: target.runId, message: target.message };
+          return {
+            kind: 'unknown_run',
+            runId: target.runId,
+            message: target.message,
+          };
         case 'stale_claim':
           break;
         default: {
@@ -2927,15 +3046,15 @@ export class RunbookLifecycleCommandService {
    * the collection-pending / open-claims guards — navigation is operator
    * control flow, not completion.
    *
-   * The machine dispatch itself (`GOTO` + execution loop) stays with the
-   * frontend, which already drives it through `RunbookActorService` — this
-   * seam owns everything decision-shaped: resolution, evidence mapping, and
-   * policy.
+   * The fenced GOTO dispatch stays in this core seam. Its applied outcome mints
+   * a Run Progression directive that binds the same authority and graph; the
+   * frontend renders the GOTO observation and passes that directive verbatim to
+   * the shared driver.
    *
    * @param input - Command, caller evidence, and target selector.
-   * @returns A typed refusal or an `allowed` outcome carrying the resolved
-   *   run, its steps, and the terminal release mode. A claim-shaped target that
-   *   the caller did not present refuses `claim_bearer_mismatch`.
+   * @returns A typed refusal or an `allowed` outcome carrying the resolved run
+   *   and its opaque navigation capability. A claim-shaped target that the
+   *   caller did not present refuses `claim_bearer_mismatch`.
    * @throws {Error} When an `explicit-step` selector is supplied (the
    *   navigation target is goto's positional argument, not a selector).
    */
@@ -2979,7 +3098,11 @@ export class RunbookLifecycleCommandService {
           message: resolution.message,
         };
       case 'unknown_run':
-        return { kind: 'unknown_run', runId: resolution.runId, message: resolution.message };
+        return {
+          kind: 'unknown_run',
+          runId: resolution.runId,
+          message: resolution.message,
+        };
       default: {
         const _exhaustive: never = resolution;
         return _exhaustive;
@@ -3020,7 +3143,11 @@ export class RunbookLifecycleCommandService {
 
     const policy = resolveCommandIntent({
       actorContext,
-      intent: { kind: 'run-navigation', command: input.command, targeted: true },
+      intent: {
+        kind: 'run-navigation',
+        command: input.command,
+        targeted: true,
+      },
       targetSelector: selector,
       targetState: state,
     });
@@ -3035,43 +3162,56 @@ export class RunbookLifecycleCommandService {
       await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
 
+    const steps = await this.#deps.loadSteps(state);
+    const { delegationRuntime } = transitionDelegationRuntime(actorContext, state.id);
+    const progressionAuthority = mintRunProgressionAuthority({
+      runId: state.id,
+      ...(actorContext.kind === 'verified_claim'
+        ? { claimKey: actorContext.authority.claimKey }
+        : {}),
+      ...(delegationRuntime === undefined ? {} : { delegationRuntime }),
+    });
     return {
       kind: 'allowed',
       runId: state.id,
       state,
-      steps: await this.#deps.loadSteps(state),
       // Navigation can land the cursor ON a DELEGATE frontier, so the same
       // run-control gate applies: the issuer follows `delegate-from-run`, not
       // the `mutate-run` grant that authorized the navigation.
-      ...transitionDelegationRuntime(actorContext, state.id),
+      navigation: {
+        authority: progressionAuthority,
+        steps,
+        [lifecycleNavigationCapabilityBrand]: true,
+      },
     };
   }
 
   /**
    * Apply an authorized GOTO through core-owned execution fencing.
    *
-   * @param input - Selected run, caller evidence, parsed steps, and validated target.
+   * @param input - Core-verified navigation capability and validated target.
    * @returns Applied transition data or a typed capture/execution refusal.
    * @throws {Error} When a committed mutation has no captured previous state.
    */
   async runNavigationMutation(
     input: LifecycleNavigationMutationInput,
   ): Promise<LifecycleNavigationMutationOutcome> {
+    const { authority, steps } = input.navigation;
     let previousState: RunbookState | undefined;
     const result = await this.#deps.actorMutationRunner.run({
-      runId: input.runId,
-      ...(input.callerEvidence.kind === 'claim_bearer'
-        ? { claimKey: claimKeyFromBearer(input.callerEvidence.claimId) }
-        : {}),
-      makeRecoveryActor: (state) => this.#deps.actorService.createRecoveryActor(state, input.steps),
+      runId: authority.runId,
+      ...(authority.claimKey === undefined ? {} : { claimKey: authority.claimKey }),
+      makeRecoveryActor: (state) => this.#deps.actorService.createRecoveryActor(state, steps),
       compute: async (capturedState) => {
         previousState = capturedState;
         const prepared = await this.#deps.actorService.prepareActorMutation(
           capturedState.id,
           previousState,
-          input.steps,
+          steps,
           { type: 'GOTO', target: input.target },
-          { issueDelegationCredential: input.issueDelegationCredential },
+          {
+            issueDelegationCredential: authority.delegationRuntime?.issueDelegationCredential,
+          },
         );
         return { ...prepared, previousState };
       },
@@ -3082,11 +3222,20 @@ export class RunbookLifecycleCommandService {
     }
     return {
       kind: 'applied',
-      runId: input.runId,
+      runId: authority.runId,
       previousState,
       updatedState: result.value.state,
       snapshot: result.value.snapshot,
-      steps: input.steps,
+      progression: {
+        kind: 'activate',
+        authority,
+        runbook: result.value.state.runbook,
+        steps,
+        entryBoundary: {
+          kind: 'after_observed_transition',
+          lifecycle: 'running',
+        },
+      },
     };
   }
 
@@ -3116,7 +3265,10 @@ export class RunbookLifecycleCommandService {
   // exactly this claim, so the holder observation needs no evidence re-check.
   async #releaseResolvedTerminalClaim(resolution: {
     readonly claimId: ClaimId;
-    readonly claim: { readonly claimKey: ClaimLookupKey; readonly controlledRunId: RunId };
+    readonly claim: {
+      readonly claimKey: ClaimLookupKey;
+      readonly controlledRunId: RunId;
+    };
     readonly state: RunbookState;
     readonly lifecycle: 'completed' | 'stopped';
   }): Promise<LifecycleTerminalOutcome | undefined> {
@@ -3392,8 +3544,10 @@ export class RunbookLifecycleCommandService {
       plan.forceOrder.some(
         (state) =>
           state.id !== plan.targetState.id &&
-          authorizeClaim(presentedClaim, { action: 'mutate-run', runId: state.id }).kind ===
-            'allowed',
+          authorizeClaim(presentedClaim, {
+            action: 'mutate-run',
+            runId: state.id,
+          }).kind === 'allowed',
       );
     const authority =
       input.callerEvidence.kind === 'claim_bearer' && !descendantAuthority
@@ -3475,7 +3629,11 @@ export class RunbookLifecycleCommandService {
         authority?.kind === 'verified' && !descendantAuthority
           ? authority.actorContext
           : UNKNOWN_ACTOR_CONTEXT,
-      intent: { kind: 'terminal-run-force', command: input.command, targeted: false },
+      intent: {
+        kind: 'terminal-run-force',
+        command: input.command,
+        targeted: false,
+      },
       targetSelector: descendantAuthority ? { kind: 'default' } : input.targetSelector,
       targetState: plan.targetState,
       openClaims: await sessionService.listOpenClaimsForParent(plan.targetState.id),
@@ -3628,7 +3786,11 @@ export class RunbookLifecycleCommandService {
                 : {}),
             });
             for (const event of observation.events) {
-              events.push({ runId: exact.state.id, runbook: exact.state.runbook, event });
+              events.push({
+                runId: exact.state.id,
+                runbook: exact.state.runbook,
+                event,
+              });
             }
           }
           members.push({ runId: exact.state.id, nextState });
@@ -3698,7 +3860,10 @@ export class RunbookLifecycleCommandService {
       // command — no force, no release. A refusal here leaves even the cleanup
       // undone, so the disposition is the only thing separating this outcome
       // from a clean teardown.
-      return { ...aggregate.value, cleanup: cleanupFromFenceOutcome(release.value) };
+      return {
+        ...aggregate.value,
+        cleanup: cleanupFromFenceOutcome(release.value),
+      };
     }
     return aggregate.value;
   }
@@ -3882,7 +4047,11 @@ export class RunbookLifecycleCommandService {
           readonly applied: number;
           readonly state: RunbookState;
           readonly terminalStatus?: 'done' | 'stopped';
-          readonly duplicate?: { at: string; frameKey: FrameKey; entry: number };
+          readonly duplicate?: {
+            at: string;
+            frameKey: FrameKey;
+            entry: number;
+          };
         }
       | undefined;
 
@@ -4230,7 +4399,10 @@ export class RunbookLifecycleCommandService {
   #guardRefusal<V>(
     guarded:
       | { readonly kind: 'advanced'; readonly value: V }
-      | { readonly kind: 'open_delegated_children'; readonly claims: ClaimRecord[] }
+      | {
+          readonly kind: 'open_delegated_children';
+          readonly claims: ClaimRecord[];
+        }
       | {
           readonly kind: 'delegation_collection_pending';
           readonly parentRunId: RunId;
@@ -4240,7 +4412,10 @@ export class RunbookLifecycleCommandService {
     parentRunId: RunId,
   ):
     | { readonly kind: 'advanced'; readonly value: V }
-    | { readonly kind: 'refusal'; readonly outcome: LifecycleTransitionOutcome } {
+    | {
+        readonly kind: 'refusal';
+        readonly outcome: LifecycleTransitionOutcome;
+      } {
     switch (guarded.kind) {
       case 'advanced':
         return { kind: 'advanced', value: guarded.value };
@@ -4292,8 +4467,11 @@ export class RunbookLifecycleCommandService {
   // launch seam re-projects, so the two agree by construction rather than by a
   // second rule about what "interrupted" means.
   #hasUnconsumedInlineLaunchIntent(parentState: RunbookState, childRunId: RunId): boolean {
-    const context = (parentState.snapshot as { readonly context?: Partial<RunbookContext> } | null)
-      ?.context;
+    const context = (
+      parentState.snapshot as {
+        readonly context?: Partial<RunbookContext>;
+      } | null
+    )?.context;
     const intent = context?.inlineLaunchIntent;
     return isInlineLaunchIntentWithoutParentEntry(intent) && intent.childRunId === childRunId;
   }

@@ -79,7 +79,12 @@ const FRAME_2 = buildFrameKey('2');
  */
 function fixtureSteps(): readonly ResolvedStep[] {
   return [
-    { kind: 'base', name: '1', description: 'Plain step', transitions: CONTINUE_TRANSITIONS },
+    {
+      kind: 'base',
+      name: '1',
+      description: 'Plain step',
+      transitions: CONTINUE_TRANSITIONS,
+    },
     {
       kind: 'substeps',
       name: '2',
@@ -281,7 +286,10 @@ describe('entry projection ordering: machine credential issuance agrees with com
     expect(replacement.credential.supersedesTokenHash).toBe(fresh.tokenHash);
     expect(replacement.childRunId).toBeNull();
     expect(replacement.cancelledAt).toBeNull();
-    expect(committed.lastAction).toEqual({ origin: 'aggregation', type: 'RETRY' });
+    expect(committed.lastAction).toEqual({
+      origin: 'aggregation',
+      type: 'RETRY',
+    });
 
     expect(replacement.credential.parentEntry).toBe(3);
     expect(committed.activeEntry).toBe(3);
@@ -310,13 +318,8 @@ describe('entry projection ordering: machine credential issuance agrees with com
     }
 
     const outcome = await seam.runNavigationMutation({
-      runId,
-      callerEvidence: evidence(),
-      steps,
+      navigation: allowed.navigation,
       target: { step: '2' },
-      ...(allowed.delegationRuntime === undefined
-        ? {}
-        : { issueDelegationCredential: allowed.delegationRuntime.issueDelegationCredential }),
     });
     expect(outcome.kind).toBe('applied');
 
@@ -366,7 +369,12 @@ describe('entry projection ordering: machine credential issuance agrees with com
     // and could therefore escape the frame-switch bump — the entering transition
     // is the only one that issues, and it is always scored as a frame switch.
     steps = [
-      { kind: 'base', name: '1', description: 'Plain step', transitions: CONTINUE_TRANSITIONS },
+      {
+        kind: 'base',
+        name: '1',
+        description: 'Plain step',
+        transitions: CONTINUE_TRANSITIONS,
+      },
       {
         kind: 'substeps',
         name: '2',

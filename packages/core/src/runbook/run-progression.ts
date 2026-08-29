@@ -24,9 +24,8 @@
  * decide progression.
  *
  * TRANSITIONAL (#851 migration): turn selection inside this runtime is still
- * imperative — the loop below reads machine-owned seams
- * (`resolveCurrentExecutionUnit`, `readPersistedReEntryFrontier`,
- * `enterExecutionUnit`) and chooses the next fenced turn itself. The spec's
+ * imperative — the loop below still chooses completion, inline-composition,
+ * and command turns around the machine-owned frontier/entry selector. The spec's
  * end state ("XState decides every progression action", #851 story 21) is
  * reached slice by slice: #854–#857 move completion draining, frontier
  * continuation, inline composition, and fresh-run entry into machine-owned
@@ -43,19 +42,17 @@ import {
 } from '../events/transition-observation.js';
 import type { ExecutionObservationEffect } from '../events/execution-observation.js';
 import { ErrorCodes } from '../errors/codes.js';
+import { Errors } from '../errors/factory.js';
 import { CLIErrorCodes } from '../output/zod-schemas.js';
 import type { RunbookActorService } from './actor-service.js';
 import { COMPLETION_TARGET_MISMATCH_CODE, RunbookCompletionService } from './completion-service.js';
 import type { EffectfulActorMutationRunner } from './effectful-actor-mutation-runner.js';
-import { findStepOrThrow, resolveCurrentExecutionUnit } from './execution-units.js';
+import { findStepOrThrow } from './execution-units.js';
 import type { ExecutionUnitEntry } from './execution-unit-entry.js';
 import {
   FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
   FRONTIER_CONSUME_FAILED_MESSAGE,
   FRONTIER_PROJECTION_REFUSED_MESSAGE,
-  projectAndConsumeReEntryFrontier,
-  readPersistedReEntryFrontier,
-  type ReEntryProjection,
 } from './re-entry-frontier.js';
 import {
   SESSION_REFUSAL_CODE_BY_KIND,
@@ -78,6 +75,7 @@ import { extractLastMessage } from './transition-kernel.js';
 import type { InlineLaunchIntent } from '../events/types.js';
 import type { InlineParentAdvanceRefusal } from './inline-parent-advance.js';
 import { getErrorMessage } from '../errors.js';
+import { InvalidRunbookStateError } from './persisted-state-guards.js';
 import type { ResolvedStep, RunbookState } from './types.js';
 
 /**
@@ -168,6 +166,10 @@ export type RunProgressionRefusalReason =
   | 'actor_context_required'
   | 'projection_refused'
   | 'consume_failed'
+  | 'frontier_disclosure_failed'
+  | 'claim_superseded'
+  | 'recovery_required'
+  | 'aggregate_recovery_required'
   | 'terminal_release_refused'
   | 'inline_launch_refused'
   | 'inline_child_stopped'
@@ -401,6 +403,37 @@ export interface RunProgressionDeps {
   readonly propagateTerminal: TerminalPropagation;
 }
 
+/** Typed provenance retained by directives that enter after a terminal observation. */
+export type TerminalPropagationSource =
+  | { readonly kind: 'explicit-result'; readonly result: 'pass' | 'fail' }
+  | { readonly kind: 'loop-inferred' };
+
+/** Durable/observation boundary at which an explicit activation enters. */
+export type RunProgressionEntryBoundary =
+  | { readonly kind: 'resume' }
+  | {
+      readonly kind: 'after_observed_transition';
+      readonly lifecycle: 'running';
+    }
+  | {
+      readonly kind: 'after_observed_transition';
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly terminalTarget: 'released' | 'retained_by_policy';
+      readonly source: TerminalPropagationSource;
+    };
+
+/** Core-minted continuation decision consumed verbatim by every frontend. */
+export type RunProgressionDirective =
+  | { readonly kind: 'none' }
+  | {
+      readonly kind: 'activate';
+      readonly authority: RunProgressionAuthority;
+      readonly runbook: RunbookState['runbook'];
+      /** Exact parsed graph verified alongside this authority. */
+      readonly steps: readonly ResolvedStep[];
+      readonly entryBoundary: RunProgressionEntryBoundary;
+    };
+
 /** The refusal arms of a fenced mutation, i.e. everything but `committed`. */
 type FencedMutationRefusal = Exclude<GuardedMutationResult<never>, { kind: 'committed' }>;
 
@@ -588,7 +621,11 @@ function emitTerminalAtActivation(args: {
 
 /** Outcome of the ported one-completion-per-commit drain pass. */
 type DrainPass =
-  | { readonly status: 'continue'; readonly state: RunbookState; readonly applied: number }
+  | {
+      readonly status: 'continue';
+      readonly state: RunbookState;
+      readonly applied: number;
+    }
   | { readonly status: 'done' }
   | { readonly status: 'stopped' }
   | { readonly status: 'refused'; readonly message: string }
@@ -627,7 +664,9 @@ async function drainResolvedCompletionsPass(args: {
       runbookId: runId,
       steps,
       ...(authority.delegationRuntime
-        ? { issueDelegationCredential: authority.delegationRuntime.issueDelegationCredential }
+        ? {
+            issueDelegationCredential: authority.delegationRuntime.issueDelegationCredential,
+          }
         : {}),
       terminalRelease: { role: 'addressed' },
     });
@@ -636,12 +675,20 @@ async function drainResolvedCompletionsPass(args: {
     }
     if (applied.kind === 'not_active') {
       if (appliedCount > 0) {
-        return { status: 'continue', state: observedState, applied: appliedCount };
+        return {
+          status: 'continue',
+          state: observedState,
+          applied: appliedCount,
+        };
       }
       return { status: 'not_active' };
     }
     if (applied.kind === 'missing') {
-      return { status: 'continue', state: observedState, applied: appliedCount };
+      return {
+        status: 'continue',
+        state: observedState,
+        applied: appliedCount,
+      };
     }
     if (applied.kind === 'none') {
       return {
@@ -689,7 +736,10 @@ async function concludeTerminal(args: {
   readonly propagateTerminal: TerminalPropagation;
   readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
 }): Promise<RunProgressionOutcome> {
-  const propagated = await args.propagateTerminal({ runId: args.runId, sink: args.sink });
+  const propagated = await args.propagateTerminal({
+    runId: args.runId,
+    sink: args.sink,
+  });
   if (propagated.kind === 'refused') {
     return propagationRefusalOutcome(args.runId, propagated);
   }
@@ -1002,15 +1052,23 @@ async function driveProgression(
   // and the fenced compute callback below re-runs once per CAS attempt, so the
   // readonly-shedding copy is made once here rather than per attempt.
   const stepsArray = [...steps];
-  const totalSteps = countNumberedSteps(stepsArray);
   let currentState: RunbookState = state;
 
   // A run already terminal at activation is reported, released, and
   // propagated — never re-driven. Restoration stays inert; this reporting is
   // the explicit activation's first (and only) turn for such a run.
   if (currentState.lifecycle === 'stopped') {
-    emitTerminalAtActivation({ sink, steps, state: currentState, terminal: 'stopped' });
-    const refusedRelease = await releaseTerminalTarget({ sessionService, runId, sink });
+    emitTerminalAtActivation({
+      sink,
+      steps,
+      state: currentState,
+      terminal: 'stopped',
+    });
+    const refusedRelease = await releaseTerminalTarget({
+      sessionService,
+      runId,
+      sink,
+    });
     if (refusedRelease) {
       // The release refused (a held execution lease), but the terminal is
       // durable and the parent advance targets a DIFFERENT run, so propagation
@@ -1043,7 +1101,11 @@ async function driveProgression(
     // Release BEFORE announcing completion, as the loop always has: a refused
     // release leaves the run targeted, and a stream that already announced
     // RUNBOOK_COMPLETED would assert a clean finish the outcome contradicts.
-    const refusedRelease = await releaseTerminalTarget({ sessionService, runId, sink });
+    const refusedRelease = await releaseTerminalTarget({
+      sessionService,
+      runId,
+      sink,
+    });
     if (refusedRelease) {
       // Same composition as the stopped arm above: the durable terminal still
       // owes its parent the advance, and a refused advance outranks the
@@ -1054,7 +1116,12 @@ async function driveProgression(
       }
       return refusedRelease;
     }
-    emitTerminalAtActivation({ sink, steps, state: currentState, terminal: 'completed' });
+    emitTerminalAtActivation({
+      sink,
+      steps,
+      state: currentState,
+      terminal: 'completed',
+    });
     return concludeTerminal({
       runId,
       terminal: 'completed',
@@ -1065,9 +1132,6 @@ async function driveProgression(
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
-    const currentStep = findStepOrThrow(steps, currentState.step, currentState.id);
-    const currentUnit = resolveCurrentExecutionUnit(currentStep, currentState.substep);
-
     // Turn: apply resolved completions, one fenced commit each.
     const drained = await drainResolvedCompletionsPass({
       completionService,
@@ -1093,7 +1157,10 @@ async function driveProgression(
       // lifecycle, so this is a refusal outcome — not a stop (#802, #849).
       sink.emit({
         type: 'ERROR_OCCURRED',
-        payload: { message: drained.message, code: COMPLETION_TARGET_MISMATCH_CODE },
+        payload: {
+          message: drained.message,
+          code: COMPLETION_TARGET_MISMATCH_CODE,
+        },
       });
       return {
         kind: 'refused',
@@ -1118,107 +1185,143 @@ async function driveProgression(
       continue;
     }
 
-    const cursorIsOnSubstep = 'id' in currentUnit;
-    const stepPosition = buildStepPosition(
-      currentState.step,
-      totalSteps,
-      currentState.substep,
-      currentState.forStack,
+    // XState owns the frontier/entry decision. The runtime binds one opaque
+    // authority object and executes only the state the restored machine selects.
+    const progression = await actorService.selectRunProgressionIntent(
+      currentState,
+      steps,
+      authority,
+      actorMutationRunner,
     );
-
-    const delegationTokenDeriver = authority.delegationRuntime?.deriveDelegationToken;
-    // The authority precondition: a persisted frontier may not be disclosed
-    // without the verified deriver half of this activation's authority. A
-    // refusal, not a terminal — the run stays running and targeted (#833).
-    if (
-      delegationTokenDeriver === undefined &&
-      cursorIsOnSubstep &&
-      readPersistedReEntryFrontier(currentState).length > 0
-    ) {
-      sink.emit({
-        type: 'ERROR_OCCURRED',
-        payload: {
-          message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
-          code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED,
-        },
-      });
-      return {
-        kind: 'refused',
-        runId,
-        reason: 'actor_context_required',
-        code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED,
-        message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
-        recovery: 'provide_authority',
-      };
+    if (progression.kind === 'reselect') {
+      currentState = progression.state;
+      continue;
     }
-
-    // Turn: project and consume a persisted re-entry frontier through the one
-    // core seam, under this activation's verified deriver.
-    const reentry: ReEntryProjection =
-      delegationTokenDeriver === undefined
-        ? { status: 'none' }
-        : await projectAndConsumeReEntryFrontier({
-            actorService,
-            steps,
-            state: currentState,
-            deriveToken: delegationTokenDeriver,
-          });
-
-    if (reentry.status === 'projection_refused') {
-      const message = `${FRONTIER_PROJECTION_REFUSED_MESSAGE}: ${reentry.message}`;
+    if (progression.kind === 'refused') {
+      if (progression.reason === 'run_missing') {
+        return runMissingRefusal(runId, sink);
+      }
+      if (progression.reason === 'actor_context_required') {
+        sink.emit({
+          type: 'ERROR_OCCURRED',
+          payload: {
+            message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
+            code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED,
+          },
+        });
+        return {
+          kind: 'refused',
+          runId,
+          reason: 'actor_context_required',
+          code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED,
+          message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
+          recovery: 'provide_authority',
+        };
+      }
+      if (progression.reason === 'projection_refused') {
+        const message = `${FRONTIER_PROJECTION_REFUSED_MESSAGE}: ${progression.message}`;
+        sink.emit({
+          type: 'ERROR_OCCURRED',
+          payload: {
+            message,
+            code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
+          },
+        });
+        return {
+          kind: 'refused',
+          runId,
+          reason: 'projection_refused',
+          code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
+          message,
+          recovery: 'permanent',
+        };
+      }
+      if (progression.reason === 'consume_failed') {
+        sink.emit({
+          type: 'ERROR_OCCURRED',
+          payload: {
+            message: FRONTIER_CONSUME_FAILED_MESSAGE,
+            code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
+          },
+        });
+        return {
+          kind: 'refused',
+          runId,
+          reason: 'consume_failed',
+          code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
+          message: FRONTIER_CONSUME_FAILED_MESSAGE,
+          recovery: 'retryable',
+        };
+      }
+      if (progression.reason === 'frontier_disclosure_failed') {
+        // A malformed persisted run keeps the repository-wide RD-309 recovery;
+        // every other failure here happened after the frontier consume commit,
+        // so retry cannot reconstruct the transient bearer.
+        if (progression.cause instanceof InvalidRunbookStateError) {
+          throw progression.cause;
+        }
+        const error = Errors.frontierDisclosureFailed(runId, progression.message);
+        sink.emit({
+          type: 'ERROR_OCCURRED',
+          payload: { message: error.message, code: error.code },
+        });
+        return {
+          kind: 'refused',
+          runId,
+          reason: 'frontier_disclosure_failed',
+          code: error.code,
+          message: error.message,
+          recovery: 'permanent',
+        };
+      }
+      if (progression.reason === 'claim_superseded') {
+        const code = TRANSACTIONAL_REFUSAL_CODE_BY_KIND.claim_superseded;
+        sink.emit({
+          type: 'ERROR_OCCURRED',
+          payload: { message: progression.message, code },
+        });
+        return {
+          kind: 'refused',
+          runId,
+          reason: 'claim_superseded',
+          code,
+          message: progression.message,
+          recovery: 'provide_authority',
+        };
+      }
+      const isAggregate = progression.reason === 'aggregate_recovery_required';
+      const code = isAggregate
+        ? TRANSACTIONAL_REFUSAL_CODE_BY_KIND.aggregate_recovery_required
+        : TRANSACTIONAL_REFUSAL_CODE_BY_KIND.recovery_required;
       sink.emit({
         type: 'ERROR_OCCURRED',
-        payload: { message, code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code },
+        payload: { message: progression.message, code },
       });
       return {
         kind: 'refused',
         runId,
-        reason: 'projection_refused',
-        code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
-        message,
+        reason: progression.reason,
+        code,
+        message: progression.message,
         recovery: 'permanent',
       };
     }
-    if (reentry.status === 'consume_failed') {
-      sink.emit({
-        type: 'ERROR_OCCURRED',
-        payload: {
-          message: FRONTIER_CONSUME_FAILED_MESSAGE,
-          code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
-        },
-      });
-      return {
-        kind: 'refused',
-        runId,
-        reason: 'consume_failed',
-        code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
-        message: FRONTIER_CONSUME_FAILED_MESSAGE,
-        recovery: 'retryable',
-      };
-    }
-
-    // Turn: enter the execution unit (a projected frontier was entered by the
-    // seam with its bearers attached; re-entering would announce it twice).
-    const entered: ExecutionUnitEntry =
-      reentry.status === 'projected'
-        ? reentry.entered
-        : await actorService.enterExecutionUnit({
-            state: currentState,
-            steps,
-            position: stepPosition,
-          });
+    currentState = progression.state;
+    const currentStep = findStepOrThrow(steps, currentState.step, currentState.id);
+    const entered: ExecutionUnitEntry = progression.entered;
     for (const effect of entered.effects) {
       sink.emit(effect.event);
-    }
-    if (reentry.status === 'projected') {
-      currentState = reentry.state;
     }
 
     // A one-shot intent is consumed by the launch it drives; on the projected
     // path the seam's consume already committed, so acting on an intent here
     // would launch a child the re-entry never armed.
-    if (reentry.status === 'none' && entered.kind === 'inline-launch') {
-      const dispatched = await deps.dispatchInlineChild({ intent: entered.launch, prompted, sink });
+    if (progression.frontier === 'none' && entered.kind === 'inline-launch') {
+      const dispatched = await deps.dispatchInlineChild({
+        intent: entered.launch,
+        prompted,
+        sink,
+      });
       switch (dispatched.kind) {
         case 'waiting':
           return outcomeFromDurableState({
@@ -1275,7 +1378,10 @@ async function driveProgression(
               const wedgeMessage = `Inline child of run ${runId} stopped without linked flow-back; inspect the child run, then finish, stop, or prune it before re-running`;
               sink.emit({
                 type: 'ERROR_OCCURRED',
-                payload: { message: wedgeMessage, code: ErrorCodes.LAUNCH_FAILED.code },
+                payload: {
+                  message: wedgeMessage,
+                  code: ErrorCodes.LAUNCH_FAILED.code,
+                },
               });
               return {
                 kind: 'refused',
@@ -1340,7 +1446,9 @@ async function driveProgression(
             rdInjected,
           },
           authority.delegationRuntime
-            ? { issueDelegationCredential: authority.delegationRuntime.issueDelegationCredential }
+            ? {
+                issueDelegationCredential: authority.delegationRuntime.issueDelegationCredential,
+              }
             : {},
         );
         return { ...prepared, previousState };

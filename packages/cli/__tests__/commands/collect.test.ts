@@ -247,7 +247,13 @@ describe('collect command', () => {
     // Child runbook (referenced by both DELEGATE substeps)
     const childContent = createRunbook({
       title: 'Child',
-      steps: [{ title: 'Do work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+      steps: [
+        {
+          title: 'Do work',
+          pass: 'COMPLETE',
+          command: 'rd echo --result pass',
+        },
+      ],
     });
     await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
     await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
@@ -283,7 +289,11 @@ describe('collect command', () => {
             title: 'Delegate child',
             pass: 'CONTINUE',
             substeps: [
-              { title: 'Child work', delegate: true, runbooks: ['runbooks/child.runbook.md'] },
+              {
+                title: 'Child work',
+                delegate: true,
+                runbooks: ['runbooks/child.runbook.md'],
+              },
             ],
           },
         ],
@@ -331,7 +341,11 @@ describe('collect command', () => {
             title: 'Delegate child',
             pass: 'CONTINUE',
             substeps: [
-              { title: 'Child work', delegate: true, runbooks: ['runbooks/child.runbook.md'] },
+              {
+                title: 'Child work',
+                delegate: true,
+                runbooks: ['runbooks/child.runbook.md'],
+              },
             ],
           },
         ],
@@ -578,7 +592,10 @@ describe('collect command', () => {
 
       expect(result.exitCode).toBe(0);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
-      expect(json).toMatchObject({ kind: 'collect', status: 'already-aggregated' });
+      expect(json).toMatchObject({
+        kind: 'collect',
+        status: 'already-aggregated',
+      });
     });
 
     it('rd collect --step <non-delegate> still errors NOT_DELEGATE_STEP', async () => {
@@ -606,7 +623,11 @@ describe('collect command', () => {
         title: 'No Delegation',
         steps: [
           { title: 'First', pass: 'CONTINUE', content: 'No delegation here.' },
-          { title: 'Second', pass: 'COMPLETE', content: 'Still no delegation.' },
+          {
+            title: 'Second',
+            pass: 'COMPLETE',
+            content: 'Still no delegation.',
+          },
         ],
       });
       await writeFile(join(workspace.cwd, 'runbooks', 'plain.runbook.md'), content);
@@ -626,16 +647,19 @@ describe('collect command', () => {
     /**
      * Direct coverage for the `applied === 0` branch on a DELEGATE step:
      * if all completions have been drained (but the cursor is still on the
-     * DELEGATE step for some reason), `rd collect` returns a visible
-     * already-aggregated status with exit 0.
+     * DELEGATE step for some reason), `rundown collect` still returns the
+     * shared progression directive. The command reports an applied count of
+     * zero, then progression owns the current-unit entry.
      */
-    it('emits already-aggregated when no completions are pending on a DELEGATE step', async () => {
+    it('emits an applied zero-count when no completions are pending on a DELEGATE step', async () => {
       const runbookId = await setupReadyToCollect(['pass', 'pass']);
 
       // Clear resolvedCompletions so drain has nothing to apply. Leave
       // substepStates[].status='done' so the resolved-substep precondition
       // still passes.
-      await patchPersistedRunState(workspace.cwd, runbookId, { resolvedCompletions: {} });
+      await patchPersistedRunState(workspace.cwd, runbookId, {
+        resolvedCompletions: {},
+      });
 
       const result = await runCliInProcess(
         await withRunTarget(['collect', '--text'], workspace),
@@ -643,25 +667,27 @@ describe('collect command', () => {
       );
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout + result.stderr).toMatch(/already aggregated/i);
+      expect(result.stdout + result.stderr).toMatch(/Collected 0 delegation outcome/);
     });
 
     /**
      * Same as above, but asserts the JSON shape for the default output mode.
      */
-    it('emits already-aggregated JSON when no completions are pending', async () => {
+    it('emits applied JSON after progression when no completions are pending', async () => {
       const runbookId = await setupReadyToCollect(['pass', 'pass']);
 
-      await patchPersistedRunState(workspace.cwd, runbookId, { resolvedCompletions: {} });
+      await patchPersistedRunState(workspace.cwd, runbookId, {
+        resolvedCompletions: {},
+      });
 
       const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
       expect(result.exitCode).toBe(0);
-      // JSON output is pretty-printed; parse the whole payload.
-      const parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
-      expect(parsed.status).toBe('already-aggregated');
+      const parsed = findCollectOutput(result.stdout, 'applied');
+      expect(parsed.status).toBe('applied');
       expect(parsed.action).toBe('collect');
       expect(parsed.kind).toBe('collect');
+      expect(parsed.applied).toBe(0);
       expect(CollectResponseSchema.safeParse(parsed).success).toBe(true);
     });
 
@@ -678,7 +704,13 @@ describe('collect command', () => {
       // Child runbook referenced by the DELEGATE substeps.
       const childContent = createRunbook({
         title: 'Child',
-        steps: [{ title: 'Do work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+        steps: [
+          {
+            title: 'Do work',
+            pass: 'COMPLETE',
+            command: 'rd echo --result pass',
+          },
+        ],
       });
       await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
       await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
@@ -815,7 +847,10 @@ describe('collect command', () => {
         if (!raw.substepStates) return raw;
         return {
           ...raw,
-          substepStates: raw.substepStates.map((ss) => ({ ...ss, frameKey: overrideFrame })),
+          substepStates: raw.substepStates.map((ss) => ({
+            ...ss,
+            frameKey: overrideFrame,
+          })),
         };
       });
 
@@ -852,7 +887,10 @@ describe('collect command', () => {
         if (!raw.substepStates) return raw;
         return {
           ...raw,
-          substepStates: raw.substepStates.map((ss) => ({ ...ss, frameKey: overrideFrame })),
+          substepStates: raw.substepStates.map((ss) => ({
+            ...ss,
+            frameKey: overrideFrame,
+          })),
         };
       });
 
@@ -892,7 +930,13 @@ describe('collect command', () => {
     it('drives the DELEGATE pipeline through rd claim + rd pass without hand-writing state', async () => {
       const childContent = createRunbook({
         title: 'Child',
-        steps: [{ title: 'Do work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+        steps: [
+          {
+            title: 'Do work',
+            pass: 'COMPLETE',
+            command: 'rd echo --result pass',
+          },
+        ],
       });
       await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
       await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
@@ -1132,13 +1176,29 @@ describe('collect command', () => {
           {
             title: 'Fan-out',
             pass: 'CONTINUE',
-            substeps: [{ title: 'Task A', delegate: true, runbooks: ['child.runbook.md'] }],
+            substeps: [
+              {
+                title: 'Task A',
+                delegate: true,
+                runbooks: ['child.runbook.md'],
+              },
+            ],
           },
-          { title: 'Local work', pass: 'CONTINUE', command: 'rd echo --result pass' },
+          {
+            title: 'Local work',
+            pass: 'CONTINUE',
+            command: 'rd echo --result pass',
+          },
           {
             title: 'Fan-out again',
             pass: 'CONTINUE',
-            substeps: [{ title: 'Task B', delegate: true, runbooks: ['child.runbook.md'] }],
+            substeps: [
+              {
+                title: 'Task B',
+                delegate: true,
+                runbooks: ['child.runbook.md'],
+              },
+            ],
           },
           { title: 'Done', pass: 'COMPLETE' },
         ],
@@ -1168,7 +1228,11 @@ describe('collect command', () => {
       // The continuation issued the SECOND frontier under the collector's authority.
       expect(requireFrontierToken(collected.stdout, '3.1')).toMatch(/^rdtk_/);
       const parent = await getActiveState(workspace);
-      expect(parent).toMatchObject({ lifecycle: 'running', step: '3', substep: '1' });
+      expect(parent).toMatchObject({
+        lifecycle: 'running',
+        step: '3',
+        substep: '1',
+      });
     }, 30_000);
   });
 
@@ -1193,7 +1257,13 @@ describe('collect command', () => {
       // Set up DELEGATE runbook, but only mark ONE substep resolved.
       const childContent = createRunbook({
         title: 'Child',
-        steps: [{ title: 'Do work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+        steps: [
+          {
+            title: 'Do work',
+            pass: 'COMPLETE',
+            command: 'rd echo --result pass',
+          },
+        ],
       });
       await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
       await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
@@ -1239,7 +1309,13 @@ describe('collect command', () => {
       // stays pending), then collect in JSON default mode.
       const childContent = createRunbook({
         title: 'Child',
-        steps: [{ title: 'Do work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+        steps: [
+          {
+            title: 'Do work',
+            pass: 'COMPLETE',
+            command: 'rd echo --result pass',
+          },
+        ],
       });
       await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
       await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
@@ -1272,7 +1348,10 @@ describe('collect command', () => {
 
       expect(result.exitCode).not.toBe(0);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
-      expect(json).toMatchObject({ kind: 'error', code: 'SUBSTEPS_NOT_RESOLVED' });
+      expect(json).toMatchObject({
+        kind: 'error',
+        code: 'SUBSTEPS_NOT_RESOLVED',
+      });
       // Pin the exact human-readable message so the "Cannot collect: not all
       // substeps are resolved. Pending: N." string literal is killed, and the
       // pending substep (qualified id "1.2") is interpolated into it.
@@ -1295,7 +1374,13 @@ describe('collect command', () => {
       // does work.
       const childContent = createRunbook({
         title: 'Child',
-        steps: [{ title: 'Do work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
+        steps: [
+          {
+            title: 'Do work',
+            pass: 'COMPLETE',
+            command: 'rd echo --result pass',
+          },
+        ],
       });
       await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childContent);
       await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
@@ -1331,7 +1416,10 @@ describe('collect command', () => {
           // stay behind. Both substeps carry one, so the rendered list is a
           // real list rather than a single id.
           activeEntry: entry + 1,
-          frameEntryCounts: { ...(raw.frameEntryCounts ?? {}), [frameKey]: entry + 1 },
+          frameEntryCounts: {
+            ...(raw.frameEntryCounts ?? {}),
+            [frameKey]: entry + 1,
+          },
           substepStates: [
             { id: '1', frameKey, status: 'pending' },
             { id: '2', frameKey, status: 'pending' },
@@ -1348,7 +1436,10 @@ describe('collect command', () => {
 
       expect(result.exitCode).not.toBe(0);
       const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
-      expect(json).toMatchObject({ kind: 'error', code: 'SUBSTEPS_NOT_RESOLVED' });
+      expect(json).toMatchObject({
+        kind: 'error',
+        code: 'SUBSTEPS_NOT_RESOLVED',
+      });
       expect(String(json.error)).toBe(
         'Cannot collect: not all substeps are resolved. Pending: 1.1, 1.2. Outcome(s) for ' +
           '1.1, 1.2 were reported under a frame entry a RETRY/GOTO re-entry has superseded, so ' +
@@ -1602,7 +1693,11 @@ describe('collect command', () => {
       );
       expect(objects.length).toBeGreaterThan(1);
       const last = objects.at(-1)!;
-      expect(last).toMatchObject({ kind: 'collect', action: 'collect', status: 'applied' });
+      expect(last).toMatchObject({
+        kind: 'collect',
+        action: 'collect',
+        status: 'applied',
+      });
       // The applied object is the ONLY collect object and it is strictly last.
       const collectIndices = objects
         .map((object, index) => ({ object, index }))

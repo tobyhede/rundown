@@ -146,7 +146,10 @@ describe('RunbookStateSchema — schema version and lifecycle fields', () => {
       lastAction: { type: 'COMPLETE', origin: 'aggregation' },
     });
 
-    expect(parsed.lastAction).toEqual({ type: 'COMPLETE', origin: 'aggregation' });
+    expect(parsed.lastAction).toEqual({
+      type: 'COMPLETE',
+      origin: 'aggregation',
+    });
   });
 
   it('accepts variables carrying exact and wildcard artifact records alongside strings', () => {
@@ -256,14 +259,20 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
   });
 
   it('throws InvalidRunbookStateError when loading foreign-version state', async () => {
-    const invalidState = { ...VALID_CURRENT_STATE, schemaVersion: FOREIGN_SCHEMA_VERSION };
+    const invalidState = {
+      ...VALID_CURRENT_STATE,
+      schemaVersion: FOREIGN_SCHEMA_VERSION,
+    };
     await seedRawRunState(tmpDir, invalidState);
 
     await expect(manager.load(invalidState.id)).rejects.toBeInstanceOf(InvalidRunbookStateError);
   });
 
   it('throws InvalidRunbookStateError with helpful message', async () => {
-    const invalidState = { ...VALID_CURRENT_STATE, schemaVersion: FOREIGN_SCHEMA_VERSION };
+    const invalidState = {
+      ...VALID_CURRENT_STATE,
+      schemaVersion: FOREIGN_SCHEMA_VERSION,
+    };
     await seedRawRunState(tmpDir, invalidState);
 
     await expect(manager.load(invalidState.id)).rejects.toThrow(
@@ -388,7 +397,11 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
 
   it('rejects state with non-numeric schemaVersion', async () => {
     const id = 'rd_99999999999999999999999999999999';
-    await seedRawRunState(tmpDir, { ...VALID_CURRENT_STATE, id, schemaVersion: 'v2' });
+    await seedRawRunState(tmpDir, {
+      ...VALID_CURRENT_STATE,
+      id,
+      schemaVersion: 'v2',
+    });
     await expect(manager.load(id)).rejects.toThrow(/Invalid runbook state/);
     await expect(manager.load(id)).rejects.not.toThrow(/prune|clear invalid state/i);
   });
@@ -427,7 +440,11 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     // independent fields, and one test covering both would let either gate be
     // deleted while the other kept the assertion passing.
     const id = `rd_${'c'.repeat(32)}`;
-    await seedRawRunState(tmpDir, { ...VALID_CURRENT_STATE, id, instance: { stepId: '1' } });
+    await seedRawRunState(tmpDir, {
+      ...VALID_CURRENT_STATE,
+      id,
+      instance: { stepId: '1' },
+    });
 
     const load = manager.load(id);
 
@@ -477,7 +494,11 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     // a corrupted row does. Mutation testing found the conjunct survived
     // `→ true`: every other test seeds `lastAction` absent or well-formed.
     const id = `rd_${'a'.repeat(32)}`;
-    await seedRawRunState(tmpDir, { ...VALID_CURRENT_STATE, id, lastAction: null });
+    await seedRawRunState(tmpDir, {
+      ...VALID_CURRENT_STATE,
+      id,
+      lastAction: null,
+    });
 
     // One load, both assertions: the class is what proves the gate did not
     // throw raw, the message is what proves it fell through to the schema parse
@@ -528,7 +549,10 @@ describe('RunbookStateManager.update() — lastAction origin persistence', () =>
     await manager.update(BASE_RUN_ID, { stepName: 'updated' });
     const reloaded = await manager.load(BASE_RUN_ID);
 
-    expect(reloaded?.lastAction).toEqual({ type: 'COMPLETE', origin: 'aggregation' });
+    expect(reloaded?.lastAction).toEqual({
+      type: 'COMPLETE',
+      origin: 'aggregation',
+    });
   });
 });
 
@@ -589,8 +613,9 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
   // moved to cover this: no persisted state outside a local clone or CI run is
   // worth protecting with the nicer classification, and the structural parse
   // already refuses this shape on its own. This block pins what that refusal
-  // actually looks like at each reader, not what it would look like if the
-  // constant had moved.
+  // actually looks like at each reader. The fixture deliberately carries the
+  // current constant so a legitimate version bump does not hide this parser
+  // classification behind the earlier version gate.
   //
   // The shape below is what a run persisted mid-inline-launch on a pre-#772 build
   // carries: `inline.startedAt`, no `inline.started`. Everything else about it is
@@ -598,7 +623,9 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
   // legitimately refuse it.
   const PRE_STARTED_RUN_ID = `rd_${'7'.repeat(32)}`;
   const PRE_STARTED_CHILD_ID = `rd_${'8'.repeat(32)}`;
-  const PRE_STARTED_SCHEMA_VERSION = 1;
+  // Stamp the historical structural shape with the current version on purpose:
+  // this suite isolates the structural parser by clearing the version gate.
+  const PRE_STARTED_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION;
 
   const preStartedInlineState = {
     id: PRE_STARTED_RUN_ID,
@@ -647,12 +674,8 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('carries the version the current build also writes', () => {
-    // The premise both tests below rest on, asserted rather than assumed. If the
-    // constant ever moves away from the version that shape was written under,
-    // the gate would start firing first and these assertions would be pinning a
-    // refusal the version gate produces, under names that say the parse does.
-    expect(CURRENT_SCHEMA_VERSION).toBe(PRE_STARTED_SCHEMA_VERSION);
+  it('carries the current version to isolate structural refusal', () => {
+    expect(preStartedInlineState.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
   });
 
   it('clears the version gate and is refused by the structural parse through RunbookStateManager.load', async () => {
@@ -701,7 +724,10 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
       // whole point: one taxonomy across both readers, past the gates as well
       // as before them.
       await expect(read()).rejects.toMatchObject({
-        defect: { runId: PRE_STARTED_RUN_ID, reason: 'schema_validation_failed' },
+        defect: {
+          runId: PRE_STARTED_RUN_ID,
+          reason: 'schema_validation_failed',
+        },
       });
     }
   });
@@ -719,7 +745,10 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
 
     const entry = debug.mock.calls.find(([message]) => message === 'invalid-run-state');
     expect(entry).toBeDefined();
-    const data = entry?.[1] as { runId: string; issues: Record<string, unknown>[] };
+    const data = entry?.[1] as {
+      runId: string;
+      issues: Record<string, unknown>[];
+    };
     expect(data.runId).toBe(PRE_STARTED_RUN_ID);
     // The whole array, exactly. The dotted path is the diagnosis — the drift
     // this fixture carries is inside the inline latch, so a trail that stopped

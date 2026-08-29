@@ -50,24 +50,21 @@ import type { RunbookState } from './types.js';
  *
  * A version mismatch is a rejection, never a migration: state carrying any
  * other value is refused outright, not read, adapted, or rewritten (CLAUDE.md
- * § State Persistence). Three PRs added a required field to the persisted run
- * state while this stood at `1` — `StepInlineChild.startedAt` (#746),
+ * § State Persistence). Historically, three PRs added a required field while
+ * this stood at `1` — `StepInlineChild.startedAt` (#746),
  * `StepInlineChild.started` replacing it (#772), and `RunbookState.prompted`
- * (#827) — without moving it (#775). State from before any of those builds
- * still carries `schemaVersion: 1`, still passes this check, and is refused
- * further in instead, by the Zod structural parse — as `schema_validation_failed`
- * through {@link parsePersistedRunState}, which both readers now share, so the
- * refusal is classified and recoverable whichever one a command arrives
- * through (#828). Moving this constant would only change WHICH refusal fires,
- * from that reason to `invalid_schema_version`.
+ * (#827) — without moving it (#775). Same-version state from before those
+ * fields passed the version gate and was refused later by the shared Zod parse
+ * as `schema_validation_failed` (#828). That history explains why a structural
+ * fixture now forces the version judgment; it does not describe current v2
+ * state. Since this constant is `2`, every v1 row is foreign and is refused by
+ * this gate as `invalid_schema_version` before structural parsing.
  *
- * Left at `1` deliberately: per CLAUDE.md § Active Development Stance, no
- * `.rundown/rundown.db` outside a local clone or CI run holds state this
- * matters for, and its documented hard reset — delete the file — clears a
- * stuck run the same as any other. What used to argue for moving it anyway —
- * an unclassified `ZodError` escaping `RunbookStore.readRun` as RD-999
- * "Unknown error", with no finish/stop/prune recovery — is closed at its own
- * seam rather than papered over here, so it no longer bears on this constant.
+ * Version `2` records #855's XState-owned Run Progression entry and frontier
+ * projection states. Those changes live inside the opaque snapshot and are
+ * invisible to the Zod structural parse, so the version gate is the only way
+ * to refuse a v1 snapshot whose state IDs the current machine does not
+ * understand. Per the no-migration rule, development runs restart.
  *
  * Move this constant when a change to `RunbookState` (`runbook/types.ts`) or
  * `RunbookStateObjectSchema` (`schemas.ts`) is one the Zod structural parse
@@ -76,7 +73,7 @@ import type { RunbookState } from './types.js';
  * shape or state IDs is invisible to it, so nothing else will refuse a stale
  * snapshot.
  */
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 /**
  * Thrown when a persisted state file does not match the current schema contract.

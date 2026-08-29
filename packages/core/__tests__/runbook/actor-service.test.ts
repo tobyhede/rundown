@@ -106,7 +106,15 @@ async function createLifecycleHarness(
   const actor = await service.createActor(state.id, steps);
   if (!actor) throw new Error('createLifecycleHarness: actor creation failed');
 
-  return { actor, manager, service, state, runbookId: state.id, steps, testDir };
+  return {
+    actor,
+    manager,
+    service,
+    state,
+    runbookId: state.id,
+    steps,
+    testDir,
+  };
 }
 
 const ARTIFACT_RECORD = {
@@ -201,7 +209,10 @@ npm test
       parentFrameKey,
       childRunId: assertRunId('rd_dddddddddddddddddddddddddddddddd'),
       childRunbookPath: 'runbooks/child.runbook.md',
-      childRunbookRef: { source: 'project' as const, path: 'runbooks/child.runbook.md' },
+      childRunbookRef: {
+        source: 'project' as const,
+        path: 'runbooks/child.runbook.md',
+      },
       contextSnapshot: {
         vars: brandEffectiveVarsForTest({}),
         ancestors: [],
@@ -317,8 +328,16 @@ npm test
 
       const steps: ResolvedStep[] = [
         ...mockSteps,
-        makeBaseStep({ name: '2', description: 'S2', transitions: mockSteps[0].transitions }),
-        makeBaseStep({ name: '3', description: 'S3', transitions: mockSteps[0].transitions }),
+        makeBaseStep({
+          name: '2',
+          description: 'S2',
+          transitions: mockSteps[0].transitions,
+        }),
+        makeBaseStep({
+          name: '3',
+          description: 'S3',
+          transitions: mockSteps[0].transitions,
+        }),
       ];
 
       const { state: updated } = await actorService.updateFromActor(state.id, actor, steps);
@@ -409,7 +428,10 @@ npm test
       });
       const value = `step::${'x'.repeat(994)}`;
       expect(value).toHaveLength(1000);
-      const actor = mockActor({ value, context: { variables: {}, retryCount: 0 } });
+      const actor = mockActor({
+        value,
+        context: { variables: {}, retryCount: 0 },
+      });
 
       await expect(actorService.updateFromActor(state.id, actor, mockSteps)).rejects.toThrow(
         /references missing step/,
@@ -422,7 +444,10 @@ npm test
       });
       const value = `step::${'x'.repeat(995)}`;
       expect(value).toHaveLength(1001);
-      const actor = mockActor({ value, context: { variables: {}, retryCount: 0 } });
+      const actor = mockActor({
+        value,
+        context: { variables: {}, retryCount: 0 },
+      });
 
       await expect(actorService.updateFromActor(state.id, actor, mockSteps)).rejects.toThrow(
         /Unsupported persisted stateValue/,
@@ -543,10 +568,15 @@ exit 1
       expect(initialized).not.toBeNull();
       expect(initialized?.step).toBe('1');
       expect(initialized?.substep).toBe('1');
-      expect(initialized?.lastAction).toEqual({ type: 'START', origin: 'direct' });
+      expect(initialized?.lastAction).toEqual({
+        type: 'START',
+        origin: 'direct',
+      });
       expect(initialized?.activeFrameKey).toBe(buildFrameKey('1'));
       expect(initialized?.activeEntry).toBe(1);
-      expect(initialized?.frameEntryCounts).toEqual({ [buildFrameKey('1')]: 1 });
+      expect(initialized?.frameEntryCounts).toEqual({
+        [buildFrameKey('1')]: 1,
+      });
       expect(initialized?.substepStates).toEqual([
         { id: '1', frameKey: buildFrameKey('1'), status: 'pending' },
         { id: '2', frameKey: buildFrameKey('1'), status: 'pending' },
@@ -587,9 +617,18 @@ exit 1
       expect(initialized).not.toBeNull();
       expect(initialized?.step).toBe('1');
       expect(initialized?.substep).toBe('1');
-      expect(initialized?.lastAction).toEqual({ type: 'START', origin: 'direct' });
+      expect(initialized?.lastAction).toEqual({
+        type: 'START',
+        origin: 'direct',
+      });
       expect(initialized?.forStack?.[0]).toEqual(
-        expect.objectContaining({ stepId: '1', iteration: 1, variable: 'i', start: 1, end: 2 }),
+        expect.objectContaining({
+          stepId: '1',
+          iteration: 1,
+          variable: 'i',
+          start: 1,
+          end: 2,
+        }),
       );
       expect(initialized?.activeFrameKey).toBe(frameKey);
       expect(initialized?.activeEntry).toBe(1);
@@ -674,14 +713,18 @@ exit 1
       // onto context.substep so CLI and machine agree on the current substep position.
       const actor = await actorService.createActor(state.id, steps);
       expect(actor).not.toBeNull();
-      const snap = actor!.getPersistedSnapshot() as unknown as { context: { substep?: string } };
+      const snap = actor!.getPersistedSnapshot() as unknown as {
+        context: { substep?: string };
+      };
       expect(snap.context.substep).toBe('1');
     });
   });
 
   describe('sendAndSync', () => {
     it('returns null for nonexistent runbook', async () => {
-      const result = await actorService.sendAndSync('nonexistent', mockSteps, { type: 'PASS' });
+      const result = await actorService.sendAndSync('nonexistent', mockSteps, {
+        type: 'PASS',
+      });
       expect(result).toBeNull();
     });
 
@@ -689,7 +732,9 @@ exit 1
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         runbookPath: 'test.md',
       });
-      const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });
+      const result = await actorService.sendAndSync(state.id, mockSteps, {
+        type: 'PASS',
+      });
 
       expect(result).not.toBeNull();
       expect(result?.state).toBeDefined();
@@ -717,11 +762,15 @@ exit 1
         { runbookPath: 'pass-result.md', frontmatterOutputs: [] },
       );
 
-      const result = await actorService.sendAndSync(state.id, steps, { type: 'PASS' });
+      const result = await actorService.sendAndSync(state.id, steps, {
+        type: 'PASS',
+      });
 
       expect(result?.state.step).toBe('2');
       expect(result?.state.lastResult).toBe('pass');
-      await expect(manager.load(state.id)).resolves.toMatchObject({ lastResult: 'pass' });
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        lastResult: 'pass',
+      });
     });
 
     it('persists lastResult from terminal FAIL events', async () => {
@@ -735,11 +784,16 @@ exit 1
         { runbookPath: 'fail-result.md', frontmatterOutputs: [] },
       );
 
-      const result = await actorService.sendAndSync(state.id, steps, { type: 'FAIL' });
+      const result = await actorService.sendAndSync(state.id, steps, {
+        type: 'FAIL',
+      });
 
       expect(result?.state.lifecycle).toBe('stopped');
       expect(result?.state.lastResult).toBe('fail');
-      expect(result?.state.lastAction).toEqual({ type: 'STOP', origin: 'direct' });
+      expect(result?.state.lastAction).toEqual({
+        type: 'STOP',
+        origin: 'direct',
+      });
       await expect(manager.load(state.id)).resolves.toMatchObject({
         lifecycle: 'stopped',
         lastResult: 'fail',
@@ -780,7 +834,11 @@ echo ok
       const runId = assertRunId('rd_55555555555555555555555555555555');
       const state = await manager.create(
         { source: 'project', path: 'workflow.runbook.md' },
-        { title: 'Command service', description: '', steps: stepsWithOneCommand },
+        {
+          title: 'Command service',
+          description: '',
+          steps: stepsWithOneCommand,
+        },
         {
           runId,
           runbookPath: 'workflow.runbook.md',
@@ -865,7 +923,11 @@ echo ok
       const runId = assertRunId('rd_99999999999999999999999999999999');
       const state = await manager.create(
         { source: 'project', path: 'workflow.runbook.md' },
-        { title: 'Command failure', description: '', steps: stepsWithOneCommand },
+        {
+          title: 'Command failure',
+          description: '',
+          steps: stepsWithOneCommand,
+        },
         {
           runId,
           runbookPath: 'workflow.runbook.md',
@@ -937,7 +999,11 @@ echo ok
       const runId = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
       const state = await manager.create(
         { source: 'project', path: 'workflow.runbook.md' },
-        { title: 'Command failure', description: '', steps: stepsWithOneCommand },
+        {
+          title: 'Command failure',
+          description: '',
+          steps: stepsWithOneCommand,
+        },
         {
           runId,
           runbookPath: 'workflow.runbook.md',
@@ -975,7 +1041,11 @@ echo ok
       const runId = assertRunId('rd_88888888888888888888888888888888');
       const state = await manager.create(
         { source: 'project', path: 'workflow.runbook.md' },
-        { title: 'Command effects', description: '', steps: stepsWithOneCommand },
+        {
+          title: 'Command effects',
+          description: '',
+          steps: stepsWithOneCommand,
+        },
         {
           runId,
           runbookPath: 'workflow.runbook.md',
@@ -1062,7 +1132,9 @@ echo ok
       expect(effects).toHaveLength(1);
       expect(effects[0]?.event.type).toBe('STEP_ENTERED');
       if (effects[0]?.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
-      expect(effects[0]?.event.payload.artifacts).toEqual({ PlanPath: publicArtifact });
+      expect(effects[0]?.event.payload.artifacts).toEqual({
+        PlanPath: publicArtifact,
+      });
       const persisted = await manager.load(state.id);
       expect('enteredArtifacts' in (persisted ?? {})).toBe(false);
       expect(JSON.stringify(persisted)).not.toContain('STEP_ENTERED');
@@ -1124,15 +1196,18 @@ echo ok
     // The guards raise `InvalidRunbookStateError` rather than a bare `Error`, and
     // the DEFECT is the machine-readable half of that: RD-309's envelope reports
     // `runId` and `reason` in FIELDS so a consumer never parses the prose. It is
-    // also what `finishCollection` reads to decide whether a committed collect
-    // reports RD-309 (prune/restart) or RD-833 (fix the helper), so a blanked
-    // reason would send an operator to the wrong recovery.
+    // also what Run Progression preserves when its entry actor refuses, so a
+    // blanked reason would send an operator to the wrong recovery.
     it('names the run and the reason in the defect of each persisted-snapshot refusal', async () => {
       const service = new RunbookActorService(manager);
       const seed = async (runId: string, snapshot: unknown) => {
         const created = await manager.create(
           { source: 'project', path: 'workflow.runbook.md' },
-          { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+          {
+            title: 'Step effects',
+            description: '',
+            steps: stepsWithOneCommand,
+          },
           {
             runId: assertRunId(runId),
             runbookPath: 'workflow.runbook.md',
@@ -1153,7 +1228,9 @@ echo ok
         }
       };
 
-      const unreadable = await seed('rd_8888888888888888888888888888888b', { value: 42 });
+      const unreadable = await seed('rd_8888888888888888888888888888888b', {
+        value: 42,
+      });
       expect(await defectOf(unreadable)).toEqual({
         runId: unreadable,
         reason: 'unsupported_snapshot_state_value',
@@ -1222,7 +1299,11 @@ echo ok
         const service = new RunbookActorService(manager);
         const created = await manager.create(
           { source: 'project', path: 'workflow.runbook.md' },
-          { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+          {
+            title: 'Step effects',
+            description: '',
+            steps: stepsWithOneCommand,
+          },
           {
             runId: assertRunId(runId),
             runbookPath: 'workflow.runbook.md',
@@ -1286,7 +1367,9 @@ echo ok
           templateVars: commandTemplateVars(runId),
         },
       );
-      await manager.update(state.id, { snapshot: { value: 'step::Gone', context: {} } });
+      await manager.update(state.id, {
+        snapshot: { value: 'step::Gone', context: {} },
+      });
 
       await expect(enterEffects(service, state.id, stepsWithOneCommand)).rejects.toThrow(
         /references missing step "Gone"/,
@@ -1309,7 +1392,9 @@ echo ok
       {
         label: 'the snapshot freshness gate',
         plant: async (id: string) => {
-          await manager.update(id, { snapshot: { value: 'step::Gone', context: {} } });
+          await manager.update(id, {
+            snapshot: { value: 'step::Gone', context: {} },
+          });
         },
       },
       {
@@ -1334,7 +1419,11 @@ echo ok
       const service = new RunbookActorService(manager);
       const state = await manager.create(
         { source: 'project', path: 'workflow.runbook.md' },
-        { title: 'Step effects', description: '', steps: stepsWithOneCommand },
+        {
+          title: 'Step effects',
+          description: '',
+          steps: stepsWithOneCommand,
+        },
         {
           runId,
           runbookPath: 'workflow.runbook.md',
@@ -1347,7 +1436,10 @@ echo ok
       if (!loaded) throw new Error('expected persisted state');
 
       const [settled] = await Promise.allSettled([
-        service.enterExecutionUnit({ state: loaded, steps: stepsWithOneCommand }),
+        service.enterExecutionUnit({
+          state: loaded,
+          steps: stepsWithOneCommand,
+        }),
       ]);
 
       expect(settled.status).toBe('rejected');
@@ -1381,7 +1473,10 @@ echo ok
         resolveInlineRunbook: async (runbookRef) => ({
           path: 'runbooks/child.runbook.md',
           runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+          childRunbookRef: {
+            source: 'project',
+            path: 'runbooks/child.runbook.md',
+          },
         }),
         generateInlineChildRunId: () => childRunId,
         inlineLaunchNow: () => createdAt,
@@ -1528,7 +1623,10 @@ echo ok
         resolveInlineRunbook: async (runbookRef) => ({
           path: 'runbooks/child.runbook.md',
           runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+          childRunbookRef: {
+            source: 'project',
+            path: 'runbooks/child.runbook.md',
+          },
         }),
       });
 
@@ -1599,7 +1697,10 @@ echo ok
         resolveInlineRunbook: async (runbookRef) => ({
           path: 'runbooks/child.runbook.md',
           runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+          childRunbookRef: {
+            source: 'project',
+            path: 'runbooks/child.runbook.md',
+          },
         }),
       });
       const bootstrap = await service.createActor(state.id, steps);
@@ -1670,7 +1771,10 @@ echo ok
         resolveInlineRunbook: async (runbookRef) => ({
           path: 'runbooks/child.runbook.md',
           runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+          childRunbookRef: {
+            source: 'project',
+            path: 'runbooks/child.runbook.md',
+          },
         }),
       });
       const bootstrap = await service.createActor(state.id, steps);
@@ -1744,7 +1848,10 @@ echo ok
         resolveInlineRunbook: async (runbookRef) => ({
           path: 'runbooks/child.runbook.md',
           runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+          childRunbookRef: {
+            source: 'project',
+            path: 'runbooks/child.runbook.md',
+          },
         }),
       });
       const bootstrap = await service.createActor(state.id, steps);
@@ -1810,7 +1917,10 @@ echo ok
         resolveInlineRunbook: async (runbookRef) => ({
           path: 'runbooks/child.runbook.md',
           runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+          childRunbookRef: {
+            source: 'project',
+            path: 'runbooks/child.runbook.md',
+          },
         }),
       });
       const bootstrap = await service.createActor(state.id, steps);
@@ -1873,7 +1983,10 @@ echo ok
         resolveInlineRunbook: async (runbookRef) => ({
           path: 'runbooks/child.runbook.md',
           runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+          childRunbookRef: {
+            source: 'project',
+            path: 'runbooks/child.runbook.md',
+          },
         }),
       });
       const bootstrap = await service.createActor(state.id, steps);
@@ -1951,7 +2064,10 @@ echo ok
         resolveInlineRunbook: async (runbookRef) => ({
           path: 'runbooks/child.runbook.md',
           runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
+          childRunbookRef: {
+            source: 'project',
+            path: 'runbooks/child.runbook.md',
+          },
         }),
       });
       const bootstrap = await service.createActor(state.id, steps);
@@ -1975,7 +2091,10 @@ echo ok
         substep: '1',
         activeFrameKey,
         activeEntry: 2,
-        frameEntryCounts: replace({ [buildFrameKey('1', 1)]: 1, [activeFrameKey]: 2 }),
+        frameEntryCounts: replace({
+          [buildFrameKey('1', 1)]: 1,
+          [activeFrameKey]: 2,
+        }),
         forStack: [
           {
             stepId: '1',
@@ -2053,7 +2172,11 @@ echo ok
       });
 
       expect(result?.state.step).toBe('2');
-      expect(result?.state.lastAction).toEqual({ type: 'GOTO', origin: 'direct', target: '2' });
+      expect(result?.state.lastAction).toEqual({
+        type: 'GOTO',
+        origin: 'direct',
+        target: '2',
+      });
       expect(result?.state.lastResult).toBeUndefined();
       await expect(manager.load(state.id)).resolves.toMatchObject({
         step: '2',
@@ -2109,7 +2232,10 @@ echo ok
           substepStates: expect.arrayContaining([
             expect.objectContaining({
               id: '1',
-              delegation: expect.objectContaining({ childRunId: null, cancelledAt: null }),
+              delegation: expect.objectContaining({
+                childRunId: null,
+                cancelledAt: null,
+              }),
             }),
           ]),
         }),
@@ -2134,7 +2260,10 @@ echo ok
 
       expect(result).toEqual({
         status: 'error',
-        error: expect.objectContaining({ code: expect.any(String), message: expect.any(String) }),
+        error: expect.objectContaining({
+          code: expect.any(String),
+          message: expect.any(String),
+        }),
       });
     });
 
@@ -2167,7 +2296,10 @@ echo ok
       expect(result).toEqual({
         status: 'child_in_flight',
         childRunId,
-        error: expect.objectContaining({ code: expect.any(String), message: expect.any(String) }),
+        error: expect.objectContaining({
+          code: expect.any(String),
+          message: expect.any(String),
+        }),
       });
     });
 
@@ -2242,7 +2374,9 @@ echo ok
         expect.arrayContaining([
           expect.objectContaining({
             id: '1',
-            delegation: expect.objectContaining({ cancelledAt: expect.any(String) }),
+            delegation: expect.objectContaining({
+              cancelledAt: expect.any(String),
+            }),
           }),
         ]),
       );
@@ -2470,7 +2604,10 @@ echo ok
             { ...linkage, parentEntry: 2 },
           ),
         ).resolves.toEqual(
-          expect.objectContaining({ kind: 'delegation_superseded', runId: state.id }),
+          expect.objectContaining({
+            kind: 'delegation_superseded',
+            runId: state.id,
+          }),
         );
         await expect(
           service.prepareDelegationChildLink(
@@ -2493,11 +2630,18 @@ echo ok
             linkage,
           ),
         ).resolves.toEqual(
-          expect.objectContaining({ kind: 'delegation_superseded', runId: state.id }),
+          expect.objectContaining({
+            kind: 'delegation_superseded',
+            runId: state.id,
+          }),
         );
         await expect(
           service.prepareDelegationChildLink(
-            { ...before, activeEntry: undefined, frameEntryCounts: { [frameKey]: 1 } },
+            {
+              ...before,
+              activeEntry: undefined,
+              frameEntryCounts: { [frameKey]: 1 },
+            },
             steps,
             childRunId,
             linkage,
@@ -2505,7 +2649,11 @@ echo ok
         ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
         await expect(
           service.prepareDelegationChildUnlink(
-            { ...prepared.nextState, activeFrameKey: undefined, activeEntry: undefined },
+            {
+              ...prepared.nextState,
+              activeFrameKey: undefined,
+              activeEntry: undefined,
+            },
             steps,
             childRunId,
             linkage,
@@ -2537,7 +2685,10 @@ echo ok
             { ...linkage, parentEntry: 2 },
           ),
         ).resolves.toEqual(
-          expect.objectContaining({ kind: 'delegation_superseded', runId: state.id }),
+          expect.objectContaining({
+            kind: 'delegation_superseded',
+            runId: state.id,
+          }),
         );
       }
 
@@ -2631,7 +2782,11 @@ echo ok
           if (!errorObserverInstalled) throw new Error('unhandled synthetic actor error');
         },
         getSnapshot: () => ({ hasTag: () => false }),
-        getPersistedSnapshot: () => ({ status: 'error', value: 'step::1', context: {} }),
+        getPersistedSnapshot: () => ({
+          status: 'error',
+          value: 'step::1',
+          context: {},
+        }),
         stop: jest.fn(),
       } as unknown as AnyActorRef;
       type ActorServiceInternals = {
@@ -2642,7 +2797,9 @@ echo ok
         .mockReturnValue(actor);
 
       await expect(
-        actorService.prepareActorMutation(created.id, before, steps, { type: 'PASS' }),
+        actorService.prepareActorMutation(created.id, before, steps, {
+          type: 'PASS',
+        }),
       ).rejects.toThrow(`Runbook ${created.id} actor entered an error state`);
       await expect(manager.load(created.id)).resolves.toEqual(before);
     });
@@ -2702,7 +2859,9 @@ echo hi
         effectsError,
       );
 
-      await expect(manager.load(state.id)).resolves.toMatchObject({ lifecycle: 'stopped' });
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        lifecycle: 'stopped',
+      });
     });
 
     it('persists lastResult from COMMAND_RESULT when machine effects fail after event send', async () => {
@@ -2795,7 +2954,9 @@ echo ok
       );
 
       expect(updateFromActor).toHaveBeenCalled();
-      await expect(manager.load(state.id)).resolves.toMatchObject({ lifecycle: 'running' });
+      await expect(manager.load(state.id)).resolves.toMatchObject({
+        lifecycle: 'running',
+      });
     });
   });
 
@@ -2964,8 +3125,16 @@ echo ok
     // with a valid message, and a recognised reason with a non-string message.
     // Both must drop the action rather than persist a malformed one.
     it.each([
-      { label: 'an unrecognised reason', reason: 'credential_expired', message: 'no authority' },
-      { label: 'a non-string message', reason: 'actor_context_required', message: 42 },
+      {
+        label: 'an unrecognised reason',
+        reason: 'credential_expired',
+        message: 'no authority',
+      },
+      {
+        label: 'a non-string message',
+        reason: 'actor_context_required',
+        message: 42,
+      },
     ])(
       'drops a terminal DELEGATION_ISSUANCE_FAILED carrying $label',
       async ({ reason, message }) => {
@@ -2978,7 +3147,12 @@ echo ok
             variables: {},
             lifecycle: 'stopped',
             retryCount: 0,
-            lastAction: { type: 'DELEGATION_ISSUANCE_FAILED', origin: 'direct', reason, message },
+            lastAction: {
+              type: 'DELEGATION_ISSUANCE_FAILED',
+              origin: 'direct',
+              reason,
+              message,
+            },
           },
         });
 
@@ -3636,7 +3810,9 @@ echo ok
 
       // Drive the actor to STOPPED via FAIL on the first step (mockSteps' default
       // transitions are PASS COMPLETE / FAIL STOP — confirm in test setup).
-      const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'FAIL' });
+      const result = await actorService.sendAndSync(state.id, mockSteps, {
+        type: 'FAIL',
+      });
       expect(result).not.toBeNull();
       expect((result!.snapshot as { value: string }).value).toBe('STOPPED');
       expect(result!.state.finalVars).toEqual({ Result: 'failed-value' });
@@ -3649,7 +3825,9 @@ echo ok
         templateVars: { Result: 'passed-value' },
       });
 
-      const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });
+      const result = await actorService.sendAndSync(state.id, mockSteps, {
+        type: 'PASS',
+      });
       expect((result!.snapshot as { value: string }).value).toBe('COMPLETE');
       expect(result!.state.finalVars).toEqual({ Result: 'passed-value' });
     });
@@ -3661,7 +3839,9 @@ echo ok
         // No frontmatterOutputs declared → context.finalVars stays {}
       });
 
-      const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'FAIL' });
+      const result = await actorService.sendAndSync(state.id, mockSteps, {
+        type: 'FAIL',
+      });
       expect(result!.state.finalVars).toBeUndefined();
     });
 
@@ -3671,7 +3851,9 @@ echo ok
         frontmatterOutputs: [], // No frontmatterOutputs declared → context.finalVars stays {}
       });
 
-      const result = await actorService.sendAndSync(state.id, mockSteps, { type: 'PASS' });
+      const result = await actorService.sendAndSync(state.id, mockSteps, {
+        type: 'PASS',
+      });
       expect(result!.state.finalVars).toBeUndefined();
     });
 
@@ -3690,7 +3872,10 @@ echo ok
       expect(result).not.toBeNull();
       expect((result!.snapshot as { value: string }).value).toBe('STOPPED');
       expect(result!.state.lifecycle).toBe('stopped');
-      expect(result!.state.lastAction).toEqual({ type: 'STOP', origin: 'direct' });
+      expect(result!.state.lastAction).toEqual({
+        type: 'STOP',
+        origin: 'direct',
+      });
       expect(result!.state.lastResult).toBeUndefined();
       expect(result!.state.finalVars).toEqual({ Result: 'forced-stop-value' });
       expect((result!.snapshot as { context: { lastMessage?: string } }).context.lastMessage).toBe(
@@ -3713,7 +3898,10 @@ echo ok
       expect(result).not.toBeNull();
       expect((result!.snapshot as { value: string }).value).toBe('STOPPED');
       expect(result!.state.lifecycle).toBe('stopped');
-      expect(result!.state.lastAction).toEqual({ type: 'STOP', origin: 'direct' });
+      expect(result!.state.lastAction).toEqual({
+        type: 'STOP',
+        origin: 'direct',
+      });
       expect(result!.state.lastResult).toBeUndefined();
     });
 
@@ -3734,8 +3922,13 @@ echo ok
       expect((result!.snapshot as { value: string }).value).toBe('COMPLETE');
       expect(result!.state.step).toBe('1');
       expect(result!.state.lifecycle).toBe('completed');
-      expect(result!.state.lastAction).toEqual({ type: 'COMPLETE', origin: 'direct' });
-      expect(result!.state.finalVars).toEqual({ Result: 'forced-complete-value' });
+      expect(result!.state.lastAction).toEqual({
+        type: 'COMPLETE',
+        origin: 'direct',
+      });
+      expect(result!.state.finalVars).toEqual({
+        Result: 'forced-complete-value',
+      });
       expect((result!.snapshot as { context: { lastMessage?: string } }).context.lastMessage).toBe(
         'Enough evidence collected',
       );
@@ -4176,13 +4369,17 @@ echo ok
             RunId: 'rd_ffffffffffffffffffffffffffffffff',
             RunbookRef: { source: 'project', path: 'review.md' },
           }),
-          initialVariables: { Plan: brandTrustedArtifactRecordForTest(ARTIFACT_RECORD) },
+          initialVariables: {
+            Plan: brandTrustedArtifactRecordForTest(ARTIFACT_RECORD),
+          },
         },
       );
 
       const actor = await actorService.createActor(state.id, steps);
       expect(actor).not.toBeNull();
-      const snapshot = actor!.getPersistedSnapshot() as unknown as { context: RunbookContext };
+      const snapshot = actor!.getPersistedSnapshot() as unknown as {
+        context: RunbookContext;
+      };
 
       expect(snapshot.context.variables.Plan).toEqual(ARTIFACT_RECORD);
       actorService.stopActor(actor!);
@@ -4252,7 +4449,11 @@ echo ok
         context: {
           enteredArtifacts: { Reviews: [] as const },
         },
-      } satisfies { context: { enteredArtifacts: Readonly<Record<string, readonly never[]>> } };
+      } satisfies {
+        context: {
+          enteredArtifacts: Readonly<Record<string, readonly never[]>>;
+        };
+      };
 
       expect(extractEnteredArtifacts(snapshot)).toEqual({ Reviews: [] });
     });
@@ -4295,17 +4496,25 @@ echo ok
         runId: 'rd_12121212121212121212121212121212',
       });
 
-      const afterPass = await actorService.sendAndSync(passState.id, steps, { type: 'PASS' });
+      const afterPass = await actorService.sendAndSync(passState.id, steps, {
+        type: 'PASS',
+      });
       expect(JSON.stringify(afterPass?.state.snapshot)).not.toContain('__resolve-artifacts');
-      expect(afterPass?.state.variables.PassPath).toMatchObject({ key: 'pass.json' });
+      expect(afterPass?.state.variables.PassPath).toMatchObject({
+        key: 'pass.json',
+      });
 
       const failState = await createInitializedStateForArtifacts(manager, actorService, steps, {
         runbookPath: 'pending-effects-fail.md',
         runId: 'rd_14141414141414141414141414141414',
       });
-      const afterFail = await actorService.sendAndSync(failState.id, steps, { type: 'FAIL' });
+      const afterFail = await actorService.sendAndSync(failState.id, steps, {
+        type: 'FAIL',
+      });
       expect(JSON.stringify(afterFail?.state.snapshot)).not.toContain('__resolve-artifacts');
-      expect(afterFail?.state.variables.FailPath).toMatchObject({ key: 'fail.json' });
+      expect(afterFail?.state.variables.FailPath).toMatchObject({
+        key: 'fail.json',
+      });
 
       const gotoState = await createInitializedStateForArtifacts(manager, actorService, steps, {
         runbookPath: 'pending-effects-goto.md',
@@ -4316,7 +4525,9 @@ echo ok
         target: { step: '4' },
       });
       expect(JSON.stringify(afterGoto?.state.snapshot)).not.toContain('__resolve-artifacts');
-      expect(afterGoto?.state.variables.GotoPath).toMatchObject({ key: 'goto.json' });
+      expect(afterGoto?.state.variables.GotoPath).toMatchObject({
+        key: 'goto.json',
+      });
     });
 
     it('does not persist enteredArtifacts as a top-level RunbookState field', async () => {
@@ -4383,7 +4594,11 @@ echo ok
     async function bootstrap(): Promise<{ id: string; state: RunbookState }> {
       const created = await manager.create(
         { source: 'project', path: 'frame-entry.md' },
-        { title: 'Frame entry', description: 'Frame entry', steps: twoStepStructure },
+        {
+          title: 'Frame entry',
+          description: 'Frame entry',
+          steps: twoStepStructure,
+        },
         { runbookPath: 'frame-entry.md', frontmatterOutputs: [] },
       );
       const state = await actorService.initializeState(created.id, twoStepStructure);
@@ -4403,7 +4618,10 @@ echo ok
         type: 'PASS',
       });
       expect(prepared.nextState.activeEntry).toBe(2);
-      expect(prepared.nextState.frameEntryCounts).toEqual({ [FRAME_1]: 1, [FRAME_2]: 2 });
+      expect(prepared.nextState.frameEntryCounts).toEqual({
+        [FRAME_1]: 1,
+        [FRAME_2]: 2,
+      });
     });
 
     it('keeps the cursor-derived activeFrameKey in agreement with context.frameEntry', async () => {
@@ -4490,7 +4708,9 @@ echo ok
         expect(mid.activeEntry).toBe(MAX_FOR_BOUND + 1);
         const reloaded = await manager.load(created.id);
         expect(reloaded?.activeEntry).toBe(MAX_FOR_BOUND + 1);
-        expect(reloaded?.frameEntryCounts).toEqual({ [FRAME_1]: MAX_FOR_BOUND + 1 });
+        expect(reloaded?.frameEntryCounts).toEqual({
+          [FRAME_1]: MAX_FOR_BOUND + 1,
+        });
 
         // The pass past the bound is the STOP, and it persists and reads back.
         actor.send({ type: 'FAIL' });
