@@ -824,14 +824,21 @@ rd echo --result fail
     }, 20_000);
 
     it('refuses automatic inline launch inside a claimed child scope and exits non-zero', async () => {
-      // Pins the mechanism that makes the `blocked` arm of this command's exit
-      // mapping unreachable: `blocked` has exactly one producer that a claimed
-      // launch can reach — the inline flow-back in `runExecutionLoop` — and core
-      // refuses automatic inline launch for any run whose parent linkage is a
-      // delegation. The claimed child therefore STOPs on the refusal instead of
-      // flowing a child terminal back, and `claim` exits 1 through the `stopped`
-      // arm. If this refusal is ever lifted, the `blocked` arm becomes live and
-      // the Stryker disable on it in `claim.ts` must go.
+      // Core refuses automatic inline launch for any run whose parent linkage
+      // is a delegation, so a claimed child STOPs on the refusal rather than
+      // flowing a child terminal back, and `claim` exits 1.
+      //
+      // This case is why the legacy `ExecutionLoopStatus` had to go rather than
+      // be repaired (#854 review finding 5). That union spelled both "refused,
+      // still running" and "refused, and the run stopped" as the same string
+      // `'stopped'`, so no mapping could tell them apart — mapping the refusal
+      // to `'blocked'` instead only moved the loss, because this command gated
+      // its upward terminal report on `'done' | 'stopped'` and the report was
+      // then silently suppressed. `RunProgressionOutcome` makes the two
+      // representable — `refused` states that the run KEEPS its lifecycle,
+      // `stopped` that it committed a stopped one — so the conflation is gone
+      // rather than relocated. This run genuinely stops, which is why the
+      // observation below is `runbook_stopped`.
       await writeParentRunbook('inline-parent.runbook.md');
       const inlineParent = `# Inline parent
 

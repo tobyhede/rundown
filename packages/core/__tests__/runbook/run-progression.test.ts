@@ -41,10 +41,15 @@ import {
   buildResolvedCompletion,
   deriveActiveFrame,
 } from '../../src/runbook/targeting.js';
+import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
+import { INLINE_PARENT_CYCLE_CODE } from '../../src/runbook/inline-parent-advance.js';
 import {
   activateRunProgression,
+  commitRunProgressionEvent,
   flowBackInlineTerminal,
+  MAX_INLINE_ANCESTOR_DEPTH,
   progressionDirectiveForClaimedRun,
+  progressionDirectiveForTerminalRun,
   resolveInlineAncestorProgression,
   type InlineChildDispatch,
   type RunProgressionDeps,
@@ -53,7 +58,6 @@ import {
   type TerminalPropagation,
   type TerminalPropagationSource,
 } from '../../src/runbook/run-progression.js';
-import { MAX_INLINE_PROPAGATION_CHAIN } from '../../src/runbook/inline-parent-advance.js';
 
 // The activation is the public behavioral seam for Run Progression (#851 /
 // ADR 0003). These tests exercise it against real SQLite persistence, the real
@@ -413,6 +417,77 @@ function progressionAuthority(state: RunbookState, control: PreparedRunControlCl
 }
 
 describe('resolveInlineAncestorProgression', () => {
+  it('refuses a corrupt distinct ancestry at the bounded depth', async () => {
+    const steps = createRunbook(MANUAL_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    let descendant = await seedRun(steps, actorService, 'depth-child.md');
+    const child = descendant;
+    const frameKey = buildFrameKey('1');
+
+    for (let index = 0; index <= MAX_INLINE_ANCESTOR_DEPTH; index += 1) {
+      const parent = await seedRun(steps, actorService, `depth-parent-${String(index)}.md`);
+      await manager.update(parent.id, {
+        lifecycle: 'running',
+        step: '1',
+        substep: '1',
+        activeFrameKey: frameKey,
+        activeEntry: 1,
+        substepStates: [{ id: '1', frameKey, status: 'running' }],
+      });
+      await manager.update(descendant.id, {
+        parentLinkage: {
+          kind: 'inline',
+          parentRunId: parent.id,
+          parentStep: '1',
+          parentStepId: '1',
+          parentFrameKey: frameKey,
+          parentEntry: 1,
+        },
+      });
+      descendant = parent;
+    }
+
+    const resolved = await resolveInlineAncestorProgression({
+      authority: mintRunProgressionAuthority({ runId: child.id }),
+      manager,
+      loadSteps: async () => steps,
+    });
+
+    expect(resolved).toMatchObject({
+      kind: 'refused',
+      reason: 'inline_parent_depth',
+    });
+
+    // #603: a caller holding the refusal must also hold the run to prune. The
+    // depth arm shares `INLINE_PARENT_CYCLE` with the repeat arm, so a
+    // consumer routing on `details.runId` must find it on both.
+    const { emitter, events } = recordingSink(child);
+    const flowBack = await flowBackInlineTerminal({
+      authority: mintRunProgressionAuthority({ runId: child.id }),
+      manager,
+      actorService,
+      loadSteps: async () => steps,
+      source: { kind: 'loop-inferred' },
+      sink: emitter,
+      activateParent: async () => {
+        throw new Error('the depth guard must refuse before any parent turn');
+      },
+    });
+
+    expect(flowBack).toMatchObject({ kind: 'refused', code: INLINE_PARENT_CYCLE_CODE });
+    const refusedRunId = (flowBack as { readonly runId: string }).runId;
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'ERROR_OCCURRED',
+        payload: expect.objectContaining({
+          code: INLINE_PARENT_CYCLE_CODE,
+          // The deepest run actually walked — the one the operator prunes.
+          details: { cause: 'depth', runId: refusedRunId },
+        }),
+      }),
+    );
+  });
+
   it('refuses an inline linkage from a superseded parent entry (#856)', async () => {
     const { parent, child, parentSteps } = await seedPersistedInlineEdge({
       parentEntry: 2,
@@ -512,11 +587,11 @@ describe('resolveInlineAncestorProgression', () => {
 
   it('refuses a contiguous inline chain past the propagation depth bound (#856)', async () => {
     // The `seen` set only catches a REPEAT. An acyclic chain longer than the
-    // bound is what `MAX_INLINE_PROPAGATION_CHAIN` exists to refuse, and the
+    // bound is what `MAX_INLINE_ANCESTOR_DEPTH` exists to refuse, and the
     // legacy walk (`inline-parent-advance.ts`) refuses it as a `linkage-cycle`
     // with cause `depth`. The migrated resolver must keep that bound: without
     // it the whole chain is loaded, parsed, and validated on every flow-back.
-    const chain = await seedInlineChainStates(MAX_INLINE_PROPAGATION_CHAIN + 2);
+    const chain = await seedInlineChainStates(MAX_INLINE_ANCESTOR_DEPTH + 2);
     const deepestChild = chain[0];
 
     const resolved = await resolveInlineAncestorProgression({
@@ -672,6 +747,100 @@ describe('progressionDirectiveForClaimedRun', () => {
       steps,
     });
     expect(directive.authority.delegationRuntime).toBeDefined();
+  });
+});
+
+describe('progressionDirectiveForTerminalRun', () => {
+  it('re-enters an inline-linked terminal run at the already-observed boundary (#858)', async () => {
+    const { child, childSteps } = await seedPersistedInlineEdge();
+    await manager.update(child.id, { lifecycle: 'completed' });
+    const terminal = await manager.load(child.id);
+    if (terminal === null) throw new Error('terminal run disappeared');
+
+    const directive = progressionDirectiveForTerminalRun(terminal, () => childSteps);
+
+    // `resume` would re-announce a terminal the caller has already rendered and
+    // re-release a run the applying transaction already released.
+    expect(directive).toMatchObject({
+      kind: 'activate',
+      authority: { runId: terminal.id },
+      runbook: terminal.runbook,
+      steps: childSteps,
+      entryBoundary: {
+        kind: 'after_observed_transition',
+        lifecycle: 'completed',
+        terminalTarget: 'released',
+      },
+    });
+  });
+
+  it('continues nothing for a delegated terminal, whose report is already durable', async () => {
+    const steps = createRunbook(MANUAL_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const parent = await seedRun(steps, actorService, 'delegating-parent.md');
+    const state = await seedRun(steps, actorService, 'child.md');
+    await manager.update(state.id, {
+      lifecycle: 'completed',
+      parentLinkage: {
+        kind: 'delegation',
+        parentRunId: parent.id,
+        parentStep: '1',
+        parentStepId: '1',
+        parentFrameKey: buildFrameKey('1'),
+        parentEntry: 1,
+        tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
+      },
+    });
+    const terminal = await manager.load(state.id);
+    if (terminal === null) throw new Error('terminal run disappeared');
+    let parsed = 0;
+
+    const directive = progressionDirectiveForTerminalRun(terminal, () => {
+      parsed += 1;
+      return steps;
+    });
+
+    expect(directive).toEqual({ kind: 'none' });
+    // A run that continues with nothing must not parse its runbook: an
+    // unreadable child would otherwise throw after its terminal was applied.
+    expect(parsed).toBe(0);
+  });
+
+  it('continues nothing for an unlinked terminal run', async () => {
+    const steps = createRunbook(MANUAL_RUNBOOK);
+    const state = await seedRun(steps, actorServiceWith(succeedingCommandServices()), 'solo.md');
+    await manager.update(state.id, { lifecycle: 'stopped' });
+    const terminal = await manager.load(state.id);
+    if (terminal === null) throw new Error('terminal run disappeared');
+
+    expect(progressionDirectiveForTerminalRun(terminal, () => steps)).toEqual({ kind: 'none' });
+  });
+
+  it('refuses a run that is not terminal', async () => {
+    const steps = createRunbook(MANUAL_RUNBOOK);
+    const state = await seedRun(steps, actorServiceWith(succeedingCommandServices()), 'live.md');
+
+    expect(() => progressionDirectiveForTerminalRun(state, () => steps)).toThrow(
+      `Run ${state.id} is not terminal`,
+    );
+  });
+});
+
+describe('commitRunProgressionEvent', () => {
+  it('consumes an inline launch intent under exact run authority (#858/#684)', async () => {
+    const { state, steps, actorService } = await seedInlineLaunchRun();
+    const control = await issueProgressionControl(state.id);
+    const authority = progressionAuthority(state, control);
+
+    const committed = await commitRunProgressionEvent(authority, manager, actorService, steps, {
+      type: 'INLINE_LAUNCH_CONSUMED',
+    });
+
+    expect(committed.kind).toBe('committed');
+    const stored = await manager.load(state.id);
+    const context = (stored?.snapshot as { context?: { inlineLaunchIntent?: unknown } } | undefined)
+      ?.context;
+    expect(context?.inlineLaunchIntent).toBeUndefined();
   });
 });
 
@@ -1708,11 +1877,16 @@ describe('activateRunProgression', () => {
       const result = await runAll(input);
       if (!raced && result.kind === 'committed') {
         raced = true;
-        const moved = await actorService.sendAndSync(state.id, steps, {
+        const current = await manager.load(state.id);
+        if (current === null) throw new Error('concurrent GOTO target disappeared');
+        const moved = await actorService.prepareActorMutation(state.id, current, steps, {
           type: 'GOTO',
           target: { step: '2' },
         });
-        if (moved === null) throw new Error('concurrent GOTO target disappeared');
+        const captured = await manager.captureRunAuthorityState(state.id);
+        if (captured.kind !== 'captured') throw new Error(captured.message);
+        const committed = await manager.saveState(captured.authority, moved.nextState);
+        if (committed.kind !== 'committed') throw new Error(committed.message);
       }
       return result;
     });
@@ -1751,10 +1925,15 @@ describe('activateRunProgression', () => {
     jest.spyOn(runner, 'runAll').mockImplementation(async (input) => {
       if (!raced) {
         raced = true;
-        const consumed = await actorService.sendAndSync(state.id, steps, {
+        const current = await manager.load(state.id);
+        if (current === null) throw new Error('concurrent frontier target disappeared');
+        const consumed = await actorService.prepareActorMutation(state.id, current, steps, {
           type: 'DELEGATE_FRONTIER_CONSUMED',
         });
-        if (consumed === null) throw new Error('concurrent frontier target disappeared');
+        const captured = await manager.captureRunAuthorityState(state.id);
+        if (captured.kind !== 'captured') throw new Error(captured.message);
+        const committed = await manager.saveState(captured.authority, consumed.nextState);
+        if (committed.kind !== 'committed') throw new Error(committed.message);
       }
       const result = await runAll(input);
       if (result.kind === 'committed' && !replaced) {
@@ -1851,10 +2030,20 @@ describe('activateRunProgression', () => {
       // Consume the selected frontier out from under every fenced capture, so
       // the projection is always `none` and every turn reselects.
       races += 1;
-      const consumed = await actorService.sendAndSync(state.id, steps, {
-        type: 'DELEGATE_FRONTIER_CONSUMED',
+      // Written straight onto the durable snapshot rather than through a
+      // machine send: since #858 there is no frontend transition seam left,
+      // and the fenced capture reads exactly this row.
+      const before = await manager.load(state.id);
+      if (before === null) throw new Error('concurrent frontier target disappeared');
+      await manager.update(state.id, {
+        snapshot: {
+          ...(before.snapshot as Record<string, unknown>),
+          context: {
+            ...((before.snapshot as { context?: Record<string, unknown> }).context ?? {}),
+            delegateFrontier: [],
+          },
+        },
       });
-      if (consumed === null) throw new Error('concurrent frontier target disappeared');
       const result = await runAll(input);
       // ...and put it straight back, so the reloaded state reselects the
       // frontier turn again instead of settling on ordinary entry.

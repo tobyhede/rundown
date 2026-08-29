@@ -64,7 +64,6 @@ import {
 } from '@rundown-org/parser';
 import { buildRunbookRef, resolveRunbookFile, resolveRunbookRef } from './resolve-runbook.js';
 import type { ResolvedRunbook as ResolvedRunbookFile } from './resolve-runbook.js';
-import type { ExecutionLoopStatus } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import {
@@ -199,9 +198,8 @@ export interface SessionRefusedFailure {
 export type RunbookStartResult =
   | {
       ok: true;
-      loopResult: ExecutionLoopStatus;
-      /** Closed composition outcome when the caller selected Run Progression. */
-      progression?: RunProgressionOutcome;
+      /** Closed outcome of the required Run Progression activation. */
+      progression: RunProgressionOutcome;
       stateId: RunId;
       claimId?: ClaimId;
       /** Process-only capabilities bound to the exact run-control claim. */
@@ -337,10 +335,8 @@ export type ClaimResult =
       parentRunId: RunId;
       /** Step (or substep) ID on the parent that holds the delegation. */
       stepId: string;
-      /** Terminal state of the child execution loop. */
-      loopResult: ExecutionLoopStatus;
-      /** Closed composition outcome when the caller selected Run Progression. */
-      progression?: RunProgressionOutcome;
+      /** Closed outcome of the required Run Progression activation. */
+      progression: RunProgressionOutcome;
     }
   | ({ readonly ok: false } & ClaimFailure);
 
@@ -1219,24 +1215,8 @@ async function launchRunbook(
     launchDirective(initializedState, runbookSteps),
     emitter,
   );
-  const loopResult = {
-    status:
-      progression.kind === 'completed'
-        ? ('done' as const)
-        : progression.kind === 'stopped'
-          ? ('stopped' as const)
-          : progression.kind === 'waiting'
-            ? ('waiting' as const)
-            : ('blocked' as const),
-  };
-
   return {
     ok: true,
-    // The status alone: this result travels to `rundown run`'s and
-    // `rundown claim`'s exit decisions, and to the inline flow-back — none of
-    // which decides a release. A disposition carried past the frame that can
-    // act on it is a field readers must work out they should ignore.
-    loopResult: loopResult.status,
     progression,
     stateId: launchedStateId,
     ...(issuedRunControlClaimId !== undefined ? { claimId: issuedRunControlClaimId } : {}),
@@ -1659,8 +1639,7 @@ function emitClaimedSuccess(args: {
   readonly parentRunId: RunId;
   readonly stepId: string;
   readonly parentStepAt: string | undefined;
-  readonly loopResult: ExecutionLoopStatus;
-  readonly progression?: RunProgressionOutcome;
+  readonly progression: RunProgressionOutcome;
 }): Extract<ClaimResult, { ok: true }> {
   const payload = buildClaimedPayload(args);
   emitClaimedOutput(
@@ -1675,8 +1654,7 @@ function emitClaimedSuccess(args: {
     claimId: args.claimId,
     parentRunId: args.parentRunId,
     stepId: args.stepId,
-    loopResult: args.loopResult,
-    ...(args.progression !== undefined ? { progression: args.progression } : {}),
+    progression: args.progression,
   };
 }
 
@@ -1703,12 +1681,6 @@ async function activateClaimedChild(args: {
     ),
     createBridgedEmitter(state, args.ctx.output),
   );
-}
-
-function executionStatusForProgression(outcome: RunProgressionOutcome): ExecutionLoopStatus {
-  if (outcome.kind === 'completed') return 'done';
-  if (outcome.kind === 'stopped') return 'stopped';
-  return 'waiting';
 }
 
 /**
@@ -1901,7 +1873,6 @@ export async function claimAndLaunch(
       parentRunId: freshParent.id,
       stepId: substepId ?? stepId,
       parentStepAt: freshDelegation.contextSnapshot.at,
-      loopResult: executionStatusForProgression(progression),
       progression,
     });
   }
@@ -1928,7 +1899,6 @@ export async function claimAndLaunch(
       parentRunId: freshParent.id,
       stepId: substepId ?? stepId,
       parentStepAt: freshDelegation.contextSnapshot.at,
-      loopResult: executionStatusForProgression(progression),
       progression,
     });
   }
@@ -1977,7 +1947,6 @@ export async function claimAndLaunch(
       parentRunId: freshParent.id,
       stepId: substepId ?? stepId,
       parentStepAt: freshDelegation.contextSnapshot.at,
-      loopResult: executionStatusForProgression(progression),
       progression,
     });
   }
@@ -2244,7 +2213,6 @@ export async function claimAndLaunch(
     parentRunId: freshParent.id,
     stepId: substepId ?? stepId,
     parentStepAt: freshDelegation.contextSnapshot.at,
-    loopResult: launchResult.loopResult,
-    ...(launchResult.progression !== undefined ? { progression: launchResult.progression } : {}),
+    progression: launchResult.progression,
   });
 }

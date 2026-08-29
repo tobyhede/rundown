@@ -182,6 +182,48 @@ This step should not become the persisted cursor.
     expect(parentState!.lastAction).not.toEqual({ type: 'COMPLETE', origin: 'aggregation' });
   });
 
+  it('announces the claimed child terminal exactly once on the JSON stream', async () => {
+    const parentRunbook = `# Parent Claim Announce
+
+## 1. Parent delegates child
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Child work
+- DELEGATE
+
+- child-announce.runbook.md
+`;
+    const childRunbook = `# Child Announce
+
+## 1. Child waits
+- PASS COMPLETE
+- FAIL STOP
+`;
+    await writeFile(join(workspace.cwd, 'parent-claim-announce.runbook.md'), parentRunbook);
+    await writeFile(join(workspace.cwd, 'child-announce.runbook.md'), childRunbook);
+
+    await runCliInProcess('run --prompted parent-claim-announce.runbook.md', workspace);
+    const token = requireLatestFrontierToken(workspace, '1.1');
+    const claim = await runCliInProcess(['claim', token], workspace);
+    const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
+
+    const result = await runCliInProcess(
+      ['complete', '--claim-id', String(claimId), 'child has enough evidence'],
+      workspace,
+    );
+
+    expect(result.exitCode).toBe(0);
+    // The seam renders the child's terminal once. Re-entering Run Progression to
+    // continue composition must not re-announce a terminal the caller already
+    // observed: a duplicate `runbook_completed` (with a restarted `seq`) tells a
+    // streaming orchestrator the child finished twice.
+    const completions = parseConcatenatedJson(result.stdout).filter(
+      (entry) => (entry as Record<string, unknown>).type === 'runbook_completed',
+    );
+    expect(completions).toHaveLength(1);
+  });
+
   it('prepares FORCE_COMPLETE with the operator message through the fenced actor seam', async () => {
     const prepareSpy = jest.spyOn(RunbookActorService.prototype, 'prepareActorMutation');
 
@@ -491,12 +533,9 @@ Do work.
     const persistedState = await readRunbookState(workspace, state!.id);
     expect(persistedState?.lifecycle).toBe('completed');
 
-    const sendSpy = jest.spyOn(RunbookActorService.prototype, 'sendAndSync');
-
     const result = await runCliInProcess('complete --text', workspace);
 
     expect(result.exitCode).toBe(0);
-    expect(sendSpy).not.toHaveBeenCalled();
 
     const afterComplete = await readRunbookState(workspace, state!.id);
     expect(afterComplete?.lifecycle).toBe('completed');
@@ -664,8 +703,10 @@ Waiting.
       const cycle = parseConcatenatedJson(result.stdout).find(
         (entry) => (entry as Record<string, unknown>).code === 'INLINE_PARENT_CYCLE',
       ) as Record<string, unknown> | undefined;
-      // `details` distinguishes this from the force-terminal path's identically
-      // worded refusal: only the propagation guard carries the cause + run id.
+      // Core now composes and streams this refusal itself, so it arrives as an
+      // `error_occurred` observation carrying `message` rather than the CLI's
+      // former `error` envelope. Both halves of the #603 contract survive that
+      // move: the operator message and the run to prune.
       expect(cycle).toMatchObject({
         type: 'error_occurred',
         code: 'INLINE_PARENT_CYCLE',

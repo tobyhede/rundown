@@ -351,7 +351,7 @@ export function registerRunCommand(program: Command): void {
             // back synchronously — advance the composing parent immediately
             // (drain-and-advance), unlike delegation's report-then-collect. If
             // advancing the parent reaches a STOP terminal, exit 1.
-            if (result.progression !== undefined && progressionFailedClosed(result.progression)) {
+            if (progressionFailedClosed(result.progression)) {
               output.flush();
               process.exit(1);
             }
@@ -361,7 +361,7 @@ export function registerRunCommand(program: Command): void {
             // seam returns one opaque capability containing the verified run,
             // graph, and progression authority, so this launch-local path
             // cannot reconstruct or cross-wire any of them.
-            if (options.step && options.prompted && result.loopResult === 'waiting') {
+            if (options.step && options.prompted && result.progression.kind === 'waiting') {
               const gotoResolution = await buildGotoContext(output, cwd, {
                 ...(result.claimId === undefined
                   ? { runId: result.stateId }
@@ -403,9 +403,6 @@ export function registerRunCommand(program: Command): void {
             }
 
             output.flush();
-            if (result.loopResult === 'stopped' || result.loopResult === 'blocked') {
-              process.exit(1);
-            }
             return;
           }
 

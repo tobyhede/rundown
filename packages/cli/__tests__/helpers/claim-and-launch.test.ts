@@ -306,14 +306,6 @@ jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
   buildRunbookRef: jest.fn(actualResolveRunbook.buildRunbookRef),
 }));
 
-// Mock execution service
-jest.unstable_mockModule('../../src/services/execution', () => ({
-  runExecutionLoop:
-    mockFn<(...args: unknown[]) => Promise<'done' | 'stopped' | 'waiting'>>().mockResolvedValue(
-      'done',
-    ),
-}));
-
 // Mock execution-emitter
 jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
   createBridgedEmitter: mockFn<() => { emit: jest.Mock }>().mockReturnValue({ emit: jest.fn() }),
@@ -408,7 +400,6 @@ const { validateOutputsDeclarations } = await import(
 );
 const { getRunbookFromState } = await import('../../src/helpers/runbook-loader.js');
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
-const { runExecutionLoop } = await import('../../src/services/execution.js');
 const { claimAndLaunch: claimAndLaunchCore } = await import(
   '../../src/helpers/runbook-pipeline.js'
 );
@@ -1192,7 +1183,7 @@ describe('claimAndLaunch', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.childRunId).toBe(EXISTING_SESSION_CHILD_ID);
-      expect(result.loopResult).toBe('waiting');
+      expect(result.progression.kind).toBe('waiting');
     }
     expect(findClaimForDelegation).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1774,7 +1765,6 @@ describe('claimAndLaunch', () => {
     jest
       .mocked(createBridgedEmitter)
       .mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<typeof createBridgedEmitter>);
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
 
     const mockCreate = mockFn<(...args: unknown[]) => Promise<{ id: RunId; title: string }>>();
     mockCreate.mockResolvedValue({
@@ -1926,7 +1916,6 @@ describe('claimAndLaunch', () => {
     jest
       .mocked(createBridgedEmitter)
       .mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<typeof createBridgedEmitter>);
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
 
     const mockCreate = mockFn<(...args: unknown[]) => Promise<{ id: RunId; title: string }>>();
     mockCreate.mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' });
@@ -2174,7 +2163,6 @@ describe('claimAndLaunch', () => {
       expect(result.cause).toContain(NEW_CHILD_ID);
     }
     // Execution loop must not have run — the throw aborted launchRunbook before it
-    expect(runExecutionLoop).not.toHaveBeenCalled();
     // Claim was attempted against the newly created child run ID
     expect(mockClaimAndInitialLink).toHaveBeenCalledWith(
       expect.objectContaining({ childRunId: NEW_CHILD_ID }),
@@ -2338,7 +2326,6 @@ describe('claimAndLaunch', () => {
       expect(update).not.toHaveBeenCalled();
       expect(removeChild).toHaveBeenCalledWith(NEW_CHILD_ID);
       expect(initializeState).toHaveBeenCalled();
-      expect(runExecutionLoop).not.toHaveBeenCalled();
       // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural service mock without invoking it.
       expect(ctx.actorService.prepareDelegationChildUnlink).not.toHaveBeenCalled();
       // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural service mock without invoking it.
@@ -2454,7 +2441,6 @@ describe('claimAndLaunch', () => {
       expect(result.parentRunId).toBe(RUN_ID);
     }
     expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
-    expect(runExecutionLoop).not.toHaveBeenCalled();
   });
 
   it('names the winning child when a second claimer loses the delegation, rather than RD-820', async () => {
@@ -2576,7 +2562,6 @@ describe('claimAndLaunch', () => {
     // The permanent refusal was decided before any commit was attempted.
     expect(mockClaimAndInitialLink).not.toHaveBeenCalled();
     expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
-    expect(runExecutionLoop).not.toHaveBeenCalled();
   });
 
   it('does not claim or link when fresh delegated launch initialization fails', async () => {
@@ -2691,7 +2676,6 @@ describe('claimAndLaunch', () => {
     expect(mockReleaseRuns).not.toHaveBeenCalled();
     expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
     expect(mockUpdate).not.toHaveBeenCalled();
-    expect(runExecutionLoop).not.toHaveBeenCalled();
   });
 
   async function arrangeInitialLinkRollback() {
@@ -2828,7 +2812,6 @@ describe('claimAndLaunch', () => {
     );
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural state-manager mock without invoking it.
     expect(ctx.manager.delete).toHaveBeenCalledWith(NEW_CHILD_ID);
-    expect(runExecutionLoop).not.toHaveBeenCalled();
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural state-manager mock without invoking it.
     expect(ctx.manager.update).not.toHaveBeenCalled();
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural output-emitter mock without invoking it.

@@ -304,21 +304,17 @@ export {
   type CollectDelegationOutcomesOperationInput,
   type RunbookCollectionServiceDependencies,
 } from './collection-service.js';
-// Shared re-entry frontier seam (F6). Run Progression owns the fenced path;
-// the legacy CLI execution loop still consumes the unfenced seam until #858.
+// Shared re-entry frontier seam (F6), consumed only through Run Progression's
+// fenced projection/consume turn.
 export {
   FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
   FRONTIER_CONSUME_FAILED_MESSAGE,
   FRONTIER_PROJECTION_REFUSED_MESSAGE,
   prepareReEntryFrontierConsume,
-  projectAndConsumeReEntryFrontier,
   readPersistedReEntryFrontier,
   type PrepareReEntryFrontierActorService,
   type PrepareReEntryFrontierConsumeInput,
   type PreparedReEntryProjection,
-  type ProjectAndConsumeReEntryFrontierInput,
-  type ReEntryFrontierActorService,
-  type ReEntryProjection,
 } from './re-entry-frontier.js';
 // Canonical refusal-kind → symbolic-code maps. The value consts are for seams
 // that may value-import the barrel; frontends loaded under partial barrel
@@ -334,9 +330,14 @@ export {
 // caller evidence may produce a RunProgressionAuthority.
 export {
   activateRunProgression,
+  commitRunProgressionEvent,
   progressionDirectiveForClaimedRun,
   progressionDirectiveForStartedRun,
+  progressionDirectiveForTerminalRun,
+  resolveInlineAncestorProgression,
   flowBackInlineTerminal,
+  propagateTerminalRun,
+  MAX_INLINE_ANCESTOR_DEPTH,
   INLINE_ADVANCE_RECOVERY_BY_REASON,
   ObservationDeliveryError,
   recoveryForInlineAdvanceRefusal,
@@ -359,18 +360,10 @@ export {
 } from './run-progression.js';
 export type { RunProgressionAuthority } from './run-progression-authority.js';
 export {
-  propagateTerminalChildUpward,
+  reportDelegatedTerminal,
   INLINE_PARENT_CYCLE_CODE,
-  MAX_INLINE_PROPAGATION_CHAIN,
-  type AdvanceInlineParent,
-  type AdvanceInlineParentInput,
-  type AdvanceInlineParentOutcome,
   type InlineParentAdvanceRefusal,
-  type InlineParentAdvanceStateReader,
-  type InlineUpwardPropagationResult,
   type LinkageCycleTrip,
-  type PropagateTerminalChildUpwardDeps,
-  type TerminalUpwardPropagationResult,
 } from './inline-parent-advance.js';
 export {
   classifyInlineLaunchOwnership,
@@ -518,8 +511,8 @@ export {
   type PrepareDelegationChildUnlinkResult,
   type RunbookActorServiceOptions,
 } from './actor-service.js';
-// The runtime capability types ARE public: a front end that owns the CLI
-// execution loop threads verified delegation capabilities through its own
+// The runtime capability types ARE public: a front end threads verified
+// delegation capabilities through its Run Progression dependencies and
 // option bags, so it must be able to name them. `DelegationRuntimeCapabilities`
 // is the shape those bags should carry — the individual callables remain
 // exported for the narrow seams that genuinely take only one.

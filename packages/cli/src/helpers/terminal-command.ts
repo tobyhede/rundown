@@ -15,6 +15,7 @@ import {
   isError,
   logger,
   redactClaimId,
+  progressionDirectiveForTerminalRun,
   type ClaimId,
   type CommandTargetSelector,
   type LifecycleTerminalOutcome,
@@ -47,8 +48,9 @@ import {
   renderSessionMutationRefusal,
   renderTransactionalMutationRefusal,
 } from './session-mutation-result.js';
-import { extractParentLinkage, propagateChildTerminal } from './delegation-completion.js';
 import { buildMetadata } from '../services/execution.js';
+import { getRunbookFromState } from './runbook-loader.js';
+import { driveRunProgression } from './run-progression-adapters.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 
 /**
@@ -321,10 +323,31 @@ export async function runSeamTerminal(
 type AppliedClaimOutcome = Extract<LifecycleTerminalOutcome, { kind: 'applied_claim' }>;
 
 /**
- * Signature of {@link propagateChildTerminal}, injectable so the finalize
- * orchestration can be unit-tested without real inline-parent state on disk.
+ * Public terminal Run Progression driver, injectable at the frontend seam.
+ *
+ * `null` reports core's decision that the observed terminal owes composition
+ * nothing further, which is distinct from any outcome an activation can close
+ * with — it means no activation ran at all.
  */
-export type ChildTerminalPropagator = typeof propagateChildTerminal;
+export type TerminalRunProgression = (
+  state: RunbookState,
+  cwd: string,
+  output: OutputEmitter,
+  manager: RunbookStateManager,
+) => Promise<import('@rundown-org/core').RunProgressionOutcome | null>;
+
+const driveTerminalRunProgression: TerminalRunProgression = async (state, cwd, output, manager) => {
+  // Core decides both whether this terminal continues and where the activation
+  // starts; the frontend only executes the directive it is handed. The steps
+  // loader is deliberately lazy — a terminal that continues with nothing never
+  // parses its runbook, so a moved or unreadable child cannot throw after its
+  // terminal was already applied and rendered.
+  const directive = progressionDirectiveForTerminalRun(state, (terminal) =>
+    getRunbookFromState(terminal, cwd),
+  );
+  if (directive.kind === 'none') return null;
+  return await driveRunProgression(directive, { manager, cwd, output });
+};
 
 /**
  * Finalize an `applied_claim` terminal: render the claimed child's own outcome,
@@ -344,7 +367,8 @@ export type ChildTerminalPropagator = typeof propagateChildTerminal;
  * @param outcome - The `applied_claim` outcome from the seam.
  * @param cwd - Current working directory (for inline parent propagation).
  * @param message - Optional operator-supplied terminal message.
- * @param propagate - Inline/delegation propagator (injected in tests).
+ * @param progress - Public Run Progression driver (injected in tests). Returns
+ *   `null` when core decided this terminal continues with nothing.
  * @returns `true` when the command requests a non-zero exit code.
  */
 export async function finalizeAppliedClaimTerminal(
@@ -354,7 +378,7 @@ export async function finalizeAppliedClaimTerminal(
   outcome: AppliedClaimOutcome,
   cwd: string,
   message: string | undefined,
-  propagate: ChildTerminalPropagator = propagateChildTerminal,
+  progress: TerminalRunProgression = driveTerminalRunProgression,
 ): Promise<boolean> {
   const terminal = await manager.load(outcome.runId);
   if (!terminal) {
@@ -379,23 +403,17 @@ export async function finalizeAppliedClaimTerminal(
     terminal,
   );
 
-  let propagatedInlineTerminal = false;
-  if (extractParentLinkage(terminal)?.kind === 'inline') {
-    const propagation = await propagate(
-      terminal,
-      outcome.status === 'completed' ? 'pass' : 'fail',
-      cwd,
-      output,
-    );
-    // 'blocked' is fail-closed: the seam could not propagate (corrupt linkage
-    // graph per #602, or a command-infrastructure failure), so the parent's true
-    // state is unknown. Exiting 0 would contradict the diagnostic the seam just
-    // emitted. Matches the execution path's rule (`execution.ts` treats
-    // 'stopped' and 'blocked' alike).
-    propagatedInlineTerminal = propagation === 'stopped' || propagation === 'blocked';
-  }
-
-  return renderRequestedExit || propagatedInlineTerminal;
+  const progression = await progress(terminal, cwd, output, manager);
+  if (progression === null) return renderRequestedExit;
+  // The claimed child's own stopped lifecycle was already rendered above as a
+  // successful report-only close. Only a refusal or delivery failure while
+  // continuing composition changes that command result.
+  return (
+    renderRequestedExit ||
+    progression.kind === 'refused' ||
+    progression.kind === 'failed' ||
+    (progression.kind === 'stopped' && progression.runId !== terminal.id)
+  );
 }
 
 /** Explicit target the failed terminal command was invoked with. */

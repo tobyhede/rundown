@@ -4981,7 +4981,6 @@ describe('RunbookLifecycleCommandService', () => {
 
     it('refuses a terminal whose presented bearer names a different claim', async () => {
       const { claimA, claimB } = await activateTwoClaimedRuns();
-      const sendSpy = jest.spyOn(actorService, 'sendAndSync');
 
       const outcome = await seam.runTerminal({
         command: 'complete',
@@ -4990,13 +4989,11 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       expect(outcome).toEqual({ kind: 'claim_bearer_mismatch' });
-      expect(sendSpy).not.toHaveBeenCalled();
       expect((await manager.load(runB))?.lifecycle).toBe('running');
     });
 
     it('refuses a terminal naming a claim with no bearer evidence at all', async () => {
       const { claimB } = await activateTwoClaimedRuns();
-      const sendSpy = jest.spyOn(actorService, 'sendAndSync');
 
       const outcome = await seam.runTerminal({
         command: 'complete',
@@ -5005,7 +5002,6 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       expect(outcome).toEqual({ kind: 'claim_bearer_mismatch' });
-      expect(sendSpy).not.toHaveBeenCalled();
       expect((await manager.load(runB))?.lifecycle).toBe('running');
     });
 
@@ -5370,7 +5366,6 @@ describe('RunbookLifecycleCommandService', () => {
       loadStepsImpl = () => twoSteps;
       await activate(baseState({ id: namedRunId }));
       await activate(baseState({ id: topRunId, runbookPath: 'top.md' }));
-      const sendSpy = jest.spyOn(actorService, 'sendAndSync');
 
       const outcome = await seam.runTerminal({
         command: 'stop',
@@ -5379,7 +5374,6 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       expect(outcome).toEqual({ kind: 'actor_context_required' });
-      expect(sendSpy).not.toHaveBeenCalled();
       expect((await manager.load(namedRunId))?.lifecycle).toBe('running');
     });
 
@@ -7538,14 +7532,15 @@ describe('RunbookLifecycleCommandService', () => {
         const missingClaimId = assertClaimId(
           'rdclm_00000000000000000000000000000000_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
         );
-        const sendSpy = jest.spyOn(actorService, 'sendAndSync');
         const out = await seam.runTerminal({
           command: 'complete',
           callerEvidence: presentedBy(missingClaimId),
           targetSelector: { kind: 'claim', claimId: missingClaimId },
         });
-        expect(out).toMatchObject({ kind: 'stale_claim', claimId: missingClaimId });
-        expect(sendSpy).not.toHaveBeenCalled();
+        expect(out).toMatchObject({
+          kind: 'stale_claim',
+          claimId: missingClaimId,
+        });
       });
 
       it('claim complete on a completed child confirms and retains the tombstone', async () => {
@@ -7668,7 +7663,6 @@ describe('RunbookLifecycleCommandService', () => {
 
       it('claim complete on a stopped child conflicts (no FORCE, still retains)', async () => {
         const claimId = await setupClaim('stopped');
-        const sendSpy = jest.spyOn(actorService, 'sendAndSync');
         const releaseSpy = jest.spyOn(sessionService, 'releaseAlreadyTerminal');
         const out = await seam.runTerminal({
           command: 'complete',
@@ -7676,7 +7670,6 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'claim', claimId },
         });
         expect(out.kind).toBe('terminal_claim_conflict');
-        expect(sendSpy).not.toHaveBeenCalled();
         // The conflict arm addresses the run it refused to re-terminalize, so it
         // releases through the same fenced seam as the confirmed arm (#734).
         expect(releaseSpy).toHaveBeenCalledWith(
@@ -8094,7 +8087,6 @@ describe('RunbookLifecycleCommandService', () => {
         await patchPersistedClaim(manager.cwd, claimKey, {
           grants: claim.grants.filter((grant) => grant.action !== 'mutate-run'),
         });
-        const sendSpy = jest.spyOn(actorService, 'sendAndSync');
 
         const out = await seam.runTerminal({
           command: 'complete',
@@ -8102,8 +8094,11 @@ describe('RunbookLifecycleCommandService', () => {
           targetSelector: { kind: 'claim', claimId },
         });
 
-        expect(out).toEqual({ kind: 'claim_grant_required', claimId, runId: claimChildRunId });
-        expect(sendSpy).not.toHaveBeenCalled();
+        expect(out).toEqual({
+          kind: 'claim_grant_required',
+          claimId,
+          runId: claimChildRunId,
+        });
       });
     });
 

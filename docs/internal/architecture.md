@@ -221,14 +221,15 @@ stores a running substep record with inline metadata, and writes
 inference from parser shape.
 
 The actor does not start the child process or write child state. Those external
-effects remain in the CLI boundary: the execution loop consumes the persisted
-intent, creates or resumes the child run with the preallocated id, records
-`INLINE_CHILD_STARTED` on the parent, and sends `INLINE_LAUNCH_CONSUMED` after
-the one-shot intent has been handled — or `INLINE_LAUNCH_ABANDONED` when the
-launch span fails after latching, which releases the latch while keeping the
-intent so the unfinished launch stays re-observable. If preparation fails, the
-machine records `INLINE_LAUNCH_FAILED` and stops the active runbook; the CLI
-must not fall back to local substep execution.
+effects remain behind the Run Progression activation's injected dispatch
+callable: activation consumes the persisted intent, creates or resumes the child
+run with the preallocated id, records `INLINE_CHILD_STARTED` on the parent, and
+sends `INLINE_LAUNCH_CONSUMED` after the one-shot intent has been handled — or
+`INLINE_LAUNCH_ABANDONED` when the launch span fails after latching, which
+releases the latch while keeping the intent so the unfinished launch stays
+re-observable. If preparation fails, the machine records `INLINE_LAUNCH_FAILED`
+and stops the active runbook; the CLI must not fall back to local substep
+execution.
 
 The leaf also invokes `commandExecActor` directly to execute the step's command;
 that actor's completion produces the `COMMAND_RESULT` event the capture flow
@@ -494,14 +495,10 @@ intact. Domain refusals are separate: they are typed `status` arms
 (`already_cancelled`, `needs_force`, `child_in_flight`, `error`), never mapped
 onto a throw.
 
-**Commit path back into the compiled machine.** Only one of the three commands
-re-enters the compiled runbook machine. `prepareManualDelegationMutation` sends
-`MANUAL_DELEGATION_ABORT_PREPARED` through `prepareActorMutation` when the
-command was `ABORT` **and** the captured parent state carries a persisted
-snapshot. `ISSUE`, `RETRY`, and an `ABORT` over a state with no snapshot return
-`{ ...previousState, substepStates }` directly, without a machine event. On the
-compiled-machine side the event is a root-level `on` handler that assigns
-`context.substepStates` — no target, no guard, no derivation.
+**Commit path.** `prepareManualDelegationMutation` returns the prepared
+`substepStates` as a state update. The shared state updater mirrors that field
+into persisted snapshot context, so no bridge event or frontend round-trip is
+needed.
 
 The design record does not settle the longer trajectory. The PR 12 planning
 audit requires manual delegation to be machine-owned and separately contemplates
@@ -533,18 +530,17 @@ translating snapshot transitions.
 | `INLINE_LAUNCH_CONSUMED`                                                     | Inline launch side effect                                       | Clears the one-shot `inlineLaunchIntent` after the front end has consumed it, releasing the launch latch in the same commit.                                                                                         |
 | `INLINE_LAUNCH_ABANDONED { started }`                                        | Inline launch side effect                                       | Releases the launch latch of a span that failed, KEEPING the intent so the unfinished launch stays re-observable. `started` is the record the sender latched; the release applies only while the row still holds it. |
 | `DELEGATION_CHILD_LINKED` / `DELEGATION_CHILD_UNLINKED`                      | `RunbookActorService` (core-internal)                           | Records or clears the parent-side link to a claimed child run. Not front-end reachable.                                                                                                                              |
-| `MANUAL_DELEGATION_ABORT_PREPARED { substepStates }`                         | `RunbookActorService` (core-internal)                           | Commits a machine-prepared manual `abort` back into the compiled machine. Root-level `assign` only — no target, guard, or derivation.                                                                                |
 
 Two qualifications on this table, both load-bearing.
 
 **It is not the whole `RunbookEvent` union.** `FORCE_STOP`, `FORCE_COMPLETE`,
 `APPLY_CURRENT_RESOLVED_COMPLETION`, and `COMMAND_RESULT` are driven by core
 (the lifecycle command seam, the completion service, and the compiled machine's
-own command actor); `EXECUTE_COMMAND` is sent by the CLI execution loop. None of
+own command actor); `EXECUTE_COMMAND` is selected by Run Progression. None of
 them appear above. `packages/core/src/runbook/compiler.ts` remains the authority
 on the union.
 
-**Not every member is CLI-originated.** The last three rows are sent by
+**Not every member is CLI-originated.** The last two rows are sent by
 `RunbookActorService` inside core, not by a front end. The invariant that still
 holds — and the rule new work must satisfy — is the direction of the arrow, not
 the caller: a new CLI subcommand dispatches into existing events, and any new
@@ -554,8 +550,6 @@ incremental migrations (e.g. an event that bridges a CLI-owned side effect to a
 machine-owned one before the side effect itself moves into the machine) are
 scoped to the migration window and removed once the boundary collapses — they do
 not become permanent fixtures of the protocol.
-`MANUAL_DELEGATION_ABORT_PREPARED` is the current instance of that pattern; see
-[§ Manual delegation preparation machine](#manual-delegation-preparation-machine).
 
 ### Observable events the CLI renders
 
@@ -653,8 +647,7 @@ it.
    resolved state's in-memory `runbookSrc` plus an environment-bound
    helper-registry + render context (Category A), not runbook-file IO.
 4. **Preserve the two ingress mutations; activate one progression path.** The
-   seam does not collapse manual completion into an unconditional
-   `sendAndSync(PASS|FAIL)`:
+   seam does not collapse manual completion into an unconditional actor send:
    - **manual substep completion** (`#driveSubstepFenced`) records exactly one
      resolved completion via `RunbookCompletionService.prepareManualCompletion`;
      it does not apply or batch-drain completion rows inside that recording
@@ -670,14 +663,24 @@ it.
    carries an `after_observed_transition` boundary so activation propagates the
    terminal without replaying its observation or release.
 
+   The claim-path terminal (`rundown complete`/`stop --claim-id`) obeys the same
+   rule through `progressionDirectiveForTerminalRun`, which core — not the
+   frontend — uses to answer both questions the frontend must not: whether the
+   observed terminal still owes composition a turn, and where that turn starts.
+   Only an INLINE-linked terminal continues, because a delegated child's outcome
+   is already recorded against its parent by the same fenced transaction that
+   applied the terminal, and an unlinked run composes with nothing; the
+   directive's `none` arm is how core says so. A `resume` boundary here would
+   re-announce a terminal the seam has already rendered and re-release a run the
+   applying transaction already released.
+
    This #854 slice owns the completion-specific choice: applicable completion,
    target mismatch, and exhausted compare-and-swap contention are selected as
-   closed intents by the compiled machine. `awaiting_input` remains a
-   transitional feedback value from the runtime's execution-unit entry
-   classification. Fresh runs and freshly claimed children now enter the same
-   Run Progression activation as resumed runs; the remaining legacy entry
-   classifier is deleted with the displaced execution loop in #858. The machine
-   closes `awaiting_input` as a typed waiting outcome throughout.
+   closed intents by the compiled machine. `awaiting_input` remains a typed
+   feedback value from the runtime's execution-unit entry classification. Fresh
+   runs, freshly claimed children, resumed runs, and terminal propagation all
+   enter this one Run Progression activation. The machine closes
+   `awaiting_input` as a typed waiting outcome throughout.
 
    Both decisive bare default-target ingress mutations run inside
    `SessionService.runGuardedParentAdvance` (the TOCTOU guard). Terminal release
@@ -1452,10 +1455,10 @@ patch from `classifyChildCompletionTarget`, the same decision owner the fenced
 The drain followed third, and went further than the recorders did. Folding its
 decision inward was not enough on its own, because the seam that made the gap
 expressible was its **interface**: it selected a completion against a
-caller-supplied `currentState` and then let `sendAndSync` re-load a different
-one. The compare-and-swap always prevented a lost update, but never that — an
-apply could consume the row for the substep the caller captured while landing
-its PASS on the substep the machine had since advanced to.
+caller-supplied `currentState` and then let an unfenced actor send re-load a
+different one. The compare-and-swap always prevented a lost update, but never
+that — an apply could consume the row for the substep the caller captured while
+landing its PASS on the substep the machine had since advanced to.
 
 So the drain became `applyNextResolvedCompletion`: ONE apply per call, selection
 and actor transition and commit inside a single
@@ -1556,11 +1559,11 @@ The latch is its own module, `services/inline-launch-latch.ts`, rather than a
 private function inside the execution service. The seam is not justified by
 variation — it has exactly one caller — but by testability and locality: the
 decision, the linkage classification, the ownership read and the
-compare-and-swap cycle are one cohesive unit, and reaching them through the
-execution loop meant reaching them through a mocked `@rundown-org/core`, which
-is precisely the blind spot that hides the race the latch exists to prevent.
-Contention is now driven through the interface itself — two observers holding
-the same version against a real store — in
+compare-and-swap cycle are one cohesive unit, and reaching them through the old
+CLI coordination path meant reaching them through a mocked `@rundown-org/core`,
+which is precisely the blind spot that hides the race the latch exists to
+prevent. Contention is now driven through the interface itself — two observers
+holding the same version against a real store — in
 `__tests__/services/inline-launch-latch.test.ts`.
 
 Two constraints on what the module may own. Its only argument is the intent

@@ -11,7 +11,7 @@ import {
   type RunbookStateManager,
   type TransitionObservationEvent,
 } from '@rundown-org/core';
-import type { ChildTerminalPropagator } from '../../src/helpers/terminal-command.js';
+import type { TerminalRunProgression } from '../../src/helpers/terminal-command.js';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 import { takeExitCode } from './exit-code.js';
 
@@ -583,9 +583,9 @@ describe('finalizeAppliedClaimTerminal', () => {
   it('surfaces an error and non-zero exit when the terminated child fails to reload', async () => {
     const { output, calls } = recordingEmitter(true);
     let propagateCalled = false;
-    const propagate: ChildTerminalPropagator = async () => {
+    const propagate: TerminalRunProgression = async () => {
       propagateCalled = true;
-      return 'handled';
+      return { kind: 'waiting', runId: RUN_ID, reason: 'awaiting_input' };
     };
 
     const exitError = await finalizeAppliedClaimTerminal(
@@ -608,11 +608,11 @@ describe('finalizeAppliedClaimTerminal', () => {
   it('renders the child terminal before propagating to the inline parent', async () => {
     const { output, calls } = recordingEmitter(true);
     let childRenderedBeforePropagate = false;
-    const propagate: ChildTerminalPropagator = async () => {
+    const propagate: TerminalRunProgression = async () => {
       childRenderedBeforePropagate = calls.some(
         (c) => c.method === 'stopped' || c.method === 'complete',
       );
-      return 'handled';
+      return { kind: 'waiting', runId: RUN_ID, reason: 'awaiting_input' };
     };
 
     await finalizeAppliedClaimTerminal(
@@ -631,7 +631,11 @@ describe('finalizeAppliedClaimTerminal', () => {
   it('reloads the terminated child exactly once for both render and propagation', async () => {
     const { output } = recordingEmitter(true);
     const { manager, loads } = countingManager(inlineChildState());
-    const propagate: ChildTerminalPropagator = async () => 'handled';
+    const propagate: TerminalRunProgression = async () => ({
+      kind: 'waiting',
+      runId: RUN_ID,
+      reason: 'awaiting_input',
+    });
 
     await finalizeAppliedClaimTerminal(
       output,
@@ -648,7 +652,7 @@ describe('finalizeAppliedClaimTerminal', () => {
 
   it('propagates a stopped inline parent into a non-zero exit', async () => {
     const { output } = recordingEmitter(true);
-    const propagate: ChildTerminalPropagator = async () => 'stopped';
+    const propagate: TerminalRunProgression = async () => ({ kind: 'stopped', runId: PARENT_ID });
 
     const exitError = await finalizeAppliedClaimTerminal(
       output,
@@ -672,7 +676,13 @@ describe('finalizeAppliedClaimTerminal', () => {
     // execution path already fails closed on 'blocked' (execution.ts:417); this
     // path must agree.
     const { output } = recordingEmitter(true);
-    const propagate: ChildTerminalPropagator = async () => 'blocked';
+    const propagate: TerminalRunProgression = async () => ({
+      kind: 'refused',
+      runId: RUN_ID,
+      reason: 'inline_flow_back_refused',
+      message: 'Inline parent progression refused',
+      recovery: 'permanent',
+    });
 
     const exitError = await finalizeAppliedClaimTerminal(
       output,

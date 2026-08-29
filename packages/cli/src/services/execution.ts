@@ -1,51 +1,32 @@
 import {
   type RunId,
-  type ClaimLookupKey,
   assertRunId,
-  buildStepPosition,
+  type buildStepPosition,
   type ActionType,
   extractLastMessage,
   extractRetryDisplayCount,
   extractRetryMax,
   formatActionForDisplay,
   type RunbookStateManager,
-  RunbookCompletionService,
-  SessionService,
+  type SessionService,
   ExecutionLifecycleService,
   type Step,
   type ResolvedStep,
   type Substep,
   type RunbookMetadata,
   type RunbookState,
-  type SessionMutationResult,
   type RunbookActorService,
-  type ActorSyncResult,
   type ExecutionResult,
   type CommandExecutionServices,
-  type ExecutionObservationEffect,
   type CommandExecutionStreamOptions,
   executeCommand,
   executeCommandWithEnv,
   executeCommandWithPolicy,
-  countNumberedSteps,
-  findStepOrThrow,
   type ExecutionEventEmitter,
   type InlineChildDispatchResult,
   type InlineLaunchIntent,
-  type ExecutionUnitEntry,
   type InlineLinkage,
-  type Frame,
   DB_FILE,
-  type DelegationCredentialIssuer,
-  type DelegationRuntimeCapabilities,
-  type InlineParentAdvanceRefusal,
-  COMPLETION_TARGET_MISMATCH_CODE,
-  FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
-  FRONTIER_CONSUME_FAILED_MESSAGE,
-  FRONTIER_PROJECTION_REFUSED_MESSAGE,
-  projectAndConsumeReEntryFrontier,
-  readPersistedReEntryFrontier,
-  type ReEntryProjection,
   CLIErrorCodes,
   TRANSACTIONAL_REFUSAL_CODE_BY_KIND,
   reconstituteContextVars,
@@ -53,16 +34,9 @@ import {
   ErrorCodes,
   type ErrorCodeKey,
   getErrorMessage,
-  resolveCurrentExecutionUnit,
-  deriveTransitionObservation,
-  asTerminalSnapshotOrDefault,
-  isRunbookStopped,
-  isRunbookComplete,
-  deriveTerminalDrainObservationEvent,
-  createEffectfulActorMutationRunner,
-  type EffectfulActorMutationRunner,
-  type ReleaseRole,
   progressionDirectiveForStartedRun,
+  commitRunProgressionEvent,
+  type RunProgressionAuthority,
   type RunProgressionOutcome,
   type RunProgressionDirective,
 } from '@rundown-org/core';
@@ -72,26 +46,14 @@ import {
   latchInlineLaunch,
   type InlineChildLinkageMatch,
 } from './inline-launch-latch.js';
-import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
 import {
   getPolicyEvaluator,
   getPolicyPrompter,
   isPolicyEnforced,
   getSandboxOptions,
 } from './policy-context.js';
-import {
-  orchestrateTransition,
-  transitionSinkFromEmitter,
-} from '../helpers/transition-orchestrator.js';
 import { createBridgedEmitter } from '../helpers/execution-emitter.js';
-import type {
-  InlinePropagationRefusalDetail,
-  RunScopedDelegationRuntime,
-} from '../helpers/delegation-completion.js';
-import {
-  sessionMutationRefusalCode,
-  transactionalRefusalCode,
-} from '../helpers/session-mutation-result.js';
+import { sessionMutationRefusalCode } from '../helpers/session-mutation-result.js';
 import type { OutputEmitter } from './output-emitter.js';
 export type { ExecutionVarValue, StepVariables, TemplateVariables } from './execution-vars.js';
 
@@ -136,159 +98,18 @@ interface RenderTerminalObservationArgs {
   position: ReturnType<typeof buildStepPosition>;
 }
 
-/**
- * Status an execution loop reports for the run it drove.
- *
- * `handled` is the successful re-entrant inline-composition arm: a child completed and its
- * synchronous flow-back already drove this run's parent progression. The
- * enclosing frame must stand down instead of reporting the same terminal a
- * second time. `blocked` is the same handled control-flow shape when that
- * progression stopped/refused and must also produce a failing process outcome.
- * Neither says anything about session release ownership.
- */
-export type ExecutionLoopStatus = 'done' | 'stopped' | 'waiting' | 'handled' | 'blocked';
-
-/**
- * What an execution loop reports about the run it drove.
- *
- * Run Release is transaction-owned and is intentionally absent from this
- * interface. Callers observe progression; they do not participate in release
- * ownership.
- */
-export interface ExecutionLoopResult {
-  /** Discriminant against {@link ExecutionLoopRefusal}, and the run's outcome. */
-  readonly status: ExecutionLoopStatus;
-}
-
-/**
- * A diagnosed refusal returned to a caller that requested Refusal Hand-back.
- *
- * The inline parent-advance adapter needs the refusal as data so it can stop the
- * upward walk. Ordinary command drivers ask the loop to render it and receive a
- * stopped status while the still-running run remains targeted.
- *
- * A separate arm keeps the refusal reason out of ordinary progression statuses;
- * the overload below exposes it only to callers that request it.
- *
- * A Refusal Hand-back applied nothing, so there is no terminal progression to
- * report.
- */
-export interface ExecutionLoopRefusal {
-  /** Discriminant, and the reason this is not a terminal. */
-  readonly status: 'refused';
-  /** What to tell the operator, and under which code. Composed by core. */
-  readonly refusal: InlineParentAdvanceRefusal;
-}
-
-/**
- * Build the operator-facing refusal for a drain that refused.
- *
- * The SOLE construction site. Two paths reach the identical `failed` arm of
- * {@link DrainResolvedCompletionsResult} — this loop's own drain and the inline
- * parent-advance callable's — and the whole point of the shared
- * {@link COMPLETION_TARGET_MISMATCH_CODE} is that they cannot describe one fact
- * differently. Two literals spelling the same object left them free to, so the
- * guarantee held only by inspection; this makes it hold by construction.
- *
- * @param runbookId - The run whose drain refused. Carried on the refusal because
- *   core's messages name no run and the walk routinely refuses at an ancestor.
- * @param drained - The drain's refusal arm.
- * @returns The refusal both paths render.
- */
-export function refusalFromDrainFailure(
-  runbookId: RunId,
-  drained: Extract<DrainResolvedCompletionsResult, { status: 'failed' }>,
-): InlineParentAdvanceRefusal {
-  return {
-    reason: drained.reason,
-    message: drained.message,
-    code: COMPLETION_TARGET_MISMATCH_CODE,
-    runId: runbookId,
-  };
-}
-
-/**
- * Optional behavior overrides for {@link runExecutionLoop}.
- */
-export interface ExecutionLoopOptions {
-  /**
-   * Return diagnosed refusals as data instead of rendering a stopped result.
-   * Used by inline parent advancement, which must stop its upward walk when no
-   * terminal transition was applied.
-   *
-   * One hand-back path is deliberately exempt, and a reader should not assume
-   * every refusal travels as data: a transactional fence refusal stays a
-   * diagnostic-emitting `blocked` result. It emits `ERROR_OCCURRED` carrying
-   * `transactionalRefusalCode(...)` and returns `blocked` rather than a typed
-   * refusal, so its code reaches the caller through the event stream instead of
-   * the return value. The drain-mismatch and frontier paths do the reverse —
-   * they return `{ status: 'refused', refusal }` and emit nothing. Both channels
-   * preserve fail-closed severity; they differ only in where the code is read.
-   */
-  readonly returnRefusals?: true;
-  /** Optional actor service test seam. */
-  readonly actorService?: RunbookActorService;
-  /**
-   * Optional session service seam.
-   *
-   * The loop constructs its own over `manager` when absent, which is the
-   * production path and stays the default. Injectable so integration tests can
-   * observe launch/session effects through the same service instance; release
-   * ownership remains transaction-internal and never enters the loop result.
-   */
-  readonly sessionService?: SessionService;
-  /** Exact claim authority retained by a claim-authenticated continuation. */
-  readonly claimKey?: ClaimLookupKey;
-  /**
-   * Verified claim-bound delegation capabilities for this loop.
-   *
-   * ONE branded pair rather than two independently optional callables. The loop
-   * needs the issuer to cross into a DELEGATE frontier and the same-issuer
-   * deriver to project the frontier that issuance stored, and they must come
-   * from the same authority — a descriptor minted by one issuer is refused
-   * RD-821 by a deriver bound to another. Carrying them separately let the
-   * frontier gate below test the deriver alone, which is a question about
-   * authority the deriver's absence could only answer by coincidence.
-   */
-  readonly delegationRuntime?: DelegationRuntimeCapabilities;
-  /** Optional core mutation runner test seam. */
-  readonly actorMutationRunner?: EffectfulActorMutationRunner;
-  /** Optional command services test seam. */
-  readonly commandServices?: CommandExecutionServices;
-  /** Runtime-only routing for command subprocess stdout/stderr. */
-  readonly commandStreamOptions?: CommandExecutionStreamOptions;
-  /** Output emitter used when the loop launches an inline child runbook. */
-  readonly output?: OutputEmitter;
-  /**
-   * Public Run Progression activation used when this loop launches an inline
-   * child.
-   *
-   * The loop never selects a private progression for the child it launches:
-   * {@link launchInlineChildFromIntent} refuses without this seam, so a caller
-   * that can reach an inline-launch intent MUST supply it. Optional on the type
-   * only because most callers drive a run that cannot reach one; the refusal,
-   * not the type, is what keeps a missing driver from silently degrading into a
-   * frontend-owned loop.
-   */
-  readonly driveProgression?: InlineLaunchArgs['driveProgression'];
-}
-
-// The three frontier refusal/failure messages are core-owned
-// (re-entry-frontier.ts, next to the seam they describe) and imported above,
-// so this loop's unmigrated paths and the core Run Progression activation
-// cannot describe one frontier condition differently.
-
 /** Launch context for {@link launchInlineChildFromIntent}. */
 export interface InlineLaunchArgs {
   readonly manager: RunbookStateManager;
+  /** Exact verified authority for the composing parent. */
+  readonly authority: RunProgressionAuthority;
   readonly actorService: RunbookActorService;
   readonly sessionService: SessionService;
   /**
    * Parent-stream sink for the span's own diagnostics. Narrowed to `emit` so
    * the Run Progression adapter can hand in the activation's GATED sink
    * (#853): a broken renderer beneath it surfaces as the typed
-   * `ObservationDeliveryError`, not an untyped escape. The legacy loop passes
-   * its full emitter, which satisfies the same shape.
+   * `ObservationDeliveryError`, not an untyped escape.
    */
   readonly emitter: Pick<ExecutionEventEmitter, 'emit'>;
   readonly cwd: string;
@@ -297,12 +118,6 @@ export interface InlineLaunchArgs {
   readonly prompted: boolean;
   readonly output: OutputEmitter;
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
-  /**
-   * This loop's own verified delegation capabilities, named with the run they
-   * belong to. Forwarded to the child's terminal flow-back, which drains and
-   * re-runs THIS run — see {@link propagateInlineChildTerminalResult}.
-   */
-  readonly parentDelegationRuntime?: RunScopedDelegationRuntime;
   /** Same public activation used by the composing run; supplied by the frontend adapter. */
   readonly driveProgression?: (
     directive: Extract<RunProgressionDirective, { kind: 'activate' }>,
@@ -312,119 +127,6 @@ export interface InlineLaunchArgs {
 
 function dispatchResultFromProgression(outcome: RunProgressionOutcome): InlineChildDispatchResult {
   return { kind: 'composition_outcome', outcome };
-}
-
-/**
- * Build a corrective stop's position from the cursor the drain COMMITTED.
- *
- * The drain's refusal arm carries no state, so a drain that applied several
- * completions before refusing leaves the loop's pre-drain capture behind the
- * committed cursor — and a stop built from that capture names a step the run had
- * already left, inside the same envelope whose message names the real one.
- *
- * One caller now, where there were two: the terminal arms used to build a
- * corrective stop for a refused release, and they no longer release at all —
- * their release commits inside the apply's own transaction (#794), so a refusal
- * takes the terminal state down with it and leaves nothing to correct.
- *
- * @param manager - State manager used to re-read the committed cursor.
- * @param runbookId - Run whose committed cursor is being named.
- * @param fallback - The loop's pre-drain capture, used only when the run has
- *   since vanished, where a stale position beats no position at all.
- * @param totalSteps - Numbered-step count the position is rendered against.
- * @returns The position naming the cursor the drain committed.
- * @throws {InvalidRunbookStateError} If the persisted row is structurally
- *   invalid, and {@link LegacySnapshotError} for a deprecated snapshot — both
- *   raised by `RunbookStateManager.load`. Per the no-migration rule each is
- *   corrupt state whose recovery is explicit user action, not a refusal this
- *   loop absorbs; its one caller reaches this only once, on a refusal path.
- */
-async function committedPosition(
-  manager: RunbookStateManager,
-  runbookId: RunId,
-  fallback: RunbookState,
-  totalSteps: number,
-): Promise<ReturnType<typeof buildStepPosition>> {
-  const committed = (await manager.load(runbookId)) ?? fallback;
-  return buildStepPosition(committed.step, totalSteps, committed.substep, committed.forStack);
-}
-
-/**
- * Perform the loop's `addressed` Run Release, reporting a refusal as events.
- *
- * The release site behind {@link releaseTerminalRun}. The role is
- * `addressed` on every path this loop takes: it acted on the run it names.
- * Before terminality the preserved claim is still live authority for the holder
- * that presented it; after terminality it is the terminal evidence
- * `rundown pass/fail/status --claim-id` resolves against. Neither reading is a
- * revocation, and a revocation is the one direction that cannot be undone —
- * `adoptRunControlClaim` refuses to re-mint over a run that has issued a
- * delegation, so the holder is told `claim-rotated` about a rotation that never
- * happened (#789).
- *
- * A refused release is emitted as an `ERROR_OCCURRED` and nothing else. It once
- * also took a resolver for a corrective `RUNBOOK_STOPPED`, because the drain's
- * terminal arms announced a completion before releasing and a refusal had to
- * contradict it. Those arms no longer release at all — their release commits
- * inside the apply's own transaction (#794), where a refusal rolls the terminal
- * state back with it and there is no announced completion left to correct.
- *
- * What still reaches here is the pair of entry-time terminal checks. They find
- * a run that was already terminal and therefore have no state write into which
- * their release can fold. Refusals never reach here: they committed no terminal
- * state and therefore owe no Run Release (#833).
- *
- * @param sessionService - Session service performing the release.
- * @param runbookId - Run whose session targeting is being released.
- * @param emitter - Execution emitter receiving the refusal events.
- * @returns `'committed'` once the release commits, `'refused'` otherwise.
- */
-async function applyAddressedRunRelease(
-  sessionService: SessionService,
-  runbookId: RunId,
-  emitter: ExecutionEventEmitter,
-): Promise<'committed' | 'refused'> {
-  // Named, not positional. This loop is releasing the run it drove, and
-  // `runbookId` is that run — so asking the session to remove "whatever is on
-  // top" is a strictly weaker statement of the same intent, weak in two
-  // directions: a stale child left above this run gets removed instead, while
-  // this run is left on the stack it was supposed to leave. A run already
-  // released — by the fence, or by another process — is a clean no-op.
-  const released: SessionMutationResult<unknown> = await sessionService.releaseRuns([
-    { runId: runbookId, role: 'addressed' },
-  ]);
-  if (released.kind === 'committed') return 'committed';
-  emitter.emit({
-    type: 'ERROR_OCCURRED',
-    payload: { message: released.message, code: sessionMutationRefusalCode(released) },
-  });
-  // Stryker disable next-line StringLiteral: equivalent — both consumers test
-  // `=== 'committed'` and take the other arm otherwise, so every other string
-  // reports a refusal exactly as this one does. Killing it would need a
-  // comparison against a state the union already makes unreachable.
-  return 'refused';
-}
-
-/**
- * Release a run this loop drove to terminal, and report the loop's outcome.
- *
- * Reports `terminal` once the release commits. A refused release downgrades the
- * status to `'stopped'`: the terminal side effect this loop owed did not happen,
- * so it must not report a clean `'done'`.
- * @param sessionService - Session service performing the release.
- * @param runbookId - Run whose session targeting is being released.
- * @param emitter - Execution emitter receiving the refusal events.
- * @param terminal - Status to report when the release commits.
- * @returns `terminal` once release commits, or `'stopped'` when it is refused.
- */
-async function releaseTerminalRun(
-  sessionService: SessionService,
-  runbookId: RunId,
-  emitter: ExecutionEventEmitter,
-  terminal: 'done' | 'stopped',
-): Promise<ExecutionLoopResult> {
-  const released = await applyAddressedRunRelease(sessionService, runbookId, emitter);
-  return released === 'committed' ? { status: terminal } : { status: 'stopped' };
 }
 
 /**
@@ -496,110 +198,20 @@ function describeInlineChildLinkageRefusal(
   }
 }
 
-/**
- * Advance the composing parent for a terminal inline child, and report a status.
- *
- * `handled` reports that synchronous inline flow-back already drove the parent
- * progression. It is a control-flow result, not a release disposition: the
- * terminal mutation owns its atomic Run Release and no frame claims it.
- *
- * @param args - The terminal child, its loop status, and the composing parent's
- *   run-scoped delegation authority.
- * @param args.manager - State manager for the workspace being executed.
- * @param args.childRunId - The terminal inline child whose parent advances.
- * @param args.loopResult - The child's own execution-loop status.
- * @param args.cwd - Current working directory.
- * @param args.output - Output emitter for streamed parent events.
- * @param args.commandStreamOptions - Runtime-only routing for command
- *   subprocess I/O.
- * @param args.parentDelegationRuntime - Verified delegation capabilities bound
- *   to the composing parent run.
- * @returns The child's status when it has no inline parent, otherwise
- *   `'handled'` after the synchronous parent flow-back returns — plus the
- *   preserved refusal identity when the flow-back refused, so the dispatch
- *   fold does not re-label it.
- * @throws {Error} If the parent's state cannot be loaded, or the inline
- *   parent-advance seam rejects for a reason it has not diagnosed.
- */
-async function propagateInlineChildTerminalResult(args: {
-  readonly manager: RunbookStateManager;
-  readonly childRunId: RunId;
-  readonly loopResult: ExecutionLoopStatus;
-  readonly cwd: string;
-  readonly output: OutputEmitter;
-  readonly commandStreamOptions?: CommandExecutionStreamOptions;
-  readonly parentDelegationRuntime?: RunScopedDelegationRuntime;
-}): Promise<{
-  readonly status: ExecutionLoopStatus;
-  readonly refusal?: InlinePropagationRefusalDetail;
-}> {
-  const {
-    manager,
-    childRunId,
-    loopResult,
-    cwd,
-    output,
-    commandStreamOptions,
-    parentDelegationRuntime,
-  } = args;
-  if (loopResult !== 'done' && loopResult !== 'stopped') return { status: loopResult };
-
-  const childState = await manager.load(childRunId);
-  if (!childState?.parentLinkage) return { status: loopResult };
-
-  // Inline composition (Plan 5): inline children flow back synchronously — the
-  // same orchestrator that ran the child advances the parent here. Drain and
-  // advance the parent immediately (there is no separate `rd collect` for
-  // inline). The child's own loopResult governs the result here unless advancing
-  // the parent fails closed, which surfaces as `blocked` after the synchronous
-  // flow-back has already handled progression.
-  //
-  // The composing parent IS the run whose loop launched this child, so its
-  // verified run-control authority is live in this process. Hand it on: the
-  // advance can step the parent into a later DELEGATE step, and a continuation
-  // without an issuer refuses `actor_context_required`.
-  // `parentDelegationRuntime` names the run it belongs to, so the seam's walk up
-  // the remaining inline chain cannot borrow it for an ancestor.
-  const { propagateChildTerminalDetailed } = await import('../helpers/delegation-completion.js');
-  const propagated = await propagateChildTerminalDetailed(
-    childState,
-    undefined,
-    cwd,
-    output,
-    commandStreamOptions,
-    parentDelegationRuntime,
-  );
-  if (propagated.result === 'stopped' || propagated.result === 'blocked') {
-    return {
-      status: 'blocked',
-      ...(propagated.refusal !== undefined ? { refusal: propagated.refusal } : {}),
-    };
-  }
-  return { status: 'handled' };
-}
-
 async function consumeInlineLaunchIntent(args: {
+  readonly authority: RunProgressionAuthority;
+  readonly manager: RunbookStateManager;
   readonly actorService: RunbookActorService;
-  readonly parentRunId: RunId;
   readonly steps: readonly ResolvedStep[];
 }): Promise<void> {
-  const consumed = await args.actorService.sendAndSync(args.parentRunId, args.steps, {
-    type: 'INLINE_LAUNCH_CONSUMED',
-  });
-  assertActorSyncSucceeded(consumed, 'Failed to consume inline launch after child start');
-}
-
-function assertActorSyncSucceeded(
-  sync: ActorSyncResult | null,
-  nullMessage: string,
-): asserts sync is ActorSyncResult {
-  if (!sync) {
-    throw new Error(nullMessage);
-  }
-  const snapshot = sync.snapshot as { status?: unknown; error?: unknown };
-  if (snapshot.status === 'error') {
-    throw new Error(getErrorMessage(snapshot.error));
-  }
+  const consumed = await commitRunProgressionEvent(
+    args.authority,
+    args.manager,
+    args.actorService,
+    args.steps,
+    { type: 'INLINE_LAUNCH_CONSUMED' },
+  );
+  if (consumed.kind !== 'committed') throw new Error(consumed.message);
 }
 
 /**
@@ -607,8 +219,8 @@ function assertActorSyncSucceeded(
  *
  * Exported for the Run Progression adapters: the migrated core activation
  * decides WHEN an inline launch happens and folds this span's status into its
- * closed outcome; the span itself — latch, child state, subprocess execution,
- * synchronous flow-back — remains CLI machinery until its own migration slice.
+ * closed outcome. This span performs only injected external launch effects;
+ * core selects and sequences all progression and upward flow-back.
  *
  * @param args - Launch context; see {@link InlineLaunchArgs}.
  * @param args.manager - State manager for the workspace being executed.
@@ -622,17 +234,13 @@ function assertActorSyncSucceeded(
  * @param args.output - Output emitter for streamed child events.
  * @param args.driveProgression - Public activation seam used for the child.
  * @param args.commandStreamOptions - Runtime-only routing for command subprocess I/O.
- * @param args.parentDelegationRuntime - The composing run's verified delegation capabilities.
  * @returns The typed conclusion of the launch span. Refusals carry the
  *   registered code of the refusing condition and a boundary-derived recovery
- *   classification; child-loop conclusions fold through
- *   {@link dispatchResultFromFlowBack}. The legacy execution loop maps this
- *   union back onto {@link ExecutionLoopStatus} via
- *   {@link executionLoopStatusFromDispatch} until its remaining entry paths
- *   migrate.
+ *   classification; child conclusions return directly to Run Progression.
  */
 export async function launchInlineChildFromIntent({
   manager,
+  authority,
   actorService,
   sessionService,
   emitter,
@@ -642,7 +250,6 @@ export async function launchInlineChildFromIntent({
   prompted,
   output,
   commandStreamOptions,
-  parentDelegationRuntime,
   driveProgression,
 }: InlineLaunchArgs): Promise<InlineChildDispatchResult> {
   // Both projections of the one intent, and derived through the same helper the
@@ -670,7 +277,7 @@ export async function launchInlineChildFromIntent({
   // the lock's job was to keep a second observer out of the gap between the
   // decision and the write it depended on, and deriving the decision inside the
   // compare-and-swap closes that gap by construction instead of by exclusion.
-  const latch = await latchInlineLaunch({ manager, actorService, steps, intent });
+  const latch = await latchInlineLaunch({ manager, actorService, authority, steps, intent });
   if (latch.kind === 'missing' || latch.kind === 'inactive') {
     const message = `Inline parent run ${parentLinkage.parentRunId} is not active`;
     emitter.emit({
@@ -810,11 +417,12 @@ export async function launchInlineChildFromIntent({
 
     try {
       await consumeInlineLaunchIntent({
+        authority,
+        manager,
         actorService,
-        parentRunId: parentLinkage.parentRunId,
         steps,
       });
-      // The launch is finished. What follows is the child's own execution loop,
+      // The launch is finished. What follows is the child's own activation,
       // which can run for the rest of the turn, and the latch must not be held
       // across it — nor released again at the end of it.
       latch.held.keep();
@@ -858,8 +466,8 @@ export async function launchInlineChildFromIntent({
     }
     // A resumed child's own bearer died with the process that launched it, so
     // this continuation holds no authority for it. The composing parent's
-    // runtime is NOT a substitute — it belongs to another run, and
-    // `delegationRuntimeFor` refuses it by design — so core re-establishes the
+    // runtime is NOT a substitute — it belongs to another run, and every seam
+    // that narrows a run-scoped runtime refuses it — so core re-establishes the
     // CHILD's own run-control authority. Core refuses that when the child
     // already issued a credential the replacement could not reproduce; that
     // refusal closes this launch rather than selecting a private unarmed loop.
@@ -1005,12 +613,13 @@ export async function launchInlineChildFromIntent({
       // exists is what lets a crashed launch be re-observed and finished.
       afterStarted: async () => {
         await consumeInlineLaunchIntent({
+          authority,
+          manager,
           actorService,
-          parentRunId: parentLinkage.parentRunId,
           steps,
         });
         // Inside the callback, not after `startRunbook` returns: the child's
-        // execution loop runs before that return, so disarming afterwards would
+        // activation runs before that return, so disarming afterwards would
         // hold the latch across the whole child run. A throw from the consume
         // above skips this and leaves the scope armed, which is correct —
         // `startRunbook` deletes the run it created on that path, so the next
@@ -1057,28 +666,7 @@ export async function launchInlineChildFromIntent({
     };
   }
 
-  if (launchResult.progression !== undefined) {
-    return dispatchResultFromProgression(launchResult.progression);
-  }
-
-  if (launchResult.loopResult === 'done' || launchResult.loopResult === 'stopped') {
-    const propagated = await propagateInlineChildTerminalResult({
-      manager,
-      childRunId,
-      loopResult: launchResult.loopResult,
-      cwd,
-      output,
-      commandStreamOptions,
-      parentDelegationRuntime,
-    });
-    return dispatchResultFromFlowBack(
-      propagated.status,
-      parentLinkage.parentRunId,
-      propagated.refusal,
-    );
-  }
-
-  return dispatchResultFromFlowBack(launchResult.loopResult, parentLinkage.parentRunId);
+  return dispatchResultFromProgression(launchResult.progression);
 }
 
 /**
@@ -1099,1057 +687,6 @@ export const CONTENTION_LAUNCH_CODES: ReadonlySet<string> = new Set([
   ErrorCodes.CONCURRENT_STATE_MODIFICATION.code,
   TRANSACTIONAL_REFUSAL_CODE_BY_KIND.concurrent_modification,
 ]);
-
-/**
- * Fold a child execution-loop conclusion into the core dispatch result.
- *
- * The launch span's inner machinery still speaks {@link ExecutionLoopStatus};
- * this is the single boundary translation: `handled` (synchronous flow-back
- * drove the composing run) becomes `flow_back_complete`, `blocked` becomes
- * `flow_back_refused`, and a terminal that reached this frame without linkage
- * becomes the degenerate `child_terminal` arm.
- *
- * @param status - The child loop or flow-back conclusion.
- * @param composingRunId - The composing run that refused when no deeper typed refusal exists.
- * @param refusal - The preserved refusal identity, when a typed refusal is what
- *   blocked the flow-back. Carried onto the `flow_back_refused` arm so the
- *   refusing condition keeps its code and boundary-derived recovery; absent for
- *   a fail-closed conclusion with no typed refusal, which stays `permanent`.
- * @returns The core-typed dispatch result.
- * @throws {Error} If an unrecognized loop status reaches the exhaustive guard.
- */
-function dispatchResultFromFlowBack(
-  status: ExecutionLoopStatus,
-  composingRunId: RunId,
-  refusal?: InlinePropagationRefusalDetail,
-): InlineChildDispatchResult {
-  switch (status) {
-    case 'waiting':
-      return { kind: 'waiting' };
-    case 'handled':
-      return { kind: 'flow_back_complete' };
-    case 'blocked':
-      return refusal === undefined
-        ? { kind: 'flow_back_refused', runId: composingRunId, recovery: 'permanent' }
-        : {
-            kind: 'flow_back_refused',
-            runId: refusal.runId,
-            code: refusal.code,
-            message: refusal.message,
-            recovery: refusal.recovery,
-          };
-    case 'done':
-      return { kind: 'child_terminal', status: 'completed' };
-    case 'stopped':
-      return { kind: 'child_terminal', status: 'stopped' };
-    default: {
-      const _exhaustive: never = status;
-      throw new Error(`Unhandled loop status: ${String(_exhaustive)}`);
-    }
-  }
-}
-
-/**
- * Map a launch span's dispatch result back onto the legacy loop status.
- *
- * The inverse boundary translation for the five entry paths still driving
- * {@link runExecutionLoop}. This compatibility boundary cannot preserve typed
- * refusal identity because the legacy status union has no refusal arm.
- *
- * @param result - The launch span's typed conclusion.
- * @returns The status the legacy loop propagates.
- * @throws {Error} If an unrecognized dispatch result reaches the exhaustive guard.
- */
-function executionLoopStatusFromDispatch(result: InlineChildDispatchResult): ExecutionLoopStatus {
-  switch (result.kind) {
-    case 'composition_outcome':
-      return result.outcome.kind === 'completed'
-        ? 'done'
-        : result.outcome.kind === 'stopped'
-          ? 'stopped'
-          : result.outcome.kind === 'waiting'
-            ? 'waiting'
-            : 'blocked';
-    case 'waiting':
-      return 'waiting';
-    case 'flow_back_complete':
-      return 'handled';
-    case 'flow_back_refused':
-      return 'blocked';
-    case 'launch_refused':
-      // #856 removed HALF of this debt: an activation-launched inline child now
-      // enters Run Progression (`driveProgression` below), so its typed refusal
-      // reaches the parent as `composition_outcome` and never crosses here. What
-      // remains is the legacy loop's OWN inline dispatch, and the flattening it
-      // needs cannot be fixed by re-labelling this arm.
-      //
-      // `launch_refused` conflates two genuinely different states, and the
-      // legacy status union has no member for either distinction:
-      //
-      // - Refused with the run still RUNNING (the intent-consume failure above,
-      //   which applied no transition). `stopped` is a false terminal for it,
-      //   and `buildAdvanceInlineParent` forwards that to
-      //   `propagateTerminalChildUpward` as real — the #802/#833 class one level
-      //   down.
-      // - Refused because the run genuinely STOPPED. `INLINE_LAUNCH_FORBIDDEN`
-      //   inside a delegation-claimed child is the reachable case: core refuses
-      //   automatic inline launch for any delegation-linked run and the child's
-      //   loop stops on that refusal. Here `stopped` is LOAD-BEARING — it is
-      //   what makes `claim.ts` report the child's terminal upward, without
-      //   which the delegating parent never receives the outcome and the
-      //   follow-on `collect` fails (pinned by collect.test.ts's "keeps JSON
-      //   stdout parseable when collect advances into a command…").
-      //
-      // Mapping this arm to `blocked` fixes the first case and breaks the
-      // second, so it stays `stopped` until the typed refusal can cross the
-      // boundary — which is #858 deleting the boundary, not re-spelling it.
-      return 'stopped';
-    case 'child_terminal':
-      return result.status === 'completed' ? 'done' : 'stopped';
-    default: {
-      const _exhaustive: never = result;
-      throw new Error(`Unhandled dispatch result: ${(_exhaustive as { kind: string }).kind}`);
-    }
-  }
-}
-
-function observeAndOrchestrate({
-  emitter,
-  steps,
-  currentState,
-  currentStep,
-  result,
-  computeActionResult,
-  command,
-  syncSnapshot,
-  postState,
-}: ObserveAndOrchestrateArgs): TransitionApplicationResult {
-  const updatedState = postState;
-
-  const orchestration = orchestrateTransition({
-    sink: transitionSinkFromEmitter(emitter),
-    steps,
-    currentStep,
-    previousState: currentState,
-    updatedState,
-    snapshot: syncSnapshot,
-    result,
-    computeActionResult,
-    command,
-  });
-
-  if (orchestration.status === 'continue') {
-    return { status: 'continue', state: orchestration.state };
-  }
-  return { status: orchestration.status };
-}
-
-function renderTerminalObservationFromCoreState({
-  emitter,
-  steps,
-  currentStep,
-  previousState,
-  updatedState,
-  snapshot,
-}: RenderTerminalObservationArgs): void {
-  const observation = deriveTransitionObservation({
-    steps,
-    currentStep,
-    previousState,
-    updatedState,
-    snapshot,
-    result: 'fail',
-  });
-
-  for (const event of observation.events) {
-    switch (event.type) {
-      case 'ERROR_OCCURRED':
-        emitter.emit({ type: 'ERROR_OCCURRED', payload: event.payload });
-        break;
-      case 'RUNBOOK_STOPPED':
-        emitter.emit({ type: 'RUNBOOK_STOPPED', payload: event.payload });
-        break;
-      case 'RUNBOOK_COMPLETED':
-        emitter.emit({ type: 'RUNBOOK_COMPLETED', payload: event.payload });
-        break;
-      case 'STEP_TRANSITIONED':
-        break;
-      default: {
-        const _exhaustive: never = event;
-        void _exhaustive;
-      }
-    }
-  }
-}
-
-/**
- * Command path: after COMMAND_RESULT the leaf enters __capture, the actor
- * resolves, onDone raises PASS or FAIL internally to the leaf's handlers,
- * and the leaf transitions to its resolved target. CLI role: observe.
- * @param args - Command transition arguments including sync snapshot and post-state
- * @returns Transition application result after observing the resolved transition
- */
-function observeCommandTransition(args: ObserveCommandTransitionArgs): TransitionApplicationResult {
-  return observeAndOrchestrate(args);
-}
-
-/** Arguments for draining resolved substep completions. */
-export interface DrainResolvedCompletionsArgs {
-  /** Actor service for sending events to the runbook machine. */
-  actorService: RunbookActorService;
-  /** State manager used by the core completion service. */
-  manager: RunbookStateManager;
-  /** Event emitter for execution progress notifications. */
-  emitter: ExecutionEventEmitter;
-  /** ID of the runbook being drained. */
-  runbookId: RunId;
-  /** Parsed step definitions for the runbook. */
-  steps: ResolvedStep[];
-  /** Current persisted runbook state. */
-  currentState: RunbookState;
-  /** Optional function to compute action result for transition evaluation. */
-  computeActionResult?: (actionType: ActionType) => boolean;
-  /** Optional command string for event context. */
-  command?: string;
-  /** Override frame for frame-scoped lookups (e.g., prompted-for with explicit --index). */
-  frameOverride?: Frame;
-  /** Verified runtime-only issuer for completion transitions entering delegation. */
-  issueDelegationCredential?: DelegationCredentialIssuer;
-  /**
-   * Run Release the drain folds into whichever apply reaches terminal.
-   *
-   * Passed through to the core apply unread. Whether a given apply is terminal
-   * is decided inside that apply's own transaction, so arming it here is a
-   * statement about atomic projection and nothing else — every non-terminal
-   * iteration releases nothing regardless.
-   */
-  terminalRelease?: { readonly role: ReleaseRole };
-}
-
-/** Result of draining resolved substep completions. */
-export type DrainResolvedCompletionsResult =
-  | {
-      /** Drain succeeded with remaining substeps to process. */
-      status: 'continue';
-      state: RunbookState;
-      unresolved: number;
-      applied: number;
-    }
-  | {
-      /** All substeps resolved and runbook completed. */ status: 'done';
-      unresolved: number;
-      applied: number;
-    }
-  | {
-      /** Runbook stopped due to a STOP transition. */ status: 'stopped';
-      unresolved: number;
-      applied: number;
-    }
-  | {
-      /** Core rejected a persisted completion that did not match the active cursor. */
-      status: 'failed';
-      reason: 'target_mismatch';
-      message: string;
-      unresolved: number;
-      applied: 0;
-    }
-  | {
-      /** Requested frame is not currently active, so drain is observation-only. */
-      status: 'not_active';
-      unresolved: number;
-      applied: 0;
-    };
-
-/**
- * Deterministically drain resolved substep completions for the active frame+entry.
- *
- * Applies completions in substep order and stops at the first unresolved substep.
- *
- * @param args - Drain arguments including services and current state
- * @param args.actorService - Actor service for sending events to the runbook machine
- * @param args.manager - Runbook state manager used to construct the core completion service
- * @param args.emitter - Event emitter for execution progress notifications
- * @param args.runbookId - ID of the runbook being drained
- * @param args.steps - Parsed step definitions for the runbook
- * @param args.currentState - Current persisted runbook state
- * @param args.computeActionResult - Optional function to compute action result for transitions
- * @param args.command - Optional command string for event context
- * @param args.frameOverride - Optional frame override for frame-scoped lookups (e.g., prompted-for with explicit --index)
- * @param args.issueDelegationCredential - Verified runtime issuer for transitions entering delegation
- * @param args.terminalRelease - Run Release folded into whichever apply reaches
- *   terminal; omit it only for a drain that cannot terminalize its run
- * @returns Drain result indicating continue/done/stopped with counts of applied and unresolved completions
- * @throws {Error} If the core completion service, session update, or transition event handling fails
- */
-export async function drainResolvedCompletions({
-  actorService,
-  manager,
-  emitter,
-  runbookId,
-  steps,
-  currentState,
-  computeActionResult,
-  command,
-  frameOverride,
-  issueDelegationCredential,
-  terminalRelease,
-}: DrainResolvedCompletionsArgs): Promise<DrainResolvedCompletionsResult> {
-  const completionService = new RunbookCompletionService(manager, actorService);
-  // `currentState` seeds only the caller-visible return value. It is deliberately
-  // NOT threaded into the applies: the core primitive reads its own state inside
-  // the compare-and-swap that commits, so a state supplied from out here could
-  // only be staler than the one the decision is made against — and would see
-  // nothing another process committed between two applies.
-  let observedState = currentState;
-  let appliedCount = 0;
-
-  for (;;) {
-    const applied = await completionService.applyNextResolvedCompletion({
-      runbookId,
-      steps,
-      issueDelegationCredential,
-      ...(frameOverride ? { frameOverride } : {}),
-      ...(terminalRelease ? { terminalRelease } : {}),
-    });
-
-    if (applied.kind === 'mismatch') {
-      return {
-        status: 'failed',
-        reason: applied.mismatch.reason,
-        message: applied.mismatch.message,
-        unresolved: applied.unresolved,
-        applied: 0,
-      };
-    }
-    if (applied.kind === 'not_active') {
-      // An INITIAL divergence is observation-only. A divergence after work means
-      // an apply advanced the cursor out of the override frame, and the entries
-      // already observed must still be reported.
-      if (appliedCount > 0) {
-        return {
-          status: 'continue',
-          state: observedState,
-          unresolved: applied.unresolved,
-          applied: appliedCount,
-        };
-      }
-      return { status: 'not_active', unresolved: applied.unresolved, applied: 0 };
-    }
-    if (applied.kind === 'missing') {
-      return {
-        status: 'continue',
-        state: observedState,
-        unresolved: 0,
-        applied: appliedCount,
-      };
-    }
-    if (applied.kind === 'none') {
-      return {
-        status: 'continue',
-        state: appliedCount > 0 ? observedState : applied.state,
-        unresolved: applied.unresolved,
-        applied: appliedCount,
-      };
-    }
-
-    // Category A: rendering and event emission belong to the CLI, and must happen
-    // for each transition before the next apply is derived. That is why the loop
-    // lives here rather than in core.
-    const entry = applied.entry;
-    const currentStep = findStepOrThrow(steps, entry.stateBefore.step, entry.stateBefore.id);
-    const observed = observeAndOrchestrate({
-      emitter,
-      steps,
-      currentState: entry.stateBefore,
-      currentStep,
-      result: entry.completion.result,
-      computeActionResult,
-      command,
-      syncSnapshot: entry.snapshot,
-      postState: entry.stateAfter,
-    });
-    appliedCount += 1;
-    // Two independent derivations of one committed fact, and the loop's terminal
-    // release now rides on the OTHER one: core arms it off `state.lifecycle`,
-    // while this reads the snapshot's top-level status/value. They cannot
-    // disagree in the direction that would matter here — entering `COMPLETE` or
-    // `STOPPED` is what assigns the lifecycle, so a terminal snapshot implies a
-    // terminal lifecycle and a released run. The reverse gap is the real one and
-    // is documented on `deriveTerminalDrainObservationEvent`; it lands on
-    // `applied.terminal` below, which reports the same status.
-    if (observed.status === 'done' || observed.status === 'stopped') {
-      return { status: observed.status, unresolved: applied.unresolved, applied: appliedCount };
-    }
-    observedState = observed.state;
-
-    if (applied.terminal) {
-      return { status: applied.terminal, unresolved: applied.unresolved, applied: appliedCount };
-    }
-  }
-}
-
-/**
- * Execute command steps in a loop until:
- * - Runbook completes or stops
- * - A prompt-only step is reached (no command)
- * - In prompted mode (no auto-execution)
- *
- * Prompted mode is read from the run's own persisted `prompted` flag rather
- * than supplied by the caller: it is a fact the run state owns, fixed at
- * creation, and a parameter is only a way for a caller to disagree with it.
- *
- * @param manager - Runbook state manager instance
- * @param runbookId - Branded run id
- * @param steps - Array of runbook steps
- * @param cwd - Current working directory for command execution
- * @param emitter - Event emitter for execution events
- * @param options - Optional execution loop behavior overrides
- * @returns An {@link ExecutionLoopResult}: `status` is 'done' if completed,
- *   'stopped' if stopped, 'waiting' if a prompt-only step was reached, and
- *   'handled' when re-entrant inline flow-back already drove the enclosing
- *   progression, and 'blocked' when that handled progression refused/stopped.
- *   A persisted delegation frontier that cannot be projected
- *   without verified claim authority returns 'stopped' after an
- *   `ACTOR_CONTEXT_REQUIRED` `ERROR_OCCURRED` and no release — it is a refusal,
- *   not a terminal, so the still-running run remains targeted for retry. A
- *   frontier the *present* authority cannot reproduce — a rotated issuing claim,
- *   or a derived bearer that does not match its persisted verifier — returns
- *   'stopped' the same way, coded `RD-821` (`DELEGATION_INVARIANT_VIOLATED`); a
- *   frontier that projected but whose consume did not commit returns 'stopped'
- *   coded `RD-829` (`DELEGATION_FRONTIER_CONSUME_FAILED`) and is retryable. All
- *   three arms come from the shared core seam
- *   {@link projectAndConsumeReEntryFrontier}, so `rundown collect` reports each
- *   condition under the same code. A persisted completion that is not for the
- *   active cursor returns 'stopped' the same way, coded
- *   `COMPLETION_TARGET_MISMATCH` — permanent, and the same code the inline
- *   parent-advance seam reports for the identical drain refusal (#802). Under
- *   Refusal Hand-back makes that ONE arm return {@link ExecutionLoopRefusal}
- *   instead of `'stopped'` and emit nothing, because nothing terminal happened.
- * @throws {Error} If the core actor/lifecycle/session services throw while
- *   advancing transitions, entering an execution unit cannot render it (a
- *   `--helpers` helper raising), command execution rejects, or the emitter
- *   raises during event dispatch.
- * @throws {InvalidRunbookStateError} If the run's persisted snapshot carries a
- *   structurally malformed `delegateFrontier`, its cursor names a step the
- *   parsed runbook does not define ({@link findStepOrThrow}), or it carries no
- *   `ContextId` / `WorkPath` to render its frame against. Per the no-migration
- *   rule each is corrupt persisted state whose recovery path is explicit user
- *   action (finish, stop, prune, restart), not a refusal the loop can absorb.
- */
-export async function runExecutionLoop(
-  manager: RunbookStateManager,
-  runbookId: RunId,
-  steps: ResolvedStep[],
-  cwd: string,
-  emitter: ExecutionEventEmitter,
-  options: ExecutionLoopOptions & { readonly returnRefusals: true },
-): Promise<ExecutionLoopResult | ExecutionLoopRefusal>;
-export async function runExecutionLoop(
-  manager: RunbookStateManager,
-  runbookId: RunId,
-  steps: ResolvedStep[],
-  cwd: string,
-  emitter: ExecutionEventEmitter,
-  options?: ExecutionLoopOptions & { readonly returnRefusals?: undefined },
-): Promise<ExecutionLoopResult>;
-export async function runExecutionLoop(
-  manager: RunbookStateManager,
-  runbookId: RunId,
-  steps: ResolvedStep[],
-  cwd: string,
-  emitter: ExecutionEventEmitter,
-  options: ExecutionLoopOptions = {},
-): Promise<ExecutionLoopResult | ExecutionLoopRefusal> {
-  const state = await manager.load(runbookId);
-  // A missing run was never driven; progression reports stopped without
-  // implying anything about release ownership.
-  if (!state) return { status: 'stopped' };
-
-  // The run owns this fact. It is written once at creation and never varies
-  // across the loop, so it is read once here rather than re-derived per
-  // iteration from a `currentState` that can only carry the same value.
-  //
-  // Since #819 it has exactly ONE consumer: the value a composing parent
-  // inherits DOWN into a fresh inline child, which has no persisted flag of its
-  // own to read yet. Every other use — the `awaiting` classification, the
-  // `STEP_ENTERED` payload — moved into the entry seam, which reads the run
-  // directly.
-  //
-  // No fallback: `RunbookState.prompted` is required and `RunbookStateManager`
-  // .`load` refuses a persisted row without it, so an absent flag is invalid
-  // state refused upstream rather than a mode this read has to guess at.
-  const prompted = state.prompted;
-
-  const returnRefusals = options.returnRefusals === true;
-
-  const commandServices =
-    options.commandServices ?? createCliCommandServices(options.commandStreamOptions);
-  const actorService =
-    options.actorService ?? createCliRunbookActorService(manager, commandServices);
-  const actorMutationRunner =
-    options.actorMutationRunner ?? createEffectfulActorMutationRunner(cwd);
-  const sessionService = options.sessionService ?? new SessionService(manager);
-  let currentState: RunbookState = state;
-
-  if (currentState.lifecycle === 'stopped') {
-    const terminalSnap = asTerminalSnapshotOrDefault(currentState.snapshot);
-    const snapIsTerminal = isRunbookStopped(terminalSnap) || isRunbookComplete(terminalSnap);
-    const currentStepForProjection = findStepOrThrow(steps, currentState.step, currentState.id);
-
-    if (snapIsTerminal) {
-      // Machine-driven stop: delegate to core projection
-      const observation = deriveTransitionObservation({
-        steps,
-        currentStep: currentStepForProjection,
-        previousState: currentState,
-        updatedState: currentState,
-        snapshot: currentState.snapshot,
-        result: 'fail',
-      });
-
-      for (const event of observation.events) {
-        switch (event.type) {
-          case 'ERROR_OCCURRED':
-            emitter.emit({ type: 'ERROR_OCCURRED', payload: event.payload });
-            break;
-          case 'RUNBOOK_STOPPED':
-            emitter.emit({ type: 'RUNBOOK_STOPPED', payload: event.payload });
-            break;
-          case 'STEP_TRANSITIONED':
-          case 'RUNBOOK_COMPLETED':
-            break;
-          default: {
-            const _exhaustive: never = event;
-            throw new Error(`unreachable transition observation event: ${String(_exhaustive)}`);
-          }
-        }
-      }
-    } else {
-      // CLI-owned stop: XState machine was never transitioned to STOPPED.
-      // The persisted snapshot is non-terminal (e.g. policy denial or
-      // delegation-resolution failure wrote lifecycle:'stopped' without
-      // driving the machine to its STOPPED state). Core still owns the
-      // terminal observation projection; the CLI only emits it.
-      const event = deriveTerminalDrainObservationEvent({
-        steps,
-        currentStep: currentStepForProjection,
-        previousState: currentState,
-        updatedState: currentState,
-        snapshot: currentState.snapshot,
-        status: 'stopped',
-        result: 'fail',
-      });
-      emitter.emit(event);
-    }
-
-    return await releaseTerminalRun(sessionService, runbookId, emitter, 'stopped');
-  }
-
-  if (currentState.lifecycle === 'completed') {
-    const terminalSnap = asTerminalSnapshotOrDefault(currentState.snapshot);
-    const snapIsTerminal = isRunbookStopped(terminalSnap) || isRunbookComplete(terminalSnap);
-
-    // Resolve the release BEFORE announcing completion. A refusal leaves the run
-    // on the session stack, so a stream that already emitted RUNBOOK_COMPLETED
-    // would assert a clean finish that the returned 'stopped' contradicts.
-    const terminal = await releaseTerminalRun(sessionService, runbookId, emitter, 'done');
-    if (terminal.status !== 'done') {
-      emitter.emit({
-        type: 'RUNBOOK_STOPPED',
-        payload: {
-          position: buildStepPosition(
-            currentState.step,
-            countNumberedSteps(steps),
-            currentState.substep,
-            currentState.forStack,
-          ),
-        },
-      });
-      return terminal;
-    }
-
-    if (snapIsTerminal) {
-      const currentStepForProjection = findStepOrThrow(steps, currentState.step, currentState.id);
-      const observation = deriveTransitionObservation({
-        steps,
-        currentStep: currentStepForProjection,
-        previousState: currentState,
-        updatedState: currentState,
-        snapshot: currentState.snapshot,
-        result: 'pass',
-      });
-
-      for (const event of observation.events) {
-        switch (event.type) {
-          case 'RUNBOOK_COMPLETED':
-            emitter.emit({ type: 'RUNBOOK_COMPLETED', payload: event.payload });
-            break;
-          case 'STEP_TRANSITIONED':
-          case 'ERROR_OCCURRED':
-          case 'RUNBOOK_STOPPED':
-            break;
-          default: {
-            const _exhaustive: never = event;
-            throw new Error(`unreachable transition observation event: ${String(_exhaustive)}`);
-          }
-        }
-      }
-    } else {
-      emitter.emit({
-        type: 'RUNBOOK_COMPLETED',
-        payload: {
-          message: extractLastMessage(currentState.snapshot),
-          finalPosition: buildStepPosition(
-            currentState.step,
-            countNumberedSteps(steps),
-            currentState.substep,
-            currentState.forStack,
-          ),
-        },
-      });
-    }
-    return terminal;
-  }
-
-  // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
-  while (true) {
-    const currentStep = findStepOrThrow(steps, currentState.step, currentState.id);
-
-    const totalSteps = countNumberedSteps(steps);
-
-    // Determine the active execution unit: substep if we're at one, otherwise the step.
-    const currentUnit = resolveCurrentExecutionUnit(currentStep, currentState.substep);
-
-    const drainResult = await drainResolvedCompletions({
-      actorService,
-      manager,
-      emitter,
-      runbookId,
-      steps,
-      currentState,
-      issueDelegationCredential: options.delegationRuntime?.issueDelegationCredential,
-      terminalRelease: { role: 'addressed' },
-    });
-    if (drainResult.status === 'done' || drainResult.status === 'stopped') {
-      // Nothing to release here. The apply that carried
-      // this run to terminal committed its Run Release in the SAME transaction
-      // as the terminal state (#794), armed above. The loop only reports.
-      //
-      // The gap this closes was a real one, not a theoretical ordering nicety:
-      // the terminal state committed, the loop returned through several frames,
-      // and only then did a second transaction take the run off the session.
-      // A process dying in between left a finished run the session still
-      // resolved to, and no healing path removes a loadable terminal run.
-      //
-      // A refused release can no longer downgrade a `'done'` either, because
-      // there is no longer a second operation to refuse: a rolled-back
-      // projection rolls back the terminal state with it, so this arm is not
-      // reached at all. That is the whole point of one transaction.
-      //
-      return { status: drainResult.status };
-    }
-    if (drainResult.status === 'failed') {
-      // A REFUSAL, not a crash — the same treatment the three frontier arms
-      // below already give their own diagnosed conditions, and for the reason
-      // spelled out there: an escaping throw unwinds past both the emitter and
-      // the release, so the caller gets a bare `Error` carrying no code and the
-      // refused run stays on the session stack. Here it also arrived as RD-999
-      // "Unknown error", telling the operator to retry a cursor mismatch that no
-      // retry can resolve (#802).
-      //
-      // The code names the CONDITION, so this loop and the inline
-      // parent-advance seam report the identical drain refusal identically.
-      const refusal = refusalFromDrainFailure(runbookId, drainResult);
-      // This refusal applied nothing and left the run RUNNING. Reporting
-      // `'stopped'` here would report a terminal to that parent's own parent
-      // that never happened. Hand the refusal back instead; the callable turns
-      // it into the seam's `refused` arm, which walks nowhere.
-      //
-      // Nothing is emitted on this path either, for the same reason and by the
-      // same division: the adapter renders this exact code and message through
-      // its emitter. Emitting here as well would announce a `RUNBOOK_STOPPED` for a run
-      // that is still running, and would print the diagnostic twice.
-      if (returnRefusals) {
-        return { status: 'refused', refusal };
-      }
-      emitter.emit({
-        type: 'ERROR_OCCURRED',
-        payload: { message: refusal.message, code: refusal.code },
-      });
-      // Resolved eagerly, and safely so: this IS the refusal path, so the
-      // position is consumed rather than conditionally needed, and the read sits
-      // BEHIND the refusal hand-back above. Order matters there — `load` throws
-      // on structurally invalid persisted state, so hoisting this read above
-      // that return would turn a handed-back refusal into an escaping
-      // `InvalidRunbookStateError` instead of the typed hand-back.
-      emitter.emit({
-        type: 'RUNBOOK_STOPPED',
-        payload: {
-          position: await committedPosition(manager, runbookId, currentState, totalSteps),
-          message: refusal.message,
-        },
-      });
-      return { status: 'stopped' };
-    }
-    if (drainResult.status === 'not_active') {
-      return { status: 'waiting' };
-    }
-    if (drainResult.applied > 0) {
-      currentState = drainResult.state;
-      continue;
-    }
-
-    // Rendering is core's. The loop derives exactly one fact for itself — whether
-    // the cursor is on a substep — because the authority precondition below has
-    // to answer it BEFORE any entry exists, and a non-substep entry can never
-    // disclose a frontier.
-    const cursorIsOnSubstep = 'id' in currentUnit;
-
-    const stepPosition = buildStepPosition(
-      currentState.step,
-      totalSteps,
-      currentState.substep,
-      currentState.forStack,
-    );
-
-    const delegationTokenDeriver = options.delegationRuntime?.deriveDelegationToken;
-    // The authority precondition, and the only frontier question the loop asks
-    // itself: is there something to disclose that we hold no authority to
-    // disclose? The pending-frontier read is core's — the same validating reader
-    // the seam uses, so the loop never parses the persisted blob — and the
-    // substep term is derived the same way the seam derives its own, since a
-    // non-substep unit can never disclose a frontier and so needs no authority.
-    if (
-      delegationTokenDeriver === undefined &&
-      cursorIsOnSubstep &&
-      readPersistedReEntryFrontier(currentState).length > 0
-    ) {
-      const refusal = {
-        reason: 'actor_context_required',
-        message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
-        code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED,
-        runId: runbookId,
-      } as const satisfies InlineParentAdvanceRefusal;
-      if (returnRefusals) {
-        return { status: 'refused', refusal };
-      }
-      // A missing deriver is a refusal of this continuation, not a crash.
-      // Throwing unwound past both the emitter and the release, so the caller
-      // got a bare Error carrying no code and the refused run stayed on the
-      // session stack — still resolving as the active runbook for every later
-      // bare command.
-      //
-      // This is the DISCLOSURE half of "no verified claim authority"; the
-      // issuance half is the machine's own `delegationIssueActor`, which refuses
-      // `reason: 'actor_context_required'`. Both halves stop with the same
-      // reason so a consumer reads one condition.
-      emitter.emit({
-        type: 'ERROR_OCCURRED',
-        payload: {
-          message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
-          code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED,
-        },
-      });
-      emitter.emit({
-        type: 'RUNBOOK_STOPPED',
-        payload: {
-          position: stepPosition,
-          message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
-          reason: 'actor_context_required',
-        },
-      });
-      return { status: 'stopped' };
-    }
-
-    // Core owns the re-entry frontier decision — validation of the persisted
-    // blob, projection through the verified deriver, the entry observation, and
-    // the `DELEGATE_FRONTIER_CONSUMED` commit — through the same seam
-    // `rundown collect` drives. The loop contributes only rendered entry
-    // metadata and, below, emitter wiring plus the terminal release.
-    const reentry: ReEntryProjection =
-      delegationTokenDeriver === undefined
-        ? { status: 'none' }
-        : await projectAndConsumeReEntryFrontier({
-            actorService,
-            steps,
-            state: currentState,
-            deriveToken: delegationTokenDeriver,
-          });
-
-    if (reentry.status === 'projection_refused') {
-      // The deriver refused a descriptor naming a superseded issuer claim
-      // (run-control claims rotate — `installRunControlClaim` supersedes rather
-      // than appends), or the reconstructed bearer does not hash to the
-      // persisted verifier. Either way this is a refusal of the continuation,
-      // and the same reasoning as the missing-deriver branch above applies: an
-      // escaping throw unwinds past both the emitter and the release, so the
-      // caller gets a bare Error carrying no code and the refused run stays on
-      // the session stack.
-      //
-      // RD-821 is the code for this condition wherever it is reached — core's
-      // echo seam, and now `collect`'s re-entry too. It is NOT the neighbouring
-      // `ACTOR_CONTEXT_REQUIRED`: authority is present here, so the
-      // absent-authority code would name the wrong condition.
-      //
-      // The core detail is safe to surface — it names the frontier id or the
-      // issuer-claim divergence, never a bearer.
-      const message = `${FRONTIER_PROJECTION_REFUSED_MESSAGE}: ${reentry.message}`;
-      const refusal = {
-        reason: 'projection_refused',
-        message,
-        code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
-        runId: runbookId,
-      } as const satisfies InlineParentAdvanceRefusal;
-      if (returnRefusals) {
-        return { status: 'refused', refusal };
-      }
-      emitter.emit({
-        type: 'ERROR_OCCURRED',
-        payload: { message, code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code },
-      });
-      emitter.emit({
-        type: 'RUNBOOK_STOPPED',
-        payload: { position: stepPosition, message },
-      });
-      return { status: 'stopped' };
-    }
-
-    if (reentry.status === 'consume_failed') {
-      const refusal = {
-        reason: 'consume_failed',
-        message: FRONTIER_CONSUME_FAILED_MESSAGE,
-        code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
-        runId: runbookId,
-      } as const satisfies InlineParentAdvanceRefusal;
-      if (returnRefusals) {
-        return { status: 'refused', refusal };
-      }
-      // Transient, and distinct from the refusal above: the frontier projected
-      // but the machine did not accept the consume, so it is still persisted and
-      // no bearer was disclosed. Same code as `collect` reports for the same
-      // condition; the remediation is to retry, which is why it must not share
-      // RD-821's "the same authority refuses identically".
-      emitter.emit({
-        type: 'ERROR_OCCURRED',
-        payload: {
-          message: FRONTIER_CONSUME_FAILED_MESSAGE,
-          code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
-        },
-      });
-      emitter.emit({
-        type: 'RUNBOOK_STOPPED',
-        payload: { position: stepPosition, message: FRONTIER_CONSUME_FAILED_MESSAGE },
-      });
-      return { status: 'stopped' };
-    }
-
-    // One classified entry either way. A projected frontier was entered by the
-    // seam — with its bearers attached — so re-entering here would announce the
-    // unit twice; every other path enters through the same core seam.
-    const entered: ExecutionUnitEntry =
-      reentry.status === 'projected'
-        ? reentry.entered
-        : await actorService.enterExecutionUnit({
-            state: currentState,
-            steps,
-            // Already computed above from the same `currentState` + `steps` for
-            // this iteration's own error-reporting events — handing it in avoids
-            // a second `countNumberedSteps` full-array scan for the identical
-            // value (RD-827 finding 3).
-            position: stepPosition,
-          });
-    for (const effect of entered.effects) {
-      emitter.emit(effect.event);
-    }
-    if (reentry.status === 'projected') {
-      currentState = reentry.state;
-    }
-
-    // A one-shot intent is consumed by the launch it drives, and the seam's
-    // consume has already committed on the projected path — so acting on one
-    // here would launch a child the re-entry never armed.
-    if (reentry.status === 'none' && entered.kind === 'inline-launch') {
-      if (!options.output) {
-        emitter.emit({
-          type: 'ERROR_OCCURRED',
-          payload: {
-            message: 'Inline launch requires an output emitter',
-            code: ErrorCodes.LAUNCH_FAILED.code,
-          },
-        });
-        return { status: 'stopped' };
-      }
-      // A terminal child can synchronously flow back through this very run and
-      // drive its parent progression before this frame resumes. The launch
-      // returns `handled` in that case so this frame stands down; no release
-      // ownership crosses the call graph.
-      const childDispatch = await launchInlineChildFromIntent({
-        manager,
-        actorService,
-        sessionService,
-        emitter,
-        cwd,
-        steps,
-        intent: entered.launch,
-        prompted,
-        output: options.output,
-        commandStreamOptions: options.commandStreamOptions,
-        // This loop IS the composing parent's execution, so its verified
-        // capabilities are exactly the authority the child's terminal flow-back
-        // needs to drain and re-run this run. Named with `runbookId` so nothing
-        // further up the inline chain can be advanced under it.
-        parentDelegationRuntime: { runId: runbookId, runtime: options.delegationRuntime },
-        // The child enters the SAME public activation the composing run's own
-        // frontend supplied. Forwarded rather than constructed here: this loop
-        // is a frontend seam, and building an activation locally would be the
-        // private progression implementation #857 exists to delete.
-        ...(options.driveProgression === undefined
-          ? {}
-          : { driveProgression: options.driveProgression }),
-      });
-      return { status: executionLoopStatusFromDispatch(childDispatch) };
-    }
-
-    // Prompted mode, a prompted-FOR step, and a unit with no command are one arm
-    // now, decided by core. The loop no longer reads an undefined rendered
-    // command as its signal for "nothing to run".
-    if (entered.kind !== 'runnable') {
-      return { status: 'waiting' };
-    }
-    const { code: expandedCommandCode, displayCommand, rdInjected } = entered.command;
-    let previousState = currentState;
-    const fencedCommand = await actorMutationRunner.run({
-      runId: runbookId,
-      ...(options.claimKey === undefined ? {} : { claimKey: options.claimKey }),
-      makeRecoveryActor: (state) => actorService.createRecoveryActor(state, steps),
-      // `addressed`, matching the natural pass/fail release this fence replaced
-      // and every other release this loop takes. Explicit teardown —
-      // abort/stop/complete — is what revokes a claim; a run reaching terminal
-      // under its own steam leaves its claim as terminal evidence so
-      // `rundown pass/fail/status --claim-id` resolves `terminal` rather than
-      // `missing`. That applies to the run-control claim `rundown run` mints
-      // over a default-stack root just as much as to a delegated child's
-      // bearer.
-      terminalRelease: { role: 'addressed' },
-      compute: async (capturedState) => {
-        previousState = capturedState;
-        const prepared = await actorService.prepareActorMutation(
-          runbookId,
-          previousState,
-          steps,
-          {
-            type: 'EXECUTE_COMMAND',
-            command: expandedCommandCode,
-            displayCommand,
-            runbookPath: capturedState.runbookPath,
-            rdInjected,
-          },
-          { issueDelegationCredential: options.delegationRuntime?.issueDelegationCredential },
-        );
-        return { ...prepared, previousState };
-      },
-    });
-    if (fencedCommand.kind !== 'committed') {
-      // The code, not the rendering: this refusal travels as an `ERROR_OCCURRED`
-      // event payload rather than through an emitter. Shared mapping either way,
-      // so the event and the error envelope cannot disagree about one refusal.
-      const code = transactionalRefusalCode(fencedCommand);
-      emitter.emit({
-        type: 'ERROR_OCCURRED',
-        payload: {
-          message: fencedCommand.message,
-          code,
-        },
-      });
-      if (!returnRefusals) {
-        emitter.emit({
-          type: 'RUNBOOK_STOPPED',
-          payload: {
-            position: stepPosition,
-            message: 'Runbook command execution was not committed',
-          },
-        });
-      }
-      // This invocation committed no terminal. Under Refusal Hand-back the
-      // inline adapter must stand down without reporting a false terminal, but
-      // still preserve fail-closed severity through `blocked`.
-      return { status: returnRefusals ? 'blocked' : 'stopped' };
-    }
-    const cmdSync = fencedCommand.value;
-    // Derived from the state the fence COMMITTED, and by the same test the
-    // runner applies: an armed `terminalRelease` projects only when the
-    // committed lifecycle is terminal, so a fence that committed an ordinary
-    // transition released nothing and owed nothing. Read once here because
-    // three of the arms below report on this one commit.
-    const fenceCommittedTerminal =
-      cmdSync.state.lifecycle === 'completed' || cmdSync.state.lifecycle === 'stopped';
-    const syncEffects = cmdSync.effects;
-    for (const effect of syncEffects) {
-      emitter.emit(effect.event);
-    }
-
-    const commandOutput = syncEffects.find(
-      (
-        effect,
-      ): effect is ExecutionObservationEffect & {
-        commandOutput: NonNullable<ExecutionObservationEffect['commandOutput']>;
-      } => effect.commandOutput !== undefined,
-    )?.commandOutput;
-
-    if (commandOutput?.kind !== 'completed') {
-      renderTerminalObservationFromCoreState({
-        emitter,
-        steps,
-        currentStep,
-        previousState,
-        updatedState: cmdSync.state,
-        snapshot: cmdSync.snapshot,
-        position: stepPosition,
-      });
-      return { status: 'stopped' };
-    }
-
-    const transitionResult = observeCommandTransition({
-      emitter,
-      steps,
-      currentState: previousState,
-      postState: cmdSync.state,
-      syncSnapshot: cmdSync.snapshot,
-      currentStep,
-      result: commandOutput.result,
-      command: displayCommand,
-    });
-    if (transitionResult.status === 'done') {
-      return { status: 'done' };
-    }
-    // Stryker disable next-line ConditionalExpression,StringLiteral,BlockStatement: equivalent — a stopped transition commits a stopped lifecycle, so the fence-terminal fallback below returns the identical stopped result; this branch supplies TypeScript narrowing and avoids deriving a duplicate terminal observation.
-    if (transitionResult.status === 'stopped') {
-      return { status: 'stopped' };
-    }
-    // The fenced commit released this run on `state.lifecycle`, which is assigned
-    // from the snapshot VALUE alone while the orchestrated observation also
-    // demands a terminal snapshot STATUS. When only the lifecycle went terminal
-    // the loop must still stop and emit the matching terminal event — continuing
-    // would drive the next step of a run this process already released.
-    const lifecycle = cmdSync.state.lifecycle;
-    if (fenceCommittedTerminal) {
-      const terminalStatus = lifecycle === 'completed' ? 'done' : 'stopped';
-      emitter.emit(
-        deriveTerminalDrainObservationEvent({
-          steps,
-          currentStep,
-          previousState,
-          updatedState: cmdSync.state,
-          snapshot: cmdSync.snapshot,
-          status: terminalStatus,
-          result: commandOutput.result,
-        }),
-      );
-      return { status: terminalStatus };
-    }
-    currentState = transitionResult.state;
-  }
-}
 
 export { extractLastMessage, extractRetryDisplayCount, extractRetryMax, formatActionForDisplay };
 
