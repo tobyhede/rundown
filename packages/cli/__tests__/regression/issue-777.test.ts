@@ -140,6 +140,11 @@ describe('issue #777: run-start CAS exhaustion reports concurrent_modification',
     const result = await startRunbook(ctx, prepared, {
       file: 'solo.runbook.md',
       prompted: true,
+      driveProgression: async (directive) => ({
+        kind: 'waiting',
+        runId: directive.authority.runId,
+        reason: 'awaiting_input',
+      }),
     });
     await Promise.all(sideWrites);
 
@@ -243,6 +248,11 @@ describe('issue #777: run-start CAS exhaustion reports concurrent_modification',
     const result = await startRunbook(ctx, prepared, {
       file: 'solo.runbook.md',
       prompted: true,
+      driveProgression: async (directive) => ({
+        kind: 'waiting',
+        runId: directive.authority.runId,
+        reason: 'awaiting_input',
+      }),
     });
     control.hammering = false;
     await hammerPromise;

@@ -178,6 +178,16 @@ export interface RunProgressionDriveContext {
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
 }
 
+/** Build the standard CLI driver shared by every fresh activation entry. */
+export function createCliRunProgressionDriver(
+  ctx: Omit<RunProgressionDriveContext, 'sink'>,
+): (
+  directive: Extract<RunProgressionDirective, { kind: 'activate' }>,
+  sink: ExecutionEventEmitter,
+) => Promise<RunProgressionOutcome> {
+  return (directive, sink) => driveRunProgression(directive, { ...ctx, sink });
+}
+
 /**
  * Activate core Run Progression for one run with the CLI's standard wiring.
  *

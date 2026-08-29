@@ -43,6 +43,9 @@ import {
   type RunProgressionDirective,
   type RunProgressionOutcome,
   progressionDirectiveForStartedRun,
+  progressionDirectiveForClaimedRun,
+  type ClaimRunbookResult,
+  isConcurrentStateModificationError,
   generateRunId,
   partitionVariables,
   prepareParsedRunbook,
@@ -61,7 +64,7 @@ import {
 } from '@rundown-org/parser';
 import { buildRunbookRef, resolveRunbookFile, resolveRunbookRef } from './resolve-runbook.js';
 import type { ResolvedRunbook as ResolvedRunbookFile } from './resolve-runbook.js';
-import { runExecutionLoop, type ExecutionLoopStatus } from '../services/execution.js';
+import type { ExecutionLoopStatus } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import {
@@ -173,7 +176,7 @@ export interface RunbookStartFailure {
   ok: false;
   reason: 'launch-failed';
   error: string;
-  code: typeof ErrorCodes.LAUNCH_FAILED.code;
+  code: typeof ErrorCodes.LAUNCH_FAILED.code | typeof ErrorCodes.CONCURRENT_STATE_MODIFICATION.code;
   details: { runbookName: string };
 }
 
@@ -214,6 +217,14 @@ export type StartedRunProgression = (
   directive: Extract<RunProgressionDirective, { kind: 'activate' }>,
   sink: ExecutionEventEmitter,
 ) => Promise<RunProgressionOutcome>;
+
+interface StartedRunProgressionActivation {
+  readonly drive: StartedRunProgression;
+  readonly directive?: (
+    state: RunbookState,
+    steps: readonly ResolvedStep[],
+  ) => Extract<RunProgressionDirective, { kind: 'activate' }>;
+}
 
 /** Failure variants from claiming and launching a delegated child runbook. */
 export type ClaimFailure =
@@ -328,6 +339,8 @@ export type ClaimResult =
       stepId: string;
       /** Terminal state of the child execution loop. */
       loopResult: ExecutionLoopStatus;
+      /** Closed composition outcome when the caller selected Run Progression. */
+      progression?: RunProgressionOutcome;
     }
   | ({ readonly ok: false } & ClaimFailure);
 
@@ -954,7 +967,7 @@ async function prepareLoadedRunbook(
  * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
  * @param options.sessionActivation - Session activation mode for the launched runbook
  * @param options.initialVariables - Runtime variables to persist before actor initialization
- * @param options.driveProgression - Optional activation callback for a freshly created run.
+ * @param options.progression - Closed activation strategy for the freshly created run.
  * @param options.afterCreate - Optional callback invoked after state creation and before initialization
  * @param options.afterCreateRollback - Optional best-effort rollback for afterCreate side effects
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
@@ -976,7 +989,7 @@ async function launchRunbook(
     afterInit?: (stateId: RunId) => Promise<void>;
     afterInitRollback?: (stateId: RunId) => Promise<void>;
     afterStarted?: (stateId: RunId) => Promise<void>;
-    driveProgression?: StartedRunProgression;
+    progression: StartedRunProgressionActivation;
   },
 ): Promise<RunbookStartResult> {
   const { output, manager, actorService, sessionService, cwd } = ctx;
@@ -1142,6 +1155,15 @@ async function launchRunbook(
     if (activationRefusal !== undefined) {
       return { ok: false, reason: 'session-refused', refusal: activationRefusal };
     }
+    if (isConcurrentStateModificationError(err)) {
+      return {
+        ok: false,
+        reason: 'launch-failed',
+        error: err.message,
+        code: ErrorCodes.CONCURRENT_STATE_MODIFICATION.code,
+        details: { runbookName: options.runbookName },
+      };
+    }
     return {
       ok: false,
       reason: 'launch-failed',
@@ -1168,40 +1190,28 @@ async function launchRunbook(
     }
   }
 
-  const progression =
-    options.driveProgression === undefined
-      ? undefined
-      : await options.driveProgression(
-          progressionDirectiveForStartedRun(
-            initializedState,
-            runbookSteps,
-            preparedRunControlClaim ??
-              (() => {
-                throw new Error('Run Progression launch requires a prepared run-control claim');
-              })(),
-          ),
-          emitter,
-        );
-  const loopResult =
-    progression === undefined
-      ? await runExecutionLoop(manager, launchedStateId, runbookSteps, cwd, emitter, {
-          output,
-          commandStreamOptions: ctx.commandStreamOptions,
-          sessionService,
-          ...(preparedRunControlClaim === undefined
-            ? {}
-            : { delegationRuntime: preparedRunControlClaim.delegationRuntime }),
-        })
-      : {
-          status:
-            progression.kind === 'completed'
-              ? ('done' as const)
-              : progression.kind === 'stopped'
-                ? ('stopped' as const)
-                : progression.kind === 'waiting'
-                  ? ('waiting' as const)
-                  : ('blocked' as const),
-        };
+  const progression = await options.progression.drive(
+    options.progression.directive?.(initializedState, runbookSteps) ??
+      progressionDirectiveForStartedRun(
+        initializedState,
+        runbookSteps,
+        preparedRunControlClaim ??
+          (() => {
+            throw new Error('Run Progression launch requires a prepared run-control claim');
+          })(),
+      ),
+    emitter,
+  );
+  const loopResult = {
+    status:
+      progression.kind === 'completed'
+        ? ('done' as const)
+        : progression.kind === 'stopped'
+          ? ('stopped' as const)
+          : progression.kind === 'waiting'
+            ? ('waiting' as const)
+            : ('blocked' as const),
+  };
 
   return {
     ok: true,
@@ -1210,7 +1220,7 @@ async function launchRunbook(
     // which decides a release. A disposition carried past the frame that can
     // act on it is a field readers must work out they should ignore.
     loopResult: loopResult.status,
-    ...(progression !== undefined ? { progression } : {}),
+    progression,
     stateId: launchedStateId,
     ...(issuedRunControlClaimId !== undefined ? { claimId: issuedRunControlClaimId } : {}),
     ...(preparedRunControlClaim === undefined
@@ -1229,7 +1239,7 @@ async function launchRunbook(
  * @param options.prompted - Whether to run in prompted mode
  * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
  * @param options.initialVariables - Runtime variables to persist before actor initialization
- * @param options.driveProgression - Optional activation callback for the fresh run.
+ * @param options.driveProgression - Public activation callback for the fresh run.
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
  * @param options.afterStarted - Optional callback invoked after RUNBOOK_STARTED is emitted
  * @returns RunbookStartResult
@@ -1245,7 +1255,7 @@ export async function startRunbook(
     initialVariables?: Readonly<Record<string, VariableValue>>;
     afterInit?: (stateId: RunId) => Promise<void>;
     afterStarted?: (stateId: RunId) => Promise<void>;
-    driveProgression?: StartedRunProgression;
+    driveProgression: StartedRunProgression;
   },
 ): Promise<RunbookStartResult> {
   return launchRunbook(ctx, prepared, {
@@ -1255,13 +1265,18 @@ export async function startRunbook(
     initialVariables: options.initialVariables,
     afterInit: options.afterInit,
     afterStarted: options.afterStarted,
-    driveProgression: options.driveProgression,
+    progression: { drive: options.driveProgression },
   });
 }
 
 /** Outcome of {@link claimChildForPipeline}. */
 type ClaimChildResult =
-  | { readonly ok: true; readonly claimId: ClaimId; readonly childRunId: RunId }
+  | {
+      readonly ok: true;
+      readonly claimId: ClaimId;
+      readonly childRunId: RunId;
+      readonly claimed: Extract<ClaimRunbookResult, { readonly status: 'claimed' }>;
+    }
   | {
       readonly ok: false;
       readonly reason:
@@ -1445,6 +1460,7 @@ async function claimChildForPipeline(
         ok: true,
         claimId: claim.claimId,
         childRunId: claim.claim.controlledRunId,
+        claimed: claim,
       };
     case 'already-claimed':
       return {
@@ -1627,6 +1643,7 @@ function emitClaimedSuccess(args: {
   readonly stepId: string;
   readonly parentStepAt: string | undefined;
   readonly loopResult: ExecutionLoopStatus;
+  readonly progression?: RunProgressionOutcome;
 }): Extract<ClaimResult, { ok: true }> {
   const payload = buildClaimedPayload(args);
   emitClaimedOutput(
@@ -1642,7 +1659,39 @@ function emitClaimedSuccess(args: {
     parentRunId: args.parentRunId,
     stepId: args.stepId,
     loopResult: args.loopResult,
+    ...(args.progression !== undefined ? { progression: args.progression } : {}),
   };
+}
+
+async function activateClaimedChild(args: {
+  readonly ctx: RunPipelineContext;
+  readonly claim: Extract<ClaimChildResult, { readonly ok: true }>;
+  readonly driveProgression: StartedRunProgression;
+}): Promise<RunProgressionOutcome> {
+  const state = await args.ctx.manager.load(args.claim.childRunId);
+  if (state === null) {
+    return {
+      kind: 'refused',
+      runId: args.claim.childRunId,
+      reason: 'run_missing',
+      message: `Claimed child ${args.claim.childRunId} is unavailable for progression`,
+      recovery: 'permanent',
+    };
+  }
+  return args.driveProgression(
+    progressionDirectiveForClaimedRun(
+      state,
+      getRunbookFromState(state, args.ctx.cwd),
+      args.claim.claimed,
+    ),
+    createBridgedEmitter(state, args.ctx.output),
+  );
+}
+
+function executionStatusForProgression(outcome: RunProgressionOutcome): ExecutionLoopStatus {
+  if (outcome.kind === 'completed') return 'done';
+  if (outcome.kind === 'stopped') return 'stopped';
+  return 'waiting';
 }
 
 /**
@@ -1663,12 +1712,14 @@ function emitClaimedSuccess(args: {
  * @param ctx - Pipeline context
  * @param rawToken - The plain-text delegation token to claim
  * @param inputOpts - Input options from CLI flags
+ * @param driveProgression - Public Run Progression driver for activation
  * @returns ClaimResult with child run details or error
  */
 export async function claimAndLaunch(
   ctx: RunPipelineContext,
   rawToken: string,
   inputOpts: InputOptions,
+  driveProgression: StartedRunProgression,
 ): Promise<ClaimResult> {
   const { output, manager, cwd } = ctx;
   const truncatedToken = truncateDelegationToken(rawToken);
@@ -1819,6 +1870,11 @@ export async function claimAndLaunch(
     if (!claimResult.ok) {
       return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
     }
+    const progression = await activateClaimedChild({
+      ctx,
+      claim: claimResult,
+      driveProgression,
+    });
     return emitClaimedSuccess({
       output,
       truncatedToken,
@@ -1828,7 +1884,8 @@ export async function claimAndLaunch(
       parentRunId: freshParent.id,
       stepId: substepId ?? stepId,
       parentStepAt: freshDelegation.contextSnapshot.at,
-      loopResult: 'waiting',
+      loopResult: executionStatusForProgression(progression),
+      progression,
     });
   }
 
@@ -1839,6 +1896,11 @@ export async function claimAndLaunch(
     if (!claimResult.ok) {
       return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
     }
+    const progression = await activateClaimedChild({
+      ctx,
+      claim: claimResult,
+      driveProgression,
+    });
     const adoptedChildRunId = claimResult.childRunId;
     return emitClaimedSuccess({
       output,
@@ -1849,7 +1911,8 @@ export async function claimAndLaunch(
       parentRunId: freshParent.id,
       stepId: substepId ?? stepId,
       parentStepAt: freshDelegation.contextSnapshot.at,
-      loopResult: 'waiting',
+      loopResult: executionStatusForProgression(progression),
+      progression,
     });
   }
 
@@ -1883,6 +1946,11 @@ export async function claimAndLaunch(
     if (!claimResult.ok) {
       return claimResultToFailure(claimResult, freshParent.id, substepId ?? stepId);
     }
+    const progression = await activateClaimedChild({
+      ctx,
+      claim: claimResult,
+      driveProgression,
+    });
     return emitClaimedSuccess({
       output,
       truncatedToken,
@@ -1892,7 +1960,8 @@ export async function claimAndLaunch(
       parentRunId: freshParent.id,
       stepId: substepId ?? stepId,
       parentStepAt: freshDelegation.contextSnapshot.at,
-      loopResult: 'waiting',
+      loopResult: executionStatusForProgression(progression),
+      progression,
     });
   }
 
@@ -1963,7 +2032,7 @@ export async function claimAndLaunch(
   const parentPrompted = freshParent.prompted;
 
   // 3g. Launch child runbook
-  let capturedClaim: { readonly claimId: ClaimId; readonly childRunId: RunId } | undefined;
+  let capturedClaim: Extract<ClaimChildResult, { readonly ok: true }> | undefined;
   let initialLinkCommitted = false;
   // Captures a write-side claim invariant violation in `afterInit` so we
   // can surface it as a structured launch-failed result instead of an
@@ -1976,6 +2045,15 @@ export async function claimAndLaunch(
     prompted: parentPrompted,
     parentLinkage: delegationLinkage,
     sessionActivation: { kind: 'none' },
+    progression: {
+      drive: driveProgression,
+      directive: (state, steps) => {
+        if (capturedClaim === undefined) {
+          throw new Error('Delegated child progression requires its freshly committed claim');
+        }
+        return progressionDirectiveForClaimedRun(state, steps, capturedClaim.claimed);
+      },
+    },
     afterInit: async (childStateId) => {
       const claimResult = await claimChildForPipeline(ctx, childStateId, delegationLinkage, true);
       if (!claimResult.ok) {
@@ -1987,7 +2065,7 @@ export async function claimAndLaunch(
           `Claim invariant violated for fresh child ${describeClaimFailureTarget(claimResult)}: ${claimResult.reason}`,
         );
       }
-      capturedClaim = { claimId: claimResult.claimId, childRunId: claimResult.childRunId };
+      capturedClaim = claimResult;
       initialLinkCommitted = true;
     },
     afterInitRollback: async (childStateId) => {
@@ -2150,5 +2228,6 @@ export async function claimAndLaunch(
     stepId: substepId ?? stepId,
     parentStepAt: freshDelegation.contextSnapshot.at,
     loopResult: launchResult.loopResult,
+    ...(launchResult.progression !== undefined ? { progression: launchResult.progression } : {}),
   });
 }

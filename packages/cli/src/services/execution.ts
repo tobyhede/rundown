@@ -639,6 +639,20 @@ export async function launchInlineChildFromIntent({
   const parentLinkage = inlineLinkageFromIntent(intent);
   const childRunId = assertRunId(intent.childRunId);
 
+  if (driveProgression === undefined) {
+    const message = 'Inline launch requires the public Run Progression activation';
+    emitter.emit({
+      type: 'ERROR_OCCURRED',
+      payload: { message, code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED },
+    });
+    return {
+      kind: 'launch_refused',
+      code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED,
+      message,
+      recovery: 'permanent',
+    };
+  }
+
   // Latch the launch before performing any of it. This replaced the retired
   // delegation file lock this site held across the read-derive-write span:
   // the lock's job was to keep a second observer out of the gap between the
@@ -835,9 +849,8 @@ export async function launchInlineChildFromIntent({
     // runtime is NOT a substitute — it belongs to another run, and
     // `delegationRuntimeFor` refuses it by design — so core re-establishes the
     // CHILD's own run-control authority. Core refuses that when the child
-    // already issued a credential the replacement could not reproduce; the
-    // continuation then runs unarmed and the machine's own
-    // `actor_context_required` refusal stands, exactly as it does today.
+    // already issued a credential the replacement could not reproduce; that
+    // refusal closes this launch rather than selecting a private unarmed loop.
     const childEmitter = createBridgedEmitter(existingChild, output);
     const adoption = await sessionService.adoptRunControlClaim(existingChild);
     if (adoption.kind === 'adopted') {
@@ -855,7 +868,7 @@ export async function launchInlineChildFromIntent({
         adoption.runtime.claimId,
       );
     }
-    if (driveProgression !== undefined && adoption.kind === 'adopted') {
+    if (adoption.kind === 'adopted') {
       const outcome = await driveProgression(
         progressionDirectiveForStartedRun(
           existingChild,
@@ -866,35 +879,30 @@ export async function launchInlineChildFromIntent({
       );
       return dispatchResultFromProgression(outcome);
     }
-    const loopResult = await runExecutionLoop(
-      manager,
-      childRunId,
-      [...getRunbookFromState(existingChild, cwd)],
-      cwd,
-      childEmitter,
-      {
-        output,
-        commandStreamOptions,
-        sessionService,
-        ...(adoption.kind === 'adopted'
-          ? { delegationRuntime: adoption.runtime.delegationRuntime }
-          : {}),
-      },
-    );
-    const propagated = await propagateInlineChildTerminalResult({
-      manager,
-      childRunId,
-      loopResult: loopResult.status,
-      cwd,
-      output,
-      commandStreamOptions,
-      parentDelegationRuntime,
+    if (adoption.kind === 'refused_credential_issued') {
+      const message = `Inline child ${childRunId} cannot resume because its prior run-control claim issued a delegation credential`;
+      childEmitter.emit({
+        type: 'ERROR_OCCURRED',
+        payload: { message, code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED },
+      });
+      return {
+        kind: 'launch_refused',
+        code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED,
+        message,
+        recovery: 'permanent',
+      };
+    }
+    const code = sessionMutationRefusalCode(adoption.refusal);
+    childEmitter.emit({
+      type: 'ERROR_OCCURRED',
+      payload: { message: adoption.refusal.message, code },
     });
-    return dispatchResultFromFlowBack(
-      propagated.status,
-      parentLinkage.parentRunId,
-      propagated.refusal,
-    );
+    return {
+      kind: 'launch_refused',
+      code,
+      message: adoption.refusal.message,
+      recovery: adoption.refusal.kind === 'execution_in_progress' ? 'retryable' : 'permanent',
+    };
   }
 
   const { resolveRunbookRef } = await import('../helpers/resolve-runbook.js');
@@ -998,7 +1006,7 @@ export async function launchInlineChildFromIntent({
         // with.
         latch.held.keep();
       },
-      ...(driveProgression !== undefined ? { driveProgression } : {}),
+      driveProgression,
     },
   );
 
