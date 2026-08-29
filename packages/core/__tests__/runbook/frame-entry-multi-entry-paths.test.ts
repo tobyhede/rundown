@@ -197,13 +197,8 @@ describe('one mutation, one entry bump', () => {
       throw new Error(`expected allowed, got ${allowed.kind}`);
     }
     const outcome = await seam.runNavigationMutation({
-      runId,
-      callerEvidence: evidence(),
-      steps,
+      navigation: allowed.navigation,
       target,
-      ...(allowed.delegationRuntime === undefined
-        ? {}
-        : { issueDelegationCredential: allowed.delegationRuntime.issueDelegationCredential }),
     });
     if (outcome.kind !== 'applied') {
       throw new Error(`expected applied, got ${outcome.kind}: ${JSON.stringify(outcome)}`);

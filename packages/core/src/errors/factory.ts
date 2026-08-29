@@ -97,11 +97,9 @@ export const Errors = {
   concurrentStateModification: (runId: string, detail: string): RundownError =>
     new RundownError('CONCURRENT_STATE_MODIFICATION', { runId, message: detail }),
 
-  // The one post-commit failure a collect can suffer. Spelled with the run id in
-  // context so an operator can name the run whose bearers were lost without
-  // parsing the message, and with the render failure's own text as `message` so
-  // the cause (usually a `--helpers` helper raising) is not swallowed by the
-  // envelope.
+  // A Run Progression entry failure after its frontier consume committed.
+  // Context names the run whose transient bearers were lost and preserves the
+  // render failure that must be fixed before the step is explicitly re-issued.
   // Stryker disable next-line ArrowFunction: undetectable, not uncovered. Every
   // member of this literal is evaluated at module load, so replacing this body
   // with `() => undefined` is a STATIC mutant — jest's module registry has
@@ -112,6 +110,13 @@ export const Errors = {
   // literal) are both killed by it.
   frontierDisclosureFailed: (runId: string, detail: string): RundownError =>
     new RundownError('DELEGATION_FRONTIER_DISCLOSURE_FAILED', { runId, message: detail }),
+
+  // The pre-consume twin of `frontierDisclosureFailed`: the same entry render
+  // failed, but on a turn that consumed nothing, so the run keeps its cursor
+  // and re-activation re-renders. Context names the run and preserves the
+  // render failure that must be fixed first.
+  runProgressionEntryFailed: (runId: string, detail: string): RundownError =>
+    new RundownError('RUN_PROGRESSION_ENTRY_FAILED', { runId, message: detail }),
 
   // The recovery is spelled into the MESSAGE, not left to the code's
   // `description`, for the same reason `walJournalModeUnavailable` spells its

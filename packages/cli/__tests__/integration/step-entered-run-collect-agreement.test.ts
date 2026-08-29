@@ -70,8 +70,8 @@ describe('STEP_ENTERED agreement between run and collect (#816 / #820)', () => {
    * A parent whose substeps both DELEGATE, aggregating `FAIL ANY RETRY 1 STOP`.
    *
    * The RETRY is what makes the SAME substep reachable from both paths: the
-   * first entry is `rundown run`'s, and the re-entry the retry produces is
-   * projected by `rundown collect` through core's re-entry frontier seam.
+   * first entry is `rundown run`'s, and after collection the retry re-entry is
+   * projected by the shared Run Progression machine path.
    */
   async function writeRunbooks(): Promise<void> {
     const passChild = [

@@ -659,13 +659,7 @@ describe('Errors factory - exhaustive coverage', () => {
       );
     });
 
-    it('frontierDisclosureFailed maps runId + the render cause → RD-833', () => {
-      // #820. The condition is post-commit and NOT retryable: a collect that
-      // landed its aggregate could not render the entry its freshly derived
-      // bearers ride on. The `runId` key is what lets an agent name the run
-      // whose bearers were lost without parsing the prose, and `message` carries
-      // the render failure's own text — usually a `--helpers` helper raising —
-      // which is the only fact the envelope's title cannot supply.
+    it('frontierDisclosureFailed maps runId + the entry cause → RD-833', () => {
       const error = Errors.frontierDisclosureFailed(
         'rd_11111111111111111111111111111111',
         'helper "slugify" threw: boom',
@@ -674,10 +668,25 @@ describe('Errors factory - exhaustive coverage', () => {
       expect(error.code).toBe('RD-833');
       expect(error.context.runId).toBe('rd_11111111111111111111111111111111');
       expect(error.context.message).toBe('helper "slugify" threw: boom');
-      // The rendered sentence, so a blanked title or a dropped cause is visible
-      // rather than tolerated by a loose `toContain`.
       expect(error.message).toBe(
         'Delegation frontier disclosure could not be rendered - helper "slugify" threw: boom',
+      );
+    });
+
+    it('runProgressionEntryFailed maps the same cause → RD-504, not RD-833', () => {
+      // The pre-consume twin. Same fault, same context shape, different code —
+      // because the two differ in what their turn had already committed, which
+      // is the whole recovery split (retryable here, permanent for RD-833).
+      const error = Errors.runProgressionEntryFailed(
+        'rd_11111111111111111111111111111111',
+        'helper "slugify" threw: boom',
+      );
+      expect(error).toBeInstanceOf(RundownError);
+      expect(error.code).toBe('RD-504');
+      expect(error.context.runId).toBe('rd_11111111111111111111111111111111');
+      expect(error.context.message).toBe('helper "slugify" threw: boom');
+      expect(error.message).toBe(
+        'Run Progression could not render the step entry - helper "slugify" threw: boom',
       );
     });
   });

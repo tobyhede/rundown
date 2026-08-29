@@ -742,7 +742,11 @@ export interface StepInlineChild {
  * without a resolved value — invalid states are unrepresentable.
  */
 export type IterationBinding =
-  | { readonly kind: 'range'; readonly index: number; readonly variable?: string }
+  | {
+      readonly kind: 'range';
+      readonly index: number;
+      readonly variable?: string;
+    }
   | {
       readonly kind: 'item';
       readonly index: number;
@@ -1178,7 +1182,7 @@ export interface RunbookState {
   /** Lifecycle state. 'running' during execution; 'completed' or 'stopped' once terminal. */
   readonly lifecycle?: Lifecycle;
 
-  /** Persisted state schema version. Current v1 state writes numeric `1`. */
+  /** Persisted state schema version. Must equal `CURRENT_SCHEMA_VERSION`. */
   readonly schemaVersion?: number;
 }
 

@@ -44,14 +44,11 @@ describe('findStepOrThrow', () => {
     expect(() => findStepOrThrow([], '1', runId)).toThrow('Step "1" not found');
   });
 
-  // The CLASS is load-bearing, not decoration on the message. `rundown collect`
-  // wraps every non-`InvalidRunbookStateError` rejection from the entry seam as
-  // RD-833, whose recovery reads "fix the helper and re-delegate" — the wrong
-  // instruction entirely for a diverged cursor, which is corrupt persisted
-  // state recoverable only by prune or restart. A bare `Error` here would pass
-  // both message assertions above and still be relabelled at that seam, so both
-  // refusals pin the class and the structured defect the CLI's RD-309 mapping
-  // reads.
+  // The CLASS is load-bearing, not decoration on the message. A diverged cursor
+  // is corrupt persisted state recoverable only by prune or restart. A bare
+  // `Error` here would pass both message assertions above and still lose that
+  // recovery at the progression boundary, so both refusals pin the class and
+  // the structured defect the CLI's RD-309 mapping reads.
   it.each([
     { label: 'a cursor no step carries', steps: [first, second], cursor: 'Gone' },
     { label: 'an empty step list', steps: [], cursor: '1' },
@@ -64,8 +61,8 @@ describe('findStepOrThrow', () => {
     }
 
     expect(caught).toBeInstanceOf(InvalidRunbookStateError);
-    // NOT a RundownError: the two classes are disjoint, which is exactly what
-    // keeps the collect path's RD-833 catch from swallowing this one.
+    // NOT a RundownError: the persisted-state taxonomy remains distinct from
+    // command-domain errors.
     expect(caught).not.toBeInstanceOf(RundownError);
     expect((caught as InvalidRunbookStateError).defect).toEqual({
       runId,

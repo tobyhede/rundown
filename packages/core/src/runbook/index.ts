@@ -302,8 +302,8 @@ export {
   type CollectDelegationOutcomesOperationInput,
   type RunbookCollectionServiceDependencies,
 } from './collection-service.js';
-// Shared re-entry frontier seam (F6). Consumed by `collectDelegationOutcomes`
-// above and by the CLI execution loop, which is why it is exported.
+// Shared re-entry frontier seam (F6). Run Progression owns the fenced path;
+// the legacy CLI execution loop still consumes the unfenced seam until #858.
 export {
   FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
   FRONTIER_CONSUME_FAILED_MESSAGE,
@@ -340,6 +340,8 @@ export {
   type InlineChildDispatchInput,
   type InlineChildDispatchResult,
   type RunProgressionDeps,
+  type RunProgressionDirective,
+  type RunProgressionEntryBoundary,
   type RunProgressionFailureReason,
   type RunProgressionOutcome,
   type RunProgressionRecovery,
@@ -348,6 +350,7 @@ export {
   type TerminalPropagation,
   type TerminalPropagationInput,
   type TerminalPropagationResult,
+  type TerminalPropagationSource,
 } from './run-progression.js';
 export type { RunProgressionAuthority } from './run-progression-authority.js';
 export {
@@ -392,6 +395,7 @@ export {
   type DelegationAbortOutcome,
   type LifecycleLoopDirective,
   type LifecycleNavigationInput,
+  type LifecycleNavigationCapability,
   type LifecycleNavigationMutationInput,
   type LifecycleNavigationMutationOutcome,
   type LifecycleNavigationOutcome,

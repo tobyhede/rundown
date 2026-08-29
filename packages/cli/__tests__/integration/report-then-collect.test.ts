@@ -140,7 +140,7 @@ describe('report-then-collect (single delegation level)', () => {
     await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
   }
 
-  it('collect drives the collecting run through the loop into its NEXT delegation frontier', async () => {
+  it('collect hands the collecting run to progression for its NEXT delegation frontier', async () => {
     await writeContinuingRunbooks();
     const start = await runCliInProcess('run runbooks/parent.runbook.md --allow-all', workspace);
     expect(start.exitCode).toBe(0);

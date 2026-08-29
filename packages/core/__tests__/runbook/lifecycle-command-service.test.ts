@@ -759,7 +759,10 @@ describe('RunbookLifecycleCommandService', () => {
       // The authored substep targets "child.md"; resolve it to a DIFFERENT
       // canonical path so returning the authored alias is observably wrong.
       const { seam: localSeam, deps } = await startSeamOnDelegateStep();
-      deps.resolveChildRunbook = async (): Promise<{ path: string; ref: RunbookRef }> => ({
+      deps.resolveChildRunbook = async (): Promise<{
+        path: string;
+        ref: RunbookRef;
+      }> => ({
         path: 'runbooks/child.md',
         ref: { source: 'project', path: 'runbooks/child.md' },
       });
@@ -4131,7 +4134,10 @@ describe('RunbookLifecycleCommandService', () => {
        */
       async function forceAbortWithChildLinkage(
         linkage: (issuedTokenHash: string, parentRunId: RunId) => RunbookState['parentLinkage'],
-      ): Promise<{ outcome: DelegationAbortOutcome; cancelledAt: string | null | undefined }> {
+      ): Promise<{
+        outcome: DelegationAbortOutcome;
+        cancelledAt: string | null | undefined;
+      }> {
         const { seam: localSeam, manager: mgr, state } = await startSeamOnDelegateStep();
         const issued = await localSeam.issueDelegation({
           mode: 'fresh',
@@ -4826,7 +4832,10 @@ describe('RunbookLifecycleCommandService', () => {
      * claim, so a seam that lost the claim selector would fall back to A rather
      * than coincidentally landing on the same run these cases assert about.
      */
-    async function activateTwoClaimedRuns(): Promise<{ claimA: ClaimId; claimB: ClaimId }> {
+    async function activateTwoClaimedRuns(): Promise<{
+      claimA: ClaimId;
+      claimB: ClaimId;
+    }> {
       loadStepsImpl = () => twoSteps;
       await activate(baseState({ id: runB, runbookPath: 'b.md' }));
       await activate(baseState({ id: runA, runbookPath: 'a.md' }));
@@ -5545,10 +5554,16 @@ describe('RunbookLifecycleCommandService', () => {
       const before = await manager.load(runId);
       const beforeEntry = before?.activeEntry ?? 1;
 
-      const outcome = await seam.runNavigationMutation({
-        runId,
+      const navigation = await seam.resolveRunNavigation({
+        command: 'goto',
         callerEvidence: runControlEvidence(runId),
-        steps: twoSteps,
+        targetSelector: { kind: 'run', runId },
+      });
+      if (navigation.kind !== 'allowed')
+        throw new Error(`expected allowed, got ${navigation.kind}`);
+
+      const outcome = await seam.runNavigationMutation({
+        navigation: navigation.navigation,
         target: { step: '1' },
       });
 
@@ -5571,10 +5586,16 @@ describe('RunbookLifecycleCommandService', () => {
       const store = await getRunbookStore(tmp);
       const keyedCapture = jest.spyOn(store, 'captureAuthorityState');
 
-      const outcome = await seam.runNavigationMutation({
-        runId,
+      const navigation = await seam.resolveRunNavigation({
+        command: 'goto',
         callerEvidence: DIRECT_CLI,
-        steps: twoSteps,
+        targetSelector: { kind: 'default' },
+      });
+      if (navigation.kind !== 'allowed')
+        throw new Error(`expected allowed, got ${navigation.kind}`);
+
+      const outcome = await seam.runNavigationMutation({
+        navigation: navigation.navigation,
         target: { step: '2' },
       });
 
@@ -5596,7 +5617,8 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('allowed');
       if (outcome.kind !== 'allowed') return;
       expect(outcome.runId).toBe(runId);
-      expect(outcome.steps).toEqual(twoSteps);
+      expect(outcome.navigation.steps).toBe(twoSteps);
+      expect(outcome).not.toHaveProperty('steps');
     });
 
     it('allows navigation when a bearer claim authorizes the run', async () => {
@@ -5611,8 +5633,8 @@ describe('RunbookLifecycleCommandService', () => {
 
       expect(outcome.kind).toBe('allowed');
       if (outcome.kind !== 'allowed') return;
-      expect(outcome.delegationRuntime).toBeDefined();
-      const runtime = outcome.delegationRuntime;
+      expect(outcome.navigation.authority.delegationRuntime).toBeDefined();
+      const runtime = outcome.navigation.authority.delegationRuntime;
       if (runtime === undefined) return;
       const issued = runtime.issueDelegationCredential({
         parentRunId: runId,
@@ -5738,9 +5760,7 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       const outcome = await seam.runNavigationMutation({
-        runId: childRunId,
-        callerEvidence: evidence,
-        steps: navigation.steps,
+        navigation: navigation.navigation,
         target: { step: '2' },
       });
 
@@ -5808,9 +5828,7 @@ describe('RunbookLifecycleCommandService', () => {
       });
 
       const outcome = await seam.runNavigationMutation({
-        runId,
-        callerEvidence: runControlEvidence(runId),
-        steps: navigation.steps,
+        navigation: navigation.navigation,
         target: { step: '2' },
       });
 
@@ -6100,17 +6118,12 @@ describe('RunbookLifecycleCommandService', () => {
       });
       expect(allowed.kind).toBe('allowed');
       if (allowed.kind !== 'allowed') return;
-      expect(allowed.delegationRuntime).toBeDefined();
+      expect(allowed.navigation.authority.delegationRuntime).toBeDefined();
       const runtimeArgs = captureRuntimeArgs();
 
       await seam.runNavigationMutation({
-        runId,
-        callerEvidence: runControlEvidence(runId),
-        steps: stepsLandingOnDelegate,
+        navigation: allowed.navigation,
         target: { step: '2' },
-        ...(allowed.delegationRuntime === undefined
-          ? {}
-          : { issueDelegationCredential: allowed.delegationRuntime.issueDelegationCredential }),
       });
 
       const seen = runtimeArgs();
@@ -6230,9 +6243,11 @@ describe('RunbookLifecycleCommandService', () => {
 
       expect(outcome.kind).toBe('allowed');
       if (outcome.kind !== 'allowed') return;
-      expect(outcome.delegationRuntime).toBeDefined();
-      expect(outcome.delegationRuntime?.issueDelegationCredential).toBeDefined();
-      expect(outcome.delegationRuntime?.deriveDelegationToken).toBeDefined();
+      expect(outcome.navigation.authority.delegationRuntime).toBeDefined();
+      expect(
+        outcome.navigation.authority.delegationRuntime?.issueDelegationCredential,
+      ).toBeDefined();
+      expect(outcome.navigation.authority.delegationRuntime?.deriveDelegationToken).toBeDefined();
     });
 
     it('withholds the delegation runtime from a navigation bearer without delegate-from-run', async () => {
@@ -6250,7 +6265,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       expect(outcome.kind).toBe('allowed');
       if (outcome.kind !== 'allowed') return;
-      expect(outcome.delegationRuntime).toBeUndefined();
+      expect(outcome.navigation.authority.delegationRuntime).toBeUndefined();
     });
   });
 

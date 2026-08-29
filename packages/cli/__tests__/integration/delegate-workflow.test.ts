@@ -401,7 +401,10 @@ describe('DELEGATE claim-anchored CLI preconditions (#586 follow-up)', () => {
       steps: [{ title: 'Only', pass: 'COMPLETE', command: 'rundown echo --result pass' }],
     });
 
-  async function startForParentThenOther(): Promise<{ parentRunId: RunId; claimId: string }> {
+  async function startForParentThenOther(): Promise<{
+    parentRunId: RunId;
+    claimId: string;
+  }> {
     await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childPass());
     await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childPass());
     await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), forParent());
@@ -493,7 +496,10 @@ describe('DELEGATE claim-anchored CLI preconditions (#586 follow-up)', () => {
     // to "Pass --claim-id", which they just did. The pre-fix code varies by why the
     // claim failed, so only the post-fix envelope is asserted.
     expect(result.exitCode).not.toBe(0);
-    const payload = JSON.parse(result.stdout) as { code?: string; error?: string };
+    const payload = JSON.parse(result.stdout) as {
+      code?: string;
+      error?: string;
+    };
     expect(payload.code).toBe('CLAIMED_RUNBOOK_UNAVAILABLE');
     // The load-bearing assertion: the operator is told what is actually wrong.
     expect(payload.error).toContain('does not exist');
@@ -1252,8 +1258,8 @@ describe('DELEGATE re-entry and retry', () => {
     expect(firstSummary!.status).toBe('applied');
     expect(firstSummary!.lifecycle).toBe('running');
 
-    // The re-entry frontier is emitted by collect: retry budget consumed and
-    // both substeps re-issued.
+    // After collect commits, Run Progression emits the re-entry frontier: retry
+    // budget consumed and both substeps re-issued.
     const afterFirst = await readRunbookState(workspace, parentRunId);
     expect(afterFirst?.retryCount).toBe(1);
     const firstFrontier = findAllFrontiersInEvents(parseConcatenatedJson(firstCollect.stdout)).at(

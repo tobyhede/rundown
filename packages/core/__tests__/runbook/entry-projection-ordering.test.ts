@@ -310,13 +310,8 @@ describe('entry projection ordering: machine credential issuance agrees with com
     }
 
     const outcome = await seam.runNavigationMutation({
-      runId,
-      callerEvidence: evidence(),
-      steps,
+      navigation: allowed.navigation,
       target: { step: '2' },
-      ...(allowed.delegationRuntime === undefined
-        ? {}
-        : { issueDelegationCredential: allowed.delegationRuntime.issueDelegationCredential }),
     });
     expect(outcome.kind).toBe('applied');
 

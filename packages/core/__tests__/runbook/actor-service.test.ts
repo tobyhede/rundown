@@ -674,7 +674,9 @@ exit 1
       // onto context.substep so CLI and machine agree on the current substep position.
       const actor = await actorService.createActor(state.id, steps);
       expect(actor).not.toBeNull();
-      const snap = actor!.getPersistedSnapshot() as unknown as { context: { substep?: string } };
+      const snap = actor!.getPersistedSnapshot() as unknown as {
+        context: { substep?: string };
+      };
       expect(snap.context.substep).toBe('1');
     });
   });
@@ -1124,9 +1126,8 @@ echo ok
     // The guards raise `InvalidRunbookStateError` rather than a bare `Error`, and
     // the DEFECT is the machine-readable half of that: RD-309's envelope reports
     // `runId` and `reason` in FIELDS so a consumer never parses the prose. It is
-    // also what `finishCollection` reads to decide whether a committed collect
-    // reports RD-309 (prune/restart) or RD-833 (fix the helper), so a blanked
-    // reason would send an operator to the wrong recovery.
+    // also what Run Progression preserves when its entry actor refuses, so a
+    // blanked reason would send an operator to the wrong recovery.
     it('names the run and the reason in the defect of each persisted-snapshot refusal', async () => {
       const service = new RunbookActorService(manager);
       const seed = async (runId: string, snapshot: unknown) => {
@@ -4182,7 +4183,9 @@ echo ok
 
       const actor = await actorService.createActor(state.id, steps);
       expect(actor).not.toBeNull();
-      const snapshot = actor!.getPersistedSnapshot() as unknown as { context: RunbookContext };
+      const snapshot = actor!.getPersistedSnapshot() as unknown as {
+        context: RunbookContext;
+      };
 
       expect(snapshot.context.variables.Plan).toEqual(ARTIFACT_RECORD);
       actorService.stopActor(actor!);
@@ -4252,7 +4255,11 @@ echo ok
         context: {
           enteredArtifacts: { Reviews: [] as const },
         },
-      } satisfies { context: { enteredArtifacts: Readonly<Record<string, readonly never[]>> } };
+      } satisfies {
+        context: {
+          enteredArtifacts: Readonly<Record<string, readonly never[]>>;
+        };
+      };
 
       expect(extractEnteredArtifacts(snapshot)).toEqual({ Reviews: [] });
     });

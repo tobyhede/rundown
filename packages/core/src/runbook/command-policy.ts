@@ -5,20 +5,17 @@ import {
   type ClaimId,
   type ClaimRecord,
 } from './claim-id.js';
-import type { DelegationRuntimeCapabilities } from './delegation-credential.js';
 import {
   type DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
 } from './delegation-lifecycle-read-model.js';
 import type { InlineUpwardPropagationResult } from './inline-parent-advance.js';
 import type { RunId } from './run-id.js';
-import type { RunProgressionAuthority } from './run-progression-authority.js';
+import type { RunProgressionDirective } from './run-progression.js';
 import type { AbandonedAttemptSetOutcome } from './storage/execution-lease.js';
 import type { GuardedMutationResult } from './storage/mutation-result.js';
 import type { FrameKey } from './targeting.js';
 import type { RunbookState } from './types.js';
-import type { ErrorCodes } from '../errors/codes.js';
-import type { ExecutionObservationEffect } from '../events/execution-observation.js';
 import type { TransitionObservationEvent } from '../events/transition-observation.js';
 
 /** Command intent categories owned by core command policy. */
@@ -265,42 +262,8 @@ export type DelegationPolicyOutcome =
        * persisted into the SQLite run state.
        */
       readonly transitionObservations: readonly TransitionObservationEvent[];
-      /**
-       * Set when collection drove a RETRY re-entry into a DELEGATE frontier.
-       * Carries the projected STEP_ENTERED observation(s) with fresh delegation
-       * tokens. Present only after the one-shot frontier was consumed.
-       */
-      readonly reEntryObservations?: readonly ExecutionObservationEffect[];
-      /**
-       * Verified collector-bound delegation capabilities for the continuation
-       * the frontend drives next. Collection can leave the target run standing
-       * one transition short of a DELEGATE step, and machine-owned issuance needs
-       * a verified issuer at that moment; without one the continuation is refused
-       * `actor_context_required` rather than advanced. The following turn then
-       * projects the frontier that issuance stored, which needs the same-issuer
-       * deriver — a descriptor naming a different issuer claim is refused RD-821.
-       *
-       * The two travel as ONE branded value rather than two optional fields
-       * precisely because they are two halves of one authority: the bearer
-       * holding `collect-for-run` over `targetRunId`, which is a run-control
-       * claim and therefore also holds `delegate-from-run` over it. Only
-       * `delegationRuntimeCapabilities` can produce the value, so the pairing is
-       * established by construction and a consumer cannot forward one half alone.
-       *
-       * Runtime-only: a closure cannot be serialised, and must never reach
-       * persisted context, a snapshot, or a diagnostic (CLAUDE.md § Actor
-       * dependencies).
-       */
-      readonly delegationRuntime: DelegationRuntimeCapabilities;
-      /**
-       * Run-bound authority for the Run Progression continuation the frontend
-       * drives next (#851 / ADR 0003). Minted by the collection seam from the
-       * same verified authority that produced {@link delegationRuntime}, so the
-       * continuation's target run, claim generation, and delegation
-       * capabilities cannot disagree. Runtime-only for the same reason as the
-       * runtime pair.
-       */
-      readonly progressionAuthority: RunProgressionAuthority;
+      /** Opaque core-minted continuation consumed verbatim by the frontend. */
+      readonly progression: Extract<RunProgressionDirective, { readonly kind: 'activate' }>;
     }
   | {
       /**
@@ -337,12 +300,8 @@ export type DelegationPolicyOutcome =
        * persisted into the SQLite run state.
        */
       readonly transitionObservations: readonly TransitionObservationEvent[];
-      /** Never present on a terminal outcome: no continuation re-enters a frontier. */
-      readonly reEntryObservations?: undefined;
-      /** Never present on a terminal outcome: no continuation needs authority. */
-      readonly delegationRuntime?: undefined;
-      /** Never present on a terminal outcome: no continuation needs authority. */
-      readonly progressionAuthority?: undefined;
+      /** Never present on a terminal outcome: no continuation follows. */
+      readonly progression?: undefined;
     }
   | {
       /** Collection failed after core rejected a persisted delegation outcome. */
@@ -355,26 +314,11 @@ export type DelegationPolicyOutcome =
        * - `step_not_found` — `collectDelegationOutcomes` stale-state guard
        * - `target_mismatch` — `prepareResolvedCompletionDrain` `status: 'failed'`
        *   (CompletionTargetMismatch.reason is the only drain failure reason).
-       * - `frontier_projection_refused` — the verified collector cannot derive
-       *   the persisted frontier or the derived bearer does not match its hash.
-       *   There is NO `state_error` reason; the drain never produces one.
-       *
-       * `frontier_consume_failed` was REMOVED rather than retained unused. It
-       * reported a frontier that projected but whose consume did not commit —
-       * a state only a separately committed consume can reach. A fenced collect
-       * derives its consume inside the one transaction, so the condition is
-       * unrepresentable and nothing can construct the arm. Keeping it would
-       * have made this docstring's own "no dead arms" promise false. RD-829
-       * itself is still live on a different shape: the execution loop emits its
-       * own envelope from the unfenced `projectAndConsumeReEntryFrontier`
-       * (`packages/cli/src/services/execution.ts`), which still commits its
-       * consume separately.
+       * Frontier projection and consume are deliberately absent: collection
+       * commits only its completion domain, then returns a Run Progression
+       * directive. The machine owns every frontier refusal on the next turn.
        */
-      readonly reason:
-        | 'target_mismatch'
-        | 'not_delegate_step'
-        | 'step_not_found'
-        | 'frontier_projection_refused';
+      readonly reason: 'target_mismatch' | 'not_delegate_step' | 'step_not_found';
       /**
        * User-facing error code, attached by core so the CLI renders a flat
        * passthrough (no CLI reason→code ternary — keeps "no CLI lifecycle
@@ -382,17 +326,8 @@ export type DelegationPolicyOutcome =
        * - `not_delegate_step` → `NOT_DELEGATE_STEP`
        * - `step_not_found` → `STEP_NOT_FOUND`
        * - `target_mismatch` → `COLLECT_OPERATION_FAILED`
-       * - `frontier_projection_refused` → `RD-821`
-       *
-       * `RD-821` names the CONDITION rather than the command, so the shared
-       * re-entry seam reports it identically whether `collect` or the execution
-       * loop drove it (F6).
        */
-      readonly code:
-        | 'NOT_DELEGATE_STEP'
-        | 'STEP_NOT_FOUND'
-        | 'COLLECT_OPERATION_FAILED'
-        | typeof ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code;
+      readonly code: 'NOT_DELEGATE_STEP' | 'STEP_NOT_FOUND' | 'COLLECT_OPERATION_FAILED';
       /** Operator-facing failure message. */
       readonly message: string;
     };

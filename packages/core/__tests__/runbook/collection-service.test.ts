@@ -9,7 +9,6 @@ import {
   RunbookCompletionService,
   RunbookStateManager,
   SessionService,
-  InvalidRunbookStateError,
   assertClaimLookupKey,
   assertDelegationTokenHash,
   assertRunId,
@@ -26,18 +25,8 @@ import {
   type ClaimId,
   type ClaimSeenRecordResult,
 } from '../../src/runbook/index.js';
-import { ErrorCodes } from '../../src/errors/codes.js';
-import { logger } from '../../src/logger.js';
-import { RundownError } from '../../src/errors/rundown-error.js';
-import { getErrorMessage } from '../../src/errors.js';
-import {
-  createDelegationCredentialIssuer,
-  createDelegationTokenDeriver,
-} from '../../src/runbook/delegation-credential.js';
-import {
-  prepareReEntryFrontierConsume,
-  readPersistedReEntryFrontier,
-} from '../../src/runbook/re-entry-frontier.js';
+import { createDelegationCredentialIssuer } from '../../src/runbook/delegation-credential.js';
+import { readPersistedReEntryFrontier } from '../../src/runbook/re-entry-frontier.js';
 import { assertDelegationIssuanceNonce } from '../../src/runbook/delegation-token.js';
 import { claimCanReportDelegationResult } from '../../src/runbook/claim-id.js';
 import { narrowInlineUpwardPropagation } from '../../src/runbook/collection-service.js';
@@ -103,10 +92,14 @@ function preparedMutation(nextState: RunbookState, snapshot: unknown = {}) {
 }
 
 function buildCurrentCursorResolvedCompletionForTest(
-  input: Parameters<typeof buildResolvedCompletion>[0] & { readonly targetSubstep: string },
+  input: Parameters<typeof buildResolvedCompletion>[0] & {
+    readonly targetSubstep: string;
+  },
 ) {
   return brandCurrentCursorResolvedCompletionForTest(
-    buildResolvedCompletion(input) as ResolvedCompletion & { readonly targetSubstep: string },
+    buildResolvedCompletion(input) as ResolvedCompletion & {
+      readonly targetSubstep: string;
+    },
   );
 }
 
@@ -652,10 +645,11 @@ describe('RunbookCollectionService', () => {
     });
 
     if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
+    if (outcome.lifecycle !== 'running') throw new Error('expected running collection');
     // One BRANDED pair, not two independently optional fields: issuance and
     // derivation are two halves of one verified authority, so the outcome either
     // carries both or neither.
-    const runtime = outcome.delegationRuntime;
+    const runtime = outcome.progression.authority.delegationRuntime;
     if (!runtime) throw new Error('expected delegation capabilities on a running collect');
     const issue = runtime.issueDelegationCredential;
     const derive = runtime.deriveDelegationToken;
@@ -683,7 +677,7 @@ describe('RunbookCollectionService', () => {
     ).toThrow('Delegation credential belongs to a different issuer claim');
   });
 
-  it('projects retry re-entry observations through the collection outcome and consumes the frontier', async () => {
+  it('returns a progression directive and leaves retry frontier ownership to XState', async () => {
     const frameKey = buildFrameKey('1');
     const target = state({
       resolvedCompletions: {
@@ -806,32 +800,22 @@ describe('RunbookCollectionService', () => {
         aggregated: true,
       },
     });
-    expect(outcome.reEntryObservations).toEqual(frontierEffects);
-    expect(enterEntrySpy).toHaveBeenCalledTimes(1);
-    // Asserted on the captured call rather than through `toHaveBeenCalledWith`:
-    // jest's recursive `AsymmetricMatcher` mapped type expands over `RunbookState`
-    // in this signature and trips TS2589 ("type instantiation is excessively
-    // deep"). Reading the arguments keeps every fact the matcher pinned.
-    const consumeCall = consumeSpy.mock.calls.at(-1);
-    expect(consumeCall?.[0]).toBe(runId);
-    expect(consumeCall?.[1]).toEqual(retryState);
-    expect(consumeCall?.[2]).toEqual(steps);
-    expect(consumeCall?.[3]).toEqual({ type: 'DELEGATE_FRONTIER_CONSUMED' });
-    // The consume is DERIVED, not committed on its own: it reaches the store only
-    // through the collection's single owned-set commit, which is what leaves the
-    // frontier consumed exactly when the applies it accompanies are.
-    expect(await persistedFrontier(runId)).toEqual([]);
+    expect(outcome.progression).toMatchObject({
+      kind: 'activate',
+      authority: { runId },
+      entryBoundary: {
+        kind: 'after_observed_transition',
+        lifecycle: 'running',
+      },
+    });
+    expect(enterEntrySpy).not.toHaveBeenCalled();
+    expect(consumeSpy).not.toHaveBeenCalled();
+    expect(await persistedFrontier(runId)).toEqual([retryA.persisted, retryB.persisted]);
   });
 
-  it('discloses no bearers and consumes no frontier when the enclosing commit refuses', async () => {
-    // REPLACES "returns collection_failed without frontier observations when
-    // retry frontier consume fails" and its F6 twin. `consume_failed` is no longer
-    // reachable from collect: the consume is derived, not committed, so it cannot
-    // half-land — the only way it does not reach the store is that the whole
-    // transaction refused. `prepareReEntryFrontierConsume`'s union omits the arm
-    // for exactly that reason. The operator-visible condition the old test named
-    // (projection succeeded, consume did not land, nothing disclosed) survives and
-    // is pinned here against the transactional refusal that now covers it.
+  it('returns no progression directive when the collection commit refuses', async () => {
+    // Collection owns only the completion-domain commit. If that commit loses a
+    // compare-and-swap race, it cannot authorize the separate progression turn.
     const frameKey = buildFrameKey('1');
     const retry = frontierEntry();
     const target = state({
@@ -845,9 +829,8 @@ describe('RunbookCollectionService', () => {
       unresolved: 1,
       applied: [],
     });
-    // The consume DERIVES cleanly — the projection half succeeds, exactly as in
-    // the old `consume_failed` scenario. What differs is that the derived state
-    // reaches the store only through the collection's one commit.
+    // This prepared mutation stands in for the completion-domain state only;
+    // frontier projection and consumption belong to Run Progression.
     jest
       .spyOn(actorService, 'prepareActorMutation')
       .mockResolvedValue(preparedMutation(state({ ...target, snapshot: { context: {} } })));
@@ -866,19 +849,16 @@ describe('RunbookCollectionService', () => {
     });
 
     expect(outcome).toMatchObject({ kind: 'concurrent_modification', runId });
-    // No disclosure: observation is strictly post-commit, so a refused commit
-    // reconstructs no bearers at all.
+    // No progression means no entry and no bearer disclosure.
     expect(enterEntrySpy).not.toHaveBeenCalled();
-    // ...and the frontier is still persisted, so the next collect re-projects it.
+    // The pending frontier remains for a later progression turn.
     expect(await persistedFrontier(runId)).toEqual([retry.persisted]);
   });
 
-  it('re-projects and consumes a pending retry frontier on a later no-op collect', async () => {
-    // Retryable-frontier regression: a PRIOR collect projected a retry frontier
-    // whose transaction refused, so the frontier stays persisted. A later collect
-    // drains nothing new (applied:0) but MUST still re-project + consume the
-    // pending frontier and surface its observations — not strand it behind a
-    // terminal `already_collected` no-op.
+  it('hands a pending retry frontier to progression on a later no-op collect', async () => {
+    // A prior completion-domain commit left a pending retry frontier. A later
+    // no-op collect must still return a progression directive so the shared
+    // driver can project and consume it in a separate turn.
     const frameKey = buildFrameKey('1');
     const retry = frontierEntry();
     const target = state({
@@ -919,7 +899,7 @@ describe('RunbookCollectionService', () => {
     const enterEntrySpy = jest
       .spyOn(actorService, 'enterExecutionUnit')
       .mockResolvedValue({ kind: 'awaiting', effects: reEntryEffects });
-    // Frontier consume derives cleanly this time, so the projection is surfaced.
+    // Collection must not prepare or enter the frontier itself.
     const consumeSpy = jest
       .spyOn(actorService, 'prepareActorMutation')
       .mockResolvedValue(preparedMutation(target, { context: {} }));
@@ -935,22 +915,19 @@ describe('RunbookCollectionService', () => {
       kind: 'collection_applied',
       targetRunId: runId,
       applied: 0,
-      reEntryObservations: reEntryEffects,
+      progression: { kind: 'activate', authority: { runId } },
     });
-    expect(enterEntrySpy).toHaveBeenCalledTimes(1);
-    // Read the captured call rather than matching it: see the TS2589 note above.
-    const consumeCall = consumeSpy.mock.calls.at(-1);
-    expect(consumeCall?.[0]).toBe(runId);
-    expect(consumeCall?.[1]).toEqual(target);
-    expect(consumeCall?.[2]).toEqual(steps);
-    expect(consumeCall?.[3]).toEqual({ type: 'DELEGATE_FRONTIER_CONSUMED' });
+    expect(enterEntrySpy).not.toHaveBeenCalled();
+    expect(consumeSpy).not.toHaveBeenCalled();
+    expect(await persistedFrontier(runId)).toEqual([retry.persisted]);
   });
 
-  it('returns already_collected when the scope has no unapplied outcomes to drain', async () => {
-    // Idempotent no-op: every delegate substep is done and carries a reported
-    // outcome (gate passes), but the cursor has advanced off the substeps
-    // (`substep` undefined), so the real drain applies nothing and reports
-    // status:'continue' with applied:0 — collection maps that to already_collected.
+  it('returns the shared progression directive when the scope has no unapplied outcomes', async () => {
+    // Every delegate substep is done and carries a reported outcome (gate
+    // passes), but the cursor has advanced off the substeps (`substep`
+    // undefined), so the real drain applies nothing. Collection still returns
+    // the same opaque activation directive: only Run Progression may decide
+    // whether the current execution unit or a persisted frontier enters next.
     const frameKey = buildFrameKey('1');
     const target = state({
       substep: undefined,
@@ -983,9 +960,10 @@ describe('RunbookCollectionService', () => {
         frame: activeFrame(frameKey, 1),
       }),
     ).resolves.toMatchObject({
-      kind: 'already_collected',
+      kind: 'collection_applied',
       targetRunId: runId,
-      step: '1',
+      applied: 0,
+      progression: { kind: 'activate', authority: { runId } },
     });
   });
 
@@ -2072,7 +2050,8 @@ describe('RunbookCollectionService', () => {
     // No frame override → `defaultCollectionFrame` builds the frame from
     // `activeFrameKeyOf(state)` and `state.activeEntry ?? 1`. With the delegate
     // substeps done under the persisted frame key and no outcomes left to drain,
-    // the result is the idempotent `already_collected`.
+    // the result is a zero-apply collection carrying the shared progression
+    // directive; collection itself no longer decides whether re-entry follows.
     //   * `activeEntry` is undefined here, so the `?? 1` fallback must supply a
     //     positive entry — the `&& 1` mutant yields `undefined`, which
     //     `activeFrame`'s positive-entry assertion rejects (throws).
@@ -2100,9 +2079,11 @@ describe('RunbookCollectionService', () => {
         callerEvidence: ORCHESTRATOR_EVIDENCE,
       }),
     ).resolves.toMatchObject({
-      kind: 'already_collected',
+      kind: 'collection_applied',
       targetRunId: runId,
       step: '1',
+      applied: 0,
+      progression: { kind: 'activate', authority: { runId }, steps },
     });
   });
 
@@ -2244,498 +2225,6 @@ describe('RunbookCollectionService', () => {
         frame: activeFrame(frameKey, 1),
       }),
     ).rejects.toThrow('Step "ghost" not found');
-  });
-
-  // ---------------------------------------------------------------------------
-  // Regions 2 & 3 — `isDelegateFrontierEntry` + `projectAndConsumeReEntryFrontier`
-  // malformed-snapshot guards (collection-service.ts L282-314).
-  //
-  // Each malformed shape drives the validation guard down a distinct branch.
-  // The scaffold mirrors the "later no-op collect" test: the drain prepares
-  // `continue` with `applied: []` over the target whose snapshot carries the
-  // (malformed) frontier.
-  // ---------------------------------------------------------------------------
-
-  /** Run a no-op collect whose target snapshot carries the given frontier. */
-  async function collectWithPersistedFrontier(delegateFrontier: unknown) {
-    const frameKey = buildFrameKey('1');
-    const target = state({
-      retryCount: 1,
-      snapshot: { context: { delegateFrontier } },
-    });
-    await manager.save(target);
-    jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
-      status: 'continue',
-      state: target,
-      unresolved: 1,
-      applied: [],
-    });
-    return collectionService.collectDelegationOutcomes({
-      targetState: target,
-      steps,
-      callerEvidence: ORCHESTRATOR_EVIDENCE,
-      frame: activeFrame(frameKey, 1),
-    });
-  }
-
-  it('rejects a non-array delegateFrontier in the persisted snapshot', async () => {
-    // L307 `!Array.isArray(rawFrontier)`: a non-array (here a string) must throw
-    // `InvalidRunbookStateError`. Covers the L307 block + the L309 message; the
-    // `&&` LogicalOperator mutant of L307 would require BOTH the non-array AND a
-    // failing `.every` (the latter throws on a string), so this also pins the
-    // operator. `rawFrontier !== undefined`, so the no-frontier early-return is
-    // not taken.
-    await expect(collectWithPersistedFrontier('oops')).rejects.toBeInstanceOf(
-      InvalidRunbookStateError,
-    );
-    // The refusal must name the offending run: the recovery path is explicit
-    // operator action (finish/stop/prune/restart) on a specific run, so a
-    // message that does not identify one is not actionable.
-    await expect(collectWithPersistedFrontier('oops')).rejects.toThrow(
-      `Run ${runId} carries a malformed delegateFrontier`,
-    );
-  });
-
-  it('rejects an object (non-array) delegateFrontier in the persisted snapshot', async () => {
-    // L307 `!Array.isArray`: an object that is not an array must also throw —
-    // distinguishes "array-like" from genuine arrays so `.every` is never reached.
-    await expect(collectWithPersistedFrontier({})).rejects.toBeInstanceOf(InvalidRunbookStateError);
-  });
-
-  it('rejects a frontier whose entry is not an object', async () => {
-    // L283 `typeof value !== 'object' || value === null`: a primitive entry
-    // (string) makes `isDelegateFrontierEntry` return false, so `.every` fails →
-    // throw. Kills the L283 ConditionalExpression/LogicalOperator/BooleanLiteral
-    // mutants (a `true`/short-circuit guard would wrongly accept the primitive).
-    await expect(collectWithPersistedFrontier(['not-an-object'])).rejects.toBeInstanceOf(
-      InvalidRunbookStateError,
-    );
-  });
-
-  it('rejects a frontier whose entry is null', async () => {
-    // L283 `value === null`: a null entry must be rejected (typeof null ===
-    // 'object', so only the explicit null check excludes it). Kills the
-    // `value === null` → false / `&&` mutants of L283.
-    await expect(collectWithPersistedFrontier([null])).rejects.toBeInstanceOf(
-      InvalidRunbookStateError,
-    );
-  });
-
-  it('rejects a frontier entry missing a string id', async () => {
-    // L286 `typeof entry.id === 'string'`: id absent → false → `.every` fails →
-    // throw. Forcing this check `true` (or OR-ing it) would accept the entry.
-    const { id: _id, ...missingId } = frontierEntry().persisted;
-    await expect(collectWithPersistedFrontier([missingId])).rejects.toBeInstanceOf(
-      InvalidRunbookStateError,
-    );
-  });
-
-  it('rejects a frontier entry missing a string runbook', async () => {
-    // L287 `typeof entry.runbook === 'string'`: runbook absent → false → throw.
-    const { runbook: _runbook, ...missingRunbook } = frontierEntry().persisted;
-    await expect(collectWithPersistedFrontier([missingRunbook])).rejects.toBeInstanceOf(
-      InvalidRunbookStateError,
-    );
-  });
-
-  it('rejects a frontier entry missing its credential descriptor', async () => {
-    const { credential: _credential, ...missingCredential } = frontierEntry().persisted;
-    await expect(collectWithPersistedFrontier([missingCredential])).rejects.toBeInstanceOf(
-      InvalidRunbookStateError,
-    );
-  });
-
-  it('rejects a frontier entry missing its token hash', async () => {
-    const { tokenHash: _tokenHash, ...missingTokenHash } = frontierEntry().persisted;
-    await expect(collectWithPersistedFrontier([missingTokenHash])).rejects.toBeInstanceOf(
-      InvalidRunbookStateError,
-    );
-  });
-
-  it('refuses projection when the verified collector is not the frontier issuer', async () => {
-    const persisted = frontierEntry().persisted;
-    const rotatedIssuer = {
-      ...persisted,
-      credential: {
-        ...persisted.credential,
-        issuerClaimKey: assertClaimLookupKey(`rdclk_${'9'.repeat(32)}`),
-      },
-    };
-    const enterEntrySpy = jest.spyOn(actorService, 'enterExecutionUnit');
-    const consumeSpy = jest.spyOn(actorService, 'prepareActorMutation');
-
-    await expect(collectWithPersistedFrontier([rotatedIssuer])).resolves.toMatchObject({
-      kind: 'collection_failed',
-      reason: 'frontier_projection_refused',
-      // Was `COLLECT_OPERATION_FAILED`. A rotated/foreign issuing claim is a
-      // credential disclosure-boundary refusal, which RD-821 names — and which
-      // the execution loop already reported under RD-821 for the same input.
-      code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
-    });
-    expect(enterEntrySpy).not.toHaveBeenCalled();
-    expect(consumeSpy).not.toHaveBeenCalled();
-  });
-
-  it('refuses projection when a derived token does not match the persisted hash', async () => {
-    const persisted = frontierEntry().persisted;
-    const wrongHash = {
-      ...persisted,
-      tokenHash: assertDelegationTokenHash(`sha256:${'0'.repeat(64)}`),
-    };
-    const enterEntrySpy = jest.spyOn(actorService, 'enterExecutionUnit');
-    const consumeSpy = jest.spyOn(actorService, 'prepareActorMutation');
-
-    await expect(collectWithPersistedFrontier([wrongHash])).resolves.toMatchObject({
-      kind: 'collection_failed',
-      reason: 'frontier_projection_refused',
-      // Was `COLLECT_OPERATION_FAILED` — see the rotated-issuer test above.
-      code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
-    });
-    expect(enterEntrySpy).not.toHaveBeenCalled();
-    expect(consumeSpy).not.toHaveBeenCalled();
-  });
-
-  it('keeps the persisted re-entry frontier free of plaintext bearers', () => {
-    const entry = frontierEntry();
-
-    expect(entry.public.token).toMatch(/^rdtk_/);
-    expect(JSON.stringify(entry.persisted)).not.toMatch(/rdtk_/);
-    expect(entry.persisted).not.toHaveProperty('token');
-  });
-
-  it('treats an empty-array delegateFrontier as no re-entry (no observations surfaced)', async () => {
-    // L313 `frontier.length === 0`: an empty (but valid) array short-circuits
-    // to `status: 'none'`, so the collect maps to the idempotent `already_collected`
-    // no-op with NO `reEntryObservations`. The `false`/`&&` mutants of L313 would
-    // fall through to the observation path. `observeExecutionUnitEntry` is spied to
-    // prove it is never reached.
-    const enterEntrySpy = jest.spyOn(actorService, 'enterExecutionUnit');
-    const outcome = await collectWithPersistedFrontier([]);
-
-    expect(outcome).toMatchObject({
-      kind: 'already_collected',
-      targetRunId: runId,
-      step: '1',
-    });
-    expect(outcome).not.toHaveProperty('reEntryObservations');
-    expect(enterEntrySpy).not.toHaveBeenCalled();
-  });
-
-  it('treats a present frontier with an undefined cursor substep as no re-entry', async () => {
-    // L313 `advanced.substep === undefined`: a valid non-empty frontier but a
-    // cursor that has advanced off the substeps (substep undefined) short-circuits
-    // to `status: 'none'`. Kills the L313 substep-clause mutants and confirms the
-    // observation path is skipped.
-    const frameKey = buildFrameKey('1');
-    const retry = frontierEntry();
-    const target = state({
-      substep: undefined,
-      retryCount: 1,
-      snapshot: {
-        context: {
-          delegateFrontier: [retry.persisted],
-        },
-      },
-    });
-    await manager.save(target);
-    jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
-      status: 'continue',
-      state: target,
-      unresolved: 1,
-      applied: [],
-    });
-    const enterEntrySpy = jest.spyOn(actorService, 'enterExecutionUnit');
-
-    const outcome = await collectionService.collectDelegationOutcomes({
-      targetState: target,
-      steps,
-      callerEvidence: ORCHESTRATOR_EVIDENCE,
-      frame: activeFrame(frameKey, 1),
-    });
-
-    expect(outcome).toMatchObject({
-      kind: 'already_collected',
-      targetRunId: runId,
-      step: '1',
-    });
-    expect(outcome).not.toHaveProperty('reEntryObservations');
-    expect(enterEntrySpy).not.toHaveBeenCalled();
-  });
-
-  // ---------------------------------------------------------------------------
-  // Region 4 — entry input wiring + result spread.
-  //
-  // Assert the exact input passed to `enterExecutionUnit`, plus the conditional
-  // `reEntryObservations` spread on the result. Since #820 the collect side
-  // supplies only the committed state, the steps, and the projected bearers —
-  // everything the entry carries is rendered by the seam from those, which is
-  // why the per-field entry assertions that used to live here are now the
-  // characterisation block further down (which reads the emitted payload).
-  // ---------------------------------------------------------------------------
-
-  /** Capture-and-assert helper: run a no-op collect that projects a valid frontier. */
-  async function projectFrontierAndCapture(overrides: Partial<RunbookState>) {
-    const frameKey = buildFrameKey('1');
-    const retry = frontierEntry();
-    const persistedFrontier = [retry.persisted];
-    const frontier = [retry.public];
-    const target = state({
-      retryCount: 1,
-      snapshot: { context: { delegateFrontier: persistedFrontier } },
-      ...overrides,
-    });
-    await manager.save(target);
-    jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
-      status: 'continue',
-      state: target,
-      unresolved: 1,
-      applied: [],
-    });
-    const reEntryEffects: readonly ExecutionObservationEffect[] = [
-      {
-        kind: 'execution_observation',
-        event: {
-          type: 'STEP_ENTERED',
-          payload: {
-            position: { current: '1', total: 2, substep: '1' },
-            stepName: '1',
-            hasCommand: false,
-            isSubstep: true,
-            prompted: false,
-            artifacts: {},
-            delegateFrontier: frontier,
-          },
-        },
-      },
-    ];
-    const enterEntrySpy = jest
-      .spyOn(actorService, 'enterExecutionUnit')
-      .mockResolvedValue({ kind: 'awaiting', effects: reEntryEffects });
-    jest
-      .spyOn(actorService, 'prepareActorMutation')
-      .mockResolvedValue(preparedMutation(target, { context: {} }));
-    const outcome = await collectionService.collectDelegationOutcomes({
-      targetState: target,
-      steps,
-      callerEvidence: ORCHESTRATOR_EVIDENCE,
-      frame: activeFrame(frameKey, 1),
-    });
-    return { outcome, enterEntrySpy, frontier, reEntryEffects };
-  }
-
-  it('enters the COMMITTED target with the runbook steps and the projected bearers', async () => {
-    // The three things the collect side still supplies, and the only three it
-    // can get wrong: the state whose commit just landed, a non-empty steps array
-    // (an emptied copy would make the entry unresolvable against the runbook),
-    // and the bearers the projection reconstructed.
-    const { enterEntrySpy, frontier } = await projectFrontierAndCapture({});
-
-    expect(enterEntrySpy).toHaveBeenCalledTimes(1);
-    const input = enterEntrySpy.mock.calls[0][0];
-    expect(input.state.id).toBe(runId);
-    expect(input.steps).toEqual(steps);
-    expect(input.steps.length).toBeGreaterThan(0);
-    expect(input.delegateFrontier).toEqual(frontier);
-  });
-
-  it('enters the state the transaction committed, not the pre-drain state it started from', async () => {
-    // Post-commit by construction: the entry describes the run as it exists
-    // after the consume, so a pre-commit state would announce a frontier the
-    // commit has already retired.
-    const { enterEntrySpy } = await projectFrontierAndCapture({});
-
-    const input = enterEntrySpy.mock.calls[0][0];
-    const committed = await manager.load(runId);
-    expect(input.state).toEqual(committed);
-  });
-
-  it('includes reEntryObservations on the result only when the frontier projects', async () => {
-    // L469 `reentry.status === 'projected' ? {...} : {}`: when a valid frontier
-    // projects + consumes, the `collection_applied` result MUST carry
-    // `reEntryObservations`. The mutant forcing the condition `true` is killed by
-    // the empty-array / undefined-substep tests above (status 'none' → no
-    // observations); this test pins the positive arm.
-    const { outcome, reEntryEffects } = await projectFrontierAndCapture({});
-    expect(outcome).toMatchObject({
-      kind: 'collection_applied',
-      targetRunId: runId,
-      applied: 0,
-      reEntryObservations: reEntryEffects,
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // #816 characterisation — the COLLECT half of the STEP_ENTERED divergence,
-  // FLIPPED by #820.
-  //
-  // These pinned a builder that no longer exists. `prepareCollectReEntryFrontier`
-  // used to hand the frontier seam a hand-built `StepEntryMetadata` carrying ids,
-  // position, name and flags and none of the four rendered fields, while the CLI
-  // execution loop's builder filled all of them. Collect now enters through the
-  // same core seam `rundown run` does, so there is one builder and nothing left
-  // to disagree.
-  //
-  // The assertions below are the same three facts inverted: what was
-  // `toBeUndefined()` is the rendered value, and what was `false` is the composed
-  // one. They read the EMITTED payload rather than a captured argument, because
-  // the argument they used to capture is core-private now. The end-to-end
-  // contrast is in the CLI's
-  // `integration/step-entered-run-collect-agreement.test.ts`.
-  // ---------------------------------------------------------------------------
-  describe('STEP_ENTERED entry metadata (#816 flip)', () => {
-    /**
-     * Run a no-op collect that projects a valid frontier, and return the
-     * `STEP_ENTERED` payload it discloses.
-     *
-     * The real `enterExecutionUnit` runs here — that is the point. A local twin
-     * of `projectFrontierAndCapture` above, which closes over the shared `steps`
-     * fixture; this one takes the step graph, because the `prompted` case needs a
-     * step KIND the shared fixture does not carry.
-     *
-     * @param collectSteps - Step graph the collect resolves its target step in.
-     * @param overrides - Target-state overrides applied on top of the fixture.
-     * @returns The single disclosed `STEP_ENTERED` payload.
-     */
-    async function collectStepEnteredPayload(
-      collectSteps: ResolvedStep[],
-      overrides: Partial<RunbookState> = {},
-    ): Promise<Record<string, unknown>> {
-      const frameKey = buildFrameKey('1');
-      const retry = frontierEntry();
-      const target = state({
-        retryCount: 1,
-        // A real `snapshot.value`, unlike the sibling fixtures above: entering
-        // the unit runs the persisted-snapshot freshness guard, which the
-        // spied-out seam never reached.
-        snapshot: { value: 'step::1::1', context: { delegateFrontier: [retry.persisted] } },
-        ...overrides,
-      });
-      await manager.save(target);
-      jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
-        status: 'continue',
-        state: target,
-        unresolved: 1,
-        applied: [],
-      });
-      jest
-        .spyOn(actorService, 'prepareActorMutation')
-        .mockResolvedValue(preparedMutation(target, { context: {} }));
-
-      const outcome = await collectionService.collectDelegationOutcomes({
-        targetState: target,
-        steps: collectSteps,
-        callerEvidence: ORCHESTRATOR_EVIDENCE,
-        frame: activeFrame(frameKey, 1),
-      });
-
-      if (outcome.kind !== 'collection_applied') {
-        throw new Error(`expected collection_applied, got ${outcome.kind}`);
-      }
-      const effects = outcome.reEntryObservations ?? [];
-      expect(effects).toHaveLength(1);
-      const event = effects[0].event;
-      if (event.type !== 'STEP_ENTERED')
-        throw new Error(`expected STEP_ENTERED, got ${event.type}`);
-      return event.payload as unknown as Record<string, unknown>;
-    }
-
-    it('carries the rendered description of the substep it names', async () => {
-      // The shared fixture gives substep '1' a description, which the old
-      // builder had and dropped.
-      expect(steps[0]).toMatchObject({
-        substeps: expect.arrayContaining([expect.objectContaining({ id: '1', description: 'A' })]),
-      });
-
-      const payload = await collectStepEnteredPayload(steps);
-
-      // THE FLIP. `toBeUndefined()` on all four rendered fields before #820.
-      // A substep's description does not depend on which command entered it.
-      expect(payload.description).toBe('A');
-      // The fixture substep declares no command, so `commandCode` is still
-      // absent — but `hasCommand` now says so because the PARSED unit says so,
-      // not because no rendering happened.
-      expect(payload.commandCode).toBeUndefined();
-      expect(payload.hasCommand).toBe(false);
-      expect(payload).toMatchObject({ stepName: '1', isSubstep: true });
-    });
-
-    it('composes prompted from the persisted flag and the step kind', async () => {
-      // The same two delegate substeps, hung off a step whose FOR bounds did
-      // not resolve. `resolvedStepHasSubsteps` accepts `prompted-for`, so the
-      // collect reaches its frontier exactly as it does for the shared fixture.
-      const promptedForSteps: ResolvedStep[] = [
-        {
-          kind: 'prompted-for',
-          name: '1',
-          description: 'Delegate work',
-          prompt: 'FOR item IN {{ items }}',
-          substeps: [
-            { id: '1', description: 'A', delegate: true, transitions: tx('CONTINUE', 'STOP') },
-            { id: '2', description: 'B', delegate: true, transitions: tx('CONTINUE', 'STOP') },
-          ],
-          transitions: tx('CONTINUE', 'STOP'),
-        },
-        {
-          kind: 'base',
-          name: '2',
-          description: 'After collection',
-          transitions: tx('CONTINUE', 'STOP'),
-        },
-      ];
-
-      // `false`, not absent: the run's own flag is off, which is what makes the
-      // composition below about the step kind rather than about the run.
-      const payload = await collectStepEnteredPayload(promptedForSteps, { prompted: false });
-
-      // THE FLIP. `false` before #820, on the persisted flag alone. The field
-      // documents whether execution is prompted rather than automatic, and a
-      // prompted-FOR step IS prompted — the entry seam classifies it `awaiting`
-      // on this same term.
-      expect(payload.prompted).toBe(true);
-      // The substep carries no prompt of its own, so the step-level FOR text is
-      // what an orchestrator is shown — a field the old builder never carried.
-      expect(payload.prompt).toBe('FOR item IN {{ items }}');
-    });
-
-    it('neither enters nor consumes the frontier for a cursor naming no live substep', async () => {
-      // The third divergence, and the only one that never reached the payload:
-      // `substepId` came off the raw cursor while `isSubstep` came off the
-      // resolved unit. Both answer one question, and both come off the resolved
-      // unit now — so a cursor naming no live substep is not a substep entry,
-      // and the frontier it would have disclosed stays persisted.
-      //
-      // Named for what it asserts rather than for that origin: the payload is
-      // never read here, so a title promising payload coverage would send a
-      // reader looking for it in the wrong file. The `substepId` assertion
-      // itself lives on the seam that renders the payload, in
-      // `execution-unit-entry.test.ts`.
-      const frameKey = buildFrameKey('1');
-      const retry = frontierEntry();
-      const target = state({
-        substep: '9',
-        retryCount: 1,
-        snapshot: { context: { delegateFrontier: [retry.persisted] } },
-      });
-      await manager.save(target);
-      jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
-        status: 'continue',
-        state: target,
-        unresolved: 1,
-        applied: [],
-      });
-      const enterEntrySpy = jest.spyOn(actorService, 'enterExecutionUnit');
-
-      const outcome = await collectionService.collectDelegationOutcomes({
-        targetState: target,
-        steps,
-        callerEvidence: ORCHESTRATOR_EVIDENCE,
-        frame: activeFrame(frameKey, 1),
-      });
-
-      expect(outcome.kind).toBe('already_collected');
-      expect(enterEntrySpy).not.toHaveBeenCalled();
-      expect(await persistedFrontier(runId)).toHaveLength(1);
-    });
   });
 
   // ---------------------------------------------------------------------------
@@ -3014,95 +2503,6 @@ describe('RunbookCollectionService', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // F6 — one condition, one code, across both entry points.
-  //
-  // `rundown collect` and `rundown run` reach the SAME re-entry frontier seam.
-  // Before the consolidation each reported its outcomes under its own code: a
-  // projection refusal was `COLLECT_OPERATION_FAILED` here and `RD-821` in the
-  // execution loop, and a consume failure was `COLLECT_OPERATION_FAILED` here
-  // and carried no code at all there. These pin the converged codes on the
-  // collect side; the
-  // execution-loop side is pinned in
-  // `packages/cli/__tests__/services/execution-loop.test.ts`.
-  //
-  // Only the PROJECTION half of the pair survives on the collect side. Collect
-  // now drives the FENCED twin of the seam, whose union has no `consume_failed`
-  // arm at all (`prepareReEntryFrontierConsume`), so RD-829 is reachable from the
-  // unfenced execution loop alone — see
-  // "discloses no bearers and consumes no frontier when the enclosing commit
-  // refuses" above for what covers the condition here now.
-  // ---------------------------------------------------------------------------
-
-  it('reports a refused frontier projection under RD-821, the credential-disclosure code', async () => {
-    // A refused projection is a credential DISCLOSURE-boundary refusal, the
-    // condition RD-821 names and describes ("presenting a claim that cannot
-    // reconstruct an in-flight delegation credential"). The execution loop
-    // already refuses the identical condition under RD-821; the command driving
-    // it must not change the code.
-    const persisted = frontierEntry().persisted;
-    const rotatedIssuer = {
-      ...persisted,
-      credential: {
-        ...persisted.credential,
-        issuerClaimKey: assertClaimLookupKey(`rdclk_${'9'.repeat(32)}`),
-      },
-    };
-
-    await expect(collectWithPersistedFrontier([rotatedIssuer])).resolves.toMatchObject({
-      kind: 'collection_failed',
-      reason: 'frontier_projection_refused',
-      code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
-    });
-  });
-
-  it('cannot produce a standalone frontier-consume failure from a fenced collect', async () => {
-    // REPLACES "reports a failed frontier consume under RD-829, not the
-    // collect-operation bucket". The old test forced `sendAndSync` to return null
-    // so the seam reported `consume_failed`; collect no longer calls it. The
-    // fenced twin DERIVES the consume, and a derivation cannot half-commit, so
-    // there is no state in which "projection succeeded but the consume did not
-    // land" is a collect-local fact — it is either committed with everything else
-    // or refused with everything else.
-    //
-    // Pinned structurally, on the union rather than on a scenario: the prepared
-    // outcome's arms are exactly `none | projected | projection_refused`, so a
-    // successful projection can only be `projected`, and `frontier_consume_failed`
-    // has no producer on this path.
-    const target = state({
-      retryCount: 1,
-      snapshot: { context: { delegateFrontier: [frontierEntry().persisted] } },
-    });
-    await manager.save(target);
-    const consumed = state({ ...target, snapshot: { context: {} } });
-    jest
-      .spyOn(actorService, 'prepareActorMutation')
-      .mockResolvedValue(preparedMutation(consumed, { context: {} }));
-
-    const prepared = await prepareReEntryFrontierConsume({
-      actorService,
-      steps,
-      state: target,
-      deriveToken: createDelegationTokenDeriver({
-        kind: 'bearer',
-        claimId: bearerClaimId,
-        claimKey: presentedClaimKey,
-      }),
-    });
-
-    expect(prepared.status).toBe('projected');
-    // The seam hands back a state to commit and bearers to disclose afterwards —
-    // never a "the write did not land" arm, because it performs no write.
-    expect(prepared).not.toHaveProperty('status', 'consume_failed');
-    if (prepared.status !== 'projected') throw new Error('expected projected');
-    expect(prepared.nextState).toEqual(consumed);
-    // RD-829 keeps its producer on the UNFENCED path the execution loop drives
-    // (`projectAndConsumeReEntryFrontier` → `consume_failed` →
-    // `ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED`), pinned in
-    // `packages/cli/__tests__/services/execution-loop.test.ts`.
-    expect(ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code).toBe('RD-829');
-  });
-
-  // ---------------------------------------------------------------------------
   // The INLINE narrowing at the collect boundary.
   //
   // `advanceInlineParentAfterCommit` narrows the shared seam's union down to the
@@ -3366,7 +2766,11 @@ describe('RunbookCollectionService', () => {
 
     it('never consults the parent loader when the target has no delegating parent', async () => {
       // A single-member aggregate owns exactly the run whose steps the caller
-      // already supplied, so the loader must not be reached at all.
+      // already supplied, so the loader must never reach for another run's
+      // graph. It IS reached for the target itself, to mint the running
+      // continuation against the state this collection commits (#852) — the
+      // rehydration assertions below pin that aggregate recovery still uses the
+      // caller's own `steps` rather than the loader's answer.
       const frameKey = buildFrameKey('1');
       const target = state({
         resolvedCompletions: {
@@ -3399,7 +2803,11 @@ describe('RunbookCollectionService', () => {
         .mockResolvedValueOnce(
           preparedMutation(state({ step: '2', substep: undefined, lifecycle: 'running' })),
         );
-      const loadSteps = jest.fn(async () => steps);
+      const loadedRunIds: string[] = [];
+      const loadSteps = jest.fn(async (loaded: RunbookState) => {
+        loadedRunIds.push(loaded.id);
+        return steps;
+      });
       const createRecoveryActor = jest
         .spyOn(actorService, 'createRecoveryActor')
         .mockImplementation(stubRecoveryActor);
@@ -3413,7 +2821,10 @@ describe('RunbookCollectionService', () => {
       });
 
       expect(outcome.kind).toBe('collection_applied');
-      expect(loadSteps).not.toHaveBeenCalled();
+      // No run other than the target was ever loaded: there is no delegating
+      // parent here, so any second identity would be the gap this seam exists
+      // to close.
+      expect(new Set(loadedRunIds)).toEqual(new Set([target.id]));
       const committed = await manager.load(runId);
       if (!committed) throw new Error('fixture target must exist');
       makeRecoveryActor()(runId, committed);
@@ -3423,178 +2834,6 @@ describe('RunbookCollectionService', () => {
       const [recoveredState, recoveredSteps] = createRecoveryActor.mock.calls[0] ?? [];
       expect(recoveredState).toBe(committed);
       expect(recoveredSteps).toBe(steps);
-    });
-  });
-
-  // ---------------------------------------------------------------------------
-  // Post-commit re-entry disclosure — the deliberate fail-loud boundary.
-  // ---------------------------------------------------------------------------
-
-  describe('post-commit re-entry disclosure', () => {
-    /** Seed a collect whose one projected frontier is consumed by the commit. */
-    async function seedFrontierReadyToProject() {
-      const retry = frontierEntry();
-      const target = state({
-        retryCount: 1,
-        snapshot: { context: { delegateFrontier: [retry.persisted] } },
-      });
-      await manager.save(target);
-      const drainSpy = jest
-        .spyOn(completionService, 'prepareResolvedCompletionDrain')
-        .mockResolvedValue({ status: 'continue', state: target, unresolved: 1, applied: [] });
-      jest
-        .spyOn(actorService, 'prepareActorMutation')
-        .mockResolvedValue(preparedMutation(state({ ...target, snapshot: { context: {} } })));
-      return { target, drainSpy };
-    }
-
-    it('reports a post-commit render failure as RD-833 rather than a phantom success', async () => {
-      // The alternative — swallowing and returning `reEntryObservations: []` —
-      // would tell the orchestrator "collected, nothing to re-enter" while the
-      // frontier's bearers had already been consumed and thrown away. That is
-      // silent stranding; a rejection is at least an operator-visible fact.
-      const { target } = await seedFrontierReadyToProject();
-      const enterEntrySpy = jest
-        .spyOn(actorService, 'enterExecutionUnit')
-        .mockRejectedValue(new Error('entry rendering exploded'));
-
-      const logged = jest.spyOn(logger, 'error').mockResolvedValue(undefined);
-
-      const rejection = await collectionService
-        .collectDelegationOutcomes({
-          targetState: target,
-          steps,
-          callerEvidence: ORCHESTRATOR_EVIDENCE,
-          frame: activeFrame(buildFrameKey('1'), 1),
-        })
-        .then(
-          () => {
-            throw new Error('expected the committed collect to reject');
-          },
-          (error: unknown) => error,
-        );
-
-      // The log line is not decoration. The rejection carries the render cause
-      // but cannot say the collection COMMITTED — which is the fact that decides
-      // whether an operator retries or re-delegates — so this is the only place
-      // that fact is recorded, and it must name the run it is about.
-      expect(logged).toHaveBeenCalledWith(
-        'collection committed but its re-entry disclosure could not be rendered',
-        { runId, error: 'entry rendering exploded' },
-      );
-
-      // Typed, not bare. #820 made rendering part of the collect path, so this
-      // is a NEW way for a collect to fail — it used to emit a thinner event
-      // that needed no rendering at all. A bare Error reaches the CLI wrapper's
-      // fallback arm and prints RD-999 "Unknown error", an envelope that cannot
-      // carry the recovery this condition has (fix the helper, then re-delegate:
-      // a retry cannot recover the bearers).
-      expect(rejection).toBeInstanceOf(RundownError);
-      expect((rejection as RundownError).code).toBe('RD-833');
-      // The cause is preserved rather than swallowed by the envelope, and the
-      // run is named in context so an operator need not parse the message.
-      expect(getErrorMessage(rejection)).toMatch(/entry rendering exploded/);
-      expect((rejection as RundownError).context).toMatchObject({ runId });
-      expect(enterEntrySpy).toHaveBeenCalledTimes(1);
-      // The transaction COMMITTED before the disclosure was attempted: the
-      // frontier is gone, which is exactly why the failure must not be silent.
-      expect(await persistedFrontier(runId)).toEqual([]);
-    });
-
-    it('keeps a corrupt-state render refusal as InvalidRunbookStateError, not RD-833', async () => {
-      // The two recoveries differ, so the two classes must. RD-309 prints
-      // finish/stop/prune, which is right for a run that cannot describe itself;
-      // RD-833 prints "fix the helper and re-delegate", which is not.
-      const { target } = await seedFrontierReadyToProject();
-      jest.spyOn(actorService, 'enterExecutionUnit').mockRejectedValue(
-        new InvalidRunbookStateError(`Runbook state ${runId} is missing WorkPath.`, {
-          runId,
-          reason: 'missing_render_context',
-        }),
-      );
-
-      await expect(
-        collectionService.collectDelegationOutcomes({
-          targetState: target,
-          steps,
-          callerEvidence: ORCHESTRATOR_EVIDENCE,
-          frame: activeFrame(buildFrameKey('1'), 1),
-        }),
-      ).rejects.toBeInstanceOf(InvalidRunbookStateError);
-    });
-
-    it('keeps the REAL persisted-snapshot guards on the RD-309 path, through the unmocked seam', async () => {
-      // The class check above is only as good as what the seam actually raises.
-      // `enterExecutionUnit` runs `assertFreshSnapshotValue` and
-      // `compileMachineFromState` BEFORE it renders anything, and both used to
-      // throw a bare `Error` — which this catch would have relabelled RD-833,
-      // telling an operator to fix a helper when the run's snapshot is corrupt
-      // and the recovery is prune/restart. Driven through the real seam, with no
-      // `enterExecutionUnit` spy, so the classification is pinned end to end.
-      // The prepared consume this fixture commits carries `{ context: {} }` and
-      // therefore no `snapshot.value`, which is exactly the shape the freshness
-      // guard refuses — so the entry never reaches rendering at all.
-      const { target } = await seedFrontierReadyToProject();
-
-      const rejection = await collectionService
-        .collectDelegationOutcomes({
-          targetState: target,
-          steps,
-          callerEvidence: ORCHESTRATOR_EVIDENCE,
-          frame: activeFrame(buildFrameKey('1'), 1),
-        })
-        .then(
-          () => {
-            throw new Error('expected the committed collect to reject');
-          },
-          (error: unknown) => error,
-        );
-
-      expect(rejection).toBeInstanceOf(InvalidRunbookStateError);
-      // NOT the RD-833 envelope: the classes are disjoint, so a guard that
-      // regressed to a bare `Error` would be caught here rather than quietly
-      // relabelled with the wrong recovery.
-      expect(rejection).not.toBeInstanceOf(RundownError);
-      expect(getErrorMessage(rejection)).toMatch(/Unsupported snapshot\.value shape/);
-    });
-
-    it('answers a retry of that committed collection as an idempotent no-op', async () => {
-      // What bounds the fail-loud choice: the caller who retries on the
-      // rejection cannot double-apply. The collection already landed, so the
-      // retry drains nothing and re-projects nothing.
-      const { target, drainSpy } = await seedFrontierReadyToProject();
-      const enterEntrySpy = jest
-        .spyOn(actorService, 'enterExecutionUnit')
-        .mockRejectedValue(new Error('entry rendering exploded'));
-      await expect(
-        collectionService.collectDelegationOutcomes({
-          targetState: target,
-          steps,
-          callerEvidence: ORCHESTRATOR_EVIDENCE,
-          frame: activeFrame(buildFrameKey('1'), 1),
-        }),
-      ).rejects.toThrow(/entry rendering exploded/);
-
-      const committed = await manager.load(runId);
-      if (!committed) throw new Error('the committed target must exist');
-      drainSpy.mockResolvedValue({
-        status: 'continue',
-        state: committed,
-        unresolved: 1,
-        applied: [],
-      });
-      enterEntrySpy.mockResolvedValue({ kind: 'awaiting', effects: [] });
-
-      await expect(
-        collectionService.collectDelegationOutcomes({
-          targetState: committed,
-          steps,
-          callerEvidence: ORCHESTRATOR_EVIDENCE,
-          frame: activeFrame(buildFrameKey('1'), 1),
-        }),
-      ).resolves.toMatchObject({ kind: 'already_collected', targetRunId: runId });
-      // No second disclosure attempt: there is no frontier left to project.
-      expect(enterEntrySpy).toHaveBeenCalledTimes(1);
     });
   });
 });

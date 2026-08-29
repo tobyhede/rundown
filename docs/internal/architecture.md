@@ -573,11 +573,11 @@ events for stdout/stderr (and for the MCP server when it is the front end):
 `STEP_ENTERED` is built by exactly one function, `deriveExecutionUnitEntry`
 (`packages/core/src/runbook/execution-unit-entry.ts`), reached through
 `RunbookActorService.enterExecutionUnit`. Every frontend enters a unit that way
-— `rundown run`'s execution loop and `rundown collect`'s re-entry disclosure
-alike — so the payload cannot vary with the command that produced it. The seam
-also classifies the entry, returning `awaiting` / `runnable` / `inline-launch`;
-the rendered command travels only on the `runnable` arm, inside a nominally
-branded record the module is the sole producer of.
+through Run Progression's machine-owned entry states, so the payload cannot vary
+with the command that produced it. The seam also classifies the entry, returning
+`awaiting` / `runnable` / `inline-launch`; the rendered command travels only on
+the `runnable` arm, inside a nominally branded record the module is the sole
+producer of.
 
 `STEP_ENTERED` may include `delegateFrontier` for authored `- DELEGATE` targets
 or `inlineLaunch` for non-DELEGATE child-runbook targets. `inlineLaunch` is
@@ -872,95 +872,93 @@ claim, or the reconstructed token does not hash to the verifier the parent
 recorded at issuance. Both are refusals, not successes with a degraded value —
 neither arm returns a token.
 
-There are three such disclosure boundaries, and all three refuse under one error
-code, `RD-821` (`DELEGATION_INVARIANT_VIOLATED`):
+There are two disclosure boundaries, and both refuse under one error code,
+`RD-821` (`DELEGATION_INVARIANT_VIOLATED`):
 
-| Boundary                                                             | Surface                                                                                                                                     |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `issueDelegation`'s same-issuer echo (`verifyEchoedDelegationToken`) | The seam returns `{ kind: 'error' }`; `rundown delegate` throws it into the wrapper, which emits `{"kind":"error","code":"RD-821"}`         |
-| The CLI execution loop re-entering a persisted `delegateFrontier`    | `projectDelegateFrontier` throws; the seam catches, emits `ERROR_OCCURRED` with `code: 'RD-821'`, releases the run, and returns `'stopped'` |
-| `rundown collect` re-entering a persisted frontier                   | Returns `collection_failed` with `reason: 'frontier_projection_refused'` and `code: 'RD-821'`                                               |
+| Boundary                                                             | Surface                                                                                                                             |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `issueDelegation`'s same-issuer echo (`verifyEchoedDelegationToken`) | The seam returns `{ kind: 'error' }`; `rundown delegate` renders `RD-821`.                                                          |
+| Run Progression re-entering a persisted `delegateFrontier`           | The compiled machine emits a typed `projection_refused`; activation returns `RD-821`, leaves the run running, and exposes no token. |
 
-The last two rows share one **disclosure boundary** — the same reader, the same
-projector, and the same refusal arm — in two seams that differ only in when the
-consume commits. Both live in `packages/core/src/runbook/re-entry-frontier.ts`.
-Neither takes a caller-supplied entry: each derives "is the cursor on a substep"
-from the state it already holds, and the entry the bearers ride on is rendered
-by `enterExecutionUnit`. A frontend contributes its emitter wiring and its
-exit-code mapping, nothing more.
+GOTO and collection are not additional boundaries. Each commits its own domain
+mutation, then returns the same core-minted `RunProgressionDirective`. The
+directive carries one authority and the exact parsed graph verified with it;
+frontends cannot supply replacement steps or a separate deriver. The CLI renders
+the command observation, then passes the directive verbatim to
+`driveRunProgression`.
 
-| Seam                               | Driver             | Consume                                  | Arms                                                              |
-| ---------------------------------- | ------------------ | ---------------------------------------- | ----------------------------------------------------------------- |
-| `projectAndConsumeReEntryFrontier` | `runExecutionLoop` | Committed by the seam, via `sendAndSync` | `none` / `projected` / `projection_refused` / `consume_failed`    |
-| `prepareReEntryFrontierConsume`    | `rundown collect`  | **Derived**, committed by the caller     | `none` / `projected` / `projection_refused` — no `consume_failed` |
+The machine owns the frontier sequence explicitly:
 
-The unfenced seam commits the consume **before** returning the entered unit, so
-a failed consume discloses no bearer. The fenced twin cannot enter the unit
-until the caller's single transaction has landed, which strengthens the same
-guarantee: where the unfenced seam can leave a consume committed while the
-surrounding work is not, a refused transaction consumes nothing and discloses
-nothing.
+1. `__progression-project-frontier` invokes the fenced projection actor.
+2. The actor derives the projection from the captured state and commits
+   `DELEGATE_FRONTIER_CONSUMED` through the SQLite execution fence.
+3. Only a committed `projected` result enters
+   `__progression-enter-after-projected-frontier`; the transient bearer array
+   flows through actor output, never persisted context. If that entry actor
+   fails, the machine emits the permanent RD-833 disclosure refusal: the consume
+   is already durable and retry cannot reconstruct the bearer.
+4. Empty frontier and ordinary entry use their own explicit entry state. Its
+   entry actor can fail the same way, and it carries the same `onError` — but
+   the refusal is the retryable RD-504 `entry_render_failed`, because that turn
+   consumed nothing and re-activating re-renders. A refusal enters
+   `__progression-refused`; it never fabricates a terminal.
 
-A collect's disclosure has one failure mode the loop's does not, and it is new
-with the shared entry: a collect that has already committed can fail to RENDER
-the entry its bearers ride on — typically a `--helpers` helper raising. Nothing
-recovers the bearers (the consume is durable, so a retry answers the idempotent
-no-op), so the collect rejects rather than reporting a phantom success with an
-empty observation list. It rejects with a code of its own, `RD-833`
-(`DELEGATION_FRONTIER_DISCLOSURE_FAILED`), except when the render refusal is
-`InvalidRunbookStateError` — corrupt persisted state keeps its class so the
-CLI's RD-309 arm still prints finish/stop/prune.
-
-That is why `consume_failed` has no fenced counterpart. A derivation cannot
-half-commit, so the only way a collect's consume does not land is that its
-enclosing transaction refused — reported as the transactional refusal, with the
-frontier likewise untouched and the operation retryable. `RD-829`
-(`DELEGATION_FRONTIER_CONSUME_FAILED`) therefore has exactly one producer today,
-the execution loop; `DelegationPolicyOutcome` carries no
-`frontier_consume_failed` reason, because nothing could construct it.
+`projectAndConsumeReEntryFrontierFenced` is the machine actor seam. It returns
+`none`, `projected`, `projection_refused`, `consume_failed`, `claim_superseded`,
+`recovery_required`, `aggregate_recovery_required`, or `run_missing`. The last
+four preserve the storage refusal's own taxonomy. `consume_failed` is RD-829 and
+retryable; projection mismatch is RD-821 and permanent; missing authority and
+superseded authority both require authority rather than pretending the run
+stopped.
 
 Three consequences worth stating explicitly.
 
 **RD-821 is now operator-reachable.** It was introduced as an unreachable-branch
 guard — `retryDelegation`'s exhaustiveness default still uses it that way — and
 its registered description in `errors/codes.ts` has been updated to name the
-operator-reachable cause. All three rows are ordinary operator conditions rather
-than internal inconsistency: rotate the run-control claim between issuance and
-disclosure and the surviving descriptor names a claim nobody can present.
+operator-reachable cause. Both boundaries are ordinary operator conditions
+rather than internal inconsistency: rotate the run-control claim between
+issuance and disclosure and the surviving descriptor names a claim nobody can
+present.
 
-**It is deliberately not `ACTOR_CONTEXT_REQUIRED`.** On these paths authority is
-present — it is simply the wrong authority — so the absent-authority code would
-name the wrong condition and its remediation ("pass `--claim-id`") would tell
-the caller to do the thing it already did. Where authority is genuinely absent —
-the execution loop reaching a pending frontier with no deriver — the loop does
-refuse `ACTOR_CONTEXT_REQUIRED`, and stops with
-`reason: 'actor_context_required'`, the same reason the machine's own
-`delegationIssueActor` produces for the issuance half of that condition.
+**It is deliberately not `ACTOR_CONTEXT_REQUIRED`.** On projection-refused paths
+authority is present — it is simply the wrong authority — so the
+absent-authority code would name the wrong condition and its remediation ("pass
+`--claim-id`") would tell the caller to do the thing it already did. Where
+authority is genuinely absent — Run Progression reaching a pending frontier with
+no deriver — activation refuses `ACTOR_CONTEXT_REQUIRED` with
+`reason: 'actor_context_required'` and leaves the run running, the same reason
+the machine's own `delegationIssueActor` produces for the issuance half of that
+condition.
 
-**The code follows the condition, never the command.** `collect` previously
-reported a refused projection under `COLLECT_OPERATION_FAILED` — its own
-surface's registered code — with the distinguishing detail only in `reason`.
-That made one fact two codes depending on which command drove the seam, and it
-overloaded a code whose contract is "collection failed while applying delegation
-outcomes" onto a case where nothing was applied. `COLLECT_OPERATION_FAILED` now
-covers only a drain target mismatch.
+**The code follows the condition, never the command.** Because GOTO and collect
+both return the same directive, the same machine state maps projection mismatch
+to RD-821 and consume contention to RD-829. `COLLECT_OPERATION_FAILED` covers
+only a completion-drain target mismatch.
 
 The frontier's other failure is a different fact and keeps its own code:
 **RD-829** (`DELEGATION_FRONTIER_CONSUME_FAILED`) means projection succeeded and
 the `DELEGATE_FRONTIER_CONSUMED` sync did not. It is retryable — the frontier is
-still persisted and no observations were surfaced — whereas
-`frontier_projection_refused` is not fixed by repetition, since the same
-authority refuses identically. Two codes because the remediations invert; RD-826
-through RD-828 belong to the retry idempotency contract
-(`DELEGATION_REPLACEMENT_CONSUMED`, `DELEGATION_RETRY_IDENTITY_UNMATCHED`,
-`DELEGATION_SUPERSESSION_AMBIGUOUS`), so the frontier code takes RD-829.
+still persisted and no observations were surfaced — whereas `projection_refused`
+is not fixed by repetition, since the same authority refuses identically. Two
+codes because the remediations invert; RD-826 through RD-828 belong to the retry
+idempotency contract (`DELEGATION_REPLACEMENT_CONSUMED`,
+`DELEGATION_RETRY_IDENTITY_UNMATCHED`, `DELEGATION_SUPERSESSION_AMBIGUOUS`), so
+the frontier code takes RD-829.
 
-RD-829's producer set narrowed when collect became transactional: it is now
-reachable only from the execution loop, which still commits its consume
-separately. A fenced collect derives the consume inside its one transaction, so
-the condition cannot arise there (see the seam table above), and the
-`frontier_consume_failed` reason was removed from `DelegationPolicyOutcome`
-rather than retained without a producer.
+RD-829 is produced by Run Progression when its separate frontier turn cannot
+commit, including real execution-lease contention. Collection never owns that
+turn and therefore has no frontier refusal arms in `DelegationPolicyOutcome`.
+
+**RD-833** (`DELEGATION_FRONTIER_DISCLOSURE_FAILED`) is the other side of the
+commit boundary. It means the fenced consume committed, then
+`__progression-enter-after-projected-frontier` could not derive the
+`STEP_ENTERED` payload carrying the transient bearers. The machine owns and
+classifies that failure regardless of whether GOTO, collect, or another frontend
+supplied the activation directive. The frontier is gone, so retry is not a
+recovery; fix the entry/helper failure and explicitly re-delegate the step.
+`InvalidRunbookStateError` remains RD-309 instead, preserving its
+finish/stop/prune recovery.
 
 The fail-closed remedy the credentials design prescribes for a rotated issuing
 claim — explicit cancel and reissue — has no path today, because

@@ -468,11 +468,10 @@ describe('explicit --run targeting (R1, #460)', () => {
   });
 
   it('run --prompted --step jumps a freshly created delegating-document run; a later bare goto is still gated (LOW-3 boundary)', async () => {
-    // Boundary pin for the run --prompted --step gate bypass (run.ts): the
-    // in-process jump targets only the run this invocation just minted, with
-    // the same authority `goto --run <own-id>` grants, so it is NOT routed
-    // through the run-navigation policy gate. The gate still owns every
-    // post-creation navigation of the same run.
+    // Boundary pin for the launch-local navigation hand-off (run.ts): the
+    // in-process jump resolves the run-control claim minted for this exact new
+    // run, then uses the same opaque navigation capability as standalone GOTO.
+    // It cannot fall back to whichever unrelated run happens to be stack-top.
     const childContent = createRunbook({
       title: 'Child',
       steps: [{ title: 'Do work', pass: 'COMPLETE', content: 'Child prompt.' }],
@@ -496,9 +495,9 @@ describe('explicit --run targeting (R1, #460)', () => {
     await writeFile(join(workspace.cwd, 'runbooks', 'jump.runbook.md'), parentContent);
 
     // The document authors a DELEGATE substep, so the run is delegating from
-    // birth (static clause a) — yet the creating invocation's --step jump
-    // succeeds without naming authority: the freshly minted id IS its
-    // authority, exactly as if it had passed `goto --run <own-id>`.
+    // birth (static clause a) — the creating invocation's --step jump succeeds
+    // because it retains the freshly minted run-control claim and resolves that
+    // exact claim through core's navigation seam.
     const start = await runCliInProcess(
       ['run', '--prompted', 'runbooks/jump.runbook.md', '--step', '3'],
       workspace,

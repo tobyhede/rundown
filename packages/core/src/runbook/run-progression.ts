@@ -24,9 +24,8 @@
  * decide progression.
  *
  * TRANSITIONAL (#851 migration): turn selection inside this runtime is still
- * imperative — the loop below reads machine-owned seams
- * (`resolveCurrentExecutionUnit`, `readPersistedReEntryFrontier`,
- * `enterExecutionUnit`) and chooses the next fenced turn itself. The spec's
+ * imperative — the loop below still chooses completion, inline-composition,
+ * and command turns around the machine-owned frontier/entry selector. The spec's
  * end state ("XState decides every progression action", #851 story 21) is
  * reached slice by slice: #854–#857 move completion draining, frontier
  * continuation, inline composition, and fresh-run entry into machine-owned
@@ -43,19 +42,17 @@ import {
 } from '../events/transition-observation.js';
 import type { ExecutionObservationEffect } from '../events/execution-observation.js';
 import { ErrorCodes } from '../errors/codes.js';
+import { Errors } from '../errors/factory.js';
 import { CLIErrorCodes } from '../output/zod-schemas.js';
 import type { RunbookActorService } from './actor-service.js';
 import { COMPLETION_TARGET_MISMATCH_CODE, RunbookCompletionService } from './completion-service.js';
 import type { EffectfulActorMutationRunner } from './effectful-actor-mutation-runner.js';
-import { findStepOrThrow, resolveCurrentExecutionUnit } from './execution-units.js';
+import { findStepOrThrow } from './execution-units.js';
 import type { ExecutionUnitEntry } from './execution-unit-entry.js';
 import {
   FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
   FRONTIER_CONSUME_FAILED_MESSAGE,
   FRONTIER_PROJECTION_REFUSED_MESSAGE,
-  projectAndConsumeReEntryFrontier,
-  readPersistedReEntryFrontier,
-  type ReEntryProjection,
 } from './re-entry-frontier.js';
 import {
   SESSION_REFUSAL_CODE_BY_KIND,
@@ -63,7 +60,13 @@ import {
 } from './storage/refusal-codes.js';
 import type { RunId } from './run-id.js';
 import type { RunProgressionAuthority } from './run-progression-authority.js';
-import type { SessionMutationRefusal, SessionMutationResult } from './storage/runbook-store.js';
+import {
+  DEFAULT_MUTATE_ATTEMPTS,
+  mutateBackoffMs,
+  type SessionMutationRefusal,
+  type SessionMutationResult,
+} from './storage/runbook-store.js';
+import type { AbandonedAttemptSetOutcome } from './storage/execution-lease.js';
 import type { GuardedMutationResult } from './storage/mutation-result.js';
 import type { SessionService } from './session-service.js';
 import {
@@ -78,6 +81,7 @@ import { extractLastMessage } from './transition-kernel.js';
 import type { InlineLaunchIntent } from '../events/types.js';
 import type { InlineParentAdvanceRefusal } from './inline-parent-advance.js';
 import { getErrorMessage } from '../errors.js';
+import { InvalidRunbookStateError } from './persisted-state-guards.js';
 import type { ResolvedStep, RunbookState } from './types.js';
 
 /**
@@ -168,6 +172,12 @@ export type RunProgressionRefusalReason =
   | 'actor_context_required'
   | 'projection_refused'
   | 'consume_failed'
+  | 'frontier_disclosure_failed'
+  | 'entry_render_failed'
+  | 'frontier_reselect_exhausted'
+  | 'claim_superseded'
+  | 'recovery_required'
+  | 'aggregate_recovery_required'
   | 'terminal_release_refused'
   | 'inline_launch_refused'
   | 'inline_child_stopped'
@@ -401,6 +411,51 @@ export interface RunProgressionDeps {
   readonly propagateTerminal: TerminalPropagation;
 }
 
+/** Typed provenance retained by directives that enter after a terminal observation. */
+export type TerminalPropagationSource =
+  | { readonly kind: 'explicit-result'; readonly result: 'pass' | 'fail' }
+  | { readonly kind: 'loop-inferred' };
+
+/** Durable/observation boundary at which an explicit activation enters. */
+export type RunProgressionEntryBoundary =
+  | { readonly kind: 'resume' }
+  | {
+      readonly kind: 'after_observed_transition';
+      readonly lifecycle: 'running';
+    }
+  | {
+      readonly kind: 'after_observed_transition';
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly terminalTarget: 'released' | 'retained_by_policy';
+      readonly source: TerminalPropagationSource;
+    };
+
+/** Core-minted continuation decision consumed verbatim by every frontend. */
+export type RunProgressionDirective =
+  | { readonly kind: 'none' }
+  | {
+      readonly kind: 'activate';
+      readonly authority: RunProgressionAuthority;
+      /** Exact parsed graph verified alongside this authority. */
+      readonly steps: readonly ResolvedStep[];
+      readonly entryBoundary: RunProgressionEntryBoundary;
+    };
+
+/**
+ * Resolve after `ms` milliseconds.
+ *
+ * Local to this module for the same reason the store, the lease, and the
+ * inline fence each keep their own: it is two lines, and exporting it would
+ * invite it to be used as a general-purpose sleep rather than the pacing
+ * between re-derives it is.
+ *
+ * @param ms - Milliseconds to pause.
+ * @returns A promise that resolves after the delay.
+ */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 /** The refusal arms of a fenced mutation, i.e. everything but `committed`. */
 type FencedMutationRefusal = Exclude<GuardedMutationResult<never>, { kind: 'committed' }>;
 
@@ -420,29 +475,37 @@ function fencedRefusalCode(refusal: FencedMutationRefusal): string {
 }
 
 /**
+ * Recovery classification for every transactional refusal kind, single-run
+ * and aggregate alike.
+ *
+ * One canonical map rather than a switch per turn, so the command fence and
+ * the frontier fence cannot classify the same storage refusal differently
+ * (#853 review F3). `recovery_required` and `aggregate_recovery_required` are
+ * retryable because the runner drives execution recovery inline before it
+ * returns either refusal: the run is unblocked for a LATER activation, and the
+ * refusal reports only that THIS mutation did not commit. Keys are exhaustive
+ * over the fenced and aggregate refusal kinds by the `satisfies` check.
+ */
+const TRANSACTIONAL_REFUSAL_RECOVERY_BY_KIND = {
+  concurrent_modification: 'retryable',
+  execution_in_progress: 'retryable',
+  recovery_required: 'retryable',
+  aggregate_recovery_required: 'retryable',
+  claim_superseded: 'provide_authority',
+  missing: 'permanent',
+} as const satisfies Record<
+  FencedMutationRefusal['kind'] | AbandonedAttemptSetOutcome['kind'],
+  RunProgressionRecovery
+>;
+
+/**
  * Derive the recovery classification for a fenced-mutation refusal kind.
  *
  * @param refusal - The non-committed fenced mutation result.
  * @returns The core recovery classification for that condition.
- * @throws {Error} If an unrecognized refusal variant reaches the exhaustive guard.
  */
 function fencedRefusalRecovery(refusal: FencedMutationRefusal): RunProgressionRecovery {
-  switch (refusal.kind) {
-    case 'concurrent_modification':
-    case 'execution_in_progress':
-    case 'recovery_required':
-      return 'retryable';
-    case 'claim_superseded':
-      return 'provide_authority';
-    case 'missing':
-      return 'permanent';
-    default: {
-      const _exhaustive: never = refusal;
-      throw new Error(
-        `Unhandled fenced mutation refusal: ${(_exhaustive as { kind: string }).kind}`,
-      );
-    }
-  }
+  return TRANSACTIONAL_REFUSAL_RECOVERY_BY_KIND[refusal.kind];
 }
 
 /**
@@ -588,7 +651,11 @@ function emitTerminalAtActivation(args: {
 
 /** Outcome of the ported one-completion-per-commit drain pass. */
 type DrainPass =
-  | { readonly status: 'continue'; readonly state: RunbookState; readonly applied: number }
+  | {
+      readonly status: 'continue';
+      readonly state: RunbookState;
+      readonly applied: number;
+    }
   | { readonly status: 'done' }
   | { readonly status: 'stopped' }
   | { readonly status: 'refused'; readonly message: string }
@@ -1038,7 +1105,6 @@ async function driveProgression(
   // and the fenced compute callback below re-runs once per CAS attempt, so the
   // readonly-shedding copy is made once here rather than per attempt.
   const stepsArray = [...steps];
-  const totalSteps = countNumberedSteps(stepsArray);
   let currentState: RunbookState = state;
 
   // A run already terminal at activation is reported, released, and
@@ -1084,11 +1150,11 @@ async function driveProgression(
     });
   }
 
+  // Counts only the write-free frontier re-derives, never the turns that made
+  // progress: an ordinary multi-step drive is unbounded by design.
+  let reselects = 0;
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
-    const currentStep = findStepOrThrow(steps, currentState.step, currentState.id);
-    const currentUnit = resolveCurrentExecutionUnit(currentStep, currentState.substep);
-
     // Turn: apply resolved completions, one fenced commit each.
     const drained = await drainResolvedCompletionsPass({
       completionService,
@@ -1139,107 +1205,195 @@ async function driveProgression(
       continue;
     }
 
-    const cursorIsOnSubstep = 'id' in currentUnit;
-    const stepPosition = buildStepPosition(
-      currentState.step,
-      totalSteps,
-      currentState.substep,
-      currentState.forStack,
+    // XState owns the frontier/entry decision. The runtime binds one opaque
+    // authority object and executes only the state the restored machine selects.
+    const progression = await actorService.selectRunProgressionIntent(
+      currentState,
+      steps,
+      authority,
+      actorMutationRunner,
     );
-
-    const delegationTokenDeriver = authority.delegationRuntime?.deriveDelegationToken;
-    // The authority precondition: a persisted frontier may not be disclosed
-    // without the verified deriver half of this activation's authority. A
-    // refusal, not a terminal — the run stays running and targeted (#833).
-    if (
-      delegationTokenDeriver === undefined &&
-      cursorIsOnSubstep &&
-      readPersistedReEntryFrontier(currentState).length > 0
-    ) {
-      sink.emit({
-        type: 'ERROR_OCCURRED',
-        payload: {
-          message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
+    if (progression.kind === 'reselect') {
+      // A reselect makes no progress: the machine selected the frontier turn,
+      // another writer moved the frontier before the fenced capture, and this
+      // re-derives against the row that writer committed. CLAUDE.md
+      // § Concurrent write synchronization requires such a loop to be bounded
+      // by the store's own exported budget and to report
+      // `concurrent_modification` once it is spent, rather than spin — so the
+      // budget and the pacing are imported, never mirrored here.
+      reselects += 1;
+      if (reselects >= DEFAULT_MUTATE_ATTEMPTS) {
+        const code = TRANSACTIONAL_REFUSAL_CODE_BY_KIND.concurrent_modification;
+        const message = `Run ${runId} could not capture a stable re-entry frontier in ${String(DEFAULT_MUTATE_ATTEMPTS)} attempts; another writer replaced it each time — retry`;
+        sink.emit({ type: 'ERROR_OCCURRED', payload: { message, code } });
+        return {
+          kind: 'refused',
+          runId,
+          reason: 'frontier_reselect_exhausted',
+          code,
+          message,
+          recovery: 'retryable',
+        };
+      }
+      await delay(mutateBackoffMs(reselects));
+      currentState = progression.state;
+      continue;
+    }
+    if (progression.kind === 'refused') {
+      if (progression.reason === 'run_missing') {
+        return runMissingRefusal(runId, sink);
+      }
+      if (progression.reason === 'actor_context_required') {
+        sink.emit({
+          type: 'ERROR_OCCURRED',
+          payload: {
+            message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
+            code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED,
+          },
+        });
+        return {
+          kind: 'refused',
+          runId,
+          reason: 'actor_context_required',
           code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED,
-        },
-      });
-      return {
-        kind: 'refused',
-        runId,
-        reason: 'actor_context_required',
-        code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED,
-        message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
-        recovery: 'provide_authority',
-      };
-    }
-
-    // Turn: project and consume a persisted re-entry frontier through the one
-    // core seam, under this activation's verified deriver.
-    const reentry: ReEntryProjection =
-      delegationTokenDeriver === undefined
-        ? { status: 'none' }
-        : await projectAndConsumeReEntryFrontier({
-            actorService,
-            steps,
-            state: currentState,
-            deriveToken: delegationTokenDeriver,
-          });
-
-    if (reentry.status === 'projection_refused') {
-      const message = `${FRONTIER_PROJECTION_REFUSED_MESSAGE}: ${reentry.message}`;
-      sink.emit({
-        type: 'ERROR_OCCURRED',
-        payload: { message, code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code },
-      });
-      return {
-        kind: 'refused',
-        runId,
-        reason: 'projection_refused',
-        code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
-        message,
-        recovery: 'permanent',
-      };
-    }
-    if (reentry.status === 'consume_failed') {
-      sink.emit({
-        type: 'ERROR_OCCURRED',
-        payload: {
-          message: FRONTIER_CONSUME_FAILED_MESSAGE,
+          message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
+          recovery: 'provide_authority',
+        };
+      }
+      if (progression.reason === 'projection_refused') {
+        const message = `${FRONTIER_PROJECTION_REFUSED_MESSAGE}: ${progression.message}`;
+        sink.emit({
+          type: 'ERROR_OCCURRED',
+          payload: {
+            message,
+            code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
+          },
+        });
+        return {
+          kind: 'refused',
+          runId,
+          reason: 'projection_refused',
+          code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
+          message,
+          recovery: 'permanent',
+        };
+      }
+      if (progression.reason === 'consume_failed') {
+        sink.emit({
+          type: 'ERROR_OCCURRED',
+          payload: {
+            message: FRONTIER_CONSUME_FAILED_MESSAGE,
+            code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
+          },
+        });
+        return {
+          kind: 'refused',
+          runId,
+          reason: 'consume_failed',
           code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
-        },
+          message: FRONTIER_CONSUME_FAILED_MESSAGE,
+          recovery: 'retryable',
+        };
+      }
+      if (
+        progression.reason === 'frontier_disclosure_failed' ||
+        progression.reason === 'entry_render_failed'
+      ) {
+        // A malformed persisted run keeps the repository-wide RD-309 recovery
+        // on both entry paths; it outranks either refusal because the run
+        // cannot be loaded at all and no retry or re-issue addresses that.
+        if (progression.cause instanceof InvalidRunbookStateError) {
+          throw progression.cause;
+        }
+        // Otherwise the two entry states differ only in what their turn had
+        // already committed, and that is exactly the recovery split: the
+        // post-consume failure lost transient bearers no retry can rebuild
+        // (permanent, RD-833), while the pre-consume failure consumed nothing
+        // and re-renders on the next activation (retryable, RD-504).
+        const disclosure = progression.reason === 'frontier_disclosure_failed';
+        const error = disclosure
+          ? Errors.frontierDisclosureFailed(runId, progression.message)
+          : Errors.runProgressionEntryFailed(runId, progression.message);
+        sink.emit({
+          type: 'ERROR_OCCURRED',
+          payload: { message: error.message, code: error.code },
+        });
+        return {
+          kind: 'refused',
+          runId,
+          reason: progression.reason,
+          code: error.code,
+          message: error.message,
+          recovery: disclosure ? 'permanent' : 'retryable',
+        };
+      }
+      if (progression.reason === 'claim_superseded') {
+        const code = TRANSACTIONAL_REFUSAL_CODE_BY_KIND.claim_superseded;
+        sink.emit({
+          type: 'ERROR_OCCURRED',
+          payload: { message: progression.message, code },
+        });
+        return {
+          kind: 'refused',
+          runId,
+          reason: 'claim_superseded',
+          code,
+          message: progression.message,
+          recovery: TRANSACTIONAL_REFUSAL_RECOVERY_BY_KIND.claim_superseded,
+        };
+      }
+      // The frontier consume's own storage refusals keep the classification
+      // the command turn gives the identical condition: the runner already
+      // recovered the named attempt inline, so the run is unblocked and a
+      // re-activation re-projects the still-persisted frontier.
+      // Exhaustive: every other reason returned above. Without this, a reason
+      // added to `RunProgressionMachineIntent` later would fall through to the
+      // single-run `recovery_required` code and message rather than failing to
+      // compile.
+      if (
+        progression.reason !== 'recovery_required' &&
+        progression.reason !== 'aggregate_recovery_required'
+      ) {
+        const _exhaustive: never = progression.reason;
+        throw new Error(
+          `Unhandled Run Progression refusal reason: ${String(_exhaustive as string)}`,
+        );
+      }
+      const isAggregate = progression.reason === 'aggregate_recovery_required';
+      const code = isAggregate
+        ? TRANSACTIONAL_REFUSAL_CODE_BY_KIND.aggregate_recovery_required
+        : TRANSACTIONAL_REFUSAL_CODE_BY_KIND.recovery_required;
+      sink.emit({
+        type: 'ERROR_OCCURRED',
+        payload: { message: progression.message, code },
       });
       return {
         kind: 'refused',
         runId,
-        reason: 'consume_failed',
-        code: ErrorCodes.DELEGATION_FRONTIER_CONSUME_FAILED.code,
-        message: FRONTIER_CONSUME_FAILED_MESSAGE,
-        recovery: 'retryable',
+        reason: progression.reason,
+        code,
+        message: progression.message,
+        recovery: isAggregate
+          ? TRANSACTIONAL_REFUSAL_RECOVERY_BY_KIND.aggregate_recovery_required
+          : TRANSACTIONAL_REFUSAL_RECOVERY_BY_KIND.recovery_required,
       };
     }
-
-    // Turn: enter the execution unit (a projected frontier was entered by the
-    // seam with its bearers attached; re-entering would announce it twice).
-    const entered: ExecutionUnitEntry =
-      reentry.status === 'projected'
-        ? reentry.entered
-        : await actorService.enterExecutionUnit({
-            state: currentState,
-            steps,
-            position: stepPosition,
-          });
+    currentState = progression.state;
+    const currentStep = findStepOrThrow(steps, currentState.step, currentState.id);
+    const entered: ExecutionUnitEntry = progression.entered;
     for (const effect of entered.effects) {
       sink.emit(effect.event);
-    }
-    if (reentry.status === 'projected') {
-      currentState = reentry.state;
     }
 
     // A one-shot intent is consumed by the launch it drives; on the projected
     // path the seam's consume already committed, so acting on an intent here
     // would launch a child the re-entry never armed.
-    if (reentry.status === 'none' && entered.kind === 'inline-launch') {
-      const dispatched = await deps.dispatchInlineChild({ intent: entered.launch, prompted, sink });
+    if (progression.frontier === 'none' && entered.kind === 'inline-launch') {
+      const dispatched = await deps.dispatchInlineChild({
+        intent: entered.launch,
+        prompted,
+        sink,
+      });
       switch (dispatched.kind) {
         case 'waiting':
           return outcomeFromDurableState({

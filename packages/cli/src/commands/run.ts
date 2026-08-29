@@ -44,9 +44,11 @@ import {
   type RunPipelineContext,
 } from '../helpers/runbook-pipeline.js';
 import {
+  buildGotoContext,
   validateGotoTarget,
   executeGoto,
   gotoResultRequiresFailureExit,
+  renderNavigationRefusal,
 } from '../helpers/goto-workflow.js';
 import {
   validateIndexRequiresStep,
@@ -60,7 +62,6 @@ import {
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
-import { buildNonDelegatingLifecycleSeam } from '../helpers/lifecycle-seam-factory.js';
 
 /**
  * Registers the 'run' command for starting runbooks.
@@ -362,45 +363,32 @@ export function registerRunCommand(program: Command): void {
               }
             }
 
-            // If --step provided with --prompted and runbook is waiting, jump to the step.
-            //
-            // Deliberate run-navigation gate bypass, bounded by construction:
-            // unlike standalone `goto` (buildGotoContext → resolveCommandIntent
-            // with the run-navigation intent), this jump never consults the
-            // policy gate. It cannot reach a pre-existing run — result.stateId
-            // is the id startRunbook just minted via manager.create in this
-            // same invocation, never a session-stack or --run resolution — and
-            // the creator is still inside the same launch call, before any
-            // subprocess boundary exists. Gating here would refuse
-            // `run --prompted --step` on any document that authors a DELEGATE
-            // substep (delegating-from-birth static exposure) while the
-            // equivalent launch-local jump succeeds — a refusal with no
-            // security content. Pinned by "run --prompted --step jumps a
-            // freshly created delegating-document run" in
-            // explicit-run-targeting.test.ts.
+            // If --step was provided for a prompted run, resolve the fresh run
+            // through the same core navigation seam as standalone GOTO. The
+            // seam returns one opaque capability containing the verified run,
+            // graph, and progression authority, so this launch-local path
+            // cannot reconstruct or cross-wire any of them.
             if (options.step && options.prompted && result.loopResult === 'waiting') {
-              const gotoState = await manager.load(result.stateId);
-              if (!gotoState) {
-                output.error('Failed to build goto context after start', 'ENGINE_INIT_FAILED');
+              const gotoResolution = await buildGotoContext(output, cwd, {
+                ...(result.claimId === undefined
+                  ? { runId: result.stateId }
+                  : { claimId: result.claimId }),
+                commandStreamOptions,
+              });
+              if (gotoResolution.kind !== 'ready') {
+                // This jump is launch-local to `rundown run`; naming `goto`
+                // here would point at a command the operator never invoked.
+                renderNavigationRefusal(output, gotoResolution, 'run');
                 output.flush();
                 process.exit(1);
               }
-              const gotoSteps = [...getRunbookFromState(gotoState, cwd)];
-              const gotoCtx = {
-                output,
-                manager,
-                actorService,
-                seam: buildNonDelegatingLifecycleSeam(cwd).seam,
-                callerEvidence: { kind: 'direct_cli' as const },
-                sessionService,
-                lifecycleService,
-                state: gotoState,
-                steps: gotoSteps,
-                cwd,
-                delegationRuntime: result.delegationRuntime,
-              };
+              const gotoCtx = gotoResolution.ctx;
 
-              const validation = validateGotoTarget(options.step, gotoCtx.steps, options.index);
+              const validation = validateGotoTarget(
+                options.step,
+                gotoCtx.navigation.steps,
+                options.index,
+              );
               if (!validation.ok) {
                 output.error(validation.error, validation.code, validation.details);
                 output.flush();

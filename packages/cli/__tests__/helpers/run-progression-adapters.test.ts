@@ -1,5 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
-import type { InlineChildDispatchResult } from '@rundown-org/core';
+import type { InlineChildDispatchResult, RunProgressionOutcome } from '@rundown-org/core';
 import type { DrivenRunPropagation } from '../../src/helpers/delegation-completion.js';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 
@@ -19,12 +19,12 @@ jest.unstable_mockModule('../../src/helpers/delegation-completion.js', () => ({
   propagateDrivenRunTerminal,
 }));
 jest.unstable_mockModule('../../src/services/execution.js', () => ({
+  createCliCommandServices: jest.fn(),
   launchInlineChildFromIntent,
 }));
 
-const { buildTerminalPropagation, buildInlineChildDispatch } = await import(
-  '../../src/helpers/run-progression-adapters.js'
-);
+const { buildTerminalPropagation, buildInlineChildDispatch, progressionFailedClosed } =
+  await import('../../src/helpers/run-progression-adapters.js');
 const { ObservationDeliveryError } = await import('@rundown-org/core');
 
 const RUN_ID = 'rd_00000000000000000000000000000853' as never;
@@ -168,5 +168,40 @@ describe('buildInlineChildDispatch', () => {
     await expect(
       dispatch({ intent, prompted: false, sink: { emit: jest.fn() } }),
     ).rejects.toBeInstanceOf(ObservationDeliveryError);
+  });
+});
+
+describe('progressionFailedClosed', () => {
+  // The one exit-polarity predicate every directive-driven command (goto,
+  // collect, run --prompted --step) maps its process exit through. Pinned
+  // against the real predicate: the goto-workflow suite mocks this module, so
+  // its polarity cases exercise the mock's own copy of the predicate, not this one.
+  it.each<[RunProgressionOutcome, boolean]>([
+    [{ kind: 'waiting', runId: RUN_ID, reason: 'awaiting_input' }, false],
+    [{ kind: 'completed', runId: RUN_ID }, false],
+    [{ kind: 'stopped', runId: RUN_ID }, true],
+    [
+      {
+        kind: 'refused',
+        runId: RUN_ID,
+        reason: 'consume_failed',
+        code: 'RD-829',
+        message: 'frontier consume did not commit',
+        recovery: 'retryable',
+      },
+      true,
+    ],
+    [
+      {
+        kind: 'failed',
+        runId: RUN_ID,
+        reason: 'observation_delivery_failed',
+        message: 'renderer threw',
+        recovery: 'retryable',
+      },
+      true,
+    ],
+  ])('maps %o to a fail-closed exit of %s', (outcome, expected) => {
+    expect(progressionFailedClosed(outcome)).toBe(expected);
   });
 });

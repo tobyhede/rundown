@@ -6,6 +6,11 @@ import {
   type CallerEvidence,
 } from './actor-context.js';
 import type { RunbookActorService } from './actor-service.js';
+import type { RunProgressionDirective } from './run-progression.js';
+import {
+  mintRunProgressionAuthority,
+  type RunProgressionAuthority,
+} from './run-progression-authority.js';
 import type { ParentAdvanceGuard } from './storage/runbook-store.js';
 import { INLINE_PARENT_CYCLE_CODE, inlineParentCycleMessage } from './inline-parent-advance.js';
 import {
@@ -217,7 +222,11 @@ export type FindDelegationsByTokenHash = (
  */
 export type RetryLocator =
   | { readonly kind: 'token'; readonly token: string }
-  | { readonly kind: 'step'; readonly step: string; readonly iteration?: number }
+  | {
+      readonly kind: 'step';
+      readonly step: string;
+      readonly iteration?: number;
+    }
   | { readonly kind: 'active' };
 
 /** Raw explicit fresh-issuance target parsed by a frontend. */
@@ -407,7 +416,9 @@ export type DelegationIssuanceOutcome =
   | SessionMutationRefusalOutcome
   | Extract<
       GuardedMutationResult<never>,
-      { readonly kind: 'claim_superseded' | 'concurrent_modification' | 'missing' }
+      {
+        readonly kind: 'claim_superseded' | 'concurrent_modification' | 'missing';
+      }
     >
   | AbandonedAttemptSetOutcome;
 
@@ -610,7 +621,10 @@ export type DelegationAbortOutcome =
         | 'terminal_child_cleaned'
         | 'missing_child_cleaned';
     }
-  | { readonly kind: 'refused'; readonly policy: MutationAuthorityRefusalPolicy }
+  | {
+      readonly kind: 'refused';
+      readonly policy: MutationAuthorityRefusalPolicy;
+    }
   | { readonly kind: 'error'; readonly error: RundownError }
   | Extract<
       GuardedMutationResult<never>,
@@ -669,7 +683,9 @@ export type LifecycleLoopDirective = { readonly kind: 'none' } | { readonly kind
  * and echoing either raw `claimId` would put a bearer secret in output. The
  * caller already holds both values it supplied, so it needs no echo to act.
  */
-export type ClaimBearerMismatchRefusal = { readonly kind: 'claim_bearer_mismatch' };
+export type ClaimBearerMismatchRefusal = {
+  readonly kind: 'claim_bearer_mismatch';
+};
 
 /** Input to {@link RunbookLifecycleCommandService.runTransition}. */
 export interface LifecycleTransitionInput {
@@ -755,7 +771,11 @@ export type LifecycleTransitionOutcome =
     }
   | { readonly kind: 'actor_context_required' }
   | ClaimBearerMismatchRefusal
-  | { readonly kind: 'claim_grant_required'; readonly claimId: ClaimId; readonly runId: RunId }
+  | {
+      readonly kind: 'claim_grant_required';
+      readonly claimId: ClaimId;
+      readonly runId: RunId;
+    }
   | UnknownRunRefusal
   | {
       readonly kind: 'applied';
@@ -896,7 +916,9 @@ export type LifecycleTerminalOutcome =
   | SessionMutationRefusalOutcome
   | Extract<
       GuardedMutationResult<never>,
-      { readonly kind: 'claim_superseded' | 'concurrent_modification' | 'missing' }
+      {
+        readonly kind: 'claim_superseded' | 'concurrent_modification' | 'missing';
+      }
     >
   /** Aggregate force crossed its effect boundary and every named attempt requires recovery. */
   | AbandonedAttemptSetOutcome
@@ -907,7 +929,11 @@ export type LifecycleTerminalOutcome =
   /** The caller did not present the bearer naming its claim-shaped terminal target. */
   | ClaimBearerMismatchRefusal
   /** The targeted claim proved possession but lacks the grant required for this terminal mutation. */
-  | { readonly kind: 'claim_grant_required'; readonly claimId: ClaimId; readonly runId: RunId }
+  | {
+      readonly kind: 'claim_grant_required';
+      readonly claimId: ClaimId;
+      readonly runId: RunId;
+    }
   | UnknownRunRefusal
   | {
       /** Refused: the resolved root has reported-but-uncollected delegation outcomes. */
@@ -997,14 +1023,22 @@ export interface LifecycleNavigationInput {
   readonly targetSelector: CommandTargetSelector;
 }
 
+const lifecycleNavigationCapabilityBrand: unique symbol = Symbol('lifecycleNavigationCapability');
+
+/** Opaque core-verified target, authority, and graph for one GOTO mutation. */
+export interface LifecycleNavigationCapability {
+  readonly authority: RunProgressionAuthority;
+  readonly steps: readonly ResolvedStep[];
+  readonly [lifecycleNavigationCapabilityBrand]: true;
+}
+
 /**
  * Outcome of {@link RunbookLifecycleCommandService.resolveRunNavigation}.
  *
  * Refusal variants mirror the base {@link CommandTargetResolution} shapes; the
- * `allowed` variant carries the resolved run, its parsed steps (derived
- * in-seam via `loadSteps`), and the terminal release mode a follow-on
- * execution loop should apply — everything the frontend needs to drive the
- * navigation without re-resolving or re-gating anything.
+ * `allowed` carries the resolved run plus one opaque navigation capability.
+ * That capability binds the verified authority to the exact parsed graph, so a
+ * frontend cannot pair either with unrelated steps.
  */
 export type LifecycleNavigationOutcome =
   /** No active runbook (bare path) to navigate. */
@@ -1033,24 +1067,16 @@ export type LifecycleNavigationOutcome =
       readonly runId: RunId;
       /** Resolved running state of the target run. */
       readonly state: RunbookState;
-      /** Parsed steps of the target run, derived in-seam. */
-      readonly steps: readonly ResolvedStep[];
       /**
-       * Verified runtime-only delegation capabilities for a navigation that
-       * lands on a DELEGATE frontier. One branded pair — see
-       * {@link TransitionDelegationRuntime}.
+       * One opaque authority for the fenced GOTO and its continuation.
        */
-      readonly delegationRuntime?: DelegationRuntimeCapabilities;
+      readonly navigation: LifecycleNavigationCapability;
     };
 
 /** Input to an already-authorized fenced GOTO mutation. */
 export interface LifecycleNavigationMutationInput {
-  readonly runId: RunId;
-  readonly callerEvidence: CallerEvidence;
-  readonly steps: readonly ResolvedStep[];
+  readonly navigation: LifecycleNavigationCapability;
   readonly target: StepId;
-  /** Verified runtime-only issuer for a GOTO that enters a delegation frontier. */
-  readonly issueDelegationCredential?: DelegationCredentialIssuer;
 }
 
 /** Result of applying an already-authorized GOTO through the execution fence. */
@@ -1062,7 +1088,8 @@ export type LifecycleNavigationMutationOutcome =
       readonly previousState: RunbookState;
       readonly updatedState: RunbookState;
       readonly snapshot: unknown;
-      readonly steps: readonly ResolvedStep[];
+      /** Opaque core-minted continuation consumed verbatim by the frontend. */
+      readonly progression: Extract<RunProgressionDirective, { readonly kind: 'activate' }>;
     };
 
 /**
@@ -1475,7 +1502,10 @@ export class RunbookLifecycleCommandService {
         readonly actorContext: ActorContext;
         readonly authority: VerifiedClaimAuthority;
       }
-    | { readonly kind: 'refused'; readonly policy: MutationAuthorityRefusalPolicy }
+    | {
+        readonly kind: 'refused';
+        readonly policy: MutationAuthorityRefusalPolicy;
+      }
   > {
     const presentedClaimId =
       input.callerEvidence.kind === 'claim_bearer' ? input.callerEvidence.claimId : undefined;
@@ -1602,7 +1632,10 @@ export class RunbookLifecycleCommandService {
 
     const stepsByRun = new Map<RunId, readonly ResolvedStep[]>();
     let preparedFresh:
-      | { readonly nextState: RunbookState; readonly value: DelegationIssuanceOutcome }
+      | {
+          readonly nextState: RunbookState;
+          readonly value: DelegationIssuanceOutcome;
+        }
       | undefined;
     const aggregate = await this.#deps.actorMutationRunner.runAll<DelegationIssuanceOutcome>({
       targets: [{ runId: activeId, claimKey: authority.actorContext.authority.claimKey }],
@@ -1991,7 +2024,10 @@ export class RunbookLifecycleCommandService {
     const stepsByRun = new Map<RunId, readonly ResolvedStep[]>();
     const hasTerminalChild = linkedChildRunId !== null && allowLinkedChildRun;
     let preparedRetry:
-      | { readonly nextState: RunbookState; readonly value: DelegationIssuanceOutcome }
+      | {
+          readonly nextState: RunbookState;
+          readonly value: DelegationIssuanceOutcome;
+        }
       | undefined;
     const aggregate = await this.#deps.actorMutationRunner.runAll<DelegationIssuanceOutcome>({
       targets: [
@@ -2927,15 +2963,15 @@ export class RunbookLifecycleCommandService {
    * the collection-pending / open-claims guards — navigation is operator
    * control flow, not completion.
    *
-   * The machine dispatch itself (`GOTO` + execution loop) stays with the
-   * frontend, which already drives it through `RunbookActorService` — this
-   * seam owns everything decision-shaped: resolution, evidence mapping, and
-   * policy.
+   * The fenced GOTO dispatch stays in this core seam. Its applied outcome mints
+   * a Run Progression directive that binds the same authority and graph; the
+   * frontend renders the GOTO observation and passes that directive verbatim to
+   * the shared driver.
    *
    * @param input - Command, caller evidence, and target selector.
-   * @returns A typed refusal or an `allowed` outcome carrying the resolved
-   *   run, its steps, and the terminal release mode. A claim-shaped target that
-   *   the caller did not present refuses `claim_bearer_mismatch`.
+   * @returns A typed refusal or an `allowed` outcome carrying the resolved run
+   *   and its opaque navigation capability. A claim-shaped target that the
+   *   caller did not present refuses `claim_bearer_mismatch`.
    * @throws {Error} When an `explicit-step` selector is supplied (the
    *   navigation target is goto's positional argument, not a selector).
    */
@@ -3035,43 +3071,56 @@ export class RunbookLifecycleCommandService {
       await this.#deps.sessionService.recordClaimSeen(input.callerEvidence.claimId);
     }
 
+    const steps = await this.#deps.loadSteps(state);
+    const { delegationRuntime } = transitionDelegationRuntime(actorContext, state.id);
+    const progressionAuthority = mintRunProgressionAuthority({
+      runId: state.id,
+      ...(actorContext.kind === 'verified_claim'
+        ? { claimKey: actorContext.authority.claimKey }
+        : {}),
+      ...(delegationRuntime === undefined ? {} : { delegationRuntime }),
+    });
     return {
       kind: 'allowed',
       runId: state.id,
       state,
-      steps: await this.#deps.loadSteps(state),
       // Navigation can land the cursor ON a DELEGATE frontier, so the same
       // run-control gate applies: the issuer follows `delegate-from-run`, not
       // the `mutate-run` grant that authorized the navigation.
-      ...transitionDelegationRuntime(actorContext, state.id),
+      navigation: {
+        authority: progressionAuthority,
+        steps,
+        [lifecycleNavigationCapabilityBrand]: true,
+      },
     };
   }
 
   /**
    * Apply an authorized GOTO through core-owned execution fencing.
    *
-   * @param input - Selected run, caller evidence, parsed steps, and validated target.
+   * @param input - Core-verified navigation capability and validated target.
    * @returns Applied transition data or a typed capture/execution refusal.
    * @throws {Error} When a committed mutation has no captured previous state.
    */
   async runNavigationMutation(
     input: LifecycleNavigationMutationInput,
   ): Promise<LifecycleNavigationMutationOutcome> {
+    const { authority, steps } = input.navigation;
     let previousState: RunbookState | undefined;
     const result = await this.#deps.actorMutationRunner.run({
-      runId: input.runId,
-      ...(input.callerEvidence.kind === 'claim_bearer'
-        ? { claimKey: claimKeyFromBearer(input.callerEvidence.claimId) }
-        : {}),
-      makeRecoveryActor: (state) => this.#deps.actorService.createRecoveryActor(state, input.steps),
+      runId: authority.runId,
+      ...(authority.claimKey === undefined ? {} : { claimKey: authority.claimKey }),
+      makeRecoveryActor: (state) => this.#deps.actorService.createRecoveryActor(state, steps),
       compute: async (capturedState) => {
         previousState = capturedState;
         const prepared = await this.#deps.actorService.prepareActorMutation(
           capturedState.id,
           previousState,
-          input.steps,
+          steps,
           { type: 'GOTO', target: input.target },
-          { issueDelegationCredential: input.issueDelegationCredential },
+          {
+            issueDelegationCredential: authority.delegationRuntime?.issueDelegationCredential,
+          },
         );
         return { ...prepared, previousState };
       },
@@ -3082,11 +3131,19 @@ export class RunbookLifecycleCommandService {
     }
     return {
       kind: 'applied',
-      runId: input.runId,
+      runId: authority.runId,
       previousState,
       updatedState: result.value.state,
       snapshot: result.value.snapshot,
-      steps: input.steps,
+      progression: {
+        kind: 'activate',
+        authority,
+        steps,
+        entryBoundary: {
+          kind: 'after_observed_transition',
+          lifecycle: 'running',
+        },
+      },
     };
   }
 
@@ -3116,7 +3173,10 @@ export class RunbookLifecycleCommandService {
   // exactly this claim, so the holder observation needs no evidence re-check.
   async #releaseResolvedTerminalClaim(resolution: {
     readonly claimId: ClaimId;
-    readonly claim: { readonly claimKey: ClaimLookupKey; readonly controlledRunId: RunId };
+    readonly claim: {
+      readonly claimKey: ClaimLookupKey;
+      readonly controlledRunId: RunId;
+    };
     readonly state: RunbookState;
     readonly lifecycle: 'completed' | 'stopped';
   }): Promise<LifecycleTerminalOutcome | undefined> {
@@ -3882,7 +3942,11 @@ export class RunbookLifecycleCommandService {
           readonly applied: number;
           readonly state: RunbookState;
           readonly terminalStatus?: 'done' | 'stopped';
-          readonly duplicate?: { at: string; frameKey: FrameKey; entry: number };
+          readonly duplicate?: {
+            at: string;
+            frameKey: FrameKey;
+            entry: number;
+          };
         }
       | undefined;
 
@@ -4230,7 +4294,10 @@ export class RunbookLifecycleCommandService {
   #guardRefusal<V>(
     guarded:
       | { readonly kind: 'advanced'; readonly value: V }
-      | { readonly kind: 'open_delegated_children'; readonly claims: ClaimRecord[] }
+      | {
+          readonly kind: 'open_delegated_children';
+          readonly claims: ClaimRecord[];
+        }
       | {
           readonly kind: 'delegation_collection_pending';
           readonly parentRunId: RunId;
@@ -4240,7 +4307,10 @@ export class RunbookLifecycleCommandService {
     parentRunId: RunId,
   ):
     | { readonly kind: 'advanced'; readonly value: V }
-    | { readonly kind: 'refusal'; readonly outcome: LifecycleTransitionOutcome } {
+    | {
+        readonly kind: 'refusal';
+        readonly outcome: LifecycleTransitionOutcome;
+      } {
     switch (guarded.kind) {
       case 'advanced':
         return { kind: 'advanced', value: guarded.value };
@@ -4292,8 +4362,11 @@ export class RunbookLifecycleCommandService {
   // launch seam re-projects, so the two agree by construction rather than by a
   // second rule about what "interrupted" means.
   #hasUnconsumedInlineLaunchIntent(parentState: RunbookState, childRunId: RunId): boolean {
-    const context = (parentState.snapshot as { readonly context?: Partial<RunbookContext> } | null)
-      ?.context;
+    const context = (
+      parentState.snapshot as {
+        readonly context?: Partial<RunbookContext>;
+      } | null
+    )?.context;
     const intent = context?.inlineLaunchIntent;
     return isInlineLaunchIntentWithoutParentEntry(intent) && intent.childRunId === childRunId;
   }

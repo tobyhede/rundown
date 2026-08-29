@@ -627,10 +627,11 @@ describe('collect command', () => {
     /**
      * Direct coverage for the `applied === 0` branch on a DELEGATE step:
      * if all completions have been drained (but the cursor is still on the
-     * DELEGATE step for some reason), `rd collect` returns a visible
-     * already-aggregated status with exit 0.
+     * DELEGATE step for some reason), `rundown collect` still returns the
+     * shared progression directive. The command reports an applied count of
+     * zero, then progression owns the current-unit entry.
      */
-    it('emits already-aggregated when no completions are pending on a DELEGATE step', async () => {
+    it('emits an applied zero-count when no completions are pending on a DELEGATE step', async () => {
       const runbookId = await setupReadyToCollect(['pass', 'pass']);
 
       // Clear resolvedCompletions so drain has nothing to apply. Leave
@@ -644,13 +645,13 @@ describe('collect command', () => {
       );
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout + result.stderr).toMatch(/already aggregated/i);
+      expect(result.stdout + result.stderr).toMatch(/Collected 0 delegation outcome/);
     });
 
     /**
      * Same as above, but asserts the JSON shape for the default output mode.
      */
-    it('emits already-aggregated JSON when no completions are pending', async () => {
+    it('emits applied JSON after progression when no completions are pending', async () => {
       const runbookId = await setupReadyToCollect(['pass', 'pass']);
 
       await patchPersistedRunState(workspace.cwd, runbookId, { resolvedCompletions: {} });
@@ -658,11 +659,11 @@ describe('collect command', () => {
       const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
       expect(result.exitCode).toBe(0);
-      // JSON output is pretty-printed; parse the whole payload.
-      const parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
-      expect(parsed.status).toBe('already-aggregated');
+      const parsed = findCollectOutput(result.stdout, 'applied');
+      expect(parsed.status).toBe('applied');
       expect(parsed.action).toBe('collect');
       expect(parsed.kind).toBe('collect');
+      expect(parsed.applied).toBe(0);
       expect(CollectResponseSchema.safeParse(parsed).success).toBe(true);
     });
 
@@ -1137,9 +1138,19 @@ describe('collect command', () => {
           {
             title: 'Fan-out',
             pass: 'CONTINUE',
-            substeps: [{ title: 'Task A', delegate: true, runbooks: ['child.runbook.md'] }],
+            substeps: [
+              {
+                title: 'Task A',
+                delegate: true,
+                runbooks: ['child.runbook.md'],
+              },
+            ],
           },
-          { title: 'Local work', pass: 'CONTINUE', command: 'rd echo --result pass' },
+          {
+            title: 'Local work',
+            pass: 'CONTINUE',
+            command: 'rd echo --result pass',
+          },
           {
             title: 'Fan-out again',
             pass: 'CONTINUE',
