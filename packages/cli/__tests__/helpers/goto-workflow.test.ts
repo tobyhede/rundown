@@ -751,6 +751,7 @@ describe('executeGoto', () => {
   const progressionDirective = {
     kind: 'activate',
     authority: navigation.authority,
+    runbook: { source: 'project', path: 'goto.runbook.md' },
     steps: navigation.steps,
     entryBoundary: { kind: 'after_observed_transition', lifecycle: 'running' },
   } as const satisfies Extract<RunProgressionDirective, { kind: 'activate' }>;

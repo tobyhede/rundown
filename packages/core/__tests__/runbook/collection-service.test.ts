@@ -17,6 +17,7 @@ import {
   type CallerEvidence,
   type ClaimLookupKey,
   type EffectfulActorMutationRunner,
+  type EffectfulActorMutationRunnerInput,
   type EffectfulActorMutationSetRunnerInput,
   type InlineUpwardPropagationResult,
   type RunbookState,
@@ -303,7 +304,7 @@ describe('RunbookCollectionService', () => {
    */
   function runnerWithPreCommitEffect(effect: () => Promise<void>): EffectfulActorMutationRunner {
     return {
-      run: (input) => actorMutationRunner.run(input),
+      run: (input: EffectfulActorMutationRunnerInput) => actorMutationRunner.run(input),
       async runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
         return await actorMutationRunner.runAll<TResult>({
           ...input,
@@ -578,6 +579,8 @@ describe('RunbookCollectionService', () => {
     });
     expect(outcome.kind).toBe('collection_applied');
     if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
+    if (outcome.lifecycle !== 'running') throw new Error('expected running collection');
+    expect(outcome.progression.kind).toBe('activate');
     expect(outcome.transitionObservations).toMatchObject([
       {
         type: 'STEP_TRANSITIONED',
@@ -2664,7 +2667,7 @@ describe('RunbookCollectionService', () => {
       let captured: EffectfulActorMutationSetRunnerInput<unknown>['makeRecoveryActor'] | undefined;
       const svc = makeCollectionService({
         actorMutationRunner: {
-          run: (input) => actorMutationRunner.run(input),
+          run: (input: EffectfulActorMutationRunnerInput) => actorMutationRunner.run(input),
           async runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
             captured = input.makeRecoveryActor;
             return await actorMutationRunner.runAll<TResult>(input);

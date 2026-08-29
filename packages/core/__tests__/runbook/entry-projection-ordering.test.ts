@@ -29,6 +29,7 @@ import {
   RunbookLifecycleCommandService,
   RunbookStateManager,
   SessionService,
+  activateRunProgression,
   assertRunId,
   buildFrameKey,
   createEffectfulActorMutationRunner,
@@ -157,7 +158,12 @@ describe('entry projection ordering: machine credential issuance agrees with com
       substep: undefined,
       retryCount: 0,
       variables: brandStoredOutputsForTest({}),
-      templateVars: brandInitialTemplateVarsForTest({ RunId: runId }),
+      templateVars: brandInitialTemplateVarsForTest({
+        RunId: runId,
+        ContextId: 'ctx1',
+        WorkPath: '.rundown/work',
+        RunbookRef: { source: 'project', path: 'investigation.md' },
+      }),
       steps: [],
       resolvedCompletions: {},
       frameEntryCounts: { [FRAME_1]: 1 },
@@ -198,6 +204,25 @@ describe('entry projection ordering: machine credential issuance agrees with com
     });
     if (outcome.kind !== 'applied') {
       throw new Error(`expected applied, got ${outcome.kind}: ${JSON.stringify(outcome)}`);
+    }
+    if (outcome.progression.kind === 'activate') {
+      const progressed = await activateRunProgression(
+        outcome.progression.authority,
+        {
+          manager,
+          actorService,
+          sessionService,
+          actorMutationRunner: createEffectfulActorMutationRunner(tmp),
+          loadSteps: () => steps,
+          sink: { emit() {} },
+          dispatchInlineChild: async () => ({ kind: 'waiting' }),
+          propagateTerminal: async () => ({ kind: 'propagated' }),
+        },
+        outcome.progression.entryBoundary,
+      );
+      if (progressed.kind === 'failed' || progressed.kind === 'refused') {
+        throw new Error(`expected progression, got ${JSON.stringify(progressed)}`);
+      }
     }
   }
 

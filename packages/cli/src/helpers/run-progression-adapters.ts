@@ -5,9 +5,10 @@
  * a driven terminal; these builders supply the Category-A/C callables that
  * perform those effects with the CLI's existing machinery. The launch span
  * returns the core-typed dispatch result itself, so no CLI coordination
- * status crosses the public seam; the propagation builder folds only the
- * inline failure-exit rule into the core `refused` arm, preserving the
- * refusing condition's code and boundary-derived recovery.
+ * status crosses the public seam. The propagation builder reports an inline
+ * parent's stable `waiting` or `stopped` condition explicitly, and preserves a
+ * refusing condition's code and boundary-derived recovery on the core
+ * `refused` arm.
  *
  * The observation commit gate (#853) holds across these turns too: every
  * parent-stream emission goes through the GATED sink core supplies at
@@ -23,20 +24,20 @@ import {
   activateRunProgression,
   CLIErrorCodes,
   createEffectfulActorMutationRunner,
-  type ExecutionEventEmitter,
+  ExecutionEventEmitter,
   ObservationDeliveryError,
   SessionService,
   type CommandExecutionStreamOptions,
   type InlineChildDispatch,
   type RunbookActorService,
   type RunbookStateManager,
-  type ResolvedStep,
   type RunProgressionDirective,
   type RunProgressionOutcome,
   type TerminalPropagation,
 } from '@rundown-org/core';
 import { createCliCommandServices, launchInlineChildFromIntent } from '../services/execution.js';
 import { createCliRunbookActorService } from './actor-service-factory.js';
+import { getRunbookFromState } from './runbook-loader.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 // Static on purpose: collect.ts already loads this module statically on the
 // same command path, and delegation-completion's documented cycle with
@@ -53,7 +54,6 @@ export interface InlineChildDispatchContext {
   readonly actorService: RunbookActorService;
   readonly sessionService: SessionService;
   readonly cwd: string;
-  readonly steps: readonly ResolvedStep[];
   readonly output: OutputEmitter;
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
   /** The composing run's verified delegation capabilities, named with its run. */
@@ -108,14 +108,14 @@ function gateProgressionOutput(output: OutputEmitter): OutputEmitter {
  */
 export function buildInlineChildDispatch(ctx: InlineChildDispatchContext): InlineChildDispatch {
   const gatedOutput = gateProgressionOutput(ctx.output);
-  return async ({ intent, prompted, sink }) =>
+  return async ({ intent, prompted, steps, sink }) =>
     launchInlineChildFromIntent({
       manager: ctx.manager,
       actorService: ctx.actorService,
       sessionService: ctx.sessionService,
       emitter: sink,
       cwd: ctx.cwd,
-      steps: ctx.steps,
+      steps,
       intent,
       prompted,
       output: gatedOutput,
@@ -136,28 +136,40 @@ export interface TerminalPropagationContext {
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
 }
 
-/** Runtime-only dependencies shared by every directive-driven continuation. */
+/** Context for {@link driveRunProgression}. Runtime references only. */
 export interface RunProgressionDriveContext {
+  /** State manager bound to the project directory. */
   readonly manager: RunbookStateManager;
+  /** Project directory the run's steps resolve against. */
   readonly cwd: string;
+  /** The command's output emitter, for the composition callables' rendering. */
   readonly output: OutputEmitter;
-  /**
-   * Required: the invoking command already bridged an emitter to `output` for
-   * its own observation, and the activation must share it so one `seq` counter
-   * covers the whole command. A fallback emitter here would silently start a
-   * second stream.
-   */
-  readonly sink: ExecutionEventEmitter;
+  /** Caller-owned emitter the activation delivers observations through. */
+  readonly sink?: ExecutionEventEmitter;
+  /** Session service; constructed over `manager` when the caller has none. */
   readonly sessionService?: SessionService;
+  /** Runtime-only routing for command subprocess stdout/stderr. */
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
 }
 
 /**
- * Activate one core-minted directive without reconstructing its authority.
+ * Activate core Run Progression for one run with the CLI's standard wiring.
  *
- * @param activation - Core-minted activation, including its exact graph and authority.
- * @param ctx - Runtime-only CLI dependencies used to drive the activation.
- * @returns The closed outcome selected by Run Progression.
+ * The ONE frontend assembly of the activation's dependencies, shared by every
+ * migrated entry path (collect follow-on, pass/fail continuation): CLI command
+ * callables behind the machine-owned command actor, the inline-dispatch and
+ * terminal-propagation adapters, and the composition capabilities derived from
+ * the SAME authority value core minted — so the callable wiring cannot
+ * disagree with the authority about run, claim, or delegation capabilities.
+ *
+ * The `failed` arm's diagnostic is rendered here best-effort: it is the one
+ * outcome whose message cannot ride the observation stream (the stream is the
+ * broken thing), and a second renderer failure must not mask the caller's
+ * fail-closed exit decision.
+ *
+ * @param activation - Core-minted activation directive and run-bound authority.
+ * @param ctx - Runtime references for the activation's dependencies.
+ * @returns The activation's closed outcome.
  */
 export async function driveRunProgression(
   activation: Extract<RunProgressionDirective, { kind: 'activate' }>,
@@ -166,54 +178,68 @@ export async function driveRunProgression(
   const commandServices = createCliCommandServices(ctx.commandStreamOptions);
   const actorService = createCliRunbookActorService(ctx.manager, commandServices);
   const sessionService = ctx.sessionService ?? new SessionService(ctx.manager);
-  const sink = ctx.sink;
-  const outcome = await activateRunProgression(activation.authority, {
-    manager: ctx.manager,
-    actorService,
-    sessionService,
-    actorMutationRunner: createEffectfulActorMutationRunner(ctx.cwd),
-    steps: activation.steps,
-    sink,
-    dispatchInlineChild: buildInlineChildDispatch({
+  const sink =
+    ctx.sink ?? new ExecutionEventEmitter(activation.authority.runId, activation.runbook);
+  if (ctx.sink === undefined) {
+    sink.subscribe((event) => {
+      ctx.output.executionEvent(event);
+    });
+  }
+  const outcome = await activateRunProgression(
+    activation.authority,
+    {
       manager: ctx.manager,
       actorService,
       sessionService,
-      cwd: ctx.cwd,
-      steps: activation.steps,
-      output: ctx.output,
-      ...(ctx.commandStreamOptions === undefined
-        ? {}
-        : { commandStreamOptions: ctx.commandStreamOptions }),
-      ...(activation.authority.delegationRuntime === undefined
-        ? {}
-        : {
-            parentDelegationRuntime: {
-              runId: activation.authority.runId,
-              runtime: activation.authority.delegationRuntime,
-            },
-          }),
-    }),
-    propagateTerminal: buildTerminalPropagation({
-      manager: ctx.manager,
-      cwd: ctx.cwd,
-      output: ctx.output,
-      ...(ctx.commandStreamOptions === undefined
-        ? {}
-        : { commandStreamOptions: ctx.commandStreamOptions }),
-    }),
-  });
+      actorMutationRunner: createEffectfulActorMutationRunner(ctx.cwd),
+      loadSteps: (state) => getRunbookFromState(state, ctx.cwd),
+      sink,
+      dispatchInlineChild: buildInlineChildDispatch({
+        manager: ctx.manager,
+        actorService,
+        sessionService,
+        cwd: ctx.cwd,
+        output: ctx.output,
+        ...(ctx.commandStreamOptions !== undefined
+          ? { commandStreamOptions: ctx.commandStreamOptions }
+          : {}),
+        // This activation IS the composing parent's progression, so the
+        // authority's verified capabilities are exactly what a child's terminal
+        // flow-back needs — named with the authority's own run so nothing
+        // further up the inline chain can be advanced under it.
+        ...(activation.authority.delegationRuntime !== undefined
+          ? {
+              parentDelegationRuntime: {
+                runId: activation.authority.runId,
+                runtime: activation.authority.delegationRuntime,
+              },
+            }
+          : {}),
+      }),
+      propagateTerminal: buildTerminalPropagation({
+        manager: ctx.manager,
+        cwd: ctx.cwd,
+        output: ctx.output,
+        ...(ctx.commandStreamOptions !== undefined
+          ? { commandStreamOptions: ctx.commandStreamOptions }
+          : {}),
+      }),
+    },
+    activation.entryBoundary,
+  );
   if (outcome.kind === 'failed') {
     try {
       ctx.output.error(outcome.message, CLIErrorCodes.OBSERVATION_DELIVERY_FAILED);
-      // FLUSHED here, not left to the caller's end-of-command flush (#853):
-      // `output.error` only accumulates into the JSON renderer while a
-      // command's deferred action object is written straight through, so an
-      // envelope left in the accumulator lands AFTER the object every caller
-      // defers to keep last (docs/spec/cli-output.md). Flushing an empty
-      // accumulator is a no-op, so this costs nothing on the other arms.
+      // Flushed HERE, not left to the caller's end-of-command flush. `error`
+      // only accumulates into the JSON renderer while a command's terminal
+      // object is written straight through, so an envelope left in the accumulator lands
+      // AFTER the action object every caller defers to keep last
+      // (docs/spec/cli-output.md). Flushing an empty accumulator is a no-op, so
+      // this costs nothing on the arms that never accumulate.
       ctx.output.flush();
     } catch {
-      // The reporting channel is broken; the caller's fail-closed result remains authoritative.
+      // The reporting channel is broken; the caller's exit code carries the
+      // failure.
     }
   }
   return outcome;
@@ -222,8 +248,12 @@ export async function driveRunProgression(
 /**
  * Whether a closed progression outcome fails the invoking command closed.
  *
- * @param outcome - Closed result returned by Run Progression.
- * @returns True when the invoking CLI command must use a failure exit code.
+ * `refused` and `failed` applied no terminal but did not finish the caller's
+ * work; `stopped` reports an actual stopped lifecycle. All three exit
+ * non-zero; `waiting` and `completed` exit clean.
+ *
+ * @param outcome - The activation's closed outcome.
+ * @returns True when the command should exit non-zero.
  */
 export function progressionFailedClosed(outcome: RunProgressionOutcome): boolean {
   return outcome.kind === 'refused' || outcome.kind === 'failed' || outcome.kind === 'stopped';
@@ -235,13 +265,12 @@ export function progressionFailedClosed(outcome: RunProgressionOutcome): boolean
  *
  * `propagateDrivenRunTerminal` reloads the driven run and internally skips a
  * missing, non-terminal, or unlinked one, so the activation may invoke this on
- * every terminal outcome. The inline-only failure-exit rule this command
- * family uses is folded here into the core `refused` arm — carrying the
- * refusing condition's registered code and boundary-derived recovery when a
- * typed refusal is what failed closed, so the closed outcome cannot re-label
- * it (#853 review F3). Rendering goes through the gated output, so a broken
- * reporting channel surfaces as the typed delivery failure rather than an
- * untyped escape.
+ * every terminal outcome. An inline advance returns the composing parent's
+ * identity and stable `waiting` or `stopped` condition; only a genuine refusal
+ * enters the core `refused` arm, carrying its registered code and
+ * boundary-derived recovery so the closed outcome cannot re-label it (#853
+ * review F3). Rendering goes through the gated output, so a broken reporting
+ * channel surfaces as the typed delivery failure rather than an untyped escape.
  *
  * @param ctx - Runtime references the propagation needs, captured by closure.
  * @returns The propagation callable the core activation invokes.
@@ -254,30 +283,38 @@ export function buildTerminalPropagation(ctx: TerminalPropagationContext): Termi
   // event it renders through `gatedOutput` instead. The input still carries the
   // sink because the seam's contract is uniform across both callables — a
   // future emission here must go through it rather than a raw emitter.
-  return async ({ runId }) => {
+  return async ({ runId, source }) => {
     const propagation = await propagateDrivenRunTerminal(
       ctx.manager,
       runId,
       ctx.cwd,
       gatedOutput,
-      { kind: 'loop-inferred' },
+      source,
       ctx.commandStreamOptions,
     );
     if (propagation.kind !== 'inline-advanced') return { kind: 'propagated' };
+    if (propagation.result === 'handled') {
+      return { kind: 'advanced', runId: propagation.parentRunId, status: 'waiting' as const };
+    }
+    if (propagation.result === 'stopped') {
+      return { kind: 'advanced', runId: propagation.parentRunId, status: 'stopped' as const };
+    }
     if (propagation.refusal !== undefined) {
       return {
         kind: 'refused',
+        runId: propagation.refusal.runId,
         code: propagation.refusal.code,
         message: propagation.refusal.message,
         recovery: propagation.refusal.recovery,
       };
     }
-    if (propagation.result === 'stopped' || propagation.result === 'blocked') {
-      // Fail-closed without a typed refusal: the parent advance reached a STOP
-      // terminal or a re-entrant flow-back concluded fail-closed. Diagnostics
-      // already streamed; no retry of this propagation can change it.
+    if (propagation.result === 'blocked') {
+      // Fail-closed without a typed refusal: a re-entrant flow-back concluded
+      // blocked after its own diagnostics streamed. No retry of this
+      // propagation can change that conclusion.
       return {
         kind: 'refused',
+        runId: propagation.parentRunId,
         message:
           'Advancing the composing inline parent concluded fail-closed; see the preceding diagnostics for the refusing run',
         recovery: 'permanent',

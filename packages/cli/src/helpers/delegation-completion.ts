@@ -51,9 +51,9 @@ import {
   type RunbookState,
   type ParentLinkage,
   type RunProgressionRecovery,
+  type TerminalPropagationSource,
   type TerminalUpwardPropagationResult,
   type CommandExecutionStreamOptions,
-  type DelegationOutcome,
   type DelegationRuntimeCapabilities,
   type RunId,
 } from '@rundown-org/core';
@@ -307,8 +307,23 @@ export function buildAdvanceInlineParent(
 export function emitLinkageCycleDiagnostic(output: OutputEmitter, trip: LinkageCycleTrip): void {
   output.error(trip.message, trip.code, {
     cause: trip.cause,
-    runId: trip.cause === 'repeat' ? trip.repeatedRunId : trip.deepestRunId,
+    runId: linkageCycleRunId(trip),
   });
+}
+
+/**
+ * The run a tripped linkage guard names, by cause.
+ *
+ * One derivation, because the diagnostic envelope and the typed refusal detail
+ * must name the SAME run: a reader correlating the two would otherwise be told
+ * about two different runs for one trip, and the rule is the kind that drifts
+ * silently when it is spelled twice.
+ *
+ * @param trip - The core-composed trip.
+ * @returns The repeated run for a cycle, otherwise the deepest run reached.
+ */
+function linkageCycleRunId(trip: LinkageCycleTrip): RunId {
+  return trip.cause === 'repeat' ? trip.repeatedRunId : trip.deepestRunId;
 }
 
 /**
@@ -377,6 +392,8 @@ export function isInlinePropagationRefusal(
  * boundary-derived recovery.
  */
 export interface InlinePropagationRefusalDetail {
+  /** Run whose upward turn actually refused. */
+  readonly runId: RunId;
   /** Registered code of the refusing condition. */
   readonly code: string;
   /** Operator-facing message composed at the point of diagnosis. */
@@ -405,12 +422,14 @@ export function inlinePropagationRefusalDetail(
 ): InlinePropagationRefusalDetail {
   if (outcome.kind === 'linkage-cycle') {
     return {
+      runId: linkageCycleRunId(outcome.trip),
       code: outcome.trip.code,
       message: outcome.trip.message,
       recovery: 'permanent',
     };
   }
   return {
+    runId: outcome.refusal.runId,
     code: outcome.refusal.code,
     message: outcome.refusal.message,
     recovery: INLINE_ADVANCE_RECOVERY[outcome.refusal.reason],
@@ -782,13 +801,11 @@ export async function propagateChildTerminalDetailed(
 /**
  * Whether the driving command authored an operator RESULT (`pass`/`fail`) or
  * relies on lifecycle inference. Making this a required discriminated param —
- * not a positional-optional `explicitResult` — encodes the operator-result vs
- * loop-inferred contract in the type: a loop driver cannot accidentally author a
- * result, and an operator-result command cannot forget to (SHOULD-FIX 5).
+ * not a positional-optional `explicitResult` — encodes the explicit-result vs
+ * loop-inferred contract in the type: an inferred driver cannot accidentally
+ * author a result, and an explicit-result caller cannot forget to (SHOULD-FIX 5).
  */
-export type PropagationTrigger =
-  | { readonly kind: 'operator-result'; readonly result: DelegationOutcome }
-  | { readonly kind: 'loop-inferred' };
+export type PropagationTrigger = TerminalPropagationSource;
 
 /**
  * Outcome of {@link propagateDrivenRunTerminal}.
@@ -803,6 +820,8 @@ export type DrivenRunPropagation =
   | { readonly kind: 'skipped' }
   | {
       readonly kind: 'inline-advanced';
+      /** Composing parent whose stable condition the advance describes. */
+      readonly parentRunId: RunId;
       readonly result: InlinePropagationResult;
       /**
        * The refusal's preserved identity, present exactly when `result` is a
@@ -886,7 +905,7 @@ export function inlineAdvanceRequiresFailureExit(propagation: DrivenRunPropagati
  * forces every caller to narrow before touching the exit code, so the guard can
  * no longer be dropped (Task 3, Correction 2).
  *
- * The `trigger`'s authored result (for `operator-result`) is forwarded into
+ * The `trigger`'s authored result (for `explicit-result`) is forwarded into
  * `projectDelegationTerminalOutcome`, which short-circuits on an explicit result
  * and otherwise infers from lifecycle. Operator-result commands (`pass`/`fail`)
  * MUST author their RESULT; loop-driven callers (goto/run/claim/collect) use
@@ -931,7 +950,7 @@ export async function propagateDrivenRunTerminal(
   }
   const linkage = extractParentLinkage(driven);
   if (!linkage) return { kind: 'skipped' };
-  const explicitResult = trigger.kind === 'operator-result' ? trigger.result : undefined;
+  const explicitResult = trigger.kind === 'explicit-result' ? trigger.result : undefined;
   if (linkage.kind === 'inline') {
     const advanced = await advanceParentForInlineChildDetailed(
       driven,
@@ -942,6 +961,7 @@ export async function propagateDrivenRunTerminal(
     );
     return {
       kind: 'inline-advanced',
+      parentRunId: linkage.parentRunId,
       result: advanced.result,
       ...(advanced.refusal !== undefined ? { refusal: advanced.refusal } : {}),
     };

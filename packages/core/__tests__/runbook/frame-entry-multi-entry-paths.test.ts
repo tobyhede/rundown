@@ -27,6 +27,7 @@ import {
   RunbookLifecycleCommandService,
   RunbookStateManager,
   SessionService,
+  activateRunProgression,
   assertRunId,
   buildFrameKey,
   createEffectfulActorMutationRunner,
@@ -178,6 +179,25 @@ describe('one mutation, one entry bump', () => {
     });
     if (outcome.kind !== 'applied') {
       throw new Error(`expected applied, got ${outcome.kind}: ${JSON.stringify(outcome)}`);
+    }
+    if (outcome.progression.kind === 'activate') {
+      const progressed = await activateRunProgression(
+        outcome.progression.authority,
+        {
+          manager,
+          actorService,
+          sessionService,
+          actorMutationRunner: createEffectfulActorMutationRunner(tmp),
+          loadSteps: () => steps,
+          sink: { emit() {} },
+          dispatchInlineChild: async () => ({ kind: 'waiting' }),
+          propagateTerminal: async () => ({ kind: 'propagated' }),
+        },
+        outcome.progression.entryBoundary,
+      );
+      if (progressed.kind === 'failed' || progressed.kind === 'refused') {
+        throw new Error(`expected progression, got ${JSON.stringify(progressed)}`);
+      }
     }
   }
 

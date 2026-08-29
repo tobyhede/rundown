@@ -755,6 +755,7 @@ async function prepareCollection(
           claimKey: scope.authority.claimKey,
           delegationRuntime,
         }),
+        runbook: drained.state.runbook,
         // Derived from the state this collection COMMITS, never from
         // `input.steps` (#852). The runbook SOURCE is fixed for the life of a
         // run, but `loadSteps` does not only parse it: it renders against the

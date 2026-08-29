@@ -57,6 +57,8 @@ import {
   type DelegationChildLinkRefusalReason,
   type RunbookEvent,
   type RunbookContext,
+  type RunbookMachineOutput,
+  type RunProgressionMachineFeedback,
   type RunProgressionMachineIntent,
   type RunProgressionMachineIntentEvent,
 } from './compiler.js';
@@ -1199,14 +1201,19 @@ export class RunbookActorService {
   }
 
   /**
-   * Ask one restored compiled runbook machine to own the frontier/entry turn.
+   * Ask one restored compiled runbook machine which completion turn Run
+   * Progression should execute next.
    *
-   * The method contains no frontier policy. It binds the one authority and the
-   * project fence as runtime-only machine dependencies, sends the explicit
-   * activation event, and returns the intent emitted by the selected state.
+   * This method performs no persistence and contains no turn-selection or
+   * frontier policy: it binds the one authority and the project fence as
+   * runtime-only machine dependencies, sends the machine's typed
+   * `SELECT_RUN_PROGRESSION` event, and returns the typed intent that
+   * transition emits. The caller may mechanically execute the selected domain
+   * operation, whose own CAS re-derives against the version it commits.
    *
-   * @param state - Persisted state to restore for the selected turn.
-   * @param steps - Exact compiled graph paired with the authority.
+   * @param state - Exact durable state loaded by the activation.
+   * @param steps - Graph derived from that state inside the activation.
+   * @param feedback - Result of the preceding mechanically executed turn.
    * @param authority - Single authority bound to frontier projection and entry.
    * @param actorMutationRunner - Transactional fence used by frontier consumption.
    * @returns The closed progression intent emitted by the compiled machine.
@@ -1214,6 +1221,7 @@ export class RunbookActorService {
   async selectRunProgressionIntent(
     state: RunbookState,
     steps: readonly ResolvedStep[],
+    feedback: RunProgressionMachineFeedback = { kind: 'activation' },
     authority: RunProgressionAuthority,
     actorMutationRunner: EffectfulActorMutationRunner,
   ): Promise<RunProgressionMachineIntent> {
@@ -1245,7 +1253,7 @@ export class RunbookActorService {
             reject(isError(error) ? error : new Error(String(error)));
           },
         });
-        actor.send({ type: 'SELECT_RUN_PROGRESSION' });
+        actor.send({ type: 'SELECT_RUN_PROGRESSION', feedback });
         // `SELECT_RUN_PROGRESSION` is handled from `idle` only. Every other
         // restored state drops it — above all `recoveryRequired`, which is
         // NON-final (lifecycle stays `running`), is accepted by the snapshot
@@ -1390,6 +1398,8 @@ export class RunbookActorService {
     try {
       actor.send(event);
       await this.waitForMachineEffects(actor);
+      const machineOutput = (actor.getSnapshot() as { readonly output?: RunbookMachineOutput })
+        .output;
       const snapshot = actor.getPersistedSnapshot() as unknown as PersistedRunbookSnapshot;
       if (snapshot.status === 'error') {
         throw new Error(`Runbook ${id} actor entered an error state`);
@@ -1412,7 +1422,13 @@ export class RunbookActorService {
       if (event.type === 'EXECUTE_COMMAND' && collector.commandOutput?.kind === 'policy_denied') {
         effects.push(policyDeniedEffect({ ...collector.commandOutput, position: commandPosition }));
       }
-      return { previousState, nextState, snapshot, effects };
+      return {
+        previousState,
+        nextState,
+        snapshot,
+        effects,
+        ...(machineOutput === undefined ? {} : { machineOutput }),
+      };
     } finally {
       errorSubscription.unsubscribe();
       this.stopActor(actor);
