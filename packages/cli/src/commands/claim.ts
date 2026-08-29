@@ -23,8 +23,11 @@ import {
   type ClaimFailure,
   type RunPipelineContext,
 } from '../helpers/runbook-pipeline.js';
-import { propagateDrivenRunTerminal } from '../helpers/delegation-completion.js';
 import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
+import {
+  createCliRunProgressionDriver,
+  progressionFailedClosed,
+} from '../helpers/run-progression-adapters.js';
 
 /** One `rundown claim` refusal, rendered as the CLI's flat error envelope. */
 export interface ClaimFailureEnvelope {
@@ -109,7 +112,10 @@ export function claimFailureToEnvelope(
       return {
         code: 'DELEGATION_SUPERSEDED',
         message: `Parent run ${failure.parentRunId} has been ${failure.lifecycle}. ${ErrorCodes.DELEGATION_SUPERSEDED.description}`,
-        details: { parentRunId: failure.parentRunId, lifecycle: failure.lifecycle },
+        details: {
+          parentRunId: failure.parentRunId,
+          lifecycle: failure.lifecycle,
+        },
       };
     case 'delegation-removed':
       // Same settlement as `parent-ended`, on the fact core classifies as
@@ -276,7 +282,10 @@ export function registerClaimCommand(program: Command): void {
       ) => {
         await withErrorHandling(
           async () => {
-            const output = new OutputEmitter({ text: options.text, command: 'claim' });
+            const output = new OutputEmitter({
+              text: options.text,
+              command: 'claim',
+            });
             const cwd = getCwd();
             const manager = new RunbookStateManager(cwd);
             const actorService = createCliRunbookActorService(manager);
@@ -301,7 +310,18 @@ export function registerClaimCommand(program: Command): void {
               artifacts: options.artifacts,
               artifactsJson: options.artifactsJson,
             };
-            const result = await claimAndLaunch(ctx, token, inputOpts);
+            const result = await claimAndLaunch(
+              ctx,
+              token,
+              inputOpts,
+              createCliRunProgressionDriver({
+                manager,
+                cwd,
+                output,
+                sessionService,
+                commandStreamOptions,
+              }),
+            );
 
             if (!result.ok) {
               if (result.reason === 'session-refused') {
@@ -320,20 +340,10 @@ export function registerClaimCommand(program: Command): void {
             // the delegating parent. Reporting is side-effect-only; the child's
             // own loopResult governs this command's exit code.
             const shouldExitWithError =
+              (result.progression !== undefined && progressionFailedClosed(result.progression)) ||
               result.loopResult === 'stopped' ||
               // Stryker disable next-line ConditionalExpression,StringLiteral: unreachable — the only `blocked` producer a claimed launch can reach is the inline flow-back in `runExecutionLoop`, and core refuses automatic inline launch for any delegation-linked run (`INLINE_LAUNCH_FORBIDDEN`), so a claimed child's loop stops on the refusal instead. Kept as exhaustive handling of `ExecutionLoopStatus`; the refusal is pinned by claim.test.ts 'refuses automatic inline launch inside a claimed child scope'.
               result.loopResult === 'blocked';
-            if (result.loopResult === 'done' || result.loopResult === 'stopped') {
-              await propagateDrivenRunTerminal(
-                manager,
-                result.childRunId,
-                cwd,
-                output,
-                { kind: 'loop-inferred' },
-                commandStreamOptions,
-              );
-            }
-
             output.flush();
             if (shouldExitWithError) {
               process.exit(1);

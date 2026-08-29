@@ -55,13 +55,13 @@ import {
   resolveIndexOption,
   IndexOptionError,
 } from '../helpers/index-option.js';
-import {
-  propagateDrivenRunTerminal,
-  propagationRequiresFailureExit,
-} from '../helpers/delegation-completion.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
+import {
+  createCliRunProgressionDriver,
+  progressionFailedClosed,
+} from '../helpers/run-progression-adapters.js';
 
 /**
  * Registers the 'run' command for starting runbooks.
@@ -325,6 +325,13 @@ export function registerRunCommand(program: Command): void {
               prompted: options.prompted ?? false,
               parentLinkage,
               afterInit,
+              driveProgression: createCliRunProgressionDriver({
+                manager,
+                cwd,
+                output,
+                sessionService,
+                commandStreamOptions,
+              }),
             });
 
             if (!result.ok) {
@@ -347,23 +354,9 @@ export function registerRunCommand(program: Command): void {
             // back synchronously — advance the composing parent immediately
             // (drain-and-advance), unlike delegation's report-then-collect. If
             // advancing the parent reaches a STOP terminal, exit 1.
-            if (
-              parentLinkage &&
-              result.loopResult !== 'handled' &&
-              result.loopResult !== 'blocked'
-            ) {
-              const propagation = await propagateDrivenRunTerminal(
-                manager,
-                result.stateId,
-                cwd,
-                output,
-                { kind: 'loop-inferred' },
-                commandStreamOptions,
-              );
-              if (propagationRequiresFailureExit(propagation)) {
-                output.flush();
-                process.exit(1);
-              }
+            if (result.progression !== undefined && progressionFailedClosed(result.progression)) {
+              output.flush();
+              process.exit(1);
             }
 
             // If --step was provided for a prompted run, resolve the fresh run

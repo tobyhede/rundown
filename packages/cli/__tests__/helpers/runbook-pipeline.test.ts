@@ -70,9 +70,11 @@ const {
   // from the one that ships.
   DEFAULT_MUTATE_ATTEMPTS: realDefaultMutateAttempts,
   mutateBackoffMs: realMutateBackoffMs,
+  isConcurrentStateModificationError: realIsConcurrentStateModificationError,
 } = await import('@rundown-org/core');
 
 const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
+// cspell:ignore AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH
 const TEST_CLAIM_ID =
   'rdclm_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' as ClaimId;
 const RUN_ID_PATTERN = /^rd_[a-f0-9]{32}$/;
@@ -261,6 +263,7 @@ function adaptClaimMockToInitialLink(
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
+  isConcurrentStateModificationError: realIsConcurrentStateModificationError,
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
@@ -284,19 +287,32 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     parse: jest.fn((ref: unknown) => realRunbookRefSchema.parse(ref)),
   },
   generateRunId: jest.fn(() => `rd_${'a'.repeat(32)}`),
-  progressionDirectiveForStartedRun: jest.fn(
-    (state: RunbookState, steps: readonly ResolvedStep[], prepared: PreparedRunControlClaim) => ({
-      kind: 'activate',
-      authority: {
-        runId: state.id,
-        claimKey: prepared.claim.claimKey,
-        delegationRuntime: prepared.delegationRuntime,
-      },
-      runbook: state.runbook,
-      steps,
-      entryBoundary: { kind: 'resume' },
-    }),
-  ),
+  progressionDirectiveForStartedRun: (
+    state: RunbookState,
+    steps: readonly ResolvedStep[],
+    prepared: PreparedRunControlClaim,
+  ) => ({
+    kind: 'activate',
+    authority: {
+      runId: state.id,
+      claimKey: prepared.claim.claimKey,
+      delegationRuntime: prepared.delegationRuntime,
+    },
+    runbook: state.runbook,
+    steps,
+    entryBoundary: { kind: 'resume' },
+  }),
+  progressionDirectiveForClaimedRun: (
+    state: RunbookState,
+    steps: readonly ResolvedStep[],
+    claimed: { claim: ClaimRecord },
+  ) => ({
+    kind: 'activate',
+    authority: { runId: state.id, claimKey: claimed.claim.claimKey },
+    runbook: state.runbook,
+    steps,
+    entryBoundary: { kind: 'resume' },
+  }),
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
   getDefaultPolicy: () => ({
     version: 1,
@@ -543,7 +559,7 @@ const {
   prepareRunnableRunbook,
   prepareResolvedRunnableRunbook,
   loadAndParseResolvedRunbook,
-  startRunbook,
+  startRunbook: startRunbookCore,
   countSubsteps,
   buildContextVars,
   buildTemplateVars,
@@ -551,6 +567,49 @@ const {
 const { setHelperRegistry, resetHelperRegistry } = await import(
   '../../src/services/helper-registry.js'
 );
+
+async function startRunbook(
+  ctx: RunPipelineContext,
+  prepared: RunnableRunbook,
+  options: Omit<Parameters<typeof startRunbookCore>[2], 'driveProgression'>,
+): ReturnType<typeof startRunbookCore> {
+  return startRunbookCore(ctx, prepared, {
+    ...options,
+    driveProgression: async (directive, sink) => {
+      const result = await runExecutionLoop(
+        ctx.manager,
+        directive.authority.runId,
+        [...directive.steps],
+        ctx.cwd,
+        sink,
+        {
+          output: ctx.output,
+          commandStreamOptions: ctx.commandStreamOptions,
+          sessionService: ctx.sessionService,
+          delegationRuntime: directive.authority.delegationRuntime,
+        },
+      );
+      return result.status === 'done'
+        ? { kind: 'completed', runId: directive.authority.runId }
+        : result.status === 'stopped'
+          ? { kind: 'stopped', runId: directive.authority.runId }
+          : { kind: 'waiting', runId: directive.authority.runId, reason: 'awaiting_input' };
+    },
+  });
+}
+
+async function claimAndLaunchWithProgression(
+  claimAndLaunch: typeof import('../../src/helpers/runbook-pipeline.js').claimAndLaunch,
+  ctx: RunPipelineContext,
+  token: string,
+  input: Parameters<typeof claimAndLaunch>[2],
+): ReturnType<typeof claimAndLaunch> {
+  return claimAndLaunch(ctx, token, input, async (directive) => ({
+    kind: 'waiting',
+    runId: directive.authority.runId,
+    reason: 'awaiting_input',
+  }));
+}
 
 function makeState(id: RunId, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -2594,7 +2653,7 @@ describe('claimAndLaunch', () => {
     } satisfies RunPipelineContext;
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
-    const result = await claimAndLaunch(ctx, 'bad-token', {});
+    const result = await claimAndLaunchWithProgression(claimAndLaunch, ctx, 'bad-token', {});
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -2624,7 +2683,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -2685,7 +2749,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -2746,7 +2815,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -2862,7 +2936,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
     return { result, prepareSpy, initialLinkSpy };
   };
 
@@ -3245,7 +3324,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -3326,7 +3410,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -3392,7 +3481,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -3495,7 +3589,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -3598,7 +3697,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -3735,7 +3839,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(true);
     const resolveCall = jest.mocked(resolveVariables).mock.calls.at(-1) as
@@ -3861,7 +3970,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(true);
     // Inherited vars are passed into resolveVariables untouched
@@ -3941,7 +4055,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -4033,7 +4152,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(mockCreate).toHaveBeenCalledWith(
       { source: 'project', path: 'child.md' },

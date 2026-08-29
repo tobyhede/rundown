@@ -44,6 +44,7 @@ import {
 } from '../../src/runbook/targeting.js';
 import {
   activateRunProgression,
+  progressionDirectiveForClaimedRun,
   resolveInlineAncestorProgression,
   type InlineChildDispatch,
   type RunProgressionDeps,
@@ -343,13 +344,37 @@ function progressionAuthority(state: RunbookState, control: PreparedRunControlCl
 
 describe('resolveInlineAncestorProgression', () => {
   it('refuses an inline linkage from a superseded parent entry (#856)', async () => {
-    const { parent, child, parentSteps } = await seedPersistedInlineEdge({ parentEntry: 2 });
+    const { parent, child, parentSteps } = await seedPersistedInlineEdge({
+      parentEntry: 2,
+    });
 
     const resolved = await resolveInlineAncestorProgression({
       authority: mintRunProgressionAuthority({ runId: child.id }),
       manager,
       loadSteps: async (state) => (state.id === parent.id ? parentSteps : []),
     });
+    expect(resolved).toMatchObject({
+      kind: 'refused',
+      runId: parent.id,
+      reason: 'unrelated_inline_parent',
+    });
+  });
+
+  it('refuses an inline linkage after the parent cursor leaves its persisted edge (#857)', async () => {
+    const { parent, child, parentSteps } = await seedPersistedInlineEdge();
+    await manager.update(parent.id, {
+      step: '2',
+      substep: '2',
+      activeFrameKey: buildFrameKey('2'),
+      activeEntry: 1,
+    });
+
+    const resolved = await resolveInlineAncestorProgression({
+      authority: mintRunProgressionAuthority({ runId: child.id }),
+      manager,
+      loadSteps: async () => parentSteps,
+    });
+
     expect(resolved).toMatchObject({
       kind: 'refused',
       runId: parent.id,
@@ -413,6 +438,27 @@ describe('resolveInlineAncestorProgression', () => {
       runId: parent.id,
       reason: 'unrelated_inline_parent',
     });
+  });
+});
+
+describe('progressionDirectiveForClaimedRun', () => {
+  it('binds fresh delegated-claim proof to the claimed run', async () => {
+    const steps = createRunbook(MANUAL_RUNBOOK);
+    const state = await seedRun(steps, actorServiceWith(succeedingCommandServices()), 'child.md');
+    const prepared = sessionService.prepareRunControlClaim(state.id);
+
+    const directive = progressionDirectiveForClaimedRun(state, steps, {
+      status: 'claimed',
+      claimId: prepared.claimId,
+      claim: prepared.claim,
+    });
+
+    expect(directive).toMatchObject({
+      kind: 'activate',
+      authority: { runId: state.id, claimKey: prepared.claim.claimKey },
+      steps,
+    });
+    expect(directive.authority.delegationRuntime).toBeDefined();
   });
 });
 
@@ -859,7 +905,9 @@ describe('activateRunProgression', () => {
 
     const outcome = await activateRunProgression(
       mintRunProgressionAuthority({ runId: state.id }),
-      depsFor(actorService, steps, recordingSink(state).emitter, { dispatchInlineChild }),
+      depsFor(actorService, steps, recordingSink(state).emitter, {
+        dispatchInlineChild,
+      }),
     );
 
     expect(outcome).toEqual({
@@ -894,7 +942,11 @@ describe('activateRunProgression', () => {
       depsFor(actorService, steps, emitter, { dispatchInlineChild }),
     );
 
-    expect(outcome).toMatchObject({ kind: 'refused', runId: ancestor, code: 'RD-829' });
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      runId: ancestor,
+      code: 'RD-829',
+    });
     expect(
       events.filter(
         (event) => event.type === 'RUNBOOK_COMPLETED' || event.type === 'RUNBOOK_STOPPED',
