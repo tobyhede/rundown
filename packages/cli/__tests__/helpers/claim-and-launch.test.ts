@@ -164,6 +164,11 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     parse: jest.fn((ref: unknown) => ref),
   },
   generateRunId: jest.fn(() => `rd_${'a'.repeat(32)}`),
+  // Imported at module scope by `runbook-pipeline.ts` for the Run Progression
+  // launch directive (#856). These suites never pass `driveProgression`, so it
+  // is never called — but a mock factory that omits it fails the whole module
+  // graph at import with "does not provide an export named".
+  progressionDirectiveForStartedRun: jest.fn(),
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
   getDefaultPolicy: () => ({
     version: 1,

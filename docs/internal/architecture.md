@@ -766,11 +766,15 @@ work:
   maps semantic lifecycle and refusal/failure to separate process-exit output;
 - **activates Run Progression** per the returned directive, supplying the
   command callable used by the machine actor plus the inline-launch,
-  terminal-propagation, and observation callables used by the transitional
-  activation runtime. Completion selection is already machine-owned in #854;
-  #856 moves inline launch and upward propagation into invoked machine states.
-  The CLI does not select completion turns or perform a second terminal-
-  propagation pass.
+  terminal-propagation, and observation callables invoked by the activation.
+  Completion selection, inline launch, and upward inline flow-back are
+  machine-owned. A freshly launched child is activated through the same Run
+  Progression seam; when it reaches terminal, core resolves and validates the
+  complete contiguous inline ancestry before the core inline-terminal flow-back
+  actor records the immediate completion and recursively activates that parent.
+  Each ancestor therefore selects its own next turn through XState. The CLI does
+  not select completion turns, interpret intermediate loop statuses, or perform
+  a second terminal-propagation pass.
 
 The CLI constructs **no** `ActorContext`.
 

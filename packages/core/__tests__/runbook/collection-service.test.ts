@@ -721,24 +721,6 @@ describe('RunbookCollectionService', () => {
         },
       },
     });
-    const frontierEffects: readonly ExecutionObservationEffect[] = [
-      {
-        kind: 'execution_observation',
-        event: {
-          type: 'STEP_ENTERED',
-          payload: {
-            position: { current: '1', total: 2, substep: '1' },
-            stepName: '1',
-            hasCommand: false,
-            isSubstep: true,
-            prompted: false,
-            artifacts: {},
-            delegateFrontier: [retryA.public, retryB.public],
-          },
-        },
-      },
-    ];
-
     jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
       status: 'continue',
       state: retryState,
@@ -780,6 +762,26 @@ describe('RunbookCollectionService', () => {
     const consumeSpy = jest
       .spyOn(actorService, 'prepareActorMutation')
       .mockResolvedValueOnce(preparedMutation(consumedState, { context: {} }));
+    // A projected-frontier entry the collect must NOT perform: since #855 the
+    // frontier turn belongs to Run Progression, so this spy exists only to
+    // prove it is never reached (asserted below).
+    const frontierEffects: readonly ExecutionObservationEffect[] = [
+      {
+        kind: 'execution_observation',
+        event: {
+          type: 'STEP_ENTERED',
+          payload: {
+            position: { current: '1', total: 2, substep: '1' },
+            stepName: '1',
+            hasCommand: false,
+            isSubstep: true,
+            prompted: false,
+            artifacts: {},
+            delegateFrontier: [retryA.public, retryB.public],
+          },
+        },
+      },
+    ];
     const enterEntrySpy = jest
       .spyOn(actorService, 'enterExecutionUnit')
       .mockResolvedValue({ kind: 'awaiting', effects: frontierEffects });
@@ -1317,6 +1319,7 @@ describe('RunbookCollectionService', () => {
       lifecycle: 'completed',
       reportedTerminalOutcome: true,
       transitionObservations: expect.any(Array),
+      progression: expect.objectContaining({ kind: 'activate' }),
     });
     // Single-level: one outcome recorded upward; the ancestor is NOT collected.
     const freshAncestor = await manager.load(ancestorRunId);
@@ -1433,6 +1436,7 @@ describe('RunbookCollectionService', () => {
       lifecycle: 'stopped',
       reportedTerminalOutcome: true,
       transitionObservations: expect.any(Array),
+      progression: expect.objectContaining({ kind: 'activate' }),
     });
     // #556: a collect that drives the target STOPPED-terminal releases it too —
     // `when: 'terminal'` covers both terminal lifecycles, not just `completed`.
@@ -1521,11 +1525,12 @@ describe('RunbookCollectionService', () => {
       lifecycle: 'completed',
       reportedTerminalOutcome: false, // root run has no delegating ancestor
       transitionObservations: expect.any(Array),
+      progression: expect.objectContaining({ kind: 'activate' }),
     });
   });
 
   describe('terminal branch — unified inline + delegation upward propagation (#598)', () => {
-    it('invokes the inline-advance callable for an inline-linked terminal target', async () => {
+    it('returns terminal Run Progression for an inline-linked terminal target', async () => {
       const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
       await manager.save(ancestor);
       const { controlled } = await seedTerminalControlled('completed', 'pass', {
@@ -1545,12 +1550,15 @@ describe('RunbookCollectionService', () => {
 
       expect(outcome.kind).toBe('collection_applied');
       if (outcome.kind === 'collection_applied') {
-        // active -> handled: the inline parent is still running on siblings.
-        expect(outcome.terminalInlineAdvance).toEqual({ kind: 'handled' });
+        expect(outcome.progression).toMatchObject({
+          kind: 'activate',
+          authority: { runId: controlledRunId },
+          entryBoundary: { kind: 'after_observed_transition', lifecycle: 'completed' },
+        });
         // Inline advance never reports a delegation outcome.
         expect(outcome.reportedTerminalOutcome).toBe(false);
       }
-      expect(advanceInlineParent).toHaveBeenCalledTimes(1);
+      expect(advanceInlineParent).not.toHaveBeenCalled();
     });
 
     it('surfaces a self-linked (cyclic) inline target as a trip naming the run to prune (#602/#603)', async () => {
@@ -1575,15 +1583,7 @@ describe('RunbookCollectionService', () => {
 
       expect(outcome.kind).toBe('collection_applied');
       if (outcome.kind === 'collection_applied') {
-        expect(outcome.terminalInlineAdvance).toEqual({
-          kind: 'linkage-cycle',
-          trip: {
-            cause: 'repeat',
-            repeatedRunId: controlledRunId,
-            code: 'INLINE_PARENT_CYCLE',
-            message: `Parent linkage cycle detected at ${controlledRunId}`,
-          },
-        });
+        expect(outcome.progression).toMatchObject({ kind: 'activate' });
         expect(outcome.reportedTerminalOutcome).toBe(false);
       }
       expect(advanceInlineParent).not.toHaveBeenCalled();
@@ -1640,9 +1640,7 @@ describe('RunbookCollectionService', () => {
       expect(outcome.kind).toBe('collection_applied');
       if (outcome.kind === 'collection_applied') {
         expect(outcome.reportedTerminalOutcome).toBe(false);
-        // No inline arm either: a delegation target never yields one, so there is
-        // no channel on which a trip could have been silently dropped.
-        expect(outcome.terminalInlineAdvance).toBeUndefined();
+        expect(outcome.progression).toMatchObject({ kind: 'activate' });
       }
       // The gate short-circuits before the seam, so nothing was prepared upward.
       expect(prepareSpy).not.toHaveBeenCalled();
@@ -1667,7 +1665,7 @@ describe('RunbookCollectionService', () => {
       expect(outcome.kind).toBe('collection_applied');
       if (outcome.kind === 'collection_applied') {
         expect(outcome.reportedTerminalOutcome).toBe(true);
-        expect(outcome.terminalInlineAdvance).toBeUndefined();
+        expect(outcome.progression).toMatchObject({ kind: 'activate' });
       }
       // The inline callable never runs for a delegation target.
       expect(advanceInlineParent).not.toHaveBeenCalled();
@@ -2623,13 +2621,13 @@ describe('RunbookCollectionService', () => {
 
       expect(outcome.kind).toBe('collection_applied');
       if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
-      // The recursion really crossed the delegation boundary...
+      // Collection commits only its target transaction. Run Progression owns
+      // the later inline/delegation composition.
       expect(
         Object.keys((await manager.load(greatGrandRunId))?.resolvedCompletions ?? {}),
-      ).toHaveLength(1);
-      // ...and the seam still handed the collect boundary an INLINE arm.
-      expect(outcome.terminalInlineAdvance).toEqual({ kind: 'handled' });
-      expect(advanceInlineParent).toHaveBeenCalledTimes(1);
+      ).toHaveLength(0);
+      expect(outcome.progression).toMatchObject({ kind: 'activate' });
+      expect(advanceInlineParent).not.toHaveBeenCalled();
     });
   });
 

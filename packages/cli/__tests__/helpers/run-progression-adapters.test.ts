@@ -43,7 +43,8 @@ function makeOutput(overrides: Partial<Record<string, unknown>> = {}): OutputEmi
 
 function propagationCtx(output: OutputEmitter) {
   return {
-    manager: {} as never,
+    manager: { load: jest.fn(async () => null) } as never,
+    authority: { runId: RUN_ID } as never,
     cwd: '/test',
     output,
   };
@@ -198,6 +199,7 @@ describe('buildInlineChildDispatch', () => {
       manager: {} as never,
       actorService: {} as never,
       sessionService: {} as never,
+      parentAuthority: { runId: RUN_ID } as never,
       cwd: '/test',
       output,
     };
@@ -214,6 +216,16 @@ describe('buildInlineChildDispatch', () => {
     expect(launchInlineChildFromIntent).toHaveBeenCalledWith(
       expect.objectContaining({ emitter: sink }),
     );
+  });
+
+  it('hands a nested inline launch the same public Run Progression activation seam (#856)', async () => {
+    launchInlineChildFromIntent.mockImplementation(async (args) => {
+      expect(args.driveProgression).toEqual(expect.any(Function));
+      return { kind: 'waiting' };
+    });
+    const dispatch = buildInlineChildDispatch(dispatchCtx(makeOutput()));
+
+    await dispatch({ intent, prompted: false, steps: [], sink: { emit: jest.fn() } });
   });
 
   it('gates the output channel handed into the launch span', async () => {

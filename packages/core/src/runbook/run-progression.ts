@@ -34,6 +34,7 @@
  */
 
 import { isDeepStrictEqual } from 'node:util';
+import { createActor, toPromise } from 'xstate';
 import type { ExecutionEventEmitter } from '../events/emitter.js';
 import {
   deriveTerminalDrainObservationEvent,
@@ -44,8 +45,12 @@ import { ErrorCodes } from '../errors/codes.js';
 import { Errors } from '../errors/factory.js';
 import { CLIErrorCodes } from '../output/zod-schemas.js';
 import type { RunbookActorService } from './actor-service.js';
-import type { RunProgressionMachineFeedback } from './compiler.js';
-import { COMPLETION_TARGET_MISMATCH_CODE, RunbookCompletionService } from './completion-service.js';
+import { RECOVERY_REQUIRED_STATE_NAME, type RunProgressionMachineFeedback } from './compiler.js';
+import {
+  COMPLETION_TARGET_MISMATCH_CODE,
+  RunbookCompletionService,
+  projectDelegationTerminalOutcome,
+} from './completion-service.js';
 import type { EffectfulActorMutationRunner } from './effectful-actor-mutation-runner.js';
 import { findStepOrThrow } from './execution-units.js';
 import type { ExecutionUnitEntry } from './execution-unit-entry.js';
@@ -77,13 +82,24 @@ import {
 } from './snapshot-utils.js';
 import type { RunbookStateManager } from './state.js';
 import { countNumberedSteps } from './step-utils.js';
-import { buildStepPosition } from './targeting.js';
+import { buildStepPosition, deriveActiveFrame } from './targeting.js';
 import { extractLastMessage } from './transition-kernel.js';
 import type { InlineLaunchIntent } from '../events/types.js';
 import type { InlineParentAdvanceRefusal } from './inline-parent-advance.js';
+import {
+  INLINE_PARENT_CYCLE_CODE,
+  MAX_INLINE_PROPAGATION_CHAIN,
+  inlineParentDepthMessage,
+} from './inline-parent-advance.js';
 import { getErrorMessage } from '../errors.js';
 import { InvalidRunbookStateError } from './persisted-state-guards.js';
+import { inlineTerminalFlowBackActor } from './actors/inline-terminal-flow-back-actor.js';
 import type { ResolvedStep, RunbookState } from './types.js';
+import type { PreparedRunControlClaim } from './session-service.js';
+import {
+  mintInlineCompositionProgressionAuthority,
+  mintRunProgressionAuthority,
+} from './run-progression-authority.js';
 
 /**
  * Machine-readable recovery classification for a non-terminal outcome.
@@ -281,6 +297,11 @@ export interface InlineChildDispatchInput {
  */
 export type InlineChildDispatchResult =
   | {
+      /** Nested activation's stable whole-composition outcome. */
+      readonly kind: 'composition_outcome';
+      readonly outcome: RunProgressionOutcome;
+    }
+  | {
       /** The launch is owned elsewhere or the child awaits; observe again later. */
       readonly kind: 'waiting';
     }
@@ -397,6 +418,11 @@ function terminalPropagationSourceFromState(
  * diagnostics the callable has already observed.
  */
 export type TerminalPropagationResult =
+  | {
+      /** A nested parent activation reached the composition's stable outcome. */
+      readonly kind: 'composition_outcome';
+      readonly outcome: RunProgressionOutcome;
+    }
   | {
       /** Propagation completed or there was nothing to propagate. */
       readonly kind: 'propagated';
@@ -524,6 +550,378 @@ export type RunProgressionDirective =
  */
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Bind a run-control claim prepared by core to the exact freshly-created run.
+ *
+ * The launch pipeline may carry this value, but cannot construct either input:
+ * the claim is minted by {@link SessionService} and the durable state by core's
+ * initializer. Keeping this constructor in core preserves the authority brand
+ * while allowing inline launch to enter the same public progression seam.
+ *
+ * @param state - Exact initialized child state.
+ * @param steps - Parsed child runbook graph.
+ * @param prepared - Core-minted run-control claim for the child.
+ * @returns An activation directive bound to the child and claim.
+ * @throws {Error} When the prepared claim controls a different run.
+ */
+export function progressionDirectiveForStartedRun(
+  state: RunbookState,
+  steps: readonly ResolvedStep[],
+  prepared: PreparedRunControlClaim,
+): Extract<RunProgressionDirective, { kind: 'activate' }> {
+  if (prepared.claim.controlledRunId !== state.id) {
+    throw new Error(`Prepared run-control claim does not control run ${state.id}`);
+  }
+  return {
+    kind: 'activate',
+    authority: mintRunProgressionAuthority({
+      runId: state.id,
+      claimKey: prepared.claim.claimKey,
+      delegationRuntime: prepared.delegationRuntime,
+    }),
+    runbook: state.runbook,
+    steps,
+    entryBoundary: { kind: 'resume' },
+  };
+}
+
+/** A core-owned refusal while resolving one exact inline-composition edge. */
+export type InlineAncestorProgressionResolution =
+  | { readonly kind: 'none' }
+  | {
+      readonly kind: 'activate';
+      /**
+       * The immediate composing parent's activation. Only this edge is turned
+       * into a directive: every ancestor above it is validated from durable
+       * state, but activating it is the recursive flow-back's job one level up,
+       * so parsing its graph here would cost a parser crossing per ancestor on
+       * every terminal — twice, since the flow-back resolves before and after
+       * recording the completion.
+       */
+      readonly directive: Extract<RunProgressionDirective, { kind: 'activate' }>;
+    }
+  | {
+      readonly kind: 'refused';
+      readonly runId: RunId;
+      readonly reason:
+        | 'missing_inline_parent'
+        | 'inline_parent_cycle'
+        | 'inline_parent_depth'
+        | 'unrelated_inline_parent';
+      readonly message: string;
+    };
+
+/**
+ * Resolve the immediate composing parent from durable linkage, while validating
+ * the whole contiguous-inline ancestry before returning any activation.
+ *
+ * The child authority is branded and run-bound; the child row is therefore
+ * loaded from that authority rather than supplied by a frontend. Every upward
+ * edge must still name the parent's exact active cursor, frame, and entry. The
+ * launch latch metadata is intentionally absent here: it is consumed when the
+ * child launch commits, while the child's linkage is write-once. A missing
+ * parent, cycle, or superseded cursor refuses before the caller records a
+ * completion. Parent claim authority is deliberately not copied from the child:
+ * a child bearer controls only the child. A delegation runtime may be forwarded
+ * only when its core-bound run id is the parent being activated.
+ *
+ * @param args - Resolution dependencies and child authority.
+ * @param args.authority - Exact branded authority of the terminal child.
+ * @param args.manager - Durable run-state manager.
+ * @param args.loadSteps - Parser boundary for validated ancestor states.
+ * @param args.ancestorAuthorities - Exact authorities retained for composing ancestors.
+ * @returns The immediate parent activation, no-link result, or typed refusal.
+ */
+export async function resolveInlineAncestorProgression(args: {
+  readonly authority: RunProgressionAuthority;
+  readonly manager: RunbookStateManager;
+  readonly loadSteps: RunProgressionDeps['loadSteps'];
+  readonly ancestorAuthorities?: readonly RunProgressionAuthority[];
+}): Promise<InlineAncestorProgressionResolution> {
+  const child = await args.manager.load(args.authority.runId);
+  if (child?.parentLinkage?.kind !== 'inline') return { kind: 'none' };
+
+  let descendant = child;
+  const seen = new Set<RunId>([child.id]);
+  const ancestors: RunbookState[] = [];
+  for (;;) {
+    const linkage = descendant.parentLinkage;
+    if (linkage?.kind !== 'inline') break;
+    // The bound is independent of the repeat check below, exactly as it is in
+    // `propagateTerminalChildUpwardInner`: `seen` saturates in a true cycle, so
+    // a size-derived cap would be parasitic on it. An acyclic chain longer than
+    // the bound is refused here rather than walked, loaded, and parsed.
+    if (ancestors.length >= MAX_INLINE_PROPAGATION_CHAIN) {
+      return {
+        kind: 'refused',
+        runId: descendant.id,
+        reason: 'inline_parent_depth',
+        message: inlineParentDepthMessage(descendant.id),
+      };
+    }
+    if (seen.has(linkage.parentRunId)) {
+      return {
+        kind: 'refused',
+        runId: linkage.parentRunId,
+        reason: 'inline_parent_cycle',
+        message: `Parent linkage cycle detected at ${linkage.parentRunId}`,
+      };
+    }
+    const parent = await args.manager.load(linkage.parentRunId);
+    if (!parent) {
+      return {
+        kind: 'refused',
+        runId: linkage.parentRunId,
+        reason: 'missing_inline_parent',
+        message: `Inline parent ${linkage.parentRunId} is unavailable`,
+      };
+    }
+    if (
+      parent.lifecycle === 'completed' ||
+      parent.lifecycle === 'stopped' ||
+      parent.step !== linkage.parentStep ||
+      parent.substep !== linkage.parentStepId ||
+      (parent.activeFrameKey ?? deriveActiveFrame(parent).frameKey) !== linkage.parentFrameKey ||
+      linkage.parentEntry !== (parent.activeEntry ?? 1)
+    ) {
+      const activeFrameKey = parent.activeFrameKey ?? deriveActiveFrame(parent).frameKey;
+      return {
+        kind: 'refused',
+        runId: parent.id,
+        reason: 'unrelated_inline_parent',
+        message: `Run ${parent.id} does not own inline child ${descendant.id} at the persisted linkage edge (lifecycle ${String(parent.lifecycle)}; cursor ${parent.step}/${String(parent.substep)} frame ${activeFrameKey} entry ${String(parent.activeEntry ?? 1)}; expected ${linkage.parentStep}/${linkage.parentStepId} frame ${linkage.parentFrameKey} entry ${String(linkage.parentEntry)})`,
+      };
+    }
+    ancestors.push(parent);
+    seen.add(parent.id);
+    descendant = parent;
+  }
+
+  // Non-empty by construction: the inline-linkage precondition above guarantees
+  // the walk ran at least one iteration before it broke.
+  const immediateParent = ancestors[0];
+  const retained = args.ancestorAuthorities?.find(
+    (candidate) => candidate.runId === immediateParent.id,
+  );
+  return {
+    kind: 'activate',
+    directive: {
+      kind: 'activate',
+      authority: retained ?? mintInlineCompositionProgressionAuthority(immediateParent.id),
+      runbook: immediateParent.runbook,
+      steps: await args.loadSteps(immediateParent),
+      entryBoundary: { kind: 'resume' },
+    },
+  };
+}
+
+/**
+ * Record one terminal inline child and activate its immediate parent.
+ *
+ * Core owns the complete flow-back decision: validate the whole ancestry,
+ * record the child's authored terminal result, refresh the parent graph after
+ * output projection, and hand the exact parent directive to the recursive
+ * activation port. The frontend supplies only runtime services and the
+ * activation callable.
+ *
+ * @param args - Inline flow-back dependencies and terminal evidence.
+ * @param args.authority - Exact authority for the terminal child.
+ * @param args.manager - Durable run-state manager.
+ * @param args.actorService - Actor service used by completion recording.
+ * @param args.loadSteps - Parser boundary for ancestor graphs.
+ * @param args.source - Durable or explicit terminal-result provenance.
+ * @param args.sink - Gated observation sink for typed refusal diagnostics.
+ * @param args.ancestorAuthorities - Exact authorities retained for ancestors.
+ * @param args.activateParent - Recursive public Run Progression activation port.
+ * @returns Null for a non-inline child, otherwise the closed propagation result.
+ */
+export async function flowBackInlineTerminal(args: {
+  readonly authority: RunProgressionAuthority;
+  readonly manager: RunbookStateManager;
+  readonly actorService: RunbookActorService;
+  readonly loadSteps: RunProgressionDeps['loadSteps'];
+  readonly source: TerminalPropagationSource;
+  readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
+  readonly ancestorAuthorities?: readonly RunProgressionAuthority[];
+  readonly activateParent: (
+    directive: Extract<RunProgressionDirective, { kind: 'activate' }>,
+  ) => Promise<RunProgressionOutcome>;
+}): Promise<TerminalPropagationResult | null> {
+  const actor = createActor(inlineTerminalFlowBackActor, {
+    input: { execute: () => executeInlineTerminalFlowBack(args) },
+  });
+  actor.start();
+  return await toPromise(actor);
+}
+
+/**
+ * Core operation invoked by {@link inlineTerminalFlowBackActor}.
+ *
+ * @param args - Exact child authority, services, source, and recursive activation port.
+ * @param args.authority - Exact terminal-child authority.
+ * @param args.manager - Durable state manager.
+ * @param args.actorService - Actor service used to record the completion.
+ * @param args.loadSteps - Parser boundary for ancestor graphs.
+ * @param args.source - Terminal-result provenance.
+ * @param args.sink - Gated observation sink.
+ * @param args.ancestorAuthorities - Retained exact ancestor authorities.
+ * @param args.activateParent - Recursive public progression activation port.
+ * @returns Null for a non-inline child, otherwise the actor's propagation result.
+ * @throws {Error} When the completion service reports a status this seam does
+ *   not classify, which the exhaustive switch makes a compile error first.
+ */
+async function executeInlineTerminalFlowBack(args: {
+  readonly authority: RunProgressionAuthority;
+  readonly manager: RunbookStateManager;
+  readonly actorService: RunbookActorService;
+  readonly loadSteps: RunProgressionDeps['loadSteps'];
+  readonly source: TerminalPropagationSource;
+  readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
+  readonly ancestorAuthorities?: readonly RunProgressionAuthority[];
+  readonly activateParent: (
+    directive: Extract<RunProgressionDirective, { kind: 'activate' }>,
+  ) => Promise<RunProgressionOutcome>;
+}): Promise<TerminalPropagationResult | null> {
+  const child = await args.manager.load(args.authority.runId);
+  if (child?.parentLinkage?.kind !== 'inline') return null;
+
+  // Every refusal this function returns flips the caller's exit code, so each
+  // one delivers its diagnostic through the gated sink first — the #853 review
+  // F2 property `runMissingRefusal` already holds, restated here so no arm can
+  // leave success-shaped output beside a failure exit.
+  const refuse = (
+    runId: RunId,
+    message: string,
+    code?: string,
+    details?: Readonly<Record<string, unknown>>,
+  ): Extract<TerminalPropagationResult, { kind: 'refused' }> => {
+    args.sink.emit({
+      type: 'ERROR_OCCURRED',
+      payload: {
+        message,
+        ...(code === undefined ? {} : { code }),
+        ...(details === undefined ? {} : { details }),
+      },
+    });
+    return {
+      kind: 'refused',
+      runId,
+      ...(code === undefined ? {} : { code }),
+      message,
+      recovery: 'permanent',
+    };
+  };
+
+  const resolutionArgs = {
+    authority: args.authority,
+    manager: args.manager,
+    loadSteps: args.loadSteps,
+    ...(args.ancestorAuthorities === undefined
+      ? {}
+      : { ancestorAuthorities: args.ancestorAuthorities }),
+  };
+  const resolved = await resolveInlineAncestorProgression(resolutionArgs);
+  if (resolved.kind === 'refused') return refuseAncestorResolution(resolved, refuse);
+  if (resolved.kind === 'none') return null;
+
+  // The SAME projection the completion service and the legacy upward walk use.
+  // Inferring `pass`/`fail` from the lifecycle instead would report an authored
+  // FAIL for a child that never produced one — a stop caused by a denied policy
+  // or a command the runner could not execute is `command_infrastructure`, not
+  // a runbook result, and passing an explicit result defeats the classification
+  // inside `recordChildCompletion` too.
+  const projection = projectDelegationTerminalOutcome(
+    child,
+    args.source.kind === 'explicit-result' ? args.source.result : undefined,
+  );
+  if (projection.kind === 'not_terminal') return null;
+  if (projection.kind === 'command_infrastructure') {
+    return refuse(
+      child.id,
+      `Inline child ${child.id} stopped for command infrastructure reasons (${projection.reason}): ${projection.message}`,
+    );
+  }
+
+  const completionService = new RunbookCompletionService(args.manager, args.actorService);
+  const recorded = await completionService.recordChildCompletion({
+    childState: child,
+    result: projection.result,
+  });
+  switch (recorded) {
+    case 'recorded':
+    case 'duplicate':
+      break;
+    case 'cancelled':
+      // The parent cancelled this substep, so it owes nothing upward and is not
+      // wedged. Reporting a refusal here would fail a run that is fine.
+      return { kind: 'propagated' };
+    case 'blocked':
+      return refuse(
+        child.id,
+        `Inline child ${child.id} terminal result is fail-closed and was not recorded; see the preceding diagnostics`,
+      );
+    case 'not-applicable':
+      return refuse(
+        child.id,
+        `Inline child ${child.id} has no composing parent to record its terminal result against`,
+      );
+    default: {
+      const exhaustive: never = recorded;
+      throw new Error(`Unhandled child completion status: ${String(exhaustive)}`);
+    }
+  }
+
+  const refreshed = await resolveInlineAncestorProgression(resolutionArgs);
+  if (refreshed.kind === 'refused') return refuseAncestorResolution(refreshed, refuse);
+  if (refreshed.kind === 'none') {
+    return refuse(
+      child.id,
+      `Inline child ${child.id} lost its composing parent after completion was recorded`,
+    );
+  }
+  return { kind: 'composition_outcome', outcome: await args.activateParent(refreshed.directive) };
+}
+
+/**
+ * Fold an ancestry-resolution refusal into the propagation refusal arm, keeping
+ * the established cycle code and its trip details on the two chain-guard arms.
+ *
+ * @param resolved - The resolver's refusal.
+ * @param refuse - Diagnostic-emitting refusal constructor bound to the sink.
+ * @returns The propagation refusal naming the run the operator must inspect.
+ * @throws {Error} When a refusal reason this seam does not classify reaches the
+ *   exhaustive guard, which the compiler refuses first.
+ */
+function refuseAncestorResolution(
+  resolved: Extract<InlineAncestorProgressionResolution, { kind: 'refused' }>,
+  refuse: (
+    runId: RunId,
+    message: string,
+    code?: string,
+    details?: Readonly<Record<string, unknown>>,
+  ) => Extract<TerminalPropagationResult, { kind: 'refused' }>,
+): Extract<TerminalPropagationResult, { kind: 'refused' }> {
+  switch (resolved.reason) {
+    case 'inline_parent_cycle':
+      return refuse(resolved.runId, resolved.message, INLINE_PARENT_CYCLE_CODE, {
+        cause: 'repeat',
+        runId: resolved.runId,
+      });
+    case 'inline_parent_depth':
+      return refuse(resolved.runId, resolved.message, INLINE_PARENT_CYCLE_CODE, {
+        cause: 'depth',
+        runId: resolved.runId,
+      });
+    case 'missing_inline_parent':
+    case 'unrelated_inline_parent':
+      return refuse(resolved.runId, resolved.message);
+    default: {
+      const exhaustive: never = resolved.reason;
+      throw new Error(`Unhandled inline ancestry refusal: ${String(exhaustive)}`);
+    }
+  }
 }
 
 /** The refusal arms of a fenced mutation, i.e. everything but `committed`. */
@@ -898,6 +1296,7 @@ async function concludeTerminal(args: {
   if (propagated.kind === 'refused') {
     return propagationRefusalOutcome(propagated);
   }
+  if (propagated.kind === 'composition_outcome') return propagated.outcome;
   if (propagated.kind === 'advanced') {
     return propagated.status === 'stopped'
       ? { kind: 'stopped', runId: propagated.runId }
@@ -1256,9 +1655,20 @@ function dropUndefinedValues(value: unknown): unknown {
  * intent and command input were selected.
  *
  * Every persisted field that can affect cursor selection, completion priority,
- * template expansion, command input, or machine hydration participates. Only
- * `updatedAt` is ignored: it is persistence bookkeeping, so a writer that
- * rewrote an otherwise identical row does not invalidate the selected effect.
+ * template expansion, command input, or machine hydration participates. Two
+ * differences are deliberately ignored, and both are non-differences once the
+ * row reaches disk:
+ *
+ * - `updatedAt`, which is persistence bookkeeping, so a writer that rewrote an
+ *   otherwise identical row does not invalidate the selected effect.
+ * - The in-memory/persisted spelling of an absent optional field. Both operands
+ *   are compared in their PERSISTENCE shape (the JSON round-trip), because one
+ *   side may be a state this activation derived in memory — where an optional
+ *   field can be present and `undefined` — and the other a row reloaded from
+ *   SQLite, where the same absence is a missing key. `isDeepStrictEqual`
+ *   distinguishes those; the storage layer cannot represent the difference, so
+ *   treating them as distinct would refuse a row that is byte-identical to the
+ *   one selected.
  *
  * Both sides are compared as {@link durableProjection}s, so an in-memory state
  * and a reload of the row it was written to compare equal. Without that, EVERY
@@ -1353,7 +1763,7 @@ async function driveProgression(
 
   const state = await manager.load(runId);
   if (!state) return runMissingRefusal(runId, sink);
-  const steps = await deps.loadSteps(state);
+  let steps = await deps.loadSteps(state);
   if (!(await actorService.assertFreshState(runId, steps))) {
     return runMissingRefusal(runId, sink);
   }
@@ -1362,7 +1772,7 @@ async function driveProgression(
   // Both loop-invariant: the parsed steps never change across an activation,
   // and the fenced compute callback below re-runs once per CAS attempt, so the
   // readonly-shedding copy is made once here rather than per attempt.
-  const stepsArray = [...steps];
+  let stepsArray = [...steps];
   let currentState: RunbookState = state;
   const conclude = (
     terminal: 'completed' | 'stopped',
@@ -1496,6 +1906,12 @@ async function driveProgression(
         return runMissingRefusal(runId, sink);
       }
       currentState = completionTurn.state;
+      // Completion application may project child outputs into the parent's
+      // variables. Resolve the graph again before selecting or entering the
+      // next execution unit so templates observe the state that the machine
+      // just committed rather than the activation's ingress variables.
+      steps = await deps.loadSteps(currentState);
+      stepsArray = [...steps];
       if (completionTurn.kind === 'feedback') {
         progressionFeedback = completionTurn.feedback;
       }
@@ -1701,15 +2117,32 @@ async function driveProgression(
         type: 'ERROR_OCCURRED',
         payload: { message: progression.message, code },
       });
+      // `recovery_required` names TWO conditions that share the word, and they
+      // do not share a recovery — so the classification reads which one
+      // produced the intent rather than the word alone:
+      //
+      // - A run restored INTO `recoveryRequired` (#854): nothing recovered it,
+      //   asking did not start a recovery, and only an explicit GOTO
+      //   reconcile/retry leaves that state, so no repeat of THIS gesture can
+      //   succeed — `permanent`.
+      // - The fence returning the store's identical refusal (#853 review F3):
+      //   the mutation runner already drove execution recovery inline before
+      //   refusing, so the run is unblocked for a LATER activation and the
+      //   refusal reports only that THIS mutation did not commit — retryable,
+      //   the same classification the command turn gives the same fence.
+      const parkedInRecovery =
+        asTerminalSnapshotOrDefault(currentState.snapshot).value === RECOVERY_REQUIRED_STATE_NAME;
       return {
         kind: 'refused',
         runId,
         reason: progression.reason,
         code,
         message: progression.message,
-        recovery: isAggregate
-          ? TRANSACTIONAL_REFUSAL_RECOVERY_BY_KIND.aggregate_recovery_required
-          : TRANSACTIONAL_REFUSAL_RECOVERY_BY_KIND.recovery_required,
+        recovery: parkedInRecovery
+          ? 'permanent'
+          : isAggregate
+            ? TRANSACTIONAL_REFUSAL_RECOVERY_BY_KIND.aggregate_recovery_required
+            : TRANSACTIONAL_REFUSAL_RECOVERY_BY_KIND.recovery_required,
       };
     }
     if (progression.kind !== 'entered') {
@@ -1733,6 +2166,8 @@ async function driveProgression(
         sink,
       });
       switch (dispatched.kind) {
+        case 'composition_outcome':
+          return dispatched.outcome;
         case 'waiting':
           return durableOutcome('inline_child_active');
         case 'flow_back_complete':

@@ -17,6 +17,7 @@ import type {
   RunbookRef,
   RunId,
   RunnableTemplateVariables,
+  ResolvedStep,
   TemplateVarValue,
 } from '@rundown-org/core';
 import type {
@@ -283,6 +284,19 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     parse: jest.fn((ref: unknown) => realRunbookRefSchema.parse(ref)),
   },
   generateRunId: jest.fn(() => `rd_${'a'.repeat(32)}`),
+  progressionDirectiveForStartedRun: jest.fn(
+    (state: RunbookState, steps: readonly ResolvedStep[], prepared: PreparedRunControlClaim) => ({
+      kind: 'activate',
+      authority: {
+        runId: state.id,
+        claimKey: prepared.claim.claimKey,
+        delegationRuntime: prepared.delegationRuntime,
+      },
+      runbook: state.runbook,
+      steps,
+      entryBoundary: { kind: 'resume' },
+    }),
+  ),
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
   getDefaultPolicy: () => ({
     version: 1,

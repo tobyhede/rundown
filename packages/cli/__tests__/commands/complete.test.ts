@@ -639,11 +639,23 @@ Waiting.
     });
 
     it('refuses via the #602 propagation guard on pass, naming the run and its cause', async () => {
-      // This is the seam #602 added. `pass` on an inline child drives
-      // propagateTerminalChildUpward, whose guard trips on the self-edge BEFORE
-      // any record/advance/release, collapses to the adapter's fail-closed
-      // 'blocked', and drives a non-zero exit. Unlike the unit tests, nothing
-      // here is mocked: real persisted state, real seam, real exit code.
+      // This is the seam #602 added. `pass` on an inline child drives the
+      // inline terminal flow-back, whose ancestry guard trips on the self-edge
+      // BEFORE any record/advance/release and refuses fail-closed, driving a
+      // non-zero exit. Unlike the unit tests, nothing here is mocked: real
+      // persisted state, real seam, real exit code.
+      //
+      // ENVELOPE, post-#856. The refusal is now diagnosed inside core and
+      // delivered through the gated observation sink, so it streams as the
+      // `error_occurred` EXECUTION EVENT rather than the CLI's own `error`
+      // envelope — which is the #853 contract every migrated refusal follows:
+      // core diagnoses through the sink, and the closed outcome only decides
+      // the exit code. The sibling test above still asserts `error`, because
+      // `complete` resolves its force-terminal plan first and refuses through
+      // `resolveActiveInlineForceTerminalPlan`, which is CLI-rendered and
+      // unmigrated. What #603 actually protects is unchanged and is what this
+      // pins: the operator is told WHICH run to prune, with the cause, at a
+      // non-zero exit.
       const childId = await seedSelfLinkedInlineChild();
 
       const result = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
@@ -655,8 +667,9 @@ Waiting.
       // `details` distinguishes this from the force-terminal path's identically
       // worded refusal: only the propagation guard carries the cause + run id.
       expect(cycle).toMatchObject({
+        type: 'error_occurred',
         code: 'INLINE_PARENT_CYCLE',
-        error: `Parent linkage cycle detected at ${childId}`,
+        message: `Parent linkage cycle detected at ${childId}`,
         details: { cause: 'repeat', runId: childId },
       });
     });

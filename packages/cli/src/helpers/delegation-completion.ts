@@ -139,6 +139,11 @@ function delegationRuntimeFor(
  * so a refusal that applied no terminal transition comes back as typed data
  * instead of a false terminal status (#802, #833).
  *
+ * Machine-owned inline composition does NOT invoke this callable — core's
+ * inline flow-back owns every inline linkage before `propagateDrivenRunTerminal`
+ * is consulted. It remains reachable only from the entry paths still driven by
+ * the legacy execution loop, and goes with that loop at #858.
+ *
  * The heavy CLI collaborators are imported LAZILY to avoid a static
  * delegation-completion ↔ execution import cycle.
  *
@@ -242,27 +247,22 @@ export function buildAdvanceInlineParent(
       const loopState = freshParent ?? drained.state;
       const loopSteps = [...getRunbookFromState(loopState, cwd)];
       const loopResult = await runExecutionLoop(manager, parentRunId, loopSteps, cwd, emitter, {
+        // Still mandatory here. This callable is unreachable from the migrated
+        // Run Progression path (core's inline flow-back owns every inline
+        // linkage before `propagateDrivenRunTerminal` is consulted), but the
+        // legacy loop is STILL the engine for the unmigrated entry paths, and it
+        // dispatches its own inline children through this callable. Without the
+        // flag a refusal that applied nothing emits `RUNBOOK_STOPPED` and
+        // reports `'stopped'`, which this callable forwards as a terminal — the
+        // seam then releases a still-running parent and recurses upward on a
+        // terminal that never happened (#802, #833). The flag goes when the loop
+        // does, at #858.
         returnRefusals: true,
         output,
         commandStreamOptions,
         delegationRuntime,
       });
       output.flush();
-      // The loop's own drain can refuse the same way this callable's did, and
-      // with Refusal Hand-back it returns the refusal rather than reporting
-      // a `'stopped'` this callable would forward as a terminal — which would
-      // have the seam release a still-running parent and recurse upward on a
-      // terminal that never happened.
-      //
-      // One discriminant across both arms, exhausted by a switch. It replaced a
-      // fall-through that reached the refusal by ELIMINATING the three terminal
-      // strings, which was the best available shape while the terminal arm was
-      // a bare string and the refusal an object: a `typeof` test would have said
-      // only "not one of these strings", swallowing any second object-shaped arm
-      // as `{status: 'refused', refusal: undefined}` with no compile error. Now
-      // that both arms carry `status`, the exhaustive `never` below refuses a
-      // new member outright instead of forwarding it as a refusal.
-      //
       switch (loopResult.status) {
         case 'stopped':
           return { status: 'stopped' };
@@ -273,8 +273,13 @@ export function buildAdvanceInlineParent(
           return { status: 'active' };
         case 'blocked':
           return { status: 'blocked' };
+        case 'refused':
+          return loopResult;
+        default: {
+          const _exhaustive: never = loopResult;
+          return _exhaustive;
+        }
       }
-      return loopResult;
     }
 
     // applied === 0: waiting for sibling substeps to resolve.

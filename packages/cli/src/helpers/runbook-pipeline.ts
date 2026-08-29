@@ -40,6 +40,9 @@ import {
   type VariableValue,
   type RoutedVariableValue,
   type CommandExecutionStreamOptions,
+  type RunProgressionDirective,
+  type RunProgressionOutcome,
+  progressionDirectiveForStartedRun,
   generateRunId,
   partitionVariables,
   prepareParsedRunbook,
@@ -194,6 +197,8 @@ export type RunbookStartResult =
   | {
       ok: true;
       loopResult: ExecutionLoopStatus;
+      /** Closed composition outcome when the caller selected Run Progression. */
+      progression?: RunProgressionOutcome;
       stateId: RunId;
       claimId?: ClaimId;
       /** Process-only capabilities bound to the exact run-control claim. */
@@ -203,6 +208,12 @@ export type RunbookStartResult =
   | SessionRefusedFailure;
 
 type LaunchSessionActivation = { readonly kind: 'default-stack' } | { readonly kind: 'none' };
+
+/** Activate a freshly started run through the public Run Progression seam. */
+export type StartedRunProgression = (
+  directive: Extract<RunProgressionDirective, { kind: 'activate' }>,
+  sink: ExecutionEventEmitter,
+) => Promise<RunProgressionOutcome>;
 
 /** Failure variants from claiming and launching a delegated child runbook. */
 export type ClaimFailure =
@@ -943,6 +954,7 @@ async function prepareLoadedRunbook(
  * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
  * @param options.sessionActivation - Session activation mode for the launched runbook
  * @param options.initialVariables - Runtime variables to persist before actor initialization
+ * @param options.driveProgression - Optional activation callback for a freshly created run.
  * @param options.afterCreate - Optional callback invoked after state creation and before initialization
  * @param options.afterCreateRollback - Optional best-effort rollback for afterCreate side effects
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
@@ -964,6 +976,7 @@ async function launchRunbook(
     afterInit?: (stateId: RunId) => Promise<void>;
     afterInitRollback?: (stateId: RunId) => Promise<void>;
     afterStarted?: (stateId: RunId) => Promise<void>;
+    driveProgression?: StartedRunProgression;
   },
 ): Promise<RunbookStartResult> {
   const { output, manager, actorService, sessionService, cwd } = ctx;
@@ -978,6 +991,7 @@ async function launchRunbook(
   let stateId: RunId | undefined;
   let launch: {
     stateId: RunId;
+    state: RunbookState;
     runbookSteps: ResolvedStep[];
     emitter: ExecutionEventEmitter;
   };
@@ -994,6 +1008,28 @@ async function launchRunbook(
     sessionActivation.kind === 'default-stack'
       ? sessionService.prepareRunControlClaim(prepared.runId)
       : undefined;
+  // Run Progression is activated under the fresh run's own run-control claim,
+  // so a caller asking for it without default-stack activation is asking for a
+  // launch that cannot be represented. Refuse HERE, ahead of the run row: the
+  // equivalent check where the directive is built sits AFTER the create, the
+  // session push, and `RUNBOOK_STARTED`, and outside the block that owns
+  // `cleanupCreatedRun` — so it would leave an orphaned run behind an untyped
+  // throw instead of this envelope.
+  const progressionLaunch =
+    options.driveProgression === undefined
+      ? undefined
+      : preparedRunControlClaim === undefined
+        ? ('unclaimable' as const)
+        : { drive: options.driveProgression, claim: preparedRunControlClaim };
+  if (progressionLaunch === 'unclaimable') {
+    return {
+      ok: false,
+      reason: 'launch-failed',
+      error: 'Run Progression launch requires a prepared run-control claim',
+      code: ErrorCodes.LAUNCH_FAILED.code,
+      details: { runbookName: options.runbookName },
+    };
+  }
   const cleanupCreatedRun = async (): Promise<void> => {
     if (!stateId) return;
     if (afterInitAttempted && options.afterInitRollback) {
@@ -1115,7 +1151,12 @@ async function launchRunbook(
     // Emit RUNBOOK_STARTED
     emitRunbookStarted(emitter, initializedState, options.prompted, issuedRunControlClaimId);
 
-    launch = { stateId: state.id, runbookSteps: [...runbook.steps], emitter };
+    launch = {
+      stateId: state.id,
+      state: initializedState,
+      runbookSteps: [...runbook.steps],
+      emitter,
+    };
   } catch (err) {
     // Best-effort cleanup: if the run was created before the failure, delete
     // it so an unclaimed run doesn't linger with no session entry.
@@ -1132,7 +1173,7 @@ async function launchRunbook(
     };
   }
 
-  const { stateId: launchedStateId, runbookSteps, emitter } = launch;
+  const { stateId: launchedStateId, state: initializedState, runbookSteps, emitter } = launch;
 
   if (options.afterStarted) {
     try {
@@ -1149,20 +1190,37 @@ async function launchRunbook(
     }
   }
 
-  const loopResult = await runExecutionLoop(manager, launchedStateId, runbookSteps, cwd, emitter, {
-    output,
-    commandStreamOptions: ctx.commandStreamOptions,
-    // The same session the rest of this launch used, so a caller watching the
-    // session sees the loop's own Run Release alongside the pushes and claims
-    // taken to get here. `SessionService` holds no state beyond its clock, so
-    // sharing the instance is the loop constructing the same thing one frame up.
-    sessionService,
-    ...(preparedRunControlClaim === undefined
-      ? {}
+  const progression =
+    progressionLaunch === undefined
+      ? undefined
+      : await progressionLaunch.drive(
+          progressionDirectiveForStartedRun(
+            initializedState,
+            runbookSteps,
+            progressionLaunch.claim,
+          ),
+          emitter,
+        );
+  const loopResult =
+    progression === undefined
+      ? await runExecutionLoop(manager, launchedStateId, runbookSteps, cwd, emitter, {
+          output,
+          commandStreamOptions: ctx.commandStreamOptions,
+          sessionService,
+          ...(preparedRunControlClaim === undefined
+            ? {}
+            : { delegationRuntime: preparedRunControlClaim.delegationRuntime }),
+        })
       : {
-          delegationRuntime: preparedRunControlClaim.delegationRuntime,
-        }),
-  });
+          status:
+            progression.kind === 'completed'
+              ? ('done' as const)
+              : progression.kind === 'stopped'
+                ? ('stopped' as const)
+                : progression.kind === 'waiting'
+                  ? ('waiting' as const)
+                  : ('blocked' as const),
+        };
 
   return {
     ok: true,
@@ -1171,6 +1229,7 @@ async function launchRunbook(
     // which decides a release. A disposition carried past the frame that can
     // act on it is a field readers must work out they should ignore.
     loopResult: loopResult.status,
+    ...(progression !== undefined ? { progression } : {}),
     stateId: launchedStateId,
     ...(issuedRunControlClaimId !== undefined ? { claimId: issuedRunControlClaimId } : {}),
     ...(preparedRunControlClaim === undefined
@@ -1189,6 +1248,7 @@ async function launchRunbook(
  * @param options.prompted - Whether to run in prompted mode
  * @param options.parentLinkage - Optional parent linkage for child runs (delegation or inline)
  * @param options.initialVariables - Runtime variables to persist before actor initialization
+ * @param options.driveProgression - Optional activation callback for the fresh run.
  * @param options.afterInit - Optional callback invoked after state initialization with the new state ID
  * @param options.afterStarted - Optional callback invoked after RUNBOOK_STARTED is emitted
  * @returns RunbookStartResult
@@ -1204,6 +1264,7 @@ export async function startRunbook(
     initialVariables?: Readonly<Record<string, VariableValue>>;
     afterInit?: (stateId: RunId) => Promise<void>;
     afterStarted?: (stateId: RunId) => Promise<void>;
+    driveProgression?: StartedRunProgression;
   },
 ): Promise<RunbookStartResult> {
   return launchRunbook(ctx, prepared, {
@@ -1213,6 +1274,7 @@ export async function startRunbook(
     initialVariables: options.initialVariables,
     afterInit: options.afterInit,
     afterStarted: options.afterStarted,
+    driveProgression: options.driveProgression,
   });
 }
 

@@ -1217,6 +1217,7 @@ export class RunbookActorService {
    * @param authority - Single authority bound to frontier projection and entry.
    * @param actorMutationRunner - Transactional fence used by frontier consumption.
    * @returns The closed progression intent emitted by the compiled machine.
+   * @throws {Error} When the authority is bound to a run other than `state.id`.
    */
   async selectRunProgressionIntent(
     state: RunbookState,

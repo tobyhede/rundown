@@ -9,11 +9,10 @@ import type {
   CapturedActorMutationRun,
   EffectfulActorMutationRunner,
 } from './effectful-actor-mutation-runner.js';
-import {
-  propagateTerminalChildUpward,
-  type AdvanceInlineParent,
-  type InlineUpwardPropagationResult,
-  type TerminalUpwardPropagationResult,
+import type {
+  AdvanceInlineParent,
+  InlineUpwardPropagationResult,
+  TerminalUpwardPropagationResult,
 } from './inline-parent-advance.js';
 import { resolveMutationAuthority, type CommandTargetReader } from './command-target-resolver.js';
 import type { AppliedResolvedCompletion } from './completion-service.js';
@@ -70,13 +69,8 @@ export interface RunbookCollectionServiceDependencies {
    * and an all-or-none boundary.
    */
   readonly actorMutationRunner: EffectfulActorMutationRunner;
-  /**
-   * CLI-supplied inline parent-advance callable (Category C). Used when a
-   * collected run reaches terminal and carries INLINE linkage: the seam drives
-   * the composing parent's execution loop through this callable. Delegation
-   * targets never invoke it (report-only).
-   */
-  readonly advanceInlineParent: AdvanceInlineParent;
+  /** @deprecated Ignored; terminal collection continues through Run Progression. */
+  readonly advanceInlineParent?: AdvanceInlineParent;
   /**
    * Derive the parsed steps of an OWNED aggregate member other than the collect
    * target, from that run's own in-memory state.
@@ -635,7 +629,7 @@ async function applyCollection(
 
   const committed = prepared;
   if (!committed) throw new Error('Collection committed without a prepared outcome.');
-  return await finishCollection(input, committed);
+  return committed.value;
 }
 
 /**
@@ -719,7 +713,7 @@ async function prepareCollection(
   const transitionObservations = deriveCollectionTransitionObservations(input, drained.applied);
 
   if (drained.status === 'done' || drained.status === 'stopped') {
-    return prepareTerminalCollection(input, scope, {
+    return prepareTerminalCollection(input, scope, delegationRuntime, {
       terminal: drained.status,
       terminalState: drained.state,
       applied,
@@ -782,15 +776,14 @@ async function prepareCollection(
  * projection ({@link RunbookCompletionService.prepareChildCompletion}), so the
  * outcome row commits in the same transaction as the terminal lifecycle that
  * earned it — closing the window where a child could be terminal while its
- * parent held no record of it. INLINE linkage is deliberately excluded: its
- * advance spawns the composing parent's execution loop, an external effect a
- * fence cannot own, so it runs post-commit in {@link finishCollection} exactly as
- * before.
+ * parent held no record of it. INLINE flow-back is deliberately excluded from
+ * this transaction and is selected by the terminal Run Progression activation.
  *
  * @param input - Collection operation input (services + target).
  * @param scope - Resolved scope and the verified collecting authority.
  * @param scope.stepName - Step selected for collection.
  * @param scope.claim - Verified claim authorizing the collect.
+ * @param delegationRuntime - Capabilities bound to the verified collector.
  * @param terminal - The prepared terminal state and its collection counters.
  * @param terminal.terminal - Which terminal status the drain reached.
  * @param terminal.terminalState - The prepared terminal state to commit.
@@ -803,6 +796,7 @@ async function prepareCollection(
 function prepareTerminalCollection(
   input: CollectDelegationOutcomesOperationInput,
   scope: { readonly stepName: string; readonly claim: VerifiedClaim },
+  delegationRuntime: DelegationRuntimeCapabilities,
   terminal: {
     readonly terminal: 'done' | 'stopped';
     readonly terminalState: RunbookState;
@@ -848,87 +842,36 @@ function prepareTerminalCollection(
       lifecycle,
       reportedTerminalOutcome: prepared?.kind === 'recorded',
       transitionObservations: terminal.transitionObservations,
+      progression: {
+        kind: 'activate',
+        authority: mintRunProgressionAuthority({
+          runId: terminalState.id,
+          claimKey: scope.claim.claimKey,
+          delegationRuntime,
+        }),
+        runbook: terminalState.runbook,
+        steps: input.steps,
+        entryBoundary: {
+          kind: 'after_observed_transition',
+          lifecycle,
+          terminalTarget: 'released',
+          source:
+            terminalState.lastResult === undefined
+              ? { kind: 'loop-inferred' }
+              : { kind: 'explicit-result', result: terminalState.lastResult },
+        },
+      },
     },
   };
 }
 
 /**
- * Complete a committed collection by walking INLINE upward when terminal.
+ * Preserve the legacy inline-only union narrowing until its public test surface
+ * is removed with the remaining upward-walk implementation in #858.
  *
- * @param input - Collection dependencies and captured caller authority.
- * @param prepared - Value and states committed by the collection transaction.
- * @returns The public collection outcome, including any inline terminal advance.
- */
-async function finishCollection(
-  input: CollectDelegationOutcomesOperationInput,
-  prepared: PreparedCollection,
-): Promise<DelegationPolicyOutcome> {
-  const value = prepared.value;
-  if (value.kind !== 'collection_applied') return value;
-
-  if (prepared.terminal === undefined || prepared.target === undefined) return value;
-  // Narrows to the terminal arm of the split union; `prepared.terminal` set
-  // means `prepareTerminalCollection` built this value, which is always the
-  // terminal arm.
-  if (value.lifecycle === 'running') return value;
-
-  // INLINE only. The delegation report already committed with the terminal
-  // state, so re-running the shared seam for it would attempt a duplicate write;
-  // the inline advance is the one arm whose effect is external.
-  if (prepared.target.parentLinkage?.kind !== 'inline') return value;
-  const terminalInlineAdvance = await advanceInlineParentAfterCommit(input, prepared.target);
-  return {
-    ...value,
-    ...(terminalInlineAdvance !== undefined ? { terminalInlineAdvance } : {}),
-  };
-}
-
-/**
- * Narrow the shared upward-propagation union to its INLINE subset.
- *
- * WHY THIS IS NOT A REMAP. `reported` and `duplicate` are DELEGATION
- * dispositions whose distinction {@link TerminalUpwardPropagationResult}
- * documents as load-bearing. Collapsing either onto `not-applicable` — "there
- * was no parent to propagate to" — would state something the walk never
- * observed, which is the silent mapping CLAUDE.md forbids. So this narrowing
- * refuses them instead, and the refusal costs nothing because they are
- * UNREACHABLE from here. Two independent facts make that so:
- *
- * 1. {@link finishCollection} only reaches this walk for a target whose
- *    `parentLinkage.kind === 'inline'`, and the seam's TOP level dispatches on
- *    that same linkage — so the delegation arm that mints `reported` /
- *    `duplicate` cannot run at level 1.
- * 2. The walk RECURSES upward, and an ancestor above an inline parent may well
- *    carry delegation linkage, so `reported` genuinely is produced one level
- *    up. It never escapes: `propagateTerminalChildUpwardInner`'s severity
- *    collapse returns the diagnosing members — `linkage-cycle`,
- *    `advance-refused` — and `blocked` unchanged, maps a `stopped` advance to
- *    `stopped`, and folds everything else — `reported` included — into
- *    `handled`. Pinned by "collapses a delegation-linked grandparent report
- *    INSIDE the seam, not at this boundary".
- *
- *    Keep this list in step with that ladder. It named two members while the
- *    ladder had grown a third, which read as a statement that the third was
- *    meant to be folded — the swallow it actually described was a defect
- *    (#802 review).
- *
- * Spelled as an exhaustive switch rather than a conditional so the compiler,
- * not a reviewer, is what forces this boundary to be revisited when a member is
- * added to either union: a new arm reaches the `never` assignment and fails to
- * build, where the old `?:` would have widened the declared return type in
- * silence. Enumerating the two refused members (rather than a bare
- * `default: throw`) is what preserves that exhaustiveness — the same shape
- * `lifecycle-command-service`'s terminal policy switch uses for its own
- * invariant-violation arms.
- *
- * Exported for the unit tests that pin the refusal, and deliberately NOT
- * re-exported from the package index: it is not a public contract.
- *
- * @param outcome - The disposition the shared seam returned.
- * @returns The same value, narrowed to the inline subset.
- * @throws {Error} When the seam yields a delegation-only disposition, which the
- *   inline-linkage precondition makes impossible; a real occurrence means the
- *   seam's contract changed and must not be reported as `not-applicable`.
+ * @param outcome - Legacy upward-propagation disposition.
+ * @returns The same inline disposition.
+ * @throws {Error} For delegation-only dispositions.
  * @internal
  */
 export function narrowInlineUpwardPropagation(
@@ -941,9 +884,6 @@ export function narrowInlineUpwardPropagation(
     case 'not-applicable':
     case 'linkage-cycle':
     case 'advance-refused':
-      // Returned AS IT CAME BACK, never rebuilt: the `linkage-cycle` arm carries
-      // the trip naming the run to prune (#603), and `advance-refused` the
-      // diagnosed drain refusal the frontend renders (#802).
       return outcome;
     case 'reported':
     case 'duplicate':
@@ -956,36 +896,4 @@ export function narrowInlineUpwardPropagation(
       return _exhaustive;
     }
   }
-}
-
-/**
- * Drive the INLINE upward walk for a collect target that committed terminal.
- *
- * Delegates to the shared {@link propagateTerminalChildUpward} seam so the
- * cycle/depth guards, progression severity, and one-level recursion stay in one
- * owner. Narrows the seam's union to the inline subset without a cast (see
- * {@link narrowInlineUpwardPropagation}), keeping the `linkage-cycle` arm INTACT
- * (#603): core holds no emitter, so the trip has to reach the frontend as data
- * and the CLI performs the fail-closed collapse.
- *
- * @param input - Collection operation input (services).
- * @param terminalState - The committed terminal collect target.
- * @returns The narrowed inline advance outcome.
- * @throws {Error} When the seam yields a delegation-only disposition — see
- *   {@link narrowInlineUpwardPropagation} for why that cannot happen here.
- */
-async function advanceInlineParentAfterCommit(
-  input: CollectDelegationOutcomesOperationInput,
-  terminalState: RunbookState,
-): Promise<InlineUpwardPropagationResult | undefined> {
-  const outcome: TerminalUpwardPropagationResult = await propagateTerminalChildUpward(
-    {
-      manager: input.manager,
-      completionService: input.completionService,
-      advanceInlineParent: input.advanceInlineParent,
-    },
-    terminalState,
-    undefined,
-  );
-  return narrowInlineUpwardPropagation(outcome);
 }

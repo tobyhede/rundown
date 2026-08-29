@@ -62,6 +62,9 @@ import {
   createEffectfulActorMutationRunner,
   type EffectfulActorMutationRunner,
   type ReleaseRole,
+  progressionDirectiveForStartedRun,
+  type RunProgressionOutcome,
+  type RunProgressionDirective,
 } from '@rundown-org/core';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import {
@@ -288,6 +291,15 @@ export interface InlineLaunchArgs {
    * re-runs THIS run — see {@link propagateInlineChildTerminalResult}.
    */
   readonly parentDelegationRuntime?: RunScopedDelegationRuntime;
+  /** Same public activation used by the composing run; supplied by the frontend adapter. */
+  readonly driveProgression?: (
+    directive: Extract<RunProgressionDirective, { kind: 'activate' }>,
+    sink: ExecutionEventEmitter,
+  ) => Promise<RunProgressionOutcome>;
+}
+
+function dispatchResultFromProgression(outcome: RunProgressionOutcome): InlineChildDispatchResult {
+  return { kind: 'composition_outcome', outcome };
 }
 
 /**
@@ -596,6 +608,7 @@ function assertActorSyncSucceeded(
  * @param args.intent - One-shot launch intent the machine prepared.
  * @param args.prompted - The composing run's prompted flag, inherited by a fresh child.
  * @param args.output - Output emitter for streamed child events.
+ * @param args.driveProgression - Public activation seam used for the child.
  * @param args.commandStreamOptions - Runtime-only routing for command subprocess I/O.
  * @param args.parentDelegationRuntime - The composing run's verified delegation capabilities.
  * @returns The typed conclusion of the launch span. Refusals carry the
@@ -618,6 +631,7 @@ export async function launchInlineChildFromIntent({
   output,
   commandStreamOptions,
   parentDelegationRuntime,
+  driveProgression,
 }: InlineLaunchArgs): Promise<InlineChildDispatchResult> {
   // Both projections of the one intent, and derived through the same helper the
   // latch derives its own from, so this span and the latch cannot disagree about
@@ -841,6 +855,17 @@ export async function launchInlineChildFromIntent({
         adoption.runtime.claimId,
       );
     }
+    if (driveProgression !== undefined && adoption.kind === 'adopted') {
+      const outcome = await driveProgression(
+        progressionDirectiveForStartedRun(
+          existingChild,
+          [...getRunbookFromState(existingChild, cwd)],
+          adoption.runtime,
+        ),
+        childEmitter,
+      );
+      return dispatchResultFromProgression(outcome);
+    }
     const loopResult = await runExecutionLoop(
       manager,
       childRunId,
@@ -852,9 +877,7 @@ export async function launchInlineChildFromIntent({
         commandStreamOptions,
         sessionService,
         ...(adoption.kind === 'adopted'
-          ? {
-              delegationRuntime: adoption.runtime.delegationRuntime,
-            }
+          ? { delegationRuntime: adoption.runtime.delegationRuntime }
           : {}),
       },
     );
@@ -975,6 +998,7 @@ export async function launchInlineChildFromIntent({
         // with.
         latch.held.keep();
       },
+      ...(driveProgression !== undefined ? { driveProgression } : {}),
     },
   );
 
@@ -1011,6 +1035,10 @@ export async function launchInlineChildFromIntent({
       message: launchResult.error,
       recovery: CONTENTION_LAUNCH_CODES.has(launchResult.code) ? 'retryable' : 'permanent',
     };
+  }
+
+  if (launchResult.progression !== undefined) {
+    return dispatchResultFromProgression(launchResult.progression);
   }
 
   if (launchResult.loopResult === 'done' || launchResult.loopResult === 'stopped') {
@@ -1115,6 +1143,14 @@ function dispatchResultFromFlowBack(
  */
 function executionLoopStatusFromDispatch(result: InlineChildDispatchResult): ExecutionLoopStatus {
   switch (result.kind) {
+    case 'composition_outcome':
+      return result.outcome.kind === 'completed'
+        ? 'done'
+        : result.outcome.kind === 'stopped'
+          ? 'stopped'
+          : result.outcome.kind === 'waiting'
+            ? 'waiting'
+            : 'blocked';
     case 'waiting':
       return 'waiting';
     case 'flow_back_complete':
@@ -1122,10 +1158,32 @@ function executionLoopStatusFromDispatch(result: InlineChildDispatchResult): Exe
     case 'flow_back_refused':
       return 'blocked';
     case 'launch_refused':
-      // Transitional debt owned by #856: an activation-launched inline child
-      // still enters runExecutionLoop, so a nested launch refusal is flattened
-      // to its legacy STOP sentinel here. #856 replaces the nested driver with
-      // Run Progression and carries the typed refusal through upward flow-back.
+      // #856 removed HALF of this debt: an activation-launched inline child now
+      // enters Run Progression (`driveProgression` below), so its typed refusal
+      // reaches the parent as `composition_outcome` and never crosses here. What
+      // remains is the legacy loop's OWN inline dispatch, and the flattening it
+      // needs cannot be fixed by re-labelling this arm.
+      //
+      // `launch_refused` conflates two genuinely different states, and the
+      // legacy status union has no member for either distinction:
+      //
+      // - Refused with the run still RUNNING (the intent-consume failure above,
+      //   which applied no transition). `stopped` is a false terminal for it,
+      //   and `buildAdvanceInlineParent` forwards that to
+      //   `propagateTerminalChildUpward` as real — the #802/#833 class one level
+      //   down.
+      // - Refused because the run genuinely STOPPED. `INLINE_LAUNCH_FORBIDDEN`
+      //   inside a delegation-claimed child is the reachable case: core refuses
+      //   automatic inline launch for any delegation-linked run and the child's
+      //   loop stops on that refusal. Here `stopped` is LOAD-BEARING — it is
+      //   what makes `claim.ts` report the child's terminal upward, without
+      //   which the delegating parent never receives the outcome and the
+      //   follow-on `collect` fails (pinned by collect.test.ts's "keeps JSON
+      //   stdout parseable when collect advances into a command…").
+      //
+      // Mapping this arm to `blocked` fixes the first case and breaks the
+      // second, so it stays `stopped` until the typed refusal can cross the
+      // boundary — which is #858 deleting the boundary, not re-spelling it.
       return 'stopped';
     case 'child_terminal':
       return result.status === 'completed' ? 'done' : 'stopped';
