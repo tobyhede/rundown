@@ -1085,6 +1085,13 @@ export function extractToken(stdout: string): string {
 export function findActionOutput<T extends Record<string, unknown> = Record<string, unknown>>(
   stdout: string,
 ): T | null {
+  const documents = parseConcatenatedJson(stdout);
+  for (const document of documents.reverse()) {
+    if (typeof document === 'object' && document !== null && 'action' in document) {
+      return document as T;
+    }
+  }
+
   // First try to parse the entire stdout as a single JSON object
   try {
     const output = JSON.parse(stdout.trim()) as Record<string, unknown>;

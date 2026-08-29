@@ -674,9 +674,10 @@ it.
    target mismatch, and exhausted compare-and-swap contention are selected as
    closed intents by the compiled machine. `awaiting_input` remains a
    transitional feedback value from the runtime's execution-unit entry
-   classification; #857 moves fresh, prompted, and command selection into
-   machine states. Until then the machine closes that typed feedback but does
-   not claim to have selected the entry.
+   classification. Fresh runs and freshly claimed children now enter the same
+   Run Progression activation as resumed runs; the remaining legacy entry
+   classifier is deleted with the displaced execution loop in #858. The machine
+   closes `awaiting_input` as a typed waiting outcome throughout.
 
    Both decisive bare default-target ingress mutations run inside
    `SessionService.runGuardedParentAdvance` (the TOCTOU guard). Terminal release

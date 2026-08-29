@@ -23,12 +23,14 @@
  * {@link TerminalPropagation}) and render the observation stream; they do not
  * decide progression.
  *
- * TRANSITIONAL (#851 migration): completion selection and the frontier/entry
- * turn now belong to explicit states in the compiled machine. The activation
- * runtime still selects the not-yet-migrated inline-composition and fresh-run
- * turns. #856–#857 move those remaining decisions into machine-owned states,
- * and #858 is the deletion finish line that removes the displaced selection
- * logic. This runtime must not grow new decisions; it only shrinks.
+ * TRANSITIONAL (#851 migration): completion selection, the frontier/entry turn
+ * and inline composition now belong to explicit states in the compiled
+ * machine, and fresh runs and freshly claimed children enter this same
+ * activation. What remains is the not-yet-deleted entry classifier, reached
+ * through machine-owned seams (`resolveCurrentExecutionUnit`,
+ * `readPersistedReEntryFrontier`, `enterExecutionUnit`); #858 is the deletion
+ * finish line that removes the displaced legacy loop and selection logic. This
+ * runtime must not grow new decisions; it only shrinks.
  *
  * @module runbook/run-progression
  */
@@ -82,7 +84,8 @@ import {
 } from './snapshot-utils.js';
 import type { RunbookStateManager } from './state.js';
 import { countNumberedSteps } from './step-utils.js';
-import { buildStepPosition, deriveActiveFrame } from './targeting.js';
+import { buildStepPosition, deriveActiveFrame, findSubstepState } from './targeting.js';
+import { inferFrameEntryFromState } from './frame-entry.js';
 import { extractLastMessage } from './transition-kernel.js';
 import type { InlineLaunchIntent } from '../events/types.js';
 import type { InlineParentAdvanceRefusal } from './inline-parent-advance.js';
@@ -96,6 +99,8 @@ import { InvalidRunbookStateError } from './persisted-state-guards.js';
 import { inlineTerminalFlowBackActor } from './actors/inline-terminal-flow-back-actor.js';
 import type { ResolvedStep, RunbookState } from './types.js';
 import type { PreparedRunControlClaim } from './session-service.js';
+import type { ClaimRunbookResult } from './claim-id.js';
+import { delegationRuntimeCapabilities } from './delegation-credential.js';
 import {
   mintInlineCompositionProgressionAuthority,
   mintRunProgressionAuthority,
@@ -587,6 +592,41 @@ export function progressionDirectiveForStartedRun(
   };
 }
 
+/**
+ * Bind a freshly minted delegated-child claim to its first progression.
+ *
+ * @param state - Exact initialized child state controlled by the claim.
+ * @param steps - Parsed graph for the initialized child.
+ * @param claimed - Fresh bearer and persisted claim record returned by core.
+ * @returns An activation directive carrying claim-bound delegation capabilities.
+ * @throws {Error} When the claim controls a different run.
+ */
+export function progressionDirectiveForClaimedRun(
+  state: RunbookState,
+  steps: readonly ResolvedStep[],
+  claimed: Extract<ClaimRunbookResult, { readonly status: 'claimed' }>,
+): Extract<RunProgressionDirective, { kind: 'activate' }> {
+  if (claimed.claim.controlledRunId !== state.id) {
+    throw new Error(`Claimed run-control claim does not control run ${state.id}`);
+  }
+  const authority = {
+    kind: 'bearer' as const,
+    claimId: claimed.claimId,
+    claimKey: claimed.claim.claimKey,
+  };
+  return {
+    kind: 'activate',
+    authority: mintRunProgressionAuthority({
+      runId: state.id,
+      claimKey: claimed.claim.claimKey,
+      delegationRuntime: delegationRuntimeCapabilities(authority),
+    }),
+    runbook: state.runbook,
+    steps,
+    entryBoundary: { kind: 'resume' },
+  };
+}
+
 /** A core-owned refusal while resolving one exact inline-composition edge. */
 export type InlineAncestorProgressionResolution =
   | { readonly kind: 'none' }
@@ -632,6 +672,7 @@ export type InlineAncestorProgressionResolution =
  * @param args.manager - Durable run-state manager.
  * @param args.loadSteps - Parser boundary for validated ancestor states.
  * @param args.ancestorAuthorities - Exact authorities retained for composing ancestors.
+ * @param args.expectedTargetStatus - Immediate edge status expected around completion recording.
  * @returns The immediate parent activation, no-link result, or typed refusal.
  */
 export async function resolveInlineAncestorProgression(args: {
@@ -639,6 +680,7 @@ export async function resolveInlineAncestorProgression(args: {
   readonly manager: RunbookStateManager;
   readonly loadSteps: RunProgressionDeps['loadSteps'];
   readonly ancestorAuthorities?: readonly RunProgressionAuthority[];
+  readonly expectedTargetStatus?: 'running' | 'done';
 }): Promise<InlineAncestorProgressionResolution> {
   const child = await args.manager.load(args.authority.runId);
   if (child?.parentLinkage?.kind !== 'inline') return { kind: 'none' };
@@ -678,20 +720,29 @@ export async function resolveInlineAncestorProgression(args: {
         message: `Inline parent ${linkage.parentRunId} is unavailable`,
       };
     }
+    const linkedSubstep = findSubstepState(
+      parent.substepStates ?? [],
+      linkage.parentStepId,
+      linkage.parentFrameKey,
+    );
+    const linkedEntry = inferFrameEntryFromState(parent, linkage.parentFrameKey);
+    const activeFrameKey = parent.activeFrameKey ?? deriveActiveFrame(parent).frameKey;
+    const expectedTargetStatus =
+      ancestors.length === 0 ? (args.expectedTargetStatus ?? 'running') : 'running';
     if (
       parent.lifecycle === 'completed' ||
       parent.lifecycle === 'stopped' ||
       parent.step !== linkage.parentStep ||
       parent.substep !== linkage.parentStepId ||
-      (parent.activeFrameKey ?? deriveActiveFrame(parent).frameKey) !== linkage.parentFrameKey ||
-      linkage.parentEntry !== (parent.activeEntry ?? 1)
+      activeFrameKey !== linkage.parentFrameKey ||
+      linkedSubstep?.status !== expectedTargetStatus ||
+      linkage.parentEntry !== linkedEntry
     ) {
-      const activeFrameKey = parent.activeFrameKey ?? deriveActiveFrame(parent).frameKey;
       return {
         kind: 'refused',
         runId: parent.id,
         reason: 'unrelated_inline_parent',
-        message: `Run ${parent.id} does not own inline child ${descendant.id} at the persisted linkage edge (lifecycle ${String(parent.lifecycle)}; cursor ${parent.step}/${String(parent.substep)} frame ${activeFrameKey} entry ${String(parent.activeEntry ?? 1)}; expected ${linkage.parentStep}/${linkage.parentStepId} frame ${linkage.parentFrameKey} entry ${String(linkage.parentEntry)})`,
+        message: `Run ${parent.id} does not own inline child ${descendant.id} at the persisted linkage edge (lifecycle ${String(parent.lifecycle)}; cursor ${parent.step}/${String(parent.substep)} frame ${activeFrameKey}; linked target ${linkage.parentStep}/${linkage.parentStepId} frame ${linkage.parentFrameKey} status ${String(linkedSubstep?.status)} entry ${String(linkedEntry)}; expected entry ${String(linkage.parentEntry)})`,
       };
     }
     ancestors.push(parent);
@@ -873,7 +924,10 @@ async function executeInlineTerminalFlowBack(args: {
     }
   }
 
-  const refreshed = await resolveInlineAncestorProgression(resolutionArgs);
+  const refreshed = await resolveInlineAncestorProgression({
+    ...resolutionArgs,
+    expectedTargetStatus: 'done',
+  });
   if (refreshed.kind === 'refused') return refuseAncestorResolution(refreshed, refuse);
   if (refreshed.kind === 'none') {
     return refuse(
@@ -881,7 +935,10 @@ async function executeInlineTerminalFlowBack(args: {
       `Inline child ${child.id} lost its composing parent after completion was recorded`,
     );
   }
-  return { kind: 'composition_outcome', outcome: await args.activateParent(refreshed.directive) };
+  return {
+    kind: 'composition_outcome',
+    outcome: await args.activateParent(refreshed.directive),
+  };
 }
 
 /**

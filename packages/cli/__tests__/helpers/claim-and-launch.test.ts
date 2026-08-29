@@ -50,6 +50,7 @@ const {
   // budget; both are captured real so this suite exercises the shipped loop.
   DEFAULT_MUTATE_ATTEMPTS: realDefaultMutateAttempts,
   mutateBackoffMs: realMutateBackoffMs,
+  isConcurrentStateModificationError: realIsConcurrentStateModificationError,
 } = await import('@rundown-org/core');
 
 const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
@@ -139,6 +140,7 @@ function mockClaimAndInitialLinkSuccess(): jest.Mock<SessionService['claimAndIni
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
+  isConcurrentStateModificationError: realIsConcurrentStateModificationError,
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
@@ -165,10 +167,26 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   },
   generateRunId: jest.fn(() => `rd_${'a'.repeat(32)}`),
   // Imported at module scope by `runbook-pipeline.ts` for the Run Progression
-  // launch directive (#856). These suites never pass `driveProgression`, so it
-  // is never called — but a mock factory that omits it fails the whole module
-  // graph at import with "does not provide an export named".
-  progressionDirectiveForStartedRun: jest.fn(),
+  // launch directive (#856/#857). A mock factory that omits either name fails
+  // the whole module graph at import with "does not provide an export named".
+  progressionDirectiveForStartedRun: (state: RunbookState, steps: readonly unknown[]) => ({
+    kind: 'activate',
+    authority: { runId: state.id },
+    runbook: state.runbook,
+    steps,
+    entryBoundary: { kind: 'resume' },
+  }),
+  progressionDirectiveForClaimedRun: (
+    state: RunbookState,
+    steps: readonly unknown[],
+    claimed: { claim: ClaimRecord },
+  ) => ({
+    kind: 'activate',
+    authority: { runId: state.id, claimKey: claimed.claim.claimKey },
+    runbook: state.runbook,
+    steps,
+    entryBoundary: { kind: 'resume' },
+  }),
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
   getDefaultPolicy: () => ({
     version: 1,
@@ -205,6 +223,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     TOKEN_NOT_FOUND: { code: 'RD-808' },
     TOKEN_CANCELLED: { code: 'RD-809' },
     LAUNCH_FAILED: { code: 'RD-816' },
+    CONCURRENT_STATE_MODIFICATION: { code: 'RD-308' },
     CLAIM_INVARIANT_VIOLATED: { code: 'RD-820' },
   },
   isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
@@ -390,7 +409,21 @@ const { validateOutputsDeclarations } = await import(
 const { getRunbookFromState } = await import('../../src/helpers/runbook-loader.js');
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
 const { runExecutionLoop } = await import('../../src/services/execution.js');
-const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
+const { claimAndLaunch: claimAndLaunchCore } = await import(
+  '../../src/helpers/runbook-pipeline.js'
+);
+
+async function claimAndLaunch(
+  ctx: RunPipelineContext,
+  token: string,
+  input: Parameters<typeof claimAndLaunchCore>[2],
+): ReturnType<typeof claimAndLaunchCore> {
+  return claimAndLaunchCore(ctx, token, input, async (directive) => ({
+    kind: 'waiting',
+    runId: directive.authority.runId,
+    reason: 'awaiting_input',
+  }));
+}
 
 /**
  * Create a minimal RunPipelineContext with mock OutputEmitter.
