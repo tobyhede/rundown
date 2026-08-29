@@ -25,12 +25,14 @@ import {
   CLIErrorCodes,
   createEffectfulActorMutationRunner,
   ExecutionEventEmitter,
+  flowBackInlineTerminal,
   ObservationDeliveryError,
   SessionService,
   type CommandExecutionStreamOptions,
   type InlineChildDispatch,
   type RunbookActorService,
   type RunbookStateManager,
+  type RunProgressionAuthority,
   type RunProgressionDirective,
   type RunProgressionOutcome,
   type TerminalPropagation,
@@ -43,10 +45,7 @@ import type { OutputEmitter } from '../services/output-emitter.js';
 // same command path, and delegation-completion's documented cycle with
 // execution.ts is broken by its own lazy imports — laziness here would buy
 // nothing and cost an async module-registry hop per propagation.
-import {
-  propagateDrivenRunTerminal,
-  type RunScopedDelegationRuntime,
-} from './delegation-completion.js';
+import { propagateDrivenRunTerminal } from './delegation-completion.js';
 
 /** Context captured by {@link buildInlineChildDispatch}. Runtime references only. */
 export interface InlineChildDispatchContext {
@@ -57,7 +56,9 @@ export interface InlineChildDispatchContext {
   readonly output: OutputEmitter;
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
   /** The composing run's verified delegation capabilities, named with its run. */
-  readonly parentDelegationRuntime?: RunScopedDelegationRuntime;
+  readonly parentAuthority: RunProgressionAuthority;
+  readonly ancestorAuthorities?: readonly RunProgressionAuthority[];
+  readonly progressionSinks?: Map<string, ExecutionEventEmitter>;
 }
 
 /**
@@ -119,11 +120,29 @@ export function buildInlineChildDispatch(ctx: InlineChildDispatchContext): Inlin
       intent,
       prompted,
       output: gatedOutput,
+      driveProgression: (directive, progressionSink) =>
+        driveRunProgression(directive, {
+          manager: ctx.manager,
+          cwd: ctx.cwd,
+          output: gatedOutput,
+          sink: progressionSink,
+          sessionService: ctx.sessionService,
+          ancestorAuthorities: [ctx.parentAuthority, ...(ctx.ancestorAuthorities ?? [])],
+          ...(ctx.progressionSinks === undefined ? {} : { progressionSinks: ctx.progressionSinks }),
+          ...(ctx.commandStreamOptions !== undefined
+            ? { commandStreamOptions: ctx.commandStreamOptions }
+            : {}),
+        }),
       ...(ctx.commandStreamOptions !== undefined
         ? { commandStreamOptions: ctx.commandStreamOptions }
         : {}),
-      ...(ctx.parentDelegationRuntime !== undefined
-        ? { parentDelegationRuntime: ctx.parentDelegationRuntime }
+      ...(ctx.parentAuthority.delegationRuntime !== undefined
+        ? {
+            parentDelegationRuntime: {
+              runId: ctx.parentAuthority.runId,
+              runtime: ctx.parentAuthority.delegationRuntime,
+            },
+          }
         : {}),
     });
 }
@@ -131,6 +150,9 @@ export function buildInlineChildDispatch(ctx: InlineChildDispatchContext): Inlin
 /** Context captured by {@link buildTerminalPropagation}. Runtime references only. */
 export interface TerminalPropagationContext {
   readonly manager: RunbookStateManager;
+  readonly authority: Extract<RunProgressionDirective, { kind: 'activate' }>['authority'];
+  readonly ancestorAuthorities?: readonly RunProgressionAuthority[];
+  readonly progressionSinks?: Map<string, ExecutionEventEmitter>;
   readonly cwd: string;
   readonly output: OutputEmitter;
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
@@ -148,6 +170,10 @@ export interface RunProgressionDriveContext {
   readonly sink?: ExecutionEventEmitter;
   /** Session service; constructed over `manager` when the caller has none. */
   readonly sessionService?: SessionService;
+  /** Core-branded delegation authority retained by the exact composing parent. */
+  readonly ancestorAuthorities?: readonly RunProgressionAuthority[];
+  /** One observation emitter per run for the entire recursive composition. */
+  readonly progressionSinks?: Map<string, ExecutionEventEmitter>;
   /** Runtime-only routing for command subprocess stdout/stderr. */
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
 }
@@ -178,9 +204,18 @@ export async function driveRunProgression(
   const commandServices = createCliCommandServices(ctx.commandStreamOptions);
   const actorService = createCliRunbookActorService(ctx.manager, commandServices);
   const sessionService = ctx.sessionService ?? new SessionService(ctx.manager);
+  const ancestorAuthorities = [
+    ...(activation.ancestorAuthorities ?? []),
+    ...(ctx.ancestorAuthorities ?? []),
+  ];
+  const progressionSinks = ctx.progressionSinks ?? new Map<string, ExecutionEventEmitter>();
+  const existingSink = progressionSinks.get(activation.authority.runId);
   const sink =
-    ctx.sink ?? new ExecutionEventEmitter(activation.authority.runId, activation.runbook);
-  if (ctx.sink === undefined) {
+    existingSink ??
+    ctx.sink ??
+    new ExecutionEventEmitter(activation.authority.runId, activation.runbook);
+  progressionSinks.set(activation.authority.runId, sink);
+  if (existingSink === undefined && ctx.sink === undefined) {
     sink.subscribe((event) => {
       ctx.output.executionEvent(event);
     });
@@ -207,22 +242,20 @@ export async function driveRunProgression(
         // authority's verified capabilities are exactly what a child's terminal
         // flow-back needs — named with the authority's own run so nothing
         // further up the inline chain can be advanced under it.
-        ...(activation.authority.delegationRuntime !== undefined
-          ? {
-              parentDelegationRuntime: {
-                runId: activation.authority.runId,
-                runtime: activation.authority.delegationRuntime,
-              },
-            }
-          : {}),
+        parentAuthority: activation.authority,
+        ...(ancestorAuthorities.length === 0 ? {} : { ancestorAuthorities }),
+        progressionSinks,
       }),
       propagateTerminal: buildTerminalPropagation({
         manager: ctx.manager,
+        authority: activation.authority,
         cwd: ctx.cwd,
         output: ctx.output,
         ...(ctx.commandStreamOptions !== undefined
           ? { commandStreamOptions: ctx.commandStreamOptions }
           : {}),
+        ...(ancestorAuthorities.length === 0 ? {} : { ancestorAuthorities }),
+        progressionSinks,
       }),
     },
     activation.entryBoundary,
@@ -270,7 +303,32 @@ export function progressionFailedClosed(outcome: RunProgressionOutcome): boolean
  */
 export function buildTerminalPropagation(ctx: TerminalPropagationContext): TerminalPropagation {
   const gatedOutput = gateProgressionOutput(ctx.output);
-  return async ({ runId, source }) => {
+  return async ({ runId, source, sink }) => {
+    const inlineFlowBack = await flowBackInlineTerminal({
+      authority: ctx.authority,
+      manager: ctx.manager,
+      actorService: createCliRunbookActorService(ctx.manager),
+      loadSteps: (state) => getRunbookFromState(state, ctx.cwd),
+      source,
+      sink,
+      ...(ctx.ancestorAuthorities === undefined
+        ? {}
+        : { ancestorAuthorities: ctx.ancestorAuthorities }),
+      activateParent: (directive) =>
+        driveRunProgression(directive, {
+          manager: ctx.manager,
+          cwd: ctx.cwd,
+          output: gatedOutput,
+          ...(ctx.ancestorAuthorities === undefined
+            ? {}
+            : { ancestorAuthorities: ctx.ancestorAuthorities }),
+          ...(ctx.progressionSinks === undefined ? {} : { progressionSinks: ctx.progressionSinks }),
+          ...(ctx.commandStreamOptions === undefined
+            ? {}
+            : { commandStreamOptions: ctx.commandStreamOptions }),
+        }),
+    });
+    if (inlineFlowBack !== null) return inlineFlowBack;
     const propagation = await propagateDrivenRunTerminal(
       ctx.manager,
       runId,

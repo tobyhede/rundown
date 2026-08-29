@@ -340,6 +340,9 @@ export {
 // caller evidence may produce a RunProgressionAuthority.
 export {
   activateRunProgression,
+  progressionDirectiveForStartedRun,
+  resolveInlineAncestorProgression,
+  flowBackInlineTerminal,
   INLINE_ADVANCE_RECOVERY_BY_REASON,
   ObservationDeliveryError,
   recoveryForInlineAdvanceRefusal,

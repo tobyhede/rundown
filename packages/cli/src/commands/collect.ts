@@ -43,11 +43,6 @@ import {
   isTransactionalMutationRefusal,
   renderTransactionalMutationRefusal,
 } from '../helpers/session-mutation-result.js';
-import {
-  buildAdvanceInlineParent,
-  isInlinePropagationRefusal,
-  renderInlinePropagationRefusal,
-} from '../helpers/delegation-completion.js';
 
 /**
  * Registers the 'collect' command — triggers aggregation after DELEGATE fan-out.
@@ -519,7 +514,6 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     // every other delegation seam, so the CLI hands core the runner rather than
     // driving a sequence of separately committed writes.
     actorMutationRunner: createEffectfulActorMutationRunner(cwd),
-    advanceInlineParent: buildAdvanceInlineParent(cwd, output, commandStreamOptions),
     // Category A. An aggregate member other than the collect target is a
     // DIFFERENT runbook, so its recovery actor cannot be built from the steps
     // resolved for the target above; without this the delegating parent is the
@@ -541,36 +535,6 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     frame: scope.frame,
   });
 
-  // #603: core returns a tripped linkage guard as data on `terminalInlineAdvance`
-  // instead of pushing it through a sink. Render it HERE — immediately after the
-  // operation returns, which is the same point in the output stream the sink
-  // fired from — so the operator still learns which run to prune, in the same
-  // position, before the collect outcome and any Run Progression events. The
-  // fail-closed exit mapping happens later, with the rest of the exit decision.
-  //
-  // The flush is what actually BUYS that position in JSON mode, and it is not
-  // optional: `output.error` only ACCUMULATES into the JSON renderer, whereas
-  // `renderAppliedOutcome` writes the action object through `output.json`, which
-  // bypasses the accumulator and goes straight to the writer. Without a flush
-  // here the trailing flush emits this diagnostic AFTER the action object,
-  // breaking the "action object is the last line" contract
-  // (docs/spec/cli-output.md) that this command's own deferral of the applied
-  // outcome exists to uphold. The three delegation-completion adapters flush at
-  // exactly this point for the same reason.
-  //
-  // #802's `advance-refused` rides the same field for the same reason and is
-  // rendered at the same point: it too is a diagnosed refusal core composed and
-  // this frontend renders, and it too must precede the action object.
-  if (outcome.kind === 'collection_applied') {
-    // The render is its own statement rather than the second operand of an
-    // `&&`: a condition that writes output reads as a pure test, and swapping
-    // the operands — a plausible tidy-up — would emit the diagnostic on
-    // outcomes that carry no advance at all.
-    if (renderInlinePropagationRefusal(output, outcome.terminalInlineAdvance)) {
-      output.flush();
-    }
-  }
-
   // The collected outcome may advance the delegating run into Run Progression
   // work (an inline child stage). When it does, progression's
   // `step_entered` / `runbook_started` events must precede the final collect
@@ -582,11 +546,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   // Core explicitly decides whether the committed collection needs another
   // progression activation. A projected frontier was already entered and
   // consumed inside core; no observation-field sentinel is interpreted here.
-  const progression =
-    outcome.kind === 'collection_applied' && outcome.lifecycle === 'running'
-      ? outcome.progression
-      : undefined;
-  const activatesProgression = progression?.kind === 'activate';
+  const progression = outcome.kind === 'collection_applied' ? outcome.progression : undefined;
 
   const emitter = new ExecutionEventEmitter(state.id, state.runbook);
   emitter.subscribe((event) => {
@@ -627,27 +587,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     continuationFailedClosed = progressionFailedClosed(continuationOutcome);
   }
 
-  let exitWithError = continuationFailedClosed || shouldExitWithError;
-  if (!activatesProgression && outcome.terminalInlineAdvance !== undefined) {
-    // Drain-terminal inline target: core already advanced the parent. Map its
-    // outcome to the same exit contract the CLI progression path uses.
-    //
-    // A refusal collapses onto the CLI's pre-existing fail-closed 'blocked'
-    // (#602/#802) — the same explicit mapping the three delegation-completion
-    // adapters make, and read through the same predicate so the two cannot
-    // diverge on which arms are refusals. It was already rendered above; only
-    // the exit code is decided here, so `InlinePropagationResult` stays the flat
-    // union its five `=== 'blocked'` consumers already read.
-    const advance = outcome.terminalInlineAdvance;
-    exitWithError =
-      shouldExitWithError ||
-      isInlinePropagationRefusal(advance) ||
-      advance.kind === 'stopped' ||
-      advance.kind === 'blocked';
-  }
-  // Drain-terminal DELEGATION target: core reported report-only; delegation never
-  // flips the exit code (matches today's dead `=== 'stopped'` delegation branch).
-
+  const exitWithError = continuationFailedClosed || shouldExitWithError;
   // Render the deferred collect action object exactly once, AFTER progression's and
   // the inline propagation's streamed events, so it is the last JSON line on
   // every applied path (activated or resting, inline / delegation / non-terminal).

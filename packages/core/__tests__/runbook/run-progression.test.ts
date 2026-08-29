@@ -29,6 +29,7 @@ import { mintRunProgressionAuthority } from '../../src/runbook/run-progression-a
 import type { PreparedRunControlClaim } from '../../src/runbook/session-service.js';
 import { readPersistedReEntryFrontier } from '../../src/runbook/re-entry-frontier.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
+import { buildContextSnapshot } from '../../src/runbook/delegation-context.js';
 import { InvalidRunbookStateError } from '../../src/runbook/persisted-state-guards.js';
 import { TRANSACTIONAL_REFUSAL_CODE_BY_KIND } from '../../src/runbook/storage/refusal-codes.js';
 import {
@@ -43,6 +44,7 @@ import {
 } from '../../src/runbook/targeting.js';
 import {
   activateRunProgression,
+  resolveInlineAncestorProgression,
   type InlineChildDispatch,
   type RunProgressionDeps,
   type TerminalPropagation,
@@ -199,6 +201,65 @@ async function seedInlineLaunchRun(): Promise<{
   return { steps, actorService, state };
 }
 
+async function seedPersistedInlineEdge(
+  options: { readonly acknowledgedChild?: RunbookState['id']; readonly parentEntry?: number } = {},
+): Promise<{
+  readonly parent: RunbookState;
+  readonly child: RunbookState;
+  readonly parentSteps: readonly ResolvedStep[];
+  readonly childSteps: readonly ResolvedStep[];
+}> {
+  const parentSteps = createRunbook(INLINE_PARENT_RUNBOOK);
+  const childSteps = createRunbook(MANUAL_RUNBOOK);
+  const actorService = actorServiceWith(succeedingCommandServices());
+  const parent = await seedRun(parentSteps, actorService, 'inline-owner.runbook.md');
+  const child = await seedRun(childSteps, actorService, 'inline-child.runbook.md');
+  const frameKey = buildFrameKey('1');
+  await manager.update(parent.id, {
+    lifecycle: 'running',
+    substep: '1',
+    activeFrameKey: frameKey,
+    activeEntry: 1,
+    substepStates: [
+      {
+        id: '1',
+        frameKey,
+        status: 'running',
+        inline: {
+          childRunbookPath: child.runbookPath,
+          childRunbookRef: child.runbook,
+          contextSnapshot: buildContextSnapshot(parent, '1'),
+          childRunId: options.acknowledgedChild ?? child.id,
+          createdAt: '2026-08-29T00:00:00.000Z',
+          started: {
+            at: '2026-08-29T00:00:01.000Z',
+            ownerPid: process.pid,
+            ownerStartId: null,
+          },
+        },
+      },
+    ],
+  });
+  const storedParentBeforeLink = await manager.load(parent.id);
+  if (!storedParentBeforeLink) throw new Error('inline parent seed failed');
+  const activeParentFrameKey =
+    storedParentBeforeLink.activeFrameKey ?? deriveActiveFrame(storedParentBeforeLink).frameKey;
+  await manager.update(child.id, {
+    parentLinkage: {
+      kind: 'inline',
+      parentRunId: parent.id,
+      parentStep: '1',
+      parentStepId: '1',
+      parentFrameKey: activeParentFrameKey,
+      parentEntry: options.parentEntry ?? 1,
+    },
+  });
+  const storedParent = await manager.load(parent.id);
+  const storedChild = await manager.load(child.id);
+  if (!storedParent || !storedChild) throw new Error('inline edge seed failed');
+  return { parent: storedParent, child: storedChild, parentSteps, childSteps };
+}
+
 /** Recording sink capturing the ordered observation stream. */
 function recordingSink(state: RunbookState): {
   emitter: ExecutionEventEmitter;
@@ -279,6 +340,81 @@ function progressionAuthority(state: RunbookState, control: PreparedRunControlCl
     delegationRuntime: control.delegationRuntime,
   });
 }
+
+describe('resolveInlineAncestorProgression', () => {
+  it('refuses an inline linkage from a superseded parent entry (#856)', async () => {
+    const { parent, child, parentSteps } = await seedPersistedInlineEdge({ parentEntry: 2 });
+
+    const resolved = await resolveInlineAncestorProgression({
+      authority: mintRunProgressionAuthority({ runId: child.id }),
+      manager,
+      loadSteps: async (state) => (state.id === parent.id ? parentSteps : []),
+    });
+    expect(resolved).toMatchObject({
+      kind: 'refused',
+      runId: parent.id,
+      reason: 'unrelated_inline_parent',
+    });
+  });
+
+  it('mints the immediate parent directive without inheriting the child claim key (#856)', async () => {
+    const { parent, child, parentSteps } = await seedPersistedInlineEdge();
+    const childControl = await issueProgressionControl(child.id);
+
+    const resolved = await resolveInlineAncestorProgression({
+      authority: progressionAuthority(child, childControl),
+      manager,
+      loadSteps: async (state) => (state.id === parent.id ? parentSteps : []),
+      ancestorAuthorities: [mintRunProgressionAuthority({ runId: parent.id })],
+    });
+    expect(resolved).toMatchObject({
+      kind: 'activate',
+      directive: {
+        kind: 'activate',
+        authority: { runId: parent.id },
+        runbook: parent.runbook,
+        steps: parentSteps,
+      },
+    });
+    if (resolved.kind !== 'activate') throw new Error('expected ancestor activation');
+    expect(resolved.directive.authority).not.toHaveProperty('claimKey');
+  });
+
+  it('retains an exact ancestor authority instead of copying child authority upward (#856)', async () => {
+    const { parent, child, parentSteps } = await seedPersistedInlineEdge();
+    const childControl = await issueProgressionControl(child.id);
+    const parentControl = await issueProgressionControl(parent.id);
+    const parentAuthority = progressionAuthority(parent, parentControl);
+
+    const resolved = await resolveInlineAncestorProgression({
+      authority: progressionAuthority(child, childControl),
+      manager,
+      loadSteps: async () => parentSteps,
+      ancestorAuthorities: [parentAuthority],
+    });
+
+    expect(resolved).toMatchObject({ kind: 'activate' });
+    if (resolved.kind !== 'activate') throw new Error('expected ancestor activation');
+    expect(resolved.directive.authority).toBe(parentAuthority);
+  });
+
+  it('refuses a terminal parent even when its persisted cursor still matches (#856)', async () => {
+    const { parent, child, parentSteps } = await seedPersistedInlineEdge();
+    await manager.update(parent.id, { lifecycle: 'completed' });
+
+    const resolved = await resolveInlineAncestorProgression({
+      authority: mintRunProgressionAuthority({ runId: child.id }),
+      manager,
+      loadSteps: async () => parentSteps,
+    });
+
+    expect(resolved).toMatchObject({
+      kind: 'refused',
+      runId: parent.id,
+      reason: 'unrelated_inline_parent',
+    });
+  });
+});
 
 describe('activateRunProgression', () => {
   it('loads the compiled graph from the run named by authority', async () => {
@@ -706,6 +842,66 @@ describe('activateRunProgression', () => {
     });
   });
 
+  it('returns the nested composition parent waiting outcome after the child terminal commits (#856)', async () => {
+    const { steps, actorService, state } = await seedInlineLaunchRun();
+    const composingParent = generateRunId();
+    const dispatchInlineChild = jest.fn<InlineChildDispatch>(
+      async () =>
+        ({
+          kind: 'composition_outcome',
+          outcome: {
+            kind: 'waiting',
+            runId: composingParent,
+            reason: 'inline_flow_back_settled',
+          },
+        }) as never,
+    );
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, recordingSink(state).emitter, { dispatchInlineChild }),
+    );
+
+    expect(outcome).toEqual({
+      kind: 'waiting',
+      runId: composingParent,
+      reason: 'inline_flow_back_settled',
+    });
+    expect((await manager.load(state.id))?.lifecycle).toBe('running');
+  });
+
+  it('returns the refusing ancestor without synthesizing a terminal for it (#856)', async () => {
+    const { steps, actorService, state } = await seedInlineLaunchRun();
+    const ancestor = generateRunId();
+    const { emitter, events } = recordingSink(state);
+    const dispatchInlineChild = jest.fn<InlineChildDispatch>(
+      async () =>
+        ({
+          kind: 'composition_outcome',
+          outcome: {
+            kind: 'refused',
+            runId: ancestor,
+            reason: 'frontier_consume_failed',
+            code: 'RD-829',
+            message: 'Ancestor frontier consume refused',
+            recovery: 'retryable',
+          },
+        }) as never,
+    );
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { dispatchInlineChild }),
+    );
+
+    expect(outcome).toMatchObject({ kind: 'refused', runId: ancestor, code: 'RD-829' });
+    expect(
+      events.filter(
+        (event) => event.type === 'RUNBOOK_COMPLETED' || event.type === 'RUNBOOK_STOPPED',
+      ),
+    ).toEqual([]);
+  });
+
   it('fails closed when a dispatched inline child stopped without linked flow-back', async () => {
     // The degenerate arm: the child genuinely launched and ran to a stopped
     // terminal, but no linkage drove flow-back, so the composing run cannot
@@ -1037,7 +1233,9 @@ describe('activateRunProgression', () => {
     );
 
     expect(outcome).toMatchObject({ kind: 'waiting', runId: state.id });
-    const entered = events.find((event) => event.type === 'STEP_ENTERED');
+    const enteredEvents = events.filter((event) => event.type === 'STEP_ENTERED');
+    expect(enteredEvents).toHaveLength(1);
+    const entered = enteredEvents[0];
     expect(entered).toMatchObject({
       payload: {
         delegateFrontier: [{ id: '1.1', runbook: 'child.runbook.md', token }],
@@ -1091,7 +1289,7 @@ describe('activateRunProgression', () => {
     expect((await manager.load(state.id))?.step).toBe('2');
   });
 
-  it('reselects when the frontier changes before the fenced capture instead of entering it as empty', async () => {
+  it('selects again when the frontier changes before the fenced capture instead of entering it as empty', async () => {
     const steps = createRunbook(SUBSTEP_RUNBOOK);
     const actorService = actorServiceWith(succeedingCommandServices());
     const state = await seedRun(steps, actorService, 'frontier-reselection.runbook.md');

@@ -62,6 +62,9 @@ import {
   createEffectfulActorMutationRunner,
   type EffectfulActorMutationRunner,
   type ReleaseRole,
+  progressionDirectiveForStartedRun,
+  type RunProgressionOutcome,
+  type RunProgressionDirective,
 } from '@rundown-org/core';
 import { isInternalRdCommand, executeRdCommandInternal } from './internal-commands.js';
 import {
@@ -288,6 +291,15 @@ export interface InlineLaunchArgs {
    * re-runs THIS run — see {@link propagateInlineChildTerminalResult}.
    */
   readonly parentDelegationRuntime?: RunScopedDelegationRuntime;
+  /** Same public activation used by the composing run; supplied by the frontend adapter. */
+  readonly driveProgression?: (
+    directive: Extract<RunProgressionDirective, { kind: 'activate' }>,
+    sink: ExecutionEventEmitter,
+  ) => Promise<RunProgressionOutcome>;
+}
+
+function dispatchResultFromProgression(outcome: RunProgressionOutcome): InlineChildDispatchResult {
+  return { kind: 'composition_outcome', outcome };
 }
 
 /**
@@ -596,6 +608,7 @@ function assertActorSyncSucceeded(
  * @param args.intent - One-shot launch intent the machine prepared.
  * @param args.prompted - The composing run's prompted flag, inherited by a fresh child.
  * @param args.output - Output emitter for streamed child events.
+ * @param args.driveProgression - Public activation seam used for the child.
  * @param args.commandStreamOptions - Runtime-only routing for command subprocess I/O.
  * @param args.parentDelegationRuntime - The composing run's verified delegation capabilities.
  * @returns The typed conclusion of the launch span. Refusals carry the
@@ -618,6 +631,7 @@ export async function launchInlineChildFromIntent({
   output,
   commandStreamOptions,
   parentDelegationRuntime,
+  driveProgression,
 }: InlineLaunchArgs): Promise<InlineChildDispatchResult> {
   // Both projections of the one intent, and derived through the same helper the
   // latch derives its own from, so this span and the latch cannot disagree about
@@ -841,6 +855,17 @@ export async function launchInlineChildFromIntent({
         adoption.runtime.claimId,
       );
     }
+    if (driveProgression !== undefined && adoption.kind === 'adopted') {
+      const outcome = await driveProgression(
+        progressionDirectiveForStartedRun(
+          existingChild,
+          [...getRunbookFromState(existingChild, cwd)],
+          adoption.runtime,
+        ),
+        childEmitter,
+      );
+      return dispatchResultFromProgression(outcome);
+    }
     const loopResult = await runExecutionLoop(
       manager,
       childRunId,
@@ -852,9 +877,7 @@ export async function launchInlineChildFromIntent({
         commandStreamOptions,
         sessionService,
         ...(adoption.kind === 'adopted'
-          ? {
-              delegationRuntime: adoption.runtime.delegationRuntime,
-            }
+          ? { delegationRuntime: adoption.runtime.delegationRuntime }
           : {}),
       },
     );
@@ -975,6 +998,7 @@ export async function launchInlineChildFromIntent({
         // with.
         latch.held.keep();
       },
+      ...(driveProgression !== undefined ? { driveProgression } : {}),
     },
   );
 
@@ -1011,6 +1035,10 @@ export async function launchInlineChildFromIntent({
       message: launchResult.error,
       recovery: CONTENTION_LAUNCH_CODES.has(launchResult.code) ? 'retryable' : 'permanent',
     };
+  }
+
+  if (launchResult.progression !== undefined) {
+    return dispatchResultFromProgression(launchResult.progression);
   }
 
   if (launchResult.loopResult === 'done' || launchResult.loopResult === 'stopped') {
@@ -1115,6 +1143,14 @@ function dispatchResultFromFlowBack(
  */
 function executionLoopStatusFromDispatch(result: InlineChildDispatchResult): ExecutionLoopStatus {
   switch (result.kind) {
+    case 'composition_outcome':
+      return result.outcome.kind === 'completed'
+        ? 'done'
+        : result.outcome.kind === 'stopped'
+          ? 'stopped'
+          : result.outcome.kind === 'waiting'
+            ? 'waiting'
+            : 'blocked';
     case 'waiting':
       return 'waiting';
     case 'flow_back_complete':

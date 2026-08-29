@@ -278,7 +278,15 @@ function frontierOutputFromInvokeEvent(event: unknown): FencedReEntryProjection 
 
 function emitFrontierProgressionIntent(
   build: (output: FencedReEntryProjection) => RunProgressionMachineIntent,
-) {
+): ReturnType<
+  typeof emitEvent<
+    RunbookContext,
+    FrontierDoneEvent,
+    undefined,
+    RunbookEvent,
+    RunProgressionMachineIntentEvent
+  >
+> {
   return emitEvent<
     RunbookContext,
     FrontierDoneEvent,
@@ -291,7 +299,17 @@ function emitFrontierProgressionIntent(
   }));
 }
 
-function emitEntryProgressionIntent(frontier: 'none' | 'projected') {
+function emitEntryProgressionIntent(
+  frontier: 'none' | 'projected',
+): ReturnType<
+  typeof emitEvent<
+    RunbookContext,
+    EntryDoneEvent,
+    undefined,
+    RunbookEvent,
+    RunProgressionMachineIntentEvent
+  >
+> {
   return emitEvent<
     RunbookContext,
     EntryDoneEvent,
@@ -309,7 +327,15 @@ function emitEntryProgressionIntent(frontier: 'none' | 'projected') {
   }));
 }
 
-function emitEntryProgressionFailureIntent() {
+function emitEntryProgressionFailureIntent(): ReturnType<
+  typeof emitEvent<
+    RunbookContext,
+    EntryErrorEvent,
+    undefined,
+    RunbookEvent,
+    RunProgressionMachineIntentEvent
+  >
+> {
   return emitEvent<
     RunbookContext,
     EntryErrorEvent,

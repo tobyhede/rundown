@@ -1215,6 +1215,8 @@ export class RunbookActorService {
    * @param state - Exact durable state loaded by the activation.
    * @param steps - Graph derived from that state inside the activation.
    * @param feedback - Result of the preceding mechanically executed turn.
+   * @param authority - Exact run-bound progression authority.
+   * @param actorMutationRunner - Fenced mutation runner bound into machine actors.
    * @returns The compiled machine's completion-specific progression intent.
    */
   async selectRunProgressionIntent(

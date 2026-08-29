@@ -135,9 +135,8 @@ function delegationRuntimeFor(
  * collapses the drain/loop statuses into the seam's `AdvanceInlineParentOutcome`.
  * It performs no standalone terminal session release. Each drain or command
  * fence folds the parent's addressed release into the transaction that commits
- * the parent's terminal state. The loop is invoked with `returnRefusals: true`
- * so a refusal that applied no terminal transition comes back as typed data
- * instead of a false terminal status (#802, #833).
+ * the parent's terminal state. This callable remains only for legacy entry
+ * paths pending #858; machine-owned inline composition does not invoke it.
  *
  * The heavy CLI collaborators are imported LAZILY to avoid a static
  * delegation-completion ↔ execution import cycle.
@@ -242,27 +241,11 @@ export function buildAdvanceInlineParent(
       const loopState = freshParent ?? drained.state;
       const loopSteps = [...getRunbookFromState(loopState, cwd)];
       const loopResult = await runExecutionLoop(manager, parentRunId, loopSteps, cwd, emitter, {
-        returnRefusals: true,
         output,
         commandStreamOptions,
         delegationRuntime,
       });
       output.flush();
-      // The loop's own drain can refuse the same way this callable's did, and
-      // with Refusal Hand-back it returns the refusal rather than reporting
-      // a `'stopped'` this callable would forward as a terminal — which would
-      // have the seam release a still-running parent and recurse upward on a
-      // terminal that never happened.
-      //
-      // One discriminant across both arms, exhausted by a switch. It replaced a
-      // fall-through that reached the refusal by ELIMINATING the three terminal
-      // strings, which was the best available shape while the terminal arm was
-      // a bare string and the refusal an object: a `typeof` test would have said
-      // only "not one of these strings", swallowing any second object-shaped arm
-      // as `{status: 'refused', refusal: undefined}` with no compile error. Now
-      // that both arms carry `status`, the exhaustive `never` below refuses a
-      // new member outright instead of forwarding it as a refusal.
-      //
       switch (loopResult.status) {
         case 'stopped':
           return { status: 'stopped' };
@@ -273,8 +256,11 @@ export function buildAdvanceInlineParent(
           return { status: 'active' };
         case 'blocked':
           return { status: 'blocked' };
+        default: {
+          const _exhaustive: never = loopResult.status;
+          return _exhaustive;
+        }
       }
-      return loopResult;
     }
 
     // applied === 0: waiting for sibling substeps to resolve.
