@@ -23,19 +23,19 @@
  * {@link TerminalPropagation}) and render the observation stream; they do not
  * decide progression.
  *
- * TRANSITIONAL (#851 migration): turn selection inside this runtime is still
- * imperative — the loop below reads machine-owned seams
- * (`resolveCurrentExecutionUnit`, `readPersistedReEntryFrontier`,
- * `enterExecutionUnit`) and chooses the next fenced turn itself. The spec's
- * end state ("XState decides every progression action", #851 story 21) is
- * reached slice by slice: #854–#857 move completion draining, frontier
- * continuation, inline composition, and fresh-run entry into machine-owned
- * states, and #858 is the deletion finish line that removes the displaced
- * selection logic. This loop must not grow new decisions; it only shrinks.
+ * TRANSITIONAL (#851 migration): completion selection now belongs to explicit
+ * states in the compiled machine. The activation runtime still selects the
+ * not-yet-migrated frontier, inline-composition, and fresh-run turns through
+ * machine-owned seams (`resolveCurrentExecutionUnit`,
+ * `readPersistedReEntryFrontier`, `enterExecutionUnit`). #855–#857 move those
+ * remaining decisions into machine-owned states, and #858 removes the
+ * displaced selection logic. This runtime must not grow new decisions; it only
+ * shrinks.
  *
  * @module runbook/run-progression
  */
 
+import { isDeepStrictEqual } from 'node:util';
 import type { ExecutionEventEmitter } from '../events/emitter.js';
 import {
   deriveTerminalDrainObservationEvent,
@@ -45,6 +45,7 @@ import type { ExecutionObservationEffect } from '../events/execution-observation
 import { ErrorCodes } from '../errors/codes.js';
 import { CLIErrorCodes } from '../output/zod-schemas.js';
 import type { RunbookActorService } from './actor-service.js';
+import type { RunProgressionMachineFeedback } from './compiler.js';
 import { COMPLETION_TARGET_MISMATCH_CODE, RunbookCompletionService } from './completion-service.js';
 import type { EffectfulActorMutationRunner } from './effectful-actor-mutation-runner.js';
 import { findStepOrThrow, resolveCurrentExecutionUnit } from './execution-units.js';
@@ -63,6 +64,7 @@ import {
 } from './storage/refusal-codes.js';
 import type { RunId } from './run-id.js';
 import type { RunProgressionAuthority } from './run-progression-authority.js';
+import { isConcurrentStateModificationError } from './state.js';
 import type { SessionMutationRefusal, SessionMutationResult } from './storage/runbook-store.js';
 import type { GuardedMutationResult } from './storage/mutation-result.js';
 import type { SessionService } from './session-service.js';
@@ -141,8 +143,6 @@ export function recoveryForInlineAdvanceRefusal(
  *
  * - `awaiting_input` — the run rests on a prompted or command-free unit and
  *   needs an operator or agent gesture to continue.
- * - `completion_frame_inactive` — a frame-scoped drain found the requested
- *   frame no longer active; the run continues elsewhere.
  * - `inline_child_active` — an inline child launch is owned by another live
  *   process or was superseded; observe again once it settles.
  * - `inline_flow_back_settled` — synchronous inline flow-back already drove
@@ -150,7 +150,6 @@ export function recoveryForInlineAdvanceRefusal(
  */
 export type RunProgressionWaitReason =
   | 'awaiting_input'
-  | 'completion_frame_inactive'
   | 'inline_child_active'
   | 'inline_flow_back_settled';
 
@@ -163,14 +162,14 @@ export type RunProgressionWaitReason =
 export type RunProgressionRefusalReason =
   | 'run_missing'
   | 'command_not_committed'
-  | 'command_result_missing'
+  | 'completion_not_committed'
   | 'completion_target_mismatch'
   | 'actor_context_required'
   | 'projection_refused'
   | 'consume_failed'
   | 'terminal_release_refused'
   | 'inline_launch_refused'
-  | 'inline_child_stopped'
+  | 'inline_child_unlinked'
   | 'inline_flow_back_refused'
   | 'terminal_propagation_refused';
 
@@ -247,6 +246,8 @@ export interface InlineChildDispatchInput {
   readonly intent: InlineLaunchIntent;
   /** The composing run's own prompted flag, inherited by a fresh child. */
   readonly prompted: boolean;
+  /** Graph loaded from this activation's authority-bound durable state. */
+  readonly steps: readonly ResolvedStep[];
   /**
    * The activation's GATED observation sink, supplied by core at invocation.
    *
@@ -280,6 +281,8 @@ export type InlineChildDispatchResult =
   | {
       /** Flow-back handled progression but concluded fail-closed; diagnostics already observed. */
       readonly kind: 'flow_back_refused';
+      /** Run whose upward turn actually refused, including a deeper ancestor. */
+      readonly runId: RunId;
       /** Registered code of the refusing condition, when its fold preserved one. */
       readonly code?: string;
       /** Operator-facing message, when the fold preserved one. */
@@ -330,6 +333,16 @@ export interface TerminalPropagationInput {
   /** The run this activation drove to terminal. */
   readonly runId: RunId;
   /**
+   * Where the terminal result came from.
+   *
+   * An explicit PASS/FAIL — whether authored by an operator, a command result,
+   * or a resolved child completion — must survive even when the authored action
+   * reaches the opposite lifecycle (PASS STOP, FAIL COMPLETE). A terminal
+   * discovered while resuming recovers that provenance from durable
+   * `lastResult`; only a row without one is loop-inferred.
+   */
+  readonly source: TerminalPropagationSource;
+  /**
    * The activation's GATED observation sink, supplied by core at invocation —
    * same contract as {@link InlineChildDispatchInput.sink}: the propagation's
    * rendering surfaces a broken reporting channel as
@@ -339,11 +352,38 @@ export interface TerminalPropagationInput {
   readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
 }
 
+/** Typed source of the result propagated from a terminal run. */
+export type TerminalPropagationSource =
+  | { readonly kind: 'explicit-result'; readonly result: 'pass' | 'fail' }
+  | { readonly kind: 'loop-inferred' };
+
+/**
+ * Recover terminal propagation provenance from one authoritative durable row.
+ *
+ * `lastResult` records the authored PASS/FAIL independently of the lifecycle it
+ * reached, including the intentionally opposite PASS STOP and FAIL COMPLETE
+ * cases. Its absence is the only condition in which lifecycle inference is
+ * honest. Every reload/convergence path uses this helper so they cannot silently
+ * invert an authored result merely because another process committed it.
+ *
+ * @param state - Authoritative persisted state carrying optional result provenance.
+ * @returns The propagation source represented by that durable state.
+ */
+function terminalPropagationSourceFromState(
+  state: Pick<RunbookState, 'lastResult'>,
+): TerminalPropagationSource {
+  return state.lastResult === undefined
+    ? { kind: 'loop-inferred' }
+    : { kind: 'explicit-result', result: state.lastResult };
+}
+
 /**
  * What propagating a driven run's terminal concluded.
  *
- * `propagated` covers the no-op cases (unlinked or vanished run) as well as a
- * successful upward report or advance; `refused` is the fail-closed arm whose
+ * `propagated` covers the no-op cases (unlinked or vanished run) and a
+ * successful upward report. `advanced` names the composing parent and its
+ * stable post-flow-back condition, so the activation reports the parent rather
+ * than reusing the child's terminal. `refused` is the fail-closed arm whose
  * diagnostics the callable has already observed.
  */
 export type TerminalPropagationResult =
@@ -352,8 +392,18 @@ export type TerminalPropagationResult =
       readonly kind: 'propagated';
     }
   | {
+      /** Inline flow-back left the composing parent active and awaiting work. */
+      readonly kind: 'advanced';
+      /** The composing parent whose stable condition the activation now reports. */
+      readonly runId: RunId;
+      /** The parent absorbed the child and either remains active or reached STOP. */
+      readonly status: 'waiting' | 'stopped';
+    }
+  | {
       /** Propagation refused fail-closed; diagnostics already observed. */
       readonly kind: 'refused';
+      /** Run whose upward turn actually refused (often an ancestor). */
+      readonly runId: RunId;
       /** Stable diagnostic code, when the refusing arm supplied one. */
       readonly code?: string;
       /** Operator-facing message. */
@@ -391,8 +441,16 @@ export interface RunProgressionDeps {
   readonly sessionService: SessionService;
   /** Fenced mutation runner for command turns. */
   readonly actorMutationRunner: EffectfulActorMutationRunner;
-  /** Parsed steps for the run being driven. */
-  readonly steps: readonly ResolvedStep[];
+  /**
+   * Derive the compiled graph from the run state loaded by this activation.
+   *
+   * The activation never accepts a separately selected state or graph: it loads
+   * `authority.runId` and passes that exact state here, making an authority/graph
+   * mismatch unrepresentable at the public seam.
+   */
+  readonly loadSteps: (
+    state: RunbookState,
+  ) => readonly ResolvedStep[] | Promise<readonly ResolvedStep[]>;
   /** Synchronous observation sink; events are delivered after each commit. */
   readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
   /** Inline child launch callable (Category C). */
@@ -400,6 +458,45 @@ export interface RunProgressionDeps {
   /** Driven-terminal propagation callable (Category C). */
   readonly propagateTerminal: TerminalPropagation;
 }
+
+/**
+ * The durable/observation boundary at which an explicit activation enters.
+ *
+ * `resume` means the activation owns reporting and releasing any terminal it
+ * discovers. `after_observed_transition` is minted by the core transition seam
+ * after its initiating commit and is consumed only after the frontend delivers
+ * that commit's observation. A terminal boundary records whether Run Release
+ * was part of that same commit, so activation cannot replay either operation.
+ */
+export type RunProgressionEntryBoundary =
+  | { readonly kind: 'resume' }
+  | {
+      readonly kind: 'after_observed_transition';
+      readonly lifecycle: 'running';
+    }
+  | {
+      readonly kind: 'after_observed_transition';
+      readonly lifecycle: 'completed' | 'stopped';
+      readonly terminalTarget: 'released' | 'retained_by_policy';
+      readonly source: TerminalPropagationSource;
+    };
+
+/**
+ * Core's explicit decision about whether a committed domain operation should
+ * activate Run Progression next.
+ *
+ * The `activate` arm carries the already-verified authority; a frontend never
+ * reconstructs it or infers continuation from unrelated observation fields.
+ */
+export type RunProgressionDirective =
+  | { readonly kind: 'none' }
+  | {
+      readonly kind: 'activate';
+      readonly authority: RunProgressionAuthority;
+      /** Event-envelope identity available even if the run vanishes before activation. */
+      readonly runbook: RunbookState['runbook'];
+      readonly entryBoundary: RunProgressionEntryBoundary;
+    };
 
 /** The refusal arms of a fenced mutation, i.e. everything but `committed`. */
 type FencedMutationRefusal = Exclude<GuardedMutationResult<never>, { kind: 'committed' }>;
@@ -430,8 +527,9 @@ function fencedRefusalRecovery(refusal: FencedMutationRefusal): RunProgressionRe
   switch (refusal.kind) {
     case 'concurrent_modification':
     case 'execution_in_progress':
-    case 'recovery_required':
       return 'retryable';
+    case 'recovery_required':
+      return 'permanent';
     case 'claim_superseded':
       return 'provide_authority';
     case 'missing':
@@ -459,7 +557,33 @@ function sessionRefusalCode(refusal: SessionMutationRefusal): string {
   return SESSION_REFUSAL_CODE_BY_KIND[refusal.kind];
 }
 
-/** Internal continuation signal for one ported loop iteration. */
+/**
+ * Derive recovery from the session refusal itself.
+ *
+ * A live owner can release its lease, so `execution_in_progress` is retryable.
+ * `recovery_required` is detection-only: repeating the session mutation neither
+ * performs nor completes recovery, so the same gesture cannot make progress.
+ *
+ * @param refusal - Ownership refusal returned by the session service.
+ * @returns The recovery classification for the refusal.
+ * @throws {Error} When an unknown refusal kind reaches the exhaustive guard.
+ */
+function sessionRefusalRecovery(refusal: SessionMutationRefusal): RunProgressionRecovery {
+  switch (refusal.kind) {
+    case 'execution_in_progress':
+      return 'retryable';
+    case 'recovery_required':
+      return 'permanent';
+    default: {
+      const _exhaustive: never = refusal;
+      throw new Error(
+        `Unhandled session mutation refusal: ${(_exhaustive as { kind: string }).kind}`,
+      );
+    }
+  }
+}
+
+/** Internal continuation signal for one ported progression turn. */
 type TransitionApplication =
   | { readonly status: 'continue'; readonly state: RunbookState }
   | { readonly status: 'done' }
@@ -469,8 +593,8 @@ type TransitionApplication =
  * Emit one applied transition's core-derived observation events and classify
  * the continuation.
  *
- * The core port of the CLI loop's transition orchestration: payload derivation
- * was already core's (`deriveTransitionObservation`); only the emit loop moves.
+ * The core port of the CLI driver's transition orchestration: payload derivation
+ * was already core's (`deriveTransitionObservation`); only observation delivery moves.
  *
  * @param args - Transition context.
  * @param args.sink - Synchronous observation sink receiving the events.
@@ -514,7 +638,7 @@ function applyTransitionObservation(args: {
  * Emit the terminal observation for a run whose lifecycle was already terminal
  * when the activation loaded it.
  *
- * Mirrors the CLI loop's terminal-at-activation projection, including the
+ * Mirrors the former CLI driver's terminal-at-activation projection, including the
  * split between a machine-driven terminal snapshot and a lifecycle-only
  * terminal.
  *
@@ -546,7 +670,7 @@ function emitTerminalAtActivation(args: {
     for (const event of observation.events) {
       // Only the terminal announcement is re-derivable here; a transition event
       // for a transition that happened in an earlier invocation must not be
-      // replayed. This matches the CLI loop's terminal-at-activation filter.
+      // replayed. This matches the former driver's terminal-at-activation filter.
       if (
         (terminal === 'stopped' &&
           (event.type === 'RUNBOOK_STOPPED' || event.type === 'ERROR_OCCURRED')) ||
@@ -586,44 +710,50 @@ function emitTerminalAtActivation(args: {
   });
 }
 
-/** Outcome of the ported one-completion-per-commit drain pass. */
-type DrainPass =
-  | { readonly status: 'continue'; readonly state: RunbookState; readonly applied: number }
-  | { readonly status: 'done' }
-  | { readonly status: 'stopped' }
-  | { readonly status: 'refused'; readonly message: string }
-  | { readonly status: 'not_active' };
+/** Outcome of one machine-selected resolved-completion turn. */
+type CompletionTurn =
+  | { readonly kind: 'continue'; readonly state: RunbookState }
+  | {
+      readonly kind: 'feedback';
+      readonly state: RunbookState;
+      readonly feedback: RunProgressionMachineFeedback;
+    }
+  | {
+      readonly kind: 'terminal';
+      readonly intent: { readonly kind: 'completed' | 'stopped' };
+      readonly source: TerminalPropagationSource;
+    }
+  | { readonly kind: 'missing' };
 
 /**
- * Apply resolved completions one fenced commit at a time, emitting each
- * commit's observation before the next apply is derived.
+ * Execute one resolved-completion turn selected by the compiled machine.
  *
- * The core port of the CLI's drain loop: the apply primitive was already
- * core's; the iteration and per-commit observation now live behind the
- * activation rather than in a frontend.
+ * There is deliberately no iteration here. The compiled machine selects one
+ * `apply_completion` intent, this runtime mechanically invokes the existing CAS
+ * operation once, and the activation delivers that commit's observation before
+ * asking the machine for another intent.
  *
  * @param args - Drain context.
  * @param args.completionService - Completion service owning the fenced apply.
+ * @param args.manager - State manager used for the authoritative contention reload.
  * @param args.sink - Synchronous observation sink receiving each commit's events.
  * @param args.runId - Run whose completions are drained.
  * @param args.steps - Parsed steps for the run.
- * @param args.currentState - State the activation observed before this pass.
  * @param args.authority - The activation's verified run-bound authority.
- * @returns The drain conclusion.
+ * @returns The one-turn conclusion.
  */
-async function drainResolvedCompletionsPass(args: {
+async function applyMachineSelectedCompletionTurn(args: {
   readonly completionService: RunbookCompletionService;
+  readonly manager: RunbookStateManager;
   readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
   readonly runId: RunId;
   readonly steps: readonly ResolvedStep[];
-  readonly currentState: RunbookState;
   readonly authority: RunProgressionAuthority;
-}): Promise<DrainPass> {
-  const { completionService, sink, runId, steps, authority } = args;
-  let observedState = args.currentState;
-  let appliedCount = 0;
-  for (;;) {
-    const applied = await completionService.applyNextResolvedCompletion({
+}): Promise<CompletionTurn> {
+  const { completionService, manager, sink, runId, steps, authority } = args;
+  let applied: Awaited<ReturnType<RunbookCompletionService['applyNextResolvedCompletion']>>;
+  try {
+    applied = await completionService.applyNextResolvedCompletion({
       runbookId: runId,
       steps,
       ...(authority.delegationRuntime
@@ -631,45 +761,79 @@ async function drainResolvedCompletionsPass(args: {
         : {}),
       terminalRelease: { role: 'addressed' },
     });
-    if (applied.kind === 'mismatch') {
-      return { status: 'refused', message: applied.mismatch.message };
-    }
-    if (applied.kind === 'not_active') {
-      if (appliedCount > 0) {
-        return { status: 'continue', state: observedState, applied: appliedCount };
-      }
-      return { status: 'not_active' };
-    }
-    if (applied.kind === 'missing') {
-      return { status: 'continue', state: observedState, applied: appliedCount };
-    }
-    if (applied.kind === 'none') {
+  } catch (cause: unknown) {
+    if (!isConcurrentStateModificationError(cause)) throw cause;
+    // Exhaustion proves only that this apply did not win. Reload the row that
+    // DID survive the contention before classifying the turn: the final writer
+    // may have removed the run, committed terminal + Run Release, or left a
+    // running row on which the machine can close the contention refusal.
+    const durable = await manager.load(runId);
+    if (!durable) return { kind: 'missing' };
+    if (durable.lifecycle === 'completed' || durable.lifecycle === 'stopped') {
       return {
-        status: 'continue',
-        state: appliedCount > 0 ? observedState : applied.state,
-        applied: appliedCount,
+        kind: 'terminal',
+        intent: { kind: durable.lifecycle },
+        source: terminalPropagationSourceFromState(durable),
       };
     }
-    const entry = applied.entry;
-    const currentStep = findStepOrThrow(steps, entry.stateBefore.step, entry.stateBefore.id);
-    const observed = applyTransitionObservation({
-      sink,
-      steps,
-      currentStep,
-      previousState: entry.stateBefore,
-      updatedState: entry.stateAfter,
-      snapshot: entry.snapshot,
-      result: entry.completion.result,
-    });
-    appliedCount += 1;
-    if (observed.status === 'done' || observed.status === 'stopped') {
-      return { status: observed.status === 'done' ? 'done' : 'stopped' };
-    }
-    observedState = observed.state;
-    if (applied.terminal) {
-      return { status: applied.terminal === 'done' ? 'done' : 'stopped' };
-    }
+    return {
+      kind: 'feedback',
+      state: durable,
+      feedback: { kind: 'completion_not_committed', message: cause.message },
+    };
   }
+  if (applied.kind === 'mismatch') {
+    return {
+      kind: 'feedback',
+      state: applied.state,
+      feedback: {
+        kind: 'completion_target_mismatch',
+        message: applied.mismatch.message,
+      },
+    };
+  }
+  if (applied.kind === 'not_active') {
+    throw new Error(
+      `Run Progression completion apply for ${runId} returned not_active without a frame override`,
+    );
+  }
+  if (applied.kind === 'missing') {
+    return { kind: 'missing' };
+  }
+  if (applied.kind === 'none') {
+    if (applied.state.lifecycle === 'completed' || applied.state.lifecycle === 'stopped') {
+      return {
+        kind: 'terminal',
+        intent: { kind: applied.state.lifecycle },
+        source: terminalPropagationSourceFromState(applied.state),
+      };
+    }
+    return { kind: 'continue', state: applied.state };
+  }
+  const entry = applied.entry;
+  const currentStep = findStepOrThrow(steps, entry.stateBefore.step, entry.stateBefore.id);
+  const observed = applyTransitionObservation({
+    sink,
+    steps,
+    currentStep,
+    previousState: entry.stateBefore,
+    updatedState: entry.stateAfter,
+    snapshot: entry.snapshot,
+    result: entry.completion.result,
+  });
+  if (entry.progressionIntent !== undefined) {
+    return {
+      kind: 'terminal',
+      intent: entry.progressionIntent,
+      source: { kind: 'explicit-result', result: entry.completion.result },
+    };
+  }
+  if (observed.status !== 'continue') {
+    throw new Error(
+      `Run ${runId} reached ${observed.status} without a terminal Run Progression machine output`,
+    );
+  }
+  return { kind: 'continue', state: observed.state };
 }
 
 /**
@@ -679,6 +843,7 @@ async function drainResolvedCompletionsPass(args: {
  * @param args - The terminal run, its status, and the propagation callable.
  * @param args.runId - The run that reached terminal.
  * @param args.terminal - Which terminal lifecycle it committed.
+ * @param args.source - Durable or initiating-boundary provenance for the terminal.
  * @param args.propagateTerminal - Frontend propagation callable.
  * @param args.sink - The gated observation sink, handed to the callable.
  * @returns The terminal outcome, or `refused` when propagation failed closed.
@@ -686,12 +851,26 @@ async function drainResolvedCompletionsPass(args: {
 async function concludeTerminal(args: {
   readonly runId: RunId;
   readonly terminal: 'completed' | 'stopped';
+  readonly source: TerminalPropagationSource;
   readonly propagateTerminal: TerminalPropagation;
   readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
 }): Promise<RunProgressionOutcome> {
-  const propagated = await args.propagateTerminal({ runId: args.runId, sink: args.sink });
+  const propagated = await args.propagateTerminal({
+    runId: args.runId,
+    source: args.source,
+    sink: args.sink,
+  });
   if (propagated.kind === 'refused') {
-    return propagationRefusalOutcome(args.runId, propagated);
+    return propagationRefusalOutcome(propagated);
+  }
+  if (propagated.kind === 'advanced') {
+    return propagated.status === 'stopped'
+      ? { kind: 'stopped', runId: propagated.runId }
+      : {
+          kind: 'waiting',
+          runId: propagated.runId,
+          reason: 'inline_flow_back_settled',
+        };
   }
   return { kind: args.terminal, runId: args.runId };
 }
@@ -701,17 +880,15 @@ async function concludeTerminal(args: {
  * callable's refusal, honoring the code and boundary-derived recovery the
  * refusing arm carried.
  *
- * @param runId - Run whose terminal propagation refused.
  * @param refused - The callable's refusal arm.
  * @returns The refused outcome.
  */
 function propagationRefusalOutcome(
-  runId: RunId,
   refused: Extract<TerminalPropagationResult, { kind: 'refused' }>,
 ): RunProgressionOutcome {
   return {
     kind: 'refused',
-    runId,
+    runId: refused.runId,
     reason: 'terminal_propagation_refused',
     ...(refused.code !== undefined ? { code: refused.code } : {}),
     message: refused.message,
@@ -733,7 +910,7 @@ async function releaseTerminalTarget(args: {
   readonly sessionService: SessionService;
   readonly runId: RunId;
   readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
-}): Promise<RunProgressionOutcome | null> {
+}): Promise<Extract<RunProgressionOutcome, { kind: 'refused' }> | null> {
   const released: SessionMutationResult<unknown> = await args.sessionService.releaseRuns([
     { runId: args.runId, role: 'addressed' },
   ]);
@@ -748,8 +925,48 @@ async function releaseTerminalTarget(args: {
     reason: 'terminal_release_refused',
     code: sessionRefusalCode(released),
     message: released.message,
-    recovery: 'retryable',
+    recovery: sessionRefusalRecovery(released),
   };
+}
+
+/**
+ * Attempt a terminal-at-activation release, then preserve the terminal's owed
+ * upward propagation even when that release refuses.
+ *
+ * A permanent recovery requirement is not hidden behind a retryable
+ * propagation refusal. Otherwise the propagation refusal is the more specific
+ * composition result and outranks the release refusal; both diagnostics have
+ * already been delivered through the gated sink.
+ *
+ * @param args - Terminal run, session service, gated sink, and propagation port.
+ * @param args.sessionService - Service that releases the terminal run's session ownership.
+ * @param args.runId - Terminal run to release and propagate.
+ * @param args.source - Durable provenance for the terminal being propagated.
+ * @param args.sink - Gated observation sink for release diagnostics.
+ * @param args.propagateTerminal - Frontend callable for owed upward propagation.
+ * @returns The refusal that wins composition, or null when release committed.
+ */
+async function releaseThenPropagateTerminal(args: {
+  readonly sessionService: SessionService;
+  readonly runId: RunId;
+  readonly source: TerminalPropagationSource;
+  readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
+  readonly propagateTerminal: TerminalPropagation;
+}): Promise<RunProgressionOutcome | null> {
+  const refusedRelease = await releaseTerminalTarget(args);
+  if (refusedRelease === null) return null;
+
+  const propagated = await args.propagateTerminal({
+    runId: args.runId,
+    source: args.source,
+    sink: args.sink,
+  });
+  if (propagated.kind !== 'refused') return refusedRelease;
+
+  const propagationRefusal = propagationRefusalOutcome(propagated);
+  return refusedRelease.recovery === 'permanent' && propagated.recovery !== 'permanent'
+    ? refusedRelease
+    : propagationRefusal;
 }
 
 /**
@@ -766,7 +983,7 @@ async function releaseTerminalTarget(args: {
  *   terminal discovered by this reload committed concurrently and has not been
  *   propagated, so it is handed to the callable before being reported. This is
  *   the healing pass the old collect path performed unconditionally after its
- *   loop.
+ *   activation.
  *
  * @param args - Manager, run, sink, wait reason, and the optional propagation posture.
  * @param args.manager - State manager used to reload the durable state.
@@ -795,6 +1012,7 @@ async function outcomeFromDurableState(args: {
       return concludeTerminal({
         runId: args.runId,
         terminal,
+        source: terminalPropagationSourceFromState(state),
         propagateTerminal: args.propagateTerminal,
         sink: args.sink,
       });
@@ -922,6 +1140,26 @@ function gateObservationDelivery(
 }
 
 /**
+ * Whether a freshly captured row is semantically the row whose progression
+ * intent and command input were selected.
+ *
+ * Every persisted field that can affect cursor selection, completion priority,
+ * template expansion, command input, or machine hydration participates. Only
+ * `updatedAt` is ignored: it is persistence bookkeeping, so a writer that
+ * rewrote an otherwise identical row does not invalidate the selected effect.
+ *
+ * @param selected - The state whose machine output selected the command.
+ * @param captured - The state atomically captured immediately before the effect.
+ * @returns Whether the captured row still supports the selected command effect.
+ */
+function isSameProgressionSelectionState(selected: RunbookState, captured: RunbookState): boolean {
+  return isDeepStrictEqual(
+    { ...selected, updatedAt: undefined },
+    { ...captured, updatedAt: undefined },
+  );
+}
+
+/**
  * Activate Run Progression for one run under one verified authority.
  *
  * Drives machine-selected fenced turns — resolved-completion application,
@@ -943,6 +1181,7 @@ function gateObservationDelivery(
  *
  * @param authority - The verified, run-bound authority for every mutating turn.
  * @param deps - Services, steps, sink, and frontend effect callables.
+ * @param entryBoundary - Observation state of the transition that entered progression.
  * @returns The closed progression outcome.
  * @throws {Error} If a core service throws on invalid persisted state, a
  *   programming invariant, or an unknown defect — deliberately not normalized
@@ -954,9 +1193,10 @@ function gateObservationDelivery(
 export async function activateRunProgression(
   authority: RunProgressionAuthority,
   deps: RunProgressionDeps,
+  entryBoundary: RunProgressionEntryBoundary = { kind: 'resume' },
 ): Promise<RunProgressionOutcome> {
   try {
-    return await driveProgression(authority, deps);
+    return await driveProgression(authority, deps, entryBoundary);
   } catch (error) {
     if (error instanceof ObservationDeliveryError) {
       // The sink's thrown cause is arbitrary frontend code — the exact
@@ -982,18 +1222,24 @@ export async function activateRunProgression(
  *
  * @param authority - The verified, run-bound authority for every mutating turn.
  * @param deps - Services, steps, sink, and frontend effect callables.
+ * @param entryBoundary - Observation state of the transition that entered progression.
  * @returns The closed progression outcome.
  */
 async function driveProgression(
   authority: RunProgressionAuthority,
   deps: RunProgressionDeps,
+  entryBoundary: RunProgressionEntryBoundary,
 ): Promise<RunProgressionOutcome> {
-  const { manager, actorService, sessionService, actorMutationRunner, steps } = deps;
+  const { manager, actorService, sessionService, actorMutationRunner } = deps;
   const runId = authority.runId;
   const sink = gateObservationDelivery(deps.sink, runId);
 
   const state = await manager.load(runId);
   if (!state) {
+    return runMissingRefusal(runId, sink);
+  }
+  const steps = await deps.loadSteps(state);
+  if (!(await actorService.assertFreshState(runId, steps))) {
     return runMissingRefusal(runId, sink);
   }
   const prompted = state.prompted;
@@ -1004,118 +1250,176 @@ async function driveProgression(
   const stepsArray = [...steps];
   const totalSteps = countNumberedSteps(stepsArray);
   let currentState: RunbookState = state;
+  const conclude = (
+    terminal: 'completed' | 'stopped',
+    source: TerminalPropagationSource,
+  ): Promise<RunProgressionOutcome> =>
+    concludeTerminal({
+      runId,
+      terminal,
+      source,
+      propagateTerminal: deps.propagateTerminal,
+      sink,
+    });
+  const releaseTerminal = (
+    source: TerminalPropagationSource,
+  ): Promise<RunProgressionOutcome | null> =>
+    releaseThenPropagateTerminal({
+      sessionService,
+      runId,
+      source,
+      sink,
+      propagateTerminal: deps.propagateTerminal,
+    });
+  const durableOutcome = (
+    runningReason: RunProgressionWaitReason,
+    propagation: 'owed' | 'settled' = 'owed',
+  ): Promise<RunProgressionOutcome> =>
+    outcomeFromDurableState({
+      manager,
+      runId,
+      sink,
+      runningReason,
+      ...(propagation === 'owed' ? { propagateTerminal: deps.propagateTerminal } : {}),
+    });
+
+  if (
+    entryBoundary.kind === 'after_observed_transition' &&
+    entryBoundary.lifecycle !== 'running' &&
+    entryBoundary.lifecycle !== currentState.lifecycle
+  ) {
+    throw new Error(
+      `Run ${runId} entered progression after an observed ${entryBoundary.lifecycle} transition but durable lifecycle is ${String(currentState.lifecycle)}`,
+    );
+  }
+
+  const terminalIngressAlreadyObserved =
+    entryBoundary.kind === 'after_observed_transition' &&
+    entryBoundary.lifecycle !== 'running' &&
+    entryBoundary.lifecycle === currentState.lifecycle;
+  let terminalIngressSource = terminalPropagationSourceFromState(currentState);
+  if (
+    entryBoundary.kind === 'after_observed_transition' &&
+    entryBoundary.lifecycle !== 'running' &&
+    entryBoundary.lifecycle === currentState.lifecycle
+  ) {
+    terminalIngressSource = entryBoundary.source;
+  }
 
   // A run already terminal at activation is reported, released, and
   // propagated — never re-driven. Restoration stays inert; this reporting is
   // the explicit activation's first (and only) turn for such a run.
   if (currentState.lifecycle === 'stopped') {
+    if (terminalIngressAlreadyObserved) {
+      return conclude('stopped', terminalIngressSource);
+    }
     emitTerminalAtActivation({ sink, steps, state: currentState, terminal: 'stopped' });
-    const refusedRelease = await releaseTerminalTarget({ sessionService, runId, sink });
+    const refusedRelease = await releaseTerminal(terminalIngressSource);
     if (refusedRelease) {
       // The release refused (a held execution lease), but the terminal is
       // durable and the parent advance targets a DIFFERENT run, so propagation
       // is not blocked by the lease. The old collect path's unconditional
-      // post-loop propagation ran here; dropping it would strand a waiting
+      // post-drive propagation ran here; dropping it would strand a waiting
       // parent behind a refusal whose remedy names only the release.
       //
-      // When propagation ALSO refuses, the propagation refusal is the outcome:
-      // the release refusal is always retryable contention whose remedy —
-      // re-activate once the lease clears — retries the propagation too, while
-      // the propagation refusal may be permanent, and hiding it behind
-      // `retryable` would tell an orchestrator to spin on a composition whose
-      // real failure never reaches any machine-readable outcome (#853 review
-      // F5). Both conditions' diagnostics stream either way — the release's
-      // through this sink above, the propagation's from the callable.
-      const propagated = await deps.propagateTerminal({ runId, sink });
-      if (propagated.kind === 'refused') {
-        return propagationRefusalOutcome(runId, propagated);
-      }
+      // `releaseTerminal` also preserves the owed upward propagation and ranks
+      // coincident refusals without assuming every release refusal is retryable.
       return refusedRelease;
     }
-    return concludeTerminal({
-      runId,
-      terminal: 'stopped',
-      propagateTerminal: deps.propagateTerminal,
-      sink,
-    });
+    return conclude('stopped', terminalIngressSource);
   }
   if (currentState.lifecycle === 'completed') {
-    // Release BEFORE announcing completion, as the loop always has: a refused
+    if (terminalIngressAlreadyObserved) {
+      return conclude('completed', terminalIngressSource);
+    }
+    // Release BEFORE announcing completion, as progression always has: a refused
     // release leaves the run targeted, and a stream that already announced
     // RUNBOOK_COMPLETED would assert a clean finish the outcome contradicts.
-    const refusedRelease = await releaseTerminalTarget({ sessionService, runId, sink });
+    const refusedRelease = await releaseTerminal(terminalIngressSource);
     if (refusedRelease) {
-      // Same composition as the stopped arm above: the durable terminal still
-      // owes its parent the advance, and a refused advance outranks the
-      // retryable release refusal in the outcome.
-      const propagated = await deps.propagateTerminal({ runId, sink });
-      if (propagated.kind === 'refused') {
-        return propagationRefusalOutcome(runId, propagated);
-      }
       return refusedRelease;
     }
     emitTerminalAtActivation({ sink, steps, state: currentState, terminal: 'completed' });
-    return concludeTerminal({
-      runId,
-      terminal: 'completed',
-      propagateTerminal: deps.propagateTerminal,
-      sink,
-    });
+    return conclude('completed', terminalIngressSource);
   }
+
+  let progressionFeedback: RunProgressionMachineFeedback = { kind: 'activation' };
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
   while (true) {
     const currentStep = findStepOrThrow(steps, currentState.step, currentState.id);
     const currentUnit = resolveCurrentExecutionUnit(currentStep, currentState.substep);
 
-    // Turn: apply resolved completions, one fenced commit each.
-    const drained = await drainResolvedCompletionsPass({
-      completionService,
-      sink,
-      runId,
-      steps,
+    // The existing compiled machine selects whether completion application is
+    // the next fenced turn. The runtime only reads that typed intent and
+    // mechanically executes ONE application before returning to the machine.
+    const progressionIntent = actorService.selectRunProgressionIntent(
       currentState,
-      authority,
-    });
-    if (drained.status === 'done' || drained.status === 'stopped') {
-      // The apply that carried the run terminal committed its Run Release in
-      // the same transaction; nothing further is owed here but propagation.
-      return concludeTerminal({
-        runId,
-        terminal: drained.status === 'done' ? 'completed' : 'stopped',
-        propagateTerminal: deps.propagateTerminal,
+      steps,
+      progressionFeedback,
+    );
+    progressionFeedback = { kind: 'activation' };
+    if (progressionIntent.kind === 'apply_completion') {
+      const completionTurn = await applyMachineSelectedCompletionTurn({
+        completionService,
+        manager,
         sink,
+        runId,
+        steps,
+        authority,
       });
+      if (completionTurn.kind === 'terminal') {
+        // Either this selected apply committed terminal + Run Release, or an
+        // authoritative reload found that a competing apply already did. In
+        // both cases the turn carries durable result provenance and only
+        // upward propagation remains; observation belongs solely to the
+        // process whose apply committed.
+        return conclude(completionTurn.intent.kind, completionTurn.source);
+      }
+      if (completionTurn.kind === 'missing') {
+        return runMissingRefusal(runId, sink);
+      }
+      currentState = completionTurn.state;
+      if (completionTurn.kind === 'feedback') {
+        progressionFeedback = completionTurn.feedback;
+      }
+      continue;
     }
-    if (drained.status === 'refused') {
-      // A diagnosed refusal of this continuation: the persisted completion is
-      // not for the active cursor. Nothing was applied and the run keeps its
-      // lifecycle, so this is a refusal outcome — not a stop (#802, #849).
+
+    if (progressionIntent.kind === 'waiting') {
+      // Waiting is the only machine intent whose turn performs no effect. Use
+      // that inert boundary for one authoritative stability read: a completion
+      // (or any other progression-relevant state) committed after selection
+      // must be selected now, not left queued behind a stale waiting hand-back.
+      const durable = await manager.load(runId);
+      if (!durable) return runMissingRefusal(runId, sink);
+      if (durable.lifecycle === 'completed' || durable.lifecycle === 'stopped') {
+        return conclude(durable.lifecycle, terminalPropagationSourceFromState(durable));
+      }
+      if (!isSameProgressionSelectionState(currentState, durable)) {
+        currentState = durable;
+        continue;
+      }
+      return { kind: 'waiting', runId, reason: progressionIntent.reason };
+    }
+
+    if (progressionIntent.kind === 'refused') {
+      const completionContention = progressionIntent.reason === 'completion_not_committed';
+      const code = completionContention
+        ? TRANSACTIONAL_REFUSAL_CODE_BY_KIND.concurrent_modification
+        : COMPLETION_TARGET_MISMATCH_CODE;
       sink.emit({
         type: 'ERROR_OCCURRED',
-        payload: { message: drained.message, code: COMPLETION_TARGET_MISMATCH_CODE },
+        payload: { message: progressionIntent.message, code },
       });
       return {
         kind: 'refused',
         runId,
-        reason: 'completion_target_mismatch',
-        code: COMPLETION_TARGET_MISMATCH_CODE,
-        message: drained.message,
-        recovery: 'permanent',
+        reason: progressionIntent.reason,
+        code,
+        message: progressionIntent.message,
+        recovery: completionContention ? 'retryable' : 'permanent',
       };
-    }
-    if (drained.status === 'not_active') {
-      return outcomeFromDurableState({
-        manager,
-        runId,
-        sink,
-        runningReason: 'completion_frame_inactive',
-        propagateTerminal: deps.propagateTerminal,
-      });
-    }
-    if (drained.applied > 0) {
-      currentState = drained.state;
-      continue;
     }
 
     const cursorIsOnSubstep = 'id' in currentUnit;
@@ -1218,30 +1522,24 @@ async function driveProgression(
     // path the seam's consume already committed, so acting on an intent here
     // would launch a child the re-entry never armed.
     if (reentry.status === 'none' && entered.kind === 'inline-launch') {
-      const dispatched = await deps.dispatchInlineChild({ intent: entered.launch, prompted, sink });
+      const dispatched = await deps.dispatchInlineChild({
+        intent: entered.launch,
+        prompted,
+        steps,
+        sink,
+      });
       switch (dispatched.kind) {
         case 'waiting':
-          return outcomeFromDurableState({
-            manager,
-            runId,
-            sink,
-            runningReason: 'inline_child_active',
-            propagateTerminal: deps.propagateTerminal,
-          });
+          return durableOutcome('inline_child_active');
         case 'flow_back_complete':
           // Flow-back already drove this run's progression, including any
           // propagation and release its terminal owed — no propagateTerminal
           // here, or a linked terminal would advance its parent twice.
-          return outcomeFromDurableState({
-            manager,
-            runId,
-            sink,
-            runningReason: 'inline_flow_back_settled',
-          });
+          return durableOutcome('inline_flow_back_settled', 'settled');
         case 'flow_back_refused':
           return {
             kind: 'refused',
-            runId,
+            runId: dispatched.runId,
             reason: 'inline_flow_back_refused',
             ...(dispatched.code !== undefined ? { code: dispatched.code } : {}),
             message:
@@ -1259,43 +1557,30 @@ async function driveProgression(
             recovery: dispatched.recovery,
           };
         case 'child_terminal': {
-          if (dispatched.status === 'stopped') {
-            const durable = await manager.load(runId);
-            if (durable && durable.lifecycle !== 'completed' && durable.lifecycle !== 'stopped') {
-              // The child genuinely launched and ran to a stopped terminal, but
-              // no linkage drove flow-back, so the composing run cannot
-              // advance. Fail closed: `waiting` would report a composition at
-              // rest that is actually wedged. The child's own diagnostics
-              // already streamed from its execution, but the WEDGE is diagnosed
-              // here and nowhere else, so its guidance must reach the stream
-              // too (#853 review F2) — this refusal flips the exit code, and an
-              // exit-flipping refusal with no diagnostic leaves success-shaped
-              // output beside a failure exit. Recovery is explicit action on
-              // the child, not a retry of this continuation.
-              const wedgeMessage = `Inline child of run ${runId} stopped without linked flow-back; inspect the child run, then finish, stop, or prune it before re-running`;
-              sink.emit({
-                type: 'ERROR_OCCURRED',
-                payload: { message: wedgeMessage, code: ErrorCodes.LAUNCH_FAILED.code },
-              });
-              return {
-                kind: 'refused',
-                runId,
-                reason: 'inline_child_stopped',
-                code: ErrorCodes.LAUNCH_FAILED.code,
-                message: wedgeMessage,
-                recovery: 'permanent',
-              };
-            }
+          const durable = await manager.load(runId);
+          if (durable && durable.lifecycle !== 'completed' && durable.lifecycle !== 'stopped') {
+            // A terminal child without flow-back leaves the composing run unable
+            // to advance, regardless of which terminal the child reached.
+            // Reporting `waiting` would hide a permanent wedge. The child stream
+            // already announced its terminal; this diagnostic names the missing
+            // linkage and prescribes explicit recovery.
+            const wedgeMessage = `Inline child of run ${runId} ${dispatched.status} without linked flow-back; inspect the child run, then finish, stop, or prune it before re-running`;
+            sink.emit({
+              type: 'ERROR_OCCURRED',
+              payload: { message: wedgeMessage, code: ErrorCodes.LAUNCH_FAILED.code },
+            });
+            return {
+              kind: 'refused',
+              runId,
+              reason: 'inline_child_unlinked',
+              code: ErrorCodes.LAUNCH_FAILED.code,
+              message: wedgeMessage,
+              recovery: 'permanent',
+            };
           }
           // No flow-back occurred for this arm, so a terminal discovered on the
           // reload still owes its parent the advance — propagation posture on.
-          return outcomeFromDurableState({
-            manager,
-            runId,
-            sink,
-            runningReason: 'inline_child_active',
-            propagateTerminal: deps.propagateTerminal,
-          });
+          return durableOutcome('inline_child_active');
         }
         default: {
           const _exhaustive: never = dispatched;
@@ -1307,24 +1592,28 @@ async function driveProgression(
     }
 
     if (entered.kind !== 'runnable') {
-      return outcomeFromDurableState({
-        manager,
-        runId,
-        sink,
-        runningReason: 'awaiting_input',
-        propagateTerminal: deps.propagateTerminal,
-      });
+      progressionFeedback = { kind: 'awaiting_input' };
+      continue;
     }
 
     // Turn: one fenced command execution — capture, lease, effect, commit —
     // under this activation's one authority.
     const { code: expandedCommandCode, displayCommand, rdInjected } = entered.command;
     let previousState = currentState;
-    const fencedCommand = await actorMutationRunner.run({
+    const fencedCommand = await actorMutationRunner.run<RunbookState>({
       runId,
       ...(authority.claimKey !== undefined ? { claimKey: authority.claimKey } : {}),
       makeRecoveryActor: (recoveryState) =>
         actorService.createRecoveryActor(recoveryState, stepsArray),
+      // The command intent and its expanded input were derived from
+      // `currentState`. Capture is the first place that can prove no writer
+      // changed that row after selection. A changed row returns before lease
+      // acquisition/mark-effect, so activation can ask the compiled machine
+      // again without executing or recovering an ambiguous side effect.
+      beforeEffect: (capturedState) =>
+        isSameProgressionSelectionState(currentState, capturedState)
+          ? { kind: 'continue' as const }
+          : { kind: 'return' as const, value: capturedState },
       terminalRelease: { role: 'addressed' },
       compute: async (capturedState) => {
         previousState = capturedState;
@@ -1346,6 +1635,18 @@ async function driveProgression(
         return { ...prepared, previousState };
       },
     });
+    if (fencedCommand.kind === 'pre_effect_return') {
+      currentState = fencedCommand.value;
+      if (currentState.lifecycle === 'completed' || currentState.lifecycle === 'stopped') {
+        // A competing addressed transition can commit terminal + Run Release
+        // before this command's capture. Addressed release preserves Terminal
+        // Evidence, so capture succeeds but the selected command is stale. No
+        // effect ran: converge on the durable terminal instead of asking a
+        // terminal snapshot for another non-terminal machine intent.
+        return durableOutcome('awaiting_input');
+      }
+      continue;
+    }
     if (fencedCommand.kind !== 'committed') {
       // The fence refused: no terminal was committed, the run stays running
       // and targeted. The refusal is observed and returned — never rendered as
@@ -1382,7 +1683,7 @@ async function driveProgression(
 
     if (commandOutput?.kind !== 'completed') {
       // The command produced no completion (policy denial, capture failure).
-      // Emit the same terminal projection the loop derived, then report the
+      // Emit the same terminal projection the former driver derived, then report the
       // committed lifecycle rather than a blanket stop.
       const observation = deriveTransitionObservation({
         steps,
@@ -1402,44 +1703,17 @@ async function driveProgression(
         }
       }
       if (cmdSync.state.lifecycle === 'stopped') {
-        return concludeTerminal({
-          runId,
-          terminal: 'stopped',
-          propagateTerminal: deps.propagateTerminal,
-          sink,
-        });
+        return conclude('stopped', terminalPropagationSourceFromState(cmdSync.state));
       }
       if (cmdSync.state.lifecycle === 'completed') {
-        return concludeTerminal({
-          runId,
-          terminal: 'completed',
-          propagateTerminal: deps.propagateTerminal,
-          sink,
-        });
+        return conclude('completed', terminalPropagationSourceFromState(cmdSync.state));
       }
-      // Committed, still running, and no command output: the fenced
-      // EXECUTE_COMMAND landed on a state that never ran the command invoke —
-      // the run advanced concurrently between the entry seam's `runnable`
-      // classification and the fence's re-capture. Fail closed as a retryable
-      // refusal, never a silent `waiting`: the replaced loop exited non-zero
-      // here, and a clean exit would report success for a turn that did not
-      // perform its command.
-      const anomalyMessage = `Run ${runId} committed a fenced command turn without a command result; the run advanced concurrently — retry`;
-      sink.emit({
-        type: 'ERROR_OCCURRED',
-        payload: {
-          message: anomalyMessage,
-          code: TRANSACTIONAL_REFUSAL_CODE_BY_KIND.concurrent_modification,
-        },
-      });
-      return {
-        kind: 'refused',
-        runId,
-        reason: 'command_result_missing',
-        code: TRANSACTIONAL_REFUSAL_CODE_BY_KIND.concurrent_modification,
-        message: anomalyMessage,
-        recovery: 'retryable',
-      };
+      // A committed, still-running turn without command output violates the
+      // command actor's contract. The fence already committed, so no observed
+      // refusal can prove contention caused it; relabeling every deterministic
+      // defect as concurrent modification invites an infinite retry loop. Keep
+      // programming invariants outside the closed outcome as ADR 0003 requires.
+      throw new Error(`Run ${runId} committed a fenced command turn without a command result`);
     }
 
     const transitionResult = applyTransitionObservation({
@@ -1453,19 +1727,15 @@ async function driveProgression(
       command: displayCommand,
     });
     if (transitionResult.status === 'done') {
-      return concludeTerminal({
-        runId,
-        terminal: 'completed',
-        propagateTerminal: deps.propagateTerminal,
-        sink,
+      return conclude('completed', {
+        kind: 'explicit-result',
+        result: commandOutput.result,
       });
     }
     if (transitionResult.status === 'stopped') {
-      return concludeTerminal({
-        runId,
-        terminal: 'stopped',
-        propagateTerminal: deps.propagateTerminal,
-        sink,
+      return conclude('stopped', {
+        kind: 'explicit-result',
+        result: commandOutput.result,
       });
     }
     // The fenced commit released this run on `state.lifecycle`; when only the
@@ -1485,11 +1755,9 @@ async function driveProgression(
           result: commandOutput.result,
         }),
       );
-      return concludeTerminal({
-        runId,
-        terminal: terminalStatus,
-        propagateTerminal: deps.propagateTerminal,
-        sink,
+      return conclude(terminalStatus, {
+        kind: 'explicit-result',
+        result: commandOutput.result,
       });
     }
     currentState = transitionResult.state;

@@ -1059,7 +1059,11 @@ describe('gotoResultRequiresFailureExit', () => {
     const result: OkResult = {
       ok: true,
       loopResult: 'done',
-      propagation: { kind: 'inline-advanced', result: 'stopped' },
+      propagation: {
+        kind: 'inline-advanced',
+        parentRunId: DEFAULT_RUNBOOK_ID,
+        result: 'stopped',
+      },
     };
     expect(gotoResultRequiresFailureExit(result)).toBe(true);
   });
@@ -1068,7 +1072,11 @@ describe('gotoResultRequiresFailureExit', () => {
     const result: OkResult = {
       ok: true,
       loopResult: 'done',
-      propagation: { kind: 'inline-advanced', result: 'blocked' },
+      propagation: {
+        kind: 'inline-advanced',
+        parentRunId: DEFAULT_RUNBOOK_ID,
+        result: 'blocked',
+      },
     };
     expect(gotoResultRequiresFailureExit(result)).toBe(true);
   });
@@ -1077,7 +1085,11 @@ describe('gotoResultRequiresFailureExit', () => {
     const result: OkResult = {
       ok: true,
       loopResult: 'done',
-      propagation: { kind: 'inline-advanced', result: 'handled' },
+      propagation: {
+        kind: 'inline-advanced',
+        parentRunId: DEFAULT_RUNBOOK_ID,
+        result: 'handled',
+      },
     };
     expect(gotoResultRequiresFailureExit(result)).toBe(false);
   });

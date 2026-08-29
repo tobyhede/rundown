@@ -867,7 +867,11 @@ export async function launchInlineChildFromIntent({
       commandStreamOptions,
       parentDelegationRuntime,
     });
-    return dispatchResultFromFlowBack(propagated.status, propagated.refusal);
+    return dispatchResultFromFlowBack(
+      propagated.status,
+      parentLinkage.parentRunId,
+      propagated.refusal,
+    );
   }
 
   const { resolveRunbookRef } = await import('../helpers/resolve-runbook.js');
@@ -1019,10 +1023,14 @@ export async function launchInlineChildFromIntent({
       commandStreamOptions,
       parentDelegationRuntime,
     });
-    return dispatchResultFromFlowBack(propagated.status, propagated.refusal);
+    return dispatchResultFromFlowBack(
+      propagated.status,
+      parentLinkage.parentRunId,
+      propagated.refusal,
+    );
   }
 
-  return dispatchResultFromFlowBack(launchResult.loopResult);
+  return dispatchResultFromFlowBack(launchResult.loopResult, parentLinkage.parentRunId);
 }
 
 /**
@@ -1055,6 +1063,7 @@ export const CONTENTION_LAUNCH_CODES: ReadonlySet<string> = new Set([
  * becomes the degenerate `child_terminal` arm.
  *
  * @param status - The child loop or flow-back conclusion.
+ * @param composingRunId - The composing run that refused when no deeper typed refusal exists.
  * @param refusal - The preserved refusal identity, when a typed refusal is what
  *   blocked the flow-back. Carried onto the `flow_back_refused` arm so the
  *   refusing condition keeps its code and boundary-derived recovery; absent for
@@ -1064,6 +1073,7 @@ export const CONTENTION_LAUNCH_CODES: ReadonlySet<string> = new Set([
  */
 function dispatchResultFromFlowBack(
   status: ExecutionLoopStatus,
+  composingRunId: RunId,
   refusal?: InlinePropagationRefusalDetail,
 ): InlineChildDispatchResult {
   switch (status) {
@@ -1073,9 +1083,10 @@ function dispatchResultFromFlowBack(
       return { kind: 'flow_back_complete' };
     case 'blocked':
       return refusal === undefined
-        ? { kind: 'flow_back_refused', recovery: 'permanent' }
+        ? { kind: 'flow_back_refused', runId: composingRunId, recovery: 'permanent' }
         : {
             kind: 'flow_back_refused',
+            runId: refusal.runId,
             code: refusal.code,
             message: refusal.message,
             recovery: refusal.recovery,
@@ -1095,8 +1106,8 @@ function dispatchResultFromFlowBack(
  * Map a launch span's dispatch result back onto the legacy loop status.
  *
  * The inverse boundary translation for the five entry paths still driving
- * {@link runExecutionLoop}: refusals collapse to `stopped` (their diagnostics
- * already streamed), exactly as the span reported before it was typed.
+ * {@link runExecutionLoop}. This compatibility boundary cannot preserve typed
+ * refusal identity because the legacy status union has no refusal arm.
  *
  * @param result - The launch span's typed conclusion.
  * @returns The status the legacy loop propagates.
@@ -1111,6 +1122,10 @@ function executionLoopStatusFromDispatch(result: InlineChildDispatchResult): Exe
     case 'flow_back_refused':
       return 'blocked';
     case 'launch_refused':
+      // Transitional debt owned by #856: an activation-launched inline child
+      // still enters runExecutionLoop, so a nested launch refusal is flattened
+      // to its legacy STOP sentinel here. #856 replaces the nested driver with
+      // Run Progression and carries the typed refusal through upward flow-back.
       return 'stopped';
     case 'child_terminal':
       return result.status === 'completed' ? 'done' : 'stopped';

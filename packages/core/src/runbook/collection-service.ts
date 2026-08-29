@@ -846,22 +846,25 @@ async function prepareCollection(
       // Placeholder: the real observations can only be derived from committed
       // state, so `finishCollection` fills this in after the commit lands.
       ...(reentry.status === 'projected' ? { reEntryObservations: [] } : {}),
-      // The target is still running, so the frontend drives a continuation for
-      // it. That continuation can step INTO a DELEGATE frontier, where
-      // machine-owned issuance needs a verified issuer, and the turn after needs
-      // the same-issuer deriver. Both are this collector's verified authority
-      // over THIS run — runtime-only closures, never persisted, and carried only
-      // on the non-terminal arm (a terminal target drives no continuation).
-      delegationRuntime,
-      // The continuation's one run-bound authority (#851). Minted here — the
-      // point the collector's bearer was verified — and deliberately WITHOUT a
-      // claimKey: the follow-on's fenced command turn keeps the bare
-      // run-authority capture the pre-migration loop performed, so the fence
-      // semantics (and the #849 capture window) are unchanged by the migration.
-      progressionAuthority: mintRunProgressionAuthority({
-        runId: targetRunId,
-        delegationRuntime,
-      }),
+      // Core decides continuation explicitly. A projected frontier was already
+      // entered and consumed by this collection, so activating again would
+      // duplicate entry. Ordinary running outcomes carry the one run-bound
+      // authority minted from the collector core just verified.
+      progression:
+        reentry.status === 'projected'
+          ? { kind: 'none' }
+          : {
+              kind: 'activate',
+              authority: mintRunProgressionAuthority({
+                runId: targetRunId,
+                delegationRuntime,
+              }),
+              runbook: drained.state.runbook,
+              entryBoundary: {
+                kind: 'after_observed_transition',
+                lifecycle: 'running',
+              },
+            },
     },
   };
 }

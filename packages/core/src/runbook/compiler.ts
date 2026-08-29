@@ -16,6 +16,7 @@ import type {
   RunId,
   ExecutionRecoveryReason,
   ExecutionRecoveryEvent,
+  RunbookState,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
 import {
@@ -104,7 +105,10 @@ import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
 import { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
 import type { ParentLinkage, PersistedDelegateFrontierEntry } from './types.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
-import type { CurrentCursorResolvedCompletion } from './completion-service.js';
+import {
+  hasApplicableRunProgressionCompletion,
+  type CurrentCursorResolvedCompletion,
+} from './completion-service.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import {
   clearAggregationRetryOnExhaustion,
@@ -164,6 +168,46 @@ export const RECOVERY_REQUIRED_STATE_NAME = 'recoveryRequired' as const;
  */
 export interface RunbookMachineOutput {
   readonly finalVars: Readonly<Record<string, VariableValue>>;
+  /** Terminal progression decision made by the machine state that ended the run. */
+  readonly progression: { readonly kind: 'completed' | 'stopped' };
+}
+
+/**
+ * Result of the immediately preceding mechanically-executed progression turn.
+ *
+ * `completion_*` feedback closes #854's machine-owned completion decision.
+ * `awaiting_input` is deliberately transitional: until #857 migrates fresh,
+ * prompted, and command resolution, the runtime classifies a non-runnable
+ * execution-unit entry and the machine closes that classification into its
+ * typed waiting intent. It is not evidence that XState chose the entry turn.
+ */
+export type RunProgressionMachineFeedback =
+  | { readonly kind: 'activation' }
+  | { readonly kind: 'awaiting_input' }
+  | { readonly kind: 'completion_not_committed'; readonly message: string }
+  | {
+      readonly kind: 'completion_target_mismatch';
+      readonly message: string;
+    };
+
+/** Closed next action selected by the compiled machine for one progression turn. */
+export type RunProgressionMachineIntent =
+  | { readonly kind: 'apply_completion' }
+  | { readonly kind: 'continue' }
+  | {
+      readonly kind: 'waiting';
+      readonly reason: 'awaiting_input';
+    }
+  | {
+      readonly kind: 'refused';
+      readonly reason: 'completion_target_mismatch' | 'completion_not_committed';
+      readonly message: string;
+    };
+
+/** Typed intent emitted by a progression decision state. */
+export interface RunProgressionMachineIntentEvent {
+  readonly type: 'RUN_PROGRESSION_INTENT';
+  readonly intent: RunProgressionMachineIntent;
 }
 
 interface StoreInlineLaunchIntentParams {
@@ -444,6 +488,7 @@ const baseRunbookSetup = setup({
     context: {} as RunbookContext,
     events: {} as RunbookEvent,
     output: {} as RunbookMachineOutput,
+    emitted: {} as RunProgressionMachineIntentEvent,
     tags: {} as
       | typeof PENDING_MACHINE_EFFECT_TAG
       | typeof PENDING_COMMAND_EXECUTION_TAG
@@ -983,6 +1028,11 @@ export const LEAF_SUBSTATES = [
   '__resolve-iteration',
   '__issue-delegations',
   '__prepare-inline-launch',
+  '__progression-apply-completion',
+  '__progression-continue',
+  '__progression-waiting-input',
+  '__progression-refused-completion',
+  '__progression-refused-contention',
 ] as const;
 
 /** Child state names owned by a compiled execution-unit leaf. */
@@ -1171,6 +1221,14 @@ export type RunbookEvent =
   | { type: 'FORCE_STOP'; message?: string }
   | { type: 'FORCE_COMPLETE'; message?: string }
   | { type: 'SET_VARIABLES'; vars: Record<string, VariableValue> }
+  | {
+      /** Explicitly ask this compiled machine which progression turn comes next. */
+      type: 'SELECT_RUN_PROGRESSION';
+      /** Exact durable state loaded by the activation for this machine snapshot. */
+      state: RunbookState;
+      /** Result of the prior selected turn, or the initial activation marker. */
+      feedback: RunProgressionMachineFeedback;
+    }
   | { type: 'DELEGATE_FRONTIER_CONSUMED' }
   | { type: 'INLINE_LAUNCH_CONSUMED' }
   | {
@@ -5036,6 +5094,37 @@ export function compileRunbookToMachine(
           : {}),
         idle: {
           on: {
+            SELECT_RUN_PROGRESSION: [
+              {
+                guard: ({ event }) => {
+                  assertEvent(event, 'SELECT_RUN_PROGRESSION');
+                  return event.feedback.kind === 'completion_target_mismatch';
+                },
+                target: `#${config.id}.__progression-refused-completion`,
+              },
+              {
+                guard: ({ event }) => {
+                  assertEvent(event, 'SELECT_RUN_PROGRESSION');
+                  return event.feedback.kind === 'completion_not_committed';
+                },
+                target: `#${config.id}.__progression-refused-contention`,
+              },
+              {
+                guard: ({ event }) => {
+                  assertEvent(event, 'SELECT_RUN_PROGRESSION');
+                  return event.feedback.kind === 'awaiting_input';
+                },
+                target: `#${config.id}.__progression-waiting-input`,
+              },
+              {
+                guard: ({ event }) => {
+                  assertEvent(event, 'SELECT_RUN_PROGRESSION');
+                  return hasApplicableRunProgressionCompletion(event.state, steps);
+                },
+                target: `#${config.id}.__progression-apply-completion`,
+              },
+              { target: `#${config.id}.__progression-continue` },
+            ],
             // Single unguarded transition. The result discriminant rides through
             // the actor's typed input/output (Task 1) — no context field, no
             // routing guard.
@@ -5047,6 +5136,61 @@ export function compileRunbookToMachine(
             },
             APPLY_CURRENT_RESOLVED_COMPLETION: applyCurrentResolvedCompletionTransitions,
           },
+        },
+        '__progression-apply-completion': {
+          entry: runbookSetup.emit(() => ({
+            type: 'RUN_PROGRESSION_INTENT' as const,
+            intent: { kind: 'apply_completion' as const },
+          })),
+          always: { target: 'idle' },
+        },
+        '__progression-continue': {
+          entry: runbookSetup.emit(() => ({
+            type: 'RUN_PROGRESSION_INTENT' as const,
+            intent: { kind: 'continue' as const },
+          })),
+          always: { target: 'idle' },
+        },
+        '__progression-waiting-input': {
+          entry: runbookSetup.emit(() => ({
+            type: 'RUN_PROGRESSION_INTENT' as const,
+            intent: { kind: 'waiting' as const, reason: 'awaiting_input' as const },
+          })),
+          always: { target: 'idle' },
+        },
+        '__progression-refused-completion': {
+          entry: runbookSetup.emit(({ event }) => {
+            assertEvent(event, 'SELECT_RUN_PROGRESSION');
+            if (event.feedback.kind !== 'completion_target_mismatch') {
+              throw new Error('Completion refusal state entered without mismatch feedback');
+            }
+            return {
+              type: 'RUN_PROGRESSION_INTENT' as const,
+              intent: {
+                kind: 'refused' as const,
+                reason: 'completion_target_mismatch' as const,
+                message: event.feedback.message,
+              },
+            };
+          }),
+          always: { target: 'idle' },
+        },
+        '__progression-refused-contention': {
+          entry: runbookSetup.emit(({ event }) => {
+            assertEvent(event, 'SELECT_RUN_PROGRESSION');
+            if (event.feedback.kind !== 'completion_not_committed') {
+              throw new Error('Completion contention state entered without contention feedback');
+            }
+            return {
+              type: 'RUN_PROGRESSION_INTENT' as const,
+              intent: {
+                kind: 'refused' as const,
+                reason: 'completion_not_committed' as const,
+                message: event.feedback.message,
+              },
+            };
+          }),
+          always: { target: 'idle' },
         },
         '__execute-command': {
           tags: [PENDING_COMMAND_EXECUTION_TAG],
@@ -5364,6 +5508,12 @@ export function compileRunbookToMachine(
       interruptedReason: undefined,
       interruptedStepId: undefined,
     },
+    output: ({ context }) => ({
+      finalVars: context.finalVars,
+      progression: {
+        kind: context.lifecycle === 'stopped' ? ('stopped' as const) : ('completed' as const),
+      },
+    }),
     states: {
       ...states,
       COMPLETE: {
@@ -5374,7 +5524,10 @@ export function compileRunbookToMachine(
             lifecycle: () => 'completed' as const,
           }),
         ],
-        output: ({ context }) => ({ finalVars: context.finalVars }),
+        output: ({ context }) => ({
+          finalVars: context.finalVars,
+          progression: { kind: 'completed' as const },
+        }),
       },
       STOPPED: {
         id: STOPPED_STATE_NAME,
@@ -5385,7 +5538,10 @@ export function compileRunbookToMachine(
             lifecycle: () => 'stopped' as const,
           }),
         ],
-        output: ({ context }) => ({ finalVars: context.finalVars }),
+        output: ({ context }) => ({
+          finalVars: context.finalVars,
+          progression: { kind: 'stopped' as const },
+        }),
       },
     },
   }) satisfies RunbookMachine;

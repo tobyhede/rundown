@@ -267,6 +267,8 @@ export {
   createEffectfulActorMutationRunner,
   type EffectfulActorMutationRunner,
   type EffectfulActorMutationRunnerInput,
+  type PreflightEffectfulActorMutationRunnerInput,
+  type PreEffectActorMutationReturn,
   type EffectfulActorMutationSetRunnerInput,
   type EffectfulActorMutationSetRunnerResult,
   type EffectfulActorMutationSetTarget,
@@ -340,6 +342,8 @@ export {
   type InlineChildDispatchInput,
   type InlineChildDispatchResult,
   type RunProgressionDeps,
+  type RunProgressionDirective,
+  type RunProgressionEntryBoundary,
   type RunProgressionFailureReason,
   type RunProgressionOutcome,
   type RunProgressionRecovery,
@@ -348,6 +352,7 @@ export {
   type TerminalPropagation,
   type TerminalPropagationInput,
   type TerminalPropagationResult,
+  type TerminalPropagationSource,
 } from './run-progression.js';
 export type { RunProgressionAuthority } from './run-progression-authority.js';
 export {
@@ -390,7 +395,6 @@ export {
   type ExplicitDelegationTarget,
   type FindDelegationsByTokenHash,
   type DelegationAbortOutcome,
-  type LifecycleLoopDirective,
   type LifecycleNavigationInput,
   type LifecycleNavigationMutationInput,
   type LifecycleNavigationMutationOutcome,
