@@ -17,6 +17,7 @@ import {
   type CallerEvidence,
   type ClaimLookupKey,
   type EffectfulActorMutationRunner,
+  type EffectfulActorMutationRunnerInput,
   type EffectfulActorMutationSetRunnerInput,
   type InlineUpwardPropagationResult,
   type RunbookState,
@@ -316,7 +317,7 @@ describe('RunbookCollectionService', () => {
    */
   function runnerWithPreCommitEffect(effect: () => Promise<void>): EffectfulActorMutationRunner {
     return {
-      run: (input) => actorMutationRunner.run(input),
+      run: (input: EffectfulActorMutationRunnerInput) => actorMutationRunner.run(input),
       async runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
         return await actorMutationRunner.runAll<TResult>({
           ...input,
@@ -596,6 +597,8 @@ describe('RunbookCollectionService', () => {
     });
     expect(outcome.kind).toBe('collection_applied');
     if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
+    if (outcome.lifecycle !== 'running') throw new Error('expected running collection');
+    expect(outcome.progression.kind).toBe('activate');
     expect(outcome.transitionObservations).toMatchObject([
       {
         type: 'STEP_TRANSITIONED',
@@ -672,7 +675,10 @@ describe('RunbookCollectionService', () => {
     // One BRANDED pair, not two independently optional fields: issuance and
     // derivation are two halves of one verified authority, so the outcome either
     // carries both or neither.
-    const runtime = outcome.progression.authority.delegationRuntime;
+    const runtime =
+      outcome.progression.kind === 'activate'
+        ? outcome.progression.authority.delegationRuntime
+        : undefined;
     if (!runtime) throw new Error('expected delegation capabilities on a running collect');
     const issue = runtime.issueDelegationCredential;
     const derive = runtime.deriveDelegationToken;
@@ -800,14 +806,6 @@ describe('RunbookCollectionService', () => {
     });
     await manager.save(retryState);
 
-    const consumedState = state({ ...retryState, snapshot: { context: {} } });
-    const consumeSpy = jest
-      .spyOn(actorService, 'prepareActorMutation')
-      .mockResolvedValueOnce(preparedMutation(consumedState, { context: {} }));
-    const enterEntrySpy = jest
-      .spyOn(actorService, 'enterExecutionUnit')
-      .mockResolvedValue({ kind: 'awaiting', effects: frontierEffects });
-
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
@@ -830,19 +828,20 @@ describe('RunbookCollectionService', () => {
     expect(outcome.progression).toMatchObject({
       kind: 'activate',
       authority: { runId },
-      entryBoundary: {
-        kind: 'after_observed_transition',
-        lifecycle: 'running',
-      },
+      steps,
     });
-    expect(enterEntrySpy).not.toHaveBeenCalled();
-    expect(consumeSpy).not.toHaveBeenCalled();
     expect(await persistedFrontier(runId)).toEqual([retryA.persisted, retryB.persisted]);
   });
 
-  it('returns no progression directive when the collection commit refuses', async () => {
-    // Collection owns only the completion-domain commit. If that commit loses a
-    // compare-and-swap race, it cannot authorize the separate progression turn.
+  it('discloses no bearers and consumes no frontier when the enclosing commit refuses', async () => {
+    // REPLACES "returns collection_failed without frontier observations when
+    // retry frontier consume fails" and its F6 twin. `consume_failed` is no longer
+    // reachable from collect: the consume is derived, not committed, so it cannot
+    // half-land — the only way it does not reach the store is that the whole
+    // transaction refused. `prepareReEntryFrontierConsume`'s union omits the arm
+    // for exactly that reason. The operator-visible condition the old test named
+    // (projection succeeded, consume did not land, nothing disclosed) survives and
+    // is pinned here against the transactional refusal that now covers it.
     const frameKey = buildFrameKey('1');
     const retry = frontierEntry();
     const target = state({
@@ -2723,7 +2722,7 @@ describe('RunbookCollectionService', () => {
       let captured: EffectfulActorMutationSetRunnerInput<unknown>['makeRecoveryActor'] | undefined;
       const svc = makeCollectionService({
         actorMutationRunner: {
-          run: (input) => actorMutationRunner.run(input),
+          run: (input: EffectfulActorMutationRunnerInput) => actorMutationRunner.run(input),
           async runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
             captured = input.makeRecoveryActor;
             return await actorMutationRunner.runAll<TResult>(input);

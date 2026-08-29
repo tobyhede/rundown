@@ -236,10 +236,10 @@ export type DelegationPolicyOutcome =
        * Collection applied one or more delegation outcomes and left the target
        * running: the frontend drives a Run Progression continuation next.
        *
-       * Split from the terminal arm on `lifecycle` so the continuation's
-       * requirements are unrepresentable-when-absent: a running outcome ALWAYS
-       * carries the verified runtime pair and the minted progression
-       * authority, and the frontend needs no runtime guard for their presence.
+       * Split from the terminal arm on `lifecycle` so a running outcome always
+       * carries core's explicit progression decision. The directive itself
+       * decides whether activation is required; the frontend never infers that
+       * decision from lifecycle or observations.
        */
       readonly kind: 'collection_applied';
       /** Target run that received the collected outcomes. */

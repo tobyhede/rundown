@@ -40,6 +40,7 @@ import type { RunbookStore } from './storage/runbook-store.js';
 import type { ParentAdvanceGuard } from './storage/runbook-store.js';
 import { isOpenDelegatedChildrenError } from './storage/runbook-store.js';
 import type { ActorSyncResult } from './actor-service.js';
+import type { RunbookMachineOutput } from './compiler.js';
 import { getErrorMessage } from '../errors.js';
 import { logger } from '../logger.js';
 
@@ -58,6 +59,8 @@ export interface PreparedActorMutation {
   readonly nextState: RunbookState;
   /** The raw persisted machine snapshot after the transition. */
   readonly snapshot: unknown;
+  /** Final machine output, present only when the transition reached a terminal state. */
+  readonly machineOutput?: RunbookMachineOutput;
   /** Non-persisted execution observations produced while computing. */
   readonly effects: readonly ExecutionObservationEffect[];
 }

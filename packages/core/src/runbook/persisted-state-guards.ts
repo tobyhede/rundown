@@ -56,15 +56,15 @@ import type { RunbookState } from './types.js';
  * (#827) — without moving it (#775). Same-version state from before those
  * fields passed the version gate and was refused later by the shared Zod parse
  * as `schema_validation_failed` (#828). That history explains why a structural
- * fixture now forces the version judgment; it does not describe current v2
+ * fixture now forces the version judgment; it does not describe current v1
  * state. Since this constant is `2`, every v1 row is foreign and is refused by
  * this gate as `invalid_schema_version` before structural parsing.
  *
- * Version `2` records #855's XState-owned Run Progression entry and frontier
- * projection states. Those changes live inside the opaque snapshot and are
+ * Version `2` records #854's XState progression decision states and final
+ * machine output. Those changes live inside the opaque snapshot and are
  * invisible to the Zod structural parse, so the version gate is the only way
- * to refuse a v1 snapshot whose state IDs the current machine does not
- * understand. Per the no-migration rule, development runs restart.
+ * to refuse a v1 snapshot whose state IDs/output contract the current machine
+ * does not understand. Per the no-migration rule, development runs restart.
  *
  * Move this constant when a change to `RunbookState` (`runbook/types.ts`) or
  * `RunbookStateObjectSchema` (`schemas.ts`) is one the Zod structural parse

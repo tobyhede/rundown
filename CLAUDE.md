@@ -153,9 +153,11 @@ codebase used to hold; four rules generalise from it.
   `currentState` is stale by construction, and the compare-and-swap does not
   rescue it: it prevents the lost update while still applying a row selected
   against one version to the cursor of another. `applyNextResolvedCompletion`
-  applies ONE completion and takes no `currentState`; the loop lives in the CLI,
-  which needs it anyway to observe each transition. A change that fixes the
-  write and leaves the parameter has kept the defect.
+  applies ONE completion and takes no `currentState`; core Run Progression asks
+  XState to select each turn, invokes one apply, and synchronously delivers its
+  observation through the frontend-supplied sink before selecting again. The
+  frontend renders those observations; it does not own completion sequencing. A
+  change that fixes the write and leaves the parameter has kept the defect.
 - **Audit the callback for repeatability rather than assuming it.** It re-runs
   once per attempt (up to 8) and must perform no external effect — filesystem
   resolution, dynamic imports, run creation, and emitted warnings all stay
@@ -427,7 +429,7 @@ applies to all run data written to SQLite: structured `RunbookState` fields
 (step, variables, lifecycle, etc.) and the opaque `state.snapshot` blob stored
 inside `RunbookState`. Neither is exempt. Persisted runbook state carries the
 schema version in `CURRENT_SCHEMA_VERSION`
-(`packages/core/src/runbook/persisted-state-guards.ts`, currently `1`); state
+(`packages/core/src/runbook/persisted-state-guards.ts`, currently `2`); state
 with any other schema version or incompatible structure is invalid. On schema
 changes, running runbooks should be completed/closed and restarted. The CLI
 should detect invalid state (via schema version or structural guard) and prompt
@@ -437,16 +439,19 @@ the user to finish or prune — never silently adapt, rewrite, or shim the data.
 `RunbookStateObjectSchema` (`schemas.ts`) is Zod-checked independently, so for
 most shape edits — a required field added or removed, a narrowed constraint —
 state an older build wrote already fails the structural parse, version gate or
-not: #746, #772, and #827 each added a required field and left
-`CURRENT_SCHEMA_VERSION` at `1`, and old state was refused either way (#775).
-Moving the constant only changes _which_ rejection fires —
-`invalid_schema_version` (RD-309, via the cheap equality check) instead of
-`schema_validation_failed` (via the full parse) — so treat it as worth doing
-when that distinction matters, not as mandatory on every shape edit. See
-`CURRENT_SCHEMA_VERSION`'s own TSDoc for the one case where it is not optional:
-the opaque `snapshot` field is declared `z.unknown()` on purpose, so a change to
-the XState machine's context shape or state IDs is invisible to the structural
-parse and only the version gate can refuse it.
+not. Historically, #746, #772, and #827 each added a required field and left
+`CURRENT_SCHEMA_VERSION` at `1`; same-version old state was still refused by the
+structural parse (#775). Version `2` now records #854's opaque XState
+progression snapshot contract, so every v1 row is foreign and is refused as
+`invalid_schema_version` before structural parsing. In general, moving the
+constant changes _which_ rejection fires — `invalid_schema_version` (RD-309, via
+the cheap equality check) instead of `schema_validation_failed` (via the full
+parse) — so treat it as worth doing when that distinction matters, not as
+mandatory on every shape edit. See `CURRENT_SCHEMA_VERSION`'s own TSDoc for the
+one case where it is not optional: the opaque `snapshot` field is declared
+`z.unknown()` on purpose, so a change to the XState machine's context shape or
+state IDs is invisible to the structural parse and only the version gate can
+refuse it.
 
 `packages/core/__tests__/runbook/persisted-state-shape.test.ts` fails whenever
 the shape changes, whether or not that change needs a version bump — it is a
@@ -467,11 +472,11 @@ would silently become valid current state the moment the constant reached it,
 asserting nothing while still passing.
 
 This is a rule about the **value inside a state object**, and nothing else. The
-structural fixture _filenames_ (`schema-v1.txt`) are deliberately versioned
-literals: each one is the permanent record of one version's shape, so it must
-not follow the constant. The same goes for a historical transcript quoting what
-an older build printed — say which version produced it and leave the number
-alone.
+structural fixture _filenames_ (`schema-v1.txt`, `schema-v2.txt`) are
+deliberately versioned literals: each one is the permanent record of one
+version's shape, so it must not follow the constant. The same goes for a
+historical transcript quoting what an older build printed — say which version
+produced it and leave the number alone.
 
 There is no in-memory migration scenario. In-memory state does not survive
 process restarts. Any state that reaches `createActor` originates from disk and

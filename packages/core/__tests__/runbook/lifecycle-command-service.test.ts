@@ -21,6 +21,7 @@ import {
   RunbookStateManager,
   SessionService,
   activeFrame,
+  activateRunProgression,
   assertClaimId,
   assertRunId,
   buildCompletionKey,
@@ -31,6 +32,7 @@ import {
   type CallerEvidence,
   type ClaimId,
   type EffectfulActorMutationRunner,
+  type EffectfulActorMutationRunnerInput,
   type EffectfulActorMutationSetRunnerInput,
   type InlineLinkage,
   type LifecycleTerminalReleasePolicy,
@@ -246,7 +248,7 @@ function runnerWithFenceEntryHook(
   onFenceEntered: () => void,
 ): EffectfulActorMutationRunner {
   return {
-    run: (input) => inner.run(input),
+    run: (input: EffectfulActorMutationRunnerInput) => inner.run(input),
     runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
       onFenceEntered();
       return inner.runAll(input);
@@ -272,7 +274,7 @@ function runnerWithAsyncFenceEntryHook(
   onFenceEntered: () => Promise<void>,
 ): EffectfulActorMutationRunner {
   return {
-    run: (input) => inner.run(input),
+    run: (input: EffectfulActorMutationRunnerInput) => inner.run(input),
     async runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
       await onFenceEntered();
       return inner.runAll(input);
@@ -5390,7 +5392,7 @@ describe('RunbookLifecycleCommandService', () => {
       expect(await store.readPendingRecovery(namedRunId)).toBeNull();
     });
 
-    it('commits substep recording and machine advancement as one fenced mutation', async () => {
+    it('commits only the substep completion record, then activates machine progression', async () => {
       const substepSteps: ResolvedStep[] = [
         {
           kind: 'substeps',
@@ -5433,16 +5435,18 @@ describe('RunbookLifecycleCommandService', () => {
 
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
-      // The directive, not just the commit. `loop` is what tells the CLI to
-      // enter the next unit after this transition, and a substep drive that
-      // applied a completion has advanced the cursor — so standing down here
-      // would strand the run one step short with no diagnostic. The `none` arm
-      // is pinned by the idempotent-duplicate test below, which applies nothing.
-      expect(outcome.loop).toEqual({ kind: 'run' });
+      expect(outcome.events).toEqual([]);
+      expect(outcome.progression).toEqual(
+        expect.objectContaining({
+          kind: 'activate',
+          authority: expect.objectContaining({ runId: namedRunId }),
+          entryBoundary: { kind: 'resume' },
+        }),
+      );
       const persisted = await manager.load(namedRunId);
-      expect(persisted?.step).toBe('2');
-      expect(persisted?.substep).toBeUndefined();
-      expect(persisted?.resolvedCompletions).toEqual({});
+      expect(persisted?.step).toBe('1');
+      expect(persisted?.substep).toBe('1');
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toHaveLength(1);
     });
 
     it('mints a run-targeted delegation against the named run, not the stack top', async () => {
@@ -6074,13 +6078,48 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('continue');
-      expect(outcome.loop).toEqual({ kind: 'run' });
+      expect(outcome.progression).toEqual(
+        expect.objectContaining({
+          kind: 'activate',
+          authority: expect.objectContaining({ runId }),
+        }),
+      );
       expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
       expect(outcome.updatedState?.step).toBe('2');
       expect(fenced).toHaveBeenCalledTimes(1);
     });
 
-    it('applies a PASS COMPLETE as a terminal done with no loop', async () => {
+    it('binds the run directive to a core-minted progression authority naming the target and bearer', async () => {
+      // #854: the directive that tells the frontend to continue progression
+      // must carry the ONE run-bound authority core minted where it verified
+      // the caller — the frontend never assembles authority from parts. The
+      // claimKey mirrors what the pre-migration loop received as its fenced
+      // capture key: present exactly when the caller presented a bearer.
+      const steps: ResolvedStep[] = [
+        { kind: 'base', name: '1', description: 'one', transitions: tx('CONTINUE', 'STOP') },
+        { kind: 'base', name: '2', description: 'two', transitions: tx('COMPLETE', 'STOP') },
+      ];
+      loadStepsImpl = () => steps;
+      await activate(baseState());
+
+      const evidence = runControlEvidence(runId);
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: evidence,
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied') return;
+      expect(outcome.progression.kind).toBe('activate');
+      if (outcome.progression.kind !== 'activate') return;
+      expect(outcome.progression.authority.runId).toBe(runId);
+      if (evidence.kind !== 'claim_bearer') throw new Error('expected bearer evidence');
+      expect(outcome.progression.authority.claimKey).toBe(claimKeyFromBearer(evidence.claimId));
+    });
+
+    it('applies a PASS COMPLETE and activates terminal propagation without replay', async () => {
       const steps: ResolvedStep[] = [
         {
           kind: 'base',
@@ -6102,9 +6141,60 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('done');
-      expect(outcome.loop).toEqual({ kind: 'none' });
+      expect(outcome.progression).toMatchObject({
+        kind: 'activate',
+        authority: { runId },
+        entryBoundary: {
+          kind: 'after_observed_transition',
+          lifecycle: 'completed',
+          terminalTarget: 'released',
+          source: { kind: 'explicit-result', result: 'pass' },
+        },
+      });
       expect(outcome.events.some((e) => e.type === 'RUNBOOK_COMPLETED')).toBe(true);
     });
+
+    it.each([
+      {
+        command: 'fail' as const,
+        transitions: tx('STOP', 'COMPLETE'),
+        lifecycle: 'completed' as const,
+        status: 'done' as const,
+      },
+      {
+        command: 'pass' as const,
+        transitions: tx('STOP', 'COMPLETE'),
+        lifecycle: 'stopped' as const,
+        status: 'stopped' as const,
+      },
+    ])(
+      'preserves authored $command through a $lifecycle terminal activation boundary',
+      async ({ command, transitions, lifecycle, status }) => {
+        loadStepsImpl = () => [{ kind: 'base', name: '1', description: 'one', transitions }];
+        await activate(baseState());
+
+        const outcome = await seam.runTransition({
+          command,
+          callerEvidence: runControlEvidence(runId),
+          targetSelector: { kind: 'default' },
+          terminalPolicy: RELEASE_POLICY,
+        });
+
+        expect(outcome.kind).toBe('applied');
+        if (outcome.kind !== 'applied') return;
+        expect(outcome.status).toBe(status);
+        expect(outcome.progression).toMatchObject({
+          kind: 'activate',
+          authority: { runId },
+          entryBoundary: {
+            kind: 'after_observed_transition',
+            lifecycle,
+            terminalTarget: 'released',
+            source: { kind: 'explicit-result', result: command },
+          },
+        });
+      },
+    );
 
     it('drives FAIL through the fail handler distinctly from PASS', async () => {
       // pass -> STOP, fail -> CONTINUE: only the FAIL mapping advances, so a
@@ -6138,9 +6228,15 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('continue');
-      expect(outcome.loop).toEqual({ kind: 'run' });
+      expect(outcome.progression).toEqual(
+        expect.objectContaining({
+          kind: 'activate',
+          authority: expect.objectContaining({ runId }),
+        }),
+      );
       expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
       expect(outcome.updatedState?.step).toBe('2');
+      expect(outcome.progression.kind).toBe('activate');
 
       const persisted = await manager.load(runId);
       expect(persisted?.step).toBe('2');
@@ -6369,12 +6465,7 @@ describe('RunbookLifecycleCommandService', () => {
       expectWorkingIssuer(seen.at(-1));
     });
 
-    it('forwards a working issuer through the substep completion drain', async () => {
-      // The third site: `#driveSubstepFenced` records the explicit substep
-      // completion and then DRAINS, and each drained apply is its own
-      // `prepareActorMutation`. That apply can advance the cursor onto a
-      // DELEGATE frontier just as a top-level transition can, so it needs the
-      // issuer for the same reason.
+    it('carries a working issuer on the substep completion activation', async () => {
       const substepSteps: ResolvedStep[] = [
         {
           kind: 'substeps',
@@ -6398,9 +6489,7 @@ describe('RunbookLifecycleCommandService', () => {
           substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
         }),
       );
-      const runtimeArgs = captureRuntimeArgs();
-
-      await seam.runTransition({
+      const outcome = await seam.runTransition({
         command: 'pass',
         callerEvidence: runControlEvidence(runId),
         targetSelector: { kind: 'explicit-step', step: '1.1' },
@@ -6408,9 +6497,19 @@ describe('RunbookLifecycleCommandService', () => {
         explicitTarget: { stepId: '1.1' },
       });
 
-      const seen = runtimeArgs();
-      expect(seen.length).toBeGreaterThan(0);
-      expectWorkingIssuer(seen.at(-1));
+      expect(outcome.kind).toBe('applied');
+      if (outcome.kind !== 'applied' || outcome.progression.kind !== 'activate') return;
+      const issuer = outcome.progression.authority.delegationRuntime?.issueDelegationCredential;
+      expect(issuer).toBeDefined();
+      if (!issuer) return;
+      expect(
+        issuer({
+          parentRunId: runId,
+          parentStepId: '2.1',
+          parentFrameKey: buildFrameKey('2'),
+          parentEntry: 1,
+        }).token,
+      ).toEqual(expect.any(String));
     });
   });
 
@@ -6452,9 +6551,16 @@ describe('RunbookLifecycleCommandService', () => {
 
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
-      expect(outcome.delegationRuntime).toBeDefined();
-      expect(outcome.delegationRuntime?.issueDelegationCredential).toBeDefined();
-      expect(outcome.delegationRuntime?.deriveDelegationToken).toBeDefined();
+      // Since #854 the runtime rides the run directive's authority — the one
+      // value the frontend hands to the activation — not a sibling field it
+      // could disagree with.
+      expect(outcome.progression.kind).toBe('activate');
+      if (outcome.progression.kind !== 'activate') return;
+      expect(outcome.progression.authority.delegationRuntime).toBeDefined();
+      expect(
+        outcome.progression.authority.delegationRuntime?.issueDelegationCredential,
+      ).toBeDefined();
+      expect(outcome.progression.authority.delegationRuntime?.deriveDelegationToken).toBeDefined();
     });
 
     it('withholds the delegation runtime from a transition bearer without delegate-from-run', async () => {
@@ -6476,7 +6582,9 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
       expect(outcome.updatedState?.step).toBe('2');
-      expect(outcome.delegationRuntime).toBeUndefined();
+      expect(outcome.progression.kind).toBe('activate');
+      if (outcome.progression.kind !== 'activate') return;
+      expect(outcome.progression.authority.delegationRuntime).toBeUndefined();
     });
 
     it('carries the delegation runtime for a navigation bearer holding delegate-from-run', async () => {
@@ -6630,7 +6738,70 @@ describe('RunbookLifecycleCommandService', () => {
   });
 
   describe('manual substep completion drive', () => {
-    it('records a bare substep completion and drains it', async () => {
+    it.each([
+      ['pass', 'completed', 'RUNBOOK_COMPLETED'],
+      ['fail', 'stopped', 'RUNBOOK_STOPPED'],
+    ] as const)(
+      'routes a real %s record through its returned public activation',
+      async (command, expectedLifecycle, terminalEvent) => {
+        const steps: ResolvedStep[] = [
+          {
+            kind: 'substeps',
+            name: '1',
+            description: 'Substeps',
+            aggregation: { strategy: 'ALL' },
+            substeps: [{ id: '1', description: 'A', transitions: tx('COMPLETE', 'STOP') }],
+            transitions: tx('COMPLETE', 'STOP'),
+          },
+        ];
+        loadStepsImpl = () => steps;
+        await activate(
+          baseState({
+            step: '1',
+            stepName: 'Substeps',
+            substep: '1',
+            substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+          }),
+        );
+
+        const initiating = await seam.runTransition({
+          command,
+          callerEvidence: runControlEvidence(runId),
+          targetSelector: { kind: 'default' },
+          terminalPolicy: RELEASE_POLICY,
+        });
+        expect(initiating.kind).toBe('applied');
+        if (initiating.kind !== 'applied' || initiating.progression.kind !== 'activate') return;
+        expect(Object.keys((await manager.load(runId))?.resolvedCompletions ?? {})).toHaveLength(1);
+
+        const committedTurns = jest.spyOn(RunbookStore.prototype, 'mutateState');
+        const observed: TransitionObservationEvent[] = [];
+        const progressed = await activateRunProgression(
+          initiating.progression.authority,
+          {
+            manager,
+            actorService,
+            sessionService,
+            actorMutationRunner,
+            loadSteps: () => steps,
+            sink: { emit: (event) => observed.push(event as TransitionObservationEvent) },
+            dispatchInlineChild: async () => ({ kind: 'waiting' }),
+            propagateTerminal: async () => ({ kind: 'propagated' }),
+          },
+          initiating.progression.entryBoundary,
+        );
+
+        expect(progressed).toEqual({ kind: expectedLifecycle, runId });
+        expect(committedTurns).toHaveBeenCalledTimes(1);
+        expect(observed.map(({ type }) => type)).toContain(terminalEvent);
+        const persisted = await manager.load(runId);
+        expect(persisted?.lifecycle).toBe(expectedLifecycle);
+        expect(persisted?.resolvedCompletions).toEqual({});
+        expect(await sessionService.getActive()).toBeNull();
+      },
+    );
+
+    it('records a bare substep completion without applying it', async () => {
       const steps: ResolvedStep[] = [
         {
           kind: 'substeps',
@@ -6667,23 +6838,22 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
       expect(outcome.status).toBe('continue');
-      expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
-      // Pin that the drain actually advanced out of the substep rather than
-      // leaving the cursor parked on substep 1.
-      expect(outcome.updatedState?.step).toBe('2');
-      expect(outcome.updatedState?.substep).toBeUndefined();
+      expect(outcome.events).toEqual([]);
+      expect(outcome.progression).toMatchObject({
+        kind: 'activate',
+        authority: { runId },
+        entryBoundary: { kind: 'resume' },
+      });
+      expect(outcome.updatedState?.step).toBe('1');
+      expect(outcome.updatedState?.substep).toBe('1');
 
       const persisted = await manager.load(runId);
-      expect(persisted?.step).toBe('2');
-      expect(persisted?.substep).toBeUndefined();
+      expect(persisted?.step).toBe('1');
+      expect(persisted?.substep).toBe('1');
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toHaveLength(1);
     });
 
-    it('threads computeActionResult into the substep drain observation', async () => {
-      // The substep drain builds its own observation, separately from the
-      // top-level drive, so the callback has to be threaded twice and can be
-      // dropped from either. Inverted the other way here — a `pass` whose
-      // callback returns false — so the assertion cannot pass by coincidence of
-      // sharing the previous test's direction.
+    it('defers transition observation until the activation applies the recorded completion', async () => {
       const steps: ResolvedStep[] = [
         {
           kind: 'substeps',
@@ -6710,20 +6880,21 @@ describe('RunbookLifecycleCommandService', () => {
         }),
       );
 
+      const computeActionResult = jest.fn(() => false);
       const outcome = await seam.runTransition({
         command: 'pass',
         callerEvidence: runControlEvidence(runId),
         targetSelector: { kind: 'default' },
         terminalPolicy: RELEASE_POLICY,
-        computeActionResult: () => false,
+        computeActionResult,
       });
 
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
-      const transitioned = outcome.events.find((e) => e.type === 'STEP_TRANSITIONED');
-      expect(transitioned?.payload).toMatchObject({ result: 'FAIL' });
-      // The drain still advanced: only the projection was overridden.
-      expect(outcome.updatedState?.step).toBe('2');
+      expect(outcome.events).toEqual([]);
+      expect(computeActionResult).not.toHaveBeenCalled();
+      expect(outcome.progression.kind).toBe('activate');
+      expect(outcome.updatedState?.step).toBe('1');
     });
 
     it('validates a substep completion against the PRESENTED claim, not the current one', async () => {
@@ -6833,16 +7004,10 @@ describe('RunbookLifecycleCommandService', () => {
 
       expect(outcome.kind).toBe('applied');
       expect(keyedCapture).not.toHaveBeenCalled();
-      expect((await manager.load(runId))?.step).toBe('2');
+      expect(Object.keys((await manager.load(runId))?.resolvedCompletions ?? {})).toHaveLength(1);
     });
 
-    it('refuses a racing child claim through the substep fence in-transaction guard', async () => {
-      // The substep fence builds its own `actorMutationRunner.run` description
-      // with its own copy of the guard spread, so a guard dropped HERE is
-      // invisible to every witness in `claim-targeted open-children guard` —
-      // all of them drive the top-level arm. Same fence point and same race:
-      // the claim commits inside `prepareActorMutation`, past every pre-check,
-      // so only the in-transaction guard can catch it.
+    it('refuses an open delegated child before recording a substep completion', async () => {
       const steps: ResolvedStep[] = [
         {
           kind: 'substeps',
@@ -6886,13 +7051,7 @@ describe('RunbookLifecycleCommandService', () => {
         }),
       );
       await seedLiveDelegation(manager, linkage);
-
-      const racingClaim = raceChildClaimDuringActorPrepare(
-        actorService,
-        new SessionService(new RunbookStateManager(tmp)),
-        childRunId,
-        linkage,
-      );
+      assertClaimed(await claimLiveDelegation(sessionService, manager, childRunId, linkage));
 
       const outcome = await seam.runTransition({
         command: 'pass',
@@ -6901,10 +7060,8 @@ describe('RunbookLifecycleCommandService', () => {
         terminalPolicy: RELEASE_POLICY,
       });
 
-      expect(racingClaim()?.kind).toBe('committed');
       expect(outcome.kind).toBe('open_delegated_children');
-      // Write-free, as on the top-level arm: the guard aborts the commit before
-      // its first UPDATE, so no completion row landed and the cursor never moved.
+      // Write-free: no completion row landed and the cursor never moved.
       const persisted = await manager.load(runId);
       expect(persisted?.substep).toBe('1');
       expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
@@ -6971,7 +7128,7 @@ describe('RunbookLifecycleCommandService', () => {
       // And the loop stands down. This is the counterpart to the `run` arm on
       // the applied path: a duplicate advanced nothing, so re-entering would
       // announce a unit the run is not on.
-      expect(outcome.loop).toEqual({ kind: 'none' });
+      expect(outcome.progression).toEqual({ kind: 'none' });
 
       // No orphan row was written and the run did not move.
       const persisted = await manager.load(runId);
@@ -6988,139 +7145,52 @@ describe('RunbookLifecycleCommandService', () => {
       ]);
     });
 
-    it('emits a terminal event when the apply reaches terminal but the completion observation did not', async () => {
-      // Divergence the seam must handle: the fenced apply derives terminal from
-      // the prepared `state.lifecycle`, while `deriveTransitionObservation`
-      // derives it from the XState snapshot's top-level status/value. Force an
-      // apply that completes the run while its snapshot stays active — the
-      // per-completion observation returns `continue` (STEP_TRANSITIONED only),
-      // so the seam must emit RUNBOOK_COMPLETED from the prepared lifecycle.
-      // Without the fix the run is released but the outcome carries no terminal
-      // envelope.
-      const steps: ResolvedStep[] = [
-        {
-          kind: 'substeps',
-          name: '1',
-          description: 'Substeps',
-          aggregation: { strategy: 'ALL' },
-          substeps: [{ id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') }],
-          transitions: tx('CONTINUE', 'STOP'),
-        },
-      ];
-      loadStepsImpl = () => steps;
-      const activeState = baseState({
-        step: '1',
-        stepName: 'Substeps',
-        substep: '1',
-        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
-      });
-      await activate(activeState);
-
-      // The manual record is prepared for real; the divergence is injected at the
-      // apply, which is the seam's only terminal signal. `nextState` is terminal by
-      // `lifecycle` while the snapshot stays active, so `deriveTransitionObservation`
-      // reports `continue` and only `reconcileFencedTerminalObservation` can supply
-      // the terminal envelope.
-      jest
-        .spyOn(actorService, 'prepareActorMutation')
-        .mockImplementation(async (_id, previousState) => ({
-          previousState,
-          // Consume the row the apply was handed, exactly as the real mutation's
-          // consumed-completion patch does. Without it the seam's loop would have
-          // no exit but the reconciliation under test, so a regression would hang
-          // instead of failing an assertion.
-          nextState: {
-            ...previousState,
-            resolvedCompletions: {},
-            lifecycle: 'completed' as const,
+    it.each(['pass', 'fail'] as const)(
+      'records %s without applying a machine transition or releasing the run',
+      async (command) => {
+        const steps: ResolvedStep[] = [
+          {
+            kind: 'substeps',
+            name: '1',
+            description: 'Substeps',
+            aggregation: { strategy: 'ALL' },
+            substeps: [{ id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') }],
+            transitions: tx('CONTINUE', 'STOP'),
           },
-          snapshot: { status: 'active', value: '1' },
-          effects: [],
-        }));
+        ];
+        loadStepsImpl = () => steps;
+        const activeState = baseState({
+          step: '1',
+          stepName: 'Substeps',
+          substep: '1',
+          substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
+        });
+        await activate(activeState);
+        const machineTransition = jest.spyOn(actorService, 'prepareActorMutation');
+        const release = jest.spyOn(sessionService, 'releaseRuns');
 
-      const outcome = await seam.runTransition({
-        command: 'pass',
-        callerEvidence: runControlEvidence(runId),
-        targetSelector: { kind: 'default' },
-        terminalPolicy: RELEASE_POLICY,
-      });
+        const outcome = await seam.runTransition({
+          command,
+          callerEvidence: runControlEvidence(runId),
+          targetSelector: { kind: 'default' },
+          terminalPolicy: RELEASE_POLICY,
+        });
 
-      expect(outcome.kind).toBe('applied');
-      if (outcome.kind !== 'applied') return;
-      expect(outcome.status).toBe('done');
-      expect(outcome.loop).toEqual({ kind: 'none' });
-      // The STEP_TRANSITIONED from the continue observation AND the terminal
-      // envelope derived from the prepared lifecycle.
-      expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
-      expect(outcome.events.some((e) => e.type === 'RUNBOOK_COMPLETED')).toBe(true);
-    });
-
-    it('emits a terminal stopped event when the apply reaches stopped but the completion observation did not', async () => {
-      // The `stopped` mirror of the `done` divergence above. The apply prepares a
-      // `stopped` lifecycle while its snapshot stays active, so the per-completion
-      // observation returns `continue` (STEP_TRANSITIONED only). The seam must emit
-      // RUNBOOK_STOPPED from the prepared lifecycle and apply the seam-owned
-      // terminal release for the prepared `stopped` lifecycle.
-      const steps: ResolvedStep[] = [
-        {
-          kind: 'substeps',
-          name: '1',
-          description: 'Substeps',
-          aggregation: { strategy: 'ALL' },
-          substeps: [{ id: '1', description: 'A', transitions: tx('CONTINUE', 'STOP') }],
-          transitions: tx('CONTINUE', 'STOP'),
-        },
-      ];
-      loadStepsImpl = () => steps;
-      const activeState = baseState({
-        step: '1',
-        stepName: 'Substeps',
-        substep: '1',
-        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
-      });
-      await activate(activeState);
-
-      // The manual record is prepared for real; the divergence is injected at the
-      // apply, which is the seam's only terminal signal. `nextState` is terminal by
-      // `lifecycle` while the snapshot stays active, so `deriveTransitionObservation`
-      // reports `continue` and only `reconcileFencedTerminalObservation` can supply
-      // the terminal envelope.
-      jest
-        .spyOn(actorService, 'prepareActorMutation')
-        .mockImplementation(async (_id, previousState) => ({
-          previousState,
-          // Consume the row the apply was handed, exactly as the real mutation's
-          // consumed-completion patch does. Without it the seam's loop would have
-          // no exit but the reconciliation under test, so a regression would hang
-          // instead of failing an assertion.
-          nextState: {
-            ...previousState,
-            resolvedCompletions: {},
-            lifecycle: 'stopped' as const,
-          },
-          snapshot: { status: 'active', value: '1' },
-          effects: [],
-        }));
-
-      const outcome = await seam.runTransition({
-        command: 'fail',
-        callerEvidence: runControlEvidence(runId),
-        targetSelector: { kind: 'default' },
-        terminalPolicy: RELEASE_POLICY,
-      });
-
-      expect(outcome.kind).toBe('applied');
-      if (outcome.kind !== 'applied') return;
-      expect(outcome.status).toBe('stopped');
-      expect(outcome.loop).toEqual({ kind: 'none' });
-      // The STEP_TRANSITIONED from the continue observation AND the stopped
-      // terminal envelope derived from the prepared lifecycle.
-      expect(outcome.events.some((e) => e.type === 'STEP_TRANSITIONED')).toBe(true);
-      expect(outcome.events.some((e) => e.type === 'RUNBOOK_STOPPED')).toBe(true);
-      // Terminal state and session release are one owned-store commit.
-      expect((await manager.load(runId))?.lifecycle).toBe('stopped');
-      expect(await sessionService.getActive()).toBeNull();
-    });
+        expect(outcome.kind).toBe('applied');
+        if (outcome.kind !== 'applied') return;
+        expect(outcome.status).toBe('continue');
+        expect(outcome.events).toEqual([]);
+        expect(outcome.progression.kind).toBe('activate');
+        expect(machineTransition).not.toHaveBeenCalled();
+        expect(release).not.toHaveBeenCalled();
+        const persisted = await manager.load(runId);
+        expect(persisted?.lifecycle).toBe('running');
+        expect(Object.values(persisted?.resolvedCompletions ?? {})).toEqual([
+          expect.objectContaining({ result: command }),
+        ]);
+        expect((await sessionService.getActive())?.id).toBe(runId);
+      },
+    );
   });
 
   describe('fenced explicit-target substep completion', () => {
@@ -7148,7 +7218,7 @@ describe('RunbookLifecycleCommandService', () => {
       loadStepsImpl = () => fencedSteps;
     });
 
-    it('drains the exact current-entry completion before an older completion on the same frame', async () => {
+    it('records the exact current-entry completion beside older completion evidence', async () => {
       const frameKey = buildFrameKey('1');
       const staleKey = buildCompletionKey(activeFrame(frameKey, 1), '1');
       await activate(
@@ -7183,12 +7253,14 @@ describe('RunbookLifecycleCommandService', () => {
 
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
-      expect(outcome.updatedState?.substep).toBe('2');
+      expect(outcome.updatedState?.substep).toBe('1');
+      expect(outcome.progression.kind).toBe('activate');
       const persisted = await manager.load(runId);
-      expect(persisted?.substep).toBe('2');
-      // The old row remains historical evidence; only the exact entry-2 row was
-      // selected and consumed by this transition.
+      expect(persisted?.substep).toBe('1');
+      // The old row remains historical evidence and the new exact-entry row is
+      // queued for the activation; neither is applied by the command seam.
       expect(persisted?.resolvedCompletions?.[staleKey]?.targetEntry).toBe(1);
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toHaveLength(2);
     });
 
     it('allows exactly one concurrent owner and leaves no orphaned completion row', async () => {
@@ -7214,11 +7286,11 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcomes.filter(({ kind }) => kind === 'applied')).toHaveLength(1);
       expect(outcomes.filter(({ kind }) => kind === 'execution_in_progress')).toHaveLength(1);
       const persisted = await manager.load(runId);
-      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toEqual([]);
-      expect(persisted?.substep).toBe('2');
+      expect(Object.keys(persisted?.resolvedCompletions ?? {})).toHaveLength(1);
+      expect(persisted?.substep).toBe('1');
     });
 
-    it('commits terminal session release with the terminal run state', async () => {
+    it('leaves terminal application and Run Release to the returned activation', async () => {
       loadStepsImpl = () => [
         {
           kind: 'substeps',
@@ -7254,9 +7326,10 @@ describe('RunbookLifecycleCommandService', () => {
 
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
-      expect(outcome.status).toBe('done');
-      expect((await manager.load(runId))?.lifecycle).toBe('completed');
-      expect(await sessionService.getActive()).toBeNull();
+      expect(outcome.status).toBe('continue');
+      expect(outcome.progression.kind).toBe('activate');
+      expect((await manager.load(runId))?.lifecycle).toBe('running');
+      expect((await sessionService.getActive())?.id).toBe(runId);
     });
   });
 
@@ -7394,7 +7467,7 @@ describe('RunbookLifecycleCommandService', () => {
         mutation: 'manual-completion',
         status: 'continue',
         events: [],
-        loop: { kind: 'none' },
+        progression: { kind: 'none' },
       });
       expect(pushSpy).toHaveBeenCalledTimes(1);
       expect(pushSpy).toHaveBeenCalledWith(childRunId);
@@ -7435,7 +7508,7 @@ describe('RunbookLifecycleCommandService', () => {
       // directive is what proves the fixture reached the branch under test
       // rather than falling back to the finished-launch one, where a push is
       // correct and the absence below would be trivially true.
-      expect(outcome).toMatchObject({ loop: { kind: 'run' } });
+      expect(outcome).toMatchObject({ progression: { kind: 'activate' } });
       expect(pushSpy).not.toHaveBeenCalled();
       expect(legacyPushSpy).not.toHaveBeenCalled();
       // And the session still targets the PARENT, which is the observable form
@@ -7459,7 +7532,8 @@ describe('RunbookLifecycleCommandService', () => {
       expect(recordSpy).toHaveBeenCalledTimes(1);
       expect(outcome.kind).toBe('applied');
       if (outcome.kind !== 'applied') return;
-      expect(outcome.updatedState?.step).toBe('2');
+      expect(outcome.updatedState?.step).toBe('1');
+      expect(outcome.progression.kind).toBe('activate');
     });
 
     it('does not reactivate a child whose linkage does not match the parent cursor', async () => {

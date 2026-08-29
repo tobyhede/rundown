@@ -652,18 +652,36 @@ it.
    front end would have to resolve first. Step derivation is parsing of the
    resolved state's in-memory `runbookSrc` plus an environment-bound
    helper-registry + render context (Category A), not runbook-file IO.
-4. **Drive the machine, preserving the two mutation paths.** The seam keeps the
-   split it inherited and does not collapse it to an unconditional
+4. **Preserve the two ingress mutations; activate one progression path.** The
+   seam does not collapse manual completion into an unconditional
    `sendAndSync(PASS|FAIL)`:
-   - **manual substep completion** (`#driveSubstep`) prepares via
-     `RunbookCompletionService.prepareManualCompletion` and applies the resolved
-     completions that follow, all inside one owned commit;
+   - **manual substep completion** (`#driveSubstepFenced`) records exactly one
+     resolved completion via `RunbookCompletionService.prepareManualCompletion`;
+     it does not apply or batch-drain completion rows inside that recording
+     commit;
    - **top-level run transition** (`#driveTopLevel`) sends `PASS` / `FAIL`
-     through `RunbookActorService.sendAndSync`.
+     through `RunbookActorService.prepareActorMutation` and commits its
+     observation boundary.
 
-   Both decisive bare default-target advances run inside
-   `SessionService.runGuardedParentAdvance` (the TOCTOU guard), and both apply
-   terminal release per the `LifecycleTerminalReleasePolicy`.
+   Every newly recorded manual completion, and every continuing or terminal
+   top-level transition, returns an `activate` directive. Run Progression then
+   asks the restored compiled XState machine for the next intent and applies at
+   most one completion per CAS/observation turn. Terminal top-level ingress
+   carries an `after_observed_transition` boundary so activation propagates the
+   terminal without replaying its observation or release.
+
+   This #854 slice owns the completion-specific choice: applicable completion,
+   target mismatch, and exhausted compare-and-swap contention are selected as
+   closed intents by the compiled machine. `awaiting_input` remains a
+   transitional feedback value from the runtime's execution-unit entry
+   classification; #857 moves fresh, prompted, and command selection into
+   machine states. Until then the machine closes that typed feedback but does
+   not claim to have selected the entry.
+
+   Both decisive bare default-target ingress mutations run inside
+   `SessionService.runGuardedParentAdvance` (the TOCTOU guard). Terminal release
+   is committed by the mutation that actually makes the run terminal: the
+   top-level transition itself or the later machine-selected completion turn.
 
 5. **Bare inline-child reactivation.** When a bare (no `manualTarget`) substep
    transition lands on a substep whose inline child is still running and whose
@@ -673,22 +691,23 @@ it.
    explicit `--step` / `--index` path never reactivates — it is a deliberate
    completion against a named substep.
 
-   The seam also decides whether the reactivation needs the parent's execution
-   loop, and returns that as the loop directive. An **interrupted** launch does:
-   the launcher takes the launch latch (`inline.started`), consumes the one-shot
-   launch intent — which releases that latch — and re-establishes the child's
-   run-control authority (`SessionService.adoptRunControlClaim`) in one
-   continuation, and a process that died mid-launch leaves all three undone.
-   Only the launch seam (`launchInlineChildFromIntent`'s existing-child branch)
-   performs them, and only the parent's own loop reaches it, so the seam returns
-   `loop: { kind: 'run' }` there.
+   The seam also decides whether the reactivation needs the parent's Run
+   Progression activation, and returns that as the progression directive. An
+   **interrupted** launch does: the launcher takes the launch latch
+   (`inline.started`), consumes the one-shot launch intent — which releases that
+   latch — and re-establishes the child's run-control authority
+   (`SessionService.adoptRunControlClaim`) in one continuation, and a process
+   that died mid-launch leaves all three undone. Only the launch seam
+   (`launchInlineChildFromIntent`'s existing-child branch) performs them, and
+   only the parent's own progression reaches it, so the seam returns
+   `progression: { kind: 'activate', ... }` there.
 
-   A launch that already **finished** returns `loop: { kind: 'none' }` — running
-   the loop would re-enter an execution unit the parent never left,
-   re-announcing the step and re-running any command it carries. The
+   A launch that already **finished** returns `progression: { kind: 'none' }` —
+   activating progression would re-enter an execution unit the parent never
+   left, re-announcing the step and re-running any command it carries. The
    discriminant is the surviving intent itself
    (`#hasUnconsumedInlineLaunchIntent`), which is the same value
-   `enterExecutionUnit` re-projects, so the seam's decision and the loop's
+   `enterExecutionUnit` re-projects, so the seam's decision and progression's
    behaviour agree by construction.
 
    **A child is activated only by the launch span that wins it.** The seam
@@ -696,10 +715,10 @@ it.
    **live** owner mid-launch looks like — the two are one process's launch at
    two moments, and this seam does not consult the latch. So the `none` arm is
    the only one it activates on: there the launch is over, and the child is
-   genuinely this session's to target. On the `run` arm a push would target the
-   session at a run this process may be about to stand down from, and standing
-   down would then have to take that push back on every refusal arm the launch
-   span has or later grows. `launchInlineChildFromIntent` performs the
+   genuinely this session's to target. On the `activate` arm a push would target
+   the session at a run this process may be about to stand down from, and
+   standing down would then have to take that push back on every refusal arm the
+   launch span has or later grows. `launchInlineChildFromIntent` performs the
    activation instead — once the latch has said the launch is its own — and
    every stand-down arm consequently writes nothing to the session.
 
@@ -718,9 +737,8 @@ it.
    `execution_in_progress` on exactly the crash-recovery launch it exists to
    finish.
 
-The seam returns transition-observation events plus a loop-continuation
-directive (`LifecycleLoopDirective`) as **data**. It does not spawn processes or
-render.
+The seam returns transition-observation events plus a Run Progression directive
+(`RunProgressionDirective`) as **data**. It does not spawn processes or render.
 
 ### What the direct CLI owns
 
@@ -740,15 +758,19 @@ work:
   parsing only; a `--run` id is threaded through as the target selector and
   resolved against the session `defaultStack` in core — it never becomes caller
   evidence);
-- **parses `--step` / `--index`** into a pre-resolved `ManualCompletionCursor`
-  via `resolveManualCompletionCursor`
+- **parses `--step` / `--index` syntax** into an `ExplicitTransitionTarget`
   (`packages/cli/src/helpers/transitions.ts`) — raw-argument input handling on
-  inherently external CLI args (Category A);
+  inherently external CLI args (Category A). Core resolves that target against
+  the exact state captured by the guarded mutation;
 - **renders the seam's typed outcome** to the existing JSON/text envelopes and
-  maps it to exit codes (including the post-transition parent-propagation
-  block);
-- **runs the execution loop** (command-step subprocess spawning) per the
-  returned `loop` directive.
+  maps semantic lifecycle and refusal/failure to separate process-exit output;
+- **activates Run Progression** per the returned directive, supplying the
+  command callable used by the machine actor plus the inline-launch,
+  terminal-propagation, and observation callables used by the transitional
+  activation runtime. Completion selection is already machine-owned in #854;
+  #856 moves inline launch and upward propagation into invoked machine states.
+  The CLI does not select completion turns or perform a second terminal-
+  propagation pass.
 
 The CLI constructs **no** `ActorContext`.
 
@@ -1063,7 +1085,9 @@ A wrong storage version invalidates the whole database (`RD-305`); a wrong
 `RunbookState.schemaVersion` invalidates **only that run** (`RD-309`). Session,
 stash, and claim rows carry no `schemaVersion` of their own. Neither version is
 ever migrated, hydrated, shimmed, or dual-read — the recovery path is always
-explicit user action.
+explicit user action. In the current build, a v1 run row is foreign and fails
+the version gate as `invalid_schema_version` before its structure or opaque
+snapshot is parsed.
 
 ### Drivers: two implementations, one atomicity bar
 
@@ -1430,11 +1454,13 @@ and actor transition and commit inside a single
 `RunbookStateManager.mutateStateReturning` cycle, and **no `currentState`
 parameter at all**. `selectNextResolvedCompletionApply` is the pure decision
 owner it shares with the prepared twin, mirroring how
-`classifyChildCompletionTarget` is shared by the child paths. The loop moved to
-the CLI, which owns it properly: it must observe and emit each transition before
-the next apply, which is a Category A concern. The per-completion commit that
-looked like an obstacle was never the problem — one apply per commit is exactly
-what the primitive preserves.
+`classifyChildCompletionTarget` is shared by the child paths. Core Run
+Progression now owns the loop: XState selects one completion turn, core invokes
+one apply, and the frontend-supplied synchronous sink receives that turn's
+observation before XState selects again. Rendering remains Category A; the
+frontend does not decide completion order. The per-completion commit that looked
+like an obstacle was never the problem — one apply per commit is exactly what
+the primitive preserves.
 
 Two things that fold demands, and neither is automatic. The build callback
 re-runs per attempt, so everything it reaches must be safe to repeat: the
