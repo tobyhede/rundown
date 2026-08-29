@@ -20,9 +20,10 @@ import type { RunId } from './run-id.js';
  *
  * A real `unique symbol` that is never exported, mirroring
  * `DelegationRuntimeCapabilities`' same-authority brand: the only producer of a
- * {@link RunProgressionAuthority} is {@link mintRunProgressionAuthority} in this
- * module, which core seams call at the point caller evidence was verified.
- * A frontend cannot assemble one from parts.
+ * {@link RunProgressionAuthority} is this core-internal module: verified caller
+ * seams use {@link mintRunProgressionAuthority}, while exact inline linkage uses
+ * {@link mintInlineCompositionProgressionAuthority}. A frontend cannot assemble
+ * one from parts.
  */
 const runProgressionAuthorityBrand: unique symbol = Symbol('runProgressionAuthority');
 
@@ -88,4 +89,22 @@ export function mintRunProgressionAuthority(
       : {}),
     [runProgressionAuthorityBrand]: true,
   };
+}
+
+/**
+ * Mint internal authority for a composing parent reached through a fully
+ * validated, write-once inline linkage edge.
+ *
+ * This is not bearer authority and deliberately carries no claim key or
+ * delegation runtime. It authorizes core to continue the exact parent selected
+ * by composition; if that parent reaches a DELEGATE turn, the machine still
+ * refuses without separately retained delegation capabilities.
+ *
+ * @param parentRunId - Exact parent run proven by the inline linkage resolver.
+ * @returns Branded authority limited to that composing parent.
+ */
+export function mintInlineCompositionProgressionAuthority(
+  parentRunId: RunId,
+): RunProgressionAuthority {
+  return mintRunProgressionAuthority({ runId: parentRunId });
 }

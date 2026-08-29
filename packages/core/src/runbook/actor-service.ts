@@ -56,6 +56,8 @@ import {
   type DelegationChildLinkRefusalReason,
   type RunbookEvent,
   type RunbookContext,
+  type RunbookMachineOutput,
+  type RunProgressionMachineFeedback,
   type RunProgressionMachineIntent,
   type RunProgressionMachineIntentEvent,
 } from './compiler.js';
@@ -249,6 +251,7 @@ export interface RunbookActorRuntimeCapabilities {
   readonly issueDelegationCredential?: DelegationCredentialIssuer;
   /** One run-bound authority plus the fence used by explicit progression. */
   readonly runProgression?: {
+    readonly state: RunbookState;
     readonly authority: RunProgressionAuthority;
     readonly actorMutationRunner: EffectfulActorMutationRunner;
   };
@@ -1200,21 +1203,26 @@ export class RunbookActorService {
   }
 
   /**
-   * Ask one restored compiled runbook machine to own the frontier/entry turn.
+   * Ask one restored compiled runbook machine which completion turn Run
+   * Progression should execute next.
    *
-   * The method contains no frontier policy. It binds the one authority and the
-   * project fence as runtime-only machine dependencies, sends the explicit
-   * activation event, and returns the intent emitted by the selected state.
+   * This method performs no persistence and contains no turn-selection logic:
+   * it sends the machine's typed `SELECT_RUN_PROGRESSION` event and returns the
+   * typed intent that transition emits. The caller may mechanically execute the
+   * selected domain operation, whose own CAS re-derives against the version it
+   * commits.
    *
-   * @param state - Persisted state to restore for the selected turn.
-   * @param steps - Exact compiled graph paired with the authority.
-   * @param authority - Single authority bound to frontier projection and entry.
-   * @param actorMutationRunner - Transactional fence used by frontier consumption.
-   * @returns The closed progression intent emitted by the compiled machine.
+   * @param state - Exact durable state loaded by the activation.
+   * @param steps - Graph derived from that state inside the activation.
+   * @param feedback - Result of the preceding mechanically executed turn.
+   * @param authority - Exact run-bound progression authority.
+   * @param actorMutationRunner - Fenced mutation runner bound into machine actors.
+   * @returns The compiled machine's completion-specific progression intent.
    */
   async selectRunProgressionIntent(
     state: RunbookState,
     steps: readonly ResolvedStep[],
+    feedback: RunProgressionMachineFeedback = { kind: 'activation' },
     authority: RunProgressionAuthority,
     actorMutationRunner: EffectfulActorMutationRunner,
   ): Promise<RunProgressionMachineIntent> {
@@ -1224,7 +1232,7 @@ export class RunbookActorService {
       );
     }
     const actor = this.createActorForState(state.id, state, steps, undefined, {
-      runProgression: { authority, actorMutationRunner },
+      runProgression: { state, authority, actorMutationRunner },
     });
     try {
       return await new Promise<RunProgressionMachineIntent>((resolve, reject) => {
@@ -1243,7 +1251,7 @@ export class RunbookActorService {
             reject(error instanceof Error ? error : new Error(String(error)));
           },
         });
-        actor.send({ type: 'SELECT_RUN_PROGRESSION' });
+        actor.send({ type: 'SELECT_RUN_PROGRESSION', feedback });
       });
     } finally {
       this.stopActor(actor);
@@ -1365,6 +1373,8 @@ export class RunbookActorService {
     try {
       actor.send(event);
       await this.waitForMachineEffects(actor);
+      const machineOutput = (actor.getSnapshot() as { readonly output?: RunbookMachineOutput })
+        .output;
       const snapshot = actor.getPersistedSnapshot() as unknown as PersistedRunbookSnapshot;
       if (snapshot.status === 'error') {
         throw new Error(`Runbook ${id} actor entered an error state`);
@@ -1395,7 +1405,13 @@ export class RunbookActorService {
           }),
         );
       }
-      return { previousState, nextState, snapshot, effects };
+      return {
+        previousState,
+        nextState,
+        snapshot,
+        effects,
+        ...(machineOutput === undefined ? {} : { machineOutput }),
+      };
     } finally {
       errorSubscription.unsubscribe();
       this.stopActor(actor);

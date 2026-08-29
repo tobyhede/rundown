@@ -25,8 +25,8 @@ import {
   type RunbookState,
   type ClaimId,
   type ClaimLookupKey,
-  claimKeyFromBearer,
   type RunId,
+  type RunProgressionOutcome,
   type CommandExecutionStreamOptions,
   type LifecycleTerminalReleasePolicy,
   type LifecycleTransitionOutcome,
@@ -47,7 +47,7 @@ import { renderTransactionalMutationRefusal } from './session-mutation-result.js
 import { resolveIndexOption } from './index-option.js';
 import { getRunbookFromState } from './runbook-loader.js';
 import { readLifecycleCallerEvidence } from './caller-evidence.js';
-import { runExecutionLoop } from '../services/execution.js';
+import { driveRunProgression, progressionFailedClosed } from './run-progression-adapters.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { transitionSinkFromEmitter, type TransitionEventSink } from './transition-orchestrator.js';
@@ -327,27 +327,30 @@ export interface SeamTransitionOptions {
 /**
  * Result of driving a pass/fail transition through the core lifecycle seam.
  *
- * `applied` is present only when a transition actually mutated a run; the caller
- * uses its `runId` to drive the post-transition parent-propagation/exit-code
- * block. `exitError` is the transition's own exit-code request before parent
- * propagation. The `manager` is returned so the caller can reload the mutated run
- * without constructing a second state manager.
+ * `applied` preserves the semantic lifecycle and closed progression outcome for
+ * transport adapters and tests. `exitError` is the independent process-exit
+ * request; it never rewrites that semantic status.
  */
 export interface SeamTransitionResult {
-  /** State manager bound to this command's cwd. */
-  readonly manager: RunbookStateManager;
-  /** Present when a transition was applied; drives parent propagation. */
+  /** Present when a transition was applied. */
   readonly applied?: {
-    readonly status: 'continue' | 'stopped';
+    readonly status: 'continue' | 'done' | 'stopped';
     readonly runId: RunId;
-    readonly terminalPropagationHandled: boolean;
+    /**
+     * The closed Run Progression outcome, present exactly when the seam's
+     * directive continued progression (#854). When present, the activation
+     * already owned every terminal-propagation decision. Absence means core
+     * explicitly directed no further activation; it never transfers progression
+     * ownership back to the frontend.
+     */
+    readonly progression?: RunProgressionOutcome;
   };
   /** Whether the transition itself requests a non-zero exit (before propagation). */
   readonly exitError: boolean;
 }
 
-// Dispatch core transition observation events to a sink (the shared event loop
-// also used by orchestrateTransition and the execution loop).
+// Dispatch core transition observation events to a sink (the shared event stream
+// also used by orchestrateTransition and Run Progression).
 function renderTransitionEvents(
   events: readonly TransitionObservationEvent[],
   sink: TransitionEventSink,
@@ -481,8 +484,9 @@ function renderRefusal(
 }
 
 // Render an applied transition: idempotent duplicate status, the observation
-// events (a buffered action for a top-level run transition, streamed execution
-// events for a substep drain), then the execution loop per the seam directive.
+// events from the initiating transition, then core Run Progression per the seam
+// directive. The directive carries the one core-minted authority (#854); the
+// CLI supplies wiring and rendering only.
 async function renderApplied(
   output: OutputEmitter,
   cwd: string,
@@ -490,11 +494,11 @@ async function renderApplied(
   manager: RunbookStateManager,
   outcome: Extract<LifecycleTransitionOutcome, { kind: 'applied' }>,
   commandStreamOptions?: CommandExecutionStreamOptions,
-  claimKey?: ClaimLookupKey,
 ): Promise<{
-  readonly status: 'continue' | 'stopped';
+  readonly status: 'continue' | 'done' | 'stopped';
   readonly runId: RunId;
-  readonly terminalPropagationHandled: boolean;
+  readonly progression?: RunProgressionOutcome;
+  readonly exitError: boolean;
 }> {
   if (outcome.duplicate) {
     output.status(config.commandName, `Completion already recorded for ${outcome.duplicate.at}`, {
@@ -505,8 +509,7 @@ async function renderApplied(
     });
   }
 
-  let status: 'continue' | 'stopped' = outcome.status === 'stopped' ? 'stopped' : 'continue';
-  let terminalPropagationHandled = false;
+  let progression: RunProgressionOutcome | undefined;
   let emitter: ExecutionEventEmitter | undefined;
   let liveState: RunbookState | null = outcome.updatedState ?? null;
   const loadLive = async (): Promise<RunbookState | null> => {
@@ -526,24 +529,33 @@ async function renderApplied(
     }
   }
 
-  if (outcome.loop.kind === 'run') {
+  if (outcome.progression.kind === 'activate') {
     const state = await loadLive();
     if (state) {
-      const steps = getRunbookFromState(state, cwd);
       emitter ??= createBridgedEmitter(state, output);
-      const loopResult = await runExecutionLoop(manager, outcome.runId, [...steps], cwd, emitter, {
-        ...(claimKey === undefined ? {} : { claimKey }),
-        output,
-        commandStreamOptions,
-        delegationRuntime: outcome.delegationRuntime,
-      });
-      if (loopResult.status === 'stopped' || loopResult.status === 'blocked') status = 'stopped';
-      terminalPropagationHandled =
-        loopResult.status === 'handled' || loopResult.status === 'blocked';
     }
+    progression = await driveRunProgression(outcome.progression, {
+      manager,
+      cwd,
+      output,
+      ...(emitter !== undefined ? { sink: emitter } : {}),
+      ...(commandStreamOptions !== undefined ? { commandStreamOptions } : {}),
+    });
   }
 
-  return { status, runId: outcome.runId, terminalPropagationHandled };
+  return {
+    status: outcome.status,
+    runId: outcome.runId,
+    ...(progression !== undefined ? { progression } : {}),
+    // Semantic lifecycle and process exit are different axes. A refusal or
+    // invocation failure closes this command non-zero without inventing a
+    // stopped run; conversely, a stopped inline child absorbed by a progressing
+    // parent follows the composition outcome rather than the child's local arm.
+    exitError:
+      progression === undefined
+        ? outcome.status === 'stopped'
+        : progressionFailedClosed(progression),
+  };
 }
 
 /**
@@ -552,20 +564,20 @@ async function renderApplied(
  * The CLI keeps only Category-A work: it parses the raw `--step` / `--index`
  * strings (step-id syntax, numeric `--index` validation, the AT-conflict
  * check), supplies typed caller evidence, renders the seam's typed outcome,
- * and runs the execution loop. The seam resolves the target exactly once and
+ * and activates Run Progression. The seam resolves the target exactly once and
  * derives the completion cursor from the raw target INSIDE its guarded
  * compute-and-commit cycle, against the state that cycle's compare-and-swap
  * commits onto (#500) — target resolution, policy gating,
  * every state-dependent target validation, the inline-child reactivation
- * decision, record/drain, the machine dispatch, and terminal release all live
+ * decision, completion recording, the machine dispatch, and terminal release all live
  * in the seam.
  *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
  * @param config - Transition configuration (command name, action-result policy, terminal policy)
  * @param options - Parsed `--claim-id` / `--step` / `--index` options
- * @returns The bound state manager, the applied transition (when one occurred),
- *   and whether the transition itself requests a non-zero exit code
+ * @returns The applied transition (when one occurred) and whether the
+ *   transition itself requests a non-zero exit code
  * @throws {Error} if the seam refuses an explicit `--step` / `--index` target
  *   against the captured state (invalid/mismatched step, missing substep,
  *   template AT expression, out-of-bounds or non-FOR iteration)
@@ -626,18 +638,18 @@ export async function runSeamTransition(
   if (outcome.kind !== 'applied') {
     const exitError = renderRefusal(output, config, outcome);
     output.flush();
-    return { manager, exitError };
+    return { exitError };
   }
 
-  const applied = await renderApplied(
+  const rendered = await renderApplied(
     output,
     cwd,
     config,
     manager,
     outcome,
     options.commandStreamOptions,
-    options.claimId === undefined ? undefined : claimKeyFromBearer(options.claimId),
   );
   output.flush();
-  return { manager, applied, exitError: applied.status === 'stopped' };
+  const { exitError, ...applied } = rendered;
+  return { applied, exitError };
 }

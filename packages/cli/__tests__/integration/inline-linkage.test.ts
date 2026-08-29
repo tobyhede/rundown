@@ -119,17 +119,17 @@ describe('Inline linkage integration (rd run --step)', () => {
     // refused as mutation authority (ACTOR_CONTEXT_REQUIRED); the verified idiom for
     // a goto against an inline child is withRunTarget, which mints the run-control
     // claim on the active run and appends --claim-id (inline-child-launch.test.ts
-    // :362). goto's loop runs `Finish`, which fails and is handled FAIL COMPLETE →
-    // child lifecycle `completed` → inferred `pass`.
+    // :362). goto drives `Finish`, whose authored FAIL reaches FAIL COMPLETE.
+    // Durable result provenance remains FAIL even though lifecycle is completed.
     result = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
     expect(result.exitCode).toBe(0);
 
-    // Parent substep 1 advanced off 'running' to done/pass (lifecycle-inferred),
-    // identical to what the natural execution-loop path already produces.
+    // Parent substep 1 advances with the authored result. Lifecycle is not a
+    // substitute for PASS/FAIL provenance: FAIL COMPLETE stays fail.
     const parentAfter = await readRunbookState(workspace, parentRunId);
     const ss1 = (parentAfter!.substepStates ?? []).find((ss) => ss.id === '1');
     expect(ss1!.status).toBe('done');
-    expect(ss1!.result).toBe('pass');
+    expect(ss1!.result).toBe('fail');
   });
 
   describe('afterInit fresh state reload (race condition fix)', () => {

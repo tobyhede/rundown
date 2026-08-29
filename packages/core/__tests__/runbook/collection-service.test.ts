@@ -17,6 +17,7 @@ import {
   type CallerEvidence,
   type ClaimLookupKey,
   type EffectfulActorMutationRunner,
+  type EffectfulActorMutationRunnerInput,
   type EffectfulActorMutationSetRunnerInput,
   type InlineUpwardPropagationResult,
   type RunbookState,
@@ -316,7 +317,7 @@ describe('RunbookCollectionService', () => {
    */
   function runnerWithPreCommitEffect(effect: () => Promise<void>): EffectfulActorMutationRunner {
     return {
-      run: (input) => actorMutationRunner.run(input),
+      run: (input: EffectfulActorMutationRunnerInput) => actorMutationRunner.run(input),
       async runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
         return await actorMutationRunner.runAll<TResult>({
           ...input,
@@ -596,6 +597,8 @@ describe('RunbookCollectionService', () => {
     });
     expect(outcome.kind).toBe('collection_applied');
     if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
+    if (outcome.lifecycle !== 'running') throw new Error('expected running collection');
+    expect(outcome.progression.kind).toBe('activate');
     expect(outcome.transitionObservations).toMatchObject([
       {
         type: 'STEP_TRANSITIONED',
@@ -741,24 +744,6 @@ describe('RunbookCollectionService', () => {
         },
       },
     });
-    const frontierEffects: readonly ExecutionObservationEffect[] = [
-      {
-        kind: 'execution_observation',
-        event: {
-          type: 'STEP_ENTERED',
-          payload: {
-            position: { current: '1', total: 2, substep: '1' },
-            stepName: '1',
-            hasCommand: false,
-            isSubstep: true,
-            prompted: false,
-            artifacts: {},
-            delegateFrontier: [retryA.public, retryB.public],
-          },
-        },
-      },
-    ];
-
     jest.spyOn(completionService, 'prepareResolvedCompletionDrain').mockResolvedValue({
       status: 'continue',
       state: retryState,
@@ -800,14 +785,6 @@ describe('RunbookCollectionService', () => {
     });
     await manager.save(retryState);
 
-    const consumedState = state({ ...retryState, snapshot: { context: {} } });
-    const consumeSpy = jest
-      .spyOn(actorService, 'prepareActorMutation')
-      .mockResolvedValueOnce(preparedMutation(consumedState, { context: {} }));
-    const enterEntrySpy = jest
-      .spyOn(actorService, 'enterExecutionUnit')
-      .mockResolvedValue({ kind: 'awaiting', effects: frontierEffects });
-
     const outcome = await collectionService.collectDelegationOutcomes({
       targetState: target,
       steps,
@@ -830,19 +807,20 @@ describe('RunbookCollectionService', () => {
     expect(outcome.progression).toMatchObject({
       kind: 'activate',
       authority: { runId },
-      entryBoundary: {
-        kind: 'after_observed_transition',
-        lifecycle: 'running',
-      },
+      steps,
     });
-    expect(enterEntrySpy).not.toHaveBeenCalled();
-    expect(consumeSpy).not.toHaveBeenCalled();
     expect(await persistedFrontier(runId)).toEqual([retryA.persisted, retryB.persisted]);
   });
 
-  it('returns no progression directive when the collection commit refuses', async () => {
-    // Collection owns only the completion-domain commit. If that commit loses a
-    // compare-and-swap race, it cannot authorize the separate progression turn.
+  it('discloses no bearers and consumes no frontier when the enclosing commit refuses', async () => {
+    // REPLACES "returns collection_failed without frontier observations when
+    // retry frontier consume fails" and its F6 twin. `consume_failed` is no longer
+    // reachable from collect: the consume is derived, not committed, so it cannot
+    // half-land — the only way it does not reach the store is that the whole
+    // transaction refused. `prepareReEntryFrontierConsume`'s union omits the arm
+    // for exactly that reason. The operator-visible condition the old test named
+    // (projection succeeded, consume did not land, nothing disclosed) survives and
+    // is pinned here against the transactional refusal that now covers it.
     const frameKey = buildFrameKey('1');
     const retry = frontierEntry();
     const target = state({
@@ -1355,6 +1333,7 @@ describe('RunbookCollectionService', () => {
       lifecycle: 'completed',
       reportedTerminalOutcome: true,
       transitionObservations: expect.any(Array),
+      progression: expect.objectContaining({ kind: 'activate' }),
     });
     // Single-level: one outcome recorded upward; the ancestor is NOT collected.
     const freshAncestor = await manager.load(ancestorRunId);
@@ -1471,6 +1450,7 @@ describe('RunbookCollectionService', () => {
       lifecycle: 'stopped',
       reportedTerminalOutcome: true,
       transitionObservations: expect.any(Array),
+      progression: expect.objectContaining({ kind: 'activate' }),
     });
     // #556: a collect that drives the target STOPPED-terminal releases it too —
     // `when: 'terminal'` covers both terminal lifecycles, not just `completed`.
@@ -1559,11 +1539,12 @@ describe('RunbookCollectionService', () => {
       lifecycle: 'completed',
       reportedTerminalOutcome: false, // root run has no delegating ancestor
       transitionObservations: expect.any(Array),
+      progression: expect.objectContaining({ kind: 'activate' }),
     });
   });
 
   describe('terminal branch — unified inline + delegation upward propagation (#598)', () => {
-    it('invokes the inline-advance callable for an inline-linked terminal target', async () => {
+    it('returns terminal Run Progression for an inline-linked terminal target', async () => {
       const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
       await manager.save(ancestor);
       const { controlled } = await seedTerminalControlled('completed', 'pass', {
@@ -1583,12 +1564,15 @@ describe('RunbookCollectionService', () => {
 
       expect(outcome.kind).toBe('collection_applied');
       if (outcome.kind === 'collection_applied') {
-        // active -> handled: the inline parent is still running on siblings.
-        expect(outcome.terminalInlineAdvance).toEqual({ kind: 'handled' });
+        expect(outcome.progression).toMatchObject({
+          kind: 'activate',
+          authority: { runId: controlledRunId },
+          entryBoundary: { kind: 'after_observed_transition', lifecycle: 'completed' },
+        });
         // Inline advance never reports a delegation outcome.
         expect(outcome.reportedTerminalOutcome).toBe(false);
       }
-      expect(advanceInlineParent).toHaveBeenCalledTimes(1);
+      expect(advanceInlineParent).not.toHaveBeenCalled();
     });
 
     it('surfaces a self-linked (cyclic) inline target as a trip naming the run to prune (#602/#603)', async () => {
@@ -1613,15 +1597,7 @@ describe('RunbookCollectionService', () => {
 
       expect(outcome.kind).toBe('collection_applied');
       if (outcome.kind === 'collection_applied') {
-        expect(outcome.terminalInlineAdvance).toEqual({
-          kind: 'linkage-cycle',
-          trip: {
-            cause: 'repeat',
-            repeatedRunId: controlledRunId,
-            code: 'INLINE_PARENT_CYCLE',
-            message: `Parent linkage cycle detected at ${controlledRunId}`,
-          },
-        });
+        expect(outcome.progression).toMatchObject({ kind: 'activate' });
         expect(outcome.reportedTerminalOutcome).toBe(false);
       }
       expect(advanceInlineParent).not.toHaveBeenCalled();
@@ -1680,9 +1656,7 @@ describe('RunbookCollectionService', () => {
       expect(outcome.kind).toBe('collection_applied');
       if (outcome.kind === 'collection_applied') {
         expect(outcome.reportedTerminalOutcome).toBe(false);
-        // No inline arm either: a delegation target never yields one, so there is
-        // no channel on which a trip could have been silently dropped.
-        expect(outcome.terminalInlineAdvance).toBeUndefined();
+        expect(outcome.progression).toMatchObject({ kind: 'activate' });
       }
       // The gate short-circuits before the seam, so nothing was prepared upward.
       expect(prepareSpy).not.toHaveBeenCalled();
@@ -1707,7 +1681,7 @@ describe('RunbookCollectionService', () => {
       expect(outcome.kind).toBe('collection_applied');
       if (outcome.kind === 'collection_applied') {
         expect(outcome.reportedTerminalOutcome).toBe(true);
-        expect(outcome.terminalInlineAdvance).toBeUndefined();
+        expect(outcome.progression).toMatchObject({ kind: 'activate' });
       }
       // The inline callable never runs for a delegation target.
       expect(advanceInlineParent).not.toHaveBeenCalled();
@@ -2679,13 +2653,13 @@ describe('RunbookCollectionService', () => {
 
       expect(outcome.kind).toBe('collection_applied');
       if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
-      // The recursion really crossed the delegation boundary...
+      // Collection commits only its target transaction. Run Progression owns
+      // the later inline/delegation composition.
       expect(
         Object.keys((await manager.load(greatGrandRunId))?.resolvedCompletions ?? {}),
-      ).toHaveLength(1);
-      // ...and the seam still handed the collect boundary an INLINE arm.
-      expect(outcome.terminalInlineAdvance).toEqual({ kind: 'handled' });
-      expect(advanceInlineParent).toHaveBeenCalledTimes(1);
+      ).toHaveLength(0);
+      expect(outcome.progression).toMatchObject({ kind: 'activate' });
+      expect(advanceInlineParent).not.toHaveBeenCalled();
     });
   });
 
@@ -2723,7 +2697,7 @@ describe('RunbookCollectionService', () => {
       let captured: EffectfulActorMutationSetRunnerInput<unknown>['makeRecoveryActor'] | undefined;
       const svc = makeCollectionService({
         actorMutationRunner: {
-          run: (input) => actorMutationRunner.run(input),
+          run: (input: EffectfulActorMutationRunnerInput) => actorMutationRunner.run(input),
           async runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
             captured = input.makeRecoveryActor;
             return await actorMutationRunner.runAll<TResult>(input);

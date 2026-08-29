@@ -113,7 +113,10 @@ import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
 import { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
 import type { ParentLinkage, PersistedDelegateFrontierEntry } from './types.js';
 import type { ResolveDelegationRunbook } from './delegation-inference.js';
-import type { CurrentCursorResolvedCompletion } from './completion-service.js';
+import {
+  hasApplicableRunProgressionCompletion,
+  type CurrentCursorResolvedCompletion,
+} from './completion-service.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import {
   clearAggregationRetryOnExhaustion,
@@ -187,27 +190,42 @@ export const RECOVERY_REQUIRED_STATE_NAME = 'recoveryRequired' as const;
  */
 export interface RunbookMachineOutput {
   readonly finalVars: Readonly<Record<string, VariableValue>>;
+  /** Terminal progression decision made by the machine state that ended the run. */
+  readonly progression: { readonly kind: 'completed' | 'stopped' };
 }
 
-/** Runtime references bound to one explicit Run Progression selection. */
-export interface RunProgressionMachineRuntime {
-  /** Exact durable state this one-shot restored actor was compiled from. */
-  readonly state: RunbookState;
-  /** The single core-minted authority for every selected turn. */
-  readonly authority: RunProgressionAuthority;
-  /** Fenced frontier operation invoked only after XState selects it. */
-  readonly projectFrontier: ProjectRunProgressionFrontier;
-  /** Ordinary entry operation invoked only after XState selects it. */
-  readonly enterUnit: EnterRunProgressionUnit;
-}
-
-/** Closed entry/frontier result emitted by the compiled machine. */
-export type RunProgressionMachineIntent =
+/**
+ * Result of the immediately preceding mechanically-executed progression turn.
+ *
+ * `completion_*` feedback closes #854's machine-owned completion decision.
+ * `awaiting_input` is deliberately transitional: until #857 migrates fresh,
+ * prompted, and command resolution, the runtime classifies a non-runnable
+ * execution-unit entry and the machine closes that classification into its
+ * typed waiting intent. It is not evidence that XState chose the entry turn.
+ */
+export type RunProgressionMachineFeedback =
+  | { readonly kind: 'activation' }
+  | { readonly kind: 'awaiting_input' }
+  | { readonly kind: 'completion_not_committed'; readonly message: string }
   | {
-      /** Durable state changed between machine selection and fenced capture. */
-      readonly kind: 'reselect';
-      readonly state: RunbookState;
+      readonly kind: 'completion_target_mismatch';
+      readonly message: string;
+    };
+
+/** Closed next action selected by the compiled machine for one progression turn. */
+export type RunProgressionMachineIntent =
+  | { readonly kind: 'apply_completion' }
+  | { readonly kind: 'continue' }
+  | {
+      readonly kind: 'waiting';
+      readonly reason: 'awaiting_input';
     }
+  | {
+      readonly kind: 'refused';
+      readonly reason: 'completion_target_mismatch' | 'completion_not_committed';
+      readonly message: string;
+    }
+  | { readonly kind: 'reselect'; readonly state: RunbookState }
   | {
       readonly kind: 'entered';
       readonly state: RunbookState;
@@ -230,46 +248,26 @@ export type RunProgressionMachineIntent =
       readonly kind: 'refused';
       readonly reason: 'frontier_disclosure_failed';
       readonly message: string;
-      /** Transient cause retained so invalid persisted state keeps RD-309. */
       readonly cause: unknown;
     };
 
-/** Typed result event emitted by the progression substates. */
+/** Typed intent emitted by a progression decision state. */
 export interface RunProgressionMachineIntentEvent {
   readonly type: 'RUN_PROGRESSION_INTENT';
   readonly intent: RunProgressionMachineIntent;
 }
 
+/** Runtime references bound to one explicit Run Progression selection. */
+export interface RunProgressionMachineRuntime {
+  readonly state: RunbookState;
+  readonly authority: RunProgressionAuthority;
+  readonly projectFrontier: ProjectRunProgressionFrontier;
+  readonly enterUnit: EnterRunProgressionUnit;
+}
+
 type FrontierDoneEvent = DoneActorEvent<FencedReEntryProjection>;
 type EntryDoneEvent = DoneActorEvent<RunProgressionEntryActorOutput>;
 type EntryErrorEvent = ErrorActorEvent;
-type FrontierProgressionEmitAction = ReturnType<
-  typeof emitEvent<
-    RunbookContext,
-    FrontierDoneEvent,
-    undefined,
-    RunbookEvent,
-    RunProgressionMachineIntentEvent
-  >
->;
-type EntryProgressionEmitAction = ReturnType<
-  typeof emitEvent<
-    RunbookContext,
-    EntryDoneEvent,
-    undefined,
-    RunbookEvent,
-    RunProgressionMachineIntentEvent
-  >
->;
-type EntryProgressionFailureEmitAction = ReturnType<
-  typeof emitEvent<
-    RunbookContext,
-    EntryErrorEvent,
-    undefined,
-    RunbookEvent,
-    RunProgressionMachineIntentEvent
-  >
->;
 
 function frontierOutputFromInvokeEvent(event: unknown): FencedReEntryProjection {
   if (typeof event !== 'object' || event === null || !('output' in event)) {
@@ -280,7 +278,15 @@ function frontierOutputFromInvokeEvent(event: unknown): FencedReEntryProjection 
 
 function emitFrontierProgressionIntent(
   build: (output: FencedReEntryProjection) => RunProgressionMachineIntent,
-): FrontierProgressionEmitAction {
+): ReturnType<
+  typeof emitEvent<
+    RunbookContext,
+    FrontierDoneEvent,
+    undefined,
+    RunbookEvent,
+    RunProgressionMachineIntentEvent
+  >
+> {
   return emitEvent<
     RunbookContext,
     FrontierDoneEvent,
@@ -293,7 +299,17 @@ function emitFrontierProgressionIntent(
   }));
 }
 
-function emitEntryProgressionIntent(frontier: 'none' | 'projected'): EntryProgressionEmitAction {
+function emitEntryProgressionIntent(
+  frontier: 'none' | 'projected',
+): ReturnType<
+  typeof emitEvent<
+    RunbookContext,
+    EntryDoneEvent,
+    undefined,
+    RunbookEvent,
+    RunProgressionMachineIntentEvent
+  >
+> {
   return emitEvent<
     RunbookContext,
     EntryDoneEvent,
@@ -311,7 +327,15 @@ function emitEntryProgressionIntent(frontier: 'none' | 'projected'): EntryProgre
   }));
 }
 
-function emitEntryProgressionFailureIntent(): EntryProgressionFailureEmitAction {
+function emitEntryProgressionFailureIntent(): ReturnType<
+  typeof emitEvent<
+    RunbookContext,
+    EntryErrorEvent,
+    undefined,
+    RunbookEvent,
+    RunProgressionMachineIntentEvent
+  >
+> {
   return emitEvent<
     RunbookContext,
     EntryErrorEvent,
@@ -1155,6 +1179,11 @@ export const LEAF_SUBSTATES = [
   '__resolve-iteration',
   '__issue-delegations',
   '__prepare-inline-launch',
+  '__progression-apply-completion',
+  '__progression-continue',
+  '__progression-waiting-input',
+  '__progression-refused-completion',
+  '__progression-refused-contention',
   '__progression-project-frontier',
   '__progression-enter-unit',
   '__progression-enter-after-projected-frontier',
@@ -1344,10 +1373,16 @@ export type RunbookEvent =
   | { type: 'FAIL' }
   | { type: 'RETRY' }
   | { type: 'GOTO'; target: StepId }
-  | { type: 'SELECT_RUN_PROGRESSION' }
   | { type: 'FORCE_STOP'; message?: string }
   | { type: 'FORCE_COMPLETE'; message?: string }
   | { type: 'SET_VARIABLES'; vars: Record<string, VariableValue> }
+  | {
+      /** Explicitly ask this compiled machine which progression turn comes next. */
+      type: 'SELECT_RUN_PROGRESSION';
+      /** Exact durable state loaded by the activation for this machine snapshot. */
+      /** Result of the prior selected turn, or the initial activation marker. */
+      feedback: RunProgressionMachineFeedback;
+    }
   | { type: 'DELEGATE_FRONTIER_CONSUMED' }
   | { type: 'INLINE_LAUNCH_CONSUMED' }
   | {
@@ -5267,6 +5302,38 @@ export function compileRunbookToMachine(
           on: {
             SELECT_RUN_PROGRESSION: [
               {
+                guard: ({ event }) => {
+                  assertEvent(event, 'SELECT_RUN_PROGRESSION');
+                  return event.feedback.kind === 'completion_target_mismatch';
+                },
+                target: `#${config.id}.__progression-refused-completion`,
+              },
+              {
+                guard: ({ event }) => {
+                  assertEvent(event, 'SELECT_RUN_PROGRESSION');
+                  return event.feedback.kind === 'completion_not_committed';
+                },
+                target: `#${config.id}.__progression-refused-contention`,
+              },
+              {
+                guard: ({ event }) => {
+                  assertEvent(event, 'SELECT_RUN_PROGRESSION');
+                  return event.feedback.kind === 'awaiting_input';
+                },
+                target: `#${config.id}.__progression-waiting-input`,
+              },
+              {
+                guard: ({ event }) => {
+                  assertEvent(event, 'SELECT_RUN_PROGRESSION');
+                  const runtime = options?.runProgression;
+                  return (
+                    runtime !== undefined &&
+                    hasApplicableRunProgressionCompletion(runtime.state, steps)
+                  );
+                },
+                target: `#${config.id}.__progression-apply-completion`,
+              },
+              {
                 guard: () => {
                   const runtime = options?.runProgression;
                   return (
@@ -5298,6 +5365,64 @@ export function compileRunbookToMachine(
             APPLY_CURRENT_RESOLVED_COMPLETION: applyCurrentResolvedCompletionTransitions,
           },
         },
+        '__progression-apply-completion': {
+          entry: runbookSetup.emit(() => ({
+            type: 'RUN_PROGRESSION_INTENT' as const,
+            intent: { kind: 'apply_completion' as const },
+          })),
+          always: { target: 'idle' },
+        },
+        '__progression-continue': {
+          entry: runbookSetup.emit(() => ({
+            type: 'RUN_PROGRESSION_INTENT' as const,
+            intent: { kind: 'continue' as const },
+          })),
+          always: { target: 'idle' },
+        },
+        '__progression-waiting-input': {
+          entry: runbookSetup.emit(() => ({
+            type: 'RUN_PROGRESSION_INTENT' as const,
+            intent: {
+              kind: 'waiting' as const,
+              reason: 'awaiting_input' as const,
+            },
+          })),
+          always: { target: 'idle' },
+        },
+        '__progression-refused-completion': {
+          entry: runbookSetup.emit(({ event }) => {
+            assertEvent(event, 'SELECT_RUN_PROGRESSION');
+            if (event.feedback.kind !== 'completion_target_mismatch') {
+              throw new Error('Completion refusal state entered without mismatch feedback');
+            }
+            return {
+              type: 'RUN_PROGRESSION_INTENT' as const,
+              intent: {
+                kind: 'refused' as const,
+                reason: 'completion_target_mismatch' as const,
+                message: event.feedback.message,
+              },
+            };
+          }),
+          always: { target: 'idle' },
+        },
+        '__progression-refused-contention': {
+          entry: runbookSetup.emit(({ event }) => {
+            assertEvent(event, 'SELECT_RUN_PROGRESSION');
+            if (event.feedback.kind !== 'completion_not_committed') {
+              throw new Error('Completion contention state entered without contention feedback');
+            }
+            return {
+              type: 'RUN_PROGRESSION_INTENT' as const,
+              intent: {
+                kind: 'refused' as const,
+                reason: 'completion_not_committed' as const,
+                message: event.feedback.message,
+              },
+            };
+          }),
+          always: { target: 'idle' },
+        },
         '__progression-refused': {
           entry: runbookSetup.emit(() => ({
             type: 'RUN_PROGRESSION_INTENT' as const,
@@ -5315,9 +5440,8 @@ export function compileRunbookToMachine(
             src: 'runProgressionFrontierActor',
             input: () => {
               const runtime = options?.runProgression;
-              if (runtime === undefined) {
+              if (runtime === undefined)
                 throw new Error('Run Progression frontier selected without runtime wiring');
-              }
               return { state: runtime.state, project: runtime.projectFrontier };
             },
             onDone: [
@@ -5325,9 +5449,8 @@ export function compileRunbookToMachine(
                 guard: ({ event }) => event.output.status === 'reselect',
                 target: 'idle',
                 actions: emitFrontierProgressionIntent((output) => {
-                  if (output.status !== 'reselect') {
+                  if (output.status !== 'reselect')
                     throw new Error('Frontier reselection transition received another result');
-                  }
                   return { kind: 'reselect', state: output.state };
                 }),
               },
@@ -5335,76 +5458,27 @@ export function compileRunbookToMachine(
                 guard: ({ event }) => event.output.status === 'projected',
                 target: `#${config.id}.__progression-enter-after-projected-frontier`,
               },
-              {
-                guard: ({ event }) => event.output.status === 'projection_refused',
+              ...(
+                [
+                  'projection_refused',
+                  'run_missing',
+                  'claim_superseded',
+                  'recovery_required',
+                  'aggregate_recovery_required',
+                ] as const
+              ).map((status) => ({
+                guard: ({ event }: { event: FrontierDoneEvent }) => event.output.status === status,
                 target: 'idle',
                 actions: emitFrontierProgressionIntent((output) => {
-                  if (output.status !== 'projection_refused') {
-                    throw new Error('Projection refusal transition received another result');
-                  }
+                  if (output.status !== status)
+                    throw new Error(`Frontier ${status} transition received another result`);
                   return {
                     kind: 'refused',
-                    reason: 'projection_refused',
+                    reason: status,
                     message: output.message,
                   };
                 }),
-              },
-              {
-                guard: ({ event }) => event.output.status === 'run_missing',
-                target: 'idle',
-                actions: emitFrontierProgressionIntent((output) => {
-                  if (output.status !== 'run_missing') {
-                    throw new Error('Missing-run transition received another result');
-                  }
-                  return {
-                    kind: 'refused',
-                    reason: 'run_missing',
-                    message: output.message,
-                  };
-                }),
-              },
-              {
-                guard: ({ event }) => event.output.status === 'claim_superseded',
-                target: 'idle',
-                actions: emitFrontierProgressionIntent((output) => {
-                  if (output.status !== 'claim_superseded') {
-                    throw new Error('Claim refusal transition received another result');
-                  }
-                  return {
-                    kind: 'refused',
-                    reason: 'claim_superseded',
-                    message: output.message,
-                  };
-                }),
-              },
-              {
-                guard: ({ event }) => event.output.status === 'recovery_required',
-                target: 'idle',
-                actions: emitFrontierProgressionIntent((output) => {
-                  if (output.status !== 'recovery_required') {
-                    throw new Error('Recovery refusal transition received another result');
-                  }
-                  return {
-                    kind: 'refused',
-                    reason: 'recovery_required',
-                    message: output.message,
-                  };
-                }),
-              },
-              {
-                guard: ({ event }) => event.output.status === 'aggregate_recovery_required',
-                target: 'idle',
-                actions: emitFrontierProgressionIntent((output) => {
-                  if (output.status !== 'aggregate_recovery_required') {
-                    throw new Error('Aggregate recovery transition received another result');
-                  }
-                  return {
-                    kind: 'refused',
-                    reason: 'aggregate_recovery_required',
-                    message: output.message,
-                  };
-                }),
-              },
+              })),
               {
                 target: 'idle',
                 actions: emitFrontierProgressionIntent(() => ({
@@ -5422,9 +5496,8 @@ export function compileRunbookToMachine(
             src: 'runProgressionEntryActor',
             input: () => {
               const runtime = options?.runProgression;
-              if (runtime === undefined) {
+              if (runtime === undefined)
                 throw new Error('Run Progression entry selected without runtime wiring');
-              }
               return { state: runtime.state, enter: runtime.enterUnit };
             },
             onDone: {
@@ -5439,13 +5512,11 @@ export function compileRunbookToMachine(
             src: 'runProgressionEntryActor',
             input: ({ event }) => {
               const output = frontierOutputFromInvokeEvent(event);
-              if (output.status !== 'projected') {
+              if (output.status !== 'projected')
                 throw new Error('Projected-frontier entry state received another result');
-              }
               const runtime = options?.runProgression;
-              if (runtime === undefined) {
+              if (runtime === undefined)
                 throw new Error('Run Progression entry selected without runtime wiring');
-              }
               return {
                 state: output.state,
                 enter: runtime.enterUnit,
@@ -5784,6 +5855,12 @@ export function compileRunbookToMachine(
       interruptedReason: undefined,
       interruptedStepId: undefined,
     },
+    output: ({ context }) => ({
+      finalVars: context.finalVars,
+      progression: {
+        kind: context.lifecycle === 'stopped' ? ('stopped' as const) : ('completed' as const),
+      },
+    }),
     states: {
       ...states,
       COMPLETE: {
@@ -5794,7 +5871,10 @@ export function compileRunbookToMachine(
             lifecycle: () => 'completed' as const,
           }),
         ],
-        output: ({ context }) => ({ finalVars: context.finalVars }),
+        output: ({ context }) => ({
+          finalVars: context.finalVars,
+          progression: { kind: 'completed' as const },
+        }),
       },
       STOPPED: {
         id: STOPPED_STATE_NAME,
@@ -5805,7 +5885,10 @@ export function compileRunbookToMachine(
             lifecycle: () => 'stopped' as const,
           }),
         ],
-        output: ({ context }) => ({ finalVars: context.finalVars }),
+        output: ({ context }) => ({
+          finalVars: context.finalVars,
+          progression: { kind: 'stopped' as const },
+        }),
       },
     },
   }) satisfies RunbookMachine;

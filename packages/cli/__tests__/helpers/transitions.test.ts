@@ -14,12 +14,14 @@ import type {
   LifecycleTransitionOutcome,
   RunId,
   RunbookState,
+  RunProgressionAuthority,
+  RunProgressionDirective,
+  RunProgressionOutcome,
   TransitionObservationEvent,
 } from '@rundown-org/core';
 import type { ResolvedStep } from '@rundown-org/parser';
 import { makeClaimRecord } from '@rundown-org/core/testing/claim-fixtures';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
-import type { ExecutionLoopResult } from '../../src/services/execution.js';
 
 // The unit-under-test (runSeamTransition, renderRefusal, renderApplied,
 // buildActionSink, renderTransitionEvents, the config + emit helpers,
@@ -84,11 +86,19 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   deriveExecutionAt:
     mockFn<(step: string, substep?: string, iteration?: number) => string>().mockReturnValue('1.1'),
   deriveActiveFrame: mockFn<
-    (state: RunbookState) => { step: string; iteration?: number; frameKey: string }
+    (state: RunbookState) => {
+      step: string;
+      iteration?: number;
+      frameKey: string;
+    }
   >().mockReturnValue({ step: '1', iteration: undefined, frameKey: '1' }),
   activeFrame: mockFn<
     (frameKey: string, entry: number) => { kind: 'active'; frameKey: string; entry: number }
-  >().mockImplementation((frameKey, entry) => ({ kind: 'active', frameKey, entry })),
+  >().mockImplementation((frameKey, entry) => ({
+    kind: 'active',
+    frameKey,
+    entry,
+  })),
   inactiveFrame: mockFn<
     (frameKey: string) => { kind: 'inactive'; frameKey: string }
   >().mockImplementation((frameKey) => ({ kind: 'inactive', frameKey })),
@@ -113,16 +123,28 @@ jest.unstable_mockModule('../../src/helpers/caller-evidence', () => ({
   readLifecycleCallerEvidence: mockReadCallerEvidence,
 }));
 
-const mockRunExecutionLoop = mockFn<
-  (...args: unknown[]) => Promise<ExecutionLoopResult>
->().mockResolvedValue({
-  status: 'done',
-});
 const mockFindStepOrThrow =
   mockFn<(steps: readonly ResolvedStep[], name: string) => ResolvedStep>();
 jest.unstable_mockModule('../../src/services/execution', () => ({
   findStepOrThrow: mockFindStepOrThrow,
-  runExecutionLoop: mockRunExecutionLoop,
+}));
+
+// Structural double for the shared Run Progression driver (#854): the suite
+// pins that transitions.ts hands the directive's authority through verbatim
+// and maps the closed outcome, not the driver's own wiring (covered by the
+// integration suites). `progressionFailedClosed` mirrors the real predicate —
+// a pure three-arm check — so the mapping under test reads the same signal.
+const mockDriveRunProgression =
+  mockFn<
+    (
+      activation: Extract<RunProgressionDirective, { kind: 'activate' }>,
+      ctx: unknown,
+    ) => Promise<RunProgressionOutcome>
+  >();
+jest.unstable_mockModule('../../src/helpers/run-progression-adapters', () => ({
+  driveRunProgression: mockDriveRunProgression,
+  progressionFailedClosed: (outcome: RunProgressionOutcome) =>
+    outcome.kind === 'refused' || outcome.kind === 'failed' || outcome.kind === 'stopped',
 }));
 
 jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
@@ -226,6 +248,20 @@ function stepEvent(
   } as unknown as Extract<TransitionObservationEvent, { type: 'STEP_TRANSITIONED' }>;
 }
 
+// Structural double for the branded, core-minted authority: core is fully
+// mocked in this suite, so the brand cannot be produced; only the value's
+// identity matters (the suite pins verbatim pass-through).
+const TEST_AUTHORITY = {
+  runId: PARENT_RUN_ID,
+} as unknown as RunProgressionAuthority;
+const TEST_ACTIVATION = {
+  kind: 'activate',
+  authority: TEST_AUTHORITY,
+  runbook: { source: 'project', path: 'test.runbook.md' },
+  steps: [],
+  entryBoundary: { kind: 'resume' },
+} as const satisfies Extract<RunProgressionDirective, { kind: 'activate' }>;
+
 function appliedOutcome(
   overrides: Partial<Extract<LifecycleTransitionOutcome, { kind: 'applied' }>> = {},
 ): LifecycleTransitionOutcome {
@@ -235,7 +271,7 @@ function appliedOutcome(
     mutation: 'run-transition',
     status: 'continue',
     events: [],
-    loop: { kind: 'none' },
+    progression: { kind: 'none' },
     ...overrides,
   } as unknown as LifecycleTransitionOutcome;
 }
@@ -245,7 +281,10 @@ beforeEach(() => {
   mockReadCallerEvidence.mockReturnValue({ kind: 'direct_cli' });
   mockManagerLoad.mockResolvedValue(makeState());
   jest.mocked(getRunbookFromState).mockReturnValue([]);
-  mockRunExecutionLoop.mockResolvedValue({ status: 'done' });
+  mockDriveRunProgression.mockResolvedValue({
+    kind: 'completed',
+    runId: PARENT_RUN_ID,
+  });
 });
 
 // ACCEPTED MUTATION SURVIVORS in transitions.ts (#485).
@@ -343,7 +382,9 @@ describe('buildTransitionContext', () => {
       claim: claimRecord(),
     } as unknown as CommandTargetResolution);
 
-    const result = await buildTransitionContext(output, '/cwd', { claimId: TEST_CLAIM_ID });
+    const result = await buildTransitionContext(output, '/cwd', {
+      claimId: TEST_CLAIM_ID,
+    });
 
     expect(result.kind).toBe('ready');
     if (result.kind === 'ready') {
@@ -385,7 +426,9 @@ describe('buildTransitionContext', () => {
       message: 'stale',
     } as unknown as CommandTargetResolution);
 
-    const result = await buildTransitionContext(output, '/cwd', { claimId: TEST_CLAIM_ID });
+    const result = await buildTransitionContext(output, '/cwd', {
+      claimId: TEST_CLAIM_ID,
+    });
 
     expect(result.kind).toBe('stale_claim');
   });
@@ -396,7 +439,9 @@ describe('buildTransitionContext', () => {
       kind: 'terminal_claim',
     } as unknown as CommandTargetResolution);
 
-    const result = await buildTransitionContext(output, '/cwd', { claimId: TEST_CLAIM_ID });
+    const result = await buildTransitionContext(output, '/cwd', {
+      claimId: TEST_CLAIM_ID,
+    });
 
     expect(result.kind).toBe('terminal_claim');
   });
@@ -416,7 +461,10 @@ describe('runSeamTransition — explicit --step target resolution', () => {
     });
 
     const runArgs = mockRunTransition.mock.calls[0][0] as Record<string, unknown>;
-    expect(runArgs.targetSelector).toEqual({ kind: 'explicit-step', step: '1.1' });
+    expect(runArgs.targetSelector).toEqual({
+      kind: 'explicit-step',
+      step: '1.1',
+    });
     // toStrictEqual (not toEqual): a bare --step must forward NO `iteration` key
     // at all. toEqual treats `{ stepId, iteration: undefined }` as equal to
     // `{ stepId }`, which lets the always-spread mutation of the iteration
@@ -439,8 +487,14 @@ describe('runSeamTransition — explicit --step target resolution', () => {
     });
 
     const runArgs = mockRunTransition.mock.calls[0][0] as Record<string, unknown>;
-    expect(runArgs.explicitTarget).toStrictEqual({ stepId: '1.1', iteration: 3 });
-    expect(runArgs.targetSelector).toEqual({ kind: 'explicit-step', step: '1.1' });
+    expect(runArgs.explicitTarget).toStrictEqual({
+      stepId: '1.1',
+      iteration: 3,
+    });
+    expect(runArgs.targetSelector).toEqual({
+      kind: 'explicit-step',
+      step: '1.1',
+    });
   });
 
   it('still forwards the explicitTarget when the seam refuses, and renders the typed refusal', async () => {
@@ -455,7 +509,10 @@ describe('runSeamTransition — explicit --step target resolution', () => {
     });
 
     const runArgs = mockRunTransition.mock.calls[0][0] as Record<string, unknown>;
-    expect(runArgs.targetSelector).toEqual({ kind: 'explicit-step', step: '1.1' });
+    expect(runArgs.targetSelector).toEqual({
+      kind: 'explicit-step',
+      step: '1.1',
+    });
     expect(runArgs.explicitTarget).toStrictEqual({ stepId: '1.1' });
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(output.noActiveRunbook).toHaveBeenCalledWith('fail');
@@ -473,12 +530,17 @@ describe('runSeamTransition — explicit --step target resolution', () => {
     });
 
     const runArgs = mockRunTransition.mock.calls[0][0] as Record<string, unknown>;
-    expect(runArgs.targetSelector).toEqual({ kind: 'claim', claimId: TEST_CLAIM_ID });
+    expect(runArgs.targetSelector).toEqual({
+      kind: 'claim',
+      claimId: TEST_CLAIM_ID,
+    });
     // Caller evidence is built from the SAME `--claim-id` that named the target.
     // The seam reconciles the two and refuses a divergence (#613), so a frontend
     // that sourced them independently would refuse every claim-targeted
     // transition at runtime; pin the coupling here, where drift would originate.
-    expect(mockReadCallerEvidence).toHaveBeenCalledWith({ claimId: TEST_CLAIM_ID });
+    expect(mockReadCallerEvidence).toHaveBeenCalledWith({
+      claimId: TEST_CLAIM_ID,
+    });
   });
 
   it('uses a claim selector for a bare --claim-id transition without --step', async () => {
@@ -490,8 +552,13 @@ describe('runSeamTransition — explicit --step target resolution', () => {
     });
 
     const runArgs = mockRunTransition.mock.calls[0][0] as Record<string, unknown>;
-    expect(runArgs.targetSelector).toEqual({ kind: 'claim', claimId: TEST_CLAIM_ID });
-    expect(mockReadCallerEvidence).toHaveBeenCalledWith({ claimId: TEST_CLAIM_ID });
+    expect(runArgs.targetSelector).toEqual({
+      kind: 'claim',
+      claimId: TEST_CLAIM_ID,
+    });
+    expect(mockReadCallerEvidence).toHaveBeenCalledWith({
+      claimId: TEST_CLAIM_ID,
+    });
     expect(mockResolveTransitionTarget).not.toHaveBeenCalled();
   });
 
@@ -761,7 +828,11 @@ describe('runSeamTransition — refusal render table', () => {
   }>([
     {
       label: 'a vanished run target',
-      outcome: { kind: 'missing', runId: PARENT_RUN_ID, message: 'Run rd_… does not exist.' },
+      outcome: {
+        kind: 'missing',
+        runId: PARENT_RUN_ID,
+        message: 'Run rd_… does not exist.',
+      },
       code: 'RUN_TARGET_UNAVAILABLE',
     },
     {
@@ -846,7 +917,6 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
     expect(result.applied).toEqual({
       status: 'continue',
       runId: PARENT_RUN_ID,
-      terminalPropagationHandled: false,
     });
     expect(result.exitError).toBe(false);
   });
@@ -909,7 +979,6 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
     expect(result.applied).toEqual({
       status: 'stopped',
       runId: PARENT_RUN_ID,
-      terminalPropagationHandled: false,
     });
     expect(result.exitError).toBe(true);
   });
@@ -952,74 +1021,124 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
     });
   });
 
-  it('drives the execution loop for a run directive and propagates a stopped loop result', async () => {
+  it('activates Run Progression for a run directive and fails closed on a stopped outcome', async () => {
     const output = makeOutput();
-    mockRunExecutionLoop.mockResolvedValue({ status: 'stopped' });
+    mockDriveRunProgression.mockResolvedValue({
+      kind: 'stopped',
+      runId: PARENT_RUN_ID,
+    });
     mockRunTransition.mockResolvedValue(
       appliedOutcome({
-        loop: { kind: 'run' },
+        progression: TEST_ACTIVATION,
       }),
     );
 
     const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
 
-    expect(mockRunExecutionLoop).toHaveBeenCalledTimes(1);
-    const loopArgs = mockRunExecutionLoop.mock.calls[0];
-    // The output is forwarded, and NO release ownership: the loop owns its own
-    // release by default, and this path never names a different owner.
-    expect(loopArgs[5]).toEqual({ output });
-    // A bare caller presented no bearer, so the key must be ABSENT rather than
-    // present-and-undefined: the loop spreads this object into the fence input,
-    // where an explicit `claimKey: undefined` is a different request from no key.
-    expect(Object.hasOwn(loopArgs[5] as object, 'claimKey')).toBe(false);
+    expect(mockDriveRunProgression).toHaveBeenCalledTimes(1);
+    // The directive's authority is handed through VERBATIM — the CLI never
+    // assembles or augments authority; core minted it where the caller's
+    // evidence was verified.
+    expect(mockDriveRunProgression.mock.calls[0]?.[0]).toBe(TEST_ACTIVATION);
     expect(result.applied).toEqual({
-      status: 'stopped',
+      status: 'continue',
       runId: PARENT_RUN_ID,
-      terminalPropagationHandled: false,
+      progression: { kind: 'stopped', runId: PARENT_RUN_ID },
     });
     expect(result.exitError).toBe(true);
   });
 
-  it('does not mark a non-stopped execution-loop result as stopped', async () => {
+  it('does not mark a waiting progression outcome as stopped', async () => {
     const output = makeOutput();
-    mockRunExecutionLoop.mockResolvedValue({ status: 'waiting' });
-    mockRunTransition.mockResolvedValue(appliedOutcome({ loop: { kind: 'run' } }));
+    mockDriveRunProgression.mockResolvedValue({
+      kind: 'waiting',
+      runId: PARENT_RUN_ID,
+      reason: 'awaiting_input',
+    });
+    mockRunTransition.mockResolvedValue(appliedOutcome({ progression: TEST_ACTIVATION }));
 
     const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
 
     expect(result.applied).not.toMatchObject({ status: 'stopped' });
+    // The closed outcome rides the result so the command layer can gate its
+    // own propagation on progression having run at all.
+    expect(result.applied?.progression).toMatchObject({ kind: 'waiting' });
     expect(result.exitError).toBe(false);
   });
 
-  it.each([
-    ['handled', 'continue'],
-    ['blocked', 'stopped'],
-  ] as const)(
-    'marks %s loop progression as already propagated with %s severity',
-    async (loopStatus, appliedStatus) => {
+  it('activates the core directive even when the post-transition run reload is missing', async () => {
+    const output = makeOutput();
+    mockManagerLoad.mockResolvedValue(null);
+    mockDriveRunProgression.mockResolvedValue({
+      kind: 'refused',
+      runId: PARENT_RUN_ID,
+      reason: 'run_missing',
+      code: 'RUN_TARGET_UNAVAILABLE',
+      message: `Run ${PARENT_RUN_ID} no longer exists`,
+      recovery: 'permanent',
+    });
+    mockRunTransition.mockResolvedValue(appliedOutcome({ progression: TEST_ACTIVATION }));
+
+    const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
+
+    expect(mockDriveRunProgression).toHaveBeenCalledTimes(1);
+    expect(mockDriveRunProgression.mock.calls[0]?.[0]).toBe(TEST_ACTIVATION);
+    expect(result.applied?.progression).toMatchObject({
+      kind: 'refused',
+      reason: 'run_missing',
+      runId: PARENT_RUN_ID,
+    });
+    expect(result.exitError).toBe(true);
+  });
+
+  it.each(['refused', 'failed'] as const)(
+    'fails closed when progression returns a %s outcome',
+    async (kind) => {
       const output = makeOutput();
-      mockRunExecutionLoop.mockResolvedValue({ status: loopStatus });
-      mockRunTransition.mockResolvedValue(appliedOutcome({ loop: { kind: 'run' } }));
+      mockDriveRunProgression.mockResolvedValue({
+        kind,
+        runId: PARENT_RUN_ID,
+        reason: kind === 'refused' ? 'command_not_committed' : 'observation_delivery_failed',
+        message: 'diagnosed by core',
+        recovery: 'retryable',
+      } as unknown as RunProgressionOutcome);
+      mockRunTransition.mockResolvedValue(appliedOutcome({ progression: TEST_ACTIVATION }));
 
       const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
 
-      expect(result.applied).toEqual({
-        status: appliedStatus,
+      expect(result.applied).toMatchObject({
+        status: 'continue',
         runId: PARENT_RUN_ID,
-        terminalPropagationHandled: true,
       });
-      expect(result.exitError).toBe(loopStatus === 'blocked');
+      expect(result.applied?.progression).toMatchObject({ kind });
+      expect(result.exitError).toBe(true);
     },
   );
 
-  it('threads the presented bearer into the execution loop as a lookup key', async () => {
-    // The bearer is what lets the loop's fenced command mutation commit under the
-    // caller's authority. Derived once here — never forwarded as the raw bearer,
-    // which would push a credential down into the loop's options.
+  it('leaves progression absent when the seam directs no continuation', async () => {
+    const output = makeOutput();
+    mockRunTransition.mockResolvedValue(appliedOutcome({ progression: { kind: 'none' } }));
+
+    const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig());
+
+    expect(mockDriveRunProgression).not.toHaveBeenCalled();
+    // Absence means core explicitly directed no additional activation; it does
+    // not transfer progression ownership back to the command layer.
+    expect(result.applied).toEqual({
+      status: 'continue',
+      runId: PARENT_RUN_ID,
+    });
+    expect(Object.hasOwn(result.applied as object, 'progression')).toBe(false);
+  });
+
+  it('hands the directive authority through untouched for a claim-presented caller', async () => {
+    // Since #854 the bearer's lookup key rides the authority core minted where
+    // it verified the evidence; the CLI derives nothing from the raw claim id
+    // and forwards the branded value as-is.
     const output = makeOutput();
     mockRunTransition.mockResolvedValue(
       appliedOutcome({
-        loop: { kind: 'run' },
+        progression: TEST_ACTIVATION,
       }),
     );
 
@@ -1027,11 +1146,8 @@ describe('runSeamTransition — applied render (buildActionSink / renderTransiti
       claimId: TEST_CLAIM_ID,
     });
 
-    const loopArgs = mockRunExecutionLoop.mock.calls[0];
-    expect(loopArgs[5]).toEqual({
-      claimKey: TEST_CLAIM_KEY,
-      output,
-    });
+    expect(mockDriveRunProgression).toHaveBeenCalledTimes(1);
+    expect(mockDriveRunProgression.mock.calls[0]?.[0]).toBe(TEST_ACTIVATION);
   });
 
   it('routes a manual-completion drain through the emitter-bridged sink, not the action sink', async () => {

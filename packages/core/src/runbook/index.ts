@@ -273,6 +273,8 @@ export {
   createEffectfulActorMutationRunner,
   type EffectfulActorMutationRunner,
   type EffectfulActorMutationRunnerInput,
+  type PreflightEffectfulActorMutationRunnerInput,
+  type PreEffectActorMutationReturn,
   type EffectfulActorMutationSetRunnerInput,
   type EffectfulActorMutationSetRunnerResult,
   type EffectfulActorMutationSetTarget,
@@ -338,6 +340,9 @@ export {
 // caller evidence may produce a RunProgressionAuthority.
 export {
   activateRunProgression,
+  progressionDirectiveForStartedRun,
+  resolveInlineAncestorProgression,
+  flowBackInlineTerminal,
   INLINE_ADVANCE_RECOVERY_BY_REASON,
   ObservationDeliveryError,
   recoveryForInlineAdvanceRefusal,
@@ -399,7 +404,6 @@ export {
   type ExplicitDelegationTarget,
   type FindDelegationsByTokenHash,
   type DelegationAbortOutcome,
-  type LifecycleLoopDirective,
   type LifecycleNavigationInput,
   type LifecycleNavigationCapability,
   type LifecycleNavigationMutationInput,

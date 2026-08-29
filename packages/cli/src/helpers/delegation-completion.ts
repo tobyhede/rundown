@@ -51,9 +51,9 @@ import {
   type RunbookState,
   type ParentLinkage,
   type RunProgressionRecovery,
+  type TerminalPropagationSource,
   type TerminalUpwardPropagationResult,
   type CommandExecutionStreamOptions,
-  type DelegationOutcome,
   type DelegationRuntimeCapabilities,
   type RunId,
 } from '@rundown-org/core';
@@ -135,9 +135,8 @@ function delegationRuntimeFor(
  * collapses the drain/loop statuses into the seam's `AdvanceInlineParentOutcome`.
  * It performs no standalone terminal session release. Each drain or command
  * fence folds the parent's addressed release into the transaction that commits
- * the parent's terminal state. The loop is invoked with `returnRefusals: true`
- * so a refusal that applied no terminal transition comes back as typed data
- * instead of a false terminal status (#802, #833).
+ * the parent's terminal state. This callable remains only for legacy entry
+ * paths pending #858; machine-owned inline composition does not invoke it.
  *
  * The heavy CLI collaborators are imported LAZILY to avoid a static
  * delegation-completion ↔ execution import cycle.
@@ -242,27 +241,11 @@ export function buildAdvanceInlineParent(
       const loopState = freshParent ?? drained.state;
       const loopSteps = [...getRunbookFromState(loopState, cwd)];
       const loopResult = await runExecutionLoop(manager, parentRunId, loopSteps, cwd, emitter, {
-        returnRefusals: true,
         output,
         commandStreamOptions,
         delegationRuntime,
       });
       output.flush();
-      // The loop's own drain can refuse the same way this callable's did, and
-      // with Refusal Hand-back it returns the refusal rather than reporting
-      // a `'stopped'` this callable would forward as a terminal — which would
-      // have the seam release a still-running parent and recurse upward on a
-      // terminal that never happened.
-      //
-      // One discriminant across both arms, exhausted by a switch. It replaced a
-      // fall-through that reached the refusal by ELIMINATING the three terminal
-      // strings, which was the best available shape while the terminal arm was
-      // a bare string and the refusal an object: a `typeof` test would have said
-      // only "not one of these strings", swallowing any second object-shaped arm
-      // as `{status: 'refused', refusal: undefined}` with no compile error. Now
-      // that both arms carry `status`, the exhaustive `never` below refuses a
-      // new member outright instead of forwarding it as a refusal.
-      //
       switch (loopResult.status) {
         case 'stopped':
           return { status: 'stopped' };
@@ -273,8 +256,11 @@ export function buildAdvanceInlineParent(
           return { status: 'active' };
         case 'blocked':
           return { status: 'blocked' };
+        default: {
+          const _exhaustive: never = loopResult.status;
+          return _exhaustive;
+        }
       }
-      return loopResult;
     }
 
     // applied === 0: waiting for sibling substeps to resolve.
@@ -377,6 +363,8 @@ export function isInlinePropagationRefusal(
  * boundary-derived recovery.
  */
 export interface InlinePropagationRefusalDetail {
+  /** Run whose upward turn actually refused. */
+  readonly runId: RunId;
   /** Registered code of the refusing condition. */
   readonly code: string;
   /** Operator-facing message composed at the point of diagnosis. */
@@ -405,12 +393,15 @@ export function inlinePropagationRefusalDetail(
 ): InlinePropagationRefusalDetail {
   if (outcome.kind === 'linkage-cycle') {
     return {
+      runId:
+        outcome.trip.cause === 'repeat' ? outcome.trip.repeatedRunId : outcome.trip.deepestRunId,
       code: outcome.trip.code,
       message: outcome.trip.message,
       recovery: 'permanent',
     };
   }
   return {
+    runId: outcome.refusal.runId,
     code: outcome.refusal.code,
     message: outcome.refusal.message,
     recovery: INLINE_ADVANCE_RECOVERY[outcome.refusal.reason],
@@ -782,13 +773,11 @@ export async function propagateChildTerminalDetailed(
 /**
  * Whether the driving command authored an operator RESULT (`pass`/`fail`) or
  * relies on lifecycle inference. Making this a required discriminated param —
- * not a positional-optional `explicitResult` — encodes the operator-result vs
- * loop-inferred contract in the type: a loop driver cannot accidentally author a
- * result, and an operator-result command cannot forget to (SHOULD-FIX 5).
+ * not a positional-optional `explicitResult` — encodes the explicit-result vs
+ * loop-inferred contract in the type: an inferred driver cannot accidentally
+ * author a result, and an explicit-result caller cannot forget to (SHOULD-FIX 5).
  */
-export type PropagationTrigger =
-  | { readonly kind: 'operator-result'; readonly result: DelegationOutcome }
-  | { readonly kind: 'loop-inferred' };
+export type PropagationTrigger = TerminalPropagationSource;
 
 /**
  * Outcome of {@link propagateDrivenRunTerminal}.
@@ -803,6 +792,8 @@ export type DrivenRunPropagation =
   | { readonly kind: 'skipped' }
   | {
       readonly kind: 'inline-advanced';
+      /** Composing parent whose stable condition the advance describes. */
+      readonly parentRunId: RunId;
       readonly result: InlinePropagationResult;
       /**
        * The refusal's preserved identity, present exactly when `result` is a
@@ -886,7 +877,7 @@ export function inlineAdvanceRequiresFailureExit(propagation: DrivenRunPropagati
  * forces every caller to narrow before touching the exit code, so the guard can
  * no longer be dropped (Task 3, Correction 2).
  *
- * The `trigger`'s authored result (for `operator-result`) is forwarded into
+ * The `trigger`'s authored result (for `explicit-result`) is forwarded into
  * `projectDelegationTerminalOutcome`, which short-circuits on an explicit result
  * and otherwise infers from lifecycle. Operator-result commands (`pass`/`fail`)
  * MUST author their RESULT; loop-driven callers (goto/run/claim/collect) use
@@ -931,7 +922,7 @@ export async function propagateDrivenRunTerminal(
   }
   const linkage = extractParentLinkage(driven);
   if (!linkage) return { kind: 'skipped' };
-  const explicitResult = trigger.kind === 'operator-result' ? trigger.result : undefined;
+  const explicitResult = trigger.kind === 'explicit-result' ? trigger.result : undefined;
   if (linkage.kind === 'inline') {
     const advanced = await advanceParentForInlineChildDetailed(
       driven,
@@ -942,6 +933,7 @@ export async function propagateDrivenRunTerminal(
     );
     return {
       kind: 'inline-advanced',
+      parentRunId: linkage.parentRunId,
       result: advanced.result,
       ...(advanced.refusal !== undefined ? { refusal: advanced.refusal } : {}),
     };

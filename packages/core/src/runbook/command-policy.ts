@@ -9,7 +9,6 @@ import {
   type DELEGATION_COLLECTION_PENDING_MESSAGE,
   readDelegationCollectionPendingForPolicy,
 } from './delegation-lifecycle-read-model.js';
-import type { InlineUpwardPropagationResult } from './inline-parent-advance.js';
 import type { RunId } from './run-id.js';
 import type { RunProgressionDirective } from './run-progression.js';
 import type { AbandonedAttemptSetOutcome } from './storage/execution-lease.js';
@@ -236,10 +235,10 @@ export type DelegationPolicyOutcome =
        * Collection applied one or more delegation outcomes and left the target
        * running: the frontend drives a Run Progression continuation next.
        *
-       * Split from the terminal arm on `lifecycle` so the continuation's
-       * requirements are unrepresentable-when-absent: a running outcome ALWAYS
-       * carries the verified runtime pair and the minted progression
-       * authority, and the frontend needs no runtime guard for their presence.
+       * Split from the terminal arm on `lifecycle` so a running outcome always
+       * carries core's explicit progression decision. The directive itself
+       * decides whether activation is required; the frontend never infers that
+       * decision from lifecycle or observations.
        */
       readonly kind: 'collection_applied';
       /** Target run that received the collected outcomes. */
@@ -254,8 +253,6 @@ export type DelegationPolicyOutcome =
       readonly lifecycle: 'running';
       /** True when collection reported this run's terminal delegation outcome upward. */
       readonly reportedTerminalOutcome: boolean;
-      /** Never present on a running outcome; the discriminant carries the arm. */
-      readonly terminalInlineAdvance?: undefined;
       /**
        * Ordered transition observations projected from the applied collection
        * transitions. This is an in-memory command outcome only; it is never
@@ -268,8 +265,8 @@ export type DelegationPolicyOutcome =
   | {
       /**
        * Collection applied one or more delegation outcomes and the target
-       * reached a terminal lifecycle: no continuation follows, so no runtime
-       * authority travels on this arm.
+       * reached a terminal lifecycle. Run Progression owns release reporting
+       * and any upward inline propagation from that committed boundary.
        */
       readonly kind: 'collection_applied';
       /** Target run that received the collected outcomes. */
@@ -285,23 +282,13 @@ export type DelegationPolicyOutcome =
       /** True when collection reported this run's terminal delegation outcome upward. */
       readonly reportedTerminalOutcome: boolean;
       /**
-       * Set only when a terminal collect target carried INLINE linkage and the
-       * seam advanced its composing parent. Carries the inline-advance outcome so
-       * the CLI can map it to an exit code via `inlineAdvanceRequiresFailureExit`,
-       * and — on the `linkage-cycle` arm — the trip naming the run to prune, which
-       * the CLI renders before collapsing it fail-closed (#603). Undefined for
-       * delegation targets and non-linked targets. In-memory command outcome only
-       * — never persisted.
-       */
-      readonly terminalInlineAdvance?: InlineUpwardPropagationResult;
-      /**
        * Ordered transition observations projected from the applied collection
        * transitions. This is an in-memory command outcome only; it is never
        * persisted into the SQLite run state.
        */
       readonly transitionObservations: readonly TransitionObservationEvent[];
-      /** Never present on a terminal outcome: no continuation follows. */
-      readonly progression?: undefined;
+      /** Core-minted terminal activation consumed verbatim by the frontend. */
+      readonly progression: Extract<RunProgressionDirective, { readonly kind: 'activate' }>;
     }
   | {
       /** Collection failed after core rejected a persisted delegation outcome. */
