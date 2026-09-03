@@ -299,6 +299,10 @@ async function seedInlineChainStates(depth: number): Promise<readonly RunbookSta
       substep: '1',
       activeFrameKey: frameKey,
       activeEntry: 1,
+      // The composing edge's own substep row. Since #857 the resolver
+      // validates it (status and frame entry), not only the parent's cursor,
+      // so a chain link without one reads as an unrelated parent.
+      substepStates: [{ id: '1', frameKey, status: 'running' }],
     });
     created.push(positioned);
   }

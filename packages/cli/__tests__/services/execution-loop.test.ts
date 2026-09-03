@@ -322,6 +322,58 @@ const asSteps = (s: readonly LooseStep[]): ResolvedStepType[] => s as unknown as
  */
 const DEAD_PID = 999999999;
 
+/**
+ * The public Run Progression activation an inline-launching caller must supply.
+ *
+ * `launchInlineChildFromIntent` refuses without it (#857), so every loop
+ * invocation that can reach an inline-launch intent passes this double. It
+ * stands for the frontend's real driver, not for the child's behaviour: it
+ * closes the child's activation as `waiting`, which is what the CLI's driver
+ * reports for a child that entered and yielded. Tests that need a different
+ * closed outcome build their own.
+ */
+const inlineProgressionDriver = (
+  outcome: { kind: 'waiting' | 'completed' | 'stopped' } = { kind: 'waiting' },
+): ((directive: { authority: { runId: string } }, sink: unknown) => Promise<unknown>) =>
+  // Two parameters because the real seam has two: core hands the driver the
+  // directive AND the gated observation sink it must emit through. Declaring
+  // one would still type-check every call site here and quietly stop the
+  // `toHaveBeenCalledWith` assertions below from being able to name the sink.
+  jest.fn(async (directive: { authority: { runId: string } }, _sink: unknown) =>
+    outcome.kind === 'waiting'
+      ? { kind: 'waiting', runId: directive.authority.runId, reason: 'awaiting_input' }
+      : { kind: outcome.kind, runId: directive.authority.runId },
+  );
+
+/**
+ * An `adopted` run-control adoption naming the CHILD it re-arms.
+ *
+ * `controlledRunId` is not decoration on this double: the resumed child's
+ * activation directive is minted from it, and
+ * `progressionDirectiveForStartedRun` refuses a claim controlling any other
+ * run — the same pairing `mintRunControlClaim` produces in production. A double
+ * that omitted it would keep type-checking behind the `as never` below and then
+ * throw at the seam it was standing in for.
+ *
+ * @param controlledRunId - The run this adopted claim controls.
+ * @returns A `RunControlAdoption` shaped for the session-service double.
+ */
+const adoptedRunControlClaim = (controlledRunId: string) =>
+  ({
+    kind: 'adopted',
+    runtime: {
+      claimId: 'rdclm_adopted',
+      claim: { claimKey: 'ck_adopted', controlledRunId },
+      // `PreparedRunControlClaim` carries ONE branded pair; the `as never`
+      // would happily keep accepting the old two-field spelling, so the shape
+      // is kept honest by hand.
+      delegationRuntime: delegationRuntimeDouble({
+        issueDelegationCredential: unusedDelegationCredentialIssuer(),
+        deriveDelegationToken: unusedDelegationTokenDeriver(),
+      }),
+    },
+  }) as never;
+
 describe('runExecutionLoop', () => {
   let mockManager: MockManagerLike;
   let mockEmitter: MockEmitterLike;
@@ -3804,7 +3856,10 @@ describe('runExecutionLoop', () => {
       asSteps(inlineSteps),
       mockManager.cwd,
       asEmitter(mockEmitter),
-      { output: { executionEvent: jest.fn() } as never },
+      {
+        output: { executionEvent: jest.fn() } as never,
+        driveProgression: inlineProgressionDriver() as never,
+      },
     );
 
     expect(result.status).toBe('stopped');
@@ -3991,7 +4046,10 @@ describe('runExecutionLoop', () => {
         asSteps(inlineSteps),
         mockManager.cwd,
         asEmitter(mockEmitter),
-        { output: { executionEvent: jest.fn() } as never },
+        {
+          output: { executionEvent: jest.fn() } as never,
+          driveProgression: inlineProgressionDriver() as never,
+        },
       );
 
       // The refused pop is absorbed: the consume failure stays the outcome, and
@@ -4129,7 +4187,10 @@ describe('runExecutionLoop', () => {
       asSteps(inlineSteps),
       mockManager.cwd,
       asEmitter(mockEmitter),
-      { output: { executionEvent: jest.fn() } as never },
+      {
+        output: { executionEvent: jest.fn() } as never,
+        driveProgression: inlineProgressionDriver() as never,
+      },
     );
 
     // The consume failure is still the outcome; only the session is spared.
@@ -4247,6 +4308,13 @@ describe('runExecutionLoop', () => {
     mockActorService.sendAndSync
       .mockResolvedValueOnce({ state: parentState, snapshot: {} })
       .mockResolvedValueOnce({ state: parentState, snapshot: {} });
+    // The repaired child resumes with its OWN re-established authority, so the
+    // launch runs to the activation rather than closing on the suite-default
+    // `refused_credential_issued`. Overriding it here is what keeps this test
+    // about repair-then-activate-then-consume; the refusal arm has its own.
+    mockSessionService.adoptRunControlClaim.mockResolvedValueOnce(
+      adoptedRunControlClaim(childRunId),
+    );
 
     const result = await runExecutionLoop(
       asManager(mockManager),
@@ -4254,7 +4322,10 @@ describe('runExecutionLoop', () => {
       asSteps(inlineSteps),
       mockManager.cwd,
       asEmitter(mockEmitter),
-      { output: { executionEvent: jest.fn() } as never },
+      {
+        output: { executionEvent: jest.fn() } as never,
+        driveProgression: inlineProgressionDriver() as never,
+      },
     );
 
     expect(result.status).toBe('waiting');
@@ -4446,7 +4517,10 @@ describe('runExecutionLoop', () => {
         asEmitter(mockEmitter),
         // `warning` is part of the double because the contender stands down
         // through the arm that names the process holding the launch.
-        { output: { executionEvent: jest.fn(), warning: jest.fn() } as never },
+        {
+          output: { executionEvent: jest.fn(), warning: jest.fn() } as never,
+          driveProgression: inlineProgressionDriver() as never,
+        },
       );
 
     let injected = false;
@@ -4658,7 +4732,7 @@ describe('runExecutionLoop', () => {
         asSteps(inlineSteps),
         mockManager.cwd,
         asEmitter(mockEmitter),
-        { output: mockOutput as never },
+        { output: mockOutput as never, driveProgression: inlineProgressionDriver() as never },
       );
 
     /**
@@ -5540,20 +5614,9 @@ describe('runExecutionLoop', () => {
       .mockResolvedValue(existingChild);
     mockSessionService.getActive.mockResolvedValueOnce({ id: runbookId });
     mockSessionService.pushRunbook.mockResolvedValueOnce(undefined);
-    mockSessionService.adoptRunControlClaim.mockResolvedValueOnce({
-      kind: 'adopted',
-      runtime: {
-        claimId: 'rdclm_adopted',
-        claim: { claimKey: 'ck_adopted' },
-        // `PreparedRunControlClaim` carries ONE branded pair; the `as never`
-        // below would happily keep accepting the old two-field spelling, so the
-        // shape is kept honest by hand.
-        delegationRuntime: delegationRuntimeDouble({
-          issueDelegationCredential: unusedDelegationCredentialIssuer(),
-          deriveDelegationToken: unusedDelegationTokenDeriver(),
-        }),
-      },
-    } as never);
+    mockSessionService.adoptRunControlClaim.mockResolvedValueOnce(
+      adoptedRunControlClaim(childRunId),
+    );
     mockActorService.enterExecutionUnit.mockResolvedValueOnce({
       kind: 'inline-launch',
       launch: inlineLaunch,
@@ -5590,7 +5653,10 @@ describe('runExecutionLoop', () => {
       asSteps(inlineSteps),
       mockManager.cwd,
       asEmitter(mockEmitter),
-      { output: { executionEvent } as never },
+      {
+        output: { executionEvent } as never,
+        driveProgression: inlineProgressionDriver() as never,
+      },
     );
 
     expect(mockSessionService.adoptRunControlClaim).toHaveBeenCalledWith(existingChild);
@@ -5609,12 +5675,20 @@ describe('runExecutionLoop', () => {
     );
   });
 
+  // Replaces a pair that asserted 'blocked'/'handled' off
+  // `recordChildCompletion`'s return. That recording is no longer the CLI's:
+  // an already-terminal inline child now reaches the SAME public activation as
+  // any other, and core's Run Progression owns both the flow-back and its
+  // refusal (`run-progression.ts`'s `executeInlineTerminalFlowBack`). What the
+  // loop still owns — and all this layer may pin — is that the activation's
+  // outcome, not a locally re-derived one, closes the composing loop.
   it.each([
-    { propagated: 'blocked', expected: 'blocked' },
-    { propagated: 'recorded', expected: 'handled' },
+    { progression: 'completed', expected: 'done' },
+    { progression: 'stopped', expected: 'stopped' },
+    { progression: 'waiting', expected: 'waiting' },
   ] as const)(
-    'reports $expected when inline completion recording returns $propagated',
-    async ({ propagated, expected }) => {
+    'closes the composing loop as $expected when the child activation reports $progression',
+    async ({ progression, expected }) => {
       const childRunId = actualCore.assertRunId(`rd_${'2'.repeat(32)}`);
       const inlineLaunch = {
         parentRunId: runbookId,
@@ -5722,7 +5796,10 @@ describe('runExecutionLoop', () => {
       // Twice: the latch write this observer now performs (it took an unlatched
       // launch), then the intent consumption after the child is activated.
       mockActorService.sendAndSync.mockResolvedValue({ state: parentState, snapshot: {} });
-      mockCompletionService.recordChildCompletion.mockResolvedValueOnce(propagated);
+      mockSessionService.adoptRunControlClaim.mockResolvedValueOnce(
+        adoptedRunControlClaim(childRunId),
+      );
+      const drive = inlineProgressionDriver({ kind: progression });
       const output = {
         executionEvent: jest.fn(),
         flush: jest.fn(),
@@ -5734,15 +5811,28 @@ describe('runExecutionLoop', () => {
         asSteps(inlineSteps),
         mockManager.cwd,
         asEmitter(mockEmitter),
-        { output: output as never },
+        { output: output as never, driveProgression: drive as never },
       );
 
       expect(result.status).toBe(expected);
-      expect(mockCompletionService.recordChildCompletion).toHaveBeenCalledWith({
-        childState: existingChild,
-        result: 'pass',
-      });
-      expect(output.flush).toHaveBeenCalled();
+      // The CHILD is what the activation names. A directive minted against the
+      // composing parent would drive the wrong run's progression while still
+      // producing a plausible status here.
+      expect(drive).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'activate',
+          authority: expect.objectContaining({ runId: childRunId }),
+        }),
+        expect.anything(),
+      );
+      // The recording this pair used to assert is core's now, and the loop must
+      // not have kept a second copy of it.
+      expect(mockCompletionService.recordChildCompletion).not.toHaveBeenCalled();
+      // The emitter is BORROWED from the command that opened it, and the loop
+      // may still be mid-composition when this returns, so flushing is the
+      // caller's (`run.ts`, `delegation-completion.ts`). A flush from in here
+      // would cut the composing run's own output short.
+      expect(output.flush).not.toHaveBeenCalled();
     },
   );
 
@@ -5862,7 +5952,7 @@ describe('runExecutionLoop', () => {
         asSteps(inlineSteps),
         mockManager.cwd,
         asEmitter(mockEmitter),
-        { output: {} as never },
+        { output: {} as never, driveProgression: inlineProgressionDriver() as never },
       ),
     ).rejects.toThrow('session push failed');
 
@@ -5946,7 +6036,10 @@ describe('runExecutionLoop', () => {
       asSteps(inlineSteps),
       mockManager.cwd,
       asEmitter(mockEmitter),
-      { output: { warning } as never },
+      {
+        output: { warning } as never,
+        driveProgression: inlineProgressionDriver() as never,
+      },
     );
 
     expect(result.status).toBe('waiting');

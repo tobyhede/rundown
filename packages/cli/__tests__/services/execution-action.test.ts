@@ -238,8 +238,9 @@ describe('CONTENTION_LAUNCH_CODES', () => {
     expect(
       CONTENTION_LAUNCH_CODES.has(TRANSACTIONAL_REFUSAL_CODE_BY_KIND.concurrent_modification),
     ).toBe(true);
-    // LAUNCH_FAILED is the pipeline's catch-all wrapper and must stay
-    // permanent until #777 unwraps the CAS code from it.
+    // LAUNCH_FAILED remains the pipeline's catch-all for everything it cannot
+    // classify, and must stay permanent: a generic init failure has no retry
+    // to offer, and admitting it here would tell every such caller to retry.
     expect(CONTENTION_LAUNCH_CODES.has(ErrorCodes.LAUNCH_FAILED.code)).toBe(false);
   });
 });

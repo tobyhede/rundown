@@ -184,6 +184,10 @@ export function buildAdvanceInlineParent(
     const { createPassTransitionConfig, createFailTransitionConfig } = await import(
       './transitions.js'
     );
+    // Lazy for the same reason as the imports above, and because
+    // `run-progression-adapters.js` imports this module for its terminal
+    // propagation callable — a static edge here would close that cycle.
+    const { createCliRunProgressionDriver } = await import('./run-progression-adapters.js');
 
     const manager = new RunbookStateManager(cwd);
     const parentActorService = createCliRunbookActorService(manager);
@@ -261,6 +265,27 @@ export function buildAdvanceInlineParent(
         output,
         commandStreamOptions,
         delegationRuntime,
+        // Re-running this parent can reach its next inline-launch intent, and
+        // that child must enter the public activation like every other entry
+        // (#857). Without it the launch fails closed on
+        // `ACTOR_CONTEXT_REQUIRED`, which is a refusal for a launch that is
+        // perfectly legal.
+        //
+        // No `ancestorAuthorities`, and no `sessionService`: this legacy entry
+        // holds neither. A `RunProgressionAuthority` is core-minted
+        // (`mintRunProgressionAuthority`), so fabricating one from the
+        // run-scoped `delegationRuntime` in scope would be the frontend
+        // inventing composition authority — exactly the private progression
+        // this slice deletes. The session service the activation needs is
+        // built over `manager` by the driver itself, which is what that
+        // parameter's optionality is for; both other construction sites pass
+        // one only because they already hold it.
+        driveProgression: createCliRunProgressionDriver({
+          manager,
+          cwd,
+          output,
+          ...(commandStreamOptions === undefined ? {} : { commandStreamOptions }),
+        }),
       });
       output.flush();
       switch (loopResult.status) {

@@ -259,6 +259,18 @@ export interface ExecutionLoopOptions {
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
   /** Output emitter used when the loop launches an inline child runbook. */
   readonly output?: OutputEmitter;
+  /**
+   * Public Run Progression activation used when this loop launches an inline
+   * child.
+   *
+   * The loop never selects a private progression for the child it launches:
+   * {@link launchInlineChildFromIntent} refuses without this seam, so a caller
+   * that can reach an inline-launch intent MUST supply it. Optional on the type
+   * only because most callers drive a run that cannot reach one; the refusal,
+   * not the type, is what keeps a missing driver from silently degrading into a
+   * frontend-owned loop.
+   */
+  readonly driveProgression?: InlineLaunchArgs['driveProgression'];
 }
 
 // The three frontier refusal/failure messages are core-owned
@@ -1031,12 +1043,12 @@ export async function launchInlineChildFromIntent({
       payload: { message: launchResult.error, code: launchResult.code },
     });
     // Classified by registered code: contention-shaped codes are retryable,
-    // everything else is permanent. NOTE (#777): a spent run-start CAS budget
-    // currently arrives here wrapped as LAUNCH_FAILED by the pipeline's
-    // catch-all, so it classifies permanent until that upstream
-    // misclassification is fixed in its own slice — at which point its
-    // CONCURRENT_STATE_MODIFICATION code makes this arm retryable with no
-    // change here.
+    // everything else is permanent. A spent run-start CAS budget now reaches
+    // here carrying its own CONCURRENT_STATE_MODIFICATION code — the pipeline's
+    // catch-all classifies it before building the envelope (#777) rather than
+    // collapsing it into LAUNCH_FAILED — so this arm reports it retryable, which
+    // is the only honest answer for a refusal whose whole remediation is
+    // "retry".
     return {
       kind: 'launch_refused',
       code: launchResult.code,
@@ -1076,12 +1088,11 @@ export async function launchInlineChildFromIntent({
  * Keyed by the registered code VALUES that actually reach the launch-refusal
  * arm — `ErrorCodes.CONCURRENT_STATE_MODIFICATION.code` (RD-308, the run-start
  * CAS budget) and the canonical symbolic fenced-write refusal code — never by
- * symbolic constant names, which no `launchResult.code` ever carries. Today the
- * pipeline's catch-all wraps the CAS loss as `LAUNCH_FAILED` (see the #777 note
- * at the classification site), so the RD-308 membership is dormant until that
- * upstream misclassification is fixed; its presence here is what makes the arm
- * retryable the moment the real code surfaces. Exported for the membership pin
- * in `execution-action.test.ts`, which fails on any remap that would silently
+ * symbolic constant names, which no `launchResult.code` ever carries. The
+ * RD-308 membership is live: the pipeline's catch-all surfaces a spent run-start
+ * CAS budget under its own code (#777), so the launch refusal built from it
+ * reports `retryable`. Exported for the membership pin in
+ * `execution-action.test.ts`, which fails on any remap that would silently
  * re-classify contention as permanent.
  */
 export const CONTENTION_LAUNCH_CODES: ReadonlySet<string> = new Set([
@@ -1988,6 +1999,13 @@ export async function runExecutionLoop(
         // needs to drain and re-run this run. Named with `runbookId` so nothing
         // further up the inline chain can be advanced under it.
         parentDelegationRuntime: { runId: runbookId, runtime: options.delegationRuntime },
+        // The child enters the SAME public activation the composing run's own
+        // frontend supplied. Forwarded rather than constructed here: this loop
+        // is a frontend seam, and building an activation locally would be the
+        // private progression implementation #857 exists to delete.
+        ...(options.driveProgression === undefined
+          ? {}
+          : { driveProgression: options.driveProgression }),
       });
       return { status: executionLoopStatusFromDispatch(childDispatch) };
     }

@@ -140,6 +140,21 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
       result: 'pass' | 'fail' | undefined,
     ) => Promise<SeamResult>
   >().mockResolvedValue({ kind: 'handled' }),
+  // Named exports of `run-progression-adapters.js`, which this module now
+  // lazily imports to build the loop's public activation. Stubs only: these
+  // tests assert drain/loop branches and never drive an inline launch, but the
+  // ESM named-import link check resolves the whole graph the moment that
+  // dynamic import runs, so every name it reaches must exist here.
+  activateRunProgression: jest.fn(),
+  createEffectfulActorMutationRunner: jest.fn(),
+  flowBackInlineTerminal: jest.fn(),
+  ObservationDeliveryError: class ObservationDeliveryError extends Error {},
+  // A real value for the same reason as COMPLETION_TARGET_MISMATCH_CODE: the
+  // adapters compose refusal envelopes from it.
+  CLIErrorCodes: {
+    ACTOR_CONTEXT_REQUIRED: 'ACTOR_CONTEXT_REQUIRED',
+    CONCURRENT_MODIFICATION: 'CONCURRENT_MODIFICATION',
+  },
   // advanceParentForInlineChild lazily constructs a bridged emitter; a no-op
   // stub satisfies the link check (these tests assert on drain/loop branches).
   ExecutionEventEmitter: jest.fn().mockImplementation(() => ({ subscribe: jest.fn() })),
@@ -212,6 +227,12 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 jest.unstable_mockModule('../../src/services/execution', () => ({
   drainResolvedCompletions: jest.fn(),
   runExecutionLoop: jest.fn(),
+  // Reached only through `run-progression-adapters.js`'s static edge back into
+  // this module, resolved when the lazy import of the adapters runs. Never
+  // called here — no test drives an inline launch — but the ESM link check
+  // needs both names to exist.
+  createCliCommandServices: jest.fn(),
+  launchInlineChildFromIntent: jest.fn(),
   // The REAL builder, not a stub: it is the sole construction site for the
   // refusal envelope, and these tests assert the exact object the operator
   // ends up seeing. Stubbing it would assert the adapter forwards whatever it
@@ -951,47 +972,6 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
   // execution loop — whose drain can hit the same refusal. Refusal Hand-back
   // returns data instead of a false `'stopped'`; the upward seam then performs
   // no recursion for a terminal that never happened.
-  it('forwards a requested refusal without claiming a terminal', async () => {
-    const parentState = makeState(PARENT_RUN_ID);
-    const manager = makeManager(new Map([[parentState.id, parentState]]));
-    const output = makeOutput();
-    wireMocks(manager, makeLifecycleService());
-    jest.mocked(drainResolvedCompletions).mockResolvedValue({
-      unresolved: 1,
-      status: 'continue',
-      applied: 1,
-      state: parentState,
-    } as never);
-    jest.mocked(runExecutionLoop).mockResolvedValue({
-      status: 'refused',
-      refusal: {
-        reason: 'target_mismatch',
-        message: 'loop drain blew up',
-        code: 'COMPLETION_TARGET_MISMATCH',
-        runId: PARENT_RUN_ID,
-      },
-    } as never);
-
-    const advance = buildAdvanceInlineParent('/test', output);
-    await expect(
-      advance({
-        parentRunId: PARENT_RUN_ID,
-        parentFrameKey: FRAME,
-        parentEntry: 1,
-        result: 'pass',
-      }),
-    ).resolves.toEqual({
-      status: 'refused',
-      refusal: {
-        reason: 'target_mismatch',
-        message: 'loop drain blew up',
-        code: 'COMPLETION_TARGET_MISMATCH',
-        runId: PARENT_RUN_ID,
-      },
-    });
-    expect(runExecutionLoop).toHaveBeenCalled();
-  });
-
   it('collapses a drain STOP to status stopped', async () => {
     const parentState = makeState(PARENT_RUN_ID);
     const manager = makeManager(new Map([[parentState.id, parentState]]));
@@ -1107,13 +1087,18 @@ describe('buildAdvanceInlineParent (CLI execution callable)', () => {
       parentEntry: 1,
       result: 'pass',
     });
+    // `driveProgression`, not the retired `returnRefusals`. Re-running this
+    // parent can reach its next inline-launch intent, and the child must enter
+    // the PUBLIC Run Progression activation like every other entry (#857); a
+    // call without the seam refuses that launch `ACTOR_CONTEXT_REQUIRED`, which
+    // is the wrong answer for a launch that is perfectly legal.
     expect(runExecutionLoop).toHaveBeenCalledWith(
       expect.anything(),
       PARENT_RUN_ID,
       expect.anything(),
       '/test',
       expect.anything(),
-      expect.objectContaining({ returnRefusals: true }),
+      expect.objectContaining({ driveProgression: expect.any(Function) }),
     );
   });
 
