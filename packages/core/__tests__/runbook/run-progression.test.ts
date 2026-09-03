@@ -2038,3 +2038,121 @@ Wait for operator input.
     expect((await sessionService.getActive())?.id).toBe(state.id);
   });
 });
+
+describe('execution-unit entry is announced once per turn (#854)', () => {
+  // A command step followed by a manual one: the first exercises the fenced
+  // command turn's pre-effect re-selection, the second the waiting arm's
+  // stability read. Both compare the state the activation SELECTED against a
+  // freshly captured/loaded row, and both re-enter the loop when they differ.
+  const COMMAND_THEN_MANUAL_RUNBOOK = `## 1. First
+- PASS CONTINUE
+- FAIL STOP
+
+\`\`\`bash
+echo first
+\`\`\`
+
+## 2. Manual
+- PASS COMPLETE
+- FAIL STOP
+
+Do it by hand.
+`;
+
+  /** Ordered `STEP_ENTERED` step names, one per announced entry. */
+  function enteredSteps(events: readonly RunbookEventV1[]): string[] {
+    return events
+      .filter((event) => event.type === 'STEP_ENTERED')
+      .map((event) => (event.payload as { stepName: string }).stepName);
+  }
+
+  it('announces the next command unit once when the fenced turn re-captures it', async () => {
+    const steps = createRunbook(TWO_COMMAND_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'entry-once-command.runbook.md');
+    const { emitter, events } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter),
+    );
+
+    expect(outcome.kind).toBe('completed');
+    expect(enteredSteps(events)).toEqual(['1', '2']);
+  });
+
+  it('announces a manual unit once when the waiting arm re-reads durable state', async () => {
+    const steps = createRunbook(COMMAND_THEN_MANUAL_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'entry-once-manual.runbook.md');
+    const { emitter, events } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter),
+    );
+
+    expect(outcome).toEqual({
+      kind: 'waiting',
+      runId: state.id,
+      reason: 'awaiting_input',
+    });
+    expect(enteredSteps(events)).toEqual(['1', '2']);
+  });
+});
+
+describe('activation over a machine awaiting recovery (#854)', () => {
+  /**
+   * Persist the run with its machine parked in `recoveryRequired`, exactly as
+   * `ExecutionRecoveryService.recover` leaves an interrupted attempt: lifecycle
+   * stays `running`, the run stays targeted, and only an explicit GOTO
+   * reconcile/retry leaves the state.
+   */
+  async function parkInRecovery(
+    state: RunbookState,
+    steps: readonly ResolvedStep[],
+    actorService: RunbookActorService,
+  ): Promise<void> {
+    const recovery = actorService.createRecoveryActor(state, steps);
+    try {
+      recovery.send({
+        type: 'EXECUTION_OUTCOME_UNKNOWN',
+        epoch: 1,
+        reason: 'effect_boundary_crossed',
+        interruptedStepId: state.step,
+      });
+      expect(recovery.isInRecoveryState()).toBe(true);
+      const current = await manager.load(state.id);
+      if (current === null) throw new Error('run vanished before parking');
+      await manager.save({ ...current, snapshot: recovery.getPersistedSnapshot() });
+    } finally {
+      recovery.stop();
+    }
+  }
+
+  it('refuses with the registered recovery code instead of throwing', async () => {
+    const steps = createRunbook(TWO_COMMAND_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'awaiting-recovery.runbook.md');
+    await parkInRecovery(state, steps, actorService);
+    const { emitter, events } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      runId: state.id,
+      reason: 'recovery_required',
+      code: 'RECOVERY_REQUIRED',
+      recovery: 'permanent',
+    });
+    // The refusal is diagnosed in the stream, never as a stop: the run is
+    // open-but-blocked and stays running and targeted.
+    expect(events.map((event) => event.type)).toEqual(['ERROR_OCCURRED']);
+    expect((await manager.load(state.id))?.lifecycle).toBe('running');
+    expect((await sessionService.getActive())?.id).toBe(state.id);
+  });
+});

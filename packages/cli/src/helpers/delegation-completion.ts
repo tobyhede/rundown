@@ -307,8 +307,23 @@ export function buildAdvanceInlineParent(
 export function emitLinkageCycleDiagnostic(output: OutputEmitter, trip: LinkageCycleTrip): void {
   output.error(trip.message, trip.code, {
     cause: trip.cause,
-    runId: trip.cause === 'repeat' ? trip.repeatedRunId : trip.deepestRunId,
+    runId: linkageCycleRunId(trip),
   });
+}
+
+/**
+ * The run a tripped linkage guard names, by cause.
+ *
+ * One derivation, because the diagnostic envelope and the typed refusal detail
+ * must name the SAME run: a reader correlating the two would otherwise be told
+ * about two different runs for one trip, and the rule is the kind that drifts
+ * silently when it is spelled twice.
+ *
+ * @param trip - The core-composed trip.
+ * @returns The repeated run for a cycle, otherwise the deepest run reached.
+ */
+function linkageCycleRunId(trip: LinkageCycleTrip): RunId {
+  return trip.cause === 'repeat' ? trip.repeatedRunId : trip.deepestRunId;
 }
 
 /**
@@ -407,8 +422,7 @@ export function inlinePropagationRefusalDetail(
 ): InlinePropagationRefusalDetail {
   if (outcome.kind === 'linkage-cycle') {
     return {
-      runId:
-        outcome.trip.cause === 'repeat' ? outcome.trip.repeatedRunId : outcome.trip.deepestRunId,
+      runId: linkageCycleRunId(outcome.trip),
       code: outcome.trip.code,
       message: outcome.trip.message,
       recovery: 'permanent',

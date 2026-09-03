@@ -56,7 +56,7 @@ beforeEach(() => {
 });
 
 describe('buildTerminalPropagation', () => {
-  it('preserves the resting parent when it absorbs a stopped child', async () => {
+  it('preserves the resting parent when it absorbs a terminal child', async () => {
     const parentRunId = 'rd_00000000000000000000000000000854' as never;
     propagateDrivenRunTerminal.mockResolvedValue({
       kind: 'inline-advanced',

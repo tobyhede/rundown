@@ -230,12 +230,12 @@ export async function driveRunProgression(
   if (outcome.kind === 'failed') {
     try {
       ctx.output.error(outcome.message, CLIErrorCodes.OBSERVATION_DELIVERY_FAILED);
-      // FLUSHED here, not left to the caller's trailing flush: `output.error`
-      // only accumulates into the JSON renderer, while a deferred action object
-      // (the collect continuation's, for one) is written straight through
-      // `output.json`. Without this flush the diagnostic lands AFTER that
-      // object and breaks the "action object is the last line" contract
-      // (docs/spec/cli-output.md) — #853.
+      // Flushed HERE, not left to the caller's end-of-command flush. `error`
+      // only accumulates into the JSON renderer while a command's terminal
+      // object is written straight through, so an envelope left in the accumulator lands
+      // AFTER the action object every caller defers to keep last
+      // (docs/spec/cli-output.md). Flushing an empty accumulator is a no-op, so
+      // this costs nothing on the arms that never accumulate.
       ctx.output.flush();
     } catch {
       // The reporting channel is broken; the caller's exit code carries the

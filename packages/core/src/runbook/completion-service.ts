@@ -489,18 +489,6 @@ function terminalProgressionIntent(
 }
 
 /**
- * Read terminal intent when the caller retained the final live machine output.
- *
- * @param machineOutput - Live machine output captured with the prepared mutation.
- * @returns The terminal progression intent, or `undefined` before terminal.
- */
-function progressionIntentForAppliedState(
-  machineOutput: unknown,
-): { readonly kind: 'completed' | 'stopped' } | undefined {
-  return terminalProgressionIntent(machineOutput);
-}
-
-/**
  * Verdict on whether one applied completion advanced the pass.
  *
  * Every caller that drains a frame loops until nothing more applies, and that
@@ -1437,7 +1425,7 @@ export class RunbookCompletionService {
         mutation.nextState,
       );
       if (progress.kind === 'stalled') throw Errors.delegationInvariantViolated(progress.reason);
-      const progressionIntent = progressionIntentForAppliedState(mutation.machineOutput);
+      const progressionIntent = terminalProgressionIntent(mutation.machineOutput);
       applied.push({
         key: selection.key,
         completion: selection.completion,
@@ -1589,7 +1577,7 @@ export class RunbookCompletionService {
               throw Errors.delegationInvariantViolated(progress.reason);
             }
             const terminal = terminalLifecycleStatus(mutation.nextState);
-            const progressionIntent = progressionIntentForAppliedState(mutation.machineOutput);
+            const progressionIntent = terminalProgressionIntent(mutation.machineOutput);
             return {
               // `mutateStateReturning` commits this verbatim, so the state the
               // entry reports is the state that was written.

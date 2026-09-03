@@ -200,7 +200,10 @@ export type RunProgressionMachineIntent =
     }
   | {
       readonly kind: 'refused';
-      readonly reason: 'completion_target_mismatch' | 'completion_not_committed';
+      readonly reason:
+        | 'completion_target_mismatch'
+        | 'completion_not_committed'
+        | 'recovery_required';
       readonly message: string;
     };
 
@@ -3253,8 +3256,53 @@ function buildRecoveryRequiredStateConfig(
     tags: [RECOVERY_TAG],
     on: {
       GOTO: buildRecoveryReconcileTransitions(allStates, steps),
+      // A run parked here has no next progression turn, and no repeat of the
+      // same gesture can produce one — only an explicit GOTO reconcile/retry
+      // leaves this state. The machine answers the selection with its own
+      // typed refusal; without this arm the activation observes no emitted
+      // intent and can only report an untyped defect for a condition the
+      // storage layer already classifies. Action-only, so asking the question
+      // does not move the run off the state it is blocked on.
+      SELECT_RUN_PROGRESSION: {
+        actions: runbookSetup.emit(({ context }) => ({
+          type: 'RUN_PROGRESSION_INTENT' as const,
+          intent: {
+            kind: 'refused' as const,
+            reason: 'recovery_required' as const,
+            message: recoveryRequiredProgressionMessage(context),
+          },
+        })),
+      },
     },
   } satisfies RunbookStateConfig;
+}
+
+/**
+ * Compose the operator-facing refusal for a progression activation over a run
+ * parked in `recoveryRequired`.
+ *
+ * Says only what the call graph supports, exactly as the store's own
+ * `recovery_required` refusal does: nothing was written, no recovery was
+ * started by asking, and the remedy is the explicit reconcile/retry that
+ * leaves this state.
+ *
+ * @param context - The parked machine's context, carrying the interrupted attempt.
+ * @returns The refusal message reported on the closed progression outcome.
+ */
+function recoveryRequiredProgressionMessage(context: RunbookContext): string {
+  const epoch = context.interruptedEpoch;
+  const reason = context.interruptedReason;
+  const attempt = [
+    epoch === undefined ? undefined : `epoch ${String(epoch)}`,
+    reason === undefined ? undefined : `reason ${reason}`,
+  ]
+    .filter((part) => part !== undefined)
+    .join(', ');
+  return (
+    `This run's last execution attempt ended with an unknown outcome${attempt === '' ? '' : ` (${attempt})`} ` +
+    `and its recovery has not completed. Run Progression cannot select a turn while the run is ` +
+    `blocked; reconcile or retry the interrupted step before continuing.`
+  );
 }
 
 /**

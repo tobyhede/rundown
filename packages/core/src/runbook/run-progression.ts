@@ -45,7 +45,7 @@ import type { ExecutionObservationEffect } from '../events/execution-observation
 import { ErrorCodes } from '../errors/codes.js';
 import { CLIErrorCodes } from '../output/zod-schemas.js';
 import type { RunbookActorService } from './actor-service.js';
-import type { RunProgressionMachineFeedback } from './compiler.js';
+import type { RunProgressionMachineFeedback, RunProgressionMachineIntent } from './compiler.js';
 import { COMPLETION_TARGET_MISMATCH_CODE, RunbookCompletionService } from './completion-service.js';
 import type { EffectfulActorMutationRunner } from './effectful-actor-mutation-runner.js';
 import { findStepOrThrow, resolveCurrentExecutionUnit } from './execution-units.js';
@@ -164,6 +164,7 @@ export type RunProgressionRefusalReason =
   | 'command_not_committed'
   | 'completion_not_committed'
   | 'completion_target_mismatch'
+  | 'recovery_required'
   | 'actor_context_required'
   | 'projection_refused'
   | 'consume_failed'
@@ -1149,6 +1150,72 @@ function gateObservationDelivery(
 }
 
 /**
+ * The one machine-refusal reason → reported code and recovery mapping.
+ *
+ * Type-driven rather than a two-arm conditional: a reason added to the
+ * machine's refused intent fails compilation here until it is classified,
+ * instead of absorbing into whichever arm the conditional defaulted to. Each
+ * entry reports the code the same condition already carries at its storage or
+ * completion seam, so a remap there changes this seam with it.
+ *
+ * `completion_not_committed` is contention on a still-running row, so it is the
+ * only retryable arm; a target mismatch and a run blocked awaiting recovery
+ * both need a different explicit action.
+ */
+const MACHINE_REFUSAL_CLASSIFICATION = {
+  completion_not_committed: {
+    code: TRANSACTIONAL_REFUSAL_CODE_BY_KIND.concurrent_modification,
+    recovery: 'retryable',
+  },
+  completion_target_mismatch: {
+    code: COMPLETION_TARGET_MISMATCH_CODE,
+    recovery: 'permanent',
+  },
+  recovery_required: {
+    code: TRANSACTIONAL_REFUSAL_CODE_BY_KIND.recovery_required,
+    recovery: 'permanent',
+  },
+} as const satisfies Record<
+  Extract<RunProgressionMachineIntent, { readonly kind: 'refused' }>['reason'],
+  { readonly code: string; readonly recovery: RunProgressionRecovery }
+>;
+
+/**
+ * Project one run state onto the exact content the store persists.
+ *
+ * The store round-trips run state through JSON, which DROPS every key whose
+ * value is `undefined`. A state the activation is still holding in memory —
+ * the `nextState` a machine turn just produced — therefore carries keys a
+ * reload of the very same row does not, and `isDeepStrictEqual` distinguishes
+ * an absent key from a present-but-`undefined` one. Comparing the two shapes
+ * directly reports "changed" for a row nobody wrote, so both re-selection
+ * seams must compare durable projections rather than raw objects.
+ *
+ * @param state - Run state from memory or from a durable read.
+ * @returns The same state with every `undefined`-valued key removed, recursively.
+ */
+function durableProjection(state: RunbookState): unknown {
+  return dropUndefinedValues(state);
+}
+
+/**
+ * Recursively drop `undefined`-valued keys, mirroring the store's JSON write.
+ *
+ * @param value - Any value reachable from a run state.
+ * @returns The value with `undefined`-valued object keys removed.
+ */
+function dropUndefinedValues(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(dropUndefinedValues);
+  if (typeof value !== 'object' || value === null) return value;
+  const projected: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (entry === undefined) continue;
+    projected[key] = dropUndefinedValues(entry);
+  }
+  return projected;
+}
+
+/**
  * Whether a freshly captured row is semantically the row whose progression
  * intent and command input were selected.
  *
@@ -1157,14 +1224,19 @@ function gateObservationDelivery(
  * `updatedAt` is ignored: it is persistence bookkeeping, so a writer that
  * rewrote an otherwise identical row does not invalidate the selected effect.
  *
+ * Both sides are compared as {@link durableProjection}s, so an in-memory state
+ * and a reload of the row it was written to compare equal. Without that, EVERY
+ * re-selection seam reported a phantom change on its first pass and re-entered
+ * the execution unit — announcing the same `STEP_ENTERED` twice per turn.
+ *
  * @param selected - The state whose machine output selected the command.
  * @param captured - The state atomically captured immediately before the effect.
  * @returns Whether the captured row still supports the selected command effect.
  */
 function isSameProgressionSelectionState(selected: RunbookState, captured: RunbookState): boolean {
   return isDeepStrictEqual(
-    { ...selected, updatedAt: undefined },
-    { ...captured, updatedAt: undefined },
+    durableProjection({ ...selected, updatedAt: '' }),
+    durableProjection({ ...captured, updatedAt: '' }),
   );
 }
 
@@ -1411,10 +1483,7 @@ async function driveProgression(
     }
 
     if (progressionIntent.kind === 'refused') {
-      const completionContention = progressionIntent.reason === 'completion_not_committed';
-      const code = completionContention
-        ? TRANSACTIONAL_REFUSAL_CODE_BY_KIND.concurrent_modification
-        : COMPLETION_TARGET_MISMATCH_CODE;
+      const { code, recovery } = MACHINE_REFUSAL_CLASSIFICATION[progressionIntent.reason];
       sink.emit({
         type: 'ERROR_OCCURRED',
         payload: { message: progressionIntent.message, code },
@@ -1425,7 +1494,7 @@ async function driveProgression(
         reason: progressionIntent.reason,
         code,
         message: progressionIntent.message,
-        recovery: completionContention ? 'retryable' : 'permanent',
+        recovery,
       };
     }
 
