@@ -8494,6 +8494,129 @@ describe('RunbookLifecycleCommandService', () => {
         );
       });
 
+      // ADR 0001: "A refusal that applies no terminal transition leaves the
+      // running run targeted", and "Refusals cannot ... remove retry authority".
+      // The already-terminal arm applies NO transition to anything — the root
+      // reached terminal on an earlier turn and the command's whole effect is
+      // the cleanup — so a descendant that is still `running` was never forced
+      // under this root by this command or any other. `collateral` asserts it
+      // was ("swept up so that an addressed run could close"), and `collateral`
+      // revokes.
+      //
+      // Every other test in this describe gives EVERY member `lifecycle:
+      // 'completed'`, which is why none of them can see this: where all members
+      // are terminal, "release the whole chain" and "release the terminal
+      // members" are the same batch. The running descendant is the one fact
+      // that separates them (#847).
+      it('omits a still-running descendant from an already-terminal chain release', async () => {
+        const child = baseState({ id: CHILD, lifecycle: 'running' });
+        const root = baseState({ id: ROOT, lifecycle: 'stopped' });
+        await manager.save(child);
+        await manager.save(root);
+        await issueRunControlClaimFor(CHILD);
+        await issueRunControlClaimFor(ROOT);
+        installResolvedPlan(root, [child, root]);
+        const releaseSpy = jest.spyOn(sessionService, 'releaseAlreadyTerminal');
+
+        const out = await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: { kind: 'plugin', agentId: 'a' },
+          targetSelector: { kind: 'default' },
+        });
+
+        expect(out).toMatchObject({ kind: 'already_terminal', targetRunId: ROOT });
+        // The root alone. Omitted rather than demoted: `addressed` would be a
+        // second untruth (the caller did not act on the descendant), and there
+        // is no third role meaning "untouched" because a release IS the act of
+        // finishing with a run. Nothing to record means nothing to send.
+        expect(releaseSpy).toHaveBeenCalledWith({ runId: ROOT, lifecycle: 'stopped' }, [
+          { runId: ROOT, role: 'addressed' },
+        ]);
+      });
+
+      // The consequence of the batch above, observed rather than inferred:
+      // `projectOne` revokes a `collateral` member's claims, so naming the
+      // running descendant destroys the very authority its holder needs to keep
+      // driving it. Asserted through `verifyClaimId` — the seam a holder
+      // actually presents its bearer at — so this fails on any fix that gets
+      // the batch right and the projection wrong.
+      it("preserves a still-running descendant's run-control authority across the cleanup", async () => {
+        const child = baseState({ id: CHILD, lifecycle: 'running' });
+        const root = baseState({ id: ROOT, lifecycle: 'stopped' });
+        await manager.save(child);
+        await manager.save(root);
+        await issueRunControlClaimFor(CHILD);
+        await issueRunControlClaimFor(ROOT);
+        installResolvedPlan(root, [child, root]);
+
+        await seam.runTerminal({
+          command: 'stop',
+          callerEvidence: { kind: 'plugin', agentId: 'a' },
+          targetSelector: { kind: 'default' },
+        });
+
+        const childClaimId = issuedRunControlClaims.get(CHILD);
+        if (childClaimId === undefined) throw new Error(`expected run-control claim for ${CHILD}`);
+        expect((await sessionService.verifyClaimId(childClaimId)).status).toBe('verified');
+        // The root's own claim is RETAINED, not revoked — `addressed` disposes
+        // `retain-as-terminal-evidence`, so its holder still resolves `terminal`
+        // and learns the run finished. Asserted alongside so a fix that spares
+        // the descendant by weakening the root's disposition fails here.
+        const rootClaimId = issuedRunControlClaims.get(ROOT);
+        if (rootClaimId === undefined) throw new Error(`expected run-control claim for ${ROOT}`);
+        expect((await sessionService.verifyClaimId(rootClaimId)).status).toBe('verified');
+      });
+
+      // The opposite-direction regression, and the reason the already-terminal
+      // rule must NOT be a filter on the shared helper. On the cascade every
+      // running member is forced terminal in the same transaction
+      // (`compute` prepares a mutation for each `lifecycle === 'running'`
+      // capture), so `collateral` is true of all of them and a filter that
+      // spared a running descendant HERE would leave a terminal run targeted
+      // with live authority — the exact inverse defect.
+      it('releases a running descendant the cascade actually forces', async () => {
+        loadStepsImpl = () => [
+          { kind: 'base', name: '1', description: 'one', transitions: tx('COMPLETE', 'STOP') },
+        ];
+        // `baseState` runs by default; the setup otherwise mirrors the
+        // atomic-cascade test above, whose linkage and claim pair are what let
+        // the aggregate capture and force both members.
+        const child = baseState({
+          id: CHILD,
+          parentLinkage: {
+            kind: 'inline',
+            parentRunId: ROOT,
+            parentStep: '1',
+            parentStepId: '1',
+            parentFrameKey: buildFrameKey('1'),
+            parentEntry: 1,
+          },
+        });
+        const root = baseState({ id: ROOT });
+        await manager.save(child);
+        await manager.save(root);
+        await issueRunControlClaimFor(CHILD);
+        await issueRunControlClaimFor(ROOT);
+        installResolvedPlan(root, [child, root]);
+        const aggregate = jest.spyOn(actorMutationRunner, 'runAll');
+
+        const out = await seam.runTerminal({
+          command: 'complete',
+          callerEvidence: runControlEvidence(ROOT),
+          targetSelector: { kind: 'default' },
+        });
+
+        expect(out).toMatchObject({ kind: 'applied_bare', rootRunId: ROOT });
+        expect(aggregate).toHaveBeenCalledWith(
+          expect.objectContaining({
+            releases: [
+              { runId: CHILD, role: 'collateral' },
+              { runId: ROOT, role: 'addressed' },
+            ],
+          }),
+        );
+      });
+
       it('cleans up the already-terminal chain for an ambient caller with a claim-free fence', async () => {
         // Multi-member on purpose: an ambient caller must never be probed for
         // descendant authority (there is no claim to consult), and only a chain

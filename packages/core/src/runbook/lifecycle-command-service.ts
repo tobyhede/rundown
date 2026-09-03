@@ -1346,25 +1346,82 @@ function transitionDelegationRuntime(
 }
 
 /**
- * Roles for releasing a whole inline force-terminal chain.
+ * Roles for releasing an inline chain this command FORCES terminal.
  *
  * The command addressed the root of the chain; every inline descendant is swept
- * up so that root can close, which is exactly what `collateral` names. Three
- * sites cascade this same chain — two session-only releases and one folded into
- * the aggregate transaction — and a disagreement between them about which
- * member is the addressed one would revoke a claim on one path and retain it on
- * another for the same command.
+ * up so that root can close, which is exactly what `collateral` names. Correct
+ * here because the aggregate's `compute` prepares a terminal mutation for every
+ * captured member whose lifecycle is `running`, in the same transaction that
+ * commits these releases — so by commit each member is terminal, either because
+ * it already was or because this command just made it so.
+ *
+ * **Only for that path.** The already-terminal arms force nothing, so their
+ * chain can still contain a `running` member for which `collateral` would be
+ * false; they use {@link releasesForAlreadyTerminalInlineChain}. The pair is two
+ * named functions rather than one with a flag because the difference is a FACT
+ * about what the command did — the same reason {@link ReleaseRole} is a fact the
+ * caller states and not a policy it chooses. A boolean can be omitted, and
+ * omission would read as the revoking direction.
  *
  * @param plan - The resolved inline force-terminal plan being cascaded.
  * @returns One release per chain member, root addressed and descendants collateral.
  */
-function releasesForInlineChain(
+function releasesForForcedInlineChain(
   plan: Extract<ActiveInlineForceTerminalPlan, { readonly status: 'resolved' }>,
 ): readonly RunRelease[] {
   return plan.releaseRunIds.map((runId) => ({
     runId,
     role: runId === plan.targetState.id ? 'addressed' : 'collateral',
   }));
+}
+
+/**
+ * Roles for cleaning up an inline chain whose root was found ALREADY terminal.
+ *
+ * Nothing is forced on this path. The root reached terminal on an earlier turn
+ * and the command's entire effect is the cleanup, so each descendant's lifecycle
+ * is whatever it already was. A descendant still `running` was never forced
+ * terminal under this root — not by this command and not by any other — which is
+ * the one fact `collateral` asserts, and `collateral` revokes: `projectOne`
+ * deletes every claim controlling the run and filters it off `defaultStack`,
+ * stranding a live run whose holder is mid-execution (#847).
+ *
+ * ADR 0001 states the rule this restores: "A refusal that applies no terminal
+ * transition leaves the running run targeted", and releases "cannot report a
+ * false terminal event or remove retry authority".
+ *
+ * Such a member is OMITTED rather than demoted to a gentler role. `addressed`
+ * would be a second untruth — the caller did not act on it — and there is no
+ * third role meaning "untouched", because a release IS the act of finishing with
+ * a run. With nothing to record, the honest batch says nothing.
+ *
+ * The root is always included: both call sites are reached only after observing
+ * it terminal, and that observation — the aggregate capture's, at the
+ * capture-time arm — is fresher than `targetState`'s own snapshot.
+ *
+ * The descendant test names the two terminal lifecycles positively rather than
+ * excluding `running`, because `lifecycle` is optional on `RunbookState`. An
+ * absent one therefore falls to the retaining side, which is the recoverable
+ * direction: a retained claim is collected when its run is pruned, whereas a
+ * revocation cannot be reconstructed.
+ *
+ * @param plan - The resolved inline force-terminal plan whose root is terminal.
+ * @returns The root as addressed, plus only those descendants already terminal.
+ */
+function releasesForAlreadyTerminalInlineChain(
+  plan: Extract<ActiveInlineForceTerminalPlan, { readonly status: 'resolved' }>,
+): readonly RunRelease[] {
+  return plan.forceOrder
+    .filter(
+      (state) =>
+        state.id === plan.targetState.id ||
+        state.lifecycle === 'completed' ||
+        state.lifecycle === 'stopped',
+    )
+    .map((state) => ({
+      runId: state.id,
+      role: state.id === plan.targetState.id ? ('addressed' as const) : ('collateral' as const),
+    }));
 }
 
 /**
@@ -3447,7 +3504,7 @@ export class RunbookLifecycleCommandService {
                 }
               : {}),
           },
-          releasesForInlineChain(plan),
+          releasesForAlreadyTerminalInlineChain(plan),
         );
         if (release.kind !== 'committed') return release;
         cleanup = cleanupFromFenceOutcome(release.value);
@@ -3556,7 +3613,7 @@ export class RunbookLifecycleCommandService {
     }
     const aggregate = await this.#deps.actorMutationRunner.runAll<BareAggregateOutcome>({
       targets,
-      releases: releasesForInlineChain(plan),
+      releases: releasesForForcedInlineChain(plan),
       makeRecoveryActor: (runId, recoveryState) => {
         const recoverySteps = stepsByRun.get(runId);
         if (recoverySteps === undefined) {
@@ -3691,7 +3748,7 @@ export class RunbookLifecycleCommandService {
               }
             : {}),
         },
-        releasesForInlineChain(plan),
+        releasesForAlreadyTerminalInlineChain(plan),
       );
       if (release.kind !== 'committed') return release;
       // The write-free `beforeEffect` return means NOTHING happened for this
