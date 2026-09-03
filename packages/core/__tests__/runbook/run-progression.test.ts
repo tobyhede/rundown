@@ -203,8 +203,10 @@ function depsFor(
     actorMutationRunner: createEffectfulActorMutationRunner(dir),
     steps,
     sink: emitter,
-    dispatchInlineChild: jest.fn(async () => ({ kind: 'waiting' as const })),
-    propagateTerminal: jest.fn(async () => ({ kind: 'propagated' as const })),
+    // Typed against the callable contracts, not inferred: an untyped `jest.fn`
+    // would accept a default whose shape the seam does not actually admit.
+    dispatchInlineChild: jest.fn<InlineChildDispatch>(async () => ({ kind: 'waiting' as const })),
+    propagateTerminal: jest.fn<TerminalPropagation>(async () => ({ kind: 'propagated' as const })),
     ...overrides,
   };
 }
@@ -480,7 +482,7 @@ describe('activateRunProgression', () => {
     // advance. The replaced loop failed closed here (exit 1); a `waiting`
     // would report a composition at rest that is actually wedged.
     const { steps, actorService, state } = await seedInlineLaunchRun();
-    const { emitter } = recordingSink(state);
+    const { emitter, events } = recordingSink(state);
 
     const dispatchInlineChild = jest.fn<InlineChildDispatch>(async () => ({
       kind: 'child_terminal' as const,
@@ -498,6 +500,19 @@ describe('activateRunProgression', () => {
       reason: 'inline_child_stopped',
       recovery: 'permanent',
     });
+    // The refusal is diagnosed HERE (no callable observed it first), so its
+    // remedy must reach the stream: a frontend maps the outcome to an exit code
+    // and renders only observations, and a refusal with no diagnostic leaves
+    // success-shaped output beside a failure exit.
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'ERROR_OCCURRED',
+        payload: expect.objectContaining({
+          message: expect.stringContaining('stopped without linked flow-back'),
+        }),
+      }),
+    );
+    expect(events.map((event) => event.type)).not.toContain('RUNBOOK_STOPPED');
     // The composing run keeps its lifecycle: nothing terminal was applied.
     expect((await manager.load(state.id))?.lifecycle).toBe('running');
   });
@@ -591,5 +606,192 @@ describe('activateRunProgression', () => {
 
     const after = await manager.load(state.id);
     expect(after?.lifecycle).toBe('running');
+  });
+
+  it('reports waiting for a run at rest on a unit that needs an operator gesture', async () => {
+    const steps = createRunbook(MANUAL_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'awaiting.runbook.md');
+    const { emitter, events } = recordingSink(state);
+
+    const propagateTerminal = jest.fn<TerminalPropagation>(async () => ({
+      kind: 'propagated' as const,
+    }));
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { propagateTerminal }),
+    );
+
+    expect(outcome).toEqual({ kind: 'waiting', runId: state.id, reason: 'awaiting_input' });
+    // The unit was entered (announced) and nothing terminal was announced.
+    const types = events.map((event) => event.type);
+    expect(types).toContain('STEP_ENTERED');
+    expect(types).not.toContain('RUNBOOK_COMPLETED');
+    expect(types).not.toContain('RUNBOOK_STOPPED');
+    expect(types).not.toContain('ERROR_OCCURRED');
+    // Nothing terminal to propagate, and the run stays running and targeted.
+    expect(propagateTerminal).not.toHaveBeenCalled();
+    expect((await manager.load(state.id))?.lifecycle).toBe('running');
+    expect((await sessionService.getActive())?.id).toBe(state.id);
+  });
+
+  it('reports stopped only for an actual stopped lifecycle the machine committed', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const actorService = actorServiceWith({
+      runExternalCommand: async () => ({ success: false, exitCode: 1 }),
+    });
+    const state = await seedRun(steps, actorService, 'failing.runbook.md');
+    const { emitter, events } = recordingSink(state);
+
+    const propagateTerminal = jest.fn<TerminalPropagation>(async () => ({
+      kind: 'propagated' as const,
+    }));
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { propagateTerminal }),
+    );
+
+    // FAIL STOP: the failing command drives the machine to its stopped
+    // terminal, so `stopped` is the durable truth — not a rendering of a
+    // refusal.
+    expect(outcome).toEqual({ kind: 'stopped', runId: state.id });
+    expect((await manager.load(state.id))?.lifecycle).toBe('stopped');
+    const types = events.map((event) => event.type);
+    expect(types.indexOf('RUNBOOK_STOPPED')).toBeGreaterThan(types.indexOf('COMMAND_COMPLETED'));
+    expect(types).not.toContain('RUNBOOK_COMPLETED');
+    expect(propagateTerminal).toHaveBeenCalledWith({ runId: state.id });
+  });
+
+  it('refuses run_missing with an observed diagnostic when the run no longer exists', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'vanished.runbook.md');
+    const { emitter, events } = recordingSink(state);
+
+    // The run vanished between the caller's decision to continue and this
+    // activation (a concurrent prune).
+    await manager.delete(state.id);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter),
+    );
+
+    expect(outcome).toEqual({
+      kind: 'refused',
+      runId: state.id,
+      reason: 'run_missing',
+      code: 'RUN_TARGET_UNAVAILABLE',
+      message: expect.stringContaining(state.id),
+      recovery: 'permanent',
+    });
+    // The activation diagnosed this refusal itself, so it must observe it: a
+    // frontend maps the outcome to an exit code and renders only the stream.
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'ERROR_OCCURRED',
+        payload: expect.objectContaining({ code: 'RUN_TARGET_UNAVAILABLE' }),
+      }),
+    );
+    expect(events.map((event) => event.type)).not.toContain('RUNBOOK_STOPPED');
+  });
+
+  it('reports a refused terminal propagation as permanent while the driven terminal stays committed', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'propagation-refused.runbook.md');
+    const { emitter, events } = recordingSink(state);
+
+    const propagateTerminal = jest.fn<TerminalPropagation>(async () => ({
+      kind: 'refused' as const,
+      code: 'INLINE_PARENT_CYCLE',
+      message: `Advancing the composing parent of ${state.id} concluded fail-closed`,
+    }));
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { propagateTerminal }),
+    );
+
+    expect(outcome).toEqual({
+      kind: 'refused',
+      runId: state.id,
+      reason: 'terminal_propagation_refused',
+      code: 'INLINE_PARENT_CYCLE',
+      message: `Advancing the composing parent of ${state.id} concluded fail-closed`,
+      recovery: 'permanent',
+    });
+    // The child's terminal committed before the ancestor refused, so it stays
+    // terminal and its own completion announcement stands.
+    expect((await manager.load(state.id))?.lifecycle).toBe('completed');
+    expect(events.map((event) => event.type)).toContain('RUNBOOK_COMPLETED');
+  });
+
+  it('waits on an inline child launch another process owns', async () => {
+    const { steps, actorService, state } = await seedInlineLaunchRun();
+    const { emitter } = recordingSink(state);
+
+    const propagateTerminal = jest.fn<TerminalPropagation>(async () => ({
+      kind: 'propagated' as const,
+    }));
+    const dispatchInlineChild = jest.fn<InlineChildDispatch>(async () => ({
+      kind: 'waiting' as const,
+    }));
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { dispatchInlineChild, propagateTerminal }),
+    );
+
+    expect(dispatchInlineChild).toHaveBeenCalled();
+    expect(outcome).toEqual({ kind: 'waiting', runId: state.id, reason: 'inline_child_active' });
+    expect(propagateTerminal).not.toHaveBeenCalled();
+    expect((await manager.load(state.id))?.lifecycle).toBe('running');
+  });
+
+  it('reports the rest state after synchronous inline flow-back without propagating a second time', async () => {
+    const { steps, actorService, state } = await seedInlineLaunchRun();
+    const { emitter } = recordingSink(state);
+
+    const propagateTerminal = jest.fn<TerminalPropagation>(async () => ({
+      kind: 'propagated' as const,
+    }));
+    const dispatchInlineChild = jest.fn<InlineChildDispatch>(async () => ({
+      kind: 'flow_back_complete' as const,
+    }));
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { dispatchInlineChild, propagateTerminal }),
+    );
+
+    // Flow-back already drove this run's progression (and owed propagation);
+    // the activation reports the durable rest state and must not advance the
+    // parent again.
+    expect(outcome).toEqual({
+      kind: 'waiting',
+      runId: state.id,
+      reason: 'inline_flow_back_settled',
+    });
+    expect(propagateTerminal).not.toHaveBeenCalled();
+  });
+
+  it('fails closed permanently when synchronous inline flow-back refused', async () => {
+    const { steps, actorService, state } = await seedInlineLaunchRun();
+    const { emitter } = recordingSink(state);
+
+    const dispatchInlineChild = jest.fn<InlineChildDispatch>(async () => ({
+      kind: 'flow_back_refused' as const,
+    }));
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { dispatchInlineChild }),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      runId: state.id,
+      reason: 'inline_flow_back_refused',
+      recovery: 'permanent',
+    });
+    // Nothing terminal was applied to the composing run by the refusal.
+    expect((await manager.load(state.id))?.lifecycle).toBe('running');
   });
 });

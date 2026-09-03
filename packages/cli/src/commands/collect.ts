@@ -617,62 +617,74 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
 
   let progressionFailedClosed = false;
   if (runningContinuation) {
-    const advanced = await manager.load(state.id);
-    if (advanced) {
-      // Core minted the continuation's one run-bound authority at the point it
-      // verified the collector's bearer, and the running arm of the split
-      // outcome REQUIRES it — the CLI never assembles authority and never
-      // guards for its absence; the type makes the absent case
-      // unrepresentable.
-      const authority = runningContinuation.progressionAuthority;
-      const loopSteps = [...getRunbookFromState(advanced, cwd)];
-      // The same runtime wiring the pre-migration loop built for itself: CLI
-      // command callables (Category A) behind the machine-owned command actor.
-      const commandServices = createCliCommandServices(commandStreamOptions);
-      const progressionActorService = createCliRunbookActorService(manager, commandServices);
-      const progression = await activateRunProgression(authority, {
+    // Core minted the continuation's one run-bound authority at the point it
+    // verified the collector's bearer, and the running arm of the split
+    // outcome REQUIRES it — the CLI never assembles authority and never
+    // guards for its absence; the type makes the absent case
+    // unrepresentable.
+    const authority = runningContinuation.progressionAuthority;
+    // Derived from the COMMITTED state, never from `ctx.state`. The runbook
+    // SOURCE is fixed for the life of a run, but `getRunbookFromState` does not
+    // only parse it: it renders against `mergeEffectiveVars(state)`, and the
+    // collection's drain just merged the collected children's `finalVars` into
+    // those variables. Deriving from the pre-collection state leaves every
+    // variable the collection published unresolved — a later DELEGATE substep's
+    // `- {{ref}}` stays literal and the continuation stops the run on
+    // `delegation_resolution_failed`.
+    //
+    // The reload's `null` is NOT an early clean exit (the pre-migration guard's
+    // defect): a run that vanished between the commit and here is the
+    // activation's own typed `run_missing` refusal, observed and failed closed
+    // below. Falling back to the pre-collection state only supplies an argument
+    // the activation refuses before reading.
+    const committedState = (await manager.load(state.id)) ?? state;
+    const loopSteps = [...getRunbookFromState(committedState, cwd)];
+    // The same runtime wiring the pre-migration loop built for itself: CLI
+    // command callables (Category A) behind the machine-owned command actor.
+    const commandServices = createCliCommandServices(commandStreamOptions);
+    const progressionActorService = createCliRunbookActorService(manager, commandServices);
+    const progression = await activateRunProgression(authority, {
+      manager,
+      actorService: progressionActorService,
+      sessionService: ctx.sessionService,
+      actorMutationRunner: createEffectfulActorMutationRunner(cwd),
+      steps: loopSteps,
+      sink: emitter,
+      dispatchInlineChild: buildInlineChildDispatch({
         manager,
         actorService: progressionActorService,
         sessionService: ctx.sessionService,
-        actorMutationRunner: createEffectfulActorMutationRunner(cwd),
+        emitter,
+        cwd,
         steps: loopSteps,
-        sink: emitter,
-        dispatchInlineChild: buildInlineChildDispatch({
-          manager,
-          actorService: progressionActorService,
-          sessionService: ctx.sessionService,
-          emitter,
-          cwd,
-          steps: loopSteps,
-          output,
-          commandStreamOptions,
-          // This activation IS the composing parent's progression, so its
-          // verified capabilities are exactly the authority a child's terminal
-          // flow-back needs. Named with the run so nothing further up the
-          // inline chain can be advanced under it. Required on the running
-          // arm, so it is always passed.
-          parentDelegationRuntime: {
-            runId: advanced.id,
-            runtime: runningContinuation.delegationRuntime,
-          },
-        }),
-        propagateTerminal: buildTerminalPropagation({
-          manager,
-          cwd,
-          output,
-          commandStreamOptions,
-        }),
-      });
-      // The closed outcome is the whole exit contract for the continuation:
-      // `refused` and `failed` are fail-closed, `stopped` reports an actual
-      // stopped lifecycle, and `waiting`/`completed` exit clean. Terminal
-      // propagation was core's decision inside the activation; no coordination
-      // status crosses back.
-      progressionFailedClosed =
-        progression.kind === 'refused' ||
-        progression.kind === 'failed' ||
-        progression.kind === 'stopped';
-    }
+        output,
+        commandStreamOptions,
+        // This activation IS the composing parent's progression, so its
+        // verified capabilities are exactly the authority a child's terminal
+        // flow-back needs. Named with the run so nothing further up the
+        // inline chain can be advanced under it. Required on the running
+        // arm, so it is always passed.
+        parentDelegationRuntime: {
+          runId: state.id,
+          runtime: runningContinuation.delegationRuntime,
+        },
+      }),
+      propagateTerminal: buildTerminalPropagation({
+        manager,
+        cwd,
+        output,
+        commandStreamOptions,
+      }),
+    });
+    // The closed outcome is the whole exit contract for the continuation:
+    // `refused` and `failed` are fail-closed, `stopped` reports an actual
+    // stopped lifecycle, and `waiting`/`completed` exit clean. Terminal
+    // propagation was core's decision inside the activation; no coordination
+    // status crosses back.
+    progressionFailedClosed =
+      progression.kind === 'refused' ||
+      progression.kind === 'failed' ||
+      progression.kind === 'stopped';
   }
 
   let exitWithError = progressionFailedClosed || shouldExitWithError;

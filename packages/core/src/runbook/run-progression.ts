@@ -647,6 +647,40 @@ async function releaseTerminalTarget(args: {
 }
 
 /**
+ * Refuse an activation whose run no longer exists, observing the diagnostic
+ * before returning.
+ *
+ * The emit is not optional: this refusal flips the caller's exit code, and a
+ * refusal with no diagnostic in the stream leaves success-shaped output beside
+ * a failure exit — a frontend renders observations and maps the outcome, it
+ * does not print the outcome itself. The code is the canonical missing-target
+ * mapping, so a remap of that code changes this arm with every other
+ * storage-refusal seam.
+ *
+ * @param runId - The run that no longer exists.
+ * @param sink - Synchronous observation sink receiving the diagnostic.
+ * @returns The refused outcome.
+ */
+function runMissingRefusal(
+  runId: RunId,
+  sink: Pick<ExecutionEventEmitter, 'emit'>,
+): RunProgressionOutcome {
+  const message = `Run ${runId} no longer exists`;
+  sink.emit({
+    type: 'ERROR_OCCURRED',
+    payload: { message, code: TRANSACTIONAL_REFUSAL_CODE_BY_KIND.missing },
+  });
+  return {
+    kind: 'refused',
+    runId,
+    reason: 'run_missing',
+    code: TRANSACTIONAL_REFUSAL_CODE_BY_KIND.missing,
+    message,
+    recovery: 'permanent',
+  };
+}
+
+/**
  * Derive the outcome for a run whose progression was settled outside this
  * frame from its durable state alone.
  *
@@ -662,9 +696,10 @@ async function releaseTerminalTarget(args: {
  *   the healing pass the old collect path performed unconditionally after its
  *   loop.
  *
- * @param args - Manager, run, wait reason, and the optional propagation posture.
+ * @param args - Manager, run, sink, wait reason, and the optional propagation posture.
  * @param args.manager - State manager used to reload the durable state.
  * @param args.runId - The run whose rest state is reported.
+ * @param args.sink - Synchronous observation sink receiving a refusal's diagnostic.
  * @param args.runningReason - Wait reason reported when the run is still running.
  * @param args.propagateTerminal - Present when a discovered terminal still owes
  *   its parent the advance; absent when flow-back already owned it.
@@ -673,20 +708,12 @@ async function releaseTerminalTarget(args: {
 async function outcomeFromDurableState(args: {
   readonly manager: RunbookStateManager;
   readonly runId: RunId;
+  readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
   readonly runningReason: RunProgressionWaitReason;
   readonly propagateTerminal?: TerminalPropagation;
 }): Promise<RunProgressionOutcome> {
   const state = await args.manager.load(args.runId);
-  if (!state) {
-    return {
-      kind: 'refused',
-      runId: args.runId,
-      reason: 'run_missing',
-      code: 'RUN_TARGET_UNAVAILABLE',
-      message: `Run ${args.runId} no longer exists`,
-      recovery: 'permanent',
-    };
-  }
+  if (!state) return runMissingRefusal(args.runId, args.sink);
   if (state.lifecycle === 'completed' || state.lifecycle === 'stopped') {
     const terminal =
       state.lifecycle === 'completed' ? ('completed' as const) : ('stopped' as const);
@@ -730,16 +757,7 @@ export async function activateRunProgression(
   const runId = authority.runId;
 
   const state = await manager.load(runId);
-  if (!state) {
-    return {
-      kind: 'refused',
-      runId,
-      reason: 'run_missing',
-      code: 'RUN_TARGET_UNAVAILABLE',
-      message: `Run ${runId} does not exist`,
-      recovery: 'permanent',
-    };
-  }
+  if (!state) return runMissingRefusal(runId, sink);
   const prompted = state.prompted;
   const completionService = new RunbookCompletionService(manager, actorService);
   // Both loop-invariant: the parsed steps never change across an activation,
@@ -835,6 +853,7 @@ export async function activateRunProgression(
       return outcomeFromDurableState({
         manager,
         runId,
+        sink,
         runningReason: 'completion_frame_inactive',
         propagateTerminal: deps.propagateTerminal,
       });
@@ -950,6 +969,7 @@ export async function activateRunProgression(
           return outcomeFromDurableState({
             manager,
             runId,
+            sink,
             runningReason: 'inline_child_active',
             propagateTerminal: deps.propagateTerminal,
           });
@@ -960,6 +980,7 @@ export async function activateRunProgression(
           return outcomeFromDurableState({
             manager,
             runId,
+            sink,
             runningReason: 'inline_flow_back_settled',
           });
         case 'flow_back_refused':
@@ -988,13 +1009,17 @@ export async function activateRunProgression(
               // no linkage drove flow-back, so the composing run cannot
               // advance. Fail closed: `waiting` would report a composition at
               // rest that is actually wedged. The child's own diagnostics
-              // already streamed from its execution; recovery is explicit
-              // action on the child, not a retry of this continuation.
+              // already streamed from its execution, but THIS refusal — and
+              // its remedy — is diagnosed here, so it is observed here:
+              // recovery is explicit action on the child, not a retry of this
+              // continuation, and a frontend renders only the stream.
+              const message = `Inline child of run ${runId} stopped without linked flow-back; inspect the child run, then finish, stop, or prune it before re-running`;
+              sink.emit({ type: 'ERROR_OCCURRED', payload: { message } });
               return {
                 kind: 'refused',
                 runId,
                 reason: 'inline_child_stopped',
-                message: `Inline child of run ${runId} stopped without linked flow-back; inspect the child run, then finish, stop, or prune it before re-running`,
+                message,
                 recovery: 'permanent',
               };
             }
@@ -1004,6 +1029,7 @@ export async function activateRunProgression(
           return outcomeFromDurableState({
             manager,
             runId,
+            sink,
             runningReason: 'inline_child_active',
             propagateTerminal: deps.propagateTerminal,
           });
@@ -1021,6 +1047,7 @@ export async function activateRunProgression(
       return outcomeFromDurableState({
         manager,
         runId,
+        sink,
         runningReason: 'awaiting_input',
         propagateTerminal: deps.propagateTerminal,
       });
