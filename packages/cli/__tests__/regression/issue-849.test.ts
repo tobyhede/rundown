@@ -38,15 +38,21 @@ function flattenEvents(events: unknown[]): Record<string, unknown>[] {
 
 // Issue #849. `docs/spec/cli-output.md:1947` and `docs/reference/cli.md:949-951`
 // both state that when a `rundown collect` aggregation advances the delegating
-// run into execution-loop work, and that loop's own command fence then loses
+// run into execution-loop work, and that follow-on's command fence then loses
 // its compare-and-swap, the refusal streams as an `error_occurred` observation
 // and "emits no `runbook_stopped`: the refused follow-on transition committed
-// no terminal state." `collect.ts:612` calls `runExecutionLoop` WITHOUT
-// `returnRefusals`, so `execution.ts:1785-1792` takes the `!returnRefusals` arm
-// and DOES emit `RUNBOOK_STOPPED` with message
-// 'Runbook command execution was not committed' — the exact divergence #849
-// reports (`returnRefusals` has exactly one production caller,
-// `buildAdvanceInlineParent`, which `collect.ts` is not).
+// no terminal state."
+//
+// The pre-fix defect (past tense — it is fixed on this branch): collect drove
+// its continuation through `runExecutionLoop` WITHOUT `returnRefusals`, so the
+// loop took its `!returnRefusals` arm and DID emit `RUNBOOK_STOPPED` with
+// message 'Runbook command execution was not committed' — the exact divergence
+// #849 reported (`returnRefusals` had exactly one production caller,
+// `buildAdvanceInlineParent`, which `collect.ts` was not). The continuation now
+// runs on core's `activateRunProgression` (#852 / ADR 0003), whose fenced
+// command turn returns a typed `refused` outcome carrying the refusal's
+// registered code and emits no terminal observation, so the witness below is
+// green.
 //
 // This test provokes a genuine lost fence rather than mocking the refusal: a
 // parent with a DELEGATE substep resolved and ready to collect, followed by a
@@ -143,8 +149,13 @@ describe('issue #849: collect fence refusal does not emit runbook_stopped', () =
     const realCapture = RunbookStore.prototype.captureRunAuthorityState;
     jest
       .spyOn(RunbookStore.prototype, 'captureRunAuthorityState')
-      .mockImplementation(async function (this: RunbookStore, runId: string) {
-        const result = await realCapture.call(this, runId as never);
+      .mockImplementation(async function (
+        this: RunbookStore,
+        runId: Parameters<typeof realCapture>[0],
+      ) {
+        // Forwarded under the method's own parameter type: an `as never` cast
+        // here would silently keep compiling if that type changed.
+        const result = await realCapture.call(this, runId);
         // Target ONLY the follow-on loop's capture of the parent at step 2 —
         // the initial `run`, `claim`, `pass`, and collect's own aggregation all
         // capture the parent (or the child) at other steps and must pass
@@ -184,8 +195,9 @@ describe('issue #849: collect fence refusal does not emit runbook_stopped', () =
     // THE PINNING ASSERTION. Both docs say this refusal "emits no
     // runbook_stopped: the refused follow-on transition committed no terminal
     // state." Correct behavior per the shipped spec is that no such event
-    // appears; execution.ts:1785-1792 emits one because collect.ts:612 does not
-    // pass `returnRefusals`.
+    // appears. Before #852 the legacy loop's `!returnRefusals` arm emitted one;
+    // the Run Progression activation reports the refusal as its closed outcome
+    // instead, and announces no terminal it did not commit.
     const spuriousStop = events.find(
       (event) =>
         event.type === 'runbook_stopped' &&
