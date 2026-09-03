@@ -43,6 +43,13 @@ export function makeConfig({ sandboxed }) {
     : [];
 
   return {
+    // Worker pool size, overridable by environment. 2 is the value this
+    // package's `test:*` scripts used to pass as `--maxWorkers=2`; it lives
+    // here now so `JEST_MAX_WORKERS=1` bounds every Jest run in the tree. A CLI
+    // `--maxWorkers` flag still beats config, which is why those flags were
+    // removed from the scripts. Restated rather than imported: this file is
+    // deliberately self-contained so it resolves inside the Stryker sandbox.
+    maxWorkers: Math.max(1, Number(process.env.JEST_MAX_WORKERS) || 2),
     testPathIgnorePatterns: [
       '/node_modules/',
       '<rootDir>/../../.worktrees/',
