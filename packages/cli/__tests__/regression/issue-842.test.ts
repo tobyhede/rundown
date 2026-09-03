@@ -177,20 +177,28 @@ echo finished
       expect((await readRunbookState(workspace, child2RunId))?.lifecycle).toBe('completed');
       expect((await readRunbookState(workspace, parentRunId))?.lifecycle).toBe('completed');
       expect((await readRunbookState(workspace, grandparentRunId))?.lifecycle).toBe('completed');
-      const completedRunIds = new Set(
-        passEvents
-          .filter((event) => event.type === 'runbook_completed')
-          .map((event) => event.runbookId),
-      );
-      expect(completedRunIds.has(child2RunId)).toBe(true);
-      expect(completedRunIds.has(parentRunId)).toBe(true);
-      expect(completedRunIds.has(grandparentRunId)).toBe(true);
+      // THE PINNING ASSERTIONS, two watchpoints. First: each ancestor's
+      // `runbook_completed` is emitted EXACTLY once — counted, never
+      // Set-deduped, because a repeated upward walk's observable symptom is a
+      // doubled completion event, and a Set would silently collapse it.
+      const completionCountOf = (runId: string): number =>
+        passEvents.filter(
+          (event) => event.type === 'runbook_completed' && event.runbookId === runId,
+        ).length;
+      expect({
+        child2: completionCountOf(child2RunId),
+        parent: completionCountOf(parentRunId),
+        grandparent: completionCountOf(grandparentRunId),
+      }).toEqual({ child2: 1, parent: 1, grandparent: 1 });
 
-      // THE PINNING ASSERTION. Every run id must appear at most once across
-      // all `SessionService.releaseRuns` calls made during this single pass —
-      // the "release here exactly once" contract the seam documents at
-      // inline-parent-advance.ts:505. At 5e43cc5dc this failed with parent
-      // and grandparent both reading 2.
+      // Second: every run id appears at most once across all
+      // `SessionService.releaseRuns` calls — the "release here exactly once"
+      // contract the seam documented at inline-parent-advance.ts:505. At
+      // 5e43cc5dc this failed with parent and grandparent both reading 2.
+      // Post-#843/#846 this seam is bypassed entirely (releases fold into the
+      // terminal-state transaction), so this spy guards only against a revert
+      // to the standalone-release architecture; the exact-count check above
+      // is what watches the current path.
       const releasedRunIds = releaseSpy.mock.calls.flatMap(([releases]) =>
         releases.map((release) => release.runId),
       );

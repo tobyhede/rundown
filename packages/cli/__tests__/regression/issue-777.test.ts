@@ -42,6 +42,20 @@ import { createTestWorkspace, createRunbook, type TestWorkspace } from '../helpe
 // `ErrorCodes.CONCURRENT_STATE_MODIFICATION.code` ('RD-308') — is never
 // reached, because `launchRunbook` builds its own envelope instead of letting
 // the error propagate to it.
+//
+// REACHABILITY CAVEAT (adversarial verification, 2026-08-28): the collision
+// staged below is engineered. Every current production caller of
+// `manager.create()` either mints a fresh cryptographically-random run id or
+// is latch-gated, so none can reach `save()`'s existing-row CAS branch that
+// `prepareOverExistingRow` forces — and #777's 2026-08-21 audit comment
+// redirects the live-contention target to run.ts's `afterInit`
+// `updateWithStateReturning` CAS (concurrent inline children on one parent
+// row), which this file does not exercise. What this test pins is the
+// CLASSIFICATION defect at the catch-all seam: any
+// `ConcurrentStateModificationError` escaping `create()` — the thrown class
+// is verified genuine, not a stand-in — is mislabeled with a non-retryable
+// code. The exhaustion-under-real-contention property at the redirected
+// target still needs its own witness.
 describe('issue #777: run-start CAS exhaustion reports concurrent_modification', () => {
   let workspace: TestWorkspace;
   let ctx: RunPipelineContext;
@@ -241,10 +255,6 @@ describe('issue #777: run-start CAS exhaustion reports concurrent_modification',
 
     expect(result.ok).toBe(false);
     if (result.ok) return;
-    // Documents what actually happens today: the generic launch-failed arm,
-    // not a refusal specific to concurrent modification.
-    expect(result.reason).toBe('launch-failed');
-    if (result.reason !== 'launch-failed') return;
 
     // PINNING ASSERTION. Per CLAUDE.md § Concurrent write synchronization, an
     // exhausted `mutateState` attempt budget is a reachable, retryable arm —
@@ -253,6 +263,11 @@ describe('issue #777: run-start CAS exhaustion reports concurrent_modification',
     // RD-308 (`ErrorCodes.CONCURRENT_STATE_MODIFICATION`). `launchRunbook`'s
     // catch-all never reaches that classifier, so this reports the wrong,
     // non-retryable code today: RD-816 (LAUNCH_FAILED) instead of RD-308.
-    expect(result.code).toBe(ErrorCodes.CONCURRENT_STATE_MODIFICATION.code);
+    // Shape-agnostic on purpose: the fix may widen RunbookStartFailure.code
+    // to a union under the existing 'launch-failed' reason, or add a new
+    // discriminated reason arm (the SessionRefusedFailure precedent) — either
+    // way, the surfaced failure envelope must carry the retryable RD-308.
+    const surfacedCode = 'code' in result ? (result as { readonly code?: string }).code : undefined;
+    expect(surfacedCode).toBe(ErrorCodes.CONCURRENT_STATE_MODIFICATION.code);
   }, 20_000);
 });
