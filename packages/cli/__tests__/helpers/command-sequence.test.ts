@@ -83,6 +83,39 @@ describe('parseJsonLines', () => {
     expect(result.terminal).toBe('COMPLETE');
   });
 
+  // A composing parent's terminal is a run-scoped observation event; the trailing
+  // action object is the command's own envelope for the run it targeted (an
+  // inline child), per docs/spec/cli-output.md. Deriving the scenario terminal
+  // positionally reads the child's `complete` and loses the parent's STOP.
+  it('prefers the root run terminal over a trailing child action envelope', () => {
+    const stdout = [
+      '{"type":"step_transitioned","action":"STOP","from":"1.2","at":"1.2","result":"FAIL","aggregated":true,"runbookId":"rd_root"}',
+      '{"type":"runbook_stopped","message":"Child failed","reason":"fail_transition","runbookId":"rd_root"}',
+      '{"action":"complete","stepResult":"PASS","from":"1","at":"1","kind":"action","complete":true}',
+    ].join('\n');
+    const result = parseJsonLines(stdout, 'rd_root');
+    expect(result.terminal).toBe('STOP');
+  });
+
+  it('prefers a root run completion over a trailing child action envelope', () => {
+    const stdout = [
+      '{"type":"step_transitioned","action":"CONTINUE","from":"1.2","at":"1.2","result":"PASS","aggregated":true,"runbookId":"rd_root"}',
+      '{"type":"runbook_completed","runbookId":"rd_root"}',
+      '{"action":"stop","stepResult":"FAIL","from":"1","at":"1","kind":"action","stopped":true}',
+    ].join('\n');
+    const result = parseJsonLines(stdout, 'rd_root');
+    expect(result.terminal).toBe('COMPLETE');
+  });
+
+  it('keeps positional terminal detection when no root run event is present', () => {
+    const stdout = [
+      '{"type":"runbook_stopped","runbookId":"rd_child"}',
+      '{"action":"complete","kind":"action","complete":true}',
+    ].join('\n');
+    expect(parseJsonLines(stdout, 'rd_root').terminal).toBe('COMPLETE');
+    expect(parseJsonLines(stdout).terminal).toBe('COMPLETE');
+  });
+
   it('skips non-JSON lines', () => {
     const stdout =
       'some text\n{"type":"step_transitioned","action":"STOP","from":"1","at":"1","result":"FAIL"}\nmore text\n';
