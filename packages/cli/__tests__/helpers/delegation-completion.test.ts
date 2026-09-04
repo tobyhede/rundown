@@ -1425,7 +1425,11 @@ describe('propagateDrivenRunTerminal', () => {
       output,
       LOOP_INFERRED,
     );
-    expect(result).toEqual({ kind: 'inline-advanced', result: 'handled' });
+    expect(result).toEqual({
+      kind: 'inline-advanced',
+      parentRunId: PARENT_RUN_ID,
+      result: 'handled',
+    });
   });
 
   it('lifts an inline-advanced STOP terminal as { inline-advanced, stopped }', async () => {
@@ -1443,7 +1447,11 @@ describe('propagateDrivenRunTerminal', () => {
       output,
       LOOP_INFERRED,
     );
-    expect(result).toEqual({ kind: 'inline-advanced', result: 'stopped' });
+    expect(result).toEqual({
+      kind: 'inline-advanced',
+      parentRunId: PARENT_RUN_ID,
+      result: 'stopped',
+    });
   });
 
   it('lifts an inline-advanced blocked terminal as { inline-advanced, blocked }', async () => {
@@ -1461,7 +1469,11 @@ describe('propagateDrivenRunTerminal', () => {
       output,
       LOOP_INFERRED,
     );
-    expect(result).toEqual({ kind: 'inline-advanced', result: 'blocked' });
+    expect(result).toEqual({
+      kind: 'inline-advanced',
+      parentRunId: PARENT_RUN_ID,
+      result: 'blocked',
+    });
   });
 
   it('reports a terminal delegation child through the seam', async () => {
@@ -1482,8 +1494,8 @@ describe('propagateDrivenRunTerminal', () => {
     expect(result).toEqual({ kind: 'delegation-reported', result: 'reported' });
   });
 
-  it('forwards an operator-result trigger into the seam call (pass/fail commands)', async () => {
-    // Correction 1 + SHOULD-FIX 5: an operator-result trigger overrides lifecycle
+  it('forwards an explicit-result trigger into the seam call (pass/fail commands)', async () => {
+    // Correction 1 + SHOULD-FIX 5: an explicit-result trigger overrides lifecycle
     // inference. The authored 'pass' is forwarded into the adapter and on into the
     // seam, even though the child is lifecycle 'stopped'.
     const child = makeState(CHILD_RUN_ID, {
@@ -1498,7 +1510,7 @@ describe('propagateDrivenRunTerminal', () => {
       CHILD_RUN_ID,
       '/test',
       output,
-      { kind: 'operator-result', result: 'pass' },
+      { kind: 'explicit-result', result: 'pass' },
     );
     expect(result).toEqual({ kind: 'delegation-reported', result: 'reported' });
     expect(propagateTerminalChildUpward).toHaveBeenCalledWith(
@@ -1517,20 +1529,36 @@ describe('propagationRequiresFailureExit', () => {
   });
 
   it('returns true for an inline-advanced stopped/blocked propagation', () => {
-    expect(propagationRequiresFailureExit({ kind: 'inline-advanced', result: 'stopped' })).toBe(
-      true,
-    );
-    expect(propagationRequiresFailureExit({ kind: 'inline-advanced', result: 'blocked' })).toBe(
-      true,
-    );
+    expect(
+      propagationRequiresFailureExit({
+        kind: 'inline-advanced',
+        parentRunId: PARENT_RUN_ID,
+        result: 'stopped',
+      }),
+    ).toBe(true);
+    expect(
+      propagationRequiresFailureExit({
+        kind: 'inline-advanced',
+        parentRunId: PARENT_RUN_ID,
+        result: 'blocked',
+      }),
+    ).toBe(true);
   });
 
   it('returns false for an inline-advanced handled/not-applicable propagation', () => {
-    expect(propagationRequiresFailureExit({ kind: 'inline-advanced', result: 'handled' })).toBe(
-      false,
-    );
     expect(
-      propagationRequiresFailureExit({ kind: 'inline-advanced', result: 'not-applicable' }),
+      propagationRequiresFailureExit({
+        kind: 'inline-advanced',
+        parentRunId: PARENT_RUN_ID,
+        result: 'handled',
+      }),
+    ).toBe(false);
+    expect(
+      propagationRequiresFailureExit({
+        kind: 'inline-advanced',
+        parentRunId: PARENT_RUN_ID,
+        result: 'not-applicable',
+      }),
     ).toBe(false);
   });
 
@@ -1551,20 +1579,36 @@ describe('inlineAdvanceRequiresFailureExit', () => {
   // inline-only rule: fires ONLY on inline-advanced stopped/blocked; delegation
   // reporting is report-only and never flips the exit (used by collect + pass/fail).
   it('returns true for an inline-advanced stopped/blocked propagation', () => {
-    expect(inlineAdvanceRequiresFailureExit({ kind: 'inline-advanced', result: 'stopped' })).toBe(
-      true,
-    );
-    expect(inlineAdvanceRequiresFailureExit({ kind: 'inline-advanced', result: 'blocked' })).toBe(
-      true,
-    );
+    expect(
+      inlineAdvanceRequiresFailureExit({
+        kind: 'inline-advanced',
+        parentRunId: PARENT_RUN_ID,
+        result: 'stopped',
+      }),
+    ).toBe(true);
+    expect(
+      inlineAdvanceRequiresFailureExit({
+        kind: 'inline-advanced',
+        parentRunId: PARENT_RUN_ID,
+        result: 'blocked',
+      }),
+    ).toBe(true);
   });
 
   it('returns false for an inline-advanced handled/not-applicable propagation', () => {
-    expect(inlineAdvanceRequiresFailureExit({ kind: 'inline-advanced', result: 'handled' })).toBe(
-      false,
-    );
     expect(
-      inlineAdvanceRequiresFailureExit({ kind: 'inline-advanced', result: 'not-applicable' }),
+      inlineAdvanceRequiresFailureExit({
+        kind: 'inline-advanced',
+        parentRunId: PARENT_RUN_ID,
+        result: 'handled',
+      }),
+    ).toBe(false);
+    expect(
+      inlineAdvanceRequiresFailureExit({
+        kind: 'inline-advanced',
+        parentRunId: PARENT_RUN_ID,
+        result: 'not-applicable',
+      }),
     ).toBe(false);
   });
 

@@ -18,6 +18,7 @@ import {
   type CallerEvidence,
   type ClaimLookupKey,
   type EffectfulActorMutationRunner,
+  type EffectfulActorMutationRunnerInput,
   type EffectfulActorMutationSetRunnerInput,
   type InlineUpwardPropagationResult,
   type RunbookState,
@@ -310,7 +311,7 @@ describe('RunbookCollectionService', () => {
    */
   function runnerWithPreCommitEffect(effect: () => Promise<void>): EffectfulActorMutationRunner {
     return {
-      run: (input) => actorMutationRunner.run(input),
+      run: (input: EffectfulActorMutationRunnerInput) => actorMutationRunner.run(input),
       async runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
         return await actorMutationRunner.runAll<TResult>({
           ...input,
@@ -585,6 +586,8 @@ describe('RunbookCollectionService', () => {
     });
     expect(outcome.kind).toBe('collection_applied');
     if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
+    if (outcome.lifecycle !== 'running') throw new Error('expected running collection');
+    expect(outcome.progression.kind).toBe('activate');
     expect(outcome.transitionObservations).toMatchObject([
       {
         type: 'STEP_TRANSITIONED',
@@ -652,10 +655,14 @@ describe('RunbookCollectionService', () => {
     });
 
     if (outcome.kind !== 'collection_applied') throw new Error('expected collection_applied');
+    if (outcome.lifecycle !== 'running') throw new Error('expected running collection');
     // One BRANDED pair, not two independently optional fields: issuance and
     // derivation are two halves of one verified authority, so the outcome either
     // carries both or neither.
-    const runtime = outcome.delegationRuntime;
+    const runtime =
+      outcome.progression.kind === 'activate'
+        ? outcome.progression.authority.delegationRuntime
+        : undefined;
     if (!runtime) throw new Error('expected delegation capabilities on a running collect');
     const issue = runtime.issueDelegationCredential;
     const derive = runtime.deriveDelegationToken;
@@ -807,6 +814,7 @@ describe('RunbookCollectionService', () => {
       },
     });
     expect(outcome.reEntryObservations).toEqual(frontierEffects);
+    expect(outcome.progression).toEqual({ kind: 'none' });
     expect(enterEntrySpy).toHaveBeenCalledTimes(1);
     // Asserted on the captured call rather than through `toHaveBeenCalledWith`:
     // jest's recursive `AsymmetricMatcher` mapped type expands over `RunbookState`
@@ -3264,7 +3272,7 @@ describe('RunbookCollectionService', () => {
       let captured: EffectfulActorMutationSetRunnerInput<unknown>['makeRecoveryActor'] | undefined;
       const svc = makeCollectionService({
         actorMutationRunner: {
-          run: (input) => actorMutationRunner.run(input),
+          run: (input: EffectfulActorMutationRunnerInput) => actorMutationRunner.run(input),
           async runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
             captured = input.makeRecoveryActor;
             return await actorMutationRunner.runAll<TResult>(input);

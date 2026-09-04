@@ -1178,7 +1178,7 @@ export interface RunbookState {
   /** Lifecycle state. 'running' during execution; 'completed' or 'stopped' once terminal. */
   readonly lifecycle?: Lifecycle;
 
-  /** Persisted state schema version. Current v1 state writes numeric `1`. */
+  /** Persisted state schema version. Current v2 state writes numeric `2`. */
   readonly schemaVersion?: number;
 }
 

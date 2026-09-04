@@ -56,6 +56,9 @@ import {
   type DelegationChildLinkRefusalReason,
   type RunbookEvent,
   type RunbookContext,
+  type RunbookMachineOutput,
+  type RunProgressionMachineFeedback,
+  type RunProgressionMachineIntentEvent,
 } from './compiler.js';
 import type { RecoveryActor } from './execution-recovery-service.js';
 import { flattenTemplateVars } from './output-evaluator.js';
@@ -422,6 +425,7 @@ function lastResultSyncForEvent(
       return { kind: 'clear' };
     case 'RETRY':
     case 'SET_VARIABLES':
+    case 'SELECT_RUN_PROGRESSION':
     case 'DELEGATE_FRONTIER_CONSUMED':
     case 'INLINE_LAUNCH_CONSUMED':
     case 'INLINE_LAUNCH_ABANDONED':
@@ -1150,6 +1154,46 @@ export class RunbookActorService {
   }
 
   /**
+   * Ask one restored compiled runbook machine which completion turn Run
+   * Progression should execute next.
+   *
+   * This method performs no persistence and contains no turn-selection logic:
+   * it sends the machine's typed `SELECT_RUN_PROGRESSION` event and returns the
+   * typed intent that transition emits. The caller may mechanically execute the
+   * selected domain operation, whose own CAS re-derives against the version it
+   * commits.
+   *
+   * @param state - Exact durable state loaded by the activation.
+   * @param steps - Graph derived from that state inside the activation.
+   * @param feedback - Result of the preceding mechanically executed turn.
+   * @returns The compiled machine's completion-specific progression intent.
+   */
+  selectRunProgressionIntent(
+    state: RunbookState,
+    steps: readonly ResolvedStep[],
+    feedback: RunProgressionMachineFeedback = { kind: 'activation' },
+  ): RunProgressionMachineIntentEvent['intent'] {
+    const actor = this.createActorForState(state.id, state, steps);
+    let selected: RunProgressionMachineIntentEvent['intent'] | undefined;
+    const subscription = actor.on(
+      'RUN_PROGRESSION_INTENT',
+      (event: RunProgressionMachineIntentEvent) => {
+        selected = event.intent;
+      },
+    );
+    try {
+      actor.send({ type: 'SELECT_RUN_PROGRESSION', state, feedback });
+      if (selected === undefined) {
+        throw new Error(`Run ${state.id} did not select a Run Progression intent`);
+      }
+      return selected;
+    } finally {
+      subscription.unsubscribe();
+      this.stopActor(actor);
+    }
+  }
+
+  /**
    * Assert that a persisted runbook state is valid for the current runtime.
    *
    * This runs the same core freshness guard used by actor creation without
@@ -1264,6 +1308,8 @@ export class RunbookActorService {
     try {
       actor.send(event);
       await this.waitForMachineEffects(actor);
+      const machineOutput = (actor.getSnapshot() as { readonly output?: RunbookMachineOutput })
+        .output;
       const snapshot = actor.getPersistedSnapshot() as unknown as PersistedRunbookSnapshot;
       if (snapshot.status === 'error') {
         throw new Error(`Runbook ${id} actor entered an error state`);
@@ -1286,7 +1332,13 @@ export class RunbookActorService {
       if (event.type === 'EXECUTE_COMMAND' && collector.commandOutput?.kind === 'policy_denied') {
         effects.push(policyDeniedEffect({ ...collector.commandOutput, position: commandPosition }));
       }
-      return { previousState, nextState, snapshot, effects };
+      return {
+        previousState,
+        nextState,
+        snapshot,
+        effects,
+        ...(machineOutput === undefined ? {} : { machineOutput }),
+      };
     } finally {
       errorSubscription.unsubscribe();
       this.stopActor(actor);

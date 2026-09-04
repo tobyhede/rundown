@@ -65,8 +65,39 @@ export interface EffectfulActorMutationRunnerInput {
   };
 }
 
+/** Input to a fenced actor mutation that may stand down before any effect boundary. */
+export interface PreflightEffectfulActorMutationRunnerInput<TResult>
+  extends EffectfulActorMutationRunnerInput {
+  /**
+   * Re-check the exact atomically captured state before acquiring an execution
+   * lease or marking the effect started.
+   *
+   * Returning `return` performs no write and crosses no effect boundary. This
+   * is the safe re-selection seam for a caller whose earlier machine intent was
+   * derived from an older row: the caller receives the captured row and asks
+   * the machine again instead of executing stale effect input.
+   */
+  readonly beforeEffect: (
+    capturedState: RunbookState,
+  ) => { readonly kind: 'continue' } | { readonly kind: 'return'; readonly value: TResult };
+}
+
+/** Write-free result returned by a single-run pre-effect re-selection. */
+export interface PreEffectActorMutationReturn<TResult> {
+  readonly kind: 'pre_effect_return';
+  readonly value: TResult;
+}
+
 /** Narrow core capability used by lifecycle command services. */
 export interface EffectfulActorMutationRunner {
+  /**
+   * Capture and optionally return before the effect boundary, otherwise run
+   * the ordinary fenced actor mutation.
+   */
+  run<TResult>(
+    input: PreflightEffectfulActorMutationRunnerInput<TResult>,
+  ): Promise<GuardedMutationResult<ActorSyncResult> | PreEffectActorMutationReturn<TResult>>;
+
   /**
    * Capture, execute, and commit one actor mutation through the execution fence.
    *
@@ -339,15 +370,28 @@ class ProjectEffectfulActorMutationRunner implements EffectfulActorMutationRunne
    */
   constructor(private readonly cwd: string) {}
 
+  async run<TResult>(
+    input: PreflightEffectfulActorMutationRunnerInput<TResult>,
+  ): Promise<GuardedMutationResult<ActorSyncResult> | PreEffectActorMutationReturn<TResult>>;
   async run(
     input: EffectfulActorMutationRunnerInput,
-  ): Promise<GuardedMutationResult<ActorSyncResult>> {
+  ): Promise<GuardedMutationResult<ActorSyncResult>>;
+  async run<TResult>(
+    input: EffectfulActorMutationRunnerInput | PreflightEffectfulActorMutationRunnerInput<TResult>,
+  ): Promise<GuardedMutationResult<ActorSyncResult> | PreEffectActorMutationReturn<TResult>> {
     const { driver, store } = await openRunbookStore(this.cwd);
     const captured =
       input.claimKey === undefined
         ? await store.captureRunAuthorityState(input.runId)
         : await store.captureAuthorityState(input.runId, input.claimKey);
     if (captured.kind !== 'captured') return captured;
+
+    if ('beforeEffect' in input) {
+      const preflight = input.beforeEffect(captured.state);
+      if (preflight.kind === 'return') {
+        return { kind: 'pre_effect_return', value: preflight.value };
+      }
+    }
 
     const executor = new CoreEffectfulMutationExecutor(new SqliteExecutionLeaseService(driver));
     const terminalRelease = input.terminalRelease;
