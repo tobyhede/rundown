@@ -3,8 +3,16 @@ name: CI
 on:
   push:
     branches: [main]
+  # `branches:` filters on the PR's BASE. Stacked PRs target another stack
+  # branch rather than `main`, so a `[main]`-only filter silently skips every
+  # PR in a stack — the whole gate never runs on the work it is meant to gate.
+  # The two prefixes below are the stacked-PR namespaces; a PR targeting a
+  # branch outside them still only runs CI when it targets `main`.
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - 'rescue/**'
+      - 'progression/**'
   workflow_dispatch:
 
 concurrency:
