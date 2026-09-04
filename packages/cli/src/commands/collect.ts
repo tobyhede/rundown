@@ -2,6 +2,7 @@
 
 import type { Command } from 'commander';
 import {
+  activateRunProgression,
   activeFrame,
   buildFrameKey,
   createEffectfulActorMutationRunner,
@@ -23,7 +24,15 @@ import { getCwd } from '../helpers/context.js';
 import { getRunbookFromState } from '../helpers/runbook-loader.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { commandStreamOptionsForOutputMode } from '../services/execution.js';
+import {
+  commandStreamOptionsForOutputMode,
+  createCliCommandServices,
+} from '../services/execution.js';
+import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
+import {
+  buildInlineChildDispatch,
+  buildTerminalPropagation,
+} from '../helpers/run-progression-adapters.js';
 import { buildTransitionContext, type TransitionContext } from '../helpers/transitions.js';
 import { resolveIndexOption, IndexOptionError } from '../helpers/index-option.js';
 import {
@@ -40,7 +49,6 @@ import {
   renderTransactionalMutationRefusal,
 } from '../helpers/session-mutation-result.js';
 import {
-  propagateDrivenRunTerminal,
   inlineAdvanceRequiresFailureExit,
   buildAdvanceInlineParent,
   isInlinePropagationRefusal,
@@ -309,7 +317,7 @@ function renderAppliedOutcome(
   } else {
     output.message(
       `Collected ${String(outcome.applied)} delegation outcome(s) on step ${outcome.step} ` +
-        `(${String(outcome.unresolved)} unresolved; lifecycle ${String(outcome.lifecycle)}).`,
+        `(${String(outcome.unresolved)} unresolved; lifecycle ${outcome.lifecycle}).`,
       'success',
     );
   }
@@ -576,7 +584,11 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
   // event streams through ONE emitter to keep `seq` continuous across the
   // command. Retry re-entry frontiers are already projected and consumed by
   // core, so do not re-enter the same DELEGATE step a second time.
-  const advancesIntoLoop =
+  // A narrowing const rather than a boolean: the running arm of the split
+  // `collection_applied` union carries the continuation's REQUIRED
+  // `progressionAuthority` and `delegationRuntime`, and holding the narrowed
+  // value is what lets the block below read them without a runtime guard.
+  const runningContinuation =
     outcome.kind === 'collection_applied' &&
     outcome.lifecycle === 'running' &&
     // Core sets `reEntryObservations` (an array) exactly when it projected and
@@ -585,7 +597,10 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     // (`undefined`) means no frontier was consumed and the collect advanced the
     // parent into ordinary loop work. Gate on `undefined`, not length: an empty
     // array would otherwise wrongly trigger a second re-entry.
-    outcome.reEntryObservations === undefined;
+    outcome.reEntryObservations === undefined
+      ? outcome
+      : undefined;
+  const advancesIntoLoop = runningContinuation !== undefined;
 
   const emitter = new ExecutionEventEmitter(state.id, state.runbook);
   emitter.subscribe((event) => {
@@ -600,69 +615,82 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
     return shouldExitWithError;
   }
 
-  let loopStopped = false;
-  // Stryker disable next-line BooleanLiteral: equivalent — this initializer is only read when `advancesIntoLoop` is true AND the reload below returned null, which requires the run to vanish between core's collection commit and the reload two statements later. Both values behave identically there: the propagation pass the `false` value enables reloads the same missing run and returns `{ kind: 'skipped' }`.
-  let loopHandledPropagation = false;
-  if (advancesIntoLoop) {
-    const { runExecutionLoop } = await import('../services/execution.js');
-    // `advancesIntoLoop` already narrowed `outcome` to `collection_applied`.
-    const advanced = await manager.load(state.id);
-    if (advanced) {
-      const loopSteps = [...getRunbookFromState(advanced, cwd)];
-      const loopResult = await runExecutionLoop(manager, advanced.id, loopSteps, cwd, emitter, {
+  let progressionFailedClosed = false;
+  if (runningContinuation) {
+    // Core minted the continuation's one run-bound authority at the point it
+    // verified the collector's bearer, and the running arm of the split
+    // outcome REQUIRES it — the CLI never assembles authority and never
+    // guards for its absence; the type makes the absent case
+    // unrepresentable.
+    const authority = runningContinuation.progressionAuthority;
+    // Derived from the COMMITTED state, never from `ctx.state`. The runbook
+    // SOURCE is fixed for the life of a run, but `getRunbookFromState` does not
+    // only parse it: it renders against `mergeEffectiveVars(state)`, and the
+    // collection's drain just merged the collected children's `finalVars` into
+    // those variables. Deriving from the pre-collection state leaves every
+    // variable the collection published unresolved — a later DELEGATE substep's
+    // `- {{ref}}` stays literal and the continuation stops the run on
+    // `delegation_resolution_failed`.
+    //
+    // The reload's `null` is NOT an early clean exit (the pre-migration guard's
+    // defect): a run that vanished between the commit and here is the
+    // activation's own typed `run_missing` refusal, observed and failed closed
+    // below. Falling back to the pre-collection state only supplies an argument
+    // the activation refuses before reading.
+    const committedState = (await manager.load(state.id)) ?? state;
+    const loopSteps = [...getRunbookFromState(committedState, cwd)];
+    // The same runtime wiring the pre-migration loop built for itself: CLI
+    // command callables (Category A) behind the machine-owned command actor.
+    const commandServices = createCliCommandServices(commandStreamOptions);
+    const progressionActorService = createCliRunbookActorService(manager, commandServices);
+    const progression = await activateRunProgression(authority, {
+      manager,
+      actorService: progressionActorService,
+      sessionService: ctx.sessionService,
+      actorMutationRunner: createEffectfulActorMutationRunner(cwd),
+      steps: loopSteps,
+      sink: emitter,
+      dispatchInlineChild: buildInlineChildDispatch({
+        manager,
+        actorService: progressionActorService,
+        sessionService: ctx.sessionService,
+        emitter,
+        cwd,
+        steps: loopSteps,
         output,
         commandStreamOptions,
-        // Core verified the collector's bearer behind the collection seam and
-        // returned the delegation capabilities bound to it. The CLI never mints
-        // authority — it only carries what core handed back, and only for the
-        // run core bound it to (`outcome.targetRunId === advanced.id`, the
-        // collect target this loop drives). Without them a collect that
-        // advances into a DELEGATE step is refused `actor_context_required` on
-        // issuance, and the following turn on frontier projection.
-        delegationRuntime: outcome.delegationRuntime,
-      });
-      // Do NOT early-return on a stopped loop: the run may have reached a
-      // terminal state INSIDE the loop and still owe its parent a propagation
-      // (the run loop does not propagate the executed run's own terminal). Defer
-      // the exit decision until after the terminal-propagation pass below.
-      loopStopped = loopResult.status === 'stopped' || loopResult.status === 'blocked';
-      loopHandledPropagation = loopResult.status === 'handled' || loopResult.status === 'blocked';
-    }
+        // This activation IS the composing parent's progression, so its
+        // verified capabilities are exactly the authority a child's terminal
+        // flow-back needs. Named with the run so nothing further up the
+        // inline chain can be advanced under it. Required on the running
+        // arm, so it is always passed.
+        parentDelegationRuntime: {
+          runId: state.id,
+          runtime: runningContinuation.delegationRuntime,
+        },
+      }),
+      propagateTerminal: buildTerminalPropagation({
+        manager,
+        cwd,
+        output,
+        commandStreamOptions,
+      }),
+    });
+    // The closed outcome is the whole exit contract for the continuation:
+    // `refused` and `failed` are fail-closed, `stopped` reports an actual
+    // stopped lifecycle, and `waiting`/`completed` exit clean. Terminal
+    // propagation was core's decision inside the activation; no coordination
+    // status crosses back.
+    progressionFailedClosed =
+      progression.kind === 'refused' ||
+      progression.kind === 'failed' ||
+      progression.kind === 'stopped';
   }
 
-  // Decide terminal propagation from the RELOADED post-loop state, not from the
-  // pre-loop `outcome.lifecycle`: when `advancesIntoLoop` was true the pre-loop
-  // lifecycle was `running`, so a run driven terminal inside the loop would be
-  // missed if we gated on the pre-loop value. For an INLINE parent this
-  // propagation STREAMS the parent's transition/`runbook_*` events through
-  // `output` — which is exactly why the applied action object below is emitted
-  // LAST, after this pass (cli-output.md: the action object is the last line).
-  // Split terminal propagation by the layer that reached terminal (#598 finding 1):
-  //  - advancesIntoLoop === false: the DRAIN reached terminal — core's collect
-  //    terminal branch already propagated (and set terminalInlineAdvance). Do NOT
-  //    re-propagate (that would double-advance the inline parent).
-  //  - advancesIntoLoop === true : the target was 'running' after the drain and may
-  //    have reached terminal INSIDE the loop, which never propagates the executed
-  //    run's own terminal — so the CLI still owns this propagation.
-  let exitWithError = loopStopped || shouldExitWithError;
-  if (advancesIntoLoop && !loopHandledPropagation) {
-    const propagation = await propagateDrivenRunTerminal(
-      manager,
-      state.id,
-      cwd,
-      output,
-      { kind: 'loop-inferred' },
-      commandStreamOptions,
-    );
-    if (propagation.kind === 'inline-advanced') {
-      exitWithError = inlineAdvanceRequiresFailureExit(propagation) || loopStopped;
-    }
-    // 'delegation-reported' / 'skipped' leave exitWithError at
-    // loopStopped || shouldExitWithError — unchanged from today.
-  } else if (outcome.terminalInlineAdvance !== undefined) {
+  let exitWithError = progressionFailedClosed || shouldExitWithError;
+  if (!advancesIntoLoop && outcome.terminalInlineAdvance !== undefined) {
     // Drain-terminal inline target: core already advanced the parent. Map its
-    // outcome to the same exit contract the CLI post-loop path uses. (loopStopped
-    // is false here — the loop did not run.)
+    // outcome to the same exit contract the CLI post-loop path uses.
     //
     // A refusal collapses onto the CLI's pre-existing fail-closed 'blocked'
     // (#602/#802) — the same explicit mapping the three delegation-completion
@@ -675,8 +703,7 @@ async function runCollect(ctx: TransitionContext, options: CollectOptions): Prom
       kind: 'inline-advanced',
       result: isInlinePropagationRefusal(advance) ? 'blocked' : advance.kind,
     };
-    exitWithError =
-      shouldExitWithError || inlineAdvanceRequiresFailureExit(corePropagation) || loopStopped;
+    exitWithError = shouldExitWithError || inlineAdvanceRequiresFailureExit(corePropagation);
   }
   // Drain-terminal DELEGATION target: core reported report-only; delegation never
   // flips the exit code (matches today's dead `=== 'stopped'` delegation branch).
