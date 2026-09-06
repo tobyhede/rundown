@@ -420,8 +420,14 @@ PATH={{ path ReviewSchemaPath }}
 
       // Run child with inline linkage — child will fail and stop
       result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
-      // Child stopped → exit 1
-      expect(result.exitCode).toBe(1);
+      // The child stopped, but this parent has a second substep, so it absorbs
+      // the failure and defers to 1.2 — the orchestrated workflow has NOT
+      // halted, so `run` exits 0 (ADR 0004; cli.md § Exit codes). The child's
+      // own `runbook_stopped` is still on the JSON stream: the exit code is the
+      // halt signal, not the failure signal. Contrast the STOP-aggregating
+      // parent at ':run --step exits 1 when the inline child stop propagates a
+      // parent STOP', where the parent does halt and `run` exits 1.
+      expect(result.exitCode).toBe(0);
 
       // Parent substep 1.1 should have a fail recorded.
       // Complete 1.2 to trigger aggregation — FAIL ANY STOP
