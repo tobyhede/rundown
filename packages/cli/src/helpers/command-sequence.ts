@@ -1038,8 +1038,15 @@ function rootScopedTerminal(
  * command targeted. Without such an observation the positional scan stands, so
  * single-run output is unaffected.
  *
+ * When `rootRunId` is omitted — the command that STARTS the root run — the
+ * payload's own first `runbook_started` becomes the root for the rest of that
+ * payload. A starting command can already carry two runs' terminals, so leaving
+ * root scoping inert there would hand that exact case back to the positional
+ * scan this function exists to override.
+ *
  * @param stdout - Raw stdout string from an rd command (JSON is the default output)
- * @param rootRunId - Run id of the scenario's root run, when already observed
+ * @param rootRunId - Run id of the scenario's root run, when already observed;
+ *   omitted for the command that starts it, which then supplies its own
  * @returns Object with extracted transitions and terminal result (or null if not determined)
  */
 export function parseJsonLines(
@@ -1121,6 +1128,14 @@ export function parseJsonLines(
 
   // Line-by-line NDJSON parsing
   let rootTerminal: 'COMPLETE' | 'STOP' | null = null;
+  // The caller's `rootRunId` is undefined for the command that STARTS the root
+  // run, and that command's own output can already carry both runs' terminals —
+  // `rundown run` on an inline-composing runbook streams the root's
+  // `runbook_started`, the child's, and then both terminals in one payload. So
+  // adopt the payload's own first `runbook_started` as the root when the caller
+  // has none, or root scoping is inert exactly where the positional rule is
+  // most likely to read the child's outcome.
+  let effectiveRootId = rootRunId;
   const lines = trimmed.split('\n').filter(Boolean);
   for (const line of lines) {
     let obj: Record<string, unknown>;
@@ -1145,7 +1160,10 @@ export function parseJsonLines(
     if (detected !== null) {
       terminal = detected;
     }
-    const rootDetected = rootScopedTerminal(obj, rootRunId);
+    // `processJsonObject` has just appended this line's run id, so `runIds[0]`
+    // is the first `runbook_started` of the payload.
+    effectiveRootId ??= runIds[0];
+    const rootDetected = rootScopedTerminal(obj, effectiveRootId);
     if (rootDetected !== null) {
       rootTerminal = rootDetected;
     }
@@ -1806,8 +1824,10 @@ export async function executeCommandSequence(
 
       // Parse JSON output to extract transitions, terminal state, and tokens
       // capturedRunIds[0] is the first `runbook_started` of the sequence — the
-      // scenario's root run. It is undefined only while parsing the command that
-      // starts it, where no terminal can have been reached yet.
+      // scenario's root run. It is undefined while parsing the command that
+      // starts it; `parseJsonLines` then adopts that payload's own first
+      // `runbook_started`, because a starting command can already carry both a
+      // root and a child terminal.
       const jsonResult = parseJsonLines(stdout, capturedRunIds[0]);
       const terminal = aggregateJsonResult(jsonResult, {
         transitions,
@@ -1846,8 +1866,10 @@ export async function executeCommandSequence(
 
       // Parse JSON output from shell commands as well (e.g., shell scripts that wrap rd commands)
       // capturedRunIds[0] is the first `runbook_started` of the sequence — the
-      // scenario's root run. It is undefined only while parsing the command that
-      // starts it, where no terminal can have been reached yet.
+      // scenario's root run. It is undefined while parsing the command that
+      // starts it; `parseJsonLines` then adopts that payload's own first
+      // `runbook_started`, because a starting command can already carry both a
+      // root and a child terminal.
       const jsonResult = parseJsonLines(stdout, capturedRunIds[0]);
       const terminal = aggregateJsonResult(jsonResult, {
         transitions,
