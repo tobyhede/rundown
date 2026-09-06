@@ -237,9 +237,15 @@ rundown run my-runbook.runbook.md --step 2.1 --index 3  # Target FOR iteration 3
 **Execution Loop:**
 
 - Auto-execute bash code blocks (unless `--prompted`)
-- Exit code 0 = PASS, non-zero = FAIL
+- A code block's own exit code decides the step result: 0 = PASS, non-zero =
+  FAIL. This is the **block's** exit code, not `rundown run`'s
 - Stop at prompt-only steps (no code block)
 - Continue until COMPLETE or STOP
+
+`rundown run`'s **own** exit code follows the shared halt rule — see
+[Exit codes for `run`, `goto`, `pass` and `fail`](#exit-codes-for-run-goto-pass-and-fail).
+With `--step`, an inline child that stops exits 0 when the composing parent
+absorbs it and keeps going.
 
 **With `--prompted`:**
 
@@ -402,16 +408,21 @@ For RETRY transitions:
 - If `retryCount < max`: increment count, stay in step
 - If exhausted: execute fallback action (default: STOP)
 
-##### Exit codes for `pass` / `fail`
+##### Exit codes for `run`, `goto`, `pass` and `fail`
 
-The exit code of a transition command reports **the action the runbook program
+The exit code of any of these commands reports **the action the runbook program
 actually took**, not the verb you typed. It answers one question for a scripted
 orchestrator: _has the workflow this process is driving halted?_
 
-- **Exit non-zero** — the workflow this process drives has **halted**: its local
-  lifecycle reached `stopped` with no parent that absorbs it, RETRY was
-  exhausted, or — for an inline child — advancing the composing parent itself
-  reached a STOP terminal.
+The rule is the same for all four. It is stated here once because it drifted
+apart when it was documented for `pass` / `fail` alone (ADR 0004).
+
+- **Exit non-zero** — the workflow this process drives has **halted**: the run
+  where progression came to rest reached `stopped`, RETRY was exhausted, or the
+  turn refused / failed to deliver its observations. For an inline child, the
+  run where progression rests is the composing parent, so this fires when
+  advancing that parent itself reached a STOP terminal. For a run with no
+  parent, it is that run itself.
 - **Exit 0** — the workflow is **still progressing**, even when the result was a
   failure. A `rundown fail` whose failure the parent handles non-terminally
   (e.g. a `FAIL ANY` / `FAIL DEFER` parent that defers to the next sibling)
@@ -424,6 +435,15 @@ recorded and emitted in the JSON output regardless of exit code. Exit 0 from
 `rundown fail` never means the failure was swallowed; it means the runbook's
 configured handler absorbed it without halting the workflow.
 
+<important>
+**Exit 0 does not mean no run stopped.** A `rundown run child.md --step 1.1`
+whose child reaches a STOP terminal exits 0 whenever the composing parent
+absorbs it and keeps going. The child's `runbook_stopped` event is still on the
+JSON stream. An agent that branches only on the exit code will miss it — read
+the event stream, which is the channel that carries what happened. The exit code
+only tells you whether to keep driving.
+</important>
+
 This contract is scoped to the **process** driving the workflow, which is why
 inline and delegation children differ. An inline child shares one process with
 its parent, so the exit code reflects the whole inline chain. A delegated child
@@ -433,7 +453,9 @@ different process, via `rundown collect --claim-id <claim_id>`.
 
 #### `rundown goto <step>` - Jump to Step
 
-Navigate directly to a step.
+Navigate directly to a step. `goto` can drive a run to a terminal, so its exit
+code follows the shared halt rule — see
+[Exit codes for `run`, `goto`, `pass` and `fail`](#exit-codes-for-run-goto-pass-and-fail).
 
 ```bash
 rundown goto 3                # Jump to step 3
