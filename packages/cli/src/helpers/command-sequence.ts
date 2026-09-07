@@ -1097,6 +1097,13 @@ export function parseJsonLines(
       throw new Error('Not a JSON object');
     }
     const obj = parsed as Record<string, unknown>;
+    // No root scoping here. Root scoping exists to pick the root's terminal out
+    // of a payload that carries two runs' terminals, and a lone object cannot be
+    // that payload: it is one observation, so it cannot both start a run and
+    // carry another run's terminal. `processJsonObject` already maps
+    // `runbook_completed`/`runbook_stopped` to COMPLETE/STOP, which is exactly
+    // what `rootScopedTerminal` would return on the only objects it matches, so
+    // scoping this branch could only ever re-derive the value already in hand.
     terminal = processJsonObject(
       obj,
       transitions,
@@ -1109,7 +1116,6 @@ export function parseJsonLines(
       artifactEntries,
       enteredSteps,
     );
-    terminal = rootScopedTerminal(obj, rootRunId) ?? terminal;
     return {
       transitions,
       terminal,
@@ -1169,6 +1175,28 @@ export function parseJsonLines(
     }
   }
 
+  // Two ordering rules meet here, and both are assumptions about what one
+  // command's payload can contain rather than facts the parser enforces.
+  //
+  // 1. A root-scoped observation beats the positional scan unconditionally.
+  //    That is the point of root scoping: the trailing action object describes
+  //    whichever run the command targeted, which under inline composition is
+  //    the child, not the root.
+  // 2. Within the payload the LAST root-scoped terminal wins. The root can
+  //    only terminate once per command, so this matters only if a payload
+  //    could carry the root's terminal and then a second, different run's --
+  //    and in that case the root's still wins, because rule 1 discards the
+  //    other run's line before it is ever compared.
+  //
+  // What neither rule survives is one command's payload carrying two DIFFERENT
+  // terminals for the SAME root run. Reaching that needs two `rd` invocations
+  // chained inside a single scenario command (`rd complete && rd run next.md`)
+  // or behind a wrapper script, so that one captured stdout spans two runs of
+  // the harness. No scenario in `runbooks/**` does this today: across all 285
+  // scenarios no single `commands:` entry contains two `rd`/`rundown`
+  // invocations, and the only two entries carrying a shell operator at all
+  // (`node -e` fault injection, a `printf` redirect) invoke neither. So the
+  // last-wins rule is never exercised against a conflicting root terminal.
   return {
     transitions,
     terminal: rootTerminal ?? terminal,
