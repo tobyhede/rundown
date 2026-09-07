@@ -40,9 +40,9 @@
     "prepack": "node ../../scripts/assert-native.mjs",
     "check:types": "tsc --noEmit -p tsconfig.test.json",
     "test": "jest",
-    "test:unit": "jest --maxWorkers=2",
+    "test:unit": "jest",
     "test:coverage": "jest --coverage",
-    "test:property": "jest --maxWorkers=2 --testPathPatterns='\\.properties\\.test\\.ts$'",
+    "test:property": "jest --testPathPatterns='\\.properties\\.test\\.ts$'",
     "test:mutate": "stryker run",
     "clean": "rm -rf dist"
   },
