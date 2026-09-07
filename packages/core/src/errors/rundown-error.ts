@@ -124,6 +124,60 @@ export type InvalidRunStateDefect =
     };
 
 /**
+ * Why persisted session state was refused (RD-310).
+ *
+ * The claims table's counterpart to {@link InvalidRunStateReason}, and closed
+ * for the same reason: a consumer must be able to tell the causes apart without
+ * pattern-matching the prose. Every member names one refusal site — five inside
+ * `deserializeClaim` and its helpers, one in `RunbookStateManager.loadSession`.
+ */
+export type InvalidSessionStateReason =
+  /** `grants_json` is not parseable JSON. */
+  | 'unparseable_grants_json'
+  /** `grants_json` parsed but failed the grants schema. */
+  | 'grants_schema_validation_failed'
+  /** `delegation_json` is unparseable, or failed the linkage schema. */
+  | 'invalid_delegation_linkage'
+  /** The row's key, secret hash, or controlled run id is not a valid branded value. */
+  | 'malformed_claim_field'
+  /** The mirrored run-id columns disagree with the delegation descriptor. */
+  | 'claim_columns_mismatch'
+  /** The reconstructed session failed `SessionDataSchema`. */
+  | 'session_schema_validation_failed';
+
+/**
+ * Structured facts about refused persisted session state (RD-310).
+ *
+ * Discriminated on `reason` rather than flat with an optional `claimKey`, for
+ * the reason {@link InvalidRunStateDefect} is discriminated on its own version
+ * field: exactly one member has no claim to name. A flat optional would permit
+ * both mistakes this shape prevents — a claim-row refusal that drops the key
+ * identifying WHICH row, and a session-wide refusal claiming a key it never
+ * read.
+ */
+export type InvalidSessionStateDefect =
+  | {
+      /**
+       * Never present: this refusal is about the reconstructed session, not
+       * about any one row in it.
+       *
+       * Declared absent-by-type rather than omitted so the key stays readable
+       * on the union without narrowing — the RD-310 factory tests
+       * `claimKey === undefined` to decide whether to emit it — while any value
+       * assigned to it is still a type error.
+       */
+      readonly claimKey?: never;
+      /** Which refusal fired. */
+      readonly reason: 'session_schema_validation_failed';
+    }
+  | {
+      /** The claim row that was refused, exactly as persisted. */
+      readonly claimKey: string;
+      /** Which refusal fired. */
+      readonly reason: Exclude<InvalidSessionStateReason, 'session_schema_validation_failed'>;
+    };
+
+/**
  * Base error class for all Rundown errors with trackable codes.
  *
  * @example

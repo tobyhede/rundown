@@ -194,6 +194,27 @@ export const ErrorCodes = {
     docSlug: 'invalid-persisted-run-state',
   },
 
+  // The claims table's half of RD-309's condition, and a separate code for the
+  // same reason RD-309 is not RD-305: the scope differs. RD-309 is one RUN row
+  // and its recovery names that run; this is one CLAIM row, or the session
+  // reconstruction built out of several, inside a database whose runs may all
+  // be readable. Reusing RD-309 would hand an operator a run id for a refusal
+  // that has none, and its description — schema versions, `templateVars`, the
+  // dynamic-step snapshot — names four causes a claim row cannot have.
+  //
+  // Before this code, all four escapes off a claim row reached the operator as
+  // RD-999 "Unknown error", and none was clearable: `complete` / `stop` /
+  // `prune` branch on refusal class, so a corrupt claim row could not be
+  // cleared through the CLI at all (#831).
+  INVALID_PERSISTED_SESSION_STATE: {
+    code: 'RD-310',
+    category: ErrorCategory.STATE,
+    title: 'Invalid persisted session state',
+    description:
+      'A claim row in the runbook database, or the session reconstructed from those rows, does not match the contract this build reads: an unparseable or schema-invalid grants blob, a malformed delegation linkage, a malformed claim key, secret hash or run id, mirrored run-id columns that disagree with the delegation descriptor beside them, or session data that fails its schema. Rundown never migrates persisted state, so the session cannot be adapted and is never silently repaired. The runs themselves are unaffected. Recover by finishing the affected run ("rundown complete"), stopping it ("rundown stop"), or discarding it ("rundown prune --inactive"), then re-run the runbook from source.',
+    docSlug: 'invalid-persisted-session-state',
+  },
+
   // Validation Errors (4xx)
   GOTO_TARGET_NOT_FOUND: {
     code: 'RD-401',

@@ -28,11 +28,13 @@ import {
   type ClaimRecord,
   type ClaimLookupKey,
   type DelegationClaimLinkage,
+  type ClaimSecretHash,
   assertClaimLookupKey,
   assertClaimSecretHash,
 } from '../claim-id.js';
 import { classifyDelegationLiveness, findSubstepState, linkageMatchesClaim } from '../targeting.js';
 import { getErrorMessage } from '../../errors.js';
+import type { InvalidSessionStateDefect } from '../../errors/rundown-error.js';
 import { logger } from '../../logger.js';
 import type { SessionData } from '../state.js';
 import { projectRunReleases, type RunRelease } from '../session-release.js';
@@ -280,8 +282,8 @@ export class StoreInvariantError extends Error {
 }
 
 /**
- * Raised when a persisted claim row's mirrored run-id columns disagree with the
- * delegation descriptor beside them — a database corrupted outside this store.
+ * Raised when a persisted claim row does not match the contract this build
+ * reads — a database corrupted outside this store.
  *
  * Typed rather than bare because the failure escapes on a READ, and one consumer
  * (`rdpath`, a hook binary) degrades to "no active context" on an unreadable
@@ -289,20 +291,66 @@ export class StoreInvariantError extends Error {
  * core's exports, so an untyped throw here is invisible to it; the same
  * reasoning already made `NativeSqliteUnavailableError` public.
  *
- * Scope is exactly the mirror check. `deserializeClaim`'s other persisted-edge
- * refusals — a malformed lookup key, secret hash, grants blob, or delegation
- * linkage — still throw bare `Error`s and are still unclassified by that
- * consumer. That gap predates this class and is not narrowed by it.
+ * Scope is now every persisted-edge refusal `deserializeClaim` can reach, not
+ * only the mirror check it was introduced for (#831). The other four —
+ * unparseable grants, schema-invalid grants, a malformed delegation linkage, and
+ * a malformed key / secret hash / run id — used to escape as `SyntaxError`,
+ * `ZodError`, and two bare `Error`s. All four reached the operator as RD-999
+ * "Unknown error" and none was clearable, because `complete` / `stop` / `prune`
+ * branch on refusal class.
+ *
+ * The {@link InvalidSessionStateDefect} rides on the error so the CLI envelope
+ * can name the row in FIELDS rather than only in prose, exactly as
+ * `InvalidRunStateDefect` does for RD-309.
  */
 export class InvalidPersistedClaimError extends Error {
+  /** Machine-readable facts about the refusal: which row, and which check. */
+  readonly defect: Extract<InvalidSessionStateDefect, { claimKey: string }>;
+
   /**
    * Construct an invalid-persisted-claim error.
    *
-   * @param message - Human-readable description of the disagreement.
+   * @param defect - Which claim row was refused, and by which check.
+   * @param message - Human-readable description of the refusal.
+   */
+  constructor(defect: Extract<InvalidSessionStateDefect, { claimKey: string }>, message: string) {
+    super(message);
+    this.name = 'InvalidPersistedClaimError';
+    this.defect = defect;
+  }
+}
+
+/**
+ * Raised when the session reconstructed from the claims table fails its schema.
+ *
+ * A sibling of {@link InvalidPersistedClaimError} rather than a member of it:
+ * the refusal is about the reconstructed whole and names no single row, which
+ * is precisely the distinction {@link InvalidSessionStateDefect} is
+ * discriminated on. The two share one error code (RD-310) because they share
+ * one recovery — the same reasoning that lets `InvalidRunbookStateError` and
+ * `LegacySnapshotError` share RD-309.
+ *
+ * Before this class, `RunbookStateManager.loadSession` threw a bare `Error`
+ * whose message reads "Finish or prune active runbooks and restart." under an
+ * envelope titled "Unknown error" — the recovery stated in the prose and
+ * contradicted by the envelope carrying it (#831).
+ */
+export class InvalidPersistedSessionError extends Error {
+  /** Machine-readable facts about the refusal. */
+  readonly defect: Extract<
+    InvalidSessionStateDefect,
+    { reason: 'session_schema_validation_failed' }
+  >;
+
+  /**
+   * Construct an invalid-persisted-session error.
+   *
+   * @param message - Human-readable description of the refusal.
    */
   constructor(message: string) {
     super(message);
-    this.name = 'InvalidPersistedClaimError';
+    this.name = 'InvalidPersistedSessionError';
+    this.defect = { reason: 'session_schema_validation_failed' };
   }
 }
 
@@ -2463,7 +2511,7 @@ export class RunbookStore {
       }
       // Validated, not cast: a malformed linkage must abort like every other
       // raw row at this edge, not reach the classifier as a shape-checked lie.
-      const linkage = deserializeDelegation(row.delegation_json);
+      const linkage = deserializeDelegation(row.key, row.delegation_json);
       // The THIRD reader of these rows, and the one that writes. It selects by
       // the `parent_run_id` column but classifies the DESCRIPTOR, so a row whose
       // two halves name different parents would have this parent's committed
@@ -2803,11 +2851,13 @@ const GrantsSchema = z.array(z.record(z.string(), z.unknown()));
  * branded field is re-validated rather than cast, so a corrupt row cannot
  * re-enter the domain wearing brands it does not satisfy.
  *
+ * @param claimKey - The row this blob was read from, carried into the refusal.
  * @param json - Raw `delegation_json` column value.
  * @returns The validated delegation linkage.
- * @throws {Error} When the blob is not a well-formed delegation linkage.
+ * @throws {InvalidPersistedClaimError} When the blob is not a well-formed
+ *   delegation linkage.
  */
-function deserializeDelegation(json: string): DelegationClaimLinkage {
+function deserializeDelegation(claimKey: string, json: string): DelegationClaimLinkage {
   try {
     const parsed = DelegationClaimLinkageSchema.safeParse(JSON.parse(json));
     if (!parsed.success) {
@@ -2815,7 +2865,10 @@ function deserializeDelegation(json: string): DelegationClaimLinkage {
     }
     return parsed.data;
   } catch (error) {
-    throw new Error(`Invalid persisted delegation linkage: ${getErrorMessage(error)}`);
+    throw new InvalidPersistedClaimError(
+      { claimKey, reason: 'invalid_delegation_linkage' },
+      `Invalid persisted claim ${claimKey}: invalid delegation linkage: ${getErrorMessage(error)}`,
+    );
   }
 }
 
@@ -2872,6 +2925,7 @@ function assertClaimColumnsMirrorDelegation(
 ): void {
   if (delegation.childRunId !== row.controlled_run) {
     throw new InvalidPersistedClaimError(
+      { claimKey: row.key, reason: 'claim_columns_mismatch' },
       `Invalid persisted claim ${row.key}: controlled_run ${row.controlled_run} does not match ` +
         `child ${delegation.childRunId} in its delegation linkage; ` +
         `the runbook database is inconsistent.`,
@@ -2879,6 +2933,7 @@ function assertClaimColumnsMirrorDelegation(
   }
   if (row.parent_run_id !== null && row.parent_run_id !== delegation.parentRunId) {
     throw new InvalidPersistedClaimError(
+      { claimKey: row.key, reason: 'claim_columns_mismatch' },
       `Invalid persisted claim ${row.key}: parent_run_id ${row.parent_run_id} does not match ` +
         `parent ${delegation.parentRunId} in its delegation linkage; ` +
         `the runbook database is inconsistent.`,
@@ -2887,27 +2942,83 @@ function assertClaimColumnsMirrorDelegation(
 }
 
 /**
+ * Parse a claim row's `grants_json`, refusing as the claim taxonomy.
+ *
+ * Split into two steps rather than one `GrantsSchema.parse(JSON.parse(...))`
+ * because the two failures are different facts and the refusal says which:
+ * unparseable JSON means the column is not JSON at all, where a schema failure
+ * means it is JSON of the wrong shape. Collapsing them would hand an operator
+ * one reason for two causes, which is the gap this taxonomy exists to close.
+ *
+ * @param claimKey - The row the blob was read from, carried into the refusal.
+ * @param json - Raw `grants_json` column value.
+ * @returns The validated grants.
+ * @throws {InvalidPersistedClaimError} When the blob is unparseable, or parses
+ *   but fails the grants schema.
+ */
+function deserializeGrants(claimKey: string, json: string): ClaimRecord['grants'] {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch (error) {
+    throw new InvalidPersistedClaimError(
+      { claimKey, reason: 'unparseable_grants_json' },
+      `Invalid persisted claim ${claimKey}: grants are not parseable JSON: ${getErrorMessage(error)}`,
+    );
+  }
+  const parsed = GrantsSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new InvalidPersistedClaimError(
+      { claimKey, reason: 'grants_schema_validation_failed' },
+      `Invalid persisted claim ${claimKey}: grants failed validation: ${parsed.error.message}`,
+    );
+  }
+  return parsed.data as unknown as ClaimRecord['grants'];
+}
+
+/**
  * Reconstruct a claim record from its row.
+ *
+ * Every refusal reachable here is an {@link InvalidPersistedClaimError} naming
+ * the row, so the three call sites — `openDelegatedChildrenFor` inside a write
+ * transaction, `readSession`, and `readClaim` — all refuse in one taxonomy the
+ * CLI can classify and clear. The branded-field asserts are re-framed rather
+ * than re-implemented: they still do the validating, and their bare `Error` is
+ * caught and re-raised so a malformed key, secret hash, or run id cannot leave
+ * this edge untyped either.
  *
  * @param row - Raw claim row.
  * @returns The claim record.
- * @throws {InvalidPersistedClaimError} When the row's mirrored run-id columns
- *   disagree with its delegation descriptor — see
- *   {@link assertClaimColumnsMirrorDelegation}.
+ * @throws {InvalidPersistedClaimError} When any persisted edge of the row fails:
+ *   an unparseable or schema-invalid grants blob, a malformed delegation
+ *   linkage, mirrored run-id columns that disagree with that linkage (see
+ *   {@link assertClaimColumnsMirrorDelegation}), or a malformed key, secret
+ *   hash, or controlled run id.
  */
 function deserializeClaim(row: ClaimRow): ClaimRecord {
-  const grants = GrantsSchema.parse(
-    JSON.parse(row.grants_json),
-  ) as unknown as ClaimRecord['grants'];
+  const grants = deserializeGrants(row.key, row.grants_json);
   const delegation =
-    row.delegation_json !== null ? deserializeDelegation(row.delegation_json) : undefined;
+    row.delegation_json !== null ? deserializeDelegation(row.key, row.delegation_json) : undefined;
   if (delegation) {
     assertClaimColumnsMirrorDelegation(row, delegation);
   }
+  let claimKey: ClaimLookupKey;
+  let secretHash: ClaimSecretHash;
+  let controlledRunId: RunId;
+  try {
+    claimKey = assertClaimLookupKey(row.key);
+    secretHash = assertClaimSecretHash(row.secret_hash);
+    controlledRunId = assertRunId(row.controlled_run);
+  } catch (error) {
+    throw new InvalidPersistedClaimError(
+      { claimKey: row.key, reason: 'malformed_claim_field' },
+      `Invalid persisted claim ${row.key}: ${getErrorMessage(error)}`,
+    );
+  }
   return {
-    claimKey: assertClaimLookupKey(row.key),
-    secretHash: assertClaimSecretHash(row.secret_hash),
-    controlledRunId: assertRunId(row.controlled_run),
+    claimKey,
+    secretHash,
+    controlledRunId,
     ...(delegation ? { delegation } : {}),
     grants,
     issuedAt: row.issued_at,

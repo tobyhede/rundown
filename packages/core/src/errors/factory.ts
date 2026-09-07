@@ -1,5 +1,9 @@
 import { truncateDelegationToken } from '../runbook/delegation-token.js';
-import { RundownError, type InvalidRunStateDefect } from './rundown-error.js';
+import {
+  RundownError,
+  type InvalidRunStateDefect,
+  type InvalidSessionStateDefect,
+} from './rundown-error.js';
 
 /**
  * Factory functions for creating typed errors.
@@ -165,6 +169,41 @@ export const Errors = {
         `cannot be resumed: finish it with "rundown complete", stop it with ` +
         `"rundown stop", or discard it with "rundown prune --inactive", then ` +
         `re-run the runbook from source.`,
+    });
+  },
+
+  // RD-310, the claims table's counterpart to `invalidPersistedRunState`. The
+  // recovery is spelled into the MESSAGE for the same reason it is there: a
+  // code's `description` reaches an operator only under `--text --verbose`, and
+  // agents are told never to pass those.
+  //
+  // The recovery differs from RD-309's in ONE respect, and it is the reason
+  // this is a separate factory rather than a second detail string. RD-309 knows
+  // which run to finish, because the refusal is about that run. A corrupt claim
+  // row names a claim, and the run it controls is exactly the thing the row is
+  // too corrupt to state — so the instruction cannot name a target and says so,
+  // rather than inventing one.
+  invalidPersistedSessionState: (
+    detail: string,
+    defect?: InvalidSessionStateDefect,
+  ): RundownError => {
+    const cause = detail.trim();
+    const terminated = cause.endsWith('.') ? cause : `${cause}.`;
+    return new RundownError('INVALID_PERSISTED_SESSION_STATE', {
+      ...(defect === undefined
+        ? {}
+        : {
+            reason: defect.reason,
+            // Omitted rather than emitted as `null` for the session-wide
+            // refusal: an absent key says "not applicable", where a null would
+            // claim the refusal names a row it never read.
+            ...(defect.claimKey === undefined ? {} : { claimKey: defect.claimKey }),
+          }),
+      message:
+        `${terminated} Rundown never migrates persisted state, so this session ` +
+        `cannot be adapted: finish the affected run with "rundown complete", ` +
+        `stop it with "rundown stop", or discard it with ` +
+        `"rundown prune --inactive", then re-run the runbook from source.`,
     });
   },
 

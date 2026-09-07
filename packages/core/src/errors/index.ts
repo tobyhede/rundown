@@ -4,5 +4,7 @@ export {
   type ErrorContext,
   type InvalidRunStateDefect,
   type InvalidRunStateReason,
+  type InvalidSessionStateDefect,
+  type InvalidSessionStateReason,
 } from './rundown-error.js';
 export { Errors } from './factory.js';
