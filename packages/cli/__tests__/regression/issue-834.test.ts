@@ -132,4 +132,45 @@ describe('issue #834: claim envelopes validate against their own schema', () => 
     // must be registered in the error-code schema.
     expect(failedCodes).toEqual([]);
   });
+  // The issue's open question — "claim may not be the only command emitting
+  // these" — answered. `run.ts` emits `prepResult.code` directly from the same
+  // `prepareRunbook` union, so an unregistered arm failed its own schema there
+  // too. One registry change covers all three consumers (`claim`, `run`,
+  // `resolve`); this pins the second of them so a later narrowing of `claim`
+  // alone cannot be mistaken for a complete fix.
+  it('validates a run MISSING_REQUIRED_VARS envelope, not only a claim one', async () => {
+    await writeFile(
+      join(workspace.cwd, 'needs-input.runbook.md'),
+      [
+        '---',
+        'name: needs-input',
+        'inputs:',
+        '  - PlanPath',
+        'required:',
+        '  - PlanPath',
+        '---',
+        '',
+        '# Needs Input',
+        '',
+        '## 1. Use it',
+        '',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Plan at {{ PlanPath }}.',
+        '',
+      ].join('\n'),
+    );
+
+    const result = await runCliInProcess('run needs-input.runbook.md', workspace);
+    expect(result.exitCode).toBe(1);
+
+    const envelope = parseCliJsonObject(result.stdout);
+    expect(envelope).toEqual(
+      expect.objectContaining({ kind: 'error', code: 'MISSING_REQUIRED_VARS' }),
+    );
+
+    const parseResult = ErrorResponseSchema.safeParse(envelope);
+    expect(parseResult.success ? 'valid' : parseResult.error.toString()).toBe('valid');
+  });
 });

@@ -92,6 +92,21 @@ export const CLISymbolicErrorCodeValues = [
   'ENGINE_INIT_FAILED',
   'INVALID_AT_TARGET',
   'SCENARIO_NOT_FOUND',
+  // Every remaining `PrepareFailure['code']` arm. These reach an envelope
+  // verbatim from `prepareRunbook`, through `rundown claim`'s `prepare-failed`
+  // arm, `rundown run` (`run.ts` emits `prepResult.code` directly) and
+  // `rundown resolve` — so this is not one command's gap. `RUNBOOK_NOT_FOUND`,
+  // `VALIDATION_ERROR`, `ARTIFACT_CHANNEL_COLLISION` and `INVALID_ARTIFACT_INPUT`
+  // are the four arms that were already registered above (#834).
+  'PARSE_ERROR',
+  'RUNBOOK_REF_RESOLUTION_ERROR',
+  'VARIABLE_RESOLUTION_ERROR',
+  'POLICY_DENIED',
+  'MISSING_REQUIRED_VARS',
+  // The symbolic SPELLING of RD-811. `CLIErrorCodes.DELEGATION_ALREADY_CLAIMED`
+  // registers the RD-811 value; `rundown claim` emits this string, and its
+  // sibling `DELEGATION_ALREADY_RESOLVED` was registered while it was not.
+  'DELEGATION_ALREADY_CLAIMED',
   'UNKNOWN_ERROR',
 ] as const;
 
