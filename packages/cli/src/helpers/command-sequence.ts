@@ -1004,6 +1004,24 @@ function parseCapturedArtifacts(
   return artifacts;
 }
 
+// A run-scoped terminal observation for the scenario's root run. Lifecycle
+// events carry `runbookId`; the trailing action object never does, because it is
+// the command's own envelope for whichever run the command targeted (see
+// docs/spec/cli-output.md: streamed observations precede the final action
+// object, which is the last line). For inline composition those two are
+// different runs — `rd pass` on the last child of a FAIL ANY step completes the
+// CHILD while the composing root STOPs — so a positional "last terminal line
+// wins" rule reads the child's envelope and loses the root's outcome.
+function rootScopedTerminal(
+  obj: Record<string, unknown>,
+  rootRunId: string | undefined,
+): 'COMPLETE' | 'STOP' | null {
+  if (rootRunId === undefined || obj.runbookId !== rootRunId) return null;
+  if (obj.type === 'runbook_completed') return 'COMPLETE';
+  if (obj.type === 'runbook_stopped') return 'STOP';
+  return null;
+}
+
 /**
  * Parse NDJSON lines from command stdout to extract transitions and terminal state.
  *
@@ -1014,10 +1032,27 @@ function parseCapturedArtifacts(
  * Transitions are extracted ONLY from streamed `step_transitioned` events.
  * The flushed JSON object (without a `type` field) is used ONLY for terminal detection.
  *
+ * A scenario's result is the root run's outcome. When this command's output
+ * carries a lifecycle terminal for `rootRunId`, that observation wins over the
+ * positional scan, whatever the trailing action object says about the run the
+ * command targeted. Without such an observation the positional scan stands, so
+ * single-run output is unaffected.
+ *
+ * When `rootRunId` is omitted — the command that STARTS the root run — the
+ * payload's own first `runbook_started` becomes the root for the rest of that
+ * payload. A starting command can already carry two runs' terminals, so leaving
+ * root scoping inert there would hand that exact case back to the positional
+ * scan this function exists to override.
+ *
  * @param stdout - Raw stdout string from an rd command (JSON is the default output)
+ * @param rootRunId - Run id of the scenario's root run, when already observed;
+ *   omitted for the command that starts it, which then supplies its own
  * @returns Object with extracted transitions and terminal result (or null if not determined)
  */
-export function parseJsonLines(stdout: string): {
+export function parseJsonLines(
+  stdout: string,
+  rootRunId?: string,
+): {
   transitions: CapturedTransition[];
   terminal: 'COMPLETE' | 'STOP' | null;
   tokens: string[];
@@ -1062,6 +1097,13 @@ export function parseJsonLines(stdout: string): {
       throw new Error('Not a JSON object');
     }
     const obj = parsed as Record<string, unknown>;
+    // No root scoping here. Root scoping exists to pick the root's terminal out
+    // of a payload that carries two runs' terminals, and a lone object cannot be
+    // that payload: it is one observation, so it cannot both start a run and
+    // carry another run's terminal. `processJsonObject` already maps
+    // `runbook_completed`/`runbook_stopped` to COMPLETE/STOP, which is exactly
+    // what `rootScopedTerminal` would return on the only objects it matches, so
+    // scoping this branch could only ever re-derive the value already in hand.
     terminal = processJsonObject(
       obj,
       transitions,
@@ -1091,6 +1133,15 @@ export function parseJsonLines(stdout: string): {
   }
 
   // Line-by-line NDJSON parsing
+  let rootTerminal: 'COMPLETE' | 'STOP' | null = null;
+  // The caller's `rootRunId` is undefined for the command that STARTS the root
+  // run, and that command's own output can already carry both runs' terminals —
+  // `rundown run` on an inline-composing runbook streams the root's
+  // `runbook_started`, the child's, and then both terminals in one payload. So
+  // adopt the payload's own first `runbook_started` as the root when the caller
+  // has none, or root scoping is inert exactly where the positional rule is
+  // most likely to read the child's outcome.
+  let effectiveRootId = rootRunId;
   const lines = trimmed.split('\n').filter(Boolean);
   for (const line of lines) {
     let obj: Record<string, unknown>;
@@ -1115,11 +1166,42 @@ export function parseJsonLines(stdout: string): {
     if (detected !== null) {
       terminal = detected;
     }
+    // `processJsonObject` has just appended this line's run id, so `runIds[0]`
+    // is the first `runbook_started` of the payload.
+    effectiveRootId ??= runIds[0];
+    const rootDetected = rootScopedTerminal(obj, effectiveRootId);
+    if (rootDetected !== null) {
+      rootTerminal = rootDetected;
+    }
   }
 
+  // Two ordering rules meet here, and both are assumptions about what one
+  // command's payload can contain rather than facts the parser enforces.
+  //
+  // 1. A root-scoped observation beats the positional scan unconditionally.
+  //    That is the point of root scoping: the trailing action object describes
+  //    whichever run the command targeted, which under inline composition is
+  //    the child, not the root.
+  // 2. Within the payload the LAST root-scoped terminal wins. The root can
+  //    only terminate once per command, so this matters only if a payload
+  //    could carry the root's terminal and then a second, different run's --
+  //    and in that case the root's still wins, because rule 1 discards the
+  //    other run's line before it is ever compared.
+  //
+  // What neither rule survives is one command's payload carrying two DIFFERENT
+  // terminals for the SAME root run. Reaching that needs two `rd` invocations
+  // chained inside a single scenario command (`rd complete && rd run next.md`)
+  // or behind a wrapper script, so that one captured stdout spans two runs of
+  // the harness. No scenario does this today: across all 331 -- 285 declared in
+  // runbook frontmatter plus 46 `cases:` in `runbooks/scenario-suite.yaml`, and
+  // the suite file is easy to miss when counting -- no single `commands:` entry
+  // contains two `rd`/`rundown` invocations, and the only two entries carrying a
+  // shell operator at all (`node -e` fault injection, a `printf` redirect)
+  // invoke neither. So the last-wins rule is never exercised against a
+  // conflicting root terminal.
   return {
     transitions,
-    terminal,
+    terminal: rootTerminal ?? terminal,
     tokens,
     claimIds,
     runClaimIds,
@@ -1771,7 +1853,12 @@ export async function executeCommandSequence(
       stdout = result.stdout;
 
       // Parse JSON output to extract transitions, terminal state, and tokens
-      const jsonResult = parseJsonLines(stdout);
+      // capturedRunIds[0] is the first `runbook_started` of the sequence — the
+      // scenario's root run. It is undefined while parsing the command that
+      // starts it; `parseJsonLines` then adopts that payload's own first
+      // `runbook_started`, because a starting command can already carry both a
+      // root and a child terminal.
+      const jsonResult = parseJsonLines(stdout, capturedRunIds[0]);
       const terminal = aggregateJsonResult(jsonResult, {
         transitions,
         capturedTokens,
@@ -1808,7 +1895,12 @@ export async function executeCommandSequence(
       stdout = result.stdout;
 
       // Parse JSON output from shell commands as well (e.g., shell scripts that wrap rd commands)
-      const jsonResult = parseJsonLines(stdout);
+      // capturedRunIds[0] is the first `runbook_started` of the sequence — the
+      // scenario's root run. It is undefined while parsing the command that
+      // starts it; `parseJsonLines` then adopts that payload's own first
+      // `runbook_started`, because a starting command can already carry both a
+      // root and a child terminal.
+      const jsonResult = parseJsonLines(stdout, capturedRunIds[0]);
       const terminal = aggregateJsonResult(jsonResult, {
         transitions,
         capturedTokens,
