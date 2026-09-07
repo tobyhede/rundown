@@ -1192,11 +1192,13 @@ export function parseJsonLines(
   // terminals for the SAME root run. Reaching that needs two `rd` invocations
   // chained inside a single scenario command (`rd complete && rd run next.md`)
   // or behind a wrapper script, so that one captured stdout spans two runs of
-  // the harness. No scenario in `runbooks/**` does this today: across all 285
-  // scenarios no single `commands:` entry contains two `rd`/`rundown`
-  // invocations, and the only two entries carrying a shell operator at all
-  // (`node -e` fault injection, a `printf` redirect) invoke neither. So the
-  // last-wins rule is never exercised against a conflicting root terminal.
+  // the harness. No scenario does this today: across all 331 -- 285 declared in
+  // runbook frontmatter plus 46 `cases:` in `runbooks/scenario-suite.yaml`, and
+  // the suite file is easy to miss when counting -- no single `commands:` entry
+  // contains two `rd`/`rundown` invocations, and the only two entries carrying a
+  // shell operator at all (`node -e` fault injection, a `printf` redirect)
+  // invoke neither. So the last-wins rule is never exercised against a
+  // conflicting root terminal.
   return {
     transitions,
     terminal: rootTerminal ?? terminal,
