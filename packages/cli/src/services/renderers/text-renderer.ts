@@ -45,6 +45,17 @@ import type { OutputRenderer, RendererOptions } from './types.js';
 interface StatusDetailData {
   active?: boolean;
   stashed?: boolean;
+  /**
+   * Terminal lifecycle of the run this status describes.
+   *
+   * Set by `buildActiveStatus` for a completed or stopped run, alongside
+   * `active: false`. It was absent from this shape entirely, so the renderer
+   * could not express "completed" even had it reached the code — a terminal run
+   * fell into the `!active && !stashed` early return and printed "No active
+   * runbook." at exit 0, while the same command in JSON reported
+   * `status: "completed"` plus the full body (#769).
+   */
+  status?: 'completed' | 'stopped';
   file?: string;
   state?: string;
   /** Run id this status describes; `state` is the same constant for every run. */
@@ -235,6 +246,7 @@ export class TextRenderer implements OutputRenderer {
     const {
       active,
       stashed,
+      status,
       file,
       state,
       runId,
@@ -246,6 +258,31 @@ export class TextRenderer implements OutputRenderer {
       pending,
       delegations,
     } = data as StatusDetailData;
+
+    // Terminal run. Ordered BEFORE the no-active early return, which is the
+    // whole defect: a completed or stopped run arrives with `active: false`,
+    // fell through to it, and reported "No active runbook." while JSON reported
+    // the run's real lifecycle at the same exit code (#769).
+    //
+    // Shaped like the stashed branch below rather than like the active one: a
+    // run that has finished has no next step to announce, so metadata plus the
+    // terminal marker plus the variables it resolved is the whole of what is
+    // still true about it.
+    if (!active && status !== undefined) {
+      if (file || state) {
+        printMetadata(
+          { file: file ?? 'unknown', state: state ?? 'unknown', runId, prompted },
+          this.writer,
+        );
+      }
+      if (status === 'completed') {
+        printRunbookComplete(undefined, this.writer);
+      } else {
+        printRunbookStopped(undefined, this.writer);
+      }
+      this.renderVars(vars);
+      return;
+    }
 
     // No active runbook
     if (!active && !stashed) {

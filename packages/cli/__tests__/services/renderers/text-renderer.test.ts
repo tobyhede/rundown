@@ -59,6 +59,55 @@ function pos(current = '1', total = 3, substep?: string): StepPosition {
 }
 
 describe('TextRenderer', () => {
+  // #769: a terminal run reaches the renderer with `active: false`, fell into
+  // the no-active early return, and printed "No active runbook." at exit 0 while
+  // JSON reported the run's real lifecycle. The regression pin covers the
+  // completed arm end-to-end through the CLI; these cover both arms at the
+  // renderer, which is where the branch lives.
+  describe('terminal status detail', () => {
+    const terminalEvent = (status: 'completed' | 'stopped'): DetailOutput => ({
+      type: 'detail',
+      format: 'status',
+      data: {
+        active: false,
+        stashed: false,
+        status,
+        file: 'runbooks/child.runbook.md',
+        state: 'rd_0123456789abcdef0123456789abcdef',
+        vars: { Branch: 'main' },
+      },
+    });
+
+    it('renders COMPLETE for a completed run, not "No active runbook"', () => {
+      const writer = createMockWriter();
+      new TextRenderer({ writer }).render(terminalEvent('completed'));
+
+      const output = writer.lines.join('\n');
+      expect(output).not.toContain('No active runbook');
+      expect(output).toContain('COMPLETE');
+    });
+
+    it('renders STOP for a stopped run, not "No active runbook"', () => {
+      const writer = createMockWriter();
+      new TextRenderer({ writer }).render(terminalEvent('stopped'));
+
+      const output = writer.lines.join('\n');
+      expect(output).not.toContain('No active runbook');
+      expect(output).toContain('STOP');
+    });
+
+    it('still reports no active runbook when nothing is active, stashed, or terminal', () => {
+      const writer = createMockWriter();
+      new TextRenderer({ writer }).render({
+        type: 'detail',
+        format: 'status',
+        data: { active: false, stashed: false },
+      });
+
+      expect(writer.lines.join('\n')).toContain('No active runbook');
+    });
+  });
+
   describe('renderDetail', () => {
     describe('object stringification (Issue A)', () => {
       it('formats nested objects as JSON instead of [object Object]', () => {
