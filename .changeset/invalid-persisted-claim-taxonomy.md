@@ -5,9 +5,9 @@
 
 # Refuse a corrupt claim row as a typed class, and give it an error code
 
-#828 closed the unclassified-refusal hole for the `runs` table. The `claims`
-table had the same hole in four shapes, and all four reached the operator as
-RD-999 "Unknown error":
+Issue #828 closed the unclassified-refusal hole for the `runs` table. The
+`claims` table had the same hole in four shapes, and all four reached the
+operator as RD-999 "Unknown error":
 
 | Trigger                                              | Escaped as                                       |
 | ---------------------------------------------------- | ------------------------------------------------ |
