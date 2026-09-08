@@ -5,6 +5,8 @@ import {
   ErrorResponseSchema,
   Errors,
   IncompatibleSchemaError,
+  InvalidPersistedClaimError,
+  InvalidPersistedSessionError,
   InvalidRunbookStateError,
   LegacySnapshotError,
   NativeSqliteUnavailableError,
@@ -232,6 +234,83 @@ describe('withErrorHandling', () => {
   //     "error": "Unknown error - Invalid runbook state for \"rd_…\": invalid
   //               schemaVersion; expected schema version 1.",
   //     "code": "RD-999", "details": { "title": "Unknown error" } }
+  // The claims table's half of the same condition. Every one of these reached
+  // the operator as RD-999 "Unknown error" before #831, and none was clearable
+  // — `complete` / `stop` / `prune` branch on refusal class.
+  describe('invalid persisted session state (RD-310)', () => {
+    it('converts InvalidPersistedClaimError to RD-310 rather than RD-999', async () => {
+      await withErrorHandling(async () => {
+        throw new InvalidPersistedClaimError(
+          { claimKey: 'rdclk_aaaa', reason: 'unparseable_grants_json' },
+          'Invalid persisted claim rdclk_aaaa: grants are not parseable JSON: Unexpected token.',
+        );
+      });
+
+      expect(mockExit).toHaveBeenCalledWith(1);
+      const parsed = parseStdoutJson();
+      expect(parsed.code).toBe(Errors.invalidPersistedSessionState('x').code);
+      expect(parsed.code).not.toBe(Errors.unknown('x').code);
+      expect(parsed.code).not.toBe(Errors.invalidPersistedRunState('x').code);
+      expect(ErrorResponseSchema.safeParse(parsed).success).toBe(true);
+    });
+
+    it('converts InvalidPersistedSessionError to RD-310 rather than RD-999', async () => {
+      await withErrorHandling(async () => {
+        throw new InvalidPersistedSessionError(
+          'Session data is invalid for this runbook schema. Finish or prune active runbooks and restart.',
+        );
+      });
+
+      const parsed = parseStdoutJson();
+      expect(parsed.code).toBe(Errors.invalidPersistedSessionState('x').code);
+      expect(parsed.code).not.toBe(Errors.unknown('x').code);
+    });
+
+    it('names the finish / stop / prune recovery in the JSON envelope itself', async () => {
+      await withErrorHandling(async () => {
+        throw new InvalidPersistedClaimError(
+          { claimKey: 'rdclk_bbbb', reason: 'invalid_delegation_linkage' },
+          'Invalid persisted claim rdclk_bbbb: invalid delegation linkage: bad shape.',
+        );
+      });
+
+      const message = String(parseStdoutJson().error);
+      expect(message).toMatch(/rundown complete/);
+      expect(message).toMatch(/rundown stop/);
+      expect(message).toMatch(/rundown prune/);
+      // The store's own diagnosis must survive alongside the recovery.
+      expect(message).toMatch(/invalid delegation linkage/);
+    });
+
+    it('forwards the claim key into details.context, not only into the prose', async () => {
+      await withErrorHandling(async () => {
+        throw new InvalidPersistedClaimError(
+          { claimKey: 'rdclk_cccc', reason: 'claim_columns_mismatch' },
+          'Invalid persisted claim rdclk_cccc: controlled_run disagrees.',
+        );
+      });
+
+      const context = (parseStdoutJson().details as { readonly context?: Record<string, unknown> })
+        .context;
+      expect(context?.claimKey).toBe('rdclk_cccc');
+      expect(context?.reason).toBe('claim_columns_mismatch');
+    });
+
+    // The session-wide refusal names no row, and the envelope must not invent
+    // one — an absent key says "not applicable" where a null would claim the
+    // refusal read a row it never saw.
+    it('emits no claimKey for the session-wide refusal', async () => {
+      await withErrorHandling(async () => {
+        throw new InvalidPersistedSessionError('Session data is invalid for this runbook schema.');
+      });
+
+      const context = (parseStdoutJson().details as { readonly context?: Record<string, unknown> })
+        .context;
+      expect(context).not.toHaveProperty('claimKey');
+      expect(context?.reason).toBe('session_schema_validation_failed');
+    });
+  });
+
   describe('invalid persisted run state (RD-309)', () => {
     it('converts InvalidRunbookStateError to RD-309 rather than RD-999', async () => {
       await withErrorHandling(async () => {

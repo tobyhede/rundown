@@ -11,6 +11,8 @@ import {
   type RunbookStateManager,
   type RunId,
   type SessionService,
+  InvalidPersistedClaimError,
+  InvalidPersistedSessionError,
   InvalidRunbookStateError,
   LegacySnapshotError,
   isError,
@@ -29,9 +31,15 @@ import {
  *   `RunbookStateManager.load` reframes from a bare `SyntaxError` so it cannot
  *   escape as RD-999 / "Unknown error"
  * - {@link LegacySnapshotError} — deprecated dynamic-step snapshot shape
+ * - {@link InvalidPersistedClaimError} — a claim row whose persisted edges this
+ *   build refuses, and {@link InvalidPersistedSessionError} — the session
+ *   rebuilt from those rows failing its schema. Both are the claims table's half
+ *   of the first entry's condition, and without them a corrupt claim row could
+ *   not be cleared through the CLI at all: this predicate is what authorizes the
+ *   removal (#831)
  * - `SyntaxError` — a raw JSON parse failure from any remaining unwrapped read
- *   path (e.g. session data); retained so no such failure regresses to
- *   non-recoverable
+ *   path; retained so no such failure regresses to non-recoverable. It no longer
+ *   covers a corrupt grants blob, which now arrives typed
  *
  * Everything else (permissions, IO, unexpected internal errors) is NOT
  * recoverable and must propagate: deleting state on such errors is the #518
@@ -44,6 +52,8 @@ export function isRecoverableActiveStackError(error: Error): boolean {
   return (
     error instanceof InvalidRunbookStateError ||
     error instanceof LegacySnapshotError ||
+    error instanceof InvalidPersistedClaimError ||
+    error instanceof InvalidPersistedSessionError ||
     (isError(error) && error.name === 'SyntaxError')
   );
 }

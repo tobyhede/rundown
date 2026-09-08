@@ -49,7 +49,10 @@ export { NativeSqliteUnavailableError, SqljsUnavailableError } from './storage/d
 // the same kind of surface: it escapes on a session READ, so `rdpath` needs an
 // `instanceof` arm or a corrupt row turns a hook invocation whose base directory
 // was already supplied into a non-zero exit.
-export { InvalidPersistedClaimError } from './storage/runbook-store.js';
+export {
+  InvalidPersistedClaimError,
+  InvalidPersistedSessionError,
+} from './storage/runbook-store.js';
 // The ownership-refusal result surface is public for the same reason: a CLI
 // front end must be able to narrow a session mutation's typed refusal.
 export type {

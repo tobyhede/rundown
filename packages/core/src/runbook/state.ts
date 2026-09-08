@@ -49,6 +49,7 @@ import {
   type SessionMutationResult,
   type SessionMutationTxn,
   type StateMutationResult,
+  InvalidPersistedSessionError,
 } from './storage/runbook-store.js';
 import type { OpenRunbookDriverOptions } from './storage/driver-factory.js';
 import type { SyncWork } from './storage/sql-driver.js';
@@ -996,8 +997,8 @@ export class RunbookStateManager {
    *
    * @returns Validated session data, or the default empty session when the
    *   database has no session rows.
-   * @throws {Error} When the reconstructed session is incompatible with the
-   *   current schema.
+   * @throws {InvalidPersistedSessionError} When the reconstructed session is
+   *   incompatible with the current schema.
    */
   async loadSession(): Promise<SessionData> {
     const store = await this.store();
@@ -1006,7 +1007,10 @@ export class RunbookStateManager {
     // database is rejected by schema version at open, not adapted per read.
     const result = SessionDataSchema.safeParse(session);
     if (!result.success) {
-      throw new Error(
+      // Typed, not bare: the message has always stated the recovery, and a bare
+      // `Error` put it under an envelope titled "Unknown error" that argues
+      // against acting on it (#831).
+      throw new InvalidPersistedSessionError(
         'Session data is invalid for this runbook schema. Finish or prune active runbooks and restart.',
       );
     }
