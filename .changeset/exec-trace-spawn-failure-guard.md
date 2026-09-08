@@ -20,7 +20,13 @@ a broken spawn.
 
 `timedOut` was worse. It was computed correctly and read by no caller. Both
 consumers destructured `{ heads }` only, so a truncated trace from a SIGKILLed
-shell was treated as a complete observation.
+shell was treated as a complete observation. It was also too narrow: it
+classified only the harness's own timeout, so a shell killed by any other signal
+carried no `error`, a null `status` and a non-null `signal` — past both spawn
+guards, and reported as a clean run. Measured on the extracted module,
+`runOracle` returned `{ policyAllowed: true, divergence: null }` for a shell
+killed by `SIGTERM` and by `SIGINT`: the invariant reported as HELD on a run cut
+short mid-command.
 
 **Measured, on macOS.** A cold spawn of `git status` under this harness cost
 1435ms against the old 2000ms timeout, and the four-head self-check command hit
@@ -35,18 +41,24 @@ spawn cold.
 - `runInSandbox` throws on any non-timeout spawn error, and on a result that
   neither exited nor was signalled. An infrastructure failure is no longer
   laundered into an observation.
-- `runOracle` throws when a run times out without observing a divergence. A
-  truncated trace stays authoritative for a bypass it DID see — a head that
-  already exec'd is a real bypass — but silence in it is not evidence of
-  soundness.
+- `ExecTrace` carries a `Truncation | null` — `{ kind: 'timeout' }` or
+  `{ kind: 'signal', signal }` — in place of the `timedOut` boolean, so every
+  way a run can end early is one type and none can be forgotten.
+- `runOracle` throws when a truncated run observed no divergence, naming the
+  cause. A truncated trace stays authoritative for a bypass it DID see — a head
+  that already exec'd is a real bypass however the shell later died — but
+  silence in it is not evidence of soundness.
 - `SHELL_TIMEOUT_MS` goes from 2000ms to 15000ms. It is a safety net against a
   wedged shell, not a performance budget, and it was acting as one. A guard that
   fires on healthy runs teaches people to ignore it.
-- The self-check asserts `timedOut` first, so a timeout reports as itself rather
-  than as a baffling `Set {}` versus four names.
+- The self-check asserts `truncation` first, so a truncated run reports as
+  itself rather than as a baffling `Set {}` versus four names.
 - The sandbox and oracle move to `exec-trace-sandbox.ts` so the observation path
   can be unit-tested at all. That is why the defect survived: the code that had
   to be mocked to expose it lived inside the test file.
 
-`exec-trace-sandbox.test.ts` carries the witnesses. Five of its seven cases fail
-without the guards.
+`exec-trace-sandbox.test.ts` carries the witnesses. Eight of its ten cases fail
+without the guards; the remaining two are controls — a genuine empty trace from
+a shell that ran, and a policy-denied command that never reaches the shell —
+which must keep passing, or the guards would be indistinguishable from refusing
+every empty trace.

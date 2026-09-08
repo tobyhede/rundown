@@ -13,6 +13,10 @@
  * in the harness could observe that, because the code that would have to be
  * mocked to prove it lived inside the test file itself.
  *
+ * The same reasoning covers every way a run can end without reaching the end of
+ * its command string, not only the two that were noticed first: see
+ * {@link Truncation}.
+ *
  * See `exec-trace-sandbox.test.ts` for the witnesses.
  *
  * @module
@@ -147,12 +151,31 @@ export function createShimSandbox(): ShimSandbox {
   };
 }
 
+/**
+ * Why a sandbox run did not reach the end of its command string.
+ *
+ * A truncated run is authoritative for a bypass it DID observe — a head that
+ * already exec'd is a real bypass however the shell later died — but silence in
+ * it is not evidence of soundness. The two arms differ only in what to say
+ * about the cause; both make an empty head set unusable as ground truth.
+ */
+export type Truncation =
+  /** {@link SHELL_TIMEOUT_MS} elapsed and the harness killed the shell. */
+  | { readonly kind: 'timeout' }
+  /** The shell was killed by a signal the harness did not send. */
+  | { readonly kind: 'signal'; readonly signal: NodeJS.Signals };
+
 /** Outcome of executing one command under the hermetic shim sandbox. */
 export interface ExecTrace {
   /** Distinct command-head basenames the real shell actually exec'd. */
   heads: Set<string>;
-  /** Whether the shell process timed out (trace is still authoritative for what ran before). */
-  timedOut: boolean;
+  /**
+   * Why the run was cut short, or `null` when the shell ran to completion.
+   *
+   * Non-null makes the head set a floor rather than a total, so a caller that
+   * reads an empty set as "nothing unauthorized ran" MUST refuse instead.
+   */
+  truncation: Truncation | null;
 }
 
 /**
@@ -168,7 +191,7 @@ export interface ExecTrace {
  *
  * @param sandbox - The hermetic shim sandbox
  * @param command - The raw command string to execute
- * @returns The executed-head set and whether the shell timed out
+ * @returns The executed-head set and why the run was cut short, if it was
  * @throws If the throwaway cwd cannot be created or the trace file cannot be read
  */
 export function runInSandbox(sandbox: ShimSandbox, command: string): ExecTrace {
@@ -187,10 +210,19 @@ export function runInSandbox(sandbox: ShimSandbox, command: string): ExecTrace {
       killSignal: 'SIGKILL',
     });
 
-    // spawnSync surfaces a timeout via `result.error.code === 'ETIMEDOUT'`, and
-    // the SIGKILL we use to kill the timed-out child via `result.signal`.
-    const timedOut =
-      (result.error !== undefined && isTimeoutError(result.error)) || result.signal === 'SIGKILL';
+    // spawnSync surfaces a timeout via `result.error.code === 'ETIMEDOUT'` and
+    // reports the SIGKILL we use to kill the timed-out child on `result.signal`.
+    // Any OTHER signal death is a truncation the harness did not cause — a
+    // supervisor's SIGTERM, an interrupted CI runner — and is just as fatal to
+    // the trace's standing as ground truth. Classifying only the timeout is
+    // what let SIGTERM hand a partial trace to `runOracle` and be reported as
+    // the invariant holding.
+    const truncation: Truncation | null =
+      result.error !== undefined && isTimeoutError(result.error)
+        ? { kind: 'timeout' }
+        : result.signal !== null
+          ? { kind: 'signal', signal: result.signal }
+          : null;
 
     // A spawn that never happened is NOT an observation of a shell that ran
     // nothing, and the difference is the whole value of this harness. The trace
@@ -200,7 +232,7 @@ export function runInSandbox(sandbox: ShimSandbox, command: string): ExecTrace {
     // Under a full test run, worker fan-out can exhaust the process table, and
     // `EAGAIN` here would turn the entire differential green without executing
     // one shell. Refuse loudly instead.
-    if (result.error !== undefined && !timedOut) {
+    if (result.error !== undefined && truncation === null) {
       throw new Error(
         `exec-trace sandbox could not spawn /bin/sh: ${getErrorMessage(result.error)}. ` +
           `This is an infrastructure failure, not an observation: the trace is empty ` +
@@ -209,7 +241,7 @@ export function runInSandbox(sandbox: ShimSandbox, command: string): ExecTrace {
     }
     // Belt and braces for the same condition without an `error` attached: a
     // process that neither exited nor was signalled produced no observation.
-    if (!timedOut && result.status === null && result.signal === null) {
+    if (truncation === null && result.status === null) {
       throw new Error(
         'exec-trace sandbox spawned no shell: /bin/sh neither exited nor was signalled, ' +
           'so the empty trace is not an observation.',
@@ -233,7 +265,7 @@ export function runInSandbox(sandbox: ShimSandbox, command: string): ExecTrace {
         .filter((line) => line.length > 0),
     );
 
-    return { heads, timedOut };
+    return { heads, truncation };
   } finally {
     fs.rmSync(runCwd, { recursive: true, force: true });
   }
@@ -301,23 +333,27 @@ export function runOracle(sandbox: ShimSandbox, command: string): OracleResult {
     return { policyAllowed: false, divergence: null };
   }
 
-  const { heads, timedOut } = runInSandbox(sandbox, command);
+  const { heads, truncation } = runInSandbox(sandbox, command);
   const allowedSet = new Set<string>(ALLOWED);
   const unauthorized = [...heads].filter((h) => !allowedSet.has(h));
 
   if (unauthorized.length === 0) {
     // A truncated run is authoritative for a bypass it DID observe — a head
-    // that already exec'd is a real bypass whether or not the shell later timed
-    // out — but it is not evidence of soundness. Absence of a divergence under
-    // a run that was cut short says nothing, so it must not be reported as the
-    // invariant holding. `timedOut` was computed here from the start and read
-    // by no caller, which is what let a 2s timeout under load stand in for
-    // ground truth.
-    if (timedOut) {
+    // that already exec'd is a real bypass however the shell later died — but
+    // it is not evidence of soundness. Absence of a divergence under a run that
+    // was cut short says nothing, so it must not be reported as the invariant
+    // holding. The truncation was computed here from the start and read by no
+    // caller, which is what let a 2s timeout under load stand in for ground
+    // truth.
+    if (truncation !== null) {
+      const cause =
+        truncation.kind === 'timeout'
+          ? `timed out after ${String(SHELL_TIMEOUT_MS)}ms`
+          : `had its shell killed by ${truncation.signal}`;
       throw new Error(
-        `exec-trace sandbox timed out after ${String(SHELL_TIMEOUT_MS)}ms on ` +
-          `${JSON.stringify(command)} without observing a divergence. A truncated ` +
-          `trace cannot establish that no unauthorized head ran.`,
+        `exec-trace sandbox ${cause} on ${JSON.stringify(command)} without ` +
+          `observing a divergence. A truncated trace cannot establish that no ` +
+          `unauthorized head ran.`,
       );
     }
     return { policyAllowed: true, divergence: null };
