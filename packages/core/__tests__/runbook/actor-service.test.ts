@@ -2408,9 +2408,13 @@ echo ok
         await expect(
           service.prepareDelegationChildUnlink(prepared.nextState, steps, otherChildRunId, linkage),
         ).resolves.toEqual({
-          kind: 'concurrent_modification',
+          kind: 'already_linked',
           runId: state.id,
           message: 'Delegation 1.1 is linked to a newer child',
+          // Permanent on the rollback path too, and it names the holder —
+          // `otherChildRunId`, the child being rolled back, is precisely the
+          // one the delegation does NOT name.
+          occupyingChildRunId: childRunId,
         });
       }
 

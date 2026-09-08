@@ -814,8 +814,14 @@ Review the plan manually.
         },
         {
           states: initial,
+          // Occupancy by a different child is the same permanent fact on the
+          // rollback path as on the link path: the delegation names one child
+          // for the life of the entry, so no re-read frees it for the child
+          // this event is trying to unlink. The occupant is named, and it is
+          // the child that HOLDS the delegation — never `otherChildRunId`,
+          // the one whose rollback is refused.
           event: { ...event, childRunId: otherChildRunId },
-          refusal: { reason: 'concurrent_modification' },
+          refusal: { reason: 'already_linked', occupyingChildRunId: childRunId },
           message: 'Delegation 1.1 is linked to a newer child',
         },
       ] as const) {
