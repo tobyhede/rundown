@@ -213,7 +213,6 @@ export type RunProgressionMachineFeedback =
 /** Closed next action selected by the compiled machine for one progression turn. */
 export type RunProgressionMachineIntent =
   | { readonly kind: 'apply_completion' }
-  | { readonly kind: 'continue' }
   | {
       readonly kind: 'waiting';
       readonly reason: 'awaiting_input';
@@ -1201,7 +1200,6 @@ export const LEAF_SUBSTATES = [
   '__issue-delegations',
   '__prepare-inline-launch',
   '__progression-apply-completion',
-  '__progression-continue',
   '__progression-waiting-input',
   '__progression-refused-completion',
   '__progression-refused-contention',
@@ -5471,13 +5469,6 @@ export function compileRunbookToMachine(
           entry: runbookSetup.emit(() => ({
             type: 'RUN_PROGRESSION_INTENT' as const,
             intent: { kind: 'apply_completion' as const },
-          })),
-          always: { target: 'idle' },
-        },
-        '__progression-continue': {
-          entry: runbookSetup.emit(() => ({
-            type: 'RUN_PROGRESSION_INTENT' as const,
-            intent: { kind: 'continue' as const },
           })),
           always: { target: 'idle' },
         },

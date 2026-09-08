@@ -2369,8 +2369,18 @@ async function driveProgression(
             : TRANSACTIONAL_REFUSAL_RECOVERY_BY_KIND.recovery_required,
       };
     }
+    // Always false TODAY — every other intent returned above, so the union is
+    // already reduced to `entered` here — and required anyway: assigning to
+    // `never` is what makes an intent added to `RunProgressionMachineIntent`
+    // later a compile error rather than a silent fall-through into the entry
+    // path, and the runtime throw is what keeps an untyped frontend's invented
+    // kind loud instead of misread as an entry.
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- see above
     if (progression.kind !== 'entered') {
-      throw new Error(`Unhandled Run Progression intent: ${progression.kind}`);
+      const _exhaustive: never = progression;
+      throw new Error(
+        `Unhandled Run Progression intent: ${(_exhaustive as { readonly kind: string }).kind}`,
+      );
     }
     currentState = progression.state;
     const currentStep = findStepOrThrow(steps, currentState.step, currentState.id);

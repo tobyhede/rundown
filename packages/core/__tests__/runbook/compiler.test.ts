@@ -9641,6 +9641,55 @@ echo hi
       expect('pendingResult' in machine.config.context).toBe(false);
     });
 
+    it('generates no unreachable leaf substate', () => {
+      // A compiled substate nothing targets is dead weight that still has to be
+      // kept in `LEAF_SUBSTATES` and in the intent union, and reads as live
+      // behaviour to the next person. `__progression-continue` was exactly
+      // that: emitting a `{kind:'continue'}` intent that
+      // `activateRunProgression` has no arm for, so had anything ever reached
+      // it the run would have died on "Unhandled Run Progression intent:
+      // continue" (#880).
+      const steps = createRunbook(`## 1. capture
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - Foo
+\`\`\`bash
+echo hi
+\`\`\`
+`);
+      const machine = compileRunbookToMachine(steps);
+      const states = machine.config.states as Record<string, any>;
+
+      const targets = new Set<string>();
+      const collect = (node: unknown): void => {
+        if (node === null || typeof node !== 'object') return;
+        if (!Array.isArray(node) && typeof (node as { target?: unknown }).target === 'string') {
+          targets.add((node as { target: string }).target);
+        }
+        for (const value of Object.values(node as Record<string, unknown>)) collect(value);
+      };
+      collect(states);
+
+      const unreachable: string[] = [];
+      for (const [stateId, config] of Object.entries(states)) {
+        const children = config.states as Record<string, unknown> | undefined;
+        if (!children) continue;
+        for (const childName of Object.keys(children)) {
+          if (childName === config.initial) continue;
+          const reached = [...targets].some(
+            (target) =>
+              target === childName ||
+              target === `.${childName}` ||
+              target.endsWith(`.${childName}`),
+          );
+          if (!reached) unreachable.push(`${stateId}.${childName}`);
+        }
+      }
+
+      expect(unreachable).toEqual([]);
+    });
+
     it('rejects relative transition targets that do not resolve to child states', () => {
       expect(() => {
         validateGraphForTest(
