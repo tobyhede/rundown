@@ -817,12 +817,28 @@ export async function resolveInlineAncestorProgression(args: {
     const activeFrameKey = parent.activeFrameKey ?? deriveActiveFrame(parent).frameKey;
     const expectedTargetStatus =
       ancestors.length === 0 ? (args.expectedTargetStatus ?? 'running') : 'running';
+    // Ownership is the persisted linkage EDGE. It is NOT the parent's live
+    // cursor within the step. `findSubstepState` locates the row by the
+    // LINKAGE's own step id and frame key, and `inferFrameEntryFromState`
+    // resolves that frame's entry — falling back to `frameEntryCounts[frameKey]`
+    // when the frame is not the active one — so both readings are already
+    // scoped to the link rather than to the cursor.
+    //
+    // Comparing `parent.substep` and `activeFrameKey` on top of them asserted
+    // something the CLI explicitly supports and no issue asked to remove:
+    // `rundown run <child> --step 1.2` composes against a substep the cursor is
+    // not on, and a FOR child may target a non-active iteration. Those two
+    // comparisons arrived with #856 and broke six `inline-linkage` integration
+    // tests the same day the merge refs froze, so no CI ever reported it.
+    // The row's own `status` is the check they were standing in for.
+    //
+    // `parent.step` stays. A parent cannot advance off a step while one of its
+    // substeps still reads `running`, so a cursor on a different step is
+    // inconsistent state rather than a supported target.
     if (
       parent.lifecycle === 'completed' ||
       parent.lifecycle === 'stopped' ||
       parent.step !== linkage.parentStep ||
-      parent.substep !== linkage.parentStepId ||
-      activeFrameKey !== linkage.parentFrameKey ||
       linkedSubstep?.status !== expectedTargetStatus ||
       linkage.parentEntry !== linkedEntry
     ) {

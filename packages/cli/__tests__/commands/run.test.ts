@@ -598,13 +598,16 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       expect(ss!.result).toBe('pass');
     });
 
-    it('records the requested linkage but fails closed when it is not the active substep', async () => {
+    it('builds an inline parentLinkage on the child pointing at the targeted substep', async () => {
       const parentRunId = await startSubstepParent();
       await writePassingChild();
 
-      // Target 1.2 so parentStepId is unambiguously the substep id '2'.
+      // Target 1.2 so parentStepId is unambiguously the substep id '2'. The
+      // parent's cursor is on 1.1, and that is the point: composing against a
+      // substep the cursor is not on is what `--step` is for. Ownership is the
+      // persisted linkage row, not the cursor (`resolveInlineAncestorProgression`).
       const result = await runCliInProcess('run child.runbook.md --step 1.2', workspace);
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(0);
 
       const childState = await findChildState(parentRunId);
       expect(childState).not.toBeNull();
@@ -1141,7 +1144,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
   });
 
   describe('FOR-loop iteration targeting (--index)', () => {
-    it('encodes a non-active FOR target but fails closed at exact ancestry validation', async () => {
+    it('targets a non-active FOR iteration and encodes it in parentFrameKey', async () => {
       await writeForParent();
       const start = await runCliInProcess('run --prompted parent.runbook.md', workspace);
       expect(start.exitCode).toBe(0);
@@ -1149,7 +1152,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       await writePassingChild();
 
       const result = await runCliInProcess('run child.runbook.md --step 1.1 --index 2', workspace);
-      expect(result.exitCode).toBe(1);
+      expect(result.exitCode).toBe(0);
 
       const childState = await findChildState(parentRunId);
       expect(childState).not.toBeNull();

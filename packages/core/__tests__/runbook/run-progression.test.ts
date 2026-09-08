@@ -527,6 +527,45 @@ describe('resolveInlineAncestorProgression', () => {
     });
   });
 
+  // The boundary of the test above. Ownership is the persisted linkage EDGE,
+  // never the parent's live cursor WITHIN the step. `rundown run <child> --step
+  // 1.2` composes against a substep the cursor is not on, and `--index` targets
+  // a FOR iteration that is not the active frame — both are documented `--step`
+  // behaviour. #856 added `parent.substep` and `activeFrameKey` comparisons that
+  // refused exactly those two shapes, which broke six `inline-linkage`
+  // integration tests on the day the stack's merge refs froze, so no CI ever
+  // reported it. These two pin the shapes back.
+  it('resolves an inline linkage whose target is not the cursor substep', async () => {
+    const { parent, child, parentSteps } = await seedPersistedInlineEdge();
+    // Cursor moves to a sibling substep of the SAME step. The linked row is
+    // untouched and still reads `running`, so the parent still owns the child.
+    await manager.update(parent.id, { substep: '2' });
+
+    const resolved = await resolveInlineAncestorProgression({
+      authority: mintRunProgressionAuthority({ runId: child.id }),
+      manager,
+      loadSteps: async () => parentSteps,
+    });
+
+    expect(resolved).toMatchObject({ kind: 'activate' });
+  });
+
+  it('resolves an inline linkage whose target frame is not the active FOR frame', async () => {
+    const { parent, child, parentSteps } = await seedPersistedInlineEdge();
+    // A different iteration of the same step. `inferFrameEntryFromState` reads
+    // the LINKED frame's entry through `frameEntryCounts`, so the entry match
+    // still holds while the active frame is elsewhere.
+    await manager.update(parent.id, { activeFrameKey: buildFrameKey('1', 2) });
+
+    const resolved = await resolveInlineAncestorProgression({
+      authority: mintRunProgressionAuthority({ runId: child.id }),
+      manager,
+      loadSteps: async () => parentSteps,
+    });
+
+    expect(resolved).toMatchObject({ kind: 'activate' });
+  });
+
   it('mints the immediate parent directive without inheriting the child claim key (#856)', async () => {
     const { parent, child, parentSteps } = await seedPersistedInlineEdge();
     const childControl = await issueProgressionControl(child.id);
