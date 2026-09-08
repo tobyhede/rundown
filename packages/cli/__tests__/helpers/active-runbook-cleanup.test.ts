@@ -10,6 +10,8 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  InvalidPersistedClaimError,
+  InvalidPersistedSessionError,
   InvalidRunbookStateError,
   LegacySnapshotError,
   RunbookStateManager,
@@ -49,6 +51,22 @@ describe('isRecoverableActiveStackError', () => {
     expect(isRecoverableActiveStackError(new InvalidRunbookStateError('anything'))).toBe(true);
     expect(isRecoverableActiveStackError(new LegacySnapshotError('reworded entirely'))).toBe(true);
     expect(isRecoverableActiveStackError(new SyntaxError('Unexpected token'))).toBe(true);
+  });
+
+  // Without this arm a corrupt claim row could not be cleared through the CLI
+  // at all: `complete` / `stop` branch on this predicate, so an unrecoverable
+  // classification leaves the entry in place with no command able to remove it
+  // (#831).
+  it('classifies both persisted-session refusals as recoverable', () => {
+    expect(
+      isRecoverableActiveStackError(
+        new InvalidPersistedClaimError(
+          { claimKey: 'rdclk_abc', reason: 'unparseable_grants_json' },
+          'anything',
+        ),
+      ),
+    ).toBe(true);
+    expect(isRecoverableActiveStackError(new InvalidPersistedSessionError('anything'))).toBe(true);
   });
 
   it('does not treat a generic error mentioning legacy snapshots as recoverable', () => {

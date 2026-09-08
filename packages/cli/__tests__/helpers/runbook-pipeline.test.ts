@@ -3027,17 +3027,11 @@ describe('claimAndLaunch', () => {
       },
       expected: { reason: 'delegation-superseded' },
     },
-    {
-      name: 'concurrently modified prepared delegation',
-      options: {
-        prepareResult: {
-          kind: 'concurrent_modification',
-          runId: PARENT_RUN_ID,
-          message: 'parent changed before preparation',
-        },
-      },
-      expected: { reason: 'concurrent-modification' },
-    },
+    // There is deliberately no "concurrently modified prepared delegation"
+    // case: preparation derives against one captured parent and sees no row
+    // version, so it cannot observe a race. `PrepareDelegationChildLinkRefusal`
+    // carries no `concurrent_modification` arm, and the case below covers the
+    // only seam that reports one — the commit.
     {
       // Permanent occupancy, not a race: it must not reach the user as the
       // retryable `concurrent-modification`. It names the OCCUPANT, not the

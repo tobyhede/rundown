@@ -2750,7 +2750,11 @@ describe('session reconstruction', () => {
     // A column holding non-JSON bytes must be refused in the same shape as every
     // other corrupt blob, not as a bare SyntaxError from the parse itself.
     await corruptDelegationBlob('eb'.repeat(16), {}, '{not valid json');
-    await expect(store.loadSession()).rejects.toThrow(/^Invalid persisted delegation linkage:/);
+    // Both halves matter: the CLASS is what `toRundownError` and
+    // `isRecoverableActiveStackError` branch on (#831), and the diagnosis is
+    // what tells the operator which column is wrong.
+    await expect(store.loadSession()).rejects.toBeInstanceOf(InvalidPersistedClaimError);
+    await expect(store.loadSession()).rejects.toThrow(/invalid delegation linkage:/);
   });
 
   it('refuses to hydrate a claim whose parent frame key is empty', async () => {
@@ -2758,28 +2762,28 @@ describe('session reconstruction', () => {
     // stored an empty key: it is impossible to produce, not canonical.
     await corruptDelegationBlob('e3'.repeat(16), { parentFrameKey: '' });
     await expect(store.loadSession()).rejects.toThrow(
-      /Invalid persisted delegation linkage[\s\S]*parentFrameKey/,
+      /invalid delegation linkage[\s\S]*parentFrameKey/,
     );
   });
 
   it('rejects zero parentEntry through the canonical positive-entry schema', async () => {
     await corruptDelegationBlob('e9'.repeat(16), { parentEntry: 0 });
-    await expect(store.loadSession()).rejects.toThrow(/Invalid persisted delegation linkage/);
+    await expect(store.loadSession()).rejects.toThrow(/invalid delegation linkage/);
   });
 
   it('rejects unknown delegation-linkage fields through the canonical strict schema', async () => {
     await corruptDelegationBlob('e2'.repeat(16), { unexpected: true });
-    await expect(store.loadSession()).rejects.toThrow(/Invalid persisted delegation linkage/);
+    await expect(store.loadSession()).rejects.toThrow(/invalid delegation linkage/);
   });
 
   it('refuses to hydrate a claim whose persisted delegation token hash is not a hash', async () => {
     await corruptDelegationBlob('e4'.repeat(16), { tokenHash: 'not-a-delegation-token-hash' });
-    await expect(store.loadSession()).rejects.toThrow(/Invalid persisted delegation linkage/);
+    await expect(store.loadSession()).rejects.toThrow(/invalid delegation linkage/);
   });
 
   it('refuses to hydrate a claim whose persisted delegation run ids are not run ids', async () => {
     await corruptDelegationBlob('e8'.repeat(16), { parentRunId: 'not-a-run-id' });
-    await expect(store.loadSession()).rejects.toThrow(/Invalid persisted delegation linkage/);
+    await expect(store.loadSession()).rejects.toThrow(/invalid delegation linkage/);
   });
 
   it('names the offending field when the persisted delegation blob is structurally invalid', async () => {
@@ -2787,21 +2791,21 @@ describe('session reconstruction', () => {
     // Naming the field is what distinguishes a rejected schema from a blob that
     // slipped past the structural gate and only tripped over a later brand.
     await expect(store.loadSession()).rejects.toThrow(
-      /Invalid persisted delegation linkage[\s\S]*parentEntry/,
+      /invalid delegation linkage[\s\S]*parentEntry/,
     );
   });
 
   it('refuses to hydrate a claim whose parent frame key has no iteration separator', async () => {
     await corruptDelegationBlob('e5'.repeat(16), { parentFrameKey: 'no-iteration-separator' });
     await expect(store.loadSession()).rejects.toThrow(
-      /Invalid persisted delegation linkage[\s\S]*parentFrameKey/,
+      /invalid delegation linkage[\s\S]*parentFrameKey/,
     );
   });
 
   it('refuses to hydrate a claim whose parent frame key has a non-numeric iteration', async () => {
     await corruptDelegationBlob('e7'.repeat(16), { parentFrameKey: '2|abc' });
     await expect(store.loadSession()).rejects.toThrow(
-      /Invalid persisted delegation linkage[\s\S]*parentFrameKey/,
+      /invalid delegation linkage[\s\S]*parentFrameKey/,
     );
   });
 
@@ -2810,7 +2814,7 @@ describe('session reconstruction', () => {
     // rescued by a suffix that happens to look well-formed.
     await corruptDelegationBlob('e1'.repeat(16), { parentFrameKey: 'a|b|3' });
     await expect(store.loadSession()).rejects.toThrow(
-      /Invalid persisted delegation linkage[\s\S]*parentFrameKey/,
+      /invalid delegation linkage[\s\S]*parentFrameKey/,
     );
   });
 

@@ -2,39 +2,60 @@
   "//": "Justification manifest for every pnpm override in pnpm-workspace.yaml. This is the single source of truth: scripts/__tests__/pnpm-workspace-config.test.mjs enforces a 1:1 mapping (every override has an entry here and vice-versa) and that each `override` value matches the pin in pnpm-workspace.yaml. Adding an override without a dated, CVE-annotated entry here fails CI. category A = the declaring parent forbids the fixed version (out-of-range force); category B = the fix is in-range but pnpm resolves a vulnerable version without the pin (an override is pnpm's only lever to bump a deep transitive). Remove an entry when its parent ships a release carrying the fix — test with `node scripts/audit-overrides.mjs`, NEVER by deleting the pin and running a plain `pnpm install`: pnpm does not downgrade an already-satisfying locked version, so a category B pin always looks redundant against an existing lockfile whether or not it is. The optional `scannerInvisible` field marks a pin whose justification OSV cannot see: such a pin is REQUIRED despite scanning clean, so the audit never tests it for removal and reports it PROTECTED. A LOAD-BEARING verdict therefore names the only scanner-VISIBLE required pin, never the only required pin. Ten entries were pruned on 2026-08-07 after a from-scratch lockfile refresh made them inert, each verified individually by the audit. See docs/internal/dependency-overrides.md.",
   "overrides": {
     "gray-matter>js-yaml": {
-      "override": "^4.3.1",
+      "override": "^4.3.2",
       "category": "A",
-      "ghsa": ["GHSA-h67p-54hq-rp68", "GHSA-5p4m-2wfm-xmqj"],
-      "reason": "js-yaml merge-key quadratic DoS (fixed 4.2.0) and !!omap quadratic DoS (fixed 4.3.1; raised from ^4.2.0 on 2026-08-07 because the old floor still admitted the vulnerable 4.3.0). gray-matter declares ^3.x; paired with patchedDependencies gray-matter@4.0.3 (safeLoad/safeDump -> load/dump). The patched 3.x (3.15.1) is not a viable target: load() is the safe schema only on 4.x, so a 3.x resolution would make the patched call the full/unsafe loader.",
+      "ghsa": ["GHSA-h67p-54hq-rp68", "GHSA-5p4m-2wfm-xmqj", "GHSA-2883-xcg3-v3hh"],
+      "reason": "js-yaml merge-key quadratic DoS (fixed 4.2.0) and !!omap quadratic DoS (fixed 4.3.1; raised from ^4.2.0 on 2026-08-07 because the old floor still admitted the vulnerable 4.3.0) and empty-merge-source CPU exhaustion past maxTotalMergeKeys (fixed 4.3.2; raised from ^4.3.1 on 2026-09-09 for the same reason — the old floor still admitted the vulnerable 4.3.1). gray-matter declares ^3.x; paired with patchedDependencies gray-matter@4.0.3 (safeLoad/safeDump -> load/dump). The patched 3.x (3.15.1) is not a viable target: load() is the safe schema only on 4.x, so a 3.x resolution would make the patched call the full/unsafe loader.",
       "scannerInvisible": "Holds gray-matter on js-yaml 4.x so patches/gray-matter@4.0.3.patch keeps meaning what it says. Dropping it resolves 3.15.1, which OSV reports as clean while turning the patched load() call into the full/unsafe loader. Never remove on a clean scan alone.",
       "added": "2026-06-16",
       "reviewBy": "2026-11-01"
     },
     "read-yaml-file>js-yaml": {
-      "override": "^4.3.1",
+      "override": "^4.3.2",
       "category": "A",
-      "ghsa": ["GHSA-h67p-54hq-rp68", "GHSA-5p4m-2wfm-xmqj"],
-      "reason": "js-yaml merge-key quadratic DoS (fixed 4.2.0) and !!omap quadratic DoS (fixed 4.3.1; raised from ^4.2.0 on 2026-08-07 because the old floor still admitted the vulnerable 4.3.0). read-yaml-file declares ^3.x; paired with patchedDependencies read-yaml-file@1.1.0 (safeLoad/safeDump -> load/dump). The patched 3.x (3.15.1) is not a viable target: load() is the safe schema only on 4.x, so a 3.x resolution would make the patched call the full/unsafe loader.",
+      "ghsa": ["GHSA-h67p-54hq-rp68", "GHSA-5p4m-2wfm-xmqj", "GHSA-2883-xcg3-v3hh"],
+      "reason": "js-yaml merge-key quadratic DoS (fixed 4.2.0) and !!omap quadratic DoS (fixed 4.3.1; raised from ^4.2.0 on 2026-08-07 because the old floor still admitted the vulnerable 4.3.0) and empty-merge-source CPU exhaustion past maxTotalMergeKeys (fixed 4.3.2; raised from ^4.3.1 on 2026-09-09 for the same reason — the old floor still admitted the vulnerable 4.3.1). read-yaml-file declares ^3.x; paired with patchedDependencies read-yaml-file@1.1.0 (safeLoad/safeDump -> load/dump). The patched 3.x (3.15.1) is not a viable target: load() is the safe schema only on 4.x, so a 3.x resolution would make the patched call the full/unsafe loader.",
       "scannerInvisible": "Holds read-yaml-file on js-yaml 4.x so patches/read-yaml-file@1.1.0.patch keeps meaning what it says. Dropping it resolves 3.15.1, which OSV reports as clean while turning the patched load() call into the full/unsafe loader. Never remove on a clean scan alone.",
       "added": "2026-06-16",
       "reviewBy": "2026-11-01"
     },
     "@istanbuljs/load-nyc-config>js-yaml": {
-      "override": "^4.3.1",
+      "override": "^4.3.2",
       "category": "A",
-      "ghsa": ["GHSA-h67p-54hq-rp68", "GHSA-5p4m-2wfm-xmqj"],
-      "reason": "js-yaml merge-key quadratic DoS (fixed 4.2.0) and !!omap quadratic DoS (fixed 4.3.1; raised from ^4.2.0 on 2026-08-07 because the old floor still admitted the vulnerable 4.3.0). @istanbuljs/load-nyc-config declares ^3.x but already uses load(), so it needs only the override (no patch) — and still needs 4.x, where load() is the safe schema.",
+      "ghsa": ["GHSA-h67p-54hq-rp68", "GHSA-5p4m-2wfm-xmqj", "GHSA-2883-xcg3-v3hh"],
+      "reason": "js-yaml merge-key quadratic DoS (fixed 4.2.0) and !!omap quadratic DoS (fixed 4.3.1; raised from ^4.2.0 on 2026-08-07 because the old floor still admitted the vulnerable 4.3.0) and empty-merge-source CPU exhaustion past maxTotalMergeKeys (fixed 4.3.2; raised from ^4.3.1 on 2026-09-09 for the same reason — the old floor still admitted the vulnerable 4.3.1). @istanbuljs/load-nyc-config declares ^3.x but already uses load(), so it needs only the override (no patch) — and still needs 4.x, where load() is the safe schema.",
       "scannerInvisible": "Holds @istanbuljs/load-nyc-config on js-yaml 4.x. It calls load() unconditionally (index.js:80); on 3.x that is the full/unsafe loader rather than the safe schema, so a 3.x resolution silently widens what a .nycrc.yml can construct while OSV reports clean. Never remove on a clean scan alone.",
       "added": "2026-06-16",
       "reviewBy": "2026-11-01"
     },
     "qs": {
-      "override": "^6.15.2",
+      "override": "^6.16.0",
       "category": "B",
-      "ghsa": ["GHSA-q8mj-m7cp-5q26"],
-      "reason": "qs stringify DoS. Without the pin, resolution picks the vulnerable 6.15.1 — re-proven 2026-08-07 by `node scripts/audit-overrides.mjs`, the only pin the audit rates LOAD-BEARING under a from-scratch resolve. That verdict is a claim about scanner visibility, not about necessity: it ranges only over the pins the audit tests, since LOAD-BEARING means removal makes OSV fail. The three `scannerInvisible` js-yaml pins are never tested (reported PROTECTED) and are just as required — each entry states its own reason. Dependency-reachable via packages/mcp -> @modelcontextprotocol/sdk -> express -> qs, but NOT code-reachable: packages/mcp/src/index.ts connects only StdioServerTransport, and the SDK's express/hono surface lives behind the server/streamableHttp.js and server/auth/** subpaths, which nothing in packages/*/src imports (verified 2026-08-07). Pinned anyway — the pin is free, and an HTTP transport would activate the path.",
+      "ghsa": ["GHSA-q8mj-m7cp-5q26", "GHSA-x5fp-wj9c-mxmx", "GHSA-4mjr-xmp4-gh2g"],
+      "reason": "qs stringify DoS (fixed 6.15.2), array-limit bypass via bracket-key comma parsing and DoS via attacker-controlled isBuffer (both fixed 6.16.0; floor raised from ^6.15.2 on 2026-09-09 because the old floor still admitted the vulnerable 6.15.3, which is what OSV flagged from 2026-09-03). Without the pin, resolution picks the vulnerable 6.15.1 — re-proven 2026-08-07 by `node scripts/audit-overrides.mjs`, the only pin the audit rates LOAD-BEARING under a from-scratch resolve. That verdict is a claim about scanner visibility, not about necessity: it ranges only over the pins the audit tests, since LOAD-BEARING means removal makes OSV fail. The three `scannerInvisible` js-yaml pins are never tested (reported PROTECTED) and are just as required — each entry states its own reason. Dependency-reachable via packages/mcp -> @modelcontextprotocol/sdk -> express -> qs, but NOT code-reachable: packages/mcp/src/index.ts connects only StdioServerTransport, and the SDK's express/hono surface lives behind the server/streamableHttp.js and server/auth/** subpaths, which nothing in packages/*/src imports (verified 2026-08-07). Pinned anyway — the pin is free, and an HTTP transport would activate the path.",
       "added": "2026-06-16",
-      "reviewBy": "2026-10-01"
+      "reviewBy": "2026-12-01"
+    },
+    "fast-uri": {
+      "override": "^3.1.6",
+      "category": "B",
+      "ghsa": [
+        "GHSA-jqff-g426-hqxp",
+        "GHSA-fph4-wmhf-6fwf",
+        "GHSA-f65p-4m7j-42xc",
+        "GHSA-5jgf-p345-68v8"
+      ],
+      "reason": "fast-uri host confusion via percent-encoded scheme normalization, SSRF via repeated hostname percent-decoding, SSRF via malformed IPv6 normalization, and host confusion via skipped IDN canonicalization on scheme-relative references — all fixed 3.1.6. Re-pinned 2026-09-09 after the advisories landed 2026-09-03; the entry pruned on 2026-08-07 recorded the wrong cause. The sole parent, ajv 8.x, declares ^3.0.1, so the fix is in range — but `pnpm update fast-uri`, bare or pinned to ^3.1.7, leaves 3.1.5 in place, because ajv sits too deep for update to reach. In-range but unreachable by update is Category B, not staleness. Dependency-reachable via ajv under @stryker-mutator/core (dev) and @modelcontextprotocol/sdk (packages/mcp runtime); ajv passes only schema $ref/$id strings to it, never a network-controlled URI, so the SSRF paths are not code-reachable here.",
+      "added": "2026-09-09",
+      "reviewBy": "2026-12-01"
+    },
+    "hono": {
+      "override": "^4.13.5",
+      "category": "B",
+      "ghsa": ["GHSA-crvj-82cr-hjcx", "GHSA-g6gw-c38x-mqfc", "GHSA-gqvv-2mrq-wpjv"],
+      "reason": "hono request-handling vulnerabilities fixed 4.13.5. Parent @modelcontextprotocol/sdk declares ^4.11.4 (and @hono/node-server declares ^4), so the fix is in range, but hono sits behind the SDK and `pnpm update hono` does not move it — Category B. Same reachability story as the qs pin: packages/mcp/src/index.ts connects only StdioServerTransport, and the SDK's hono surface lives behind server/streamableHttp.js and server/auth/**, which nothing in packages/*/src imports. Pinned anyway — the pin is free, and an HTTP transport would activate the path.",
+      "added": "2026-09-09",
+      "reviewBy": "2026-12-01"
     }
   }
 }

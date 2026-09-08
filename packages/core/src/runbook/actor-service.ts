@@ -139,9 +139,15 @@ export interface PreparedDelegationChildUnlink {
  * derivation, propagated verbatim, and each arm carries whatever facts
  * {@link DelegationChildLinkRefusal} attaches to that class — so an
  * `already_linked` refusal still names the occupying child. Both preparations
- * share one derivation contract, so both carry the same refusal vocabulary;
- * narrowing on `kind` is what separates the retryable race
- * (`concurrent_modification`) from the two permanent refusals.
+ * share one derivation contract, so both carry the same refusal vocabulary,
+ * and both arms of that vocabulary are reachable from each.
+ *
+ * Every arm is permanent, by construction rather than by convention: a
+ * preparation reads one captured parent and derives against it, so it can
+ * observe an occupied or superseded delegation but never a version race. A
+ * caller that must tell "retry" from "refuse" therefore does not narrow on
+ * `kind` at all — it distinguishes this result from the *commit's*
+ * `concurrent_modification`, which is where the race is detected.
  */
 export type PrepareDelegationChildLinkRefusal = {
   readonly [TReason in DelegationChildLinkRefusalReason]: {

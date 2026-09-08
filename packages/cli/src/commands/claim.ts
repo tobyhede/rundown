@@ -1,5 +1,6 @@
 import { type Command, Option } from 'commander';
 import {
+  type CLIErrorCode,
   DELEGATION_TOKEN_PREFIX,
   ErrorCodes,
   RunbookStateManager,
@@ -34,19 +35,19 @@ export interface ClaimFailureEnvelope {
   /**
    * Code an agent routes on.
    *
-   * `string`, and NOT `CLIErrorCode`, which is what it should be: a typo here
-   * compiles and only surfaces if some test validates the envelope against
-   * `ErrorCodeSchema`. Narrowing it was tried and does not build, because two
-   * arms already emit codes the registry does not carry —
-   * `delegation-already-claimed` renders the symbolic
-   * `'DELEGATION_ALREADY_CLAIMED'` (only the RD-811 VALUE is registered, not
-   * that spelling), and `prepare-failed` forwards `PrepareFailure['code']`
-   * (`POLICY_DENIED`, `MISSING_REQUIRED_VARS`, …), none of which is registered
-   * either. Both predate #807 and both mean those envelopes fail the schema
-   * they document; registering the missing codes is a public-surface decision
-   * of its own, tracked separately rather than smuggled in here.
+   * `CLIErrorCode`, so the compiler holds the link between an emit site and the
+   * registry. It was `string` until #834, which is what let two arms emit codes
+   * `ErrorCodeSchema` does not carry — `delegation-already-claimed` rendering
+   * the symbolic `'DELEGATION_ALREADY_CLAIMED'` when only the RD-811 VALUE was
+   * registered, and `prepare-failed` forwarding `PrepareFailure['code']`
+   * (`POLICY_DENIED`, `MISSING_REQUIRED_VARS`, …). Those envelopes failed the
+   * schema they document, and nothing observed it: `claim.test.ts` validates
+   * only the arms it exercises, and neither of these was one.
+   *
+   * The type is the guard now. A code added to an arm without being registered
+   * is a build failure rather than a runtime envelope that fails its own schema.
    */
-  readonly code: string;
+  readonly code: CLIErrorCode;
   /** Operator-facing message. */
   readonly message: string;
   /** Structured facts the code alone does not carry. */

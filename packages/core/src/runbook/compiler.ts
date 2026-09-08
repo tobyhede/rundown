@@ -386,14 +386,21 @@ type DelegationChildUnlinkedEvent = Extract<RunbookEvent, { type: 'DELEGATION_CH
 /**
  * Stable refusal classes a delegated-child link derivation can raise.
  *
- * The three are distinct facts and must never collapse into one another:
+ * The two are distinct facts and must never collapse into one another:
  *
  * - `delegation_superseded` — the coordinate no longer names this delegation.
  * - `already_linked` — the delegation is permanently occupied by a different
  *   child. Re-reading cannot change it, so the caller must refuse rather than
  *   retry.
- * - `concurrent_modification` — a version race. Re-deriving against the
- *   committed row can succeed, so the caller may retry.
+ *
+ * There is deliberately no `concurrent_modification` class here. Both
+ * derivations are pure functions of one captured `substepStates` array: they
+ * see no row version, so they cannot observe a version race, and every refusal
+ * they raise is permanent against the state they were handed. The race belongs
+ * to the commit — `SessionService.claimAndInitialLink` and
+ * `rollbackInitialLink` return `concurrent_modification` from their own
+ * compare-and-swap, and the CLI's re-derive loop retries *that*. Adding the
+ * class back here would re-admit a state neither derivation can produce.
  */
 export type DelegationChildLinkRefusalReason = DelegationChildLinkRefusal['reason'];
 
@@ -412,8 +419,7 @@ export type DelegationChildLinkRefusal =
       readonly reason: 'already_linked';
       /** The child that already holds the delegation; never the rejected one. */
       readonly occupyingChildRunId: RunId;
-    }
-  | { readonly reason: 'concurrent_modification' };
+    };
 
 /** Typed refusal raised while deriving an exact delegated-child link transition. */
 export class DelegationChildLinkPreparationError extends Error {
@@ -487,7 +493,7 @@ export function deriveDelegationChildLinkedSubsteps(
  * @param substepStates - Current machine-owned substep state.
  * @param event - Typed unlink event.
  * @returns Updated substep state, or the original array for an idempotent replay.
- * @throws {DelegationChildLinkPreparationError} When the delegation was superseded or replaced.
+ * @throws {DelegationChildLinkPreparationError} `delegation_superseded` when the coordinate or token no longer names this delegation; `already_linked` when a different child holds it.
  */
 export function deriveDelegationChildUnlinkedSubsteps(
   substepStates: readonly SubstepState[] | undefined,
@@ -509,8 +515,13 @@ export function deriveDelegationChildUnlinkedSubsteps(
   }
   if (delegation.childRunId === null) return substepStates;
   if (delegation.childRunId !== event.childRunId) {
+    // Same permanent fact as the link path's occupancy refusal, reached from
+    // the other side: the delegation names one child for the life of the
+    // entry, so re-reading can never make it name the child this rollback is
+    // for. Classifying it `concurrent_modification` modelled it as a version
+    // race a retry could clear, which no retry can.
     throw new DelegationChildLinkPreparationError(
-      { reason: 'concurrent_modification' },
+      { reason: 'already_linked', occupyingChildRunId: delegation.childRunId },
       `Delegation ${event.parentStepId} is linked to a newer child`,
     );
   }

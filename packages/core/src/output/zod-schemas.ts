@@ -93,6 +93,21 @@ export const CLISymbolicErrorCodeValues = [
   'INVALID_AT_TARGET',
   'SCENARIO_NOT_FOUND',
   'OBSERVATION_DELIVERY_FAILED',
+  // Every remaining `PrepareFailure['code']` arm. These reach an envelope
+  // verbatim from `prepareRunbook`, through `rundown claim`'s `prepare-failed`
+  // arm, `rundown run` (`run.ts` emits `prepResult.code` directly) and
+  // `rundown resolve` — so this is not one command's gap. `RUNBOOK_NOT_FOUND`,
+  // `VALIDATION_ERROR`, `ARTIFACT_CHANNEL_COLLISION` and `INVALID_ARTIFACT_INPUT`
+  // are the four arms that were already registered above (#834).
+  'PARSE_ERROR',
+  'RUNBOOK_REF_RESOLUTION_ERROR',
+  'VARIABLE_RESOLUTION_ERROR',
+  'POLICY_DENIED',
+  'MISSING_REQUIRED_VARS',
+  // The symbolic SPELLING of RD-811. `CLIErrorCodes.DELEGATION_ALREADY_CLAIMED`
+  // registers the RD-811 value; `rundown claim` emits this string, and its
+  // sibling `DELEGATION_ALREADY_RESOLVED` was registered while it was not.
+  'DELEGATION_ALREADY_CLAIMED',
   'UNKNOWN_ERROR',
 ] as const;
 
@@ -196,6 +211,13 @@ export const CLIErrorCodes = {
   DELEGATION_NO_DELEGATABLE_SUBSTEP: ErrorCodes.DELEGATION_NO_DELEGATABLE_SUBSTEP.code,
   /** Runbook launch failed */
   LAUNCH_FAILED: ErrorCodes.LAUNCH_FAILED.code,
+  // The run-start compare-and-swap spending its budget is transient, not a
+  // launch fault, so it reaches the claim/run envelope as its own RD-308 rather
+  // than under `LAUNCH_FAILED` (#777). Registered here because
+  // `ClaimFailureEnvelope.code` is narrowed to `CLIErrorCode` (#834), which is
+  // what proves every emit site on that union is a registered code.
+  /** Run-state compare-and-swap lost to a concurrent writer */
+  CONCURRENT_STATE_MODIFICATION: ErrorCodes.CONCURRENT_STATE_MODIFICATION.code,
   /** Fresh claim launch violated write-side invariants */
   CLAIM_INVARIANT_VIOLATED: ErrorCodes.CLAIM_INVARIANT_VIOLATED.code,
   /** Requested child runbook does not match the authored DELEGATE target */

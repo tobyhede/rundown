@@ -154,6 +154,60 @@ describe('Errors factory - exhaustive coverage', () => {
     // finish or prune" on invalid state. The prompt has to live in `message`:
     // the code's `description` reaches an operator only under `--text
     // --verbose`, and never appears in the JSON envelope agents read.
+    describe('invalidPersistedSessionState → RD-310', () => {
+      it('appends the finish / stop / prune recovery to the store diagnosis', () => {
+        const error = Errors.invalidPersistedSessionState(
+          'Invalid persisted claim rdclk_abc: grants are not parseable JSON.',
+        );
+
+        expect(error).toBeInstanceOf(RundownError);
+        expect(error.code).toBe('RD-310');
+        expect(error.message).toContain('grants are not parseable JSON');
+        expect(error.message).toContain('rundown complete');
+        expect(error.message).toContain('rundown stop');
+        expect(error.message).toContain('rundown prune --inactive');
+      });
+
+      it('does not double-punctuate a diagnosis that already ends in a period', () => {
+        const error = Errors.invalidPersistedSessionState('Something is wrong.');
+        expect(error.message).toContain('Something is wrong. Rundown never migrates');
+        expect(error.message).not.toContain('wrong.. ');
+      });
+
+      it('terminates and trims a diagnosis that does not end in a period', () => {
+        const error = Errors.invalidPersistedSessionState('  Something is wrong  ');
+        expect(error.message).toContain('Something is wrong. Rundown never migrates');
+      });
+
+      it('carries a claim-row defect into context', () => {
+        const error = Errors.invalidPersistedSessionState('Invalid persisted claim rdclk_abc.', {
+          claimKey: 'rdclk_abc',
+          reason: 'grants_schema_validation_failed',
+        });
+
+        expect(error.context.claimKey).toBe('rdclk_abc');
+        expect(error.context.reason).toBe('grants_schema_validation_failed');
+      });
+
+      // An absent key says "not applicable". A null would claim the refusal
+      // read a row it never saw.
+      it('omits claimKey entirely for the session-wide refusal', () => {
+        const error = Errors.invalidPersistedSessionState('Session data is invalid.', {
+          reason: 'session_schema_validation_failed',
+        });
+
+        expect(error.context).not.toHaveProperty('claimKey');
+        expect(error.context.reason).toBe('session_schema_validation_failed');
+      });
+
+      it('emits no defect keys when none is supplied', () => {
+        const error = Errors.invalidPersistedSessionState('Session data is invalid.');
+
+        expect(error.context).not.toHaveProperty('claimKey');
+        expect(error.context).not.toHaveProperty('reason');
+      });
+    });
+
     describe('invalidPersistedRunState → RD-309', () => {
       it('appends the finish / stop / prune recovery to the store diagnosis', () => {
         const error = Errors.invalidPersistedRunState(

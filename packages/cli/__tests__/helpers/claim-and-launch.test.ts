@@ -2833,7 +2833,7 @@ describe('claimAndLaunch', () => {
         mocks.prepareUnlink.mockClear();
         mocks.rollbackInitialLink.mockClear();
       },
-      expectedWarning: `Run ${RUN_ID} disappeared before rollback.`,
+      expectedWarning: `Could not unlink delegated child ${NEW_CHILD_ID} from parent ${RUN_ID}: Run ${RUN_ID} disappeared before rollback.`,
       expectedPrepareCalls: 0,
       expectedRollbackCalls: 0,
     },
@@ -2852,7 +2852,32 @@ describe('claimAndLaunch', () => {
         });
         mocks.rollbackInitialLink.mockClear();
       },
-      expectedWarning: 'The delegation moved before rollback preparation.',
+      expectedWarning: `Could not unlink delegated child ${NEW_CHILD_ID} from parent ${RUN_ID}: The delegation moved before rollback preparation.`,
+      expectedPrepareCalls: 1,
+      expectedRollbackCalls: 0,
+    },
+    {
+      // The other permanent preparation refusal, and the one that must NOT be
+      // worded as a failed rollback: another child holds the delegation, so
+      // this child's link is already gone and there is nothing left to undo.
+      // A reader chasing the generic "could not unlink" wording would go
+      // looking for a leak that does not exist.
+      name: 'delegation taken by a newer child',
+      configure: (mocks: Awaited<ReturnType<typeof arrangeInitialLinkRollback>>): void => {
+        // eslint-disable-next-line @typescript-eslint/unbound-method -- The context contains the Jest mock installed by makeCtx.
+        const capture = jest.mocked(mocks.ctx.manager.captureRunAuthorityState);
+        capture.mockReset();
+        capture.mockResolvedValue(mocks.capturedAuthority);
+        mocks.prepareUnlink.mockReset();
+        mocks.prepareUnlink.mockResolvedValue({
+          kind: 'already_linked',
+          runId: RUN_ID,
+          message: 'Delegation 1 is linked to a newer child',
+          occupyingChildRunId: EXISTING_CHILD_RUN_ID,
+        });
+        mocks.rollbackInitialLink.mockClear();
+      },
+      expectedWarning: `Delegated child ${NEW_CHILD_ID} no longer holds parent ${RUN_ID}'s delegation, which now names ${EXISTING_CHILD_RUN_ID}: nothing to unlink.`,
       expectedPrepareCalls: 1,
       expectedRollbackCalls: 0,
     },
@@ -2871,7 +2896,7 @@ describe('claimAndLaunch', () => {
           message: `Run ${RUN_ID} was modified concurrently.`,
         });
       },
-      expectedWarning: `Run ${RUN_ID} was modified concurrently.`,
+      expectedWarning: `Could not unlink delegated child ${NEW_CHILD_ID} from parent ${RUN_ID}: Run ${RUN_ID} was modified concurrently.`,
       expectedPrepareCalls: 1,
       expectedRollbackCalls: 1,
     },
@@ -2886,7 +2911,7 @@ describe('claimAndLaunch', () => {
         mocks.rollbackInitialLink.mockReset();
         mocks.rollbackInitialLink.mockRejectedValue(new Error('rollback storage failed'));
       },
-      expectedWarning: 'rollback storage failed',
+      expectedWarning: `Could not unlink delegated child ${NEW_CHILD_ID} from parent ${RUN_ID}: rollback storage failed`,
       expectedPrepareCalls: 1,
       expectedRollbackCalls: 1,
     },
@@ -2908,9 +2933,7 @@ describe('claimAndLaunch', () => {
       expect(mocks.prepareUnlink).toHaveBeenCalledTimes(expectedPrepareCalls);
       expect(mocks.rollbackInitialLink).toHaveBeenCalledTimes(expectedRollbackCalls);
       // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural output-emitter mock without invoking it.
-      expect(mocks.ctx.output.warning).toHaveBeenCalledWith(
-        `Could not unlink delegated child ${NEW_CHILD_ID} from parent ${RUN_ID}: ${expectedWarning}`,
-      );
+      expect(mocks.ctx.output.warning).toHaveBeenCalledWith(expectedWarning);
     },
   );
 

@@ -283,7 +283,13 @@ Inactive status responses carry only `kind`, `active`, and `stashed`.
 
 Same output shape as active `rundown status`, but resolves the delegated child
 identified by `claim_id` instead of the default stack. Invalid, missing, stale,
-terminal, or unlinked claim ids return an error response.
+or unlinked claim ids return an error response.
+
+A **terminal** claim does not. It returns a status body at exit `0` carrying
+`active: false` and `status: "completed"` or `status: "stopped"` — the run
+finished, which is an answer rather than a refusal. `--text` renders the same
+fact as `Runbook:  COMPLETE` / `Runbook:  STOP`; it printed `No active runbook.`
+until #769.
 
 ---
 

@@ -116,6 +116,56 @@ describe('parseJsonLines', () => {
     expect(parseJsonLines(stdout).terminal).toBe('COMPLETE');
   });
 
+  // The caller has no root run id yet for the command that STARTS the root run,
+  // and `rundown run` on an inline-composing runbook reaches both runs' terminals
+  // inside that one payload. Root scoping must therefore adopt the payload's own
+  // first `runbook_started`, or the very first command of every scenario falls
+  // back to the positional rule these tests exist to replace.
+  it('adopts the payload first runbook_started as root when the caller has none', () => {
+    const stdout = [
+      '{"type":"runbook_started","runbookId":"rd_root","claim_id":"rc_root"}',
+      '{"type":"runbook_started","runbookId":"rd_child","claim_id":"rc_child"}',
+      '{"type":"runbook_stopped","message":"Child failed","reason":"fail_transition","runbookId":"rd_root"}',
+      '{"action":"complete","stepResult":"PASS","from":"1","at":"1","kind":"action","complete":true}',
+    ].join('\n');
+    const result = parseJsonLines(stdout);
+    expect(result.terminal).toBe('STOP');
+    expect(result.runIds[0]).toBe('rd_root');
+  });
+
+  it('adopts the payload first runbook_started for a root completion too', () => {
+    const stdout = [
+      '{"type":"runbook_started","runbookId":"rd_root","claim_id":"rc_root"}',
+      '{"type":"runbook_started","runbookId":"rd_child","claim_id":"rc_child"}',
+      '{"type":"runbook_completed","runbookId":"rd_root"}',
+      '{"action":"stop","stepResult":"FAIL","from":"1","at":"1","kind":"action","stopped":true}',
+    ].join('\n');
+    expect(parseJsonLines(stdout).terminal).toBe('COMPLETE');
+  });
+
+  // The adopted root is still a root: a child's own lifecycle terminal must not
+  // win just because it arrived later in the same payload.
+  it('ignores a child lifecycle terminal under the adopted root', () => {
+    const stdout = [
+      '{"type":"runbook_started","runbookId":"rd_root","claim_id":"rc_root"}',
+      '{"type":"runbook_started","runbookId":"rd_child","claim_id":"rc_child"}',
+      '{"type":"runbook_completed","runbookId":"rd_root"}',
+      '{"type":"runbook_stopped","runbookId":"rd_child"}',
+    ].join('\n');
+    expect(parseJsonLines(stdout).terminal).toBe('COMPLETE');
+  });
+
+  // An explicitly supplied root always wins over the payload's own first start —
+  // a later command in the sequence can start a fresh child run of its own.
+  it('prefers the caller root id over the payload first runbook_started', () => {
+    const stdout = [
+      '{"type":"runbook_started","runbookId":"rd_child","claim_id":"rc_child"}',
+      '{"type":"runbook_stopped","runbookId":"rd_child"}',
+      '{"action":"complete","kind":"action","complete":true}',
+    ].join('\n');
+    expect(parseJsonLines(stdout, 'rd_root').terminal).toBe('COMPLETE');
+  });
+
   it('skips non-JSON lines', () => {
     const stdout =
       'some text\n{"type":"step_transitioned","action":"STOP","from":"1","at":"1","result":"FAIL"}\nmore text\n';

@@ -7,6 +7,8 @@ import {
   Errors,
   getWriter,
   IncompatibleSchemaError,
+  InvalidPersistedClaimError,
+  InvalidPersistedSessionError,
   InvalidRunbookStateError,
   LegacySnapshotError,
   NativeSqliteUnavailableError,
@@ -146,6 +148,31 @@ function toRundownError(error: unknown): RundownError {
   // prose-only envelope rather than losing the error.
   if (error instanceof InvalidRunbookStateError || error instanceof LegacySnapshotError) {
     return Errors.invalidPersistedRunState(error.message, error.defect);
+  }
+
+  // The claims table's half of the same condition — RD-310, and two classes for
+  // one code for the same reason the arm above has two: they share one
+  // recovery. `InvalidPersistedClaimError` covers every persisted edge of one
+  // claim row (unparseable or schema-invalid grants, a malformed delegation
+  // linkage, mirrored columns that disagree with it, a malformed key / secret
+  // hash / run id); `InvalidPersistedSessionError` covers the session
+  // reconstructed from those rows failing its schema.
+  //
+  // Before this arm all of them reached the operator as RD-999 "Unknown error",
+  // and none was clearable — `complete` / `stop` / `prune` branch on refusal
+  // class, so a corrupt claim row could not be cleared through the CLI at all
+  // (#831). It is a separate code from RD-309 because the scope differs: a
+  // claim refusal names a claim key, not a run id, and RD-309's description
+  // names four causes a claim row cannot have.
+  //
+  // Ordered after RD-309 for the same reason RD-309 sits after RD-305: the
+  // classes are disjoint so order is not load-bearing, but the narrower
+  // diagnosis must not be able to shadow the broader one.
+  if (
+    error instanceof InvalidPersistedClaimError ||
+    error instanceof InvalidPersistedSessionError
+  ) {
+    return Errors.invalidPersistedSessionState(error.message, error.defect);
   }
 
   // Generic error - wrap it
