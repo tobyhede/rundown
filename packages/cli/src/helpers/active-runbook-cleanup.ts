@@ -50,10 +50,36 @@ import {
  */
 export function isRecoverableActiveStackError(error: Error): boolean {
   return (
+    isUnusableRunStateError(error) ||
+    error instanceof InvalidPersistedClaimError ||
+    error instanceof InvalidPersistedSessionError
+  );
+}
+
+/**
+ * Determine whether a load failure came from the RUN ROW itself.
+ *
+ * The strict subset of {@link isRecoverableActiveStackError} that excludes the
+ * claims table's half of the condition, for the caller that must attribute the
+ * failure to a specific run. {@link InvalidPersistedClaimError} and
+ * {@link InvalidPersistedSessionError} arise from claim and session reads and
+ * never from a run row, so reporting one of them against a named run
+ * misdiagnoses a corrupt claims table as a corrupt run — and the remedy that
+ * diagnosis implies (prune that run) cannot fix it. Their own envelope is
+ * RD-310, which `toRundownError` produces once the error is allowed to
+ * propagate.
+ *
+ * Default-stack orphan cleanup keeps the wider predicate: it removes an
+ * unusable top entry, and a corrupt claim row makes that entry unusable
+ * whichever table the corruption sits in (#831).
+ *
+ * @param error - Error thrown while loading a persisted run
+ * @returns True when the run row itself is unreadable
+ */
+export function isUnusableRunStateError(error: Error): boolean {
+  return (
     error instanceof InvalidRunbookStateError ||
     error instanceof LegacySnapshotError ||
-    error instanceof InvalidPersistedClaimError ||
-    error instanceof InvalidPersistedSessionError ||
     (isError(error) && error.name === 'SyntaxError')
   );
 }

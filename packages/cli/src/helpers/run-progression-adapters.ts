@@ -36,6 +36,7 @@ import {
   type RunProgressionAuthority,
   type RunProgressionDirective,
   type RunProgressionOutcome,
+  type RunId,
   type TerminalPropagation,
 } from '@rundown-org/core';
 import { createCliCommandServices, launchInlineChildFromIntent } from '../services/execution.js';
@@ -58,6 +59,8 @@ export interface InlineChildDispatchContext {
   readonly parentAuthority: RunProgressionAuthority;
   readonly ancestorAuthorities?: readonly RunProgressionAuthority[];
   readonly progressionSinks?: Map<string, ExecutionEventEmitter>;
+  /** Runs whose delivery-failure envelope this composition has already shown. */
+  readonly reportedDeliveryFailures?: Set<RunId>;
 }
 
 /**
@@ -129,6 +132,9 @@ export function buildInlineChildDispatch(ctx: InlineChildDispatchContext): Inlin
           sessionService: ctx.sessionService,
           ancestorAuthorities: [ctx.parentAuthority, ...(ctx.ancestorAuthorities ?? [])],
           ...(ctx.progressionSinks === undefined ? {} : { progressionSinks: ctx.progressionSinks }),
+          ...(ctx.reportedDeliveryFailures === undefined
+            ? {}
+            : { reportedDeliveryFailures: ctx.reportedDeliveryFailures }),
           ...(ctx.commandStreamOptions !== undefined
             ? { commandStreamOptions: ctx.commandStreamOptions }
             : {}),
@@ -148,6 +154,8 @@ export interface TerminalPropagationContext {
   readonly cwd: string;
   readonly output: OutputEmitter;
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
+  /** Runs whose delivery-failure envelope this composition has already shown. */
+  readonly reportedDeliveryFailures?: Set<RunId>;
 }
 
 /** Context for {@link driveRunProgression}. Runtime references only. */
@@ -166,6 +174,17 @@ export interface RunProgressionDriveContext {
   readonly ancestorAuthorities?: readonly RunProgressionAuthority[];
   /** One observation emitter per run for the entire recursive composition. */
   readonly progressionSinks?: Map<string, ExecutionEventEmitter>;
+  /**
+   * Runs whose `OBSERVATION_DELIVERY_FAILED` envelope this composition has
+   * already rendered, shared across every nested activation the same way
+   * {@link RunProgressionDriveContext.progressionSinks} is.
+   *
+   * Core folds a nested `failed` outcome back out unchanged, so without a
+   * shared record an N-deep inline composition renders the identical envelope
+   * N times for one broken channel. Keyed by run rather than a flat flag so a
+   * second run that genuinely fails delivery is still reported.
+   */
+  readonly reportedDeliveryFailures?: Set<RunId>;
   /** Runtime-only routing for command subprocess stdout/stderr. */
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
 }
@@ -215,6 +234,7 @@ export async function driveRunProgression(
   const sessionService = ctx.sessionService ?? new SessionService(ctx.manager);
   const ancestorAuthorities = ctx.ancestorAuthorities ?? [];
   const progressionSinks = ctx.progressionSinks ?? new Map<string, ExecutionEventEmitter>();
+  const reportedDeliveryFailures = ctx.reportedDeliveryFailures ?? new Set<RunId>();
   const existingSink = progressionSinks.get(activation.authority.runId);
   const sink =
     existingSink ??
@@ -251,6 +271,7 @@ export async function driveRunProgression(
         parentAuthority: activation.authority,
         ...(ancestorAuthorities.length === 0 ? {} : { ancestorAuthorities }),
         progressionSinks,
+        reportedDeliveryFailures,
       }),
       propagateTerminal: buildTerminalPropagation({
         manager: ctx.manager,
@@ -262,11 +283,17 @@ export async function driveRunProgression(
           : {}),
         ...(ancestorAuthorities.length === 0 ? {} : { ancestorAuthorities }),
         progressionSinks,
+        reportedDeliveryFailures,
       }),
     },
     activation.entryBoundary,
   );
-  if (outcome.kind === 'failed') {
+  // Rendered ONCE per failing run across the whole composition: nested
+  // activations reuse this function and core folds a nested `failed` outcome
+  // back out unchanged, so an unconditional render printed the identical
+  // envelope once per level of an inline composition.
+  if (outcome.kind === 'failed' && !reportedDeliveryFailures.has(outcome.runId)) {
+    reportedDeliveryFailures.add(outcome.runId);
     try {
       ctx.output.error(outcome.message, CLIErrorCodes.OBSERVATION_DELIVERY_FAILED);
       // Flushed HERE, not left to the caller's end-of-command flush. `error`
@@ -351,6 +378,9 @@ export function buildTerminalPropagation(ctx: TerminalPropagationContext): Termi
             ? {}
             : { ancestorAuthorities: ctx.ancestorAuthorities }),
           ...(ctx.progressionSinks === undefined ? {} : { progressionSinks: ctx.progressionSinks }),
+          ...(ctx.reportedDeliveryFailures === undefined
+            ? {}
+            : { reportedDeliveryFailures: ctx.reportedDeliveryFailures }),
           ...(ctx.commandStreamOptions === undefined
             ? {}
             : { commandStreamOptions: ctx.commandStreamOptions }),

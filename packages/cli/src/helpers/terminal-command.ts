@@ -42,6 +42,7 @@ import {
 import {
   cleanupOrphanedActiveStack,
   isRecoverableActiveStackError,
+  isUnusableRunStateError,
   type OrphanCleanupResult,
 } from './active-runbook-cleanup.js';
 import {
@@ -475,11 +476,16 @@ export async function handleTerminalRecovery(
   // and popping it would exit 0 without terminating the named run. Surface
   // the failure against the named run instead (echoing only the id the caller
   // themselves supplied).
+  //
+  // Narrower than the cleanup predicate on purpose: this arm ATTRIBUTES the
+  // failure to `target.runId`, so it must only accept failures that came from
+  // that run's own row. A corrupt claim row or session reconstruction reaches
+  // here too, and reporting either as "Run <id> has unusable persisted state"
+  // names the wrong thing, implies a remedy (prune that run) that cannot fix
+  // it, and hides the RD-310 envelope that exists for exactly that condition.
+  // Those propagate to `withErrorHandling` instead.
   if (target.runId !== undefined) {
-    if (
-      error instanceof InvalidRunbookStateError ||
-      (isError(error) && isRecoverableActiveStackError(error))
-    ) {
+    if (isError(error) && isUnusableRunStateError(error)) {
       output.error(
         `Run ${target.runId} has unusable persisted state; cannot ${command} it.`,
         'RUN_TARGET_UNAVAILABLE',

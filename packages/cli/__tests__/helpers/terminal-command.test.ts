@@ -3,6 +3,8 @@ import {
   assertClaimId,
   assertExecutionEpoch,
   assertRunId,
+  InvalidPersistedClaimError,
+  InvalidPersistedSessionError,
   InvalidRunbookStateError,
   parseClaimBearer,
   redactClaimId,
@@ -723,6 +725,54 @@ describe('handleTerminalRecovery', () => {
 
     // Recovery signals failure through `process.exitCode` rather than `process.exit`.
     // Assert it, and consume it so the value cannot leak into the next test file.
+    expect(takeExitCode()).toBe(1);
+  });
+
+  it.each([
+    {
+      label: 'claim row',
+      error: new InvalidPersistedClaimError(
+        { claimKey: 'rdclm_11111111111111111111111111111111', reason: 'malformed_claim_field' },
+        'claim row is unreadable',
+      ),
+    },
+    {
+      label: 'reconstructed session',
+      error: new InvalidPersistedSessionError('session failed its schema'),
+    },
+  ])('rethrows a corrupt $label rather than blaming the named run', async ({ error }) => {
+    // Both classes come from claim and session reads — never from the run row.
+    // Reporting them as `Run <id> has unusable persisted state` under
+    // RUN_TARGET_UNAVAILABLE misdiagnoses a corrupt claims table as a corrupt
+    // run, implies a remedy (prune that run) that cannot fix it, and hides the
+    // RD-310 envelope `toRundownError` carries for exactly this condition.
+    // Rethrowing is what routes them to `withErrorHandling`.
+    const { output, calls } = recordingEmitter();
+
+    await expect(
+      handleTerminalRecovery('stop', error, output, '/test', { runId: RUN_ID }),
+    ).rejects.toBe(error);
+
+    expect(calls).toEqual([]);
+    expect(takeExitCode()).toBeUndefined();
+  });
+
+  it('still reports a corrupt run row against the named run', async () => {
+    // The other half of the narrowing: an actual run-state failure must keep
+    // reporting RUN_TARGET_UNAVAILABLE against the run the operator named.
+    const { output, calls } = recordingEmitter();
+
+    await handleTerminalRecovery(
+      'complete',
+      new InvalidRunbookStateError('snapshot incompatible'),
+      output,
+      '/test',
+      { runId: RUN_ID },
+    );
+
+    const errorCall = calls.find((c) => c.method === 'error');
+    expect(errorCall?.args[1]).toBe('RUN_TARGET_UNAVAILABLE');
+    expect(String(errorCall?.args[0])).toContain(RUN_ID);
     expect(takeExitCode()).toBe(1);
   });
 });

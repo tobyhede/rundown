@@ -371,9 +371,17 @@ export function registerRunCommand(program: Command): void {
               if (gotoResolution.kind !== 'ready') {
                 // This jump is launch-local to `rundown run`; naming `goto`
                 // here would point at a command the operator never invoked.
-                renderNavigationRefusal(output, gotoResolution, 'run');
+                //
+                // The return value is honoured, exactly as `goto` honours it:
+                // the helper reports `false` for `none`, which is an empty-stack
+                // no-op rather than a failure. Exiting 1 unconditionally paired
+                // a "no active runbook" envelope with a failure exit and
+                // contradicted the one contract this site shares with the
+                // standalone command.
+                const exitError = renderNavigationRefusal(output, gotoResolution, 'run');
                 output.flush();
-                process.exit(1);
+                if (exitError) process.exit(1);
+                return;
               }
               const gotoCtx = gotoResolution.ctx;
 
