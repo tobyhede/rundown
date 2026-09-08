@@ -24,6 +24,7 @@ import {
   type RunbookRef,
   type RunbookState,
   type RunId,
+  type RunProgressionOutcome,
   type TerminalCommandName,
 } from '@rundown-org/core';
 import { buildNonDelegatingLifecycleSeam } from './lifecycle-seam-factory.js';
@@ -334,7 +335,7 @@ export type TerminalRunProgression = (
   cwd: string,
   output: OutputEmitter,
   manager: RunbookStateManager,
-) => Promise<import('@rundown-org/core').RunProgressionOutcome | null>;
+) => Promise<RunProgressionOutcome | null>;
 
 const driveTerminalRunProgression: TerminalRunProgression = async (state, cwd, output, manager) => {
   // Core decides both whether this terminal continues and where the activation

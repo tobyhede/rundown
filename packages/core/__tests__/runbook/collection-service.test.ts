@@ -131,8 +131,6 @@ describe('RunbookCollectionService', () => {
   const runId = assertRunId('rd_11111111111111111111111111111111');
   const controlledRunId = assertRunId('rd_22222222222222222222222222222222');
   const ancestorRunId = assertRunId('rd_33333333333333333333333333333333');
-  /** A fourth run, used only to give the ancestor a delegating parent of its own. */
-  const greatGrandRunId = assertRunId('rd_44444444444444444444444444444444');
   const tokenHash = assertDelegationTokenHash(
     'sha256:deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
   );

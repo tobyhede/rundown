@@ -190,7 +190,6 @@ export type RunProgressionRefusalReason =
   | 'entry_render_failed'
   | 'frontier_reselect_exhausted'
   | 'claim_superseded'
-  | 'recovery_required'
   | 'aggregate_recovery_required'
   | 'terminal_release_refused'
   | 'inline_launch_refused'
@@ -901,6 +900,18 @@ export async function flowBackInlineTerminal(args: {
  * Inline linkage takes precedence; a non-inline terminal is reported through
  * delegation when applicable. Frontends supply effects but never select the
  * upward path or translate its coordination outcomes.
+ * @param args - Upward propagation dependencies and terminal evidence.
+ * @param args.authority - Exact authority for the terminal run being propagated.
+ * @param args.manager - Durable run-state manager.
+ * @param args.actorService - Actor service used by completion recording.
+ * @param args.completionService - Completion service that reports a delegated terminal.
+ * @param args.loadSteps - Parser boundary for ancestor graphs.
+ * @param args.source - Durable or explicit terminal-result provenance.
+ * @param args.sink - Gated observation sink for typed refusal diagnostics.
+ * @param args.ancestorAuthorities - Exact authorities retained for ancestors.
+ * @param args.activateParent - Recursive public Run Progression activation port.
+ * @returns The closed propagation result: `propagated`, or a typed refusal when
+ *   the delegated report was blocked or tripped a linkage cycle.
  */
 export async function propagateTerminalRun(args: {
   readonly authority: RunProgressionAuthority;
@@ -2296,12 +2307,15 @@ async function driveProgression(
         // arm above; they are re-excluded here only because a compound guard
         // does not narrow the union on its false branch.
         progression.reason !== 'completion_not_committed' &&
+        // Always false TODAY, and required anyway: it is the clause that reduces
+        // the narrowed union to `never` for the assignment below, which is the
+        // whole compile-time guard. Drop it and a reason added later compiles
+        // into the single-run `recovery_required` classification in silence.
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- see above
         progression.reason !== 'completion_target_mismatch'
       ) {
         const _exhaustive: never = progression.reason;
-        throw new Error(
-          `Unhandled Run Progression refusal reason: ${String(_exhaustive as string)}`,
-        );
+        throw new Error(`Unhandled Run Progression refusal reason: ${String(_exhaustive)}`);
       }
       const isAggregate = progression.reason === 'aggregate_recovery_required';
       const code = isAggregate

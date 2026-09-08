@@ -124,16 +124,18 @@ export type GotoRefusal = Exclude<BuildGotoContextResult, { kind: 'ready' }>;
  * testable seam at all. Naming the dispatcher restores parity with the siblings
  * and puts every arm under this module's own unit tests.
  *
- * `'goto'` is hard-coded rather than passed in: `LifecycleNavigationInput`
- * types `command` as the literal `'goto'`, so navigation has exactly one
- * command and threading it through the call site would only move the literal
- * somewhere no unit test can observe it.
+ * The command name is a parameter defaulting to `'goto'` because `run` resolves
+ * a `GOTO` through the same navigation outcome union and must name itself in
+ * the refusal it renders. It names only the command in the rendered text;
+ * `LifecycleNavigationInput` still types `command` as the literal `'goto'`.
  *
  * Exit-code-to-process mapping stays with the caller (Category A) — this
  * function decides only the polarity.
  *
  * @param output - Output emitter for CLI output.
  * @param refusal - The non-`ready` result returned by {@link buildGotoContext}.
+ * @param commandName - Command named in the rendered refusal: `'goto'`, or
+ *   `'run'` when a run's own `GOTO` resolution is refused.
  * @returns `true` when the refusal requests a non-zero exit code; `false` for
  *   `none`, which is an empty-stack no-op rather than a failure.
  */

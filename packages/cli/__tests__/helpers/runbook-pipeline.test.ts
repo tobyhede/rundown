@@ -41,6 +41,7 @@ import type {
   PreparedRunbook,
   RunPipelineContext,
   RunnableRunbook,
+  claimAndLaunch as claimAndLaunchType,
 } from '../../src/helpers/runbook-pipeline.js';
 import { assertVariant } from './assert-variant.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
@@ -579,7 +580,7 @@ async function startRunbook(
 }
 
 async function claimAndLaunchWithProgression(
-  claimAndLaunch: typeof import('../../src/helpers/runbook-pipeline.js').claimAndLaunch,
+  claimAndLaunch: typeof claimAndLaunchType,
   ctx: RunPipelineContext,
   token: string,
   input: Parameters<typeof claimAndLaunch>[2],

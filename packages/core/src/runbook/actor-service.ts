@@ -1273,6 +1273,11 @@ export class RunbookActorService {
           hasTag: (tag: string) => boolean;
           value: unknown;
         };
+        // `settled` is narrowed to `false` by control-flow analysis, which cannot
+        // see the `emitted`/`errors` subscriptions that assign it — and `send` is
+        // synchronous, so one of them may already have run by this line. The
+        // check is load-bearing at runtime; the rule is reading a type, not a value.
+        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- see above
         if (!settled && !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG)) {
           emitted.unsubscribe();
           errors.unsubscribe();
@@ -1471,6 +1476,12 @@ export class RunbookActorService {
    *   machine did not handle, so preparation produced neither a result nor a
    *   throw.
    */
+  // The `async` IS the contract, as it is for `enterExecutionUnit` above. Every
+  // line of the body is synchronous since the abort arm stopped round-tripping
+  // through `prepareActorMutation`, but both documented throws must reject the
+  // promise this signature returns rather than throwing in the caller's own tick,
+  // or a caller using `.catch(...)` or `Promise.all` observes no failure at all.
+  // eslint-disable-next-line @typescript-eslint/require-await -- see above: async is the contract
   async prepareManualDelegationMutation(
     previousState: RunbookState,
     steps: readonly ResolvedStep[],

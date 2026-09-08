@@ -332,7 +332,14 @@ function cursorIsOnSubstep(state: RunbookState, steps: readonly ResolvedStep[]):
   );
 }
 
-/** Whether this exact run state carries a frontier its current unit may disclose. */
+/**
+ * Whether this exact run state carries a frontier its current unit may disclose.
+ *
+ * @param state - Exact run state whose persisted snapshot carries the frontier.
+ * @param steps - Parsed steps the state's cursor is resolved against.
+ * @returns True when a persisted frontier exists and the cursor rests on a
+ *   substep, which is the only unit that may disclose one.
+ */
 export function hasCurrentReEntryFrontier(
   state: RunbookState,
   steps: readonly ResolvedStep[],
@@ -344,7 +351,15 @@ function isPersistedDelegateFrontierEntry(value: unknown): value is PersistedDel
   return PersistedDelegateFrontierEntrySchema.safeParse(value).success;
 }
 
-/** Read and structurally validate the persisted delegation re-entry frontier. */
+/**
+ * Read and structurally validate the persisted delegation re-entry frontier.
+ *
+ * @param state - Exact run state whose snapshot context holds the frontier.
+ * @returns The validated frontier entries, empty when the snapshot carries none.
+ * @throws {InvalidRunbookStateError} When `delegateFrontier` is present but is
+ *   not an array of structurally valid entries — the no-migration rule, refused
+ *   rather than shimmed.
+ */
 export function readPersistedReEntryFrontier(
   state: RunbookState,
 ): readonly PersistedDelegateFrontierEntry[] {

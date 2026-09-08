@@ -22,7 +22,6 @@ import type {
   ResolvedStep,
   RunbookState,
 } from '../../src/runbook/types.js';
-import type { ExecutionObservationEffect } from '../../src/events/execution-observation.js';
 import {
   brandStoredOutputsForTest,
   brandInitialTemplateVarsForTest,
@@ -150,23 +149,6 @@ function stateWithFrontier(delegateFrontier: unknown): RunbookState {
  */
 function stepCursorWithFrontier(delegateFrontier: unknown): RunbookState {
   return state({ substep: undefined, snapshot: { context: { delegateFrontier } } });
-}
-
-function observationEffect(stepName: string): ExecutionObservationEffect {
-  return {
-    kind: 'execution_observation',
-    event: {
-      type: 'STEP_ENTERED',
-      payload: {
-        position: { current: '1', total: 1, substep: '1' },
-        stepName,
-        hasCommand: false,
-        isSubstep: true,
-        prompted: false,
-        artifacts: {},
-      },
-    },
-  };
 }
 
 /**

@@ -170,7 +170,14 @@ export interface RunProgressionDriveContext {
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
 }
 
-/** Build the standard CLI driver shared by every fresh activation entry. */
+/**
+ * Build the standard CLI driver shared by every fresh activation entry.
+ *
+ * @param ctx - The drive context minus its sink, which the returned callable
+ *   receives per activation so each run keeps its own observation emitter.
+ * @returns A callable taking one `activate` directive and that run's sink, and
+ *   resolving to the activation's Run Progression outcome.
+ */
 export function createCliRunProgressionDriver(
   ctx: Omit<RunProgressionDriveContext, 'sink'>,
 ): (

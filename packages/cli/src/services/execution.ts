@@ -1,8 +1,6 @@
 import {
   type RunId,
   assertRunId,
-  type buildStepPosition,
-  type ActionType,
   extractLastMessage,
   extractRetryDisplayCount,
   extractRetryMax,
@@ -67,35 +65,6 @@ export function commandStreamOptionsForOutputMode(
   text: boolean | undefined,
 ): CommandExecutionStreamOptions {
   return { commandOutput: text ? 'inherit' : 'stderr' };
-}
-
-type TransitionApplicationResult =
-  | { status: 'continue'; state: RunbookState }
-  | { status: 'done' }
-  | { status: 'stopped' };
-
-interface ObserveAndOrchestrateArgs {
-  emitter: ExecutionEventEmitter;
-  steps: ResolvedStep[];
-  currentState: RunbookState;
-  currentStep: ResolvedStep;
-  result: 'pass' | 'fail';
-  computeActionResult?: (actionType: ActionType) => boolean;
-  command?: string;
-  syncSnapshot: unknown;
-  postState: RunbookState;
-}
-
-type ObserveCommandTransitionArgs = ObserveAndOrchestrateArgs;
-
-interface RenderTerminalObservationArgs {
-  emitter: ExecutionEventEmitter;
-  steps: ResolvedStep[];
-  currentStep: ResolvedStep;
-  previousState: RunbookState;
-  updatedState: RunbookState;
-  snapshot: unknown;
-  position: ReturnType<typeof buildStepPosition>;
 }
 
 /** Launch context for {@link launchInlineChildFromIntent}. */
@@ -224,6 +193,7 @@ async function consumeInlineLaunchIntent(args: {
  *
  * @param args - Launch context; see {@link InlineLaunchArgs}.
  * @param args.manager - State manager for the workspace being executed.
+ * @param args.authority - Exact verified authority for the composing parent.
  * @param args.actorService - Actor service compiled for this project.
  * @param args.sessionService - Session service owning run targeting.
  * @param args.emitter - Execution emitter receiving launch events.
