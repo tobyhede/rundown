@@ -2249,6 +2249,73 @@ describe('activateRunProgression', () => {
     expect(readPersistedReEntryFrontier(committed)).toEqual([]);
   });
 
+  it('classifies a THROWING frontier projection as a diagnosed refusal, never an undiagnosed escape', async () => {
+    // The frontier turn is not total: `prepareActorMutation` can reject (a
+    // `waitForMachineEffects` timeout, an actor error), `readPersistedReEntryFrontier`
+    // can throw on the freshly captured row, and the commit itself can fail in
+    // the driver. With no `onError` on `__progression-project-frontier` any of
+    // those escaped the actor unhandled and reached the operator as RD-999
+    // "Unknown error", which carries no recovery — the exact diagnosis both
+    // sibling entry states already carry an `onError` to prevent.
+    //
+    // The reason is the PERMANENT one because the actor cannot see which side
+    // of the commit it threw on; see the compiler's own comment on the arm.
+    const steps = createRunbook(SUBSTEP_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'frontier-projection-throw.runbook.md');
+    const control = await issueProgressionControl(state.id);
+    await persistFrontier(state, control);
+    const { emitter, events } = recordingSink(state);
+    jest
+      .spyOn(actorService, 'prepareActorMutation')
+      .mockRejectedValue(new Error('machine effects did not settle'));
+
+    const outcome = await activateRunProgression(
+      progressionAuthority(state, control),
+      depsFor(actorService, steps, emitter),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      runId: state.id,
+      reason: 'frontier_disclosure_failed',
+      code: 'RD-833',
+      recovery: 'permanent',
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'ERROR_OCCURRED',
+        payload: expect.objectContaining({ code: 'RD-833' }),
+      }),
+    );
+    expect(events.map((event) => event.type)).not.toContain('STEP_ENTERED');
+  });
+
+  it('preserves InvalidRunbookStateError thrown by the frontier projection, keeping RD-309', async () => {
+    // Routing the projection's rejection into a typed refusal must not swallow
+    // the repository-wide corrupt-state classification: RD-309 outranks the
+    // frontier refusal exactly as it does on both entry paths, because the run
+    // cannot be loaded at all and no retry or re-issue addresses that.
+    const steps = createRunbook(SUBSTEP_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'frontier-projection-invalid.runbook.md');
+    const control = await issueProgressionControl(state.id);
+    await persistFrontier(state, control);
+    const { emitter } = recordingSink(state);
+    const invalid = new InvalidRunbookStateError('captured frontier row is invalid', {
+      runId: state.id,
+      reason: 'schema_validation_failed',
+    });
+    jest.spyOn(actorService, 'prepareActorMutation').mockRejectedValue(invalid);
+
+    await expect(
+      activateRunProgression(
+        progressionAuthority(state, control),
+        depsFor(actorService, steps, emitter),
+      ),
+    ).rejects.toBe(invalid);
+  });
+
   it('classifies a real issuer mismatch as permanent RD-821 without consuming the frontier', async () => {
     const steps = createRunbook(SUBSTEP_RUNBOOK);
     const actorService = actorServiceWith(succeedingCommandServices());

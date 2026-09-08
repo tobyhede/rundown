@@ -9831,6 +9831,132 @@ echo hi
       }).toThrow(/parent-entry.*onDone\.target.*generated state/);
     });
 
+    it.each([
+      '__progression-project-frontier',
+      '__progression-enter-unit',
+      '__progression-enter-after-projected-frontier',
+    ])('rejects %s child states missing PENDING_MACHINE_EFFECT_TAG', (childName) => {
+      // The three Run Progression invoking substates are side-effect leaves
+      // like every other `invoke` child: `prepareActorMutation` waits on the
+      // pending tag, so a tag-less one lets a snapshot persist mid-invoke.
+      // Before #880 the per-invoke invariants skipped them entirely because
+      // the side-effect classifier had never been extended past the six
+      // pre-progression substates.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const malformed = {
+        'step::1': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            [childName]: {
+              // tags intentionally missing — must be flagged by validateGraph
+              invoke: {
+                src: 'runProgressionEntryActor',
+                onError: { target: 'idle' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+      expect(() => {
+        validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).toThrow(/must include ".*pending-machine-effect" tag/);
+    });
+
+    it.each([
+      '__progression-project-frontier',
+      '__progression-enter-unit',
+      '__progression-enter-after-projected-frontier',
+    ])('rejects %s child states whose invoke has no onError', (childName) => {
+      // A Run Progression invoke that rejects with no `onError` escapes the
+      // actor unhandled and reaches the operator as RD-999 "Unknown error",
+      // which carries no recovery. Every one of the three must route its
+      // rejection to a typed refusal instead.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const malformed = {
+        'step::1': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            [childName]: {
+              tags: [PENDING_MACHINE_EFFECT_TAG],
+              invoke: {
+                src: 'runProgressionEntryActor',
+                onDone: { target: 'idle' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+      expect(() => {
+        validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).toThrow(/onError\.target/);
+    });
+
+    it('rejects a Run Progression onError that leaves the compound parent', () => {
+      // A progression refusal must land back on a sibling so the leaf emits its
+      // typed `RUN_PROGRESSION_INTENT`; routing to `#STOPPED` would terminate
+      // the run and settle the selection promise never.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const malformed = {
+        'step::1': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            '__progression-enter-unit': {
+              tags: [PENDING_MACHINE_EFFECT_TAG],
+              invoke: {
+                src: 'runProgressionEntryActor',
+                onDone: { target: 'idle' },
+                onError: { target: '#STOPPED' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+      expect(() => {
+        validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).toThrow(/onError\.target/);
+    });
+
+    it('accepts a Run Progression onDone that names a sibling through the parent id', () => {
+      // `#step::1.__progression-enter-after-projected-frontier` is how the
+      // frontier state hands the disclosed bearers to its sibling. The
+      // absolute-with-child form must resolve, or extending the invariants to
+      // these substates would reject the real compiled graph.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const graph = {
+        'step::1': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            '__progression-project-frontier': {
+              tags: [PENDING_MACHINE_EFFECT_TAG],
+              invoke: {
+                src: 'runProgressionFrontierActor',
+                onDone: [
+                  { target: 'idle' },
+                  { target: '#step::1.__progression-enter-after-projected-frontier' },
+                ],
+                onError: { target: 'idle' },
+              },
+            },
+            '__progression-enter-after-projected-frontier': {
+              tags: [PENDING_MACHINE_EFFECT_TAG],
+              invoke: {
+                src: 'runProgressionEntryActor',
+                onDone: { target: 'idle' },
+                onError: { target: 'idle' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+      expect(() => {
+        validateGraphForTest(graph, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).not.toThrow();
+    });
+
     it('rejects __execute-command child states missing PENDING_COMMAND_EXECUTION_TAG (regression: isSideEffectLeafSubstate excludes __execute-command)', () => {
       // Regression coverage: __execute-command is a machine-owned pending
       // invoke and must carry the command-execution tag — distinct from the

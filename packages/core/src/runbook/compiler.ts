@@ -4298,7 +4298,10 @@ function extractRelativeTargets(config: RunbookStateConfig): string[] {
  * 2. All transition targets reference existing states or terminal states
  * 3. Nested leaf substates are known compiler-owned substates
  * 4. Every side-effect child has the pending-effect tag
- * 5. Every side-effect child has `onError.target` equal to `captureErrorTarget`
+ * 5. Every side-effect child routes `onError` the way its
+ *    {@link SIDE_EFFECT_LEAF_SUBSTATE_POLICIES} entry declares — to
+ *    `captureErrorTarget` for a fail-closed leaf, or to a sibling child for a
+ *    Run Progression leaf whose rejection becomes a typed refusal intent
  * 6. Every side-effect child `onDone.target` references a sibling child state
  *
  * @param states - The generated states record
@@ -4402,23 +4405,17 @@ function validateGraph(
           `Compiler invariant: "${stateId}" has unknown leaf substate "${childName}"`,
         );
       }
-      if (!isSideEffectLeafSubstate(childName)) continue;
+      const policy = sideEffectLeafSubstatePolicy(childName);
+      if (policy === undefined) continue;
 
       if (!isGraphRecord(child)) {
         throw new Error(`Compiler invariant: "${stateId}.${childName}" must be an object`);
       }
 
-      // Command execution carries its own pending tag: it must never be
-      // subject to the machine-effect wait budget (#536), but progression
-      // still needs a tag to know the invoke is in flight.
-      const requiredTag =
-        childName === '__execute-command'
-          ? PENDING_COMMAND_EXECUTION_TAG
-          : PENDING_MACHINE_EFFECT_TAG;
       const tags = graphTags(child);
-      if (!tags.includes(requiredTag)) {
+      if (!tags.includes(policy.tag)) {
         throw new Error(
-          `Compiler invariant: "${stateId}.${childName}" must include "${requiredTag}" tag`,
+          `Compiler invariant: "${stateId}.${childName}" must include "${policy.tag}" tag`,
         );
       }
 
@@ -4427,30 +4424,34 @@ function validateGraph(
       }
 
       const errorTargets = graphTransitionTargets(child.invoke.onError);
-      if (errorTargets.length !== 1 || errorTargets[0] !== captureErrorTarget) {
+      if (policy.onError === 'terminal') {
+        if (errorTargets.length !== 1 || errorTargets[0] !== captureErrorTarget) {
+          throw new Error(
+            `Compiler invariant: "${stateId}.${childName}.onError.target" must be ` +
+              `"${captureErrorTarget}", got "${errorTargets.join(', ') || 'undefined'}"`,
+          );
+        }
+      } else if (
+        errorTargets.length !== 1 ||
+        resolveSideEffectTransitionTarget(errorTargets[0], states, childStates, stateIds) !==
+          'child'
+      ) {
         throw new Error(
-          `Compiler invariant: "${stateId}.${childName}.onError.target" must be ` +
-            `"${captureErrorTarget}", got "${errorTargets.join(', ') || 'undefined'}"`,
+          `Compiler invariant: "${stateId}.${childName}.onError.target" must be a sibling ` +
+            `child that emits a typed refusal, got "${errorTargets.join(', ') || 'undefined'}"`,
         );
       }
 
       for (const target of graphTransitionTargets(child.invoke.onDone)) {
-        if (target.startsWith('#')) {
-          // Current absolute machine targets in scope: #STOPPED, #iteration_exhausted.
-          const lookupTarget = target.slice(1);
-          if (!stateIds.has(lookupTarget)) {
-            throw new Error(
-              `Compiler invariant: "${stateId}.${childName}.onDone.target" references ` +
-                `unknown absolute target "${target}"`,
-            );
-          }
-          continue;
-        }
-        const childTarget = target.startsWith('.') ? target.slice(1) : target;
-        if (!(childTarget in childStates)) {
+        // Current absolute machine targets in scope: #STOPPED, #iteration_exhausted.
+        if (
+          resolveSideEffectTransitionTarget(target, states, childStates, stateIds) === undefined
+        ) {
           throw new Error(
             `Compiler invariant: "${stateId}.${childName}.onDone.target" references ` +
-              `unknown child "${target}"`,
+              (target.startsWith('#')
+                ? `unknown absolute target "${target}"`
+                : `unknown child "${target}"`),
           );
         }
       }
@@ -4462,23 +4463,103 @@ function isGraphRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
-function isSideEffectLeafSubstate(
-  value: string,
-): value is
-  | '__capture'
-  | '__execute-command'
-  | '__resolve-artifacts'
-  | '__resolve-iteration'
-  | '__issue-delegations'
-  | '__prepare-inline-launch' {
-  return (
-    value === '__capture' ||
-    value === '__execute-command' ||
-    value === '__resolve-artifacts' ||
-    value === '__resolve-iteration' ||
-    value === '__issue-delegations' ||
-    value === '__prepare-inline-launch'
-  );
+/** Per-substate invariants for a compiler-owned leaf substate that invokes an actor. */
+interface SideEffectLeafSubstatePolicy {
+  /**
+   * Pending tag the substate must carry so `prepareActorMutation` holds off
+   * persistence while the invoke is in flight.
+   */
+  readonly tag: typeof PENDING_MACHINE_EFFECT_TAG | typeof PENDING_COMMAND_EXECUTION_TAG;
+  /**
+   * Where a rejection must land.
+   *
+   * - `terminal` — the fail-closed classic: route to the machine's terminal
+   *   STOPPED state, because the substate has no vocabulary for the failure.
+   * - `refusal` — route back to a SIBLING, because the substate's `onError`
+   *   emits a typed `RUN_PROGRESSION_INTENT` refusal that the selection seam
+   *   is waiting on. Sending one of these to STOPPED would terminate the run
+   *   AND settle the selection promise never.
+   */
+  readonly onError: 'terminal' | 'refusal';
+}
+
+/**
+ * Every compiler-owned leaf substate that invokes an actor, with the invariants
+ * `validateGraph` enforces on it.
+ *
+ * A table rather than a predicate because the two policies genuinely differ per
+ * substate, and the table is the single place a new invoking substate must be
+ * declared. Omitting one here does not fail loudly — it silently exempts that
+ * substate from every per-invoke invariant, which is how
+ * `__progression-project-frontier` shipped with no `onError` at all (#880).
+ */
+const SIDE_EFFECT_LEAF_SUBSTATE_POLICIES = {
+  __capture: { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'terminal' },
+  // Command execution carries its own pending tag: it must never be subject to
+  // the machine-effect wait budget (#536), but progression still needs a tag to
+  // know the invoke is in flight.
+  '__execute-command': { tag: PENDING_COMMAND_EXECUTION_TAG, onError: 'terminal' },
+  '__resolve-artifacts': { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'terminal' },
+  '__resolve-iteration': { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'terminal' },
+  '__issue-delegations': { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'terminal' },
+  '__prepare-inline-launch': { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'terminal' },
+  '__progression-project-frontier': { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'refusal' },
+  '__progression-enter-unit': { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'refusal' },
+  '__progression-enter-after-projected-frontier': {
+    tag: PENDING_MACHINE_EFFECT_TAG,
+    onError: 'refusal',
+  },
+} as const satisfies Readonly<Record<string, SideEffectLeafSubstatePolicy>>;
+
+/**
+ * Look up the per-invoke invariants for a leaf substate.
+ *
+ * @param value - Nested compound-state child name
+ * @returns The substate's policy, or `undefined` when it invokes no actor
+ */
+function sideEffectLeafSubstatePolicy(value: string): SideEffectLeafSubstatePolicy | undefined {
+  return Object.hasOwn(SIDE_EFFECT_LEAF_SUBSTATE_POLICIES, value)
+    ? SIDE_EFFECT_LEAF_SUBSTATE_POLICIES[value as keyof typeof SIDE_EFFECT_LEAF_SUBSTATE_POLICIES]
+    : undefined;
+}
+
+/**
+ * Resolve a side-effect child's transition target against the generated graph.
+ *
+ * Three forms are legal, and the third is what the Run Progression frontier
+ * state needs: `#STOPPED` (absolute top-level), `idle` / `.idle` (a sibling by
+ * bare or relative name), and `#step::1.__progression-enter-unit` (a child
+ * named through its parent's absolute id, which is how a nested state reaches
+ * a sibling across the compound boundary).
+ *
+ * @param target - Raw transition target string
+ * @param states - The whole generated states record
+ * @param childStates - Sibling children of the state carrying the transition
+ * @param stateIds - Every generated and terminal state id
+ * @returns `'absolute'` for a top-level state, `'child'` for a sibling or
+ *   parent-qualified child, `undefined` when the target resolves to neither
+ */
+function resolveSideEffectTransitionTarget(
+  target: string,
+  states: Record<string, RunbookStateConfig>,
+  childStates: Record<string, unknown>,
+  stateIds: ReadonlySet<string>,
+): 'absolute' | 'child' | undefined {
+  if (target.startsWith('#')) {
+    const ref = target.slice(1);
+    if (stateIds.has(ref)) return 'absolute';
+    const separator = ref.indexOf('.');
+    if (separator === -1) return undefined;
+    const parentId = ref.slice(0, separator);
+    const childName = ref.slice(separator + 1);
+    if (!stateIds.has(parentId)) return undefined;
+    const parent = states[parentId] as unknown as Record<string, unknown> | undefined;
+    const parentChildren = parent === undefined ? undefined : parent.states;
+    if (!isGraphRecord(parentChildren) || !(childName in parentChildren)) return undefined;
+    return 'child';
+  }
+  const childTarget = target.startsWith('.') ? target.slice(1) : target;
+  return childTarget in childStates ? 'child' : undefined;
 }
 
 function graphTags(config: Record<string, unknown>): readonly unknown[] {
@@ -5569,6 +5650,34 @@ export function compileRunbookToMachine(
                 }),
               },
             ],
+            // The frontier turn is NOT total, and without this arm every way it
+            // can reject — a `waitForMachineEffects` timeout or an actor error
+            // inside `prepareActorMutation`, `readPersistedReEntryFrontier`
+            // throwing on the freshly captured row, a driver error in
+            // `commitOwnedRunSet` — escaped the actor unhandled and reached the
+            // operator as RD-999 "Unknown error", which carries no recovery.
+            // Both sibling entry states already carry the same arm for the same
+            // reason.
+            //
+            // `frontier_disclosure_failed` (permanent, RD-833) is a DELIBERATE
+            // CONSERVATIVE CLASSIFICATION, not a diagnosis. The split that
+            // separates it from `entry_render_failed` (retryable, RD-504) is
+            // whether the fenced consume had already committed, and this actor
+            // cannot observe that side: a thrown commit "may already be
+            // durable" — `CoreEffectfulMutationExecutor` says so in as many
+            // words and rethrows precisely because "distinguishing the two
+            // needs a lease outcome that reports the observed phase", which
+            // does not exist. So we fail closed to the permanent arm. Getting
+            // it wrong in this direction tells an operator a retryable
+            // condition is permanent; getting it wrong the other way tells them
+            // to retry a turn whose frontier is already consumed and whose
+            // bearers can never be re-derived, and the retry would then find no
+            // frontier and enter the unit having disclosed nothing. Revisit
+            // only when the fence reports its committed phase.
+            onError: {
+              target: 'idle',
+              actions: emitEntryProgressionFailureIntent('frontier_disclosure_failed'),
+            },
           },
         },
         '__progression-enter-unit': {
