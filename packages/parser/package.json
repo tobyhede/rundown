@@ -18,7 +18,7 @@
     "build": "tsc",
     "check:types": "tsc --noEmit -p tsconfig.test.json",
     "test": "jest",
-    "test:unit": "jest --maxWorkers=2",
+    "test:unit": "jest",
     "test:coverage": "jest --coverage",
     "test:mutate": "stryker run",
     "clean": "rm -rf dist"
