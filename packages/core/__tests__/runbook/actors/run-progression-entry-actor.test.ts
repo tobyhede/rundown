@@ -159,6 +159,12 @@ describe('runProgressionEntryActor', () => {
 
     await runToOutput(runProgressionEntryActor, { state: selected, enter });
 
-    expect(enter.mock.calls[0]?.[1]).toBeUndefined();
+    // Pinned first, and the argument then read NON-optionally: `toBeUndefined`
+    // is satisfied by an `enter` that was never called at all, since
+    // `mock.calls[0]` is itself undefined and `?.[1]` short-circuits. The
+    // sibling cases above escape this because `toBe(x)` fails on undefined;
+    // this one asserted nothing.
+    expect(enter).toHaveBeenCalledTimes(1);
+    expect(enter.mock.calls[0][1]).toBeUndefined();
   });
 });

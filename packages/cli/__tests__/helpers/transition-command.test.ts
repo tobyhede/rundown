@@ -67,6 +67,13 @@ describe('transition command exit-code mapping', () => {
 
       await program.parseAsync(['node', 'rundown', name]);
 
+      // Pinned BEFORE the exit code, because the exit code alone cannot tell
+      // this branch from a refusal that never reached the seam: option
+      // validation, `parseTransitionTarget`, and the atomic `--claim-id` /
+      // `--run` parsers all set `process.exitCode = 1` themselves and return
+      // early. Without this, a mutant anywhere in the pre-seam path leaves
+      // this case green while the branch it exists to pin never runs.
+      expect(runSeamTransition).toHaveBeenCalledTimes(1);
       expect(process.exitCode).toBe(1);
     },
   );

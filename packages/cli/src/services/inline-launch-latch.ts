@@ -402,12 +402,22 @@ export interface InlineLaunchLatchArgs {
  *
  * `inline.started` is the durable "I am launching this child" record, and this
  * is the single cycle that writes it. Reading the intent, testing the latch and
- * committing `INLINE_CHILD_STARTED` all happen inside one
- * {@link RunbookStateManager.mutateStateReturning} build callback, so the state
+ * committing `INLINE_CHILD_STARTED` all happen within one capture-decide-save
+ * cycle whose save compare-and-swaps against the captured version, so the state
  * the decision is derived from is the state the write commits onto. That is what
  * makes the launch exactly-once: two observers of one intent cannot both reach
  * `manager.create` for the intent's fixed `childRunId` and race the store's bare
  * `INSERT INTO runs`.
+ *
+ * The decision is async — it loads the child run and asks the actor service to
+ * prepare the mutation — so it cannot ride inside a `mutateState` build
+ * callback, whose `SyncWork` shape makes an async callback a compile error.
+ * The cycle is therefore the loop-from-outside form (CLAUDE.md § Concurrent
+ * write synchronization): capture, decide, save, and on
+ * `concurrent_modification` re-derive, bounded by the store's exported
+ * {@link DEFAULT_MUTATE_ATTEMPTS} with {@link mutateBackoffMs} between
+ * attempts. Every other save refusal is permanent and returned as itself; an
+ * exhausted budget throws {@link ConcurrentStateModificationError}.
  *
  * The record names its owner, so a latch is only binding while that owner runs.
  * Committing before the create is what makes the launch exactly-once, and it is
@@ -423,12 +433,12 @@ export interface InlineLaunchLatchArgs {
  * next intent it prepares for the same substep, so a spurious latch would make
  * every later re-entry of that frame report an already-started launch.
  *
- * The launch span itself stays OUTSIDE this callback. It resolves a runbook ref,
+ * The launch span itself stays OUTSIDE this cycle. It resolves a runbook ref,
  * reads files, imports modules and writes warnings — external effects, which a
- * callback that re-runs once per compare-and-swap attempt must not perform.
+ * decision that re-runs once per compare-and-swap attempt must not perform.
  *
  * @remarks
- * The callback re-runs per attempt (up to 8), so it must be safe to repeat. Its
+ * The decision re-runs per attempt (up to 8), so it must be safe to repeat. Its
  * own work is three reads and a derivation — the liveness probe is the third.
  * The probe is a pure read, which is what makes it admissible here, but it is
  * not uniformly as cheap as the `kill(pid, 0)` it starts with: a LIVE foreign
@@ -439,7 +449,7 @@ export interface InlineLaunchLatchArgs {
  * `reclaimable` on a dead pid short-circuits before the spawn, and `held`
  * commits nothing — a `null` next ends the cycle with no retry. Only the rare
  * recycled-pid reclaim (live pid, start ids disagree) can pay it more than once.
- * The record this observer would write is built ONCE, outside the callback, so a
+ * The record this observer would write is built ONCE, outside the decision, so a
  * retried attempt commits the identity the caller reasoned about rather than
  * re-probing the host per attempt. It reaches
  * {@link RunbookActorService.prepareActorMutation}, and for this event nothing
