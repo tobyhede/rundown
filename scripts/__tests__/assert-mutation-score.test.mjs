@@ -12,6 +12,7 @@ import {
   normalizeReportFileKeys,
   parseArgs,
   renderMarkdown,
+  TEST_SCOPE_LEGENDS,
 } from '../assert-mutation-score.mjs';
 
 /**
@@ -336,6 +337,75 @@ test('renderMarkdown renders scores plus individual undetected mutants', () => {
 // into one sticky PR comment. GitHub rejects a comment over 65536 characters, so
 // an uncapped listing turns a large finding into a failed comment job: the most
 // interesting result is the one that cannot be posted.
+// #890: shard `cli-3` flipped from related to dedicated scope when someone
+// added a dedicated test for a DIFFERENT file it batched, and
+// `runbook-pipeline.ts` moved 53.33% -> 35.56% with nobody touching it. Neither
+// number was wrong; they answer different questions. The scope is decided per
+// shard, so no per-file row can carry it — the summary has to say it.
+test('renderMarkdown names the effective test scope and what it means', () => {
+  const scored = {
+    ok: true,
+    failures: [],
+    checked: [{ file: 'src/a.ts', score: 53.33 }],
+    skipped: [],
+    floor: 70,
+  };
+
+  const dedicated = renderMarkdown(scored, 'cli', 'dedicated');
+  assert.match(dedicated, /Test scope/);
+  assert.match(dedicated, /dedicated/);
+  assert.ok(dedicated.includes(TEST_SCOPE_LEGENDS.dedicated));
+
+  const related = renderMarkdown(scored, 'cli', 'related');
+  assert.ok(related.includes(TEST_SCOPE_LEGENDS.related));
+  // The two legends must not read the same, or the label answers nothing.
+  assert.notEqual(TEST_SCOPE_LEGENDS.dedicated, TEST_SCOPE_LEGENDS.related);
+});
+
+// The local runner (`test:mutate:changed`) renders no summary and passes no
+// scope. An omitted scope must render no line at all rather than an empty or
+// defaulted one, which would assert a scope the run never established.
+test('renderMarkdown omits the scope line when the caller does not know the scope', () => {
+  const md = renderMarkdown(
+    { ok: true, failures: [], checked: [{ file: 'src/a.ts', score: 91 }], skipped: [], floor: 70 },
+    'cli',
+  );
+  assert.doesNotMatch(md, /Test scope/);
+});
+
+test('parseArgs accepts both test scopes and refuses any other', () => {
+  const base = [
+    '--report',
+    'r.json',
+    '--package-dir',
+    'packages/cli',
+    '--changed-file',
+    'src/a.ts',
+  ];
+  assert.equal(parseArgs([...base, '--test-scope', 'dedicated']).testScope, 'dedicated');
+  assert.equal(parseArgs([...base, '--test-scope', 'related']).testScope, 'related');
+  // Undefined is a valid state: it means "not known", not "not set yet".
+  assert.equal(parseArgs(base).testScope, undefined);
+  // A wrong label is worse than no label, so an unknown scope is refused
+  // rather than passed through to the summary.
+  assert.throws(() => parseArgs([...base, '--test-scope', 'ded']), /--test-scope/);
+  // An INHERITED key is the trap here: `'__proto__' in TEST_SCOPE_LEGENDS` is
+  // true, so a membership test that walks the prototype chain accepts it and the
+  // summary then renders the word "undefined" as the explanation.
+  assert.throws(() => parseArgs([...base, '--test-scope', '__proto__']), /--test-scope/);
+  assert.throws(() => parseArgs([...base, '--test-scope', 'toString']), /--test-scope/);
+});
+
+test('renderMarkdown renders no scope line for an inherited key', () => {
+  const md = renderMarkdown(
+    { ok: true, failures: [], checked: [{ file: 'src/a.ts', score: 91 }], skipped: [], floor: 70 },
+    'cli',
+    '__proto__',
+  );
+  assert.doesNotMatch(md, /Test scope/);
+  assert.doesNotMatch(md, /undefined/);
+});
+
 test('renderMarkdown caps the mutant listing and says how many it withheld', () => {
   const undetected = Array.from({ length: 400 }, (_, i) => ({
     id: `m-${i}`,

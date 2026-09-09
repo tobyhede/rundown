@@ -142,6 +142,28 @@ test('mutation-pr.yml uploads per-package markdown summaries', async () => {
   );
 });
 
+// #890: a shard's score is only comparable with a score at the SAME test scope,
+// and the scope is decided per shard rather than per file. The label must come
+// from `matrix.testFiles` — the value the Stryker step itself branches on — and
+// NOT from the requested `TEST_SCOPE` input, which the planner overrides for any
+// shard batching a file without a dedicated test. A label taken from the request
+// would read `dedicated` on a shard that ran with related-test fan-out.
+test('mutation-pr.yml labels each summary with the EFFECTIVE test scope', async () => {
+  const yml = await read('.github/workflows/mutation-pr.yml');
+  const scoring = yml.match(
+    /- name: Score changed files \(advisory\)[\s\S]*?(?=\n      - name: )/,
+  )?.[0];
+  assert.ok(scoring, 'the scoring step must exist');
+  assert.match(
+    scoring,
+    /TEST_SCOPE:\s*\$\{\{\s*matrix\.testFiles/,
+    'the scope label must be derived from matrix.testFiles, not the requested scope',
+  );
+  assert.match(scoring, /--test-scope "\$\{TEST_SCOPE\}"/, 'the scorer must receive the scope');
+  assert.match(scoring, /'dedicated'/);
+  assert.match(scoring, /'related'/);
+});
+
 test('mutation-pr.yml posts a single sticky advisory comment', async () => {
   const yml = await read('.github/workflows/mutation-pr.yml');
   assert.match(yml, /sticky-pull-request-comment/, 'must use a sticky comment action');

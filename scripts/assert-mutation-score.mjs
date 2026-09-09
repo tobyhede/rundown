@@ -38,6 +38,15 @@
  * hundreds of untouched baseline kills and still clear the floor. A ranged path is
  * implicitly a changed file, so it need not also be passed as `--changed-file`.
  *
+ * `--test-scope <dedicated|related>` labels the rendered summary with the test
+ * selection the run actually used. It is a LABEL, not an input to the verdict.
+ * The effective scope is decided per shard by `toShardEntry`
+ * (`scripts/lib/mutation-scope.mjs`), which emits `--testFiles` only when EVERY
+ * file the shard batches has a dedicated test — so adding one test can flip a
+ * whole shard, and a file nobody touched can move sharply between two reports
+ * with nothing in either saying why (#890). Naming the scope is what lets a
+ * reader tell that apart from a regression.
+ *
  * `--floor <percent>` does NOT decide the verdict. Every undetected in-scope
  * mutant fails this gate on its own, because over a handful of changed lines a
  * percentage is not a meaningful threshold — two survivors out of two is 0% and
@@ -60,6 +69,20 @@ import { htmlEscape } from './lib/pr-comment.mjs';
  * only the full producer applies this value as an aggregate break threshold.
  */
 export const DEFAULT_FLOOR = 70;
+
+/**
+ * How each test scope selects the tests a mutant is judged by.
+ *
+ * `dedicated` names `--testFiles`, which disables the jest runner's
+ * `--findRelatedTests` fan-out: a mutant killed only by an integration test
+ * reports as a survivor. `related` keeps the fan-out and answers the broader
+ * question at roughly 13x the cost per mutant. The two answer DIFFERENT
+ * questions, so a score is only comparable with another score at the same scope.
+ */
+export const TEST_SCOPE_LEGENDS = Object.freeze({
+  dedicated: "each mutant was judged by its file's own unit test alone",
+  related: "mutants were judged by jest's related-test fan-out",
+});
 
 /**
  * Most individual mutants one summary will name before it starts counting the
@@ -321,9 +344,11 @@ export function assertMutationScore({
  *
  * @param {GateResult} result - the gate outcome.
  * @param {string} packageName - human label for the package/module (e.g. `core`).
+ * @param {'dedicated' | 'related'} [testScope] - test selection this shard ran
+ *   with; omitted by callers that do not know it, which renders no scope line.
  * @returns {string} a markdown fragment (no trailing newline).
  */
-export function renderMarkdown(result, packageName) {
+export function renderMarkdown(result, packageName, testScope) {
   const { checked, failures, skipped, floor, ok } = result;
   const status = ok ? '✅' : '⚠️';
   // Render interpolated values as HTML-escaped text wrapped in <code>. See
@@ -334,6 +359,15 @@ export function renderMarkdown(result, packageName) {
     `#### ${status} ${codeCell(packageName)} — changed-scope mutants (floor ${floor}% shown as score context)`,
     '',
   ];
+  // A score is only comparable with another score at the SAME scope, and the
+  // scope is decided per shard rather than per file, so it cannot be inferred
+  // from the rows below.
+  if (testScope !== undefined && Object.hasOwn(TEST_SCOPE_LEGENDS, testScope)) {
+    lines.push(
+      `_Test scope: ${codeCell(testScope)} — ${htmlEscape(TEST_SCOPE_LEGENDS[testScope])}._`,
+      '',
+    );
+  }
   if (checked.length === 0 && failures.length === 0 && skipped.length === 0) {
     lines.push('_No mutated changed files to score._');
     return lines.join('\n');
@@ -418,7 +452,7 @@ export function changedFilesFromGit(base) {
  * Parse argv into options for the CLI entrypoint.
  *
  * @param {string[]} argv - process arguments (excluding node + script).
- * @returns {{ report: string, packageDir: string, base?: string, changedFiles: string[], changedRanges: Array<{file: string, start: number, end: number}>, floor: number, markdown?: string, packageName?: string }}
+ * @returns {{ report: string, packageDir: string, base?: string, changedFiles: string[], changedRanges: Array<{file: string, start: number, end: number}>, floor: number, markdown?: string, packageName?: string, testScope?: 'dedicated' | 'related' }}
  *   parsed options; `floor` is reported as context and never decides the verdict.
  * @throws {Error} when a required option is missing or a flag lacks a value.
  */
@@ -446,6 +480,7 @@ export function parseArgs(argv) {
     } else if (arg === '--floor') opts.floor = Number.parseInt(next(), 10);
     else if (arg === '--markdown') opts.markdown = next();
     else if (arg === '--package-name') opts.packageName = next();
+    else if (arg === '--test-scope') opts.testScope = next();
     else throw new Error(`unknown argument: ${arg}`);
   }
   if (!opts.report) throw new Error('--report <path> is required');
@@ -455,6 +490,11 @@ export function parseArgs(argv) {
   }
   if (!Number.isInteger(opts.floor) || opts.floor < 0 || opts.floor > 100) {
     throw new Error('--floor must be an integer between 0 and 100');
+  }
+  // Fail closed on an unknown scope rather than labelling the summary with it:
+  // a wrong label is worse than no label, because a reader trusts it.
+  if (opts.testScope !== undefined && !Object.hasOwn(TEST_SCOPE_LEGENDS, opts.testScope)) {
+    throw new Error("--test-scope must be 'dedicated' or 'related'");
   }
   return opts;
 }
@@ -516,7 +556,10 @@ export function main(argv) {
 
   if (opts.markdown) {
     try {
-      writeFileSync(opts.markdown, renderMarkdown(result, opts.packageName ?? opts.packageDir));
+      writeFileSync(
+        opts.markdown,
+        renderMarkdown(result, opts.packageName ?? opts.packageDir, opts.testScope),
+      );
     } catch (err) {
       console.error(`error: failed to write markdown summary ${opts.markdown}: ${err.message}`);
       return 2;

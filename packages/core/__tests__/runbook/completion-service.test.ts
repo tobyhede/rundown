@@ -16,7 +16,10 @@ import {
   type ApplyNextResolvedCompletionArgs,
   type ApplyNextResolvedCompletionResult,
 } from '../../src/runbook/index.js';
-import { COMPLETION_TARGET_MISMATCH_CODE } from '../../src/runbook/completion-service.js';
+import {
+  COMPLETION_TARGET_MISMATCH_CODE,
+  hasApplicableRunProgressionCompletion,
+} from '../../src/runbook/completion-service.js';
 import { SessionService } from '../../src/runbook/session-service.js';
 import { claimKeyFromBearer } from '../../src/runbook/claim-id.js';
 import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
@@ -3466,6 +3469,213 @@ describe('RunbookCompletionService', () => {
       expect(prepared.status).toBe('recorded');
       expect(prepared.nextState.updatedAt >= before).toBe(true);
       expect(prepared.nextState.updatedAt <= after).toBe(true);
+    });
+  });
+
+  describe('hasApplicableRunProgressionCompletion', () => {
+    // The compiled machine's activation guard. It answers ONE question — is a
+    // completion turn on offer — and both halves matter: a false when nothing
+    // applies keeps the machine from selecting an empty turn, and a true on a
+    // MISMATCH is deliberate, because the refusal is classified downstream on
+    // machine feedback rather than suppressed here.
+
+    /** A leaf step: nothing under it can carry a substep completion. */
+    const leafSteps: ResolvedStep[] = [
+      ...steps,
+      {
+        kind: 'base',
+        name: '2',
+        description: 'Leaf',
+        transitions: {
+          pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
+          fail: { kind: 'fail', retry: 0, action: { type: 'STOP' } },
+        },
+      },
+    ];
+
+    it('is false when the cursor step has no substeps to complete', () => {
+      // The cursor names a LEAF step, so there is no substep graph to select
+      // from however the state is decorated — distinct from the arm below,
+      // where the step has substeps and the cursor simply is not on one.
+      expect(
+        hasApplicableRunProgressionCompletion(
+          state({ step: '2', stepName: 'Leaf', substep: '1' }),
+          leafSteps,
+        ),
+      ).toBe(false);
+    });
+
+    it('is false when the cursor is not positioned on a substep', () => {
+      expect(hasApplicableRunProgressionCompletion(state({ substep: undefined }), steps)).toBe(
+        false,
+      );
+    });
+
+    it('is false when the active frame holds no completion for the cursor', () => {
+      expect(hasApplicableRunProgressionCompletion(state({ substep: '1' }), steps)).toBe(false);
+    });
+
+    it('is true when a completion for the cursor is ready to apply', () => {
+      const applicable = state({
+        substep: '1',
+        resolvedCompletions: {
+          [buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1')]: buildResolvedCompletion({
+            agentId: 'manual',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      });
+
+      expect(hasApplicableRunProgressionCompletion(applicable, steps)).toBe(true);
+    });
+
+    it('is true for a completion that does NOT address the cursor', () => {
+      // A mismatch is still a turn: the apply's compare-and-swap owns
+      // current-version validation and the machine classifies the typed refusal
+      // on feedback. Answering false here would strand the row instead.
+      const mismatched = state({
+        substep: '1',
+        resolvedCompletions: {
+          // Filed under the CURSOR's key, but addressed to substep 2 — the exact
+          // shape `resolveAgainstCurrentCursor` refuses.
+          [buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1')]: buildResolvedCompletion({
+            agentId: 'manual',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '2',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      });
+
+      expect(hasApplicableRunProgressionCompletion(mismatched, steps)).toBe(true);
+    });
+  });
+
+  describe('terminal progression intent read off the machine output', () => {
+    // The apply reports the machine's OWN terminal decision alongside the
+    // lifecycle it reached. The two are not the same fact: `terminal` is derived
+    // from `nextState.lifecycle`, while `progressionIntent` is what the final
+    // machine state declared. A malformed output must therefore be reported as
+    // "the machine said nothing", never as a terminal intent it never made —
+    // and the field must be ABSENT rather than present-and-undefined, because a
+    // frontend narrows on its presence.
+
+    /** The one resolved row every apply below consumes. */
+    const cursorKey = buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1');
+
+    /**
+     * Seed one applicable completion and stub the transition that consumes it.
+     *
+     * The stubbed `nextState` drops the row and reaches `completed`, so the
+     * apply's progress post-condition is satisfied and the run ends terminal —
+     * exactly the shape that carries a machine output in production.
+     *
+     * @param machineOutput - Raw machine output the apply should read.
+     * @returns The seeded cursor state.
+     */
+    async function seedApplyWithOutput(machineOutput: unknown): Promise<RunbookState> {
+      const current = state({
+        substep: '1',
+        resolvedCompletions: {
+          [cursorKey]: buildResolvedCompletion({
+            agentId: 'manual',
+            result: 'pass',
+            targetStep: '1',
+            targetSubstep: '1',
+            targetFrame: activeFrame(buildFrameKey('1'), 1),
+            completedAt: '2026-01-01T00:00:00.000Z',
+          }),
+        },
+      });
+      await manager.save(current);
+      jest.spyOn(actorService, 'prepareActorMutation').mockResolvedValue({
+        previousState: current,
+        nextState: state({ substep: '1', lifecycle: 'completed', resolvedCompletions: {} }),
+        snapshot: {},
+        effects: [],
+        ...(machineOutput === undefined ? {} : { machineOutput }),
+      } as unknown as Awaited<ReturnType<typeof actorService.prepareActorMutation>>);
+      return current;
+    }
+
+    afterEach(() => {
+      jest.restoreAllMocks();
+    });
+
+    it.each([['completed'], ['stopped']] as const)(
+      'reports a %s intent declared by the final machine state',
+      async (kind) => {
+        await seedApplyWithOutput({ finalVars: {}, progression: { kind } });
+
+        const applied = await service.applyNextResolvedCompletion({ runbookId, steps });
+
+        expect(applied.kind).toBe('applied');
+        if (applied.kind !== 'applied') throw new Error(`Unexpected arm ${applied.kind}`);
+        expect(applied.entry.progressionIntent).toEqual({ kind });
+      },
+    );
+
+    it.each([
+      ['no machine output at all', undefined],
+      ['a null progression', { finalVars: {}, progression: null }],
+      ['a non-object progression', { finalVars: {}, progression: 'completed' }],
+      ['a null machine output', null],
+      [
+        'a progression kind the reader does not know',
+        { finalVars: {}, progression: { kind: 'aborted' } },
+      ],
+    ])('OMITS progressionIntent for %s', async (_label, machineOutput) => {
+      await seedApplyWithOutput(machineOutput);
+
+      const applied = await service.applyNextResolvedCompletion({ runbookId, steps });
+
+      expect(applied.kind).toBe('applied');
+      if (applied.kind !== 'applied') throw new Error(`Unexpected arm ${applied.kind}`);
+      expect(Object.hasOwn(applied.entry, 'progressionIntent')).toBe(false);
+      // The run still reached terminal — the missing intent is about the machine
+      // output, not about whether the apply ended the run.
+      expect(applied.terminal).toBe('done');
+    });
+
+    it('carries the same intent through the prepared drain twin', async () => {
+      // The fenced twin reads the identical output through the identical
+      // reader; the two paths must not be able to disagree about what the
+      // machine decided.
+      const current = await seedApplyWithOutput({
+        finalVars: {},
+        progression: { kind: 'stopped' },
+      });
+
+      const prepared = await service.prepareResolvedCompletionDrain({
+        runbookId,
+        steps,
+        capturedState: current,
+      });
+
+      expect(prepared.applied).toHaveLength(1);
+      expect(prepared.applied[0]?.progressionIntent).toEqual({ kind: 'stopped' });
+    });
+
+    it('omits progressionIntent through the prepared drain twin when the output is malformed', async () => {
+      const current = await seedApplyWithOutput({
+        finalVars: {},
+        progression: { kind: 'aborted' },
+      });
+
+      const prepared = await service.prepareResolvedCompletionDrain({
+        runbookId,
+        steps,
+        capturedState: current,
+      });
+
+      expect(prepared.applied).toHaveLength(1);
+      expect(Object.hasOwn(prepared.applied[0] ?? {}, 'progressionIntent')).toBe(false);
     });
   });
 });
