@@ -361,6 +361,21 @@ export function registerRunCommand(program: Command): void {
             // seam returns one opaque capability containing the verified run,
             // graph, and progression authority, so this launch-local path
             // cannot reconstruct or cross-wire any of them.
+            if (options.step && options.prompted && result.progression.kind === 'completed') {
+              // Only `waiting` and `completed` remain here — every other arm
+              // exits above through `progressionFailedClosed`. A completed run
+              // has no cursor left to move, so the requested jump cannot be
+              // performed. Say so: silently dropping `--step` reported success
+              // for a navigation that never happened.
+              output.error(
+                `Run ${result.progression.runId} completed during launch; --step ${options.step} cannot be applied to a completed run.`,
+                'CLAIMED_RUNBOOK_UNAVAILABLE',
+                { step: options.step, runbookId: result.progression.runId },
+              );
+              output.flush();
+              process.exitCode = 1;
+              return;
+            }
             if (options.step && options.prompted && result.progression.kind === 'waiting') {
               const gotoResolution = await buildGotoContext(output, cwd, {
                 ...(result.claimId === undefined

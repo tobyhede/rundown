@@ -1647,6 +1647,31 @@ export function parseConcatenatedJson(raw: string): unknown[] {
 }
 
 /**
+ * Flatten {@link parseConcatenatedJson} output into a list of JSON objects.
+ *
+ * The CLI writes some documents as a bare object and some inside an array
+ * (a flushed accumulator), so a caller scanning for one event type has to
+ * descend one level. Nested arrays are flattened recursively; non-object
+ * values are dropped.
+ *
+ * @param events - Parsed JSON documents, as returned by `parseConcatenatedJson`.
+ * @returns Every JSON object found, in document order.
+ */
+export function flattenEvents(events: unknown[]): Record<string, unknown>[] {
+  const flat: Record<string, unknown>[] = [];
+  for (const event of events) {
+    if (Array.isArray(event)) {
+      flat.push(...flattenEvents(event));
+      continue;
+    }
+    if (event && typeof event === 'object') {
+      flat.push(event as Record<string, unknown>);
+    }
+  }
+  return flat;
+}
+
+/**
  * Inject a reported (uncollected) delegation outcome into the active run's state.
  *
  * Writes a `delegation`-agent resolved completion at the active frame/entry so

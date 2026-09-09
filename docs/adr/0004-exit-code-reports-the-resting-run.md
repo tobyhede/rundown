@@ -24,7 +24,7 @@ and they drifted. Measured on `main`, with the failure mechanism held constant �
 an auto-executed command exiting non-zero under `FAIL STOP`, and a composing
 parent that defers to a pending sibling and keeps running:
 
-```
+```text
 run  carries the stop     exit=1     parent=running  child=stopped
 pass carries the stop     exit=0     parent=running  child=stopped
 goto carries the stop     exit=1     parent=running  child=stopped
@@ -85,5 +85,6 @@ that sibling resolves, and the exit code then reports the halt.
   that need the named run's identity already carry it separately (`stateId`,
   `childRunId`).
 - `packages/cli/__tests__/integration/exit-code-contract.test.ts` pins the rule
-  across `run`, `pass` and `goto` with one failure mechanism, so a future change
-  that moves one command cannot pass while the others stay put.
+  across all four commands in scope — `run`, `pass`, `goto` and `fail` — with
+  one failure mechanism, so a future change that moves one command cannot pass
+  while the others stay put.

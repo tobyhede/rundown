@@ -2038,7 +2038,6 @@ describe('activateRunProgression', () => {
     const selection = actorService.selectRunProgressionIntent(
       parked,
       steps,
-      { kind: 'activation' },
       progressionAuthority(parked, control),
       createEffectfulActorMutationRunner(dir),
     );

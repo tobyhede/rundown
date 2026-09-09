@@ -403,17 +403,14 @@ const { createBridgedEmitter } = await import('../../src/helpers/execution-emitt
 const { claimAndLaunch: claimAndLaunchCore } = await import(
   '../../src/helpers/runbook-pipeline.js'
 );
+const { claimAndLaunchWithProgression } = await import('./claim-and-launch-harness.js');
 
 async function claimAndLaunch(
   ctx: RunPipelineContext,
   token: string,
   input: Parameters<typeof claimAndLaunchCore>[2],
 ): ReturnType<typeof claimAndLaunchCore> {
-  return claimAndLaunchCore(ctx, token, input, async (directive) => ({
-    kind: 'waiting',
-    runId: directive.authority.runId,
-    reason: 'awaiting_input',
-  }));
+  return claimAndLaunchWithProgression(claimAndLaunchCore, ctx, token, input);
 }
 
 /**

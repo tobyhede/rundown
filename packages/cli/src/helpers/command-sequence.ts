@@ -1116,7 +1116,6 @@ export function parseJsonLines(
       artifactEntries,
       enteredSteps,
     );
-    terminal = rootScopedTerminal(obj, rootRunId) ?? terminal;
     return {
       transitions,
       terminal,

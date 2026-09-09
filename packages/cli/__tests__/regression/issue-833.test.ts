@@ -19,15 +19,22 @@ import {
 /**
  * Issue #833 (re-scoped 2026-08-27 against main @ 9eb46d2a2).
  *
- * `runExecutionLoop`'s frontier-authority arm (`execution.ts:1550-1560`)
- * refuses to disclose a persisted, not-yet-consumed delegation re-entry
- * frontier when the driving continuation carries no `deriveDelegationToken`
- * capability. On the ONE caller that opts into `returnRefusals`
- * (`delegation-completion.ts:243`) that refusal travels back as data and
- * nothing is announced. Every other caller — including `goto-workflow.ts:387`
- * — does not opt in, so the same refusal instead emits `RUNBOOK_STOPPED` and
- * the loop returns `{status:'stopped'}`, even though nothing terminal was
- * ever applied and the run is still `running` in SQLite.
+ * GREEN since Run Progression activation replaced the CLI execution loop.
+ * Retained as a regression pin on the behaviour the migration corrected.
+ *
+ * The defect this file was written against lived in the now-deleted
+ * `runExecutionLoop`. Its frontier-authority arm refused to disclose a
+ * persisted, not-yet-consumed delegation re-entry frontier when the driving
+ * continuation carried no `deriveDelegationToken` capability. On the ONE caller
+ * that opted into `returnRefusals` that refusal traveled back as data and
+ * nothing was announced; every other caller — `goto-workflow.ts` among them —
+ * did not opt in, so the same refusal emitted `RUNBOOK_STOPPED` and the loop
+ * returned `{status:'stopped'}`, even though nothing terminal had been applied
+ * and the run was still `running` in SQLite.
+ *
+ * Run Progression activation now owns this path, and its `refused` outcome is
+ * a closed arm that never fabricates a terminal (ADR 0003), which is exactly
+ * what the assertions below require.
  *
  * REACHABILITY, traced empirically against this exact commit:
  *
@@ -183,10 +190,11 @@ Child prompt.
     expect(parentAfter?.lifecycle).toBe('running');
 
     // (b) THE PIN. The CLI's own account must agree with the ground truth
-    // above: it must not claim the run stopped. Red today — the missing-
-    // deriver arm at `execution.ts:1550-1560` emits `RUNBOOK_STOPPED` (reason
+    // above: it must not claim the run stopped. The retired execution loop's
+    // missing-deriver arm emitted `RUNBOOK_STOPPED` (reason
     // `actor_context_required`) on this exact path, for a run that stayed
-    // running the whole time.
+    // running the whole time. Run Progression activation owns it now and
+    // reports the refusal as a refusal, so this pin is green.
     expect(events).not.toContainEqual(expect.objectContaining({ type: 'runbook_stopped' }));
 
     // (c) The refusal itself is still the honest report of what happened.

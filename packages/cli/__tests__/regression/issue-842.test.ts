@@ -7,24 +7,11 @@ import {
   parseConcatenatedJson,
   readRunbookState,
   readSession,
+  flattenEvents,
   runCliInProcess,
   type TestWorkspace,
   withRunTarget,
 } from '../helpers/test-utils.js';
-
-function flattenEvents(events: unknown[]): Record<string, unknown>[] {
-  const flat: Record<string, unknown>[] = [];
-  for (const event of events) {
-    if (Array.isArray(event)) {
-      flat.push(...flattenEvents(event));
-      continue;
-    }
-    if (event && typeof event === 'object') {
-      flat.push(event as Record<string, unknown>);
-    }
-  }
-  return flat;
-}
 
 // Issue #842, pinned to 5e43cc5dc: `propagateTerminalChildUpwardInner`
 // (packages/core/src/runbook/inline-parent-advance.ts:412) is documented at

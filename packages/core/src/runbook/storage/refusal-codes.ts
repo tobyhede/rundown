@@ -20,6 +20,7 @@
  * @module runbook/storage/refusal-codes
  */
 
+import type { CLISymbolicErrorCodeValues } from '../../output/zod-schemas.js';
 import type { AbandonedAttemptSetOutcome } from './execution-lease.js';
 import type { GuardedMutationResult } from './mutation-result.js';
 import type { SessionMutationRefusal } from './runbook-store.js';
@@ -29,12 +30,18 @@ import type { SessionMutationRefusal } from './runbook-store.js';
  *
  * Keys are exhaustive over {@link SessionMutationRefusal} by the `satisfies`
  * check: a kind added to the union fails compilation here until it is mapped,
- * rather than silently falling into a default arm somewhere downstream.
+ * rather than silently falling into a default arm somewhere downstream. The
+ * VALUE type is the registered symbolic-code union rather than `string`, so an
+ * unregistered code fails here too instead of reaching an envelope the output
+ * schema then refuses.
  */
 export const SESSION_REFUSAL_CODE_BY_KIND = {
   execution_in_progress: 'EXECUTION_IN_PROGRESS',
   recovery_required: 'RECOVERY_REQUIRED',
-} as const satisfies Record<SessionMutationRefusal['kind'], string>;
+} as const satisfies Record<
+  SessionMutationRefusal['kind'],
+  (typeof CLISymbolicErrorCodeValues)[number]
+>;
 
 /**
  * Shape of {@link SESSION_REFUSAL_CODE_BY_KIND}, for compile-time-only
@@ -60,7 +67,7 @@ export const TRANSACTIONAL_REFUSAL_CODE_BY_KIND = {
 } as const satisfies Record<
   | Exclude<GuardedMutationResult<never>, { readonly kind: 'committed' }>['kind']
   | AbandonedAttemptSetOutcome['kind'],
-  string
+  (typeof CLISymbolicErrorCodeValues)[number]
 >;
 
 /**

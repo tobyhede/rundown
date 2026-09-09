@@ -155,6 +155,14 @@ export interface ReportDelegatedTerminalDeps {
 export type DelegatedTerminalReportResult =
   | { readonly kind: 'reported' }
   | { readonly kind: 'duplicate' }
+  /**
+   * The child's delegation was cancelled, so its terminal records nothing.
+   *
+   * Distinct from `duplicate`: nothing was recorded because the delegation is
+   * gone, not because it was already recorded. The catch-all that used to end
+   * this function reported the two under one kind.
+   */
+  | { readonly kind: 'cancelled' }
   | { readonly kind: 'refused' }
   | { readonly kind: 'not-applicable' }
   | { readonly kind: 'linkage-cycle'; readonly trip: LinkageCycleTrip };
@@ -194,8 +202,22 @@ export async function reportDelegatedTerminal(
     childState,
     result: projection.result,
   });
-  if (recorded === 'blocked') return { kind: 'refused' };
-  if (recorded === 'not-applicable') return { kind: 'not-applicable' };
-  if (recorded === 'recorded') return { kind: 'reported' };
-  return { kind: 'duplicate' };
+  switch (recorded) {
+    case 'recorded':
+      return { kind: 'reported' };
+    case 'duplicate':
+      return { kind: 'duplicate' };
+    case 'cancelled':
+      return { kind: 'cancelled' };
+    case 'blocked':
+      return { kind: 'refused' };
+    case 'not-applicable':
+      return { kind: 'not-applicable' };
+    default: {
+      // Exhaustive over every `recordChildCompletion` outcome: a sixth is a
+      // build error here rather than a silent collapse into `duplicate`.
+      const _exhaustive: never = recorded;
+      throw new Error(`Unhandled child completion outcome: ${String(_exhaustive)}`);
+    }
+  }
 }

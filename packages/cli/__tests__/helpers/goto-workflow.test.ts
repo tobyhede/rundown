@@ -78,11 +78,16 @@ jest.unstable_mockModule('../../src/helpers/lifecycle-seam-factory', () => ({
 
 // GOTO owns only rendering and verbatim directive forwarding. Keep the shared
 // driver structural so these tests cannot accidentally pin its internal loop.
+// ONE mirror of the production predicate, used by the module factory and by
+// the per-test reset below. Two copies could drift, and a factory copy that
+// no longer matched the reset copy would silently change what "failed closed"
+// means half-way through the suite.
+const failedClosed = (outcome: RunProgressionOutcome): boolean =>
+  ['refused', 'failed', 'stopped'].includes(outcome.kind);
+
 jest.unstable_mockModule('../../src/helpers/run-progression-adapters', () => ({
   driveRunProgression: mockFn<() => Promise<RunProgressionOutcome>>(),
-  progressionFailedClosed: jest.fn((outcome: RunProgressionOutcome) =>
-    ['refused', 'failed', 'stopped'].includes(outcome.kind),
-  ),
+  progressionFailedClosed: jest.fn(failedClosed),
 }));
 
 // Mock runbook-loader
@@ -198,9 +203,7 @@ beforeEach(() => {
     runId: DEFAULT_RUNBOOK_ID,
     reason: 'awaiting_input',
   });
-  jest
-    .mocked(progressionFailedClosed)
-    .mockImplementation((outcome) => ['refused', 'failed', 'stopped'].includes(outcome.kind));
+  jest.mocked(progressionFailedClosed).mockImplementation(failedClosed);
 });
 
 // ACCEPTED MUTATION SURVIVORS in goto-workflow.ts (#485).

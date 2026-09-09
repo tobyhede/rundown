@@ -167,6 +167,24 @@ describe('exit-code contract: the exit code reports the resting run, not the nam
       expect(parent!.lifecycle).toBe('running');
     });
 
+    it('`fail` exits 0 when the same child stops during the transition', async () => {
+      // `fail` is in scope for the rule (ADR 0004 § Scope) and was the one
+      // command the contract named but did not exercise. Same mechanism as
+      // `pass`: the child's own step 2 command exits non-zero under FAIL STOP,
+      // so the verb in flight is the only thing that differs.
+      const parentRunId = await startParent(DEFERRING_PARENT);
+      await writeFile(join(workspace.cwd, 'child.runbook.md'), CHILD_FAILS_AT_STEP_2);
+
+      const launch = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+      expect(launch.exitCode).toBe(0);
+
+      const result = await runCliInProcess(await withRunTarget(['fail'], workspace), workspace);
+
+      expect(result.exitCode).toBe(0);
+      const parent = await readRunbookState(workspace, parentRunId);
+      expect(parent!.lifecycle).toBe('running');
+    });
+
     it('keeps the absorbed child stop visible on the JSON stream at exit 0', async () => {
       await startParent(DEFERRING_PARENT);
       await writeFile(join(workspace.cwd, 'child.runbook.md'), CHILD_FAILS_AT_STEP_1);
@@ -192,6 +210,31 @@ describe('exit-code contract: the exit code reports the resting run, not the nam
       const parent = await readRunbookState(workspace, parentRunId);
       expect(parent!.lifecycle).toBe('stopped');
     });
+
+    // The mirror of the deferring block: the same three verbs, the same
+    // mechanism, the ONE substep that aggregates immediately — so a change
+    // that moved one command's exit could not pass here while the others
+    // stayed put either.
+    it.each([
+      ['pass', ['pass']],
+      ['goto', ['goto', '2']],
+      ['fail', ['fail']],
+    ] as const)(
+      '`%s` exits 1 when advancing the parent reaches its own STOP',
+      async (_verb, argv) => {
+        const parentRunId = await startParent(HALTING_PARENT);
+        await writeFile(join(workspace.cwd, 'child.runbook.md'), CHILD_FAILS_AT_STEP_2);
+
+        const launch = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
+        expect(launch.exitCode).toBe(0);
+
+        const result = await runCliInProcess(await withRunTarget([...argv], workspace), workspace);
+
+        expect(result.exitCode).toBe(1);
+        const parent = await readRunbookState(workspace, parentRunId);
+        expect(parent!.lifecycle).toBe('stopped');
+      },
+    );
   });
 
   describe('no composing parent', () => {

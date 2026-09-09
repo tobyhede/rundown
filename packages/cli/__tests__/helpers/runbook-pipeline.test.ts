@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { claimAndLaunchWithProgression } from './claim-and-launch-harness.js';
 import type {
   ClaimId,
   ClaimRecord,
@@ -41,7 +42,6 @@ import type {
   PreparedRunbook,
   RunPipelineContext,
   RunnableRunbook,
-  claimAndLaunch as claimAndLaunchType,
 } from '../../src/helpers/runbook-pipeline.js';
 import { assertVariant } from './assert-variant.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
@@ -577,19 +577,6 @@ async function startRunbook(
     ...options,
     driveProgression: (directive, sink) => mockDriveProgression(directive, sink),
   });
-}
-
-async function claimAndLaunchWithProgression(
-  claimAndLaunch: typeof claimAndLaunchType,
-  ctx: RunPipelineContext,
-  token: string,
-  input: Parameters<typeof claimAndLaunch>[2],
-): ReturnType<typeof claimAndLaunch> {
-  return claimAndLaunch(ctx, token, input, async (directive) => ({
-    kind: 'waiting',
-    runId: directive.authority.runId,
-    reason: 'awaiting_input',
-  }));
 }
 
 function makeState(id: RunId, overrides: Record<string, unknown> = {}): Record<string, unknown> {

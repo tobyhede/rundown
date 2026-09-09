@@ -18,6 +18,38 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 
+// One fixture pair for both cases in this file: they differ only in HOW the
+// renderer breaks (one-shot vs. permanently), never in the runbook that drives
+// it, so the DELEGATE substep and the following fenced command step are shared.
+const PARENT_RUNBOOK = [
+  '# Parent',
+  '',
+  '## 1. Fan-out',
+  '',
+  '- PASS ALL CONTINUE',
+  '- FAIL ANY STOP',
+  '',
+  '### 1.1 Child',
+  '',
+  '- DELEGATE',
+  '',
+  '- child.runbook.md',
+  '',
+  '## 2. Command step',
+  '',
+  '- PASS COMPLETE',
+  '- FAIL STOP',
+  '',
+  '```bash',
+  'echo issue-853',
+  '```',
+  '',
+].join('\n');
+
+const CHILD_RUNBOOK = ['# Child', '', '## 1. Done', '', '- PASS COMPLETE', '', 'Done.', ''].join(
+  '\n',
+);
+
 // Observation commit gate (#853), CLI seam: when the renderer breaks mid-way
 // through the collect continuation's observation stream, the command must fail
 // closed (non-zero exit) while the run rests at its last COMMITTED boundary —
@@ -38,34 +70,8 @@ describe('collect observation gate (#853)', () => {
   });
 
   it('exits non-zero on a broken renderer and leaves the run at its committed boundary', async () => {
-    const parent = [
-      '# Parent',
-      '',
-      '## 1. Fan-out',
-      '',
-      '- PASS ALL CONTINUE',
-      '- FAIL ANY STOP',
-      '',
-      '### 1.1 Child',
-      '',
-      '- DELEGATE',
-      '',
-      '- child.runbook.md',
-      '',
-      '## 2. Command step',
-      '',
-      '- PASS COMPLETE',
-      '- FAIL STOP',
-      '',
-      '```bash',
-      'echo issue-853',
-      '```',
-      '',
-    ].join('\n');
-    const child = ['# Child', '', '## 1. Done', '', '- PASS COMPLETE', '', 'Done.', ''].join('\n');
-
-    await writeFile(join(workspace.runbooksDir(), 'parent.runbook.md'), parent);
-    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), child);
+    await writeFile(join(workspace.runbooksDir(), 'parent.runbook.md'), PARENT_RUNBOOK);
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), CHILD_RUNBOOK);
 
     const start = await runCliInProcess('run parent.runbook.md', workspace);
     expect(start.exitCode).toBe(0);
@@ -154,34 +160,8 @@ describe('collect observation gate (#853)', () => {
   }, 20_000);
 
   it('keeps the failure typed when the reporting channel stays broken through the tail render', async () => {
-    const parent = [
-      '# Parent',
-      '',
-      '## 1. Fan-out',
-      '',
-      '- PASS ALL CONTINUE',
-      '- FAIL ANY STOP',
-      '',
-      '### 1.1 Child',
-      '',
-      '- DELEGATE',
-      '',
-      '- child.runbook.md',
-      '',
-      '## 2. Command step',
-      '',
-      '- PASS COMPLETE',
-      '- FAIL STOP',
-      '',
-      '```bash',
-      'echo issue-853',
-      '```',
-      '',
-    ].join('\n');
-    const child = ['# Child', '', '## 1. Done', '', '- PASS COMPLETE', '', 'Done.', ''].join('\n');
-
-    await writeFile(join(workspace.runbooksDir(), 'parent.runbook.md'), parent);
-    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), child);
+    await writeFile(join(workspace.runbooksDir(), 'parent.runbook.md'), PARENT_RUNBOOK);
+    await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), CHILD_RUNBOOK);
 
     const start = await runCliInProcess('run parent.runbook.md', workspace);
     expect(start.exitCode).toBe(0);

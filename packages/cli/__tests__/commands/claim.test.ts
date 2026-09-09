@@ -817,6 +817,11 @@ rd echo --result fail
       const claimed = await runCliInProcess(`claim ${token}`, workspace);
 
       expect(claimed.exitCode).toBe(1);
+      // Reported by ASSIGNING `process.exitCode` and returning, not by calling
+      // `process.exit`, which tears the process down while stdout writes the
+      // flush above only queued may still be pending. The neighbouring failure
+      // arm in this command already returns; this one used to abort.
+      expect(claimed.exitIntercepted).toBeFalsy();
       const emitted = parseConcatenatedJson(claimed.stdout).filter(
         (v): v is Record<string, unknown> => typeof v === 'object' && v !== null,
       );

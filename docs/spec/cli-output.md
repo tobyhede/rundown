@@ -1896,7 +1896,7 @@ Error RD-309: Invalid persisted run state - Invalid runbook state for "rd_9e725b
 
 `rundown collect` shares the transactional refusal vocabulary documented above.
 The codes reach a collect's output at two different positions — the command's
-own refusal envelope, and streamed observations from follow-on execution-loop
+own refusal envelope, and streamed observations from follow-on Run Progression
 work — and the two mean different things.
 
 #### Collect's own refusal envelope
@@ -1967,25 +1967,27 @@ report, that grandparent too.
 
 #### Streamed `error_occurred` observations
 
-A collect whose aggregation advances the delegating run into execution-loop work
-streams that work's events through the same emitter, on the same `seq` counter.
-The loop's command fence commits under captured authority, so it can lose the
-compare-and-swap that collect's own seam never performs. When it does, the
-refusal is observed as an `error_occurred` line carrying the same code
+A collect whose aggregation advances the delegating run into Run Progression
+work streams that work's events through the same emitter, on the same `seq`
+counter. The progression's command fence commits under captured authority, so it
+can lose the compare-and-swap that collect's own seam never performs. When it
+does, the refusal is observed as an `error_occurred` line carrying the same code
 vocabulary — `STALE_CLAIM`, `CONCURRENT_MODIFICATION`, `EXECUTION_IN_PROGRESS`,
 `RECOVERY_REQUIRED`, or `RUN_TARGET_UNAVAILABLE`. It emits no `runbook_stopped`:
 the refused follow-on transition committed no terminal state.
 
 **The collection is already committed when this is observed.** Collect's own
-aggregate transaction — the drain's applies, any delegation re-entry frontier
-consumption, the terminal session release, and a delegating grandparent's
-outcome row — lands in full _before_ any execution-loop work begins; the loop is
-post-commit follow-on work driven from the state that commit produced. Only the
-**refused follow-on transition** committed nothing, and precisely because that
-invocation committed nothing it owns no terminal cleanup either — releasing
-there would let a losing claimant tear down the winner's run. The delegating run
-is therefore left exactly where the aggregation put it: applied, non-terminal,
-and still session-targeted.
+aggregate transaction — the drain's applies, the terminal session release, and a
+delegating grandparent's outcome row — lands in full _before_ any Run
+Progression work begins; that progression is post-commit follow-on work driven
+from the state that commit produced. Frontier projection and entry are no part
+of the aggregate either: they are their own Run Progression turn after it, so
+their refusals arrive here as streamed observations too. Only the **refused
+follow-on transition** committed nothing, and precisely because that invocation
+committed nothing it owns no terminal cleanup either — releasing there would let
+a losing claimant tear down the winner's run. The delegating run is therefore
+left exactly where the aggregation put it: applied, non-terminal, and still
+session-targeted.
 
 **Do not re-run the collect to recover.** The aggregation is durable and is
 never applied twice — a repeated bare `rundown collect` on the post-aggregation

@@ -225,13 +225,19 @@ describe('issue #777: run-start CAS exhaustion reports concurrent_modification',
     // narrowing at the point the loop checks it.
     const control = { hammering: true };
     const sideband = new RunbookStateManager(workspace.cwd);
-    let hammerIterations = 0;
+    let hammerAttempts = 0;
+    let hammerCommits = 0;
     const hammerPromise = (async () => {
-      while (control.hammering && Date.now() < hammerDeadline && hammerIterations < 20_000) {
-        hammerIterations += 1;
-        await sideband
-          .update(prepared.runId, { retryCount: hammerIterations })
-          .catch(() => undefined);
+      while (control.hammering && Date.now() < hammerDeadline && hammerAttempts < 20_000) {
+        hammerAttempts += 1;
+        // Counted only once `update` RESOLVES. A rejected write advanced the
+        // old counter just the same, so the sanity gate below could be
+        // satisfied entirely by writes that never committed.
+        const committed = await sideband
+          .update(prepared.runId, { retryCount: hammerAttempts })
+          .then(() => true)
+          .catch(() => false);
+        if (committed) hammerCommits += 1;
       }
     })();
 
@@ -245,23 +251,28 @@ describe('issue #777: run-start CAS exhaustion reports concurrent_modification',
       }
     };
 
-    const result = await startRunbook(ctx, prepared, {
-      file: 'solo.runbook.md',
-      prompted: true,
-      driveProgression: async (directive) => ({
-        kind: 'waiting',
-        runId: directive.authority.runId,
-        reason: 'awaiting_input',
-      }),
-    });
-    control.hammering = false;
-    await hammerPromise;
+    let result: Awaited<ReturnType<typeof startRunbook>>;
+    try {
+      result = await startRunbook(ctx, prepared, {
+        file: 'solo.runbook.md',
+        prompted: true,
+        driveProgression: async (directive) => ({
+          kind: 'waiting',
+          runId: directive.authority.runId,
+          reason: 'awaiting_input',
+        }),
+      });
+    } finally {
+      control.hammering = false;
+      await hammerPromise;
+      sharedStore.mutateState = realMutateState;
+    }
 
     // Sanity: genuine sustained contention actually happened — comfortably
-    // more sibling writes landed than the launch had attempts to spend —
+    // more sibling writes COMMITTED than the launch had attempts to spend —
     // rather than the pinning assertion below passing (or failing) for an
     // unrelated reason.
-    expect(hammerIterations).toBeGreaterThan(DEFAULT_MUTATE_ATTEMPTS);
+    expect(hammerCommits).toBeGreaterThan(DEFAULT_MUTATE_ATTEMPTS);
 
     expect(result.ok).toBe(false);
     if (result.ok) return;

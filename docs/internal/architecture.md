@@ -934,12 +934,14 @@ The machine owns the frontier sequence explicitly:
    `__progression-refused`; it never fabricates a terminal.
 
 `projectAndConsumeReEntryFrontierFenced` is the machine actor seam. It returns
-`none`, `projected`, `projection_refused`, `consume_failed`, `claim_superseded`,
-`recovery_required`, `aggregate_recovery_required`, or `run_missing`. The last
-four preserve the storage refusal's own taxonomy. `consume_failed` is RD-829 and
-retryable; projection mismatch is RD-821 and permanent; missing authority and
-superseded authority both require authority rather than pretending the run
-stopped.
+`reselect`, `projected`, `projection_refused`, `consume_failed`,
+`claim_superseded`, `recovery_required`, `aggregate_recovery_required`, or
+`run_missing`. (`none` belongs to the inner `PreparedReEntryProjection`
+contract; the fenced seam reloads the run and answers `reselect` instead.) The
+last four preserve the storage refusal's own taxonomy. `consume_failed` is
+RD-829 and retryable; projection mismatch is RD-821 and permanent; missing
+authority and superseded authority both require authority rather than pretending
+the run stopped.
 
 Three consequences worth stating explicitly.
 

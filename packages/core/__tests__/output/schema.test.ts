@@ -1,4 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
+import { ErrorCodes } from '../../src/errors/codes.js';
 import {
   isActionResponse,
   isClaimResponse,
@@ -22,6 +23,7 @@ import {
   CLISymbolicErrorCodeValues,
   CLIWarningCodes,
   ErrorCodeSchema,
+  RundownErrorCodeValues,
   WarningCodeSchema,
   WarningResponseSchema,
 } from '../../src/output/zod-schemas.js';
@@ -262,6 +264,39 @@ describe('ErrorCodeSchema code registry', () => {
       ErrorResponseSchema.safeParse({
         kind: 'error',
         error: `transactional mutation refused with ${code}`,
+        code,
+      }).success,
+    ).toBe(true);
+  });
+
+  it('registers OBSERVATION_DELIVERY_FAILED in the symbolic registry (#853)', () => {
+    // The observation commit gate's own envelope code. The `it.each` above
+    // sweeps the whole list, so a code REMOVED from the registry would make
+    // that sweep quietly shorter rather than fail — this names it.
+    expect(CLISymbolicErrorCodeValues).toContain('OBSERVATION_DELIVERY_FAILED');
+    expect(ErrorCodeSchema.safeParse('OBSERVATION_DELIVERY_FAILED').success).toBe(true);
+    expect(
+      ErrorResponseSchema.safeParse({
+        kind: 'error',
+        error: 'the reporting channel is broken',
+        code: 'OBSERVATION_DELIVERY_FAILED',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('registers CONCURRENT_STATE_MODIFICATION (RD-308) in the Rundown registry (#777)', () => {
+    // RD-308 is a RUNDOWN code, not a symbolic one, so it belongs to the other
+    // half of `ErrorCodeSchema`'s enum. A spent run-start CAS budget now
+    // surfaces under it through the launch pipeline, so a consumer validating
+    // against the published schema must accept an envelope carrying it.
+    const code = ErrorCodes.CONCURRENT_STATE_MODIFICATION.code;
+    expect(RundownErrorCodeValues).toContain(code);
+    expect(CLISymbolicErrorCodeValues).not.toContain(code);
+    expect(ErrorCodeSchema.safeParse(code).success).toBe(true);
+    expect(
+      ErrorResponseSchema.safeParse({
+        kind: 'error',
+        error: 'Run rd_9e725b142d81dabcefb9e04919568fcd changed while latching inline launch',
         code,
       }).success,
     ).toBe(true);

@@ -2101,9 +2101,9 @@ async function driveProgression(
     const progressionIntent = await actorService.selectRunProgressionIntent(
       currentState,
       steps,
-      progressionFeedback,
       authority,
       actorMutationRunner,
+      progressionFeedback,
     );
     progressionFeedback = { kind: 'activation' };
     if (progressionIntent.kind === 'apply_completion') {

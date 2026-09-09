@@ -16,7 +16,7 @@
 // the compiler, not a reader, is what keeps "every arm" true.
 
 import { describe, it, expect } from '@jest/globals';
-import { ErrorCodes, assertRunId } from '@rundown-org/core';
+import { ErrorCodes, ErrorResponseSchema, assertRunId } from '@rundown-org/core';
 import { claimFailureToEnvelope, type ClaimFailureEnvelope } from '../../src/commands/claim.js';
 import type { ClaimFailure } from '../../src/helpers/runbook-pipeline.js';
 
@@ -222,6 +222,33 @@ const ARM_CASES = {
 describe('claimFailureToEnvelope', () => {
   it.each(Object.entries(ARM_CASES))('renders %s', (_reason, arm) => {
     expect(claimFailureToEnvelope(arm.failure)).toEqual(arm.expected);
+  });
+
+  // `RunbookStartFailure.code` is a UNION, not the single RD-816 the table arm
+  // above carries: a spent run-start CAS budget surfaces under RD-308 (#777).
+  // The passthrough must forward whichever of the two it is handed, and RD-308
+  // must survive the trip as the retryable code it is — collapsing it back to
+  // RD-816 tells an agent a contention refusal is permanent.
+  it('forwards RD-308 on the launch-failed arm as readily as RD-816 (#777)', () => {
+    const envelope = claimFailureToEnvelope({
+      reason: 'launch-failed',
+      runbook: 'child.runbook.md',
+      code: ErrorCodes.CONCURRENT_STATE_MODIFICATION.code,
+      cause: 'Run rd_9e725b142d81dabcefb9e04919568fcd changed while creating the run',
+      details: { runbookName: 'child.runbook.md', runbook: 'child.runbook.md' },
+    });
+
+    expect(envelope.code).toBe(ErrorCodes.CONCURRENT_STATE_MODIFICATION.code);
+    expect(envelope.code).not.toBe(ErrorCodes.LAUNCH_FAILED.code);
+    // And the envelope it produces is one a schema-validating consumer accepts.
+    expect(
+      ErrorResponseSchema.safeParse({
+        kind: 'error',
+        error: envelope.message,
+        code: envelope.code,
+        details: envelope.details,
+      }).success,
+    ).toBe(true);
   });
 
   // The defect #807 names, stated as the property rather than as three separate

@@ -75,15 +75,30 @@ export interface InlineChildDispatchContext {
  * an {@link ObservationDeliveryError} already thrown beneath (the gated sink's
  * own conversion) passes through unwrapped.
  *
+ * Each wrapper is memoized per property, so reading the same method twice
+ * yields the same function. A `get` trap with no such cache mints a fresh closure on
+ * every read, which breaks identity comparison (`gated.flush === gated.flush`
+ * is false), defeats keying a Map or Set on a method, and makes a
+ * `toHaveBeenCalled`-style spy attached to one read invisible to the next.
+ *
  * @param output - The command's real output emitter.
  * @returns A delegating proxy with the delivery-failure conversion applied.
  */
 function gateProgressionOutput(output: OutputEmitter): OutputEmitter {
+  // Keyed by property, and holding the real method alongside its wrapper, so a
+  // method REPLACED underneath (a suite spying on the prototype mid-composition)
+  // is re-wrapped rather than served stale.
+  const wrapped = new Map<
+    string | symbol,
+    { readonly method: unknown; readonly gate: (...args: unknown[]) => unknown }
+  >();
   return new Proxy(output, {
     get(target, prop) {
       const value = Reflect.get(target, prop, target) as unknown;
       if (typeof value !== 'function') return value;
-      return (...args: unknown[]): unknown => {
+      const cached = wrapped.get(prop);
+      if (cached?.method === value) return cached.gate;
+      const gate = (...args: unknown[]): unknown => {
         try {
           return Reflect.apply(value as (...a: unknown[]) => unknown, target, args);
         } catch (cause) {
@@ -91,6 +106,8 @@ function gateProgressionOutput(output: OutputEmitter): OutputEmitter {
           throw new ObservationDeliveryError(cause);
         }
       };
+      wrapped.set(prop, { method: value, gate });
+      return gate;
     },
   });
 }
@@ -148,6 +165,13 @@ export function buildInlineChildDispatch(ctx: InlineChildDispatchContext): Inlin
 /** Context captured by {@link buildTerminalPropagation}. Runtime references only. */
 export interface TerminalPropagationContext {
   readonly manager: RunbookStateManager;
+  /**
+   * The composition's ALREADY-RESOLVED session service, forwarded to the
+   * parent activation. `driveRunProgression` constructs one when its context
+   * omits it, so leaving this out silently swapped an injected service (and
+   * its injected clock) for a default one part-way up an inline chain.
+   */
+  readonly sessionService: SessionService;
   readonly authority: Extract<RunProgressionDirective, { kind: 'activate' }>['authority'];
   readonly ancestorAuthorities?: readonly RunProgressionAuthority[];
   readonly progressionSinks?: Map<string, ExecutionEventEmitter>;
@@ -275,6 +299,7 @@ export async function driveRunProgression(
       }),
       propagateTerminal: buildTerminalPropagation({
         manager: ctx.manager,
+        sessionService,
         authority: activation.authority,
         cwd: ctx.cwd,
         output: ctx.output,
@@ -374,6 +399,7 @@ export function buildTerminalPropagation(ctx: TerminalPropagationContext): Termi
           manager: ctx.manager,
           cwd: ctx.cwd,
           output: gatedOutput,
+          sessionService: ctx.sessionService,
           ...(ctx.ancestorAuthorities === undefined
             ? {}
             : { ancestorAuthorities: ctx.ancestorAuthorities }),

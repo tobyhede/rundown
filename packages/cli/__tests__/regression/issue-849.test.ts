@@ -18,23 +18,10 @@ import {
   findActionOutput,
   parseConcatenatedJson,
   requireFrontierToken,
+  flattenEvents,
   runCliInProcess,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-
-function flattenEvents(events: unknown[]): Record<string, unknown>[] {
-  const flat: Record<string, unknown>[] = [];
-  for (const event of events) {
-    if (Array.isArray(event)) {
-      flat.push(...flattenEvents(event));
-      continue;
-    }
-    if (event && typeof event === 'object') {
-      flat.push(event as Record<string, unknown>);
-    }
-  }
-  return flat;
-}
 
 // Issue #849. `docs/spec/cli-output.md:1947` and `docs/reference/cli.md:949-951`
 // both state that when a `rundown collect` aggregation advances the delegating

@@ -22,6 +22,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { activateForTest } from '../helpers/run-progression-activation.js';
 import {
   DelegationScanService,
   RunbookActorService,
@@ -29,7 +30,6 @@ import {
   RunbookLifecycleCommandService,
   RunbookStateManager,
   SessionService,
-  activateRunProgression,
   assertRunId,
   buildFrameKey,
   createEffectfulActorMutationRunner,
@@ -206,23 +206,13 @@ describe('entry projection ordering: machine credential issuance agrees with com
       throw new Error(`expected applied, got ${outcome.kind}: ${JSON.stringify(outcome)}`);
     }
     if (outcome.progression.kind === 'activate') {
-      const progressed = await activateRunProgression(
-        outcome.progression.authority,
-        {
-          manager,
-          actorService,
-          sessionService,
-          actorMutationRunner: createEffectfulActorMutationRunner(tmp),
-          loadSteps: () => steps,
-          sink: { emit() {} },
-          dispatchInlineChild: async () => ({ kind: 'waiting' }),
-          propagateTerminal: async () => ({ kind: 'propagated' }),
-        },
-        outcome.progression.entryBoundary,
-      );
-      if (progressed.kind === 'failed' || progressed.kind === 'refused') {
-        throw new Error(`expected progression, got ${JSON.stringify(progressed)}`);
-      }
+      await activateForTest(outcome.progression, {
+        manager,
+        actorService,
+        sessionService,
+        tmp,
+        steps,
+      });
     }
   }
 

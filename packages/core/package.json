@@ -7,32 +7,32 @@
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
     "./session-reader": {
-      "import": "./dist/runbook/session-reader.js",
-      "types": "./dist/runbook/session-reader.d.ts"
+      "types": "./dist/runbook/session-reader.d.ts",
+      "import": "./dist/runbook/session-reader.js"
     },
     "./testing/effective-vars": {
-      "import": "./dist/testing/effective-vars.js",
-      "types": "./dist/testing/effective-vars.d.ts"
+      "types": "./dist/testing/effective-vars.d.ts",
+      "import": "./dist/testing/effective-vars.js"
     },
     "./testing/claim-fixtures": {
-      "import": "./dist/testing/claim-fixtures.js",
-      "types": "./dist/testing/claim-fixtures.d.ts"
+      "types": "./dist/testing/claim-fixtures.d.ts",
+      "import": "./dist/testing/claim-fixtures.js"
     },
     "./testing/delegation-fixtures": {
-      "import": "./dist/testing/delegation-fixtures.js",
-      "types": "./dist/testing/delegation-fixtures.d.ts"
+      "types": "./dist/testing/delegation-fixtures.d.ts",
+      "import": "./dist/testing/delegation-fixtures.js"
     },
     "./testing/session-fixtures": {
-      "import": "./dist/testing/session-fixtures.js",
-      "types": "./dist/testing/session-fixtures.d.ts"
+      "types": "./dist/testing/session-fixtures.d.ts",
+      "import": "./dist/testing/session-fixtures.js"
     },
     "./testing/runbook-store": {
-      "import": "./dist/testing/runbook-store.js",
-      "types": "./dist/testing/runbook-store.d.ts"
+      "types": "./dist/testing/runbook-store.d.ts",
+      "import": "./dist/testing/runbook-store.js"
     }
   },
   "files": [

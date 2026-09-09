@@ -244,3 +244,29 @@ describe('CONTENTION_LAUNCH_CODES', () => {
     expect(CONTENTION_LAUNCH_CODES.has(ErrorCodes.LAUNCH_FAILED.code)).toBe(false);
   });
 });
+
+describe('sessionRefusalRecovery', () => {
+  // Three launch arms answer "may the caller just try again?" for a session
+  // ownership refusal — child adoption, the launch pipeline, and the inline
+  // latch's own commit. Each had its own copy of the ternary, and the launch
+  // arm's copy had drifted to an unconditional `retryable`, which told an
+  // operator holding a `recovery_required` run to repeat the one gesture that
+  // can never clear it.
+  it.each([
+    ['execution_in_progress', 'retryable'],
+    ['recovery_required', 'permanent'],
+  ] as const)('classifies %s as %s', async (kind, expected) => {
+    const { sessionRefusalRecovery } = await import('../../src/services/execution.js');
+    const { assertRunId } = await import('@rundown-org/core');
+    const refusal = {
+      kind,
+      runId: assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+      message: `run is ${kind}`,
+      ...(kind === 'recovery_required' ? { epoch: 2 } : {}),
+    };
+
+    expect(sessionRefusalRecovery(refusal as Parameters<typeof sessionRefusalRecovery>[0])).toBe(
+      expected,
+    );
+  });
+});

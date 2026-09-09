@@ -338,7 +338,8 @@ export function registerClaimCommand(program: Command): void {
 
             output.flush();
             if (progressionFailedClosed(result.progression)) {
-              process.exit(1);
+              process.exitCode = 1;
+              return;
             }
           },
           { text: options.text },

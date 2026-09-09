@@ -70,6 +70,23 @@ import {
   makeDelegationCredentialDescriptor,
 } from '../../src/testing/delegation-fixtures.js';
 
+/**
+ * The subset of an XState state-node config these tests read.
+ *
+ * Module-scoped so every traversal in this file shares one shape rather than
+ * re-casting the generated graph through `any` at each call site.
+ */
+interface TestStateConfig {
+  readonly initial?: unknown;
+  readonly states?: Readonly<Record<string, TestStateConfig>>;
+  readonly tags?: readonly unknown[];
+  readonly invoke?: {
+    readonly src?: unknown;
+    readonly onDone?: unknown;
+    readonly onError?: unknown;
+  };
+}
+
 describe('runbook compiler', () => {
   /** Input type: Resolved step variants without the `kind` discriminant. */
   type StepInput =
@@ -9659,30 +9676,40 @@ echo hi
 \`\`\`
 `);
       const machine = compileRunbookToMachine(steps);
-      const states = machine.config.states as Record<string, any>;
+      const states = (machine.config.states ?? {}) as Readonly<Record<string, TestStateConfig>>;
 
-      const targets = new Set<string>();
-      const collect = (node: unknown): void => {
+      const collectTargets = (node: unknown, into: Set<string>): void => {
         if (node === null || typeof node !== 'object') return;
         if (!Array.isArray(node) && typeof (node as { target?: unknown }).target === 'string') {
-          targets.add((node as { target: string }).target);
+          into.add((node as { target: string }).target);
         }
-        for (const value of Object.values(node as Record<string, unknown>)) collect(value);
+        for (const value of Object.values(node as Record<string, unknown>)) {
+          collectTargets(value, into);
+        }
       };
-      collect(states);
+
+      // Every target anywhere in the machine, used ONLY for the absolute,
+      // parent-qualified form `#<parentId>.<child>` — the one form that can
+      // legitimately name a child from outside its own parent.
+      const allTargets = new Set<string>();
+      collectTargets(states, allTargets);
 
       const unreachable: string[] = [];
       for (const [stateId, config] of Object.entries(states)) {
-        const children = config.states as Record<string, unknown> | undefined;
+        const children = config.states;
         if (!children) continue;
+        // Bare (`idle`) and relative (`.idle`) targets resolve against the
+        // ENCLOSING parent, so they are collected per parent. Scanning the
+        // whole machine let a child under parent A be counted as reached by an
+        // identically named sibling's target under parent B.
+        const localTargets = new Set<string>();
+        collectTargets(config, localTargets);
         for (const childName of Object.keys(children)) {
           if (childName === config.initial) continue;
-          const reached = [...targets].some(
-            (target) =>
-              target === childName ||
-              target === `.${childName}` ||
-              target.endsWith(`.${childName}`),
-          );
+          const reached =
+            localTargets.has(childName) ||
+            localTargets.has(`.${childName}`) ||
+            allTargets.has(`#${stateId}.${childName}`);
           if (!reached) unreachable.push(`${stateId}.${childName}`);
         }
       }
@@ -9711,6 +9738,36 @@ echo hi
           '#STOPPED',
         );
       }).toThrow(/unknown relative target "\.__missing"/);
+    });
+
+    it('accepts a parent-qualified onError target whose parent id contains a period', () => {
+      // `resolveSideEffectTransitionTarget` split `#<parent>.<child>` at the
+      // FIRST period, so a parent id carrying one — which an author-chosen step
+      // name can produce — was cut in half and the target rejected as unknown.
+      // The leaf substate name never contains a period, so the LAST one is the
+      // only correct split point.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const dotted = {
+        'step::1.5': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            '__progression-refused': {},
+            '__progression-project-frontier': {
+              tags: [PENDING_MACHINE_EFFECT_TAG],
+              invoke: {
+                src: 'reEntryFrontierActor',
+                onDone: { target: '#step::1.5.__progression-refused' },
+                onError: { target: '#step::1.5.__progression-refused' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+
+      expect(() => {
+        validateGraphForTest(dotted, 'step::1.5', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).not.toThrow();
     });
 
     it('rejects side-effect child states missing PENDING_MACHINE_EFFECT_TAG', () => {
@@ -10448,17 +10505,6 @@ echo hi
   });
 
   describe('ARTIFACTS entry resolution', () => {
-    interface TestStateConfig {
-      readonly initial?: unknown;
-      readonly states?: Readonly<Record<string, TestStateConfig>>;
-      readonly tags?: readonly unknown[];
-      readonly invoke?: {
-        readonly src?: unknown;
-        readonly onDone?: unknown;
-        readonly onError?: unknown;
-      };
-    }
-
     function isRecord(value: unknown): value is Record<string, unknown> {
       return typeof value === 'object' && value !== null && !Array.isArray(value);
     }

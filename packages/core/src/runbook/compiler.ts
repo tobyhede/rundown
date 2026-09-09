@@ -135,6 +135,7 @@ import type { ExecutionUnitEntry } from './execution-unit-entry.js';
 import type { FencedReEntryProjection } from './re-entry-frontier.js';
 import {
   FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
+  FRONTIER_CONSUME_FAILED_MESSAGE,
   hasCurrentReEntryFrontier,
 } from './re-entry-frontier.js';
 import type { RunProgressionAuthority } from './run-progression-authority.js';
@@ -4398,13 +4399,13 @@ function validateGraph(
     if (!childStates) continue;
 
     for (const [childName, child] of Object.entries(childStates)) {
-      if (!LEAF_SUBSTATE_SET.has(childName)) {
+      if (!isCompoundLeafValue(childName)) {
         throw new Error(
           `Compiler invariant: "${stateId}" has unknown leaf substate "${childName}"`,
         );
       }
       const policy = sideEffectLeafSubstatePolicy(childName);
-      if (policy === undefined) continue;
+      if (policy === null) continue;
 
       if (!isGraphRecord(child)) {
         throw new Error(`Compiler invariant: "${stateId}.${childName}" must be an object`);
@@ -4482,16 +4483,23 @@ interface SideEffectLeafSubstatePolicy {
 }
 
 /**
- * Every compiler-owned leaf substate that invokes an actor, with the invariants
- * `validateGraph` enforces on it.
+ * Every compiler-owned leaf substate, with the invariants `validateGraph`
+ * enforces on the ones that invoke an actor.
  *
  * A table rather than a predicate because the two policies genuinely differ per
  * substate, and the table is the single place a new invoking substate must be
- * declared. Omitting one here does not fail loudly — it silently exempts that
- * substate from every per-invoke invariant, which is how
- * `__progression-project-frontier` shipped with no `onError` at all (#880).
+ * declared. Keyed by the COMPLETE {@link LeafSubstate} union so a substate
+ * cannot be left out: a non-invoking one is declared `null` — "invokes
+ * nothing", said out loud — while omission used to say it silently, which is
+ * how `__progression-project-frontier` shipped with no `onError` at all (#880).
  */
 const SIDE_EFFECT_LEAF_SUBSTATE_POLICIES = {
+  idle: null,
+  '__progression-apply-completion': null,
+  '__progression-waiting-input': null,
+  '__progression-refused-completion': null,
+  '__progression-refused-contention': null,
+  '__progression-refused': null,
   __capture: { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'terminal' },
   // Command execution carries its own pending tag: it must never be subject to
   // the machine-effect wait budget (#536), but progression still needs a tag to
@@ -4507,18 +4515,20 @@ const SIDE_EFFECT_LEAF_SUBSTATE_POLICIES = {
     tag: PENDING_MACHINE_EFFECT_TAG,
     onError: 'refusal',
   },
-} as const satisfies Readonly<Record<string, SideEffectLeafSubstatePolicy>>;
+} as const satisfies Readonly<Record<LeafSubstate, SideEffectLeafSubstatePolicy | null>>;
 
 /**
  * Look up the per-invoke invariants for a leaf substate.
  *
- * @param value - Nested compound-state child name
- * @returns The substate's policy, or `undefined` when it invokes no actor
+ * Callers must have established membership first — `validateGraph` rejects an
+ * unknown child name through {@link isCompoundLeafValue} before reaching here —
+ * so the table lookup is total and returns the declared value directly.
+ *
+ * @param value - Nested compound-state child name, known to be a leaf substate
+ * @returns The substate's policy, or `null` when it invokes no actor
  */
-function sideEffectLeafSubstatePolicy(value: string): SideEffectLeafSubstatePolicy | undefined {
-  return Object.hasOwn(SIDE_EFFECT_LEAF_SUBSTATE_POLICIES, value)
-    ? SIDE_EFFECT_LEAF_SUBSTATE_POLICIES[value as keyof typeof SIDE_EFFECT_LEAF_SUBSTATE_POLICIES]
-    : undefined;
+function sideEffectLeafSubstatePolicy(value: LeafSubstate): SideEffectLeafSubstatePolicy | null {
+  return SIDE_EFFECT_LEAF_SUBSTATE_POLICIES[value];
 }
 
 /**
@@ -4546,7 +4556,10 @@ function resolveSideEffectTransitionTarget(
   if (target.startsWith('#')) {
     const ref = target.slice(1);
     if (stateIds.has(ref)) return 'absolute';
-    const separator = ref.indexOf('.');
+    // LAST period, not the first: the leaf substate name never contains one,
+    // but a parent id derived from an author-chosen step name can, and
+    // splitting at the first period selected a parent that does not exist.
+    const separator = ref.lastIndexOf('.');
     if (separator === -1) return undefined;
     const parentId = ref.slice(0, separator);
     const childName = ref.slice(separator + 1);
@@ -5636,7 +5649,7 @@ export function compileRunbookToMachine(
                   return {
                     kind: 'refused',
                     reason: 'consume_failed',
-                    message: 'Frontier consume did not commit',
+                    message: FRONTIER_CONSUME_FAILED_MESSAGE,
                   };
                 }),
               },

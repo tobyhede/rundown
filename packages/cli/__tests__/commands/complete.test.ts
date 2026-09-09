@@ -203,10 +203,16 @@ This step should not become the persisted cursor.
     await writeFile(join(workspace.cwd, 'parent-claim-announce.runbook.md'), parentRunbook);
     await writeFile(join(workspace.cwd, 'child-announce.runbook.md'), childRunbook);
 
-    await runCliInProcess('run --prompted parent-claim-announce.runbook.md', workspace);
+    const started = await runCliInProcess(
+      'run --prompted parent-claim-announce.runbook.md',
+      workspace,
+    );
+    expect(started.exitCode).toBe(0);
     const token = requireLatestFrontierToken(workspace, '1.1');
     const claim = await runCliInProcess(['claim', token], workspace);
+    expect(claim.exitCode).toBe(0);
     const claimId = findActionOutput<ClaimOutput>(claim.stdout)?.claim_id;
+    expect(claimId).toBeDefined();
 
     const result = await runCliInProcess(
       ['complete', '--claim-id', String(claimId), 'child has enough evidence'],

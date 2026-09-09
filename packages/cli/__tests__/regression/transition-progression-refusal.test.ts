@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { RunbookStateManager, merge } from '@rundown-org/core';
+import { RunbookStateManager, merge, type RunId } from '@rundown-org/core';
 // The dedicated testing entry resolves (via this package's jest
 // moduleNameMapper) to the SAME source file `@rundown-org/core` itself
 // imports, so the prototype spy below reaches the one store instance
@@ -11,23 +11,10 @@ import { RunbookStore } from '@rundown-org/core/testing/runbook-store';
 import {
   createTestWorkspace,
   parseConcatenatedJson,
+  flattenEvents,
   runCliInProcess,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-
-function flattenEvents(events: unknown[]): Record<string, unknown>[] {
-  const flat: Record<string, unknown>[] = [];
-  for (const event of events) {
-    if (Array.isArray(event)) {
-      flat.push(...flattenEvents(event));
-      continue;
-    }
-    if (event && typeof event === 'object') {
-      flat.push(event as Record<string, unknown>);
-    }
-  }
-  return flat;
-}
 
 // #854 migration pin — the pass/fail analog of the #849 collect witness. When
 // a `rundown pass` continuation advances the run into a command step and that
@@ -88,8 +75,8 @@ describe('pass continuation fence refusal does not emit runbook_stopped (#854)',
     const realCapture = RunbookStore.prototype.captureRunAuthorityState;
     jest
       .spyOn(RunbookStore.prototype, 'captureRunAuthorityState')
-      .mockImplementation(async function (this: RunbookStore, target: string) {
-        const result = await realCapture.call(this, target as never);
+      .mockImplementation(async function (this: RunbookStore, target: RunId) {
+        const result = await realCapture.call(this, target);
         if (
           !injected &&
           result.kind === 'captured' &&

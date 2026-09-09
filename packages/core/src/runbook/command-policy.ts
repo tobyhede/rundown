@@ -232,13 +232,15 @@ export type DelegationPolicyOutcome =
     }
   | {
       /**
-       * Collection applied one or more delegation outcomes and left the target
-       * running: the frontend drives a Run Progression continuation next.
+       * Collection applied one or more delegation outcomes.
        *
-       * Split from the terminal arm on `lifecycle` so a running outcome always
-       * carries core's explicit progression decision. The directive itself
-       * decides whether activation is required; the frontend never infers that
-       * decision from lifecycle or observations.
+       * ONE arm across every committed lifecycle, because the arm's shape does
+       * not vary with it: `progression` is required whether the target is
+       * still running (the frontend drives the continuation next) or reached a
+       * terminal (Run Progression owns release reporting and any upward inline
+       * propagation from that committed boundary). The directive itself decides
+       * whether activation is required; the frontend never infers that decision
+       * from lifecycle or observations, so `lifecycle` narrows only itself.
        */
       readonly kind: 'collection_applied';
       /** Target run that received the collected outcomes. */
@@ -249,8 +251,8 @@ export type DelegationPolicyOutcome =
       readonly applied: number;
       /** Number of outcomes still unresolved after this collection. */
       readonly unresolved: number;
-      /** The target run is still running; a continuation follows. */
-      readonly lifecycle: 'running';
+      /** Lifecycle the target committed: still running, or terminal. */
+      readonly lifecycle: 'running' | 'completed' | 'stopped';
       /** True when collection reported this run's terminal delegation outcome upward. */
       readonly reportedTerminalOutcome: boolean;
       /**
@@ -260,34 +262,6 @@ export type DelegationPolicyOutcome =
        */
       readonly transitionObservations: readonly TransitionObservationEvent[];
       /** Opaque core-minted continuation consumed verbatim by the frontend. */
-      readonly progression: Extract<RunProgressionDirective, { readonly kind: 'activate' }>;
-    }
-  | {
-      /**
-       * Collection applied one or more delegation outcomes and the target
-       * reached a terminal lifecycle. Run Progression owns release reporting
-       * and any upward inline propagation from that committed boundary.
-       */
-      readonly kind: 'collection_applied';
-      /** Target run that received the collected outcomes. */
-      readonly targetRunId: RunId;
-      /** Step selected for collection. */
-      readonly step: string;
-      /** Number of delegation outcomes consumed. */
-      readonly applied: number;
-      /** Number of outcomes still unresolved after this collection. */
-      readonly unresolved: number;
-      /** Terminal lifecycle the target committed. */
-      readonly lifecycle: 'completed' | 'stopped';
-      /** True when collection reported this run's terminal delegation outcome upward. */
-      readonly reportedTerminalOutcome: boolean;
-      /**
-       * Ordered transition observations projected from the applied collection
-       * transitions. This is an in-memory command outcome only; it is never
-       * persisted into the SQLite run state.
-       */
-      readonly transitionObservations: readonly TransitionObservationEvent[];
-      /** Core-minted terminal activation consumed verbatim by the frontend. */
       readonly progression: Extract<RunProgressionDirective, { readonly kind: 'activate' }>;
     }
   | {

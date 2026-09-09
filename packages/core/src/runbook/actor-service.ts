@@ -1217,18 +1217,19 @@ export class RunbookActorService {
    *
    * @param state - Exact durable state loaded by the activation.
    * @param steps - Graph derived from that state inside the activation.
-   * @param feedback - Result of the preceding mechanically executed turn.
    * @param authority - Single authority bound to frontier projection and entry.
    * @param actorMutationRunner - Transactional fence used by frontier consumption.
+   * @param feedback - Result of the preceding mechanically executed turn;
+   *   defaults to a fresh activation.
    * @returns The closed progression intent emitted by the compiled machine.
    * @throws {Error} When the authority is bound to a run other than `state.id`.
    */
   async selectRunProgressionIntent(
     state: RunbookState,
     steps: readonly ResolvedStep[],
-    feedback: RunProgressionMachineFeedback = { kind: 'activation' },
     authority: RunProgressionAuthority,
     actorMutationRunner: EffectfulActorMutationRunner,
+    feedback: RunProgressionMachineFeedback = { kind: 'activation' },
   ): Promise<RunProgressionMachineIntent> {
     if (state.id !== authority.runId) {
       throw new Error(

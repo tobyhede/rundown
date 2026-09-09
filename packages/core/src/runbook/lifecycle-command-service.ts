@@ -1019,10 +1019,8 @@ export interface LifecycleNavigationCapability {
  * Refusal variants mirror the base {@link CommandTargetResolution} shapes; the
  * `allowed` carries the resolved run plus one opaque navigation capability.
  * That capability binds the verified authority to the exact parsed graph, so a
- * frontend cannot pair either with unrelated steps, and carries the terminal
- * release mode a follow-on Run Progression activation should apply —
- * everything the frontend needs to drive the navigation without re-resolving
- * or re-gating anything.
+ * frontend cannot pair either with unrelated steps — everything the frontend
+ * needs to drive the navigation without re-resolving or re-gating anything.
  */
 export type LifecycleNavigationOutcome =
   /** No active runbook (bare path) to navigate. */
@@ -3968,9 +3966,12 @@ export class RunbookLifecycleCommandService {
     const run = (guard?: ParentAdvanceGuard): ReturnType<EffectfulActorMutationRunner['run']> =>
       actorMutationRunner.run({
         runId: activeState.id,
-        ...(input.callerEvidence.kind === 'claim_bearer'
-          ? { claimKey: claimKeyFromBearer(input.callerEvidence.claimId) }
-          : {}),
+        // From the AUTHORITY, not from `input.callerEvidence`: the authority
+        // was minted at the point the evidence was verified against this exact
+        // run, so reading the key off it is what keeps the fence and the
+        // authority from being able to disagree. `runNavigationMutation` reads
+        // it the same way.
+        ...(authority.claimKey === undefined ? {} : { claimKey: authority.claimKey }),
         ...(guard === undefined ? {} : { guard }),
         makeRecoveryActor: (state) => actorService.createRecoveryActor(state, steps),
         compute: (capturedState) => {
@@ -4084,9 +4085,12 @@ export class RunbookLifecycleCommandService {
     const run = (guard?: ParentAdvanceGuard): ReturnType<EffectfulActorMutationRunner['run']> =>
       actorMutationRunner.run({
         runId: activeState.id,
-        ...(input.callerEvidence.kind === 'claim_bearer'
-          ? { claimKey: claimKeyFromBearer(input.callerEvidence.claimId) }
-          : {}),
+        // From the AUTHORITY, not from `input.callerEvidence`: the authority
+        // was minted at the point the evidence was verified against this exact
+        // run, so reading the key off it is what keeps the fence and the
+        // authority from being able to disagree. `runNavigationMutation` reads
+        // it the same way.
+        ...(authority.claimKey === undefined ? {} : { claimKey: authority.claimKey }),
         ...(guard === undefined ? {} : { guard }),
         // Addressed: the caller drove this very run to terminal, so its claims
         // stay as terminal evidence for a later `--claim-id` to resolve

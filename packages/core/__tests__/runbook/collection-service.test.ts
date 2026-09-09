@@ -200,6 +200,23 @@ describe('RunbookCollectionService', () => {
     },
   ];
 
+  // Structurally the same graph, with descriptions the collect input does not
+  // carry. Collection never reads a description, so behaviour is identical —
+  // but a `progression.steps` assertion can now tell which of the two the
+  // directive was built from.
+  const renderedSteps: ResolvedStep[] = steps.map((step) =>
+    step.kind === 'substeps'
+      ? {
+          ...step,
+          description: `${step.description} (rendered)`,
+          substeps: step.substeps.map((substep) => ({
+            ...substep,
+            description: `${substep.description} (rendered)`,
+          })),
+        }
+      : { ...step, description: `${step.description} (rendered)` },
+  );
+
   function state(overrides: Partial<RunbookState> = {}): RunbookState {
     return {
       prompted: false,
@@ -1522,6 +1539,7 @@ describe('RunbookCollectionService', () => {
       await manager.save(ancestor);
       const { controlled } = await seedTerminalControlled('completed', 'pass', {
         parentLinkage: inlineLinkage,
+        lastResult: 'pass',
       });
       const svc = makeCollectionService();
 
@@ -1537,7 +1555,14 @@ describe('RunbookCollectionService', () => {
         expect(outcome.progression).toMatchObject({
           kind: 'activate',
           authority: { runId: controlledRunId },
-          entryBoundary: { kind: 'after_observed_transition', lifecycle: 'completed' },
+          entryBoundary: {
+            kind: 'after_observed_transition',
+            lifecycle: 'completed',
+            terminalTarget: 'released',
+            // Recovered from the run's own `lastResult`, never inferred from
+            // the lifecycle it reached — the two disagree on PASS STOP.
+            source: { kind: 'explicit-result', result: 'pass' },
+          },
         });
         // Inline advance never reports a delegation outcome.
         expect(outcome.reportedTerminalOutcome).toBe(false);
@@ -2050,8 +2075,13 @@ describe('RunbookCollectionService', () => {
     });
     await manager.save(target);
 
+    // `loadSteps` answers a graph the collect input does NOT carry, so the
+    // assertion below fails if the directive is built from `input.steps`
+    // instead of from the drained state's own re-derived graph.
+    const svc = makeCollectionService({ loadSteps: () => renderedSteps });
+
     await expect(
-      collectionService.collectDelegationOutcomes({
+      svc.collectDelegationOutcomes({
         targetState: target,
         steps,
         callerEvidence: ORCHESTRATOR_EVIDENCE,
@@ -2061,7 +2091,7 @@ describe('RunbookCollectionService', () => {
       targetRunId: runId,
       step: '1',
       applied: 0,
-      progression: { kind: 'activate', authority: { runId }, steps },
+      progression: { kind: 'activate', authority: { runId }, steps: renderedSteps },
     });
   });
 

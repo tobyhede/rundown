@@ -5,11 +5,14 @@ import { compileRunbookToMachine, PENDING_MACHINE_EFFECT_TAG } from '../../src/r
 import type { RunbookContext } from '../../src/runbook/compiler.js';
 import type { ResolveInlineRunbook } from '../../src/runbook/actors/inline-launch-intent-actor.js';
 import { assertRunId, type RunId } from '../../src/runbook/run-id.js';
-import type { InlineLaunchStart } from '../../src/runbook/types.js';
+import type { InlineLaunchStart, SubstepState } from '../../src/runbook/types.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { brandFlattenedTemplateVarsForTest } from '../../src/testing/effective-vars.js';
 import { makeDelegationCredentialIssuer } from '../../src/testing/delegation-fixtures.js';
 import { createRunbook } from './fixtures.js';
+
+/** The substep-row shape these snapshot-restoring cases mutate. */
+type SubstepStateForTest = SubstepState;
 
 // ACCEPTED MUTATION SURVIVORS for the latch actions in compiler.ts.
 //
@@ -536,6 +539,91 @@ describe('inline launch compiler integration', () => {
     expect(actor.getSnapshot().context.substepStates).toBe(beforeConsume);
 
     actor.stop();
+  });
+
+  // `releaseInlineLatch`'s remaining two no-op guards, and the only way to
+  // reach either: the intent and the row it names are written by ONE transition,
+  // so no sequence of events makes them disagree. A RESTORED snapshot can —
+  // that is what a persisted run is — so each case drives a real
+  // `INLINE_LAUNCH_CONSUMED` against a restored state whose row has moved out
+  // from under the intent. Neither goes near `INLINE_CHILD_STARTED`, whose
+  // mismatch arm throws rather than no-ops.
+  describe.each([
+    [
+      'the row the intent names no longer exists',
+      (rows: SubstepStateForTest[]): SubstepStateForTest[] =>
+        rows.map((row) => ({ ...row, frameKey: buildFrameKey('9') })),
+    ],
+    [
+      'the row has moved on to a different inline child',
+      (rows: SubstepStateForTest[]): SubstepStateForTest[] =>
+        rows.map((row) =>
+          row.inline
+            ? {
+                ...row,
+                inline: {
+                  ...row.inline,
+                  childRunId: assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'),
+                },
+              }
+            : row,
+        ),
+    ],
+  ])('INLINE_LAUNCH_CONSUMED is a no-op when %s', (_label, mutateRows) => {
+    it('leaves the substep rows exactly as it found them', async () => {
+      const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+      const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
+      const machine = compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest({
+          RunId: 'rd_cccccccccccccccccccccccccccccccc',
+        }),
+        resolveInlineRunbook: childResolver(),
+        generateChildRunId: () => childRunId,
+        now: () => '2026-05-30T00:00:00.000Z',
+      });
+
+      const first = createActor(machine);
+      first.start();
+      await waitFor(first, (candidate) => !candidate.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 500,
+      });
+      first.send({
+        type: 'INLINE_CHILD_STARTED',
+        parentStepId: '1',
+        parentFrameKey: buildFrameKey('1'),
+        childRunId,
+        started: LATCHED,
+      });
+      const persisted = first.getPersistedSnapshot() as unknown as {
+        context: { substepStates?: SubstepStateForTest[] };
+      };
+      first.stop();
+
+      // The intent is left exactly as the machine wrote it; only the ROW moves,
+      // which is the disagreement each guard exists to detect.
+      const rows = persisted.context.substepStates;
+      if (!rows) throw new Error('expected substep rows on the persisted snapshot');
+      const moved = mutateRows(rows);
+      const restored = createActor(machine, {
+        snapshot: { ...persisted, context: { ...persisted.context, substepStates: moved } },
+      } as unknown as Parameters<typeof createActor>[1]);
+      restored.start();
+
+      restored.send({ type: 'INLINE_LAUNCH_CONSUMED' });
+
+      // Identity, not equality: the guard returns the INPUT array, so a
+      // release that ran and happened to produce an equal array would pass a
+      // `toEqual` here.
+      expect(restored.getSnapshot().context.substepStates).toBe(moved);
+      restored.stop();
+    });
   });
 
   it('leaves state unchanged when inline child start has no substep states', async () => {

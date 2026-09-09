@@ -26,6 +26,9 @@ describe('Run Progression architecture (#858)', () => {
     for await (const file of glob('packages/{cli,core}/src/**/*.ts', { cwd: repoRoot })) {
       files.push(file);
     }
+    // Anti-vacuity: a glob that resolves nothing (a moved package root, a
+    // changed cwd) would otherwise report an empty violation list as a pass.
+    expect(files.length).toBeGreaterThan(0);
 
     const violations: string[] = [];
     for (const file of files) {

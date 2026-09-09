@@ -1,15 +1,24 @@
 # ADR 0003: Drive Run Progression in XState
 
+- **Status:** Accepted
+- **Date:** 2026-09-04
+
+## Context
+
 Run Progression was divided between the compiled runbook machine and the CLI
 execution loop, forcing frontends to decide completion draining, command
-dispatch, inline composition, upward flow-back, and refusal control. Each run's
-existing compiled XState machine owns complete Run Progression, including inline
-composition, and every continuing operation converges on its explicitly
-activated path using one core-verified, run-bound authority; restoring a machine
-is inert. Between durable transitions and effects the machine synchronously
-delivers observations and waits; delivery failure fails only the invocation at
-the last committed boundary without changing lifecycle, and historical events
-are not durably replayed because persisted run state remains authoritative.
+dispatch, inline composition, upward flow-back, and refusal control.
+
+## Decision
+
+Each run's existing compiled XState machine owns complete Run Progression,
+including inline composition, and every continuing operation converges on its
+explicitly activated path using one core-verified, run-bound authority;
+restoring a machine is inert. Between durable transitions and effects the
+machine synchronously delivers observations and waits; delivery failure fails
+only the invocation at the last committed boundary without changing lifecycle,
+and historical events are not durably replayed because persisted run state
+remains authoritative.
 
 ## Consequences
 

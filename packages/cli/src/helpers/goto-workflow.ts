@@ -55,8 +55,9 @@ export interface GotoContext {
   /**
    * Verified delegation capabilities for a navigation that lands on a DELEGATE
    * frontier, and for the continuation that projects the frontier it stored.
-   * One branded pair — `runNavigationMutation` takes only the issuer, so that
-   * half is unpacked at the call site rather than carried apart from its twin.
+   * Passed WHOLE to `runNavigationMutation`, with the delegation runtime left
+   * nested under `navigation.authority`, so neither half can travel apart from
+   * its twin.
    */
   navigation: LifecycleNavigationCapability;
 }
@@ -112,6 +113,15 @@ export type BuildGotoContextResult =
 export type GotoRefusal = Exclude<BuildGotoContextResult, { kind: 'ready' }>;
 
 /**
+ * Commands that render a navigation refusal.
+ *
+ * Closed at the two call sites: standalone `goto`, and `run`'s launch-local
+ * `--step` jump. Keeping it closed is what stops `output.noActiveRunbook` from
+ * being handed a command the `no_active_runbook` envelope does not name.
+ */
+export type NavigationRefusalCommand = 'goto' | 'run';
+
+/**
  * Render a non-`ready` goto context result and report whether it exits non-zero.
  *
  * The navigation counterpart to `renderRefusal` (pass/fail, `transitions.ts`)
@@ -135,14 +145,15 @@ export type GotoRefusal = Exclude<BuildGotoContextResult, { kind: 'ready' }>;
  * @param output - Output emitter for CLI output.
  * @param refusal - The non-`ready` result returned by {@link buildGotoContext}.
  * @param commandName - Command named in the rendered refusal: `'goto'`, or
- *   `'run'` when a run's own `GOTO` resolution is refused.
+ *   `'run'` when a run's own `GOTO` resolution is refused. Closed over those
+ *   two so the `no_active_runbook` envelope cannot name a third.
  * @returns `true` when the refusal requests a non-zero exit code; `false` for
  *   `none`, which is an empty-stack no-op rather than a failure.
  */
 export function renderNavigationRefusal(
   output: OutputEmitter,
   refusal: GotoRefusal,
-  commandName = 'goto',
+  commandName: NavigationRefusalCommand = 'goto',
 ): boolean {
   switch (refusal.kind) {
     case 'none':
@@ -351,7 +362,7 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
   const { output, manager, seam, state, navigation, cwd } = ctx;
 
   const mutation = await seam.runNavigationMutation({
-    navigation: ctx.navigation,
+    navigation,
     target,
   });
   if (mutation.kind !== 'applied') {

@@ -6,6 +6,7 @@ import {
   extractRetryMax,
   formatActionForDisplay,
   type RunbookStateManager,
+  type SessionMutationRefusalOutcome,
   type SessionService,
   ExecutionLifecycleService,
   type Step,
@@ -32,6 +33,7 @@ import {
   ErrorCodes,
   type ErrorCodeKey,
   getErrorMessage,
+  isConcurrentStateModificationError,
   progressionDirectiveForStartedRun,
   commitRunProgressionEvent,
   type RunProgressionAuthority,
@@ -43,6 +45,7 @@ import {
   inlineLinkageFromIntent,
   latchInlineLaunch,
   type InlineChildLinkageMatch,
+  type InlineLaunchLatch,
 } from './inline-launch-latch.js';
 import {
   getPolicyEvaluator,
@@ -87,11 +90,47 @@ export interface InlineLaunchArgs {
   readonly prompted: boolean;
   readonly output: OutputEmitter;
   readonly commandStreamOptions?: CommandExecutionStreamOptions;
-  /** Same public activation used by the composing run; supplied by the frontend adapter. */
-  readonly driveProgression?: (
+  /**
+   * Same public activation used by the composing run; supplied by the frontend
+   * adapter. REQUIRED: `buildInlineChildDispatch` is the only producer of these
+   * args and always supplies it, so the compiler — not a runtime refusal arm —
+   * is what guarantees the callable is present.
+   */
+  readonly driveProgression: (
     directive: Extract<RunProgressionDirective, { kind: 'activate' }>,
     sink: ExecutionEventEmitter,
   ) => Promise<RunProgressionOutcome>;
+}
+
+/**
+ * Recovery classification for a session ownership refusal.
+ *
+ * ONE function for every arm that has to answer this, because the two answers
+ * are not interchangeable and the arms were drifting: `execution_in_progress`
+ * is another process holding the execution lease, which frees up on its own, so
+ * repeating the gesture is the remedy. `recovery_required` needs an explicit
+ * recovery (finish, stop, prune) and can never succeed on a bare repeat —
+ * telling the caller to retry it is telling them to do the one thing that
+ * cannot work.
+ *
+ * @param refusal - The typed ownership refusal core returned.
+ * @returns `'retryable'` for a held lease, `'permanent'` for a required recovery.
+ * @throws {Error} When an unrecognized refusal kind reaches the exhaustive
+ *   guard, which the `never` assignment makes a compile error first.
+ */
+export function sessionRefusalRecovery(
+  refusal: SessionMutationRefusalOutcome,
+): 'retryable' | 'permanent' {
+  switch (refusal.kind) {
+    case 'execution_in_progress':
+      return 'retryable';
+    case 'recovery_required':
+      return 'permanent';
+    default: {
+      const _exhaustive: never = refusal;
+      throw new Error(`Unhandled session refusal kind: ${String(_exhaustive)}`);
+    }
+  }
 }
 
 function dispatchResultFromProgression(outcome: RunProgressionOutcome): InlineChildDispatchResult {
@@ -184,6 +223,41 @@ async function consumeInlineLaunchIntent(args: {
 }
 
 /**
+ * {@link latchInlineLaunch} with its one documented throw folded into the union.
+ *
+ * `latchInlineLaunch` throws {@link ConcurrentStateModificationError} when
+ * sustained contention on the parent spends the store's optimistic retry
+ * budget, and its own TSDoc says the CLI wrapper reports that as RD-308. Nothing
+ * did: the throw escaped `launchInlineChildFromIntent` entirely and unwound
+ * `activateRunProgression`, where a transient, retryable condition surfaced as
+ * an untyped failure with no recovery classification.
+ *
+ * @param args - The latch arguments, plus the parent-stream sink the refusal is
+ *   announced on.
+ * @param args.emitter - Parent-stream sink for the announced refusal.
+ * @returns The latch outcome, or a `contention` arm carrying RD-308.
+ */
+async function latchInlineLaunchGuarded(
+  args: Parameters<typeof latchInlineLaunch>[0] & {
+    readonly emitter: Pick<ExecutionEventEmitter, 'emit'>;
+  },
+): Promise<
+  | InlineLaunchLatch
+  | { readonly kind: 'contention'; readonly code: string; readonly message: string }
+> {
+  const { emitter, ...latchArgs } = args;
+  try {
+    return await latchInlineLaunch(latchArgs);
+  } catch (error) {
+    if (!isConcurrentStateModificationError(error)) throw error;
+    const message = getErrorMessage(error);
+    const code = ErrorCodes.CONCURRENT_STATE_MODIFICATION.code;
+    emitter.emit({ type: 'ERROR_OCCURRED', payload: { message, code } });
+    return { kind: 'contention', code, message };
+  }
+}
+
+/**
  * Latch, create or resume, and drive one inline child launch (Category A + C).
  *
  * Exported for the Run Progression adapters: the migrated core activation
@@ -228,26 +302,27 @@ export async function launchInlineChildFromIntent({
   const parentLinkage = inlineLinkageFromIntent(intent);
   const childRunId = assertRunId(intent.childRunId);
 
-  if (driveProgression === undefined) {
-    const message = 'Inline launch requires the public Run Progression activation';
-    emitter.emit({
-      type: 'ERROR_OCCURRED',
-      payload: { message, code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED },
-    });
-    return {
-      kind: 'launch_refused',
-      code: CLIErrorCodes.ACTOR_CONTEXT_REQUIRED,
-      message,
-      recovery: 'permanent',
-    };
-  }
-
   // Latch the launch before performing any of it. This replaced the retired
   // delegation file lock this site held across the read-derive-write span:
   // the lock's job was to keep a second observer out of the gap between the
   // decision and the write it depended on, and deriving the decision inside the
   // compare-and-swap closes that gap by construction instead of by exclusion.
-  const latch = await latchInlineLaunch({ manager, actorService, authority, steps, intent });
+  const latch = await latchInlineLaunchGuarded({
+    manager,
+    actorService,
+    authority,
+    steps,
+    intent,
+    emitter,
+  });
+  if (latch.kind === 'contention') {
+    return {
+      kind: 'launch_refused',
+      code: latch.code,
+      message: latch.message,
+      recovery: CONTENTION_LAUNCH_CODES.has(latch.code) ? 'retryable' : 'permanent',
+    };
+  }
   if (latch.kind === 'missing' || latch.kind === 'inactive') {
     const message = `Inline parent run ${parentLinkage.parentRunId} is not active`;
     emitter.emit({
@@ -276,6 +351,22 @@ export async function launchInlineChildFromIntent({
       `Inline launch of ${childRunId} was superseded: run ${parentLinkage.parentRunId} no longer carries that launch. Re-run this command to observe its current state.`,
     );
     return { kind: 'waiting' };
+  }
+  if (latch.kind === 'store-refused') {
+    // Translated through the SAME mapping every other session-ownership
+    // refusal in this file uses, and classified off the same discriminant:
+    // an occupied lease frees up, a required recovery does not.
+    const code = sessionMutationRefusalCode(latch.refusal);
+    emitter.emit({
+      type: 'ERROR_OCCURRED',
+      payload: { message: latch.refusal.message, code },
+    });
+    return {
+      kind: 'launch_refused',
+      code,
+      message: latch.refusal.message,
+      recovery: sessionRefusalRecovery(latch.refusal),
+    };
   }
   if (latch.kind === 'linkage-refused') {
     const payload = describeInlineChildLinkageRefusal(childRunId, parentLinkage, latch.mismatch);
@@ -491,7 +582,7 @@ export async function launchInlineChildFromIntent({
       kind: 'launch_refused',
       code,
       message: adoption.refusal.message,
-      recovery: adoption.refusal.kind === 'execution_in_progress' ? 'retryable' : 'permanent',
+      recovery: sessionRefusalRecovery(adoption.refusal),
     };
   }
 
@@ -608,13 +699,14 @@ export async function launchInlineChildFromIntent({
         type: 'ERROR_OCCURRED',
         payload: { message: launchResult.refusal.message, code },
       });
-      // Retryable: a session ownership refusal is contention — the same
-      // classification the fenced command turn gives these kinds.
+      // Derived from the refusal KIND through the SAME helper as the adoption
+      // arm above. Reporting both kinds as retryable told the operator to retry
+      // a `recovery_required` refusal that cannot clear itself.
       return {
         kind: 'launch_refused',
         code,
         message: launchResult.refusal.message,
-        recovery: 'retryable',
+        recovery: sessionRefusalRecovery(launchResult.refusal),
       };
     }
     emitter.emit({

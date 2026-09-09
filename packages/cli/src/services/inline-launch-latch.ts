@@ -20,6 +20,7 @@ import {
   type RunProgressionAuthority,
   type RunbookState,
   type RunbookStateManager,
+  type SessionMutationRefusal,
 } from '@rundown-org/core';
 
 /**
@@ -286,6 +287,19 @@ export type InlineLaunchLatch =
   | { readonly kind: 'inactive' }
   /** The persisted intent is gone or names a different launch. */
   | { readonly kind: 'superseded' }
+  /**
+   * A guarded write the latch attempted was refused on execution OWNERSHIP.
+   *
+   * Kept apart from `superseded`, which reports that the launch itself moved
+   * on and whose caller-facing answer is the benign "re-run and observe".
+   * These two are neither benign nor the same as each other:
+   * `execution_in_progress` clears when the holder finishes, while
+   * `recovery_required` never clears without an explicit recovery gesture.
+   * Collapsing all three into `superseded` told the operator a launch had been
+   * superseded when the store had actually refused it, and offered a remedy
+   * that could not work.
+   */
+  | { readonly kind: 'store-refused'; readonly refusal: SessionMutationRefusal }
   /** A run already exists under the intent's child id, but is not this launch's. */
   | {
       readonly kind: 'linkage-refused';
@@ -561,13 +575,17 @@ export async function latchInlineLaunch(args: InlineLaunchLatchArgs): Promise<In
         ? await args.manager.captureRunAuthorityState(args.authority.runId)
         : await args.manager.captureAuthorityState(args.authority.runId, args.authority.claimKey);
     if (captured.kind === 'missing') return { kind: 'missing' };
-    if (captured.kind !== 'captured') return { kind: 'superseded' };
+    if (captured.kind === 'claim_superseded') return { kind: 'superseded' };
 
     const decision = await decide(captured.state);
     if (decision.next === null) return decision.value;
     const committed = await args.manager.saveState(captured.authority, decision.next);
     if (committed.kind === 'committed') return decision.value;
-    if (committed.kind !== 'concurrent_modification') return { kind: 'superseded' };
+    if (committed.kind === 'claim_superseded') return { kind: 'superseded' };
+    if (committed.kind === 'missing') return { kind: 'missing' };
+    if (committed.kind !== 'concurrent_modification') {
+      return { kind: 'store-refused', refusal: committed };
+    }
     if (attempt < DEFAULT_MUTATE_ATTEMPTS - 1) {
       await new Promise((resolve) => setTimeout(resolve, mutateBackoffMs(attempt)));
     }
