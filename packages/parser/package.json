@@ -45,17 +45,17 @@
     "gray-matter": "^4.0.3",
     "mdast-util-from-markdown": "^2.0.3",
     "unist-util-visit": "^5.0.0",
-    "zod": "^4.4.3"
+    "zod": "^4.5.4"
   },
   "devDependencies": {
-    "@jest/globals": "^30.4.1",
+    "@jest/globals": "^30.5.1",
     "@stryker-mutator/core": "^9.6.1",
     "@stryker-mutator/jest-runner": "^9.6.1",
     "@types/jest": "^30.0.0",
-    "@types/node": "^26.2.0",
+    "@types/node": "^26.4.1",
     "fast-check": "^4.9.0",
-    "jest": "^30.4.2",
-    "jest-mock": "^30.4.1",
+    "jest": "^30.5.1",
+    "jest-mock": "^30.5.1",
     "ts-jest": "^29.4.11",
     "typescript": "^6.0.3"
   }
