@@ -34,6 +34,7 @@ import {
   writeSession,
   requireFrontierToken,
   requireLatestFrontierToken,
+  findLatestFrontierInEvents,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import {
@@ -626,10 +627,11 @@ describe('collect command', () => {
     /**
      * Direct coverage for the `applied === 0` branch on a DELEGATE step:
      * if all completions have been drained (but the cursor is still on the
-     * DELEGATE step for some reason), `rd collect` returns a visible
-     * already-aggregated status with exit 0.
+     * DELEGATE step for some reason), `rundown collect` still returns the
+     * shared progression directive. The command reports an applied count of
+     * zero, then progression owns the current-unit entry.
      */
-    it('emits already-aggregated when no completions are pending on a DELEGATE step', async () => {
+    it('emits an applied zero-count when no completions are pending on a DELEGATE step', async () => {
       const runbookId = await setupReadyToCollect(['pass', 'pass']);
 
       // Clear resolvedCompletions so drain has nothing to apply. Leave
@@ -643,13 +645,13 @@ describe('collect command', () => {
       );
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout + result.stderr).toMatch(/already aggregated/i);
+      expect(result.stdout + result.stderr).toMatch(/Collected 0 delegation outcome/);
     });
 
     /**
      * Same as above, but asserts the JSON shape for the default output mode.
      */
-    it('emits already-aggregated JSON when no completions are pending', async () => {
+    it('emits applied JSON after progression when no completions are pending', async () => {
       const runbookId = await setupReadyToCollect(['pass', 'pass']);
 
       await patchPersistedRunState(workspace.cwd, runbookId, { resolvedCompletions: {} });
@@ -657,11 +659,11 @@ describe('collect command', () => {
       const result = await runCliInProcess(await withRunTarget(['collect'], workspace), workspace);
 
       expect(result.exitCode).toBe(0);
-      // JSON output is pretty-printed; parse the whole payload.
-      const parsed = JSON.parse(result.stdout.trim()) as Record<string, unknown>;
-      expect(parsed.status).toBe('already-aggregated');
+      const parsed = findCollectOutput(result.stdout, 'applied');
+      expect(parsed.status).toBe('applied');
       expect(parsed.action).toBe('collect');
       expect(parsed.kind).toBe('collect');
+      expect(parsed.applied).toBe(0);
       expect(CollectResponseSchema.safeParse(parsed).success).toBe(true);
     });
 
@@ -1089,7 +1091,11 @@ describe('collect command', () => {
         action: 'collect',
         status: 'applied',
       });
-    });
+      // Same 20s budget its `setupCollectAdvancesIntoCommand` siblings carry:
+      // the setup drives four CLI commands before the assertion, which exceeds
+      // the 5s default on a loaded machine. Observed failing here at 5s while
+      // passing in ~3s idle — a timing artefact, not a behaviour change.
+    }, 20_000);
 
     it('routes command stdout and stderr separately when collect text output advances into a command', async () => {
       const { claimId } = await setupCollectAdvancesIntoCommand();
@@ -1132,9 +1138,19 @@ describe('collect command', () => {
           {
             title: 'Fan-out',
             pass: 'CONTINUE',
-            substeps: [{ title: 'Task A', delegate: true, runbooks: ['child.runbook.md'] }],
+            substeps: [
+              {
+                title: 'Task A',
+                delegate: true,
+                runbooks: ['child.runbook.md'],
+              },
+            ],
           },
-          { title: 'Local work', pass: 'CONTINUE', command: 'rd echo --result pass' },
+          {
+            title: 'Local work',
+            pass: 'CONTINUE',
+            command: 'rd echo --result pass',
+          },
           {
             title: 'Fan-out again',
             pass: 'CONTINUE',
@@ -1169,6 +1185,132 @@ describe('collect command', () => {
       expect(requireFrontierToken(collected.stdout, '3.1')).toMatch(/^rdtk_/);
       const parent = await getActiveState(workspace);
       expect(parent).toMatchObject({ lifecycle: 'running', step: '3', substep: '1' });
+    }, 30_000);
+
+    it('derives the continuation steps from the state the collection committed', async () => {
+      // The collection's drain merges the collected child's `finalVars` into the
+      // target's `variables` (compiler `APPLY_CURRENT_RESOLVED_COMPLETION`), and
+      // `getRunbookFromState` renders the runbook against
+      // `mergeEffectiveVars(state)` — so the steps handed to the continuation
+      // MUST come from the state the collection committed, not the one this
+      // command loaded before it ran. Most rendered text self-heals downstream
+      // (`deriveExecutionUnitEntry` re-expands descriptions, prompts, and
+      // command code against the live state), which is exactly why this pins the
+      // one class that does NOT: a substep runbook reference, resolved once by
+      // `resolveForBounds`/`resolveSubstepRunbooks` at load time and preserved
+      // as literal `{{ref}}` text when its variable is undefined.
+      const parentContent = [
+        '---',
+        'name: collect-continuation-parent',
+        'inputs:',
+        '  - childRef',
+        '---',
+        '# Parent',
+        '',
+        '## 1. Fan-out',
+        '- PASS CONTINUE',
+        '',
+        '### 1.1 Delegated child',
+        '- DELEGATE',
+        '',
+        'Child publishes the next runbook reference.',
+        '',
+        '- child.runbook.md',
+        '',
+        // The middle command step is what routes the continuation through the
+        // Run Progression activation rather than the collection seam's own
+        // drain: without it the collection reaches step 2 itself, using the
+        // steps the command was constructed with, and this pin would be
+        // asserting on a different seam.
+        '## 2. Local work',
+        '- PASS CONTINUE',
+        '',
+        '```bash',
+        'rd echo --result pass',
+        '```',
+        '',
+        '## 3. Second fan-out',
+        '- PASS CONTINUE',
+        '',
+        '### 3.1 Delegated again',
+        '- DELEGATE',
+        '',
+        'Delegates to the reference the first child published.',
+        '',
+        '- {{childRef}}',
+        '',
+        '## 4. Done',
+        '- PASS COMPLETE',
+        '',
+      ].join('\n');
+      // `outputs: [childRef]` is what puts the claimed value on the child's
+      // terminal `finalVars`, which the collection then merges into the parent.
+      const childContent = [
+        '---',
+        'name: collect-continuation-child',
+        'inputs:',
+        '  - childRef',
+        'outputs:',
+        '  - childRef',
+        '---',
+        '# Child',
+        '',
+        '## 1. Publish',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Publishing childRef={{childRef}}.',
+        '',
+      ].join('\n');
+      await writeFile(join(workspace.runbooksDir(), 'parent.runbook.md'), parentContent);
+      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childContent);
+      await writeFile(join(workspace.runbooksDir(), 'second.runbook.md'), childContent);
+
+      // Not prompted: the continuation must actually RUN the middle command
+      // step to reach the second fan-out.
+      const start = await runCliInProcess('run parent.runbook.md --allow-all', workspace);
+      expect(start.exitCode).toBe(0);
+      const token = requireFrontierToken(start.stdout, '1.1');
+      const claim = await runCliInProcess(
+        ['claim', token, '--input', 'childRef=second.runbook.md'],
+        workspace,
+      );
+      expect(claim.exitCode).toBe(0);
+      const claimAction = findActionOutput(claim.stdout);
+      const childClaimId = String(claimAction?.claim_id);
+      const childRunId = String(claimAction?.run_id);
+      const passed = await runCliInProcess(['pass', '--claim-id', childClaimId], workspace);
+      expect(passed.exitCode).toBe(0);
+
+      // Sanity gate BEFORE the pinning assertion: the child really did publish
+      // the value, so a setup that stopped producing `finalVars` cannot make the
+      // assertion below pass vacuously.
+      expect((await readRunbookState(workspace, childRunId))?.finalVars).toEqual({
+        childRef: 'second.runbook.md',
+      });
+
+      const collected = await runCliInProcess(
+        [...(await withRunTarget(['collect'], workspace)), '--allow-all'],
+        workspace,
+      );
+      // Steps derived from the pre-collection state leave the reference literal,
+      // and the continuation STOPS the run on `delegation_resolution_failed`.
+      expect(collected.stdout).not.toContain('delegation_resolution_failed');
+      expect(collected.exitCode).toBe(0);
+
+      // The collection committed `childRef` onto the parent, and the
+      // continuation ran the command step and entered the second fan-out.
+      const parent = await getActiveState(workspace);
+      expect(parent).toMatchObject({ lifecycle: 'running', step: '3', substep: '1' });
+      expect(parent?.variables).toEqual(expect.objectContaining({ childRef: 'second.runbook.md' }));
+
+      // THE PINNING ASSERTION. The continuation entered 3.1 and advertised its
+      // frontier; that frontier's runbook reference is resolved only if the
+      // continuation's steps were derived from the committed state. Derived from
+      // the pre-collection state it stays the literal `{{ childRef }}`.
+      const frontier = findLatestFrontierInEvents(parseConcatenatedJson(collected.stdout));
+      const entry = frontier?.find((candidate) => candidate.id === '3.1');
+      expect(entry?.runbook).toBe('second.runbook.md');
     }, 30_000);
   });
 

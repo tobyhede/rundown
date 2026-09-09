@@ -29,18 +29,6 @@ import {
 } from '../helpers/test-utils.js';
 import { textModeAgentAdvisory } from '../../src/commands/run.js';
 
-// ACCEPTED MUTATION SURVIVOR in run.ts (#485).
-//
-//  - `callerEvidence: { kind: 'direct_cli' }` on the `--prompted --step` goto
-//    context (`run.ts:312`), `ObjectLiteral -> {}`. Equivalent, not a gap:
-//    `runNavigationMutation` reads the evidence through exactly one predicate,
-//    `input.callerEvidence.kind === 'claim_bearer'`, so `{}` and `direct_cli`
-//    take the same branch and commit the same mutation. Confirmed against the
-//    broad (`--findRelatedTests`) tier, so this is not the dedicated-tier
-//    artifact — the integration path in `explicit-run-targeting.test.ts` does
-//    exercise this line. Killing it would mean asserting an object literal's
-//    shape rather than any behaviour it produces.
-
 describe('textModeAgentAdvisory', () => {
   it('warns when --text is captured (non-terminal stdout — the agent case)', () => {
     const advisory = textModeAgentAdvisory({ text: true }, undefined);
@@ -614,7 +602,10 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       const parentRunId = await startSubstepParent();
       await writePassingChild();
 
-      // Target 1.2 so parentStepId is unambiguously the substep id '2'.
+      // Target 1.2 so parentStepId is unambiguously the substep id '2'. The
+      // parent's cursor is on 1.1, and that is the point: composing against a
+      // substep the cursor is not on is what `--step` is for. Ownership is the
+      // persisted linkage row, not the cursor (`resolveInlineAncestorProgression`).
       const result = await runCliInProcess('run child.runbook.md --step 1.2', workspace);
       expect(result.exitCode).toBe(0);
 
@@ -844,11 +835,7 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       expect((await listPersistedRunIds(workspace.cwd)).length).toBe(runsBefore);
     });
 
-    it('proceeds unlinked when the parent run vanishes after determination', async () => {
-      // A parent pruned between linkage determination and the substep mark is
-      // the pre-existing "nothing to do" outcome: the mark writes nothing and
-      // the launch completes without a parent to advance. The fence must keep
-      // that contract rather than convert it into a refusal.
+    it('fails closed when the composing parent vanishes after determination', async () => {
       const parentRunId = await startSubstepParent();
       await writePassingChild();
 
@@ -875,9 +862,12 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
       const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
       expect(injected).toBe(true);
 
-      // The launch neither refused nor crashed: the child ran to completion
-      // with no parent left to mark.
-      expect(result.exitCode).toBe(0);
+      // The child retains an inline linkage, so Run Progression must not
+      // silently reinterpret the missing ancestor as an unlinked success.
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout + result.stderr).toContain(
+        `Inline parent ${parentRunId} is unavailable`,
+      );
       expect(await readRunbookState(workspace, parentRunId)).toBeNull();
     });
 
@@ -1143,17 +1133,13 @@ describe('run --step inline linkage (sandbox-visible coverage)', () => {
   });
 
   describe('terminal propagation', () => {
-    it('inline child that fails and stops exits 1 and stops the parent', async () => {
-      const parentRunId = await startSubstepParent();
+    it('maps a parent waiting composition outcome to exit 0 and renders its observation', async () => {
+      await startSubstepParent();
       await writeStoppingChild();
 
       const result = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
-      // propagateChildTerminal reports 'stopped' → process.exit(1).
-      expect(result.exitCode).toBe(1);
-
-      const parent = await readRunbookState(workspace, parentRunId);
-      const ss = (parent!.substepStates ?? []).find((s) => s.id === '1');
-      expect(ss?.result).toBe('fail');
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain('"substep":"2"');
     });
   });
 

@@ -1085,6 +1085,13 @@ export function extractToken(stdout: string): string {
 export function findActionOutput<T extends Record<string, unknown> = Record<string, unknown>>(
   stdout: string,
 ): T | null {
+  const documents = parseConcatenatedJson(stdout);
+  for (const document of documents.reverse()) {
+    if (typeof document === 'object' && document !== null && 'action' in document) {
+      return document as T;
+    }
+  }
+
   // First try to parse the entire stdout as a single JSON object
   try {
     const output = JSON.parse(stdout.trim()) as Record<string, unknown>;
@@ -1637,6 +1644,31 @@ export function parseConcatenatedJson(raw: string): unknown[] {
     }
   }
   return results;
+}
+
+/**
+ * Flatten {@link parseConcatenatedJson} output into a list of JSON objects.
+ *
+ * The CLI writes some documents as a bare object and some inside an array
+ * (a flushed accumulator), so a caller scanning for one event type has to
+ * descend one level. Nested arrays are flattened recursively; non-object
+ * values are dropped.
+ *
+ * @param events - Parsed JSON documents, as returned by `parseConcatenatedJson`.
+ * @returns Every JSON object found, in document order.
+ */
+export function flattenEvents(events: unknown[]): Record<string, unknown>[] {
+  const flat: Record<string, unknown>[] = [];
+  for (const event of events) {
+    if (Array.isArray(event)) {
+      flat.push(...flattenEvents(event));
+      continue;
+    }
+    if (event && typeof event === 'object') {
+      flat.push(event as Record<string, unknown>);
+    }
+  }
+  return flat;
 }
 
 /**

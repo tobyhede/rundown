@@ -222,3 +222,51 @@ describe('execution action helpers', () => {
     });
   });
 });
+
+describe('CONTENTION_LAUNCH_CODES', () => {
+  it('classifies the registered run-start CAS code as contention', async () => {
+    // The set is keyed by REGISTERED code values, not symbolic names: the codes
+    // that reach the launch-refusal arm are `ErrorCodes.*.code` strings
+    // (RD-NNN). Pinned against the registry so a code remap cannot silently
+    // turn every contention-shaped launch loss permanent (#853 review F4) —
+    // when the #777 fix surfaces CONCURRENT_STATE_MODIFICATION from the
+    // run-start pipeline, this membership is what makes that arm retryable
+    // with no further change.
+    const { CONTENTION_LAUNCH_CODES } = await import('../../src/services/execution.js');
+    const { ErrorCodes, TRANSACTIONAL_REFUSAL_CODE_BY_KIND } = await import('@rundown-org/core');
+    expect(CONTENTION_LAUNCH_CODES.has(ErrorCodes.CONCURRENT_STATE_MODIFICATION.code)).toBe(true);
+    expect(
+      CONTENTION_LAUNCH_CODES.has(TRANSACTIONAL_REFUSAL_CODE_BY_KIND.concurrent_modification),
+    ).toBe(true);
+    // LAUNCH_FAILED remains the pipeline's catch-all for everything it cannot
+    // classify, and must stay permanent: a generic init failure has no retry
+    // to offer, and admitting it here would tell every such caller to retry.
+    expect(CONTENTION_LAUNCH_CODES.has(ErrorCodes.LAUNCH_FAILED.code)).toBe(false);
+  });
+});
+
+describe('sessionRefusalRecovery', () => {
+  // Three launch arms answer "may the caller just try again?" for a session
+  // ownership refusal — child adoption, the launch pipeline, and the inline
+  // latch's own commit. Each had its own copy of the ternary, and the launch
+  // arm's copy had drifted to an unconditional `retryable`, which told an
+  // operator holding a `recovery_required` run to repeat the one gesture that
+  // can never clear it.
+  it.each([
+    ['execution_in_progress', 'retryable'],
+    ['recovery_required', 'permanent'],
+  ] as const)('classifies %s as %s', async (kind, expected) => {
+    const { sessionRefusalRecovery } = await import('../../src/services/execution.js');
+    const { assertRunId } = await import('@rundown-org/core');
+    const refusal = {
+      kind,
+      runId: assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+      message: `run is ${kind}`,
+      ...(kind === 'recovery_required' ? { epoch: 2 } : {}),
+    };
+
+    expect(sessionRefusalRecovery(refusal as Parameters<typeof sessionRefusalRecovery>[0])).toBe(
+      expected,
+    );
+  });
+});

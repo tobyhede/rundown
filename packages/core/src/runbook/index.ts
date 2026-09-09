@@ -270,6 +270,8 @@ export {
   createEffectfulActorMutationRunner,
   type EffectfulActorMutationRunner,
   type EffectfulActorMutationRunnerInput,
+  type PreflightEffectfulActorMutationRunnerInput,
+  type PreEffectActorMutationReturn,
   type EffectfulActorMutationSetRunnerInput,
   type EffectfulActorMutationSetRunnerResult,
   type EffectfulActorMutationSetTarget,
@@ -305,32 +307,66 @@ export {
   type CollectDelegationOutcomesOperationInput,
   type RunbookCollectionServiceDependencies,
 } from './collection-service.js';
-// Shared re-entry frontier seam (F6). Consumed by `collectDelegationOutcomes`
-// above and by the CLI execution loop, which is why it is exported.
+// Shared re-entry frontier seam (F6), consumed only through Run Progression's
+// fenced projection/consume turn.
 export {
+  FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
+  FRONTIER_CONSUME_FAILED_MESSAGE,
+  FRONTIER_PROJECTION_REFUSED_MESSAGE,
   prepareReEntryFrontierConsume,
-  projectAndConsumeReEntryFrontier,
   readPersistedReEntryFrontier,
   type PrepareReEntryFrontierActorService,
   type PrepareReEntryFrontierConsumeInput,
   type PreparedReEntryProjection,
-  type ProjectAndConsumeReEntryFrontierInput,
-  type ReEntryFrontierActorService,
-  type ReEntryProjection,
 } from './re-entry-frontier.js';
+// Canonical refusal-kind → symbolic-code maps. The value consts are for seams
+// that may value-import the barrel; frontends loaded under partial barrel
+// mocks restate the literal and pin it with the exported `…ByKind` types.
 export {
-  propagateTerminalChildUpward,
+  SESSION_REFUSAL_CODE_BY_KIND,
+  TRANSACTIONAL_REFUSAL_CODE_BY_KIND,
+  type SessionRefusalCodeByKind,
+  type TransactionalRefusalCodeByKind,
+} from './storage/refusal-codes.js';
+// XState-owned Run Progression activation (#851 / ADR 0003). The authority's
+// minting function is deliberately NOT exported: only core seams that verified
+// caller evidence may produce a RunProgressionAuthority.
+export {
+  activateRunProgression,
+  commitRunProgressionEvent,
+  progressionDirectiveForClaimedRun,
+  progressionDirectiveForStartedRun,
+  progressionDirectiveForTerminalRun,
+  resolveInlineAncestorProgression,
+  flowBackInlineTerminal,
+  propagateTerminalRun,
+  MAX_INLINE_ANCESTOR_DEPTH,
+  INLINE_ADVANCE_RECOVERY_BY_REASON,
+  ObservationDeliveryError,
+  recoveryForInlineAdvanceRefusal,
+  type InlineAdvanceRecoveryByReason,
+  type InlineChildDispatch,
+  type InlineChildDispatchInput,
+  type InlineChildDispatchResult,
+  type RunProgressionDeps,
+  type RunProgressionDirective,
+  type RunProgressionEntryBoundary,
+  type RunProgressionFailureReason,
+  type RunProgressionOutcome,
+  type RunProgressionRecovery,
+  type RunProgressionRefusalReason,
+  type RunProgressionWaitReason,
+  type TerminalPropagation,
+  type TerminalPropagationInput,
+  type TerminalPropagationResult,
+  type TerminalPropagationSource,
+} from './run-progression.js';
+export type { RunProgressionAuthority } from './run-progression-authority.js';
+export {
+  reportDelegatedTerminal,
   INLINE_PARENT_CYCLE_CODE,
-  MAX_INLINE_PROPAGATION_CHAIN,
-  type AdvanceInlineParent,
-  type AdvanceInlineParentInput,
-  type AdvanceInlineParentOutcome,
   type InlineParentAdvanceRefusal,
-  type InlineParentAdvanceStateReader,
-  type InlineUpwardPropagationResult,
   type LinkageCycleTrip,
-  type PropagateTerminalChildUpwardDeps,
-  type TerminalUpwardPropagationResult,
 } from './inline-parent-advance.js';
 export {
   classifyInlineLaunchOwnership,
@@ -358,8 +394,8 @@ export {
   type ExplicitDelegationTarget,
   type FindDelegationsByTokenHash,
   type DelegationAbortOutcome,
-  type LifecycleLoopDirective,
   type LifecycleNavigationInput,
+  type LifecycleNavigationCapability,
   type LifecycleNavigationMutationInput,
   type LifecycleNavigationMutationOutcome,
   type LifecycleNavigationOutcome,
@@ -478,8 +514,8 @@ export {
   type PrepareDelegationChildUnlinkResult,
   type RunbookActorServiceOptions,
 } from './actor-service.js';
-// The runtime capability types ARE public: a front end that owns the CLI
-// execution loop threads verified delegation capabilities through its own
+// The runtime capability types ARE public: a front end threads verified
+// delegation capabilities through its Run Progression dependencies and
 // option bags, so it must be able to name them. `DelegationRuntimeCapabilities`
 // is the shape those bags should carry — the individual callables remain
 // exported for the narrow seams that genuinely take only one.

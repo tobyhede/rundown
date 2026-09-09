@@ -112,6 +112,7 @@ export function makeConfig({ sandboxed }) {
       '^(\\.{1,2}/.*)\\.js$': '$1',
       '^@rundown-org/core$': `<rootDir>/${up}core/src/index.ts`,
       '^@rundown-org/core/testing/effective-vars$': `<rootDir>/${up}core/src/testing/effective-vars.ts`,
+      '^@rundown-org/core/testing/runbook-store$': `<rootDir>/${up}core/src/testing/runbook-store.ts`,
       '^@rundown-org/parser$': `<rootDir>/${up}parser/src/index.ts`,
     },
     transform: {

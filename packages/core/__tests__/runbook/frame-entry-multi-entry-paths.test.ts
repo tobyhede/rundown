@@ -20,6 +20,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { activateForTest } from '../helpers/run-progression-activation.js';
 import {
   DelegationScanService,
   RunbookActorService,
@@ -179,6 +180,15 @@ describe('one mutation, one entry bump', () => {
     if (outcome.kind !== 'applied') {
       throw new Error(`expected applied, got ${outcome.kind}: ${JSON.stringify(outcome)}`);
     }
+    if (outcome.progression.kind === 'activate') {
+      await activateForTest(outcome.progression, {
+        manager,
+        actorService,
+        sessionService,
+        tmp,
+        steps,
+      });
+    }
   }
 
   /**
@@ -197,13 +207,8 @@ describe('one mutation, one entry bump', () => {
       throw new Error(`expected allowed, got ${allowed.kind}`);
     }
     const outcome = await seam.runNavigationMutation({
-      runId,
-      callerEvidence: evidence(),
-      steps,
+      navigation: allowed.navigation,
       target,
-      ...(allowed.delegationRuntime === undefined
-        ? {}
-        : { issueDelegationCredential: allowed.delegationRuntime.issueDelegationCredential }),
     });
     if (outcome.kind !== 'applied') {
       throw new Error(`expected applied, got ${outcome.kind}: ${JSON.stringify(outcome)}`);

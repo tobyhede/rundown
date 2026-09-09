@@ -221,14 +221,15 @@ stores a running substep record with inline metadata, and writes
 inference from parser shape.
 
 The actor does not start the child process or write child state. Those external
-effects remain in the CLI boundary: the execution loop consumes the persisted
-intent, creates or resumes the child run with the preallocated id, records
-`INLINE_CHILD_STARTED` on the parent, and sends `INLINE_LAUNCH_CONSUMED` after
-the one-shot intent has been handled — or `INLINE_LAUNCH_ABANDONED` when the
-launch span fails after latching, which releases the latch while keeping the
-intent so the unfinished launch stays re-observable. If preparation fails, the
-machine records `INLINE_LAUNCH_FAILED` and stops the active runbook; the CLI
-must not fall back to local substep execution.
+effects remain behind the Run Progression activation's injected dispatch
+callable: activation consumes the persisted intent, creates or resumes the child
+run with the preallocated id, records `INLINE_CHILD_STARTED` on the parent, and
+sends `INLINE_LAUNCH_CONSUMED` after the one-shot intent has been handled — or
+`INLINE_LAUNCH_ABANDONED` when the launch span fails after latching, which
+releases the latch while keeping the intent so the unfinished launch stays
+re-observable. If preparation fails, the machine records `INLINE_LAUNCH_FAILED`
+and stops the active runbook; the CLI must not fall back to local substep
+execution.
 
 The leaf also invokes `commandExecActor` directly to execute the step's command;
 that actor's completion produces the `COMMAND_RESULT` event the capture flow
@@ -494,14 +495,10 @@ intact. Domain refusals are separate: they are typed `status` arms
 (`already_cancelled`, `needs_force`, `child_in_flight`, `error`), never mapped
 onto a throw.
 
-**Commit path back into the compiled machine.** Only one of the three commands
-re-enters the compiled runbook machine. `prepareManualDelegationMutation` sends
-`MANUAL_DELEGATION_ABORT_PREPARED` through `prepareActorMutation` when the
-command was `ABORT` **and** the captured parent state carries a persisted
-snapshot. `ISSUE`, `RETRY`, and an `ABORT` over a state with no snapshot return
-`{ ...previousState, substepStates }` directly, without a machine event. On the
-compiled-machine side the event is a root-level `on` handler that assigns
-`context.substepStates` — no target, no guard, no derivation.
+**Commit path.** `prepareManualDelegationMutation` returns the prepared
+`substepStates` as a state update. The shared state updater mirrors that field
+into persisted snapshot context, so no bridge event or frontend round-trip is
+needed.
 
 The design record does not settle the longer trajectory. The PR 12 planning
 audit requires manual delegation to be machine-owned and separately contemplates
@@ -533,18 +530,17 @@ translating snapshot transitions.
 | `INLINE_LAUNCH_CONSUMED`                                                     | Inline launch side effect                                       | Clears the one-shot `inlineLaunchIntent` after the front end has consumed it, releasing the launch latch in the same commit.                                                                                         |
 | `INLINE_LAUNCH_ABANDONED { started }`                                        | Inline launch side effect                                       | Releases the launch latch of a span that failed, KEEPING the intent so the unfinished launch stays re-observable. `started` is the record the sender latched; the release applies only while the row still holds it. |
 | `DELEGATION_CHILD_LINKED` / `DELEGATION_CHILD_UNLINKED`                      | `RunbookActorService` (core-internal)                           | Records or clears the parent-side link to a claimed child run. Not front-end reachable.                                                                                                                              |
-| `MANUAL_DELEGATION_ABORT_PREPARED { substepStates }`                         | `RunbookActorService` (core-internal)                           | Commits a machine-prepared manual `abort` back into the compiled machine. Root-level `assign` only — no target, guard, or derivation.                                                                                |
 
 Two qualifications on this table, both load-bearing.
 
 **It is not the whole `RunbookEvent` union.** `FORCE_STOP`, `FORCE_COMPLETE`,
 `APPLY_CURRENT_RESOLVED_COMPLETION`, and `COMMAND_RESULT` are driven by core
 (the lifecycle command seam, the completion service, and the compiled machine's
-own command actor); `EXECUTE_COMMAND` is sent by the CLI execution loop. None of
+own command actor); `EXECUTE_COMMAND` is selected by Run Progression. None of
 them appear above. `packages/core/src/runbook/compiler.ts` remains the authority
 on the union.
 
-**Not every member is CLI-originated.** The last three rows are sent by
+**Not every member is CLI-originated.** The last two rows are sent by
 `RunbookActorService` inside core, not by a front end. The invariant that still
 holds — and the rule new work must satisfy — is the direction of the arrow, not
 the caller: a new CLI subcommand dispatches into existing events, and any new
@@ -554,8 +550,6 @@ incremental migrations (e.g. an event that bridges a CLI-owned side effect to a
 machine-owned one before the side effect itself moves into the machine) are
 scoped to the migration window and removed once the boundary collapses — they do
 not become permanent fixtures of the protocol.
-`MANUAL_DELEGATION_ABORT_PREPARED` is the current instance of that pattern; see
-[§ Manual delegation preparation machine](#manual-delegation-preparation-machine).
 
 ### Observable events the CLI renders
 
@@ -573,11 +567,11 @@ events for stdout/stderr (and for the MCP server when it is the front end):
 `STEP_ENTERED` is built by exactly one function, `deriveExecutionUnitEntry`
 (`packages/core/src/runbook/execution-unit-entry.ts`), reached through
 `RunbookActorService.enterExecutionUnit`. Every frontend enters a unit that way
-— `rundown run`'s execution loop and `rundown collect`'s re-entry disclosure
-alike — so the payload cannot vary with the command that produced it. The seam
-also classifies the entry, returning `awaiting` / `runnable` / `inline-launch`;
-the rendered command travels only on the `runnable` arm, inside a nominally
-branded record the module is the sole producer of.
+through Run Progression's machine-owned entry states, so the payload cannot vary
+with the command that produced it. The seam also classifies the entry, returning
+`awaiting` / `runnable` / `inline-launch`; the rendered command travels only on
+the `runnable` arm, inside a nominally branded record the module is the sole
+producer of.
 
 `STEP_ENTERED` may include `delegateFrontier` for authored `- DELEGATE` targets
 or `inlineLaunch` for non-DELEGATE child-runbook targets. `inlineLaunch` is
@@ -652,18 +646,46 @@ it.
    front end would have to resolve first. Step derivation is parsing of the
    resolved state's in-memory `runbookSrc` plus an environment-bound
    helper-registry + render context (Category A), not runbook-file IO.
-4. **Drive the machine, preserving the two mutation paths.** The seam keeps the
-   split it inherited and does not collapse it to an unconditional
-   `sendAndSync(PASS|FAIL)`:
-   - **manual substep completion** (`#driveSubstep`) prepares via
-     `RunbookCompletionService.prepareManualCompletion` and applies the resolved
-     completions that follow, all inside one owned commit;
+4. **Preserve the two ingress mutations; activate one progression path.** The
+   seam does not collapse manual completion into an unconditional actor send:
+   - **manual substep completion** (`#driveSubstepFenced`) records exactly one
+     resolved completion via `RunbookCompletionService.prepareManualCompletion`;
+     it does not apply or batch-drain completion rows inside that recording
+     commit;
    - **top-level run transition** (`#driveTopLevel`) sends `PASS` / `FAIL`
-     through `RunbookActorService.sendAndSync`.
+     through `RunbookActorService.prepareActorMutation` and commits its
+     observation boundary.
 
-   Both decisive bare default-target advances run inside
-   `SessionService.runGuardedParentAdvance` (the TOCTOU guard), and both apply
-   terminal release per the `LifecycleTerminalReleasePolicy`.
+   Every newly recorded manual completion, and every continuing or terminal
+   top-level transition, returns an `activate` directive. Run Progression then
+   asks the restored compiled XState machine for the next intent and applies at
+   most one completion per CAS/observation turn. Terminal top-level ingress
+   carries an `after_observed_transition` boundary so activation propagates the
+   terminal without replaying its observation or release.
+
+   The claim-path terminal (`rundown complete`/`stop --claim-id`) obeys the same
+   rule through `progressionDirectiveForTerminalRun`, which core — not the
+   frontend — uses to answer both questions the frontend must not: whether the
+   observed terminal still owes composition a turn, and where that turn starts.
+   Only an INLINE-linked terminal continues, because a delegated child's outcome
+   is already recorded against its parent by the same fenced transaction that
+   applied the terminal, and an unlinked run composes with nothing; the
+   directive's `none` arm is how core says so. A `resume` boundary here would
+   re-announce a terminal the seam has already rendered and re-release a run the
+   applying transaction already released.
+
+   This #854 slice owns the completion-specific choice: applicable completion,
+   target mismatch, and exhausted compare-and-swap contention are selected as
+   closed intents by the compiled machine. `awaiting_input` remains a typed
+   feedback value from the runtime's execution-unit entry classification. Fresh
+   runs, freshly claimed children, resumed runs, and terminal propagation all
+   enter this one Run Progression activation. The machine closes
+   `awaiting_input` as a typed waiting outcome throughout.
+
+   Both decisive bare default-target ingress mutations run inside
+   `SessionService.runGuardedParentAdvance` (the TOCTOU guard). Terminal release
+   is committed by the mutation that actually makes the run terminal: the
+   top-level transition itself or the later machine-selected completion turn.
 
 5. **Bare inline-child reactivation.** When a bare (no `manualTarget`) substep
    transition lands on a substep whose inline child is still running and whose
@@ -673,22 +695,23 @@ it.
    explicit `--step` / `--index` path never reactivates — it is a deliberate
    completion against a named substep.
 
-   The seam also decides whether the reactivation needs the parent's execution
-   loop, and returns that as the loop directive. An **interrupted** launch does:
-   the launcher takes the launch latch (`inline.started`), consumes the one-shot
-   launch intent — which releases that latch — and re-establishes the child's
-   run-control authority (`SessionService.adoptRunControlClaim`) in one
-   continuation, and a process that died mid-launch leaves all three undone.
-   Only the launch seam (`launchInlineChildFromIntent`'s existing-child branch)
-   performs them, and only the parent's own loop reaches it, so the seam returns
-   `loop: { kind: 'run' }` there.
+   The seam also decides whether the reactivation needs the parent's Run
+   Progression activation, and returns that as the progression directive. An
+   **interrupted** launch does: the launcher takes the launch latch
+   (`inline.started`), consumes the one-shot launch intent — which releases that
+   latch — and re-establishes the child's run-control authority
+   (`SessionService.adoptRunControlClaim`) in one continuation, and a process
+   that died mid-launch leaves all three undone. Only the launch seam
+   (`launchInlineChildFromIntent`'s existing-child branch) performs them, and
+   only the parent's own progression reaches it, so the seam returns
+   `progression: { kind: 'activate', ... }` there.
 
-   A launch that already **finished** returns `loop: { kind: 'none' }` — running
-   the loop would re-enter an execution unit the parent never left,
-   re-announcing the step and re-running any command it carries. The
+   A launch that already **finished** returns `progression: { kind: 'none' }` —
+   activating progression would re-enter an execution unit the parent never
+   left, re-announcing the step and re-running any command it carries. The
    discriminant is the surviving intent itself
    (`#hasUnconsumedInlineLaunchIntent`), which is the same value
-   `enterExecutionUnit` re-projects, so the seam's decision and the loop's
+   `enterExecutionUnit` re-projects, so the seam's decision and progression's
    behaviour agree by construction.
 
    **A child is activated only by the launch span that wins it.** The seam
@@ -696,10 +719,10 @@ it.
    **live** owner mid-launch looks like — the two are one process's launch at
    two moments, and this seam does not consult the latch. So the `none` arm is
    the only one it activates on: there the launch is over, and the child is
-   genuinely this session's to target. On the `run` arm a push would target the
-   session at a run this process may be about to stand down from, and standing
-   down would then have to take that push back on every refusal arm the launch
-   span has or later grows. `launchInlineChildFromIntent` performs the
+   genuinely this session's to target. On the `activate` arm a push would target
+   the session at a run this process may be about to stand down from, and
+   standing down would then have to take that push back on every refusal arm the
+   launch span has or later grows. `launchInlineChildFromIntent` performs the
    activation instead — once the latch has said the launch is its own — and
    every stand-down arm consequently writes nothing to the session.
 
@@ -718,9 +741,8 @@ it.
    `execution_in_progress` on exactly the crash-recovery launch it exists to
    finish.
 
-The seam returns transition-observation events plus a loop-continuation
-directive (`LifecycleLoopDirective`) as **data**. It does not spawn processes or
-render.
+The seam returns transition-observation events plus a Run Progression directive
+(`RunProgressionDirective`) as **data**. It does not spawn processes or render.
 
 ### What the direct CLI owns
 
@@ -740,15 +762,23 @@ work:
   parsing only; a `--run` id is threaded through as the target selector and
   resolved against the session `defaultStack` in core — it never becomes caller
   evidence);
-- **parses `--step` / `--index`** into a pre-resolved `ManualCompletionCursor`
-  via `resolveManualCompletionCursor`
+- **parses `--step` / `--index` syntax** into an `ExplicitTransitionTarget`
   (`packages/cli/src/helpers/transitions.ts`) — raw-argument input handling on
-  inherently external CLI args (Category A);
+  inherently external CLI args (Category A). Core resolves that target against
+  the exact state captured by the guarded mutation;
 - **renders the seam's typed outcome** to the existing JSON/text envelopes and
-  maps it to exit codes (including the post-transition parent-propagation
-  block);
-- **runs the execution loop** (command-step subprocess spawning) per the
-  returned `loop` directive.
+  maps semantic lifecycle and refusal/failure to separate process-exit output;
+- **activates Run Progression** per the returned directive, supplying the
+  command callable used by the machine actor plus the inline-launch,
+  terminal-propagation, and observation callables invoked by the activation.
+  Completion selection, inline launch, and upward inline flow-back are
+  machine-owned. A freshly launched child is activated through the same Run
+  Progression seam; when it reaches terminal, core resolves and validates the
+  complete contiguous inline ancestry before the core inline-terminal flow-back
+  actor records the immediate completion and recursively activates that parent.
+  Each ancestor therefore selects its own next turn through XState. The CLI does
+  not select completion turns, interpret intermediate loop statuses, or perform
+  a second terminal-propagation pass.
 
 The CLI constructs **no** `ActorContext`.
 
@@ -872,95 +902,95 @@ claim, or the reconstructed token does not hash to the verifier the parent
 recorded at issuance. Both are refusals, not successes with a degraded value —
 neither arm returns a token.
 
-There are three such disclosure boundaries, and all three refuse under one error
-code, `RD-821` (`DELEGATION_INVARIANT_VIOLATED`):
+There are two disclosure boundaries, and both refuse under one error code,
+`RD-821` (`DELEGATION_INVARIANT_VIOLATED`):
 
-| Boundary                                                             | Surface                                                                                                                                     |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `issueDelegation`'s same-issuer echo (`verifyEchoedDelegationToken`) | The seam returns `{ kind: 'error' }`; `rundown delegate` throws it into the wrapper, which emits `{"kind":"error","code":"RD-821"}`         |
-| The CLI execution loop re-entering a persisted `delegateFrontier`    | `projectDelegateFrontier` throws; the seam catches, emits `ERROR_OCCURRED` with `code: 'RD-821'`, releases the run, and returns `'stopped'` |
-| `rundown collect` re-entering a persisted frontier                   | Returns `collection_failed` with `reason: 'frontier_projection_refused'` and `code: 'RD-821'`                                               |
+| Boundary                                                             | Surface                                                                                                                             |
+| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `issueDelegation`'s same-issuer echo (`verifyEchoedDelegationToken`) | The seam returns `{ kind: 'error' }`; `rundown delegate` renders `RD-821`.                                                          |
+| Run Progression re-entering a persisted `delegateFrontier`           | The compiled machine emits a typed `projection_refused`; activation returns `RD-821`, leaves the run running, and exposes no token. |
 
-The last two rows share one **disclosure boundary** — the same reader, the same
-projector, and the same refusal arm — in two seams that differ only in when the
-consume commits. Both live in `packages/core/src/runbook/re-entry-frontier.ts`.
-Neither takes a caller-supplied entry: each derives "is the cursor on a substep"
-from the state it already holds, and the entry the bearers ride on is rendered
-by `enterExecutionUnit`. A frontend contributes its emitter wiring and its
-exit-code mapping, nothing more.
+GOTO and collection are not additional boundaries. Each commits its own domain
+mutation, then returns the same core-minted `RunProgressionDirective`. The
+directive carries one authority and the exact parsed graph verified with it;
+frontends cannot supply replacement steps or a separate deriver. The CLI renders
+the command observation, then passes the directive verbatim to
+`driveRunProgression`.
 
-| Seam                               | Driver             | Consume                                  | Arms                                                              |
-| ---------------------------------- | ------------------ | ---------------------------------------- | ----------------------------------------------------------------- |
-| `projectAndConsumeReEntryFrontier` | `runExecutionLoop` | Committed by the seam, via `sendAndSync` | `none` / `projected` / `projection_refused` / `consume_failed`    |
-| `prepareReEntryFrontierConsume`    | `rundown collect`  | **Derived**, committed by the caller     | `none` / `projected` / `projection_refused` — no `consume_failed` |
+The machine owns the frontier sequence explicitly:
 
-The unfenced seam commits the consume **before** returning the entered unit, so
-a failed consume discloses no bearer. The fenced twin cannot enter the unit
-until the caller's single transaction has landed, which strengthens the same
-guarantee: where the unfenced seam can leave a consume committed while the
-surrounding work is not, a refused transaction consumes nothing and discloses
-nothing.
+1. `__progression-project-frontier` invokes the fenced projection actor.
+2. The actor derives the projection from the captured state and commits
+   `DELEGATE_FRONTIER_CONSUMED` through the SQLite execution fence.
+3. Only a committed `projected` result enters
+   `__progression-enter-after-projected-frontier`; the transient bearer array
+   flows through actor output, never persisted context. If that entry actor
+   fails, the machine emits the permanent RD-833 disclosure refusal: the consume
+   is already durable and retry cannot reconstruct the bearer.
+4. Empty frontier and ordinary entry use their own explicit entry state. Its
+   entry actor can fail the same way, and it carries the same `onError` — but
+   the refusal is the retryable RD-504 `entry_render_failed`, because that turn
+   consumed nothing and re-activating re-renders. A refusal enters
+   `__progression-refused`; it never fabricates a terminal.
 
-A collect's disclosure has one failure mode the loop's does not, and it is new
-with the shared entry: a collect that has already committed can fail to RENDER
-the entry its bearers ride on — typically a `--helpers` helper raising. Nothing
-recovers the bearers (the consume is durable, so a retry answers the idempotent
-no-op), so the collect rejects rather than reporting a phantom success with an
-empty observation list. It rejects with a code of its own, `RD-833`
-(`DELEGATION_FRONTIER_DISCLOSURE_FAILED`), except when the render refusal is
-`InvalidRunbookStateError` — corrupt persisted state keeps its class so the
-CLI's RD-309 arm still prints finish/stop/prune.
-
-That is why `consume_failed` has no fenced counterpart. A derivation cannot
-half-commit, so the only way a collect's consume does not land is that its
-enclosing transaction refused — reported as the transactional refusal, with the
-frontier likewise untouched and the operation retryable. `RD-829`
-(`DELEGATION_FRONTIER_CONSUME_FAILED`) therefore has exactly one producer today,
-the execution loop; `DelegationPolicyOutcome` carries no
-`frontier_consume_failed` reason, because nothing could construct it.
+`projectAndConsumeReEntryFrontierFenced` is the machine actor seam. It returns
+`reselect`, `projected`, `projection_refused`, `consume_failed`,
+`claim_superseded`, `recovery_required`, `aggregate_recovery_required`, or
+`run_missing`. (`none` belongs to the inner `PreparedReEntryProjection`
+contract; the fenced seam reloads the run and answers `reselect` instead.) The
+last four preserve the storage refusal's own taxonomy. `consume_failed` is
+RD-829 and retryable; projection mismatch is RD-821 and permanent; missing
+authority and superseded authority both require authority rather than pretending
+the run stopped.
 
 Three consequences worth stating explicitly.
 
 **RD-821 is now operator-reachable.** It was introduced as an unreachable-branch
 guard — `retryDelegation`'s exhaustiveness default still uses it that way — and
 its registered description in `errors/codes.ts` has been updated to name the
-operator-reachable cause. All three rows are ordinary operator conditions rather
-than internal inconsistency: rotate the run-control claim between issuance and
-disclosure and the surviving descriptor names a claim nobody can present.
+operator-reachable cause. Both boundaries are ordinary operator conditions
+rather than internal inconsistency: rotate the run-control claim between
+issuance and disclosure and the surviving descriptor names a claim nobody can
+present.
 
-**It is deliberately not `ACTOR_CONTEXT_REQUIRED`.** On these paths authority is
-present — it is simply the wrong authority — so the absent-authority code would
-name the wrong condition and its remediation ("pass `--claim-id`") would tell
-the caller to do the thing it already did. Where authority is genuinely absent —
-the execution loop reaching a pending frontier with no deriver — the loop does
-refuse `ACTOR_CONTEXT_REQUIRED`, and stops with
-`reason: 'actor_context_required'`, the same reason the machine's own
-`delegationIssueActor` produces for the issuance half of that condition.
+**It is deliberately not `ACTOR_CONTEXT_REQUIRED`.** On projection-refused paths
+authority is present — it is simply the wrong authority — so the
+absent-authority code would name the wrong condition and its remediation ("pass
+`--claim-id`") would tell the caller to do the thing it already did. Where
+authority is genuinely absent — Run Progression reaching a pending frontier with
+no deriver — activation refuses `ACTOR_CONTEXT_REQUIRED` with
+`reason: 'actor_context_required'` and leaves the run running, the same reason
+the machine's own `delegationIssueActor` produces for the issuance half of that
+condition.
 
-**The code follows the condition, never the command.** `collect` previously
-reported a refused projection under `COLLECT_OPERATION_FAILED` — its own
-surface's registered code — with the distinguishing detail only in `reason`.
-That made one fact two codes depending on which command drove the seam, and it
-overloaded a code whose contract is "collection failed while applying delegation
-outcomes" onto a case where nothing was applied. `COLLECT_OPERATION_FAILED` now
-covers only a drain target mismatch.
+**The code follows the condition, never the command.** Because GOTO and collect
+both return the same directive, the same machine state maps projection mismatch
+to RD-821 and consume contention to RD-829. `COLLECT_OPERATION_FAILED` covers
+only a completion-drain target mismatch.
 
 The frontier's other failure is a different fact and keeps its own code:
 **RD-829** (`DELEGATION_FRONTIER_CONSUME_FAILED`) means projection succeeded and
 the `DELEGATE_FRONTIER_CONSUMED` sync did not. It is retryable — the frontier is
-still persisted and no observations were surfaced — whereas
-`frontier_projection_refused` is not fixed by repetition, since the same
-authority refuses identically. Two codes because the remediations invert; RD-826
-through RD-828 belong to the retry idempotency contract
-(`DELEGATION_REPLACEMENT_CONSUMED`, `DELEGATION_RETRY_IDENTITY_UNMATCHED`,
-`DELEGATION_SUPERSESSION_AMBIGUOUS`), so the frontier code takes RD-829.
+still persisted and no observations were surfaced — whereas `projection_refused`
+is not fixed by repetition, since the same authority refuses identically. Two
+codes because the remediations invert; RD-826 through RD-828 belong to the retry
+idempotency contract (`DELEGATION_REPLACEMENT_CONSUMED`,
+`DELEGATION_RETRY_IDENTITY_UNMATCHED`, `DELEGATION_SUPERSESSION_AMBIGUOUS`), so
+the frontier code takes RD-829.
 
-RD-829's producer set narrowed when collect became transactional: it is now
-reachable only from the execution loop, which still commits its consume
-separately. A fenced collect derives the consume inside its one transaction, so
-the condition cannot arise there (see the seam table above), and the
-`frontier_consume_failed` reason was removed from `DelegationPolicyOutcome`
-rather than retained without a producer.
+RD-829 is produced by Run Progression when its separate frontier turn cannot
+commit, including real execution-lease contention. Collection never owns that
+turn and therefore has no frontier refusal arms in `DelegationPolicyOutcome`.
+
+**RD-833** (`DELEGATION_FRONTIER_DISCLOSURE_FAILED`) is the other side of the
+commit boundary. It means the fenced consume committed, then
+`__progression-enter-after-projected-frontier` could not derive the
+`STEP_ENTERED` payload carrying the transient bearers. The machine owns and
+classifies that failure regardless of whether GOTO, collect, or another frontend
+supplied the activation directive. The frontier is gone, so retry is not a
+recovery; fix the entry/helper failure and explicitly re-delegate the step.
+`InvalidRunbookStateError` remains RD-309 instead, preserving its
+finish/stop/prune recovery.
 
 The fail-closed remedy the credentials design prescribes for a rotated issuing
 claim — explicit cancel and reissue — has no path today, because
@@ -1062,13 +1092,15 @@ a documented mistake:
 | Version                      | Governs                                                                            | Where it lives                     | Rule                                                |
 | ---------------------------- | ---------------------------------------------------------------------------------- | ---------------------------------- | --------------------------------------------------- |
 | SQLite storage schema        | The whole database — runs, session, stash, claims, attempts                        | `PRAGMA user_version`              | Must equal `SCHEMA_VERSION` (currently `2`)         |
-| `RunbookState.schemaVersion` | One run's structured state fields and its opaque `snapshot` blob, and nothing else | The run row's persisted state JSON | Must equal `CURRENT_SCHEMA_VERSION` (currently `1`) |
+| `RunbookState.schemaVersion` | One run's structured state fields and its opaque `snapshot` blob, and nothing else | The run row's persisted state JSON | Must equal `CURRENT_SCHEMA_VERSION` (currently `2`) |
 
 A wrong storage version invalidates the whole database (`RD-305`); a wrong
 `RunbookState.schemaVersion` invalidates **only that run** (`RD-309`). Session,
 stash, and claim rows carry no `schemaVersion` of their own. Neither version is
 ever migrated, hydrated, shimmed, or dual-read — the recovery path is always
-explicit user action.
+explicit user action. In the current build, a v1 run row is foreign and fails
+the version gate as `invalid_schema_version` before its structure or opaque
+snapshot is parsed.
 
 ### Drivers: two implementations, one atomicity bar
 
@@ -1425,21 +1457,23 @@ patch from `classifyChildCompletionTarget`, the same decision owner the fenced
 The drain followed third, and went further than the recorders did. Folding its
 decision inward was not enough on its own, because the seam that made the gap
 expressible was its **interface**: it selected a completion against a
-caller-supplied `currentState` and then let `sendAndSync` re-load a different
-one. The compare-and-swap always prevented a lost update, but never that — an
-apply could consume the row for the substep the caller captured while landing
-its PASS on the substep the machine had since advanced to.
+caller-supplied `currentState` and then let an unfenced actor send re-load a
+different one. The compare-and-swap always prevented a lost update, but never
+that — an apply could consume the row for the substep the caller captured while
+landing its PASS on the substep the machine had since advanced to.
 
 So the drain became `applyNextResolvedCompletion`: ONE apply per call, selection
 and actor transition and commit inside a single
 `RunbookStateManager.mutateStateReturning` cycle, and **no `currentState`
 parameter at all**. `selectNextResolvedCompletionApply` is the pure decision
 owner it shares with the prepared twin, mirroring how
-`classifyChildCompletionTarget` is shared by the child paths. The loop moved to
-the CLI, which owns it properly: it must observe and emit each transition before
-the next apply, which is a Category A concern. The per-completion commit that
-looked like an obstacle was never the problem — one apply per commit is exactly
-what the primitive preserves.
+`classifyChildCompletionTarget` is shared by the child paths. Core Run
+Progression now owns the loop: XState selects one completion turn, core invokes
+one apply, and the frontend-supplied synchronous sink receives that turn's
+observation before XState selects again. Rendering remains Category A; the
+frontend does not decide completion order. The per-completion commit that looked
+like an obstacle was never the problem — one apply per commit is exactly what
+the primitive preserves.
 
 Two things that fold demands, and neither is automatic. The build callback
 re-runs per attempt, so everything it reaches must be safe to repeat: the
@@ -1512,26 +1546,32 @@ so two observers of one intent inside the launch span race a bare
 rather than a typed refusal.
 
 The replacement is an atomic **compare-and-latch** — a separate, prior
-`mutateStateReturning` cycle (`latchInlineLaunch`) whose build callback decides
-the whole question against the version the compare-and-swap commits onto:
-inactive parent, superseded intent, linkage refusal, unrecorded row, already
-latched, or won — plus a `missing` arm for a parent run that no longer exists,
-the one outcome the callback does not decide because it never runs.
-`inline.started` is the latch, and only the `won` arm proceeds into the launch
-span. The span itself must stay outside the callback — it resolves runbook refs,
-reads files, dynamically imports the pipeline and writes warnings, and a build
-callback re-runs up to eight times, so those are exactly the external effects it
-may not perform.
+capture-decide-save cycle (`latchInlineLaunch`) that decides the whole question
+against the version it saves onto: inactive parent, superseded intent, linkage
+refusal, unrecorded row, already latched, or won — plus a `missing` arm for a
+parent run that no longer exists, the one outcome the decision does not make
+because the capture it needs never returns a state. The decision is async (it
+loads the child run and asks the actor service to prepare the mutation), so it
+cannot ride inside a `mutateState` build callback and the cycle is the
+loop-from-outside form instead: capture the authority state, decide, save, and
+on `concurrent_modification` re-derive, bounded by the store's exported
+`DEFAULT_MUTATE_ATTEMPTS` with `mutateBackoffMs(attempt)` between attempts.
+Every other save refusal is permanent and returned as itself; an exhausted
+budget throws `ConcurrentStateModificationError`. `inline.started` is the latch,
+and only the `won` arm proceeds into the launch span. The span itself must stay
+outside the loop — it resolves runbook refs, reads files, dynamically imports
+the pipeline and writes warnings, and the decision re-runs once per attempt, so
+those are exactly the external effects it may not perform.
 
 The latch is its own module, `services/inline-launch-latch.ts`, rather than a
 private function inside the execution service. The seam is not justified by
 variation — it has exactly one caller — but by testability and locality: the
 decision, the linkage classification, the ownership read and the
-compare-and-swap cycle are one cohesive unit, and reaching them through the
-execution loop meant reaching them through a mocked `@rundown-org/core`, which
-is precisely the blind spot that hides the race the latch exists to prevent.
-Contention is now driven through the interface itself — two observers holding
-the same version against a real store — in
+compare-and-swap cycle are one cohesive unit, and reaching them through the old
+CLI coordination path meant reaching them through a mocked `@rundown-org/core`,
+which is precisely the blind spot that hides the race the latch exists to
+prevent. Contention is now driven through the interface itself — two observers
+holding the same version against a real store — in
 `__tests__/services/inline-launch-latch.test.ts`.
 
 Two constraints on what the module may own. Its only argument is the intent

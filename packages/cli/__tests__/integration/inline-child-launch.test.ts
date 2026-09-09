@@ -8,6 +8,7 @@ import {
 import { recordInlineLaunchStart, SessionService, type InlineLaunchStart } from '@rundown-org/core';
 import {
   createTestWorkspace,
+  flattenEvents,
   parseConcatenatedJson,
   readSession,
   readRunbookState,
@@ -16,20 +17,6 @@ import {
   writeSession,
   withRunTarget,
 } from '../helpers/test-utils.js';
-
-function flattenEvents(events: unknown[]): Record<string, unknown>[] {
-  const flat: Record<string, unknown>[] = [];
-  for (const event of events) {
-    if (Array.isArray(event)) {
-      flat.push(...flattenEvents(event));
-      continue;
-    }
-    if (event && typeof event === 'object') {
-      flat.push(event as Record<string, unknown>);
-    }
-  }
-  return flat;
-}
 
 function findDelegateToken(stdout: string, substepId: string): string {
   const events = flattenEvents(parseConcatenatedJson(stdout));

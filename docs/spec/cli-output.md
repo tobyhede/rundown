@@ -1896,30 +1896,31 @@ Error RD-309: Invalid persisted run state - Invalid runbook state for "rd_9e725b
 
 `rundown collect` shares the transactional refusal vocabulary documented above.
 The codes reach a collect's output at two different positions — the command's
-own refusal envelope, and streamed observations from follow-on execution-loop
+own refusal envelope, and streamed observations from follow-on Run Progression
 work — and the two mean different things.
 
 #### Collect's own refusal envelope
 
 The whole collection commits as one fenced aggregate transaction: the drain's
-applies, any delegation re-entry frontier consumption, the terminal session
-release, and a delegating grandparent's outcome row all land together or not at
-all. Because the seam captures the collector's authority and re-checks it at
-commit time, collect's own error envelope carries the transactional codes.
+applies, the terminal session release, and a delegating grandparent's outcome
+row all land together or not at all. Frontier projection and entry are **not**
+part of it — they are a separate Run Progression turn after that commit, so
+their refusals reach the operator as streamed observations rather than in this
+envelope. Because the seam captures the collector's authority and re-checks it
+at commit time, collect's own error envelope carries the transactional codes.
 
-| Code                                                                | Cause                                                                                                                                                                            | Origin                                    |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
-| `ACTOR_CONTEXT_REQUIRED`                                            | Bare `rundown collect` on a delegation-exposed run                                                                                                                               | Command policy                            |
-| `CLAIM_GRANT_REQUIRED`                                              | Verified bearer without the `collect-for-run` grant on the target delegating run                                                                                                 | Command policy                            |
-| `DELEGATION_SUPERSEDED` / `CLAIMED_RUNBOOK_UNAVAILABLE`             | The presented `--claim-id` is no longer authority — refused while resolving the target, before any mutation is attempted                                                         | Target resolution                         |
-| `SUBSTEPS_NOT_RESOLVED`                                             | Not every DELEGATE substep in the targeted frame has resolved                                                                                                                    | Collection seam                           |
-| `NOT_DELEGATE_STEP` / `STEP_NOT_FOUND` / `COLLECT_OPERATION_FAILED` | The targeted step is not a DELEGATE step, does not exist, or a delegated outcome did not apply to the target cursor                                                              | Collection seam                           |
-| `RD-821`                                                            | A persisted delegation re-entry frontier refused to project — the presenting claim is not the issuing claim, or the reconstructed bearer does not hash to the persisted verifier | Delegation frontier                       |
-| `STALE_CLAIM`                                                       | The collector's claim was released or replaced between authorization and commit                                                                                                  | Aggregate transaction                     |
-| `CONCURRENT_MODIFICATION`                                           | Another writer advanced a captured run's state version first                                                                                                                     | Aggregate transaction                     |
-| `EXECUTION_IN_PROGRESS`                                             | Another process holds the execution lease on a captured run                                                                                                                      | Aggregate transaction                     |
-| `RECOVERY_REQUIRED` / `AGGREGATE_RECOVERY_REQUIRED`                 | An interrupted execution attempt must be recovered before the collection can commit; the aggregate form names every affected run in `details.runs`                               | Aggregate transaction                     |
-| `RUN_TARGET_UNAVAILABLE`                                            | The `--run` id is not a running member of this session's active stack, or a captured run disappeared before the commit                                                           | Target resolution / aggregate transaction |
+| Code                                                                | Cause                                                                                                                                              | Origin                                    |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| `ACTOR_CONTEXT_REQUIRED`                                            | Bare `rundown collect` on a delegation-exposed run                                                                                                 | Command policy                            |
+| `CLAIM_GRANT_REQUIRED`                                              | Verified bearer without the `collect-for-run` grant on the target delegating run                                                                   | Command policy                            |
+| `DELEGATION_SUPERSEDED` / `CLAIMED_RUNBOOK_UNAVAILABLE`             | The presented `--claim-id` is no longer authority — refused while resolving the target, before any mutation is attempted                           | Target resolution                         |
+| `SUBSTEPS_NOT_RESOLVED`                                             | Not every DELEGATE substep in the targeted frame has resolved                                                                                      | Collection seam                           |
+| `NOT_DELEGATE_STEP` / `STEP_NOT_FOUND` / `COLLECT_OPERATION_FAILED` | The targeted step is not a DELEGATE step, does not exist, or a delegated outcome did not apply to the target cursor                                | Collection seam                           |
+| `STALE_CLAIM`                                                       | The collector's claim was released or replaced between authorization and commit                                                                    | Aggregate transaction                     |
+| `CONCURRENT_MODIFICATION`                                           | Another writer advanced a captured run's state version first                                                                                       | Aggregate transaction                     |
+| `EXECUTION_IN_PROGRESS`                                             | Another process holds the execution lease on a captured run                                                                                        | Aggregate transaction                     |
+| `RECOVERY_REQUIRED` / `AGGREGATE_RECOVERY_REQUIRED`                 | An interrupted execution attempt must be recovered before the collection can commit; the aggregate form names every affected run in `details.runs` | Aggregate transaction                     |
+| `RUN_TARGET_UNAVAILABLE`                                            | The `--run` id is not a running member of this session's active stack, or a captured run disappeared before the commit                             | Target resolution / aggregate transaction |
 
 Two notes on reading this table:
 
@@ -1929,14 +1930,36 @@ to lose. From the aggregate transaction a captured run vanished mid-flight. An
 agent cannot tell them apart from the envelope, and does not need to — the
 recovery is the same.
 
-`RD-829` (`frontier_consume_failed`) is **not** reachable from
-`rundown collect`. That code reports a frontier that projected but whose consume
-did not commit, leaving the frontier persisted and retryable. A collection
-derives its consume rather than committing one separately, so the only way it
-does not land is that the enclosing transaction refused — reported as the
-transactional code above, with the frontier likewise untouched. The code remains
-reachable from the execution loop, which still drives the unfenced projection
-seam.
+`RD-821` (`projection_refused`) is emitted by Run Progression when a persisted
+delegation re-entry frontier refuses to project — the presenting claim is not
+the issuing claim, or the reconstructed bearer does not hash to the persisted
+verifier. It is permanent, and nothing is consumed. It is **not** a collect
+envelope code: the frontier turn runs after collect's own commit, so a collect
+reports its successful result and this refusal arrives as a streamed
+observation.
+
+`RD-829` (`consume_failed`) is emitted by Run Progression after a frontier
+projects but its separate SQLite-fenced consume does not commit. The frontier
+remains persisted, no bearer is disclosed, and retrying re-projects it.
+`rundown collect` can therefore print a successful collection result followed by
+RD-829: collection owns and commits only its completion domain, then passes the
+core-minted activation directive to the same progression driver used by other
+entry points.
+
+If that consume commits but the following machine-owned entry actor cannot
+render the `STEP_ENTERED` payload, Run Progression reports permanent `RD-833`
+(`frontier_disclosure_failed`). The frontier is already gone and its bearer was
+transient, so retry cannot disclose it; repair the entry/helper failure and
+explicitly re-delegate the step. An `InvalidRunbookStateError` keeps RD-309 and
+its finish/stop/prune recovery instead of being relabelled RD-833.
+
+The same render failure on a turn that consumed nothing is `RD-504`
+(`entry_render_failed`), and it is retryable rather than permanent. Both entry
+states invoke one entry actor over one `enterExecutionUnit`, so the two codes
+separate the CONDITION, not the fault: RD-833 lost a transient bearer the
+frontier consume had already spent, while RD-504's run keeps the cursor and
+lifecycle it had, so re-running the command re-renders the same entry once the
+helper is fixed. `InvalidRunbookStateError` keeps RD-309 on this path too.
 
 An `AGGREGATE_RECOVERY_REQUIRED` from collect names the collect target and, when
 the target is itself a delegated child whose grandparent received a terminal
@@ -1944,25 +1967,27 @@ report, that grandparent too.
 
 #### Streamed `error_occurred` observations
 
-A collect whose aggregation advances the delegating run into execution-loop work
-streams that work's events through the same emitter, on the same `seq` counter.
-The loop's command fence commits under captured authority, so it can lose the
-compare-and-swap that collect's own seam never performs. When it does, the
-refusal is observed as an `error_occurred` line carrying the same code
+A collect whose aggregation advances the delegating run into Run Progression
+work streams that work's events through the same emitter, on the same `seq`
+counter. The progression's command fence commits under captured authority, so it
+can lose the compare-and-swap that collect's own seam never performs. When it
+does, the refusal is observed as an `error_occurred` line carrying the same code
 vocabulary — `STALE_CLAIM`, `CONCURRENT_MODIFICATION`, `EXECUTION_IN_PROGRESS`,
 `RECOVERY_REQUIRED`, or `RUN_TARGET_UNAVAILABLE`. It emits no `runbook_stopped`:
 the refused follow-on transition committed no terminal state.
 
 **The collection is already committed when this is observed.** Collect's own
-aggregate transaction — the drain's applies, any delegation re-entry frontier
-consumption, the terminal session release, and a delegating grandparent's
-outcome row — lands in full _before_ any execution-loop work begins; the loop is
-post-commit follow-on work driven from the state that commit produced. Only the
-**refused follow-on transition** committed nothing, and precisely because that
-invocation committed nothing it owns no terminal cleanup either — releasing
-there would let a losing claimant tear down the winner's run. The delegating run
-is therefore left exactly where the aggregation put it: applied, non-terminal,
-and still session-targeted.
+aggregate transaction — the drain's applies, the terminal session release, and a
+delegating grandparent's outcome row — lands in full _before_ any Run
+Progression work begins; that progression is post-commit follow-on work driven
+from the state that commit produced. Frontier projection and entry are no part
+of the aggregate either: they are their own Run Progression turn after it, so
+their refusals arrive here as streamed observations too. Only the **refused
+follow-on transition** committed nothing, and precisely because that invocation
+committed nothing it owns no terminal cleanup either — releasing there would let
+a losing claimant tear down the winner's run. The delegating run is therefore
+left exactly where the aggregation put it: applied, non-terminal, and still
+session-targeted.
 
 **Do not re-run the collect to recover.** The aggregation is durable and is
 never applied twice — a repeated bare `rundown collect` on the post-aggregation

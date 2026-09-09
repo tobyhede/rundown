@@ -5,17 +5,25 @@ import { join } from 'node:path';
 import { parseRunbookDocument, type ResolvedStep } from '@rundown-org/parser';
 import {
   assertRunId,
+  commitRunProgressionEvent,
+  ConcurrentStateModificationError,
+  DEFAULT_MUTATE_ATTEMPTS,
   generateRunId,
+  progressionDirectiveForStartedRun,
   recordInlineLaunchStart,
   RunbookStateManager,
+  SessionService,
   type DelegationTokenHash,
+  type ExecutionEpoch,
   type FrameKey,
+  type GuardedMutationResult,
   type InlineLaunchIntent,
   type InlineLaunchStart,
   type InlineLinkage,
   type ParentLinkage,
   type RunbookActorService,
   type RunbookState,
+  type RunProgressionAuthority,
   type RunId,
   type SubstepState,
 } from '@rundown-org/core';
@@ -208,6 +216,7 @@ Child prompt.
 interface LatchableParent {
   readonly manager: RunbookStateManager;
   readonly actorService: RunbookActorService;
+  readonly authority: RunProgressionAuthority;
   readonly parentRunId: RunId;
   readonly childRunId: RunId;
   readonly steps: readonly ResolvedStep[];
@@ -257,8 +266,19 @@ describe('latchInlineLaunch', () => {
     const { getRunbookFromState } = await import('../../src/helpers/runbook-loader.js');
     const steps = getRunbookFromState(created, cwd);
     await actorService.initializeState(parentRunId, steps);
+    const issued = await new SessionService(manager).issueRunControlClaim(parentRunId);
+    if (issued.kind !== 'committed') throw new Error(issued.message);
+    const authority = progressionDirectiveForStartedRun(created, steps, issued.value).authority;
     // Step 1 → step 2, whose substep entry invokes `inlineLaunchIntentActor`.
-    await actorService.sendAndSync(parentRunId, steps, { type: 'PASS' });
+    const initialized = await manager.load(parentRunId);
+    if (initialized === null) throw new Error('initialized parent disappeared');
+    const passed = await actorService.prepareActorMutation(parentRunId, initialized, steps, {
+      type: 'PASS',
+    });
+    const captured = await manager.captureRunAuthorityState(parentRunId);
+    if (captured.kind !== 'captured') throw new Error(captured.message);
+    const passCommit = await manager.saveState(captured.authority, passed.nextState);
+    if (passCommit.kind !== 'committed') throw new Error(passCommit.message);
 
     const state = await manager.load(parentRunId);
     const persisted = (
@@ -280,6 +300,7 @@ describe('latchInlineLaunch', () => {
     return {
       manager,
       actorService,
+      authority,
       parentRunId,
       childRunId: assertRunId(intent.childRunId),
       steps,
@@ -314,6 +335,7 @@ describe('latchInlineLaunch', () => {
     return latchInlineLaunch({
       manager: options?.manager ?? parent.manager,
       actorService: options?.actorService ?? parent.actorService,
+      authority: parent.authority,
       steps: parent.steps,
       intent: options?.intent ?? parent.intent,
     });
@@ -368,10 +390,11 @@ describe('latchInlineLaunch', () => {
   }
 
   it('reports a missing parent as its own arm rather than a null beside the union', async () => {
-    // `mutateStateReturning` never runs the callback for a run that does not
-    // exist, so this is the one outcome the compare-and-swap does not decide.
-    // It is still an answer to "may this launch proceed", so it travels on the
-    // same union — a caller narrowing the union cannot skip it.
+    // The cycle's authority capture returns `missing` for a run that does not
+    // exist, so the decision never runs and this is the one outcome the
+    // compare-and-swap does not make. It is still an answer to "may this launch
+    // proceed", so it travels on the same union — a caller narrowing the union
+    // cannot skip it.
     const parent = await seedLatchableParent();
     await parent.manager.delete(parent.parentRunId);
 
@@ -396,9 +419,13 @@ describe('latchInlineLaunch', () => {
     const parent = await seedLatchableParent();
     // Exactly what `INLINE_LAUNCH_CONSUMED` leaves behind: the winner of this
     // launch consumed the intent, so this observer's observation is stale.
-    await parent.actorService.sendAndSync(parent.parentRunId, parent.steps, {
-      type: 'INLINE_LAUNCH_CONSUMED',
-    });
+    await commitRunProgressionEvent(
+      parent.authority,
+      parent.manager,
+      parent.actorService,
+      parent.steps,
+      { type: 'INLINE_LAUNCH_CONSUMED' },
+    );
 
     await expect(latch(parent)).resolves.toEqual({ kind: 'superseded' });
     expect(await readLatch(parent)).toBeNull();
@@ -457,13 +484,24 @@ describe('latchInlineLaunch', () => {
   // FROM the intent, so an observed intent naming another parent selects that
   // parent, and the two can no longer be made to disagree. Its two reachable
   // states are pinned separately below.
-  it('reports the parent as missing when the observed intent names a run that does not exist', async () => {
+  it('refuses an intent naming a run outside the verified authority', async () => {
     const parent = await seedLatchableParent();
 
     await expect(
       latch(parent, { intent: { ...parent.intent, parentRunId: generateRunId() } }),
-    ).resolves.toEqual({ kind: 'missing' });
+    ).resolves.toEqual({ kind: 'superseded' });
     // The seeded parent is untouched: the latch never went near it.
+    expect(await readLatch(parent)).toBeNull();
+  });
+
+  it('refuses a superseded claim authority without writing the launch latch', async () => {
+    const parent = await seedLatchableParent();
+    const rotated = await new SessionService(parent.manager).issueRunControlClaim(
+      parent.parentRunId,
+    );
+    expect(rotated.kind).toBe('committed');
+
+    await expect(latch(parent)).resolves.toEqual({ kind: 'superseded' });
     expect(await readLatch(parent)).toBeNull();
   });
 
@@ -673,13 +711,24 @@ describe('latchInlineLaunch', () => {
       };
       // Exactly what a reclaiming observer commits: the same launch, at the same
       // coordinates, with the record overwritten by its own identity.
-      await parent.actorService.sendAndSync(parent.parentRunId, parent.steps, {
-        type: 'INLINE_CHILD_STARTED',
-        parentStepId: parent.intent.parentStepId,
-        parentFrameKey: parent.intent.parentFrameKey as FrameKey,
-        childRunId: parent.childRunId,
-        started: reclaimed,
-      });
+      const current = await parent.manager.load(parent.parentRunId);
+      if (current === null) throw new Error('inline parent disappeared');
+      const replaced = await parent.actorService.prepareActorMutation(
+        parent.parentRunId,
+        current,
+        parent.steps,
+        {
+          type: 'INLINE_CHILD_STARTED',
+          parentStepId: parent.intent.parentStepId,
+          parentFrameKey: parent.intent.parentFrameKey as FrameKey,
+          childRunId: parent.childRunId,
+          started: reclaimed,
+        },
+      );
+      const captured = await parent.manager.captureRunAuthorityState(parent.parentRunId);
+      if (captured.kind !== 'captured') throw new Error(captured.message);
+      const committed = await parent.manager.saveState(captured.authority, replaced.nextState);
+      if (committed.kind !== 'committed') throw new Error(committed.message);
 
       await outcome.held[Symbol.asyncDispose]();
 
@@ -1012,14 +1061,10 @@ describe('latchInlineLaunch', () => {
       const contender = new RunbookStateManager(cwd);
       const contenderActors = createCliRunbookActorService(contender);
 
-      // Hold the first reader inside its build callback until the second has
-      // also read, so both derive against the same version and the commit that
-      // lands second is genuinely stale. The two calls do interleave on their
-      // own today — measured — but only because both suspend at store awaits;
-      // the rendezvous removes the dependence on that scheduling rather than
-      // leaving a contention test to the event loop's discretion. `builds`
-      // below is what would catch it if they ever serialised anyway.
-      let builds = 0;
+      // Hold the first authority capture until the second has captured too, so
+      // both derive against the same verified version and one guarded commit is
+      // genuinely stale.
+      let captures = 0;
       let releaseFirstReader: (() => void) | undefined;
       // Bounded, so a run in which the second observer never reaches its build
       // fails on `builds` below rather than hanging the first observer until
@@ -1034,24 +1079,18 @@ describe('latchInlineLaunch', () => {
         clearTimeout(rendezvousTimer);
         releaseFirstReader?.();
       };
-      const gateBuild = (manager: RunbookStateManager): void => {
-        const real = manager.mutateStateReturning.bind(manager);
-        // Assigned without a cast, so the wrapper is checked against the real
-        // signature: a change to it fails here rather than silently un-gating
-        // the interleave and leaving a contention test that observes none.
-        manager.mutateStateReturning = async <R>(
-          id: string,
-          build: (current: RunbookState) => Promise<{ next: RunbookState | null; value: R }>,
-        ) =>
-          await real<R>(id, async (current) => {
-            builds += 1;
-            if (builds === 1) await bothRead;
-            if (builds === 2) releaseRendezvous();
-            return await build(current);
-          });
+      const gateCapture = (manager: RunbookStateManager): void => {
+        const real = manager.captureAuthorityState.bind(manager);
+        manager.captureAuthorityState = async (...args) => {
+          const captured = await real(...args);
+          captures += 1;
+          if (captures === 1) await bothRead;
+          if (captures === 2) releaseRendezvous();
+          return captured;
+        };
       };
-      gateBuild(parent.manager);
-      gateBuild(contender);
+      gateCapture(parent.manager);
+      gateCapture(contender);
 
       // Each winner performs the launch span's opening act, exactly as
       // `launchInlineChildFromIntent` does: one unconditional create for the
@@ -1096,10 +1135,7 @@ describe('latchInlineLaunch', () => {
         clearTimeout(rendezvousTimer);
       }
 
-      // The interleave happened: three build runs for two calls is the loser
-      // re-deriving against the row the winner committed. Two would mean the
-      // calls serialised and no compare-and-swap conflict was ever observed.
-      expect(builds).toBe(3);
+      expect(captures).toBeGreaterThanOrEqual(3);
       expect(outcomes.map((outcome) => outcome.kind).sort()).toEqual(['already-latched', 'won']);
       // The loser re-derived against the committed row and found a LIVE owner —
       // this process, since both observers run in it — rather than reclaiming a
@@ -1122,6 +1158,124 @@ describe('latchInlineLaunch', () => {
       expect(child?.id).toBe(parent.childRunId);
       // Latched exactly once, by the observer that won.
       expect((await readLatch(parent))?.ownerPid).toBe(process.pid);
+    });
+  });
+
+  // The decision is async — it loads the child and asks the actor service to
+  // prepare the mutation — so it cannot ride inside a `mutateState` build
+  // callback and the module owns a bounded capture-decide-save loop instead.
+  // That loop's two exits past the happy path had no test describing them:
+  // what a permanent refusal degrades to, and what an exhausted budget reports.
+  describe('the bounded capture-decide-save loop', () => {
+    /**
+     * Replace the manager's guarded state write with a fixed refusal.
+     *
+     * @param manager - Manager whose `saveState` the loop drives.
+     * @param refusal - Refusal every attempt receives.
+     * @returns Counter of the attempts the loop actually spent.
+     */
+    function refuseEverySave(
+      manager: RunbookStateManager,
+      refusal: Exclude<GuardedMutationResult<RunbookState>, { kind: 'committed' }>,
+    ): { attempts: number } {
+      const spent = { attempts: 0 };
+      manager.saveState = async () => {
+        spent.attempts += 1;
+        return refusal;
+      };
+      return spent;
+    }
+
+    it('spends the whole attempt budget on sustained contention, then reports it as concurrency', async () => {
+      const parent = await seedLatchableParent();
+      const spent = refuseEverySave(parent.manager, {
+        kind: 'concurrent_modification',
+        runId: parent.parentRunId,
+        message: 'lost update',
+      });
+
+      // Never a `superseded` or a silent `already-latched`: an exhausted budget
+      // observed no cause, so it reports the one it can actually vouch for.
+      await expect(latch(parent)).rejects.toThrow(ConcurrentStateModificationError);
+      // Exactly the store's exported budget — a mirrored constant here would
+      // drift from the one the loop paces against.
+      expect(spent.attempts).toBe(DEFAULT_MUTATE_ATTEMPTS);
+    });
+
+    it.each(['execution_in_progress', 'recovery_required'] as const)(
+      'returns a permanent %s refusal as itself, without retrying it',
+      async (kind) => {
+        const parent = await seedLatchableParent();
+        const refusal =
+          kind === 'recovery_required'
+            ? ({
+                kind,
+                runId: parent.parentRunId,
+                epoch: 1 as ExecutionEpoch,
+                message: 'recover first',
+              } as const)
+            : ({
+                kind,
+                runId: parent.parentRunId,
+                message: 'another process is executing',
+              } as const);
+        const spent = refuseEverySave(parent.manager, refusal);
+
+        // Passed through as itself rather than folded into `superseded`: a
+        // refusal that never clears must not be answered with "re-run and
+        // observe".
+        await expect(latch(parent)).resolves.toEqual({ kind: 'store-refused', refusal });
+        // Retrying a permanent refusal would burn the budget to reach the same
+        // answer, so the loop stops at the first one.
+        expect(spent.attempts).toBe(1);
+      },
+    );
+
+    // The two arms the store can return that are neither a refusal to report
+    // nor a race to re-derive. Both were NoCoverage: the loop's own tests drove
+    // `saveState` only to `committed` and `concurrent_modification`, so nothing
+    // said what a commit-time `claim_superseded` or `missing` degrades to.
+    it.each([
+      {
+        refusal: { kind: 'claim_superseded' as const, message: 'claim rotated under the latch' },
+        latched: { kind: 'superseded' as const },
+        why: 'the authority that captured no longer owns the run, so the intent this call reasoned about is not the one on the row',
+      },
+      {
+        refusal: { kind: 'missing' as const, message: 'run deleted under the latch' },
+        latched: { kind: 'missing' as const },
+        why: 'the parent went away between the capture and the commit',
+      },
+    ])(
+      'reports a commit-time $refusal.kind as $latched.kind — $why',
+      async ({ refusal, latched }) => {
+        const parent = await seedLatchableParent();
+        const spent = refuseEverySave(parent.manager, { ...refusal, runId: parent.parentRunId });
+
+        // Named as itself on the latch union rather than folded into the
+        // catch-all, and — like every permanent answer here — decided on the
+        // first attempt: re-deriving against a rotated claim or an absent run
+        // reaches the same answer with the budget spent.
+        await expect(latch(parent)).resolves.toEqual(latched);
+        expect(spent.attempts).toBe(1);
+      },
+    );
+
+    it('names the contended run in the exhausted-budget error', async () => {
+      // The message is what an operator sees behind RD-308, and the run id is
+      // the only part of it that is not a constant: emptied, the error still
+      // has the right type and still exits the same way, so nothing else here
+      // would notice.
+      const parent = await seedLatchableParent();
+      refuseEverySave(parent.manager, {
+        kind: 'concurrent_modification',
+        runId: parent.parentRunId,
+        message: 'lost update',
+      });
+
+      await expect(latch(parent)).rejects.toThrow(
+        new RegExp(`Run ${parent.parentRunId} changed while latching inline launch`),
+      );
     });
   });
 });

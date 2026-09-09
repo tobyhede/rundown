@@ -119,17 +119,17 @@ describe('Inline linkage integration (rd run --step)', () => {
     // refused as mutation authority (ACTOR_CONTEXT_REQUIRED); the verified idiom for
     // a goto against an inline child is withRunTarget, which mints the run-control
     // claim on the active run and appends --claim-id (inline-child-launch.test.ts
-    // :362). goto's loop runs `Finish`, which fails and is handled FAIL COMPLETE →
-    // child lifecycle `completed` → inferred `pass`.
+    // :362). goto drives `Finish`, whose authored FAIL reaches FAIL COMPLETE.
+    // Durable result provenance remains FAIL even though lifecycle is completed.
     result = await runCliInProcess(await withRunTarget(['goto', '2'], workspace), workspace);
     expect(result.exitCode).toBe(0);
 
-    // Parent substep 1 advanced off 'running' to done/pass (lifecycle-inferred),
-    // identical to what the natural execution-loop path already produces.
+    // Parent substep 1 advances with the authored result. Lifecycle is not a
+    // substitute for PASS/FAIL provenance: FAIL COMPLETE stays fail.
     const parentAfter = await readRunbookState(workspace, parentRunId);
     const ss1 = (parentAfter!.substepStates ?? []).find((ss) => ss.id === '1');
     expect(ss1!.status).toBe('done');
-    expect(ss1!.result).toBe('pass');
+    expect(ss1!.result).toBe('fail');
   });
 
   describe('afterInit fresh state reload (race condition fix)', () => {
@@ -420,8 +420,14 @@ PATH={{ path ReviewSchemaPath }}
 
       // Run child with inline linkage — child will fail and stop
       result = await runCliInProcess('run child.runbook.md --step 1.1 --text', workspace);
-      // Child stopped → exit 1
-      expect(result.exitCode).toBe(1);
+      // The child stopped, but this parent has a second substep, so it absorbs
+      // the failure and defers to 1.2 — the orchestrated workflow has NOT
+      // halted, so `run` exits 0 (ADR 0004; cli.md § Exit codes). The child's
+      // own `runbook_stopped` is still on the JSON stream: the exit code is the
+      // halt signal, not the failure signal. Contrast the STOP-aggregating
+      // parent at ':run --step exits 1 when the inline child stop propagates a
+      // parent STOP', where the parent does halt and `run` exits 1.
+      expect(result.exitCode).toBe(0);
 
       // Parent substep 1.1 should have a fail recorded.
       // Complete 1.2 to trigger aggregation — FAIL ANY STOP

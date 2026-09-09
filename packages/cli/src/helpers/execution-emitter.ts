@@ -24,7 +24,7 @@ import type { OutputEmitter } from '../services/output-emitter.js';
  * @example
  * ```typescript
  * const emitter = createBridgedEmitter(state, output);
- * await runExecutionLoop(manager, state.id, steps, cwd, emitter, options);
+ * await driveRunProgression(directive, dependencies);
  * ```
  */
 export function createBridgedEmitter(

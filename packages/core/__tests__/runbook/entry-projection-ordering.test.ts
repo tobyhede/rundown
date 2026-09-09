@@ -22,6 +22,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
+import { activateForTest } from '../helpers/run-progression-activation.js';
 import {
   DelegationScanService,
   RunbookActorService,
@@ -157,7 +158,12 @@ describe('entry projection ordering: machine credential issuance agrees with com
       substep: undefined,
       retryCount: 0,
       variables: brandStoredOutputsForTest({}),
-      templateVars: brandInitialTemplateVarsForTest({ RunId: runId }),
+      templateVars: brandInitialTemplateVarsForTest({
+        RunId: runId,
+        ContextId: 'ctx1',
+        WorkPath: '.rundown/work',
+        RunbookRef: { source: 'project', path: 'investigation.md' },
+      }),
       steps: [],
       resolvedCompletions: {},
       frameEntryCounts: { [FRAME_1]: 1 },
@@ -198,6 +204,15 @@ describe('entry projection ordering: machine credential issuance agrees with com
     });
     if (outcome.kind !== 'applied') {
       throw new Error(`expected applied, got ${outcome.kind}: ${JSON.stringify(outcome)}`);
+    }
+    if (outcome.progression.kind === 'activate') {
+      await activateForTest(outcome.progression, {
+        manager,
+        actorService,
+        sessionService,
+        tmp,
+        steps,
+      });
     }
   }
 
@@ -310,13 +325,8 @@ describe('entry projection ordering: machine credential issuance agrees with com
     }
 
     const outcome = await seam.runNavigationMutation({
-      runId,
-      callerEvidence: evidence(),
-      steps,
+      navigation: allowed.navigation,
       target: { step: '2' },
-      ...(allowed.delegationRuntime === undefined
-        ? {}
-        : { issueDelegationCredential: allowed.delegationRuntime.issueDelegationCredential }),
     });
     expect(outcome.kind).toBe('applied');
 

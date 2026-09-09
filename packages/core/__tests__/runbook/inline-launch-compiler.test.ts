@@ -11,6 +11,9 @@ import { brandFlattenedTemplateVarsForTest } from '../../src/testing/effective-v
 import { makeDelegationCredentialIssuer } from '../../src/testing/delegation-fixtures.js';
 import { createRunbook } from './fixtures.js';
 
+/** The substep-row shape these snapshot-restoring cases mutate. */
+type SubstepStateForTest = SubstepState;
+
 // ACCEPTED MUTATION SURVIVORS for the latch actions in compiler.ts.
 //
 // A scoped run over `releaseInlineLaunchLatch` reports two survivors — the
@@ -501,166 +504,6 @@ describe('inline launch compiler integration', () => {
   // "whatever inline row is at that coordinate". A row that has moved on to a
   // different child belongs to a different launch, whose latch is not this
   // event's to clear.
-  it('leaves a latch belonging to a different child run untouched on consume', async () => {
-    const steps = createRunbook(`# Parent
-
-## 1. Parent
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-- child.runbook.md
-`);
-    const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
-    const actor = createActor(
-      compileRunbookToMachine(steps, {
-        templateVars: brandFlattenedTemplateVarsForTest({
-          RunId: 'rd_cccccccccccccccccccccccccccccccc',
-        }),
-        resolveInlineRunbook: childResolver(),
-        generateChildRunId: () => childRunId,
-        now: () => '2026-05-30T00:00:00.000Z',
-      }),
-    );
-    actor.start();
-
-    await waitFor(actor, (candidate) => !candidate.hasTag(PENDING_MACHINE_EFFECT_TAG), {
-      timeout: 500,
-    });
-    actor.send({
-      type: 'INLINE_CHILD_STARTED',
-      parentStepId: '1',
-      parentFrameKey: buildFrameKey('1'),
-      childRunId,
-      started: LATCHED,
-    });
-    // The row moves to a different launch between the latch and the consume.
-    actor.send({
-      type: 'MANUAL_DELEGATION_ABORT_PREPARED',
-      substepStates: (actor.getSnapshot().context.substepStates ?? []).map((substepState) =>
-        substepState.inline
-          ? {
-              ...substepState,
-              inline: {
-                ...substepState.inline,
-                childRunId: assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'),
-              },
-            }
-          : substepState,
-      ),
-    });
-
-    actor.send({ type: 'INLINE_LAUNCH_CONSUMED' });
-
-    const consumedContext = actor.getSnapshot().context;
-    expect(consumedContext.inlineLaunchIntent).toBeUndefined();
-    expect(consumedContext.substepStates?.[0]?.inline?.started).toEqual(LATCHED);
-
-    actor.stop();
-  });
-
-  // The rows the release must not touch, and the states it must survive. Each
-  // case replaces the substep array between the latch and the consume, which is
-  // the only way a row can diverge from the intent that named it — and the
-  // release reads the row, so every divergence is a way it could clear the wrong
-  // latch or throw on a row that is not there.
-  it.each<{
-    readonly name: string;
-    readonly rows: (row: SubstepState) => readonly SubstepState[];
-    readonly assert: (rows: readonly SubstepState[] | undefined) => void;
-  }>([
-    {
-      // The mapping is per-row, and a sibling's latch belongs to a sibling's
-      // launch. Two rows are what makes "clear the target" distinguishable from
-      // "clear everything".
-      name: 'a sibling substep keeps its own latch',
-      rows: (row) => [
-        row,
-        {
-          ...row,
-          id: '2',
-          inline: row.inline
-            ? { ...row.inline, childRunId: assertRunId('rd_ffffffffffffffffffffffffffffffff') }
-            : undefined,
-        },
-      ],
-      assert: (rows) => {
-        expect(rows?.[0]?.inline?.started).toBeNull();
-        expect(rows?.[1]?.inline?.started).toEqual(LATCHED);
-      },
-    },
-    {
-      // No row at the intent's coordinate at all: the lookup answers undefined,
-      // and reading `.inline` off it would throw inside an assign.
-      name: 'no row sits at the consumed intent coordinate',
-      rows: (row) => [{ ...row, id: '9' }],
-      assert: (rows) => {
-        expect(rows?.[0]?.inline?.started).toEqual(LATCHED);
-      },
-    },
-    {
-      // The row is there but carries no inline metadata, so there is no latch to
-      // release and nothing to read it from.
-      name: 'the row carries no inline metadata',
-      rows: (row) => [{ id: row.id, frameKey: row.frameKey, status: row.status }],
-      assert: (rows) => {
-        expect(rows?.[0]?.inline).toBeUndefined();
-      },
-    },
-  ])('releases nothing when $name', async ({ rows, assert }) => {
-    const steps = createRunbook(`# Parent
-
-## 1. Parent
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-- child.runbook.md
-`);
-    const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
-    const actor = createActor(
-      compileRunbookToMachine(steps, {
-        templateVars: brandFlattenedTemplateVarsForTest({
-          RunId: 'rd_cccccccccccccccccccccccccccccccc',
-        }),
-        resolveInlineRunbook: childResolver(),
-        generateChildRunId: () => childRunId,
-        now: () => '2026-05-30T00:00:00.000Z',
-      }),
-    );
-    const errors: unknown[] = [];
-    const subscription = actor.subscribe({ error: (error) => errors.push(error) });
-    actor.start();
-
-    await waitFor(actor, (candidate) => !candidate.hasTag(PENDING_MACHINE_EFFECT_TAG), {
-      timeout: 500,
-    });
-    actor.send({
-      type: 'INLINE_CHILD_STARTED',
-      parentStepId: '1',
-      parentFrameKey: buildFrameKey('1'),
-      childRunId,
-      started: LATCHED,
-    });
-    const latched = actor.getSnapshot().context.substepStates?.[0];
-    if (!latched) throw new Error('expected a latched substep row');
-    actor.send({ type: 'MANUAL_DELEGATION_ABORT_PREPARED', substepStates: rows(latched) });
-
-    actor.send({ type: 'INLINE_LAUNCH_CONSUMED' });
-
-    expect(errors).toEqual([]);
-    expect(actor.getSnapshot().context.inlineLaunchIntent).toBeUndefined();
-    assert(actor.getSnapshot().context.substepStates);
-
-    subscription.unsubscribe();
-    actor.stop();
-  });
-
-  // Consuming an intent whose launch was never latched — the row is this
-  // launch's, and its latch is already null. Releasing must recognise there is
-  // nothing to release and return the rows it was given, not rebuild them: an
-  // unchanged state that arrives as a new array reads as a write to every
-  // version-comparing writer above it. Identity is the only assertion that sees
-  // the difference, and a second consume cannot substitute for this case — the
-  // intent is gone by then, so the release returns before it ever reads the row.
   it('returns the same substep rows when the launch was never latched', async () => {
     const steps = createRunbook(`# Parent
 
@@ -696,6 +539,91 @@ describe('inline launch compiler integration', () => {
     expect(actor.getSnapshot().context.substepStates).toBe(beforeConsume);
 
     actor.stop();
+  });
+
+  // `releaseInlineLatch`'s remaining two no-op guards, and the only way to
+  // reach either: the intent and the row it names are written by ONE transition,
+  // so no sequence of events makes them disagree. A RESTORED snapshot can —
+  // that is what a persisted run is — so each case drives a real
+  // `INLINE_LAUNCH_CONSUMED` against a restored state whose row has moved out
+  // from under the intent. Neither goes near `INLINE_CHILD_STARTED`, whose
+  // mismatch arm throws rather than no-ops.
+  describe.each([
+    [
+      'the row the intent names no longer exists',
+      (rows: SubstepStateForTest[]): SubstepStateForTest[] =>
+        rows.map((row) => ({ ...row, frameKey: buildFrameKey('9') })),
+    ],
+    [
+      'the row has moved on to a different inline child',
+      (rows: SubstepStateForTest[]): SubstepStateForTest[] =>
+        rows.map((row) =>
+          row.inline
+            ? {
+                ...row,
+                inline: {
+                  ...row.inline,
+                  childRunId: assertRunId('rd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'),
+                },
+              }
+            : row,
+        ),
+    ],
+  ])('INLINE_LAUNCH_CONSUMED is a no-op when %s', (_label, mutateRows) => {
+    it('leaves the substep rows exactly as it found them', async () => {
+      const steps = createRunbook(`# Parent
+
+## 1. Parent
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+      const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
+      const machine = compileRunbookToMachine(steps, {
+        templateVars: brandFlattenedTemplateVarsForTest({
+          RunId: 'rd_cccccccccccccccccccccccccccccccc',
+        }),
+        resolveInlineRunbook: childResolver(),
+        generateChildRunId: () => childRunId,
+        now: () => '2026-05-30T00:00:00.000Z',
+      });
+
+      const first = createActor(machine);
+      first.start();
+      await waitFor(first, (candidate) => !candidate.hasTag(PENDING_MACHINE_EFFECT_TAG), {
+        timeout: 500,
+      });
+      first.send({
+        type: 'INLINE_CHILD_STARTED',
+        parentStepId: '1',
+        parentFrameKey: buildFrameKey('1'),
+        childRunId,
+        started: LATCHED,
+      });
+      const persisted = first.getPersistedSnapshot() as unknown as {
+        context: { substepStates?: SubstepStateForTest[] };
+      };
+      first.stop();
+
+      // The intent is left exactly as the machine wrote it; only the ROW moves,
+      // which is the disagreement each guard exists to detect.
+      const rows = persisted.context.substepStates;
+      if (!rows) throw new Error('expected substep rows on the persisted snapshot');
+      const moved = mutateRows(rows);
+      const restored = createActor(machine, {
+        snapshot: { ...persisted, context: { ...persisted.context, substepStates: moved } },
+      } as unknown as Parameters<typeof createActor>[1]);
+      restored.start();
+
+      restored.send({ type: 'INLINE_LAUNCH_CONSUMED' });
+
+      // Identity, not equality: the guard returns the INPUT array, so a
+      // release that ran and happened to produce an equal array would pass a
+      // `toEqual` here.
+      expect(restored.getSnapshot().context.substepStates).toBe(moved);
+      restored.stop();
+    });
   });
 
   it('leaves state unchanged when inline child start has no substep states', async () => {

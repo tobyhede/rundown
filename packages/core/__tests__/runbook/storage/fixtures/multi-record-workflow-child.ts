@@ -61,12 +61,12 @@ import { SessionService } from '../../../../src/runbook/session-service.js';
 import {
   createEffectfulActorMutationRunner,
   type EffectfulActorMutationRunner,
+  type EffectfulActorMutationRunnerInput,
   type EffectfulActorMutationSetRunnerInput,
 } from '../../../../src/runbook/effectful-actor-mutation-runner.js';
 import { closeRunbookStores } from '../../../../src/runbook/storage/store-registry.js';
 import { assertClaimId } from '../../../../src/runbook/claim-id.js';
 import { assertRunId } from '../../../../src/runbook/run-id.js';
-import type { AdvanceInlineParent } from '../../../../src/runbook/inline-parent-advance.js';
 import type { CallerEvidence } from '../../../../src/runbook/actor-context.js';
 import type { ResolvedStep, RunbookState } from '../../../../src/runbook/types.js';
 import { getErrorMessage } from '../../../../src/errors.js';
@@ -249,7 +249,7 @@ function runnerParkedAfterCapture(
   inner: EffectfulActorMutationRunner,
 ): EffectfulActorMutationRunner {
   return {
-    run: (input) => inner.run(input),
+    run: (input: EffectfulActorMutationRunnerInput) => inner.run(input),
     runAll<TResult>(input: EffectfulActorMutationSetRunnerInput<TResult>) {
       const beforeEffect = input.beforeEffect;
       return inner.runAll<TResult>({
@@ -323,12 +323,6 @@ const lifecycleSeam = new RunbookLifecycleCommandService({
     new DelegationScanService(manager).scanByTokenHash(tokenHash),
 });
 
-// The collect target of these races never carries INLINE linkage, so a call here
-// is a genuine surprise: rejecting surfaces it in the `ok: false` arm instead of
-// letting an unexercised code path read as a clean pass.
-const advanceInlineParent: AdvanceInlineParent = () =>
-  Promise.reject(new Error('advanceInlineParent must not be called by this fixture'));
-
 /**
  * Perform this worker's single delegation workflow through the production seam.
  *
@@ -362,7 +356,6 @@ async function run(): Promise<unknown> {
         lifecycleService,
         completionService,
         actorMutationRunner,
-        advanceInlineParent,
         // Derives each aggregate member's graph from its OWN `runbookPath`, so
         // a delegating parent captured alongside the target rehydrates from its
         // own document rather than the target's.

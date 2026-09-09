@@ -70,6 +70,23 @@ import {
   makeDelegationCredentialDescriptor,
 } from '../../src/testing/delegation-fixtures.js';
 
+/**
+ * The subset of an XState state-node config these tests read.
+ *
+ * Module-scoped so every traversal in this file shares one shape rather than
+ * re-casting the generated graph through `any` at each call site.
+ */
+interface TestStateConfig {
+  readonly initial?: unknown;
+  readonly states?: Readonly<Record<string, TestStateConfig>>;
+  readonly tags?: readonly unknown[];
+  readonly invoke?: {
+    readonly src?: unknown;
+    readonly onDone?: unknown;
+    readonly onError?: unknown;
+  };
+}
+
 describe('runbook compiler', () => {
   /** Input type: Resolved step variants without the `kind` discriminant. */
   type StepInput =
@@ -9641,6 +9658,65 @@ echo hi
       expect('pendingResult' in machine.config.context).toBe(false);
     });
 
+    it('generates no unreachable leaf substate', () => {
+      // A compiled substate nothing targets is dead weight that still has to be
+      // kept in `LEAF_SUBSTATES` and in the intent union, and reads as live
+      // behaviour to the next person. `__progression-continue` was exactly
+      // that: emitting a `{kind:'continue'}` intent that
+      // `activateRunProgression` has no arm for, so had anything ever reached
+      // it the run would have died on "Unhandled Run Progression intent:
+      // continue" (#880).
+      const steps = createRunbook(`## 1. capture
+- PASS COMPLETE
+- FAIL STOP
+- OUTPUTS
+  - Foo
+\`\`\`bash
+echo hi
+\`\`\`
+`);
+      const machine = compileRunbookToMachine(steps);
+      const states = (machine.config.states ?? {}) as Readonly<Record<string, TestStateConfig>>;
+
+      const collectTargets = (node: unknown, into: Set<string>): void => {
+        if (node === null || typeof node !== 'object') return;
+        if (!Array.isArray(node) && typeof (node as { target?: unknown }).target === 'string') {
+          into.add((node as { target: string }).target);
+        }
+        for (const value of Object.values(node as Record<string, unknown>)) {
+          collectTargets(value, into);
+        }
+      };
+
+      // Every target anywhere in the machine, used ONLY for the absolute,
+      // parent-qualified form `#<parentId>.<child>` — the one form that can
+      // legitimately name a child from outside its own parent.
+      const allTargets = new Set<string>();
+      collectTargets(states, allTargets);
+
+      const unreachable: string[] = [];
+      for (const [stateId, config] of Object.entries(states)) {
+        const children = config.states;
+        if (!children) continue;
+        // Bare (`idle`) and relative (`.idle`) targets resolve against the
+        // ENCLOSING parent, so they are collected per parent. Scanning the
+        // whole machine let a child under parent A be counted as reached by an
+        // identically named sibling's target under parent B.
+        const localTargets = new Set<string>();
+        collectTargets(config, localTargets);
+        for (const childName of Object.keys(children)) {
+          if (childName === config.initial) continue;
+          const reached =
+            localTargets.has(childName) ||
+            localTargets.has(`.${childName}`) ||
+            allTargets.has(`#${stateId}.${childName}`);
+          if (!reached) unreachable.push(`${stateId}.${childName}`);
+        }
+      }
+
+      expect(unreachable).toEqual([]);
+    });
+
     it('rejects relative transition targets that do not resolve to child states', () => {
       expect(() => {
         validateGraphForTest(
@@ -9662,6 +9738,36 @@ echo hi
           '#STOPPED',
         );
       }).toThrow(/unknown relative target "\.__missing"/);
+    });
+
+    it('accepts a parent-qualified onError target whose parent id contains a period', () => {
+      // `resolveSideEffectTransitionTarget` split `#<parent>.<child>` at the
+      // FIRST period, so a parent id carrying one — which an author-chosen step
+      // name can produce — was cut in half and the target rejected as unknown.
+      // The leaf substate name never contains a period, so the LAST one is the
+      // only correct split point.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const dotted = {
+        'step::1.5': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            '__progression-refused': {},
+            '__progression-project-frontier': {
+              tags: [PENDING_MACHINE_EFFECT_TAG],
+              invoke: {
+                src: 'reEntryFrontierActor',
+                onDone: { target: '#step::1.5.__progression-refused' },
+                onError: { target: '#step::1.5.__progression-refused' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+
+      expect(() => {
+        validateGraphForTest(dotted, 'step::1.5', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).not.toThrow();
     });
 
     it('rejects side-effect child states missing PENDING_MACHINE_EFFECT_TAG', () => {
@@ -9829,6 +9935,132 @@ echo hi
           '#STOPPED',
         );
       }).toThrow(/parent-entry.*onDone\.target.*generated state/);
+    });
+
+    it.each([
+      '__progression-project-frontier',
+      '__progression-enter-unit',
+      '__progression-enter-after-projected-frontier',
+    ])('rejects %s child states missing PENDING_MACHINE_EFFECT_TAG', (childName) => {
+      // The three Run Progression invoking substates are side-effect leaves
+      // like every other `invoke` child: `prepareActorMutation` waits on the
+      // pending tag, so a tag-less one lets a snapshot persist mid-invoke.
+      // Before #880 the per-invoke invariants skipped them entirely because
+      // the side-effect classifier had never been extended past the six
+      // pre-progression substates.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const malformed = {
+        'step::1': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            [childName]: {
+              // tags intentionally missing — must be flagged by validateGraph
+              invoke: {
+                src: 'runProgressionEntryActor',
+                onError: { target: 'idle' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+      expect(() => {
+        validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).toThrow(/must include ".*pending-machine-effect" tag/);
+    });
+
+    it.each([
+      '__progression-project-frontier',
+      '__progression-enter-unit',
+      '__progression-enter-after-projected-frontier',
+    ])('rejects %s child states whose invoke has no onError', (childName) => {
+      // A Run Progression invoke that rejects with no `onError` escapes the
+      // actor unhandled and reaches the operator as RD-999 "Unknown error",
+      // which carries no recovery. Every one of the three must route its
+      // rejection to a typed refusal instead.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const malformed = {
+        'step::1': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            [childName]: {
+              tags: [PENDING_MACHINE_EFFECT_TAG],
+              invoke: {
+                src: 'runProgressionEntryActor',
+                onDone: { target: 'idle' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+      expect(() => {
+        validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).toThrow(/onError\.target/);
+    });
+
+    it('rejects a Run Progression onError that leaves the compound parent', () => {
+      // A progression refusal must land back on a sibling so the leaf emits its
+      // typed `RUN_PROGRESSION_INTENT`; routing to `#STOPPED` would terminate
+      // the run and settle the selection promise never.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const malformed = {
+        'step::1': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            '__progression-enter-unit': {
+              tags: [PENDING_MACHINE_EFFECT_TAG],
+              invoke: {
+                src: 'runProgressionEntryActor',
+                onDone: { target: 'idle' },
+                onError: { target: '#STOPPED' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+      expect(() => {
+        validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).toThrow(/onError\.target/);
+    });
+
+    it('accepts a Run Progression onDone that names a sibling through the parent id', () => {
+      // `#step::1.__progression-enter-after-projected-frontier` is how the
+      // frontier state hands the disclosed bearers to its sibling. The
+      // absolute-with-child form must resolve, or extending the invariants to
+      // these substates would reject the real compiled graph.
+      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+      const graph = {
+        'step::1': {
+          initial: 'idle',
+          states: {
+            idle: {},
+            '__progression-project-frontier': {
+              tags: [PENDING_MACHINE_EFFECT_TAG],
+              invoke: {
+                src: 'runProgressionFrontierActor',
+                onDone: [
+                  { target: 'idle' },
+                  { target: '#step::1.__progression-enter-after-projected-frontier' },
+                ],
+                onError: { target: 'idle' },
+              },
+            },
+            '__progression-enter-after-projected-frontier': {
+              tags: [PENDING_MACHINE_EFFECT_TAG],
+              invoke: {
+                src: 'runProgressionEntryActor',
+                onDone: { target: 'idle' },
+                onError: { target: 'idle' },
+              },
+            },
+          },
+        },
+      } as unknown as ValidateGraphStates;
+      expect(() => {
+        validateGraphForTest(graph, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+      }).not.toThrow();
     });
 
     it('rejects __execute-command child states missing PENDING_COMMAND_EXECUTION_TAG (regression: isSideEffectLeafSubstate excludes __execute-command)', () => {
@@ -10273,17 +10505,6 @@ echo hi
   });
 
   describe('ARTIFACTS entry resolution', () => {
-    interface TestStateConfig {
-      readonly initial?: unknown;
-      readonly states?: Readonly<Record<string, TestStateConfig>>;
-      readonly tags?: readonly unknown[];
-      readonly invoke?: {
-        readonly src?: unknown;
-        readonly onDone?: unknown;
-        readonly onError?: unknown;
-      };
-    }
-
     function isRecord(value: unknown): value is Record<string, unknown> {
       return typeof value === 'object' && value !== null && !Array.isArray(value);
     }

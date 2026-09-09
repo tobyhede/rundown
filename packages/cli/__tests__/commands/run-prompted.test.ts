@@ -1,21 +1,61 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import {
+import type { TestWorkspace } from '../helpers/test-utils.js';
+import type { BuildGotoContextResult } from '../../src/helpers/goto-workflow.js';
+import type { RunProgressionOutcome } from '@rundown-org/core';
+
+// The launch-local `--prompted --step` jump resolves through the same core
+// navigation seam as standalone GOTO, and `renderNavigationRefusal` reports
+// `false` for `none` — an empty-stack no-op rather than a failure. `run` always
+// names its fresh run with a `runId` (or its `claimId`), so the seam's selector
+// is never `{kind:'default'}` and `none` cannot arise from a real launch. That
+// is why the arm needs a seam to be observed at, the same reasoning that put
+// `renderNavigationRefusal`'s own unreachable arms (`claim_bearer_mismatch`,
+// #613) under a named dispatcher.
+//
+// The real module is imported first and re-exported wholesale, and the double
+// defaults to the real implementation, so every other test in this file runs
+// the production resolution untouched. Value imports below are dynamic because
+// the mock has to be registered before the CLI's own module graph loads.
+const actualGotoWorkflow = await import('../../src/helpers/goto-workflow.js');
+const buildGotoContext = jest.fn(actualGotoWorkflow.buildGotoContext);
+jest.unstable_mockModule('../../src/helpers/goto-workflow.js', () => ({
+  ...actualGotoWorkflow,
+  buildGotoContext,
+}));
+
+// A `--prompted` launch cannot reach a `completed` closed outcome through any
+// runbook this suite could author, so the outcome is restated on top of a REAL
+// launch. Same double shape as `buildGotoContext` above: the real module is
+// re-exported wholesale and the double defaults to the real implementation, so
+// every other test in this file runs the production pipeline untouched.
+const actualPipeline = await import('../../src/helpers/runbook-pipeline.js');
+const startRunbook = jest.fn(actualPipeline.startRunbook);
+jest.unstable_mockModule('../../src/helpers/runbook-pipeline.js', () => ({
+  ...actualPipeline,
+  startRunbook,
+}));
+
+const {
   createTestWorkspace,
+  parseConcatenatedJson,
   runCliInProcess,
   getActiveState,
   findActionOutput,
   readRunbookState,
   requireFrontierToken,
-  type TestWorkspace,
-} from '../helpers/test-utils.js';
+} = await import('../helpers/test-utils.js');
 
 describe('start --prompted', () => {
   let workspace: TestWorkspace;
 
   beforeEach(async () => {
     workspace = await createTestWorkspace();
+    buildGotoContext.mockReset();
+    buildGotoContext.mockImplementation(actualGotoWorkflow.buildGotoContext);
+    startRunbook.mockReset();
+    startRunbook.mockImplementation(actualPipeline.startRunbook);
   });
 
   afterEach(async () => {
@@ -417,6 +457,97 @@ npm run dangerous-command
 
       // Runbook completes in auto mode (all steps pass)
       expect(result.stdout).toContain('COMPLETE');
+    });
+  });
+
+  describe('--step navigation refusal', () => {
+    const JUMP_RUNBOOK = `## 1. First
+- PASS CONTINUE
+
+First step.
+
+## 2. Second
+- PASS COMPLETE
+
+Second step.
+`;
+
+    beforeEach(async () => {
+      await writeFile(join(workspace.cwd, 'jump.runbook.md'), JUMP_RUNBOOK);
+    });
+
+    it('exits 0 on an empty-stack no-op rather than reporting a failure', async () => {
+      buildGotoContext.mockResolvedValueOnce({ kind: 'none' });
+
+      const result = await runCliInProcess('run --prompted jump.runbook.md --step 2', workspace);
+
+      expect(buildGotoContext).toHaveBeenCalledTimes(1);
+      expect(result.exitCode).toBe(0);
+    });
+
+    it('reports that a completed run cannot be navigated instead of dropping the jump', async () => {
+      // The jump ran only for a `waiting` launch. Every other closed outcome
+      // exits earlier through `progressionFailedClosed` — except `completed`,
+      // which fell through that guard and left the command reporting SUCCESS
+      // for a navigation it never performed. A completed run has no cursor
+      // left to move, so the honest answer is to say the jump cannot be
+      // applied, not to drop it silently.
+      startRunbook.mockImplementation(async (ctx, prepared, options) => {
+        const launched = await actualPipeline.startRunbook(ctx, prepared, options);
+        if (!launched.ok) return launched;
+        const completed: RunProgressionOutcome = { kind: 'completed', runId: launched.stateId };
+        return { ...launched, progression: completed };
+      });
+
+      const result = await runCliInProcess('run --prompted jump.runbook.md --step 2', workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(parseConcatenatedJson(result.stdout)).toContainEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          error: expect.stringContaining('--step 2'),
+        }),
+      );
+    });
+
+    it('still performs the jump when the launch comes to rest waiting', async () => {
+      // Anti-vacuity: the completed arm must not swallow the ordinary case it
+      // sits in front of. Nothing is restated here, so the launch rests
+      // `waiting` and the jump runs for real.
+      const result = await runCliInProcess('run --prompted jump.runbook.md --step 2', workspace);
+
+      expect(result.exitCode).toBe(0);
+      const state = await getActiveState(workspace);
+      expect(state?.step).toBe('2');
+    });
+
+    it('still exits 1 on a refusal that is a real failure', async () => {
+      // Anti-vacuity: honouring the return value must not flatten every refusal
+      // to success. `unknown_run` reports `true` and keeps the non-zero exit.
+      buildGotoContext.mockResolvedValueOnce({
+        kind: 'unknown_run',
+        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        message: 'Run rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa not found',
+      } as BuildGotoContextResult);
+
+      const result = await runCliInProcess('run --prompted jump.runbook.md --step 2', workspace);
+
+      expect(result.exitCode).toBe(1);
+      // `mockResolvedValueOnce` queues ONE refusal, so a second resolution
+      // would fall through to the real implementation and this arm would be
+      // exercising production resolution instead. Pinning the count is what
+      // makes the exit code above attributable to the staged refusal.
+      expect(buildGotoContext).toHaveBeenCalledTimes(1);
+      // And the exit is paired with the refusal's OWN code, not a generic
+      // failure envelope: exit 1 alone cannot tell the two apart.
+      expect(parseConcatenatedJson(result.stdout)).toContainEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'RUN_TARGET_UNAVAILABLE',
+          error: 'Run rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa not found',
+        }),
+      );
     });
   });
 });

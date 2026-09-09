@@ -46,7 +46,7 @@ export interface TransitionObservationInput {
   readonly previousState: RunbookState;
   /** Persisted state after actor synchronization and active-entry bookkeeping. */
   readonly updatedState: RunbookState;
-  /** Raw XState snapshot returned by `RunbookActorService.sendAndSync()`. */
+  /** Raw XState snapshot returned by the prepared actor mutation. */
   readonly snapshot: unknown;
   /** Result signal that triggered the machine transition. */
   readonly result: 'pass' | 'fail';

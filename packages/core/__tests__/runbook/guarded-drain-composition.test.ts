@@ -23,26 +23,18 @@ import {
   buildResolvedCompletion,
 } from '../../src/runbook/targeting.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
-import { assertClaimId } from '../../src/runbook/claim-id.js';
 import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
 import { createRunbook } from './fixtures.js';
 import { assertClaimed, linkageFor, seedLiveDelegation } from './claim-test-helpers.js';
 
 /**
- * End-to-end composition pin for the guarded drain.
+ * Composition pin for the manual-ingress / Run Progression boundary.
  *
- * Every other guarded-drain test stubs a drain or mocks `sendAndSync`, so the
- * store's open-delegated-children predicate never actually runs. This suite runs
- * the whole path for real — a real machine snapshot, real applies, a real claim
- * committed between them, and the real predicate deciding — so it asserts the
- * CONSEQUENCE (a mid-drain claim does not swallow a committed advance) rather
- * than the mechanism (which argument each loop passes).
- *
- * That distinction is the point: the per-loop tests in `completion-service.test.ts`
- * and `lifecycle-command-service.test.ts` each pin one expression at its own
- * boundary. Neither would notice if follow-on writes started being guarded by some
- * other route. This one would, because it never inspects a guard value.
+ * A manual pass/fail records one completion under the lifecycle seam's guard;
+ * it never prepares or batch-applies previously queued completions in that same
+ * commit. The returned activation directive is the only authority to apply
+ * those rows later, one CAS/observation turn at a time.
  */
 
 const RELEASE_POLICY: LifecycleTerminalReleasePolicy = {
@@ -74,7 +66,7 @@ const PARENT_MARKDOWN = `## 1. Parent
 
 const DELEGATED_SUBSTEP_ID = '3';
 
-describe('guarded drain composition (real store, real predicate)', () => {
+describe('guarded manual-completion ingress', () => {
   let tmp: string;
   let manager: RunbookStateManager;
   let actorService: RunbookActorService;
@@ -133,9 +125,9 @@ describe('guarded drain composition (real store, real predicate)', () => {
     return key;
   }
 
-  it('refuses with open_delegated_children and commits no partial advance', async () => {
-    // A real initialised state: the machine snapshot is what lets the applies below
-    // run for real instead of dying inside sendAndSync.
+  it('records ingress without batch-applying queued completions', async () => {
+    // A real initialized state: activation may later restore this exact machine
+    // snapshot, but the recording seam must not restore or drive it.
     const created = await manager.create(
       { source: 'project', path: 'parent.runbook.md' },
       { title: 'Parent', description: '', steps },
@@ -148,9 +140,8 @@ describe('guarded drain composition (real store, real predicate)', () => {
     );
     const evidence: CallerEvidence = { kind: 'claim_bearer', claimId: runControl };
 
-    // Two undrained completions: the state a process leaves by dying between the
-    // separately-locked record and drain. The first makes the record short-circuit
-    // `duplicate`, which is what moves the decisive write into the drain.
+    // Two queued completions. The first makes this manual ingress idempotent;
+    // neither row may be applied inside the record-only mutation.
     const firstKey = await queueCompletion('1');
     const secondKey = await queueCompletion('2');
 
@@ -164,12 +155,12 @@ describe('guarded drain composition (real store, real predicate)', () => {
     await manager.update(childBase.id, { parentLinkage: linkage });
     await seedLiveDelegation(manager, linkage);
 
-    // Commit the claim after the first pure actor preparation and before the one
-    // owned commit. The execution guard must refuse the whole prepared mutation.
+    // If the recording seam accidentally prepares even one completion, this
+    // hook makes that hidden batch work observable by claiming the child.
     const realPrepare = actorService.prepareActorMutation.bind(actorService);
     let applies = 0;
     let claimedId: string | undefined;
-    jest
+    const prepare = jest
       .spyOn(actorService, 'prepareActorMutation')
       .mockImplementation(
         async (...args: Parameters<RunbookActorService['prepareActorMutation']>) => {
@@ -191,18 +182,15 @@ describe('guarded drain composition (real store, real predicate)', () => {
       terminalPolicy: RELEASE_POLICY,
     });
 
-    // The claim really is live, so the predicate WOULD refuse any guarded write
-    // issued after it landed. Without this the test could pass by never racing.
-    expect(claimedId).toBeDefined();
-    expect((await sessionService.verifyClaimId(assertClaimId(claimedId!))).status).toBe('verified');
-
-    // The in-transaction guard aborts before the first UPDATE, so this refusal is
-    // provably write-free — it stays the actionable `open_delegated_children`
-    // rather than being escalated into a recovery the run does not need.
-    expect(outcome.kind).toBe('open_delegated_children');
+    expect(outcome.kind).toBe('applied');
+    if (outcome.kind !== 'applied') throw new Error(`expected applied, got ${outcome.kind}`);
+    expect(outcome.progression.kind).toBe('activate');
+    expect(prepare).not.toHaveBeenCalled();
+    expect(claimedId).toBeUndefined();
     await expect((await getRunbookStore(tmp)).readPendingRecovery(parentRunId)).resolves.toBeNull();
 
-    // Neither prepared completion was consumed: record + drain is all-or-none.
+    // Neither queued completion was consumed: applying them belongs to the
+    // returned Run Progression activation, not this lifecycle mutation.
     await expect(
       lifecycleService.getResolvedCompletion(parentRunId, firstKey),
     ).resolves.not.toBeNull();

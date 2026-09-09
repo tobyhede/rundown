@@ -9,12 +9,6 @@ import type {
   CapturedActorMutationRun,
   EffectfulActorMutationRunner,
 } from './effectful-actor-mutation-runner.js';
-import {
-  propagateTerminalChildUpward,
-  type AdvanceInlineParent,
-  type InlineUpwardPropagationResult,
-  type TerminalUpwardPropagationResult,
-} from './inline-parent-advance.js';
 import { resolveMutationAuthority, type CommandTargetReader } from './command-target-resolver.js';
 import type { AppliedResolvedCompletion } from './completion-service.js';
 import type { RunbookCompletionService } from './completion-service.js';
@@ -22,25 +16,16 @@ import { isPostDelegateAggregationCursor } from './delegation-inference.js';
 import { findStepOrThrow } from './execution-units.js';
 import type { ExecutionLifecycleService } from './execution-lifecycle-service.js';
 import type { RunbookStateManager } from './state.js';
-import {
-  prepareReEntryFrontierConsume,
-  type PreparedReEntryProjection,
-} from './re-entry-frontier.js';
 import type { Frame, FrameKey } from './targeting.js';
 import { completionTargetsFrame, findSubstepState } from './targeting.js';
 import { deriveActiveCompletionFrame } from './frame-entry.js';
 import type { ClaimSeenRecordResult } from './session-service.js';
+import { mintRunProgressionAuthority } from './run-progression-authority.js';
 import type { ResolvedStep, RunbookState, RunId } from './types.js';
 import {
   delegationRuntimeCapabilities,
   type DelegationRuntimeCapabilities,
 } from './delegation-credential.js';
-import { ErrorCodes } from '../errors/codes.js';
-import { Errors } from '../errors/factory.js';
-import { getErrorMessage } from '../errors.js';
-import { InvalidRunbookStateError } from './persisted-state-guards.js';
-import { logger } from '../logger.js';
-import type { DelegateFrontierEntry } from '../events/types.js';
 import {
   deriveTransitionObservation,
   type TransitionObservationEvent,
@@ -80,13 +65,6 @@ export interface RunbookCollectionServiceDependencies {
    */
   readonly actorMutationRunner: EffectfulActorMutationRunner;
   /**
-   * CLI-supplied inline parent-advance callable (Category C). Used when a
-   * collected run reaches terminal and carries INLINE linkage: the seam drives
-   * the composing parent's execution loop through this callable. Delegation
-   * targets never invoke it (report-only).
-   */
-  readonly advanceInlineParent: AdvanceInlineParent;
-  /**
    * Derive the parsed steps of an OWNED aggregate member other than the collect
    * target, from that run's own in-memory state.
    *
@@ -100,9 +78,14 @@ export interface RunbookCollectionServiceDependencies {
    * attempt left pending')` and continues — so without this loader the
    * delegating parent is the one member a collect can never recover, silently.
    *
-   * The collect target's steps are NOT taken from here: the caller already
-   * resolved them into {@link CollectDelegationOutcomesInput.steps}, and the
-   * parent is a different runbook whose graph must not be rebuilt from them.
+   * Also the parser boundary for the running continuation's minted graph
+   * (#852): that graph must be rendered against the state this collection
+   * COMMITS, not the pre-collection {@link CollectDelegationOutcomesInput.steps}
+   * the caller resolved, because the drain merges the collected children's
+   * `finalVars` into the effective variables the render reads. Aggregate
+   * RECOVERY still rehydrates the collect target from the caller's own `steps`
+   * — the parent is a different runbook whose graph must not be rebuilt from
+   * them, which is what this seam exists for.
    *
    * Category A, and the same DI shape as
    * `LifecycleCommandServiceDependencies.loadSteps`: deriving steps is parsing
@@ -423,36 +406,6 @@ function deriveCollectionTransitionObservations(
 }
 
 /**
- * Drive the FENCED half of the shared re-entry frontier seam for a collect.
- *
- * The seam itself lives in `re-entry-frontier.ts` and shares its disclosure
- * boundary verbatim with the CLI execution loop (F6): both entry points reach
- * the same persisted data under the same conditions, so both classify it with
- * the same arms and report each arm under the same code. Since #820 this wrapper
- * contributes only the verified deriver — the entry the disclosure rides on is
- * rendered by core when the commit lands, from the same state the seam decided
- * against.
- *
- * @param input - Collection operation input (services + target + steps).
- * @param advanced - Prepared post-drain state whose snapshot carries the frontier.
- * @param delegationRuntime - Collector-bound issuer/deriver pair.
- * @returns The prepared re-entry outcome.
- * @throws {InvalidRunbookStateError} When the persisted `delegateFrontier` is malformed.
- */
-async function prepareCollectReEntryFrontier(
-  input: CollectDelegationOutcomesOperationInput,
-  advanced: RunbookState,
-  delegationRuntime: DelegationRuntimeCapabilities,
-): Promise<PreparedReEntryProjection> {
-  return await prepareReEntryFrontierConsume({
-    actorService: input.actorService,
-    steps: input.steps,
-    state: advanced,
-    deriveToken: delegationRuntime.deriveDelegationToken,
-  });
-}
-
-/**
  * Record the ORCHESTRATOR's own presented bearer after authorization and NEVER
  * the children's: a parent cannot vouch for a child's liveness (#519 AC5).
  * Best-effort and total, so failure cannot mask the later collection (RD-102).
@@ -485,9 +438,7 @@ async function recordPresenterLiveness(
  * Everything the collection transaction derives before it commits.
  *
  * Held in one value so the `compute` callback can return the prepared state set
- * and the command-facing outcome together, and so the post-commit disclosure
- * (frontier observations) has a single carrier rather than a set of parallel
- * mutable bindings.
+ * and the command-facing outcome together.
  */
 interface PreparedCollection {
   /** The collect target's prepared state, or absent when nothing is written. */
@@ -496,8 +447,6 @@ interface PreparedCollection {
   readonly parent?: RunbookState;
   /** Whether the prepared parent write was a FRESH upward report. */
   readonly reportedTerminalOutcome: boolean;
-  /** Post-commit frontier disclosure, withheld until the commit lands. */
-  readonly frontierDisclosure?: readonly DelegateFrontierEntry[];
   /** The collection outcome to return once the commit succeeds. */
   readonly value: DelegationPolicyOutcome;
   /** Whether the prepared target state is terminal (drives release + upward walk). */
@@ -508,7 +457,7 @@ interface PreparedCollection {
  * Derive and commit a whole collection as ONE fenced aggregate transaction.
  *
  * WHAT CHANGED AND WHY. Collect used to authorize, then drain through one
- * `sendAndSync` transaction per completion, then release the session, then
+ * unfenced actor transaction per completion, then release the session, then
  * propagate upward — four or more separately committed writes, none of which
  * re-checked the collector's captured `claim_generation`. `writeStateAtVersion`
  * guards on `state_version` and its own docstring states that callers "MUST NOT
@@ -524,20 +473,14 @@ interface PreparedCollection {
  * - Commit-time supersession is REPORTABLE. A claim retired between
  *   authorization and commit surfaces as `claim_superseded` (`STALE_CLAIM`)
  *   rather than committing under stale authority.
- * - Partial collection is UNREPRESENTABLE. Applies, frontier consumption, the
- *   terminal session release, and a delegating parent's outcome row either all
- *   land or none do.
+ * - Partial collection is UNREPRESENTABLE. Applies, the terminal session
+ *   release, and a delegating parent's outcome row either all land or none do.
  *
  * WHAT STAYS OUTSIDE THE TRANSACTION, and why that is not a gap:
- * - The INLINE upward walk. `advanceInlineParent` is a CLI callable that spawns
- *   the composing parent's execution loop — Category A, an external effect that
- *   cannot be re-run inside a fence. It runs after the commit exactly as before,
- *   and its own writes remain owned by the loop it drives.
- * - The frontier OBSERVATION. Deriving it needs committed state, so it is taken
- *   after the commit. Disclosure ordering is strengthened rather than weakened:
- *   the old seam committed the consume first so a failed consume disclosed no
- *   bearers, which left a consume that committed while the surrounding collect
- *   did not; here a refused transaction consumes nothing and discloses nothing.
+ * - Upward continuation. Run Progression owns it after this commit and resumes
+ *   the composing parent through its verified activation authority.
+ * - Frontier progression. The compiled runbook machine selects projection,
+ *   consume, and entry in a separate fenced turn after this domain commit.
  *
  * @param input - Collection operation input (services + target + steps).
  * @param scope - Resolved step/frame scope and the verified collecting authority.
@@ -677,16 +620,15 @@ async function applyCollection(
 
   const committed = prepared;
   if (!committed) throw new Error('Collection committed without a prepared outcome.');
-  return await finishCollection(input, committed);
+  return committed.value;
 }
 
 /**
  * Derive the whole collection against the exact captured state, writing nothing.
  *
  * Every arm that used to be produced after one or more committed writes is
- * produced here instead, from one captured version: the drain, the frontier
- * projection and consume, the terminal decision, and a delegating grandparent's
- * outcome row. A `prepared.target` of `undefined` means the collection writes
+ * produced here instead, from one captured version: the drain, the terminal
+ * decision, and a delegating grandparent's outcome row. A `prepared.target` of `undefined` means the collection writes
  * nothing at all, which lets the caller answer from the write-free
  * `beforeEffect` return rather than acquiring a lease it does not need.
  *
@@ -699,9 +641,7 @@ async function applyCollection(
  * @param delegationRuntime - Collector-bound issuer/deriver pair.
  * @param captured - The exact target state captured under the lease.
  * @param capturedParent - The delegating grandparent's captured state, when present.
- * @returns The prepared state set, post-commit disclosure, and command outcome.
- * @throws {InvalidRunbookStateError} When the captured snapshot carries a
- *   malformed `delegateFrontier` (no-migration rule: corrupt persisted state).
+ * @returns The prepared state set and command outcome.
  */
 async function prepareCollection(
   input: CollectDelegationOutcomesOperationInput,
@@ -764,7 +704,7 @@ async function prepareCollection(
   const transitionObservations = deriveCollectionTransitionObservations(input, drained.applied);
 
   if (drained.status === 'done' || drained.status === 'stopped') {
-    return prepareTerminalCollection(input, scope, {
+    return prepareTerminalCollection(input, scope, delegationRuntime, {
       terminal: drained.status,
       terminalState: drained.state,
       applied,
@@ -774,80 +714,48 @@ async function prepareCollection(
     });
   }
 
-  // status === 'continue': the run is still active. The drain may have advanced
-  // the cursor onto a step whose entry carries a retry re-entry frontier; project
-  // and derive its consume so the CLI can surface fresh delegation tokens without
-  // synthesizing events. This runs even when `applied === 0`: a PRIOR collect can
-  // have applied outcomes but left the frontier persisted, and re-projecting on a
-  // later no-op collect is what keeps consumption retryable rather than stranded.
-  const reentry = await prepareCollectReEntryFrontier(input, drained.state, delegationRuntime);
-  if (reentry.status === 'projection_refused') {
-    // A credential DISCLOSURE-boundary refusal — the condition RD-821 names and
-    // the CLI execution loop already reports under it. The code follows the
-    // condition, never the command that happened to drive the seam, so an agent
-    // branching on `code` reads one fact whichever entry point produced it.
-    // Deliberately NOT `COLLECT_OPERATION_FAILED`: that code's contract is
-    // "collection failed while applying delegation outcomes", and nothing was
-    // applied here.
-    //
-    // Refusing here abandons any drain the same pass derived, which is correct
-    // and is the point of the transaction: the old seam had already committed
-    // those applies before it could discover the refusal.
-    return {
-      reportedTerminalOutcome: false,
-      value: {
-        kind: 'collection_failed',
-        targetRunId,
-        reason: 'frontier_projection_refused',
-        code: ErrorCodes.DELEGATION_INVARIANT_VIOLATED.code,
-        message: reentry.message,
-      },
-    };
-  }
-
-  // Idempotent no-op ONLY when nothing drained AND no pending frontier remained
-  // to consume. With a freshly derived frontier consume we must fall through to a
-  // `collection_applied` result so its re-entry observations reach the CLI.
-  //
-  // `target: undefined` is what makes this a genuine no-op: the write-free
-  // `beforeEffect` return commits nothing, where the old path had already
-  // performed an `ensureActiveEntry` write to reach the same conclusion.
-  if (applied === 0 && reentry.status === 'none') {
-    return {
-      reportedTerminalOutcome: false,
-      value: { kind: 'already_collected', targetRunId, step: scope.stepName },
-    };
-  }
-
+  // status === 'continue': collection commits only its completion-domain state.
+  // Frontier projection/consume and execution-unit entry are a separate fenced
+  // Run Progression turn selected by the compiled machine after this commit.
   return {
-    target: reentry.status === 'projected' ? reentry.nextState : drained.state,
+    target: drained.state,
     reportedTerminalOutcome: false,
-    // Stryker disable next-line ConditionalExpression: equivalent — forcing the
-    // condition true spreads `frontierDisclosure: reentry.frontier`, and on
-    // every other arm `reentry` carries no `frontier`, so the key lands as
-    // `undefined`. `finishCollection` gates on `!== undefined`, so present-and-
-    // undefined and absent reach the same branch. The spread exists only to
-    // satisfy `exactOptionalPropertyTypes`, not to change behaviour.
-    ...(reentry.status === 'projected' ? { frontierDisclosure: reentry.frontier } : {}),
     value: {
       kind: 'collection_applied',
       targetRunId,
       step: scope.stepName,
       applied,
       unresolved: drained.unresolved,
-      lifecycle: drained.state.lifecycle,
+      // Literal, not `drained.state.lifecycle`: this arm is only built when the
+      // drain concluded non-terminal (the terminal statuses branched to
+      // `prepareTerminalCollection` above), and the literal is what carries the
+      // running-arm narrowing of `DelegationPolicyOutcome`.
+      lifecycle: 'running',
       reportedTerminalOutcome: false,
       transitionObservations,
-      // Placeholder: the real observations can only be derived from committed
-      // state, so `finishCollection` fills this in after the commit lands.
-      ...(reentry.status === 'projected' ? { reEntryObservations: [] } : {}),
-      // The target is still running, so the frontend drives a continuation for
-      // it. That continuation can step INTO a DELEGATE frontier, where
-      // machine-owned issuance needs a verified issuer, and the turn after needs
-      // the same-issuer deriver. Both are this collector's verified authority
-      // over THIS run — runtime-only closures, never persisted, and carried only
-      // on the non-terminal arm (a terminal target drives no continuation).
-      delegationRuntime,
+      progression: {
+        kind: 'activate',
+        authority: mintRunProgressionAuthority({
+          runId: targetRunId,
+          claimKey: scope.authority.claimKey,
+          delegationRuntime,
+        }),
+        runbook: drained.state.runbook,
+        // Derived from the state this collection COMMITS, never from
+        // `input.steps` (#852). The runbook SOURCE is fixed for the life of a
+        // run, but `loadSteps` does not only parse it: it renders against the
+        // state's effective variables, and the drain just merged the collected
+        // children's `finalVars` into them. Minting the continuation's graph
+        // from the pre-collection parse leaves every variable the collection
+        // published unresolved — a later DELEGATE substep's `- {{ref}}` stays
+        // literal and the continuation stops the run on
+        // `delegation_resolution_failed`.
+        steps: await input.loadSteps(drained.state),
+        entryBoundary: {
+          kind: 'after_observed_transition',
+          lifecycle: 'running',
+        },
+      },
     },
   };
 }
@@ -859,15 +767,14 @@ async function prepareCollection(
  * projection ({@link RunbookCompletionService.prepareChildCompletion}), so the
  * outcome row commits in the same transaction as the terminal lifecycle that
  * earned it — closing the window where a child could be terminal while its
- * parent held no record of it. INLINE linkage is deliberately excluded: its
- * advance spawns the composing parent's execution loop, an external effect a
- * fence cannot own, so it runs post-commit in {@link finishCollection} exactly as
- * before.
+ * parent held no record of it. INLINE flow-back is deliberately excluded from
+ * this transaction and is selected by the terminal Run Progression activation.
  *
  * @param input - Collection operation input (services + target).
  * @param scope - Resolved scope and the verified collecting authority.
  * @param scope.stepName - Step selected for collection.
  * @param scope.claim - Verified claim authorizing the collect.
+ * @param delegationRuntime - Capabilities bound to the verified collector.
  * @param terminal - The prepared terminal state and its collection counters.
  * @param terminal.terminal - Which terminal status the drain reached.
  * @param terminal.terminalState - The prepared terminal state to commit.
@@ -880,6 +787,7 @@ async function prepareCollection(
 function prepareTerminalCollection(
   input: CollectDelegationOutcomesOperationInput,
   scope: { readonly stepName: string; readonly claim: VerifiedClaim },
+  delegationRuntime: DelegationRuntimeCapabilities,
   terminal: {
     readonly terminal: 'done' | 'stopped';
     readonly terminalState: RunbookState;
@@ -925,218 +833,25 @@ function prepareTerminalCollection(
       lifecycle,
       reportedTerminalOutcome: prepared?.kind === 'recorded',
       transitionObservations: terminal.transitionObservations,
-    },
-  };
-}
-
-/**
- * Complete a committed collection: disclose the frontier and walk INLINE upward.
- *
- * Everything here is strictly post-commit, and each item is here for a reason
- * that a fence cannot accommodate:
- *
- * - The frontier OBSERVATION reads committed state, and disclosing bearers is
- *   only sound once the consume that retired them has actually landed.
- * - The INLINE upward advance spawns the composing parent's execution loop
- *   (Category A). A fenced transaction cannot own a subprocess.
- *
- * A FAILED post-commit disclosure REJECTS, deliberately. Being post-commit, the
- * failure arrives after the aggregate landed and after the frontier entry was
- * consumed, so neither disposition can recover the bearers — the consume is
- * durable and the next collect re-projects nothing. What the two dispositions
- * differ on is whether anyone is told:
- *
- * - Swallowing would return `collection_applied` with `reEntryObservations: []`.
- *   That array is not "no news": the frontend reads its PRESENCE as "the
- *   frontier was consumed, do not re-enter this DELEGATE step", so an empty one
- *   reports a successful collection with nothing left to delegate. The
- *   delegations are stranded and no surface says so — a warning-only adapter of
- *   exactly the kind this project rules out.
- * - Rejecting misreports a committed collect as failed, which would be the worse
- *   trade if it invited an unsafe repeat. It does not: a retried collect finds
- *   the outcomes drained and the frontier gone, and answers the idempotent
- *   `already_collected` no-op. Both halves are pinned by the
- *   "post-commit re-entry disclosure" tests.
- *
- * So the rejection costs an inaccurate command status and buys an operator-
- * visible fact; the silence costs a stranded delegation and buys nothing.
- *
- * @param input - Collection operation input (services + target + steps).
- * @param prepared - The prepared collection whose commit has landed.
- * @returns The final collection outcome with post-commit data folded in.
- * @throws {InvalidRunbookStateError} When the committed target cannot describe
- *   itself well enough to render its re-entry entry — corrupt persisted state,
- *   whose recovery (finish/stop/prune) the CLI's RD-309 arm already spells.
- * @throws {RundownError} `DELEGATION_FRONTIER_DISCLOSURE_FAILED` (RD-833) for
- *   any other render failure — typically a `--helpers` helper raising. Typed
- *   rather than bare because this is a new way for a collect to fail: it used
- *   to emit a thinner event that needed no rendering.
- */
-async function finishCollection(
-  input: CollectDelegationOutcomesOperationInput,
-  prepared: PreparedCollection,
-): Promise<DelegationPolicyOutcome> {
-  const value = prepared.value;
-  if (value.kind !== 'collection_applied') return value;
-
-  // Stryker disable next-line ConditionalExpression: equivalent on the second
-  // term — `frontierDisclosure` is set only on `prepareCollection`'s projected
-  // arm, which sets `target` in the same literal, so the first term already
-  // implies the second. It is spelled out because `target` is optional on
-  // `PreparedCollection` and TypeScript narrows on the check, not on the
-  // invariant.
-  if (prepared.frontierDisclosure !== undefined && prepared.target !== undefined) {
-    try {
-      // The SAME seam `rundown run` enters through, so the `STEP_ENTERED` a
-      // collect emits carries every rendered field a run's does. The state is
-      // the one this transaction just committed, which is why the entry cannot
-      // be derived before the commit: it would describe a run that does not yet
-      // exist in that shape, and would disclose bearers a refused commit never
-      // consumed.
-      const entered = await input.actorService.enterExecutionUnit({
-        state: prepared.target,
+      progression: {
+        kind: 'activate',
+        authority: mintRunProgressionAuthority({
+          runId: terminalState.id,
+          claimKey: scope.claim.claimKey,
+          delegationRuntime,
+        }),
+        runbook: terminalState.runbook,
         steps: input.steps,
-        delegateFrontier: prepared.frontierDisclosure,
-      });
-      return { ...value, reEntryObservations: entered.effects };
-    } catch (renderError) {
-      // Attribute, then reject. The rejection is the outcome; this log exists
-      // because the rejection alone cannot say that the collection COMMITTED —
-      // the fact an operator needs and the only one the error's own message
-      // will not carry.
-      void logger.error('collection committed but its re-entry disclosure could not be rendered', {
-        runId: prepared.target.id,
-        error: getErrorMessage(renderError),
-      });
-      // A corrupt persisted snapshot keeps its own class, so the CLI's RD-309
-      // mapping still fires and still prints finish/stop/prune — the right
-      // recovery for a run that cannot describe itself. Everything else is a
-      // render failure, and since #820 that is a NEW way for a collect to fail:
-      // it used to emit a thinner event that needed no rendering at all. It gets
-      // a code of its own rather than escaping bare as RD-999 "Unknown error",
-      // because the two recoveries differ — RD-833's is "fix the helper and
-      // re-delegate", and a retry cannot recover the bearers.
-      if (renderError instanceof InvalidRunbookStateError) throw renderError;
-      throw Errors.frontierDisclosureFailed(prepared.target.id, getErrorMessage(renderError));
-    }
-  }
-
-  if (prepared.terminal === undefined || prepared.target === undefined) return value;
-
-  // INLINE only. The delegation report already committed with the terminal
-  // state, so re-running the shared seam for it would attempt a duplicate write;
-  // the inline advance is the one arm whose effect is external.
-  if (prepared.target.parentLinkage?.kind !== 'inline') return value;
-  const terminalInlineAdvance = await advanceInlineParentAfterCommit(input, prepared.target);
-  return {
-    ...value,
-    ...(terminalInlineAdvance !== undefined ? { terminalInlineAdvance } : {}),
-  };
-}
-
-/**
- * Narrow the shared upward-propagation union to its INLINE subset.
- *
- * WHY THIS IS NOT A REMAP. `reported` and `duplicate` are DELEGATION
- * dispositions whose distinction {@link TerminalUpwardPropagationResult}
- * documents as load-bearing. Collapsing either onto `not-applicable` — "there
- * was no parent to propagate to" — would state something the walk never
- * observed, which is the silent mapping CLAUDE.md forbids. So this narrowing
- * refuses them instead, and the refusal costs nothing because they are
- * UNREACHABLE from here. Two independent facts make that so:
- *
- * 1. {@link finishCollection} only reaches this walk for a target whose
- *    `parentLinkage.kind === 'inline'`, and the seam's TOP level dispatches on
- *    that same linkage — so the delegation arm that mints `reported` /
- *    `duplicate` cannot run at level 1.
- * 2. The walk RECURSES upward, and an ancestor above an inline parent may well
- *    carry delegation linkage, so `reported` genuinely is produced one level
- *    up. It never escapes: `propagateTerminalChildUpwardInner`'s severity
- *    collapse returns the diagnosing members — `linkage-cycle`,
- *    `advance-refused` — and `blocked` unchanged, maps a `stopped` advance to
- *    `stopped`, and folds everything else — `reported` included — into
- *    `handled`. Pinned by "collapses a delegation-linked grandparent report
- *    INSIDE the seam, not at this boundary".
- *
- *    Keep this list in step with that ladder. It named two members while the
- *    ladder had grown a third, which read as a statement that the third was
- *    meant to be folded — the swallow it actually described was a defect
- *    (#802 review).
- *
- * Spelled as an exhaustive switch rather than a conditional so the compiler,
- * not a reviewer, is what forces this boundary to be revisited when a member is
- * added to either union: a new arm reaches the `never` assignment and fails to
- * build, where the old `?:` would have widened the declared return type in
- * silence. Enumerating the two refused members (rather than a bare
- * `default: throw`) is what preserves that exhaustiveness — the same shape
- * `lifecycle-command-service`'s terminal policy switch uses for its own
- * invariant-violation arms.
- *
- * Exported for the unit tests that pin the refusal, and deliberately NOT
- * re-exported from the package index: it is not a public contract.
- *
- * @param outcome - The disposition the shared seam returned.
- * @returns The same value, narrowed to the inline subset.
- * @throws {Error} When the seam yields a delegation-only disposition, which the
- *   inline-linkage precondition makes impossible; a real occurrence means the
- *   seam's contract changed and must not be reported as `not-applicable`.
- * @internal
- */
-export function narrowInlineUpwardPropagation(
-  outcome: TerminalUpwardPropagationResult,
-): InlineUpwardPropagationResult {
-  switch (outcome.kind) {
-    case 'handled':
-    case 'stopped':
-    case 'blocked':
-    case 'not-applicable':
-    case 'linkage-cycle':
-    case 'advance-refused':
-      // Returned AS IT CAME BACK, never rebuilt: the `linkage-cycle` arm carries
-      // the trip naming the run to prune (#603), and `advance-refused` the
-      // diagnosed drain refusal the frontend renders (#802).
-      return outcome;
-    case 'reported':
-    case 'duplicate':
-      throw new Error(
-        `Inline upward propagation yielded the delegation-only disposition "${outcome.kind}"; ` +
-          'an inline-linked child cannot produce one, so this is a seam-contract violation.',
-      );
-    default: {
-      const _exhaustive: never = outcome;
-      return _exhaustive;
-    }
-  }
-}
-
-/**
- * Drive the INLINE upward walk for a collect target that committed terminal.
- *
- * Delegates to the shared {@link propagateTerminalChildUpward} seam so the
- * cycle/depth guards, progression severity, and one-level recursion stay in one
- * owner. Narrows the seam's union to the inline subset without a cast (see
- * {@link narrowInlineUpwardPropagation}), keeping the `linkage-cycle` arm INTACT
- * (#603): core holds no emitter, so the trip has to reach the frontend as data
- * and the CLI performs the fail-closed collapse.
- *
- * @param input - Collection operation input (services).
- * @param terminalState - The committed terminal collect target.
- * @returns The narrowed inline advance outcome.
- * @throws {Error} When the seam yields a delegation-only disposition — see
- *   {@link narrowInlineUpwardPropagation} for why that cannot happen here.
- */
-async function advanceInlineParentAfterCommit(
-  input: CollectDelegationOutcomesOperationInput,
-  terminalState: RunbookState,
-): Promise<InlineUpwardPropagationResult | undefined> {
-  const outcome: TerminalUpwardPropagationResult = await propagateTerminalChildUpward(
-    {
-      manager: input.manager,
-      completionService: input.completionService,
-      advanceInlineParent: input.advanceInlineParent,
+        entryBoundary: {
+          kind: 'after_observed_transition',
+          lifecycle,
+          terminalTarget: 'released',
+          source:
+            terminalState.lastResult === undefined
+              ? { kind: 'loop-inferred' }
+              : { kind: 'explicit-result', result: terminalState.lastResult },
+        },
+      },
     },
-    terminalState,
-    undefined,
-  );
-  return narrowInlineUpwardPropagation(outcome);
+  };
 }

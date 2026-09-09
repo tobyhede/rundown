@@ -316,7 +316,7 @@ and MUST NOT be conflated:
 
 | Check                        | Governs                                                                                     | Requirement                                                                                                                    |
 | ---------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `RunbookState.schemaVersion` | Runbook state **only** — the structured fields and the opaque `snapshot` blob of a run row. | MUST be `1`. Any other value makes that run's state invalid.                                                                   |
+| `RunbookState.schemaVersion` | Runbook state **only** — the structured fields and the opaque `snapshot` blob of a run row. | MUST be `2`. Any other value makes that run's state invalid.                                                                   |
 | SQLite schema version        | The whole state database, including the session, stash, and delegation/claim tables.        | Stored in `PRAGMA user_version` and MUST equal the version this build installs. Any other version is rejected as incompatible. |
 
 Session, stash, and delegation rows carry no `schemaVersion` field of their own;
@@ -371,7 +371,7 @@ Each SQLite run state row stores enough information to resume deterministically.
   "lifecycle": "running",
   "runbookSrc": "---\nname: my-runbook\n---\n# My Runbook\n...",
   "snapshot": {},
-  "schemaVersion": 1
+  "schemaVersion": 2
 }
 ```
 
@@ -397,7 +397,7 @@ Each SQLite run state row stores enough information to resume deterministically.
 | `lifecycle`                                         | Run lifecycle state: `running` during execution, `completed` or `stopped` once terminal.                                                                                                                                                                                                         |
 | `runbookSrc`                                        | Raw source content with template placeholders preserved.                                                                                                                                                                                                                                         |
 | `snapshot`                                          | Opaque XState persisted snapshot.                                                                                                                                                                                                                                                                |
-| `schemaVersion`                                     | Persisted state schema version. Current v1 state writes numeric `1`.                                                                                                                                                                                                                             |
+| `schemaVersion`                                     | Persisted state schema version. Current v2 state writes numeric `2`.                                                                                                                                                                                                                             |
 
 The runtime MUST treat `snapshot` as persisted state subject to the no-migration
 rule.

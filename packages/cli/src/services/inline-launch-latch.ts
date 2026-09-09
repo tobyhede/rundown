@@ -1,9 +1,13 @@
 import {
   assertRunId,
   classifyInlineLaunchOwnership,
+  commitRunProgressionEvent,
+  ConcurrentStateModificationError,
+  DEFAULT_MUTATE_ATTEMPTS,
   getErrorMessage,
   isInlineLaunchIntentWithoutParentEntry,
   logger,
+  mutateBackoffMs,
   recordInlineLaunchStart,
   type FrameKey,
   type InlineLaunchIntent,
@@ -13,8 +17,10 @@ import {
   type ParentLinkage,
   type ResolvedStep,
   type RunbookActorService,
+  type RunProgressionAuthority,
   type RunbookState,
   type RunbookStateManager,
+  type SessionMutationRefusal,
 } from '@rundown-org/core';
 
 /**
@@ -281,6 +287,19 @@ export type InlineLaunchLatch =
   | { readonly kind: 'inactive' }
   /** The persisted intent is gone or names a different launch. */
   | { readonly kind: 'superseded' }
+  /**
+   * A guarded write the latch attempted was refused on execution OWNERSHIP.
+   *
+   * Kept apart from `superseded`, which reports that the launch itself moved
+   * on and whose caller-facing answer is the benign "re-run and observe".
+   * These two are neither benign nor the same as each other:
+   * `execution_in_progress` clears when the holder finishes, while
+   * `recovery_required` never clears without an explicit recovery gesture.
+   * Collapsing all three into `superseded` told the operator a launch had been
+   * superseded when the store had actually refused it, and offered a remedy
+   * that could not work.
+   */
+  | { readonly kind: 'store-refused'; readonly refusal: SessionMutationRefusal }
   /** A run already exists under the intent's child id, but is not this launch's. */
   | {
       readonly kind: 'linkage-refused';
@@ -368,6 +387,8 @@ export function inlineLinkageFromIntent(intent: InlineLaunchIntent): InlineLinka
 export interface InlineLaunchLatchArgs {
   /** State manager owning the parent's compare-and-swap cycle. */
   readonly manager: RunbookStateManager;
+  /** Exact verified authority for the parent launch intent. */
+  readonly authority: RunProgressionAuthority;
   /** Actor service used to derive the `INLINE_CHILD_STARTED` transition. */
   readonly actorService: RunbookActorService;
   /** Parsed steps the parent machine is compiled from. */
@@ -381,12 +402,22 @@ export interface InlineLaunchLatchArgs {
  *
  * `inline.started` is the durable "I am launching this child" record, and this
  * is the single cycle that writes it. Reading the intent, testing the latch and
- * committing `INLINE_CHILD_STARTED` all happen inside one
- * {@link RunbookStateManager.mutateStateReturning} build callback, so the state
+ * committing `INLINE_CHILD_STARTED` all happen within one capture-decide-save
+ * cycle whose save compare-and-swaps against the captured version, so the state
  * the decision is derived from is the state the write commits onto. That is what
  * makes the launch exactly-once: two observers of one intent cannot both reach
  * `manager.create` for the intent's fixed `childRunId` and race the store's bare
  * `INSERT INTO runs`.
+ *
+ * The decision is async — it loads the child run and asks the actor service to
+ * prepare the mutation — so it cannot ride inside a `mutateState` build
+ * callback, whose `SyncWork` shape makes an async callback a compile error.
+ * The cycle is therefore the loop-from-outside form (CLAUDE.md § Concurrent
+ * write synchronization): capture, decide, save, and on
+ * `concurrent_modification` re-derive, bounded by the store's exported
+ * {@link DEFAULT_MUTATE_ATTEMPTS} with {@link mutateBackoffMs} between
+ * attempts. Every other save refusal is permanent and returned as itself; an
+ * exhausted budget throws {@link ConcurrentStateModificationError}.
  *
  * The record names its owner, so a latch is only binding while that owner runs.
  * Committing before the create is what makes the launch exactly-once, and it is
@@ -402,12 +433,12 @@ export interface InlineLaunchLatchArgs {
  * next intent it prepares for the same substep, so a spurious latch would make
  * every later re-entry of that frame report an already-started launch.
  *
- * The launch span itself stays OUTSIDE this callback. It resolves a runbook ref,
+ * The launch span itself stays OUTSIDE this cycle. It resolves a runbook ref,
  * reads files, imports modules and writes warnings — external effects, which a
- * callback that re-runs once per compare-and-swap attempt must not perform.
+ * decision that re-runs once per compare-and-swap attempt must not perform.
  *
  * @remarks
- * The callback re-runs per attempt (up to 8), so it must be safe to repeat. Its
+ * The decision re-runs per attempt (up to 8), so it must be safe to repeat. Its
  * own work is three reads and a derivation — the liveness probe is the third.
  * The probe is a pure read, which is what makes it admissible here, but it is
  * not uniformly as cheap as the `kill(pid, 0)` it starts with: a LIVE foreign
@@ -418,7 +449,7 @@ export interface InlineLaunchLatchArgs {
  * `reclaimable` on a dead pid short-circuits before the spawn, and `held`
  * commits nothing — a `null` next ends the cycle with no retry. Only the rare
  * recycled-pid reclaim (live pid, start ids disagree) can pay it more than once.
- * The record this observer would write is built ONCE, outside the callback, so a
+ * The record this observer would write is built ONCE, outside the decision, so a
  * retried attempt commits the identity the caller reasoned about rather than
  * re-probing the host per attempt. It reaches
  * {@link RunbookActorService.prepareActorMutation}, and for this event nothing
@@ -453,98 +484,124 @@ export async function latchInlineLaunch(args: InlineLaunchLatchArgs): Promise<In
   let startedRecord: InlineLaunchStart | undefined;
   const started = (): InlineLaunchStart =>
     (startedRecord ??= recordInlineLaunchStart(new Date().toISOString()));
-  const { value } = await args.manager.mutateStateReturning<InlineLaunchLatch>(
-    parentLinkage.parentRunId,
-    async (current) => {
-      if (current.lifecycle === 'completed' || current.lifecycle === 'stopped') {
-        return { next: null, value: { kind: 'inactive' } };
+  const decide = async (
+    current: RunbookState,
+  ): Promise<{ readonly next: RunbookState | null; readonly value: InlineLaunchLatch }> => {
+    if (current.lifecycle === 'completed' || current.lifecycle === 'stopped') {
+      return { next: null, value: { kind: 'inactive' } };
+    }
+    if (!persistedInlineLaunchIntentMatches(current, args.intent)) {
+      return { next: null, value: { kind: 'superseded' } };
+    }
+    // Ownership first, and before the child load: a launch held by a live
+    // process is refused whatever the child looks like, so loading and
+    // classifying that child would be a round-trip per attempt for a decision
+    // this arm discards. Liveness, never age, and never the child run's
+    // absence — an observer that has latched and is still resolving the child
+    // runbook leaves exactly the state a crashed one leaves.
+    const ownership = classifyParentInlineLatch(current, args.intent);
+    if (ownership.kind === 'held') {
+      return { next: null, value: { kind: 'already-latched', ownerPid: ownership.ownerPid } };
+    }
+    if (ownership.kind === 'unrecorded') {
+      return { next: null, value: { kind: 'unrecorded', reason: ownership.reason } };
+    }
+    const existingChild = await args.manager.load(childRunId);
+    if (existingChild) {
+      const linkageMatch = classifyInlineChildLinkage(existingChild.parentLinkage, parentLinkage);
+      if (linkageMatch.kind !== 'matched') {
+        return { next: null, value: { kind: 'linkage-refused', mismatch: linkageMatch } };
       }
-      if (!persistedInlineLaunchIntentMatches(current, args.intent)) {
-        return { next: null, value: { kind: 'superseded' } };
-      }
-      // Ownership first, and before the child load: a launch held by a live
-      // process is refused whatever the child looks like, so loading and
-      // classifying that child would be a round-trip per attempt for a decision
-      // this arm discards. Liveness, never age, and never the child run's
-      // absence — an observer that has latched and is still resolving the child
-      // runbook leaves exactly the state a crashed one leaves.
-      const ownership = classifyParentInlineLatch(current, args.intent);
-      if (ownership.kind === 'held') {
-        return { next: null, value: { kind: 'already-latched', ownerPid: ownership.ownerPid } };
-      }
-      if (ownership.kind === 'unrecorded') {
-        return { next: null, value: { kind: 'unrecorded', reason: ownership.reason } };
-      }
-      const existingChild = await args.manager.load(childRunId);
-      if (existingChild) {
-        const linkageMatch = classifyInlineChildLinkage(existingChild.parentLinkage, parentLinkage);
-        if (linkageMatch.kind !== 'matched') {
-          return { next: null, value: { kind: 'linkage-refused', mismatch: linkageMatch } };
-        }
-      }
-      switch (ownership.kind) {
-        case 'unlatched':
-        case 'reclaimable': {
-          // The two arms that launch, and they differ only in what they report:
-          // one takes a free latch, the other takes over a dead owner's.
-          const mutation = await args.actorService.prepareActorMutation(
-            parentLinkage.parentRunId,
-            current,
-            args.steps,
-            {
-              type: 'INLINE_CHILD_STARTED',
-              parentStepId: args.intent.parentStepId,
-              parentFrameKey: parentLinkage.parentFrameKey,
-              childRunId,
-              // Overwrites a dead owner's record with this process's own, so the
-              // launch this observer is about to perform is the one a third
-              // observer finds held. Leaving the dead pid there would let the
-              // reclamation be reclaimed again, mid-span.
-              started: started(),
-            },
-          );
-          // Committed verbatim, so the latch this observer reads back is the
-          // latch that was written.
-          return {
-            next: mutation.nextState,
-            value: {
-              kind: 'won',
-              existingChild,
-              reclaimedFrom: ownership.kind === 'reclaimable' ? ownership.ownerPid : null,
-              // Built here rather than by the caller so that taking the latch
-              // and owning its release are one act: a `won` the caller could
-              // receive without a scope is a `won` the caller can forget to
-              // release. The thunk is not invoked inside this callback — it is
-              // stored for scope exit, which is outside the compare-and-swap
-              // and therefore free to send its own event.
-              held: heldInlineLatch(
-                async () => {
-                  await args.actorService.sendAndSync(parentLinkage.parentRunId, args.steps, {
+    }
+    switch (ownership.kind) {
+      case 'unlatched':
+      case 'reclaimable': {
+        // The two arms that launch, and they differ only in what they report:
+        // one takes a free latch, the other takes over a dead owner's.
+        const mutation = await args.actorService.prepareActorMutation(
+          parentLinkage.parentRunId,
+          current,
+          args.steps,
+          {
+            type: 'INLINE_CHILD_STARTED',
+            parentStepId: args.intent.parentStepId,
+            parentFrameKey: parentLinkage.parentFrameKey,
+            childRunId,
+            // Overwrites a dead owner's record with this process's own, so the
+            // launch this observer is about to perform is the one a third
+            // observer finds held. Leaving the dead pid there would let the
+            // reclamation be reclaimed again, mid-span.
+            started: started(),
+          },
+        );
+        // Committed verbatim, so the latch this observer reads back is the
+        // latch that was written.
+        return {
+          next: mutation.nextState,
+          value: {
+            kind: 'won',
+            existingChild,
+            reclaimedFrom: ownership.kind === 'reclaimable' ? ownership.ownerPid : null,
+            // Built here rather than by the caller so that taking the latch
+            // and owning its release are one act: a `won` the caller could
+            // receive without a scope is a `won` the caller can forget to
+            // release. The thunk is not invoked inside this callback — it is
+            // stored for scope exit, which is outside the compare-and-swap
+            // and therefore free to send its own event.
+            held: heldInlineLatch(
+              async () => {
+                await commitRunProgressionEvent(
+                  args.authority,
+                  args.manager,
+                  args.actorService,
+                  args.steps,
+                  {
                     type: 'INLINE_LAUNCH_ABANDONED',
                     // The record this attempt committed, not a fresh one: the
-                    // machine releases only while the row still holds it, so a
-                    // re-probed identity would name a latch nobody wrote and
-                    // release nothing. `started()` is memoized for that reason.
+                    // machine releases only while the row still holds it.
                     started: started(),
-                  });
-                },
-                () => ({
-                  parentRunId: parentLinkage.parentRunId,
-                  parentStepId: args.intent.parentStepId,
-                  childRunId,
-                }),
-              ),
-            },
-          };
-        }
-        default: {
-          const _exhaustive: never = ownership;
-          return _exhaustive;
-        }
+                  },
+                );
+              },
+              () => ({
+                parentRunId: parentLinkage.parentRunId,
+                parentStepId: args.intent.parentStepId,
+                childRunId,
+              }),
+            ),
+          },
+        };
       }
-    },
+      default: {
+        const _exhaustive: never = ownership;
+        return _exhaustive;
+      }
+    }
+  };
+
+  for (let attempt = 0; attempt < DEFAULT_MUTATE_ATTEMPTS; attempt += 1) {
+    const captured =
+      args.authority.claimKey === undefined
+        ? await args.manager.captureRunAuthorityState(args.authority.runId)
+        : await args.manager.captureAuthorityState(args.authority.runId, args.authority.claimKey);
+    if (captured.kind === 'missing') return { kind: 'missing' };
+    if (captured.kind === 'claim_superseded') return { kind: 'superseded' };
+
+    const decision = await decide(captured.state);
+    if (decision.next === null) return decision.value;
+    const committed = await args.manager.saveState(captured.authority, decision.next);
+    if (committed.kind === 'committed') return decision.value;
+    if (committed.kind === 'claim_superseded') return { kind: 'superseded' };
+    if (committed.kind === 'missing') return { kind: 'missing' };
+    if (committed.kind !== 'concurrent_modification') {
+      return { kind: 'store-refused', refusal: committed };
+    }
+    if (attempt < DEFAULT_MUTATE_ATTEMPTS - 1) {
+      await new Promise((resolve) => setTimeout(resolve, mutateBackoffMs(attempt)));
+    }
+  }
+  throw new ConcurrentStateModificationError(
+    parentLinkage.parentRunId,
+    `Run ${parentLinkage.parentRunId} changed while latching inline launch`,
   );
-  // `value` is null exactly when the callback never ran, which happens only for
-  // a missing run.
-  return value ?? { kind: 'missing' };
 }

@@ -50,6 +50,7 @@ const {
   // budget; both are captured real so this suite exercises the shipped loop.
   DEFAULT_MUTATE_ATTEMPTS: realDefaultMutateAttempts,
   mutateBackoffMs: realMutateBackoffMs,
+  isConcurrentStateModificationError: realIsConcurrentStateModificationError,
 } = await import('@rundown-org/core');
 
 const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
@@ -139,6 +140,7 @@ function mockClaimAndInitialLinkSuccess(): jest.Mock<SessionService['claimAndIni
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
+  isConcurrentStateModificationError: realIsConcurrentStateModificationError,
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
@@ -164,6 +166,27 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     parse: jest.fn((ref: unknown) => ref),
   },
   generateRunId: jest.fn(() => `rd_${'a'.repeat(32)}`),
+  // Imported at module scope by `runbook-pipeline.ts` for the Run Progression
+  // launch directive (#856/#857). A mock factory that omits either name fails
+  // the whole module graph at import with "does not provide an export named".
+  progressionDirectiveForStartedRun: (state: RunbookState, steps: readonly unknown[]) => ({
+    kind: 'activate',
+    authority: { runId: state.id },
+    runbook: state.runbook,
+    steps,
+    entryBoundary: { kind: 'resume' },
+  }),
+  progressionDirectiveForClaimedRun: (
+    state: RunbookState,
+    steps: readonly unknown[],
+    claimed: { claim: ClaimRecord },
+  ) => ({
+    kind: 'activate',
+    authority: { runId: state.id, claimKey: claimed.claim.claimKey },
+    runbook: state.runbook,
+    steps,
+    entryBoundary: { kind: 'resume' },
+  }),
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
   getDefaultPolicy: () => ({
     version: 1,
@@ -200,6 +223,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     TOKEN_NOT_FOUND: { code: 'RD-808' },
     TOKEN_CANCELLED: { code: 'RD-809' },
     LAUNCH_FAILED: { code: 'RD-816' },
+    CONCURRENT_STATE_MODIFICATION: { code: 'RD-308' },
     CLAIM_INVARIANT_VIOLATED: { code: 'RD-820' },
   },
   isJsonArray: jest.fn((v: unknown) => Array.isArray(v)),
@@ -280,14 +304,6 @@ jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
     }),
   ),
   buildRunbookRef: jest.fn(actualResolveRunbook.buildRunbookRef),
-}));
-
-// Mock execution service
-jest.unstable_mockModule('../../src/services/execution', () => ({
-  runExecutionLoop:
-    mockFn<(...args: unknown[]) => Promise<'done' | 'stopped' | 'waiting'>>().mockResolvedValue(
-      'done',
-    ),
 }));
 
 // Mock execution-emitter
@@ -384,8 +400,18 @@ const { validateOutputsDeclarations } = await import(
 );
 const { getRunbookFromState } = await import('../../src/helpers/runbook-loader.js');
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
-const { runExecutionLoop } = await import('../../src/services/execution.js');
-const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
+const { claimAndLaunch: claimAndLaunchCore } = await import(
+  '../../src/helpers/runbook-pipeline.js'
+);
+const { claimAndLaunchWithProgression } = await import('./claim-and-launch-harness.js');
+
+async function claimAndLaunch(
+  ctx: RunPipelineContext,
+  token: string,
+  input: Parameters<typeof claimAndLaunchCore>[2],
+): ReturnType<typeof claimAndLaunchCore> {
+  return claimAndLaunchWithProgression(claimAndLaunchCore, ctx, token, input);
+}
 
 /**
  * Create a minimal RunPipelineContext with mock OutputEmitter.
@@ -1154,7 +1180,7 @@ describe('claimAndLaunch', () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.childRunId).toBe(EXISTING_SESSION_CHILD_ID);
-      expect(result.loopResult).toBe('waiting');
+      expect(result.progression.kind).toBe('waiting');
     }
     expect(findClaimForDelegation).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -1736,7 +1762,6 @@ describe('claimAndLaunch', () => {
     jest
       .mocked(createBridgedEmitter)
       .mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<typeof createBridgedEmitter>);
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
 
     const mockCreate = mockFn<(...args: unknown[]) => Promise<{ id: RunId; title: string }>>();
     mockCreate.mockResolvedValue({
@@ -1888,7 +1913,6 @@ describe('claimAndLaunch', () => {
     jest
       .mocked(createBridgedEmitter)
       .mockReturnValue({ emit: jest.fn() } as unknown as ReturnType<typeof createBridgedEmitter>);
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
 
     const mockCreate = mockFn<(...args: unknown[]) => Promise<{ id: RunId; title: string }>>();
     mockCreate.mockResolvedValue({ id: NEW_CHILD_ID, title: 'Child' });
@@ -2136,7 +2160,6 @@ describe('claimAndLaunch', () => {
       expect(result.cause).toContain(NEW_CHILD_ID);
     }
     // Execution loop must not have run — the throw aborted launchRunbook before it
-    expect(runExecutionLoop).not.toHaveBeenCalled();
     // Claim was attempted against the newly created child run ID
     expect(mockClaimAndInitialLink).toHaveBeenCalledWith(
       expect.objectContaining({ childRunId: NEW_CHILD_ID }),
@@ -2300,7 +2323,6 @@ describe('claimAndLaunch', () => {
       expect(update).not.toHaveBeenCalled();
       expect(removeChild).toHaveBeenCalledWith(NEW_CHILD_ID);
       expect(initializeState).toHaveBeenCalled();
-      expect(runExecutionLoop).not.toHaveBeenCalled();
       // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural service mock without invoking it.
       expect(ctx.actorService.prepareDelegationChildUnlink).not.toHaveBeenCalled();
       // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural service mock without invoking it.
@@ -2416,7 +2438,6 @@ describe('claimAndLaunch', () => {
       expect(result.parentRunId).toBe(RUN_ID);
     }
     expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
-    expect(runExecutionLoop).not.toHaveBeenCalled();
   });
 
   it('names the winning child when a second claimer loses the delegation, rather than RD-820', async () => {
@@ -2538,7 +2559,6 @@ describe('claimAndLaunch', () => {
     // The permanent refusal was decided before any commit was attempted.
     expect(mockClaimAndInitialLink).not.toHaveBeenCalled();
     expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
-    expect(runExecutionLoop).not.toHaveBeenCalled();
   });
 
   it('does not claim or link when fresh delegated launch initialization fails', async () => {
@@ -2653,7 +2673,6 @@ describe('claimAndLaunch', () => {
     expect(mockReleaseRuns).not.toHaveBeenCalled();
     expect(mockDelete).toHaveBeenCalledWith(NEW_CHILD_ID);
     expect(mockUpdate).not.toHaveBeenCalled();
-    expect(runExecutionLoop).not.toHaveBeenCalled();
   });
 
   async function arrangeInitialLinkRollback() {
@@ -2790,7 +2809,6 @@ describe('claimAndLaunch', () => {
     );
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural state-manager mock without invoking it.
     expect(ctx.manager.delete).toHaveBeenCalledWith(NEW_CHILD_ID);
-    expect(runExecutionLoop).not.toHaveBeenCalled();
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural state-manager mock without invoking it.
     expect(ctx.manager.update).not.toHaveBeenCalled();
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest verifies this structural output-emitter mock without invoking it.

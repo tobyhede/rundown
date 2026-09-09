@@ -409,6 +409,26 @@ setup({ actors: { fetchUser } }).createMachine({
 
 `fromCallback`, `fromObservable`, `fromEventObservable`, and `fromTransition` (reducer-style) are also available with similar typed-input/output patterns.
 
+### Carry transient actor output across an explicit target
+
+An invoked actor's `onDone` transition targets the next state with the done
+event still available to that target's `invoke.input` factory. Use that route
+for sensitive or runtime-only data needed by the immediately following actor;
+do not `assign` it into context merely to bridge two states.
+
+Run Progression uses this for delegation re-entry. The frontier actor returns a
+projected bearer array only after the consume commits. Its `onDone` transition
+targets the projected-entry state, whose entry actor reads the prior done
+event's output in `invoke.input`. The bearer is therefore available for exactly
+one `STEP_ENTERED` projection but never becomes persisted context.
+
+Keep each decision visible in the graph even when two targets invoke the same
+actor. Empty-frontier entry and projected-frontier entry are distinct states:
+their names describe why entry is happening, and only the latter can receive a
+frontier output. A coordinator function that projects, commits, enters, and
+returns would hide those transitions from XState and recreate progression
+ownership outside the machine.
+
 <a id="actors-type-extraction"></a>
 
 ### Type extraction utilities

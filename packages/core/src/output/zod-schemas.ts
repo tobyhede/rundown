@@ -92,6 +92,7 @@ export const CLISymbolicErrorCodeValues = [
   'ENGINE_INIT_FAILED',
   'INVALID_AT_TARGET',
   'SCENARIO_NOT_FOUND',
+  'OBSERVATION_DELIVERY_FAILED',
   // Every remaining `PrepareFailure['code']` arm. These reach an envelope
   // verbatim from `prepareRunbook`, through `rundown claim`'s `prepare-failed`
   // arm, `rundown run` (`run.ts` emits `prepResult.code` directly) and
@@ -210,6 +211,13 @@ export const CLIErrorCodes = {
   DELEGATION_NO_DELEGATABLE_SUBSTEP: ErrorCodes.DELEGATION_NO_DELEGATABLE_SUBSTEP.code,
   /** Runbook launch failed */
   LAUNCH_FAILED: ErrorCodes.LAUNCH_FAILED.code,
+  // The run-start compare-and-swap spending its budget is transient, not a
+  // launch fault, so it reaches the claim/run envelope as its own RD-308 rather
+  // than under `LAUNCH_FAILED` (#777). Registered here because
+  // `ClaimFailureEnvelope.code` is narrowed to `CLIErrorCode` (#834), which is
+  // what proves every emit site on that union is a registered code.
+  /** Run-state compare-and-swap lost to a concurrent writer */
+  CONCURRENT_STATE_MODIFICATION: ErrorCodes.CONCURRENT_STATE_MODIFICATION.code,
   /** Fresh claim launch violated write-side invariants */
   CLAIM_INVARIANT_VIOLATED: ErrorCodes.CLAIM_INVARIANT_VIOLATED.code,
   /** Requested child runbook does not match the authored DELEGATE target */
@@ -218,6 +226,12 @@ export const CLIErrorCodes = {
   DELEGATION_IN_FLIGHT: ErrorCodes.DELEGATION_IN_FLIGHT.code,
   /** Scenario not found */
   SCENARIO_NOT_FOUND: ErrorCodes.SCENARIO_NOT_FOUND.code,
+  /**
+   * A Run Progression activation ended because its observation reporting
+   * channel threw (#853). The run rests at its last committed boundary;
+   * re-activate once the reporting channel is repaired.
+   */
+  OBSERVATION_DELIVERY_FAILED: 'OBSERVATION_DELIVERY_FAILED',
   /** Unknown or unexpected error */
   UNKNOWN_ERROR: ErrorCodes.UNKNOWN_ERROR.code,
 } as const;

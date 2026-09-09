@@ -589,8 +589,9 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
   // moved to cover this: no persisted state outside a local clone or CI run is
   // worth protecting with the nicer classification, and the structural parse
   // already refuses this shape on its own. This block pins what that refusal
-  // actually looks like at each reader, not what it would look like if the
-  // constant had moved.
+  // actually looks like at each reader. The fixture deliberately carries the
+  // current constant so a legitimate version bump does not hide this parser
+  // classification behind the earlier version gate.
   //
   // The shape below is what a run persisted mid-inline-launch on a pre-#772 build
   // carries: `inline.startedAt`, no `inline.started`. Everything else about it is
@@ -598,7 +599,9 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
   // legitimately refuse it.
   const PRE_STARTED_RUN_ID = `rd_${'7'.repeat(32)}`;
   const PRE_STARTED_CHILD_ID = `rd_${'8'.repeat(32)}`;
-  const PRE_STARTED_SCHEMA_VERSION = 1;
+  // Stamp the historical structural shape with the current version on purpose:
+  // this suite isolates the structural parser by clearing the version gate.
+  const PRE_STARTED_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION;
 
   const preStartedInlineState = {
     id: PRE_STARTED_RUN_ID,
@@ -647,12 +650,8 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
-  it('carries the version the current build also writes', () => {
-    // The premise both tests below rest on, asserted rather than assumed. If the
-    // constant ever moves away from the version that shape was written under,
-    // the gate would start firing first and these assertions would be pinning a
-    // refusal the version gate produces, under names that say the parse does.
-    expect(CURRENT_SCHEMA_VERSION).toBe(PRE_STARTED_SCHEMA_VERSION);
+  it('carries the current version to isolate structural refusal', () => {
+    expect(preStartedInlineState.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
   });
 
   it('clears the version gate and is refused by the structural parse through RunbookStateManager.load', async () => {

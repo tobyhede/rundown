@@ -10,10 +10,6 @@ import { withErrorHandling } from './wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 import { runSeamTransition, type TransitionConfig } from './transitions.js';
-import {
-  propagateDrivenRunTerminal,
-  inlineAdvanceRequiresFailureExit,
-} from './delegation-completion.js';
 import { validateIndexRequiresStep } from './index-option.js';
 import { parseTransitionTarget, transitionTargetFields } from './transition-target.js';
 
@@ -122,57 +118,21 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
             const config = def.buildConfig();
 
             // The core lifecycle seam owns evidence mapping, target resolution,
-            // policy gating (refusals), record/drain or send, inline-child
-            // reactivation, and terminal release. The CLI keeps only Category-A
-            // work: cursor parsing, output rendering, and the execution loop. The
-            // seam renders refusals/applied events itself (inside runSeamTransition);
-            // here we own the post-transition parent-propagation/exit-code contract.
+            // policy gating (refusals), completion recording or top-level send,
+            // inline-child reactivation, activation, and terminal propagation.
+            // The CLI keeps only Category-A parsing, rendering, and exit mapping.
             const commandStreamOptions = commandStreamOptionsForOutputMode(options.text);
-            const { manager, applied, exitError } = await runSeamTransition(output, cwd, config, {
+            const { exitError } = await runSeamTransition(output, cwd, config, {
               ...targetFields,
               ...(options.step !== undefined ? { step: options.step } : {}),
               ...(options.index !== undefined ? { index: options.index } : {}),
               commandStreamOptions,
             });
 
-            // Exit-code contract: when this runbook is a delegated child whose
-            // terminal outcome is absorbed non-terminally by the parent (e.g.
-            // the parent's FAIL transition is RETRY), the orchestrated workflow
-            // is still progressing — `rd pass` / `rd fail` exits 0 so scripted
-            // orchestrators can use exit codes as flow control. Exit 1 is
-            // reserved for cases where the workflow has actually halted (parent
-            // propagation also stopped, RETRY exhausted, or no parent linkage
-            // and the local lifecycle is `stopped`).
-            let shouldExitWithError = exitError;
-
-            // Propagate this child's terminal outcome to its parent, dispatching
-            // on linkage kind (Plan 5). Inline children drain and advance the
-            // composing parent synchronously; delegation children report-only (the
-            // delegating run collects later). For inline, if advancing the parent
-            // reaches a STOP terminal the close exits 1; delegation reporting
-            // returns 'reported' and never flips the exit code (the child's own
-            // lifecycle, captured in `shouldExitWithError` above when it locally
-            // STOPped, governs). Re-pointed at the seam outcome's runId (reloaded
-            // via the same manager) now that the resolve/drive lives in core.
-            if (applied && !applied.terminalPropagationHandled) {
-              const propagation = await propagateDrivenRunTerminal(
-                manager,
-                applied.runId,
-                cwd,
-                output,
-                { kind: 'operator-result', result: def.name },
-                commandStreamOptions,
-              );
-              if (propagation.kind === 'inline-advanced') {
-                shouldExitWithError = inlineAdvanceRequiresFailureExit(propagation);
-              }
-              // `delegation-reported` never flips the exit code here: today's else-if
-              // tested `propagation === 'stopped'` (`:170`), which
-              // reportTerminalToDelegatingRun can NEVER return — a dead branch the
-              // discriminated type removes (SHOULD-FIX 4). The child's own lifecycle
-              // (captured in `shouldExitWithError` when it locally STOPped) governs.
-            }
-            if (shouldExitWithError) {
+            // Core activation returns the composition's closed condition after
+            // any terminal flow-back. Refused/failed remain non-terminal
+            // semantically but still request a non-zero process exit.
+            if (exitError) {
               process.exitCode = 1;
             } else {
               // Clear any non-zero code set earlier in this command (e.g. by an

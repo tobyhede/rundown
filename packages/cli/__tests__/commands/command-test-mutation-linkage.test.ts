@@ -52,6 +52,9 @@ const COMMAND_TEST_MODULE_MAP: Readonly<Record<string, readonly string[]>> = {
   // end-to-end and cannot reach exhaustively.
   'claim-failure-envelope.test.ts': ['claim'],
   'collect.test.ts': ['collect'],
+  // A second home for the same module: the observation-commit-gate seam (#853)
+  // — broken-renderer exit mapping — which `collect.test.ts` drives nowhere.
+  'collect-observation-gate.test.ts': ['collect'],
   'complete.test.ts': ['complete'],
   'delegate.test.ts': ['delegate'],
   'echo.test.ts': ['echo'],

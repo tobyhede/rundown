@@ -1,4 +1,5 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
+import { claimAndLaunchWithProgression } from './claim-and-launch-harness.js';
 import type {
   ClaimId,
   ClaimRecord,
@@ -17,6 +18,7 @@ import type {
   RunbookRef,
   RunId,
   RunnableTemplateVariables,
+  ResolvedStep,
   TemplateVarValue,
 } from '@rundown-org/core';
 import type {
@@ -69,9 +71,11 @@ const {
   // from the one that ships.
   DEFAULT_MUTATE_ATTEMPTS: realDefaultMutateAttempts,
   mutateBackoffMs: realMutateBackoffMs,
+  isConcurrentStateModificationError: realIsConcurrentStateModificationError,
 } = await import('@rundown-org/core');
 
 const MOCK_TOKEN_HASH = brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`);
+// cspell:ignore AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH
 const TEST_CLAIM_ID =
   'rdclm_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' as ClaimId;
 const RUN_ID_PATTERN = /^rd_[a-f0-9]{32}$/;
@@ -260,6 +264,7 @@ function adaptClaimMockToInitialLink(
 
 // Mock @rundown-org/core
 jest.unstable_mockModule('@rundown-org/core', () => ({
+  isConcurrentStateModificationError: realIsConcurrentStateModificationError,
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
   ),
@@ -283,6 +288,32 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     parse: jest.fn((ref: unknown) => realRunbookRefSchema.parse(ref)),
   },
   generateRunId: jest.fn(() => `rd_${'a'.repeat(32)}`),
+  progressionDirectiveForStartedRun: (
+    state: RunbookState,
+    steps: readonly ResolvedStep[],
+    prepared: PreparedRunControlClaim,
+  ) => ({
+    kind: 'activate',
+    authority: {
+      runId: state.id,
+      claimKey: prepared.claim.claimKey,
+      delegationRuntime: prepared.delegationRuntime,
+    },
+    runbook: state.runbook,
+    steps,
+    entryBoundary: { kind: 'resume' },
+  }),
+  progressionDirectiveForClaimedRun: (
+    state: RunbookState,
+    steps: readonly ResolvedStep[],
+    claimed: { claim: ClaimRecord },
+  ) => ({
+    kind: 'activate',
+    authority: { runId: state.id, claimKey: claimed.claim.claimKey },
+    runbook: state.runbook,
+    steps,
+    entryBoundary: { kind: 'resume' },
+  }),
   DELEGATION_TOKEN_PREFIX: 'rdtk_',
   getDefaultPolicy: () => ({
     version: 1,
@@ -413,13 +444,6 @@ jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => {
   };
 });
 
-// Mock execution service
-jest.unstable_mockModule('../../src/services/execution', () => ({
-  runExecutionLoop: mockFn<(...args: unknown[]) => Promise<{ status: string }>>().mockResolvedValue(
-    { status: 'done' },
-  ),
-}));
-
 // Mock execution-emitter
 jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
   createBridgedEmitter: mockFn<(...args: unknown[]) => { emit: jest.Mock }>().mockReturnValue({
@@ -508,7 +532,6 @@ const parser = await import('@rundown-org/parser');
 const { resolveRunbookFile, resolveRunbookRef, buildRunbookRef } = await import(
   '../../src/helpers/resolve-runbook.js'
 );
-const { runExecutionLoop } = await import('../../src/services/execution.js');
 const { createBridgedEmitter } = await import('../../src/helpers/execution-emitter.js');
 const { FileSourcePolicyError, ArtifactChannelError, resolveVariables } = await import(
   '../../src/services/variable-discovery.js'
@@ -529,7 +552,7 @@ const {
   prepareRunnableRunbook,
   prepareResolvedRunnableRunbook,
   loadAndParseResolvedRunbook,
-  startRunbook,
+  startRunbook: startRunbookCore,
   countSubsteps,
   buildContextVars,
   buildTemplateVars,
@@ -537,6 +560,24 @@ const {
 const { setHelperRegistry, resetHelperRegistry } = await import(
   '../../src/services/helper-registry.js'
 );
+
+const mockDriveProgression = mockFn<
+  Parameters<typeof startRunbookCore>[2]['driveProgression']
+>().mockImplementation(async (directive) => ({
+  kind: 'completed',
+  runId: directive.authority.runId,
+}));
+
+async function startRunbook(
+  ctx: RunPipelineContext,
+  prepared: RunnableRunbook,
+  options: Omit<Parameters<typeof startRunbookCore>[2], 'driveProgression'>,
+): ReturnType<typeof startRunbookCore> {
+  return startRunbookCore(ctx, prepared, {
+    ...options,
+    driveProgression: (directive, sink) => mockDriveProgression(directive, sink),
+  });
+}
 
 function makeState(id: RunId, overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -631,7 +672,10 @@ function makeLifecycle(overrides: Record<string, unknown> = {}): Record<string, 
 beforeEach(() => {
   jest.resetAllMocks();
   // Re-establish default mock implementations after reset
-  jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
+  mockDriveProgression.mockImplementation(async (directive) => ({
+    kind: 'completed',
+    runId: directive.authority.runId,
+  }));
   jest
     .mocked(core.deriveExecutionAt)
     .mockImplementation(
@@ -2031,7 +2075,10 @@ describe('startRunbook', () => {
     const mockPushRunbookWithRunControlClaim = mockFn<
       SessionService['pushRunbookWithPreparedRunControlClaim']
     >().mockResolvedValue(committed({ claimId: TEST_CLAIM_ID, claim: claimRecord(MOCK_RUN_ID) }));
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
+    mockDriveProgression.mockImplementation(async (directive) => ({
+      kind: 'completed',
+      runId: directive.authority.runId,
+    }));
 
     const ctx = makeRunPipelineContext({
       manager: {
@@ -2068,7 +2115,7 @@ describe('startRunbook', () => {
 
     expect(result.ok).toBe(true);
     if (result.ok) {
-      expect(result.loopResult).toBe('done');
+      expect(result.progression.kind).toBe('completed');
       expect(result.claimId).toBe(TEST_CLAIM_ID);
     }
     expect(mockCreate).toHaveBeenCalledWith(
@@ -2126,7 +2173,10 @@ describe('startRunbook', () => {
     const mockInitState =
       mockFn<RunbookActorService['initializeState']>().mockResolvedValue(initializedState);
 
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
+    mockDriveProgression.mockImplementation(async (directive) => ({
+      kind: 'completed',
+      runId: directive.authority.runId,
+    }));
 
     const ctx = makeRunPipelineContext({
       manager: {
@@ -2169,20 +2219,11 @@ describe('startRunbook', () => {
     expect(mockInitState).toHaveBeenCalledWith(MOCK_RUN_ID, expect.anything(), {
       issueDelegationCredential,
     });
-    // Hand-off 2 — the execution loop, which needs BOTH the issuer and the
-    // token deriver, so it receives the branded pair whole. Pinned by REFERENCE:
+    // Hand-off 2 — public Run Progression receives the branded pair whole. Pinned by REFERENCE:
     // a structural matcher also passes against a pair rebuilt from the same two
     // halves further down, which is precisely the forwarding defect this guards.
-    expect(jest.mocked(runExecutionLoop).mock.calls.at(-1)?.[5]?.delegationRuntime).toBe(
+    expect(mockDriveProgression.mock.calls.at(-1)?.[0].authority.delegationRuntime).toBe(
       delegationRuntime,
-    );
-    // The same session this launch pushed and claimed through, by REFERENCE.
-    // The loop constructs its own when none is passed, so a caller watching
-    // this session for the run's Run Release would see every write the launch
-    // made and none of the one the loop takes — the split view that made a
-    // second releaser invisible (#838).
-    expect(jest.mocked(runExecutionLoop).mock.calls.at(-1)?.[5]?.sessionService).toBe(
-      ctx.sessionService,
     );
     // Hand-off 3 — the caller. `run --prompted --step` reads `delegationRuntime`
     // off this result to build its goto context, so an omitted or substituted
@@ -2244,7 +2285,7 @@ describe('startRunbook', () => {
     expect(mockPushWithClaim).not.toHaveBeenCalled();
     // The created run is cleaned up so no orphaned state lingers.
     expect(mockDelete).toHaveBeenCalledWith(runId);
-    expect(runExecutionLoop).not.toHaveBeenCalled();
+    expect(mockDriveProgression).not.toHaveBeenCalled();
   });
 
   it('cleans up an activated runbook when afterStarted fails', async () => {
@@ -2337,7 +2378,10 @@ describe('startRunbook', () => {
       title: 'T',
       substeps: undefined,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
+    mockDriveProgression.mockImplementation(async (directive) => ({
+      kind: 'completed',
+      runId: directive.authority.runId,
+    }));
 
     const ctx = {
       output: { flush: jest.fn() } as unknown as OutputEmitter,
@@ -2410,7 +2454,10 @@ describe('startRunbook', () => {
       title: 'T',
       substeps: undefined,
     });
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
+    mockDriveProgression.mockImplementation(async (directive) => ({
+      kind: 'completed',
+      runId: directive.authority.runId,
+    }));
 
     const ctx = {
       output: { flush: jest.fn() } as unknown as OutputEmitter,
@@ -2492,7 +2539,10 @@ describe('startRunbook', () => {
       title: 'Sub Test',
     });
 
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'done' });
+    mockDriveProgression.mockImplementation(async (directive) => ({
+      kind: 'completed',
+      runId: directive.authority.runId,
+    }));
 
     const mockLoad = mockFn<(...args: unknown[]) => Promise<unknown>>().mockResolvedValue({
       id: 'sub-id',
@@ -2580,7 +2630,7 @@ describe('claimAndLaunch', () => {
     } satisfies RunPipelineContext;
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
-    const result = await claimAndLaunch(ctx, 'bad-token', {});
+    const result = await claimAndLaunchWithProgression(claimAndLaunch, ctx, 'bad-token', {});
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -2610,7 +2660,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -2671,7 +2726,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -2732,7 +2792,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -2848,7 +2913,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
     return { result, prepareSpy, initialLinkSpy };
   };
 
@@ -3225,7 +3295,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -3306,7 +3381,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -3372,7 +3452,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -3475,7 +3560,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -3553,7 +3643,11 @@ describe('claimAndLaunch', () => {
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
+    mockDriveProgression.mockImplementation(async (directive) => ({
+      kind: 'waiting',
+      runId: directive.authority.runId,
+      reason: 'awaiting_input',
+    }));
 
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
@@ -3578,12 +3672,17 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.childRunId).toBe('new-child-id');
-      expect(result.loopResult).toBe('waiting');
+      expect(result.progression.kind).toBe('waiting');
     }
     expect(mockCreate).toHaveBeenCalledWith(
       { source: 'project', path: 'child.md' },
@@ -3685,7 +3784,11 @@ describe('claimAndLaunch', () => {
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
+    mockDriveProgression.mockImplementation(async (directive) => ({
+      kind: 'waiting',
+      runId: directive.authority.runId,
+      reason: 'awaiting_input',
+    }));
 
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
@@ -3715,7 +3818,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(true);
     const resolveCall = jest.mocked(resolveVariables).mock.calls.at(-1) as
@@ -3816,7 +3924,11 @@ describe('claimAndLaunch', () => {
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
+    mockDriveProgression.mockImplementation(async (directive) => ({
+      kind: 'waiting',
+      runId: directive.authority.runId,
+      reason: 'awaiting_input',
+    }));
 
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
@@ -3841,7 +3953,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(true);
     // Inherited vars are passed into resolveVariables untouched
@@ -3921,7 +4038,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    const result = await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    const result = await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -3992,7 +4114,11 @@ describe('claimAndLaunch', () => {
       .mocked(core.RunbookStateManager)
       .mockImplementation(() => mockManager as unknown as jest.MockedObject<RunbookStateManager>);
 
-    jest.mocked(runExecutionLoop).mockResolvedValue({ status: 'waiting' });
+    mockDriveProgression.mockImplementation(async (directive) => ({
+      kind: 'waiting',
+      runId: directive.authority.runId,
+      reason: 'awaiting_input',
+    }));
 
     const ctx = {
       output: { status: jest.fn(), flush: jest.fn() } as unknown as OutputEmitter,
@@ -4013,7 +4139,12 @@ describe('claimAndLaunch', () => {
 
     const { claimAndLaunch } = await import('../../src/helpers/runbook-pipeline.js');
     // cspell:disable-next-line
-    await claimAndLaunch(ctx, 'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH', {});
+    await claimAndLaunchWithProgression(
+      claimAndLaunch,
+      ctx,
+      'rdtk_AAAABBBBCCCCDDDDEEEEFFFFGGGGHHHH',
+      {},
+    );
 
     expect(mockCreate).toHaveBeenCalledWith(
       { source: 'project', path: 'child.md' },
