@@ -1546,16 +1546,22 @@ so two observers of one intent inside the launch span race a bare
 rather than a typed refusal.
 
 The replacement is an atomic **compare-and-latch** — a separate, prior
-`mutateStateReturning` cycle (`latchInlineLaunch`) whose build callback decides
-the whole question against the version the compare-and-swap commits onto:
-inactive parent, superseded intent, linkage refusal, unrecorded row, already
-latched, or won — plus a `missing` arm for a parent run that no longer exists,
-the one outcome the callback does not decide because it never runs.
-`inline.started` is the latch, and only the `won` arm proceeds into the launch
-span. The span itself must stay outside the callback — it resolves runbook refs,
-reads files, dynamically imports the pipeline and writes warnings, and a build
-callback re-runs up to eight times, so those are exactly the external effects it
-may not perform.
+capture-decide-save cycle (`latchInlineLaunch`) that decides the whole question
+against the version it saves onto: inactive parent, superseded intent, linkage
+refusal, unrecorded row, already latched, or won — plus a `missing` arm for a
+parent run that no longer exists, the one outcome the decision does not make
+because the capture it needs never returns a state. The decision is async (it
+loads the child run and asks the actor service to prepare the mutation), so it
+cannot ride inside a `mutateState` build callback and the cycle is the
+loop-from-outside form instead: capture the authority state, decide, save, and
+on `concurrent_modification` re-derive, bounded by the store's exported
+`DEFAULT_MUTATE_ATTEMPTS` with `mutateBackoffMs(attempt)` between attempts.
+Every other save refusal is permanent and returned as itself; an exhausted
+budget throws `ConcurrentStateModificationError`. `inline.started` is the latch,
+and only the `won` arm proceeds into the launch span. The span itself must stay
+outside the loop — it resolves runbook refs, reads files, dynamically imports
+the pipeline and writes warnings, and the decision re-runs once per attempt, so
+those are exactly the external effects it may not perform.
 
 The latch is its own module, `services/inline-launch-latch.ts`, rather than a
 private function inside the execution service. The seam is not justified by

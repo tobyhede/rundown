@@ -6,18 +6,23 @@ import { parseRunbookDocument, type ResolvedStep } from '@rundown-org/parser';
 import {
   assertRunId,
   commitRunProgressionEvent,
+  ConcurrentStateModificationError,
+  DEFAULT_MUTATE_ATTEMPTS,
   generateRunId,
   progressionDirectiveForStartedRun,
   recordInlineLaunchStart,
   RunbookStateManager,
   SessionService,
   type DelegationTokenHash,
+  type ExecutionEpoch,
   type FrameKey,
+  type GuardedMutationResult,
   type InlineLaunchIntent,
   type InlineLaunchStart,
   type InlineLinkage,
   type ParentLinkage,
   type RunbookActorService,
+  type RunbookState,
   type RunProgressionAuthority,
   type RunId,
   type SubstepState,
@@ -385,10 +390,11 @@ describe('latchInlineLaunch', () => {
   }
 
   it('reports a missing parent as its own arm rather than a null beside the union', async () => {
-    // `mutateStateReturning` never runs the callback for a run that does not
-    // exist, so this is the one outcome the compare-and-swap does not decide.
-    // It is still an answer to "may this launch proceed", so it travels on the
-    // same union — a caller narrowing the union cannot skip it.
+    // The cycle's authority capture returns `missing` for a run that does not
+    // exist, so the decision never runs and this is the one outcome the
+    // compare-and-swap does not make. It is still an answer to "may this launch
+    // proceed", so it travels on the same union — a caller narrowing the union
+    // cannot skip it.
     const parent = await seedLatchableParent();
     await parent.manager.delete(parent.parentRunId);
 
@@ -1152,6 +1158,124 @@ describe('latchInlineLaunch', () => {
       expect(child?.id).toBe(parent.childRunId);
       // Latched exactly once, by the observer that won.
       expect((await readLatch(parent))?.ownerPid).toBe(process.pid);
+    });
+  });
+
+  // The decision is async — it loads the child and asks the actor service to
+  // prepare the mutation — so it cannot ride inside a `mutateState` build
+  // callback and the module owns a bounded capture-decide-save loop instead.
+  // That loop's two exits past the happy path had no test describing them:
+  // what a permanent refusal degrades to, and what an exhausted budget reports.
+  describe('the bounded capture-decide-save loop', () => {
+    /**
+     * Replace the manager's guarded state write with a fixed refusal.
+     *
+     * @param manager - Manager whose `saveState` the loop drives.
+     * @param refusal - Refusal every attempt receives.
+     * @returns Counter of the attempts the loop actually spent.
+     */
+    function refuseEverySave(
+      manager: RunbookStateManager,
+      refusal: Exclude<GuardedMutationResult<RunbookState>, { kind: 'committed' }>,
+    ): { attempts: number } {
+      const spent = { attempts: 0 };
+      manager.saveState = async () => {
+        spent.attempts += 1;
+        return refusal;
+      };
+      return spent;
+    }
+
+    it('spends the whole attempt budget on sustained contention, then reports it as concurrency', async () => {
+      const parent = await seedLatchableParent();
+      const spent = refuseEverySave(parent.manager, {
+        kind: 'concurrent_modification',
+        runId: parent.parentRunId,
+        message: 'lost update',
+      });
+
+      // Never a `superseded` or a silent `already-latched`: an exhausted budget
+      // observed no cause, so it reports the one it can actually vouch for.
+      await expect(latch(parent)).rejects.toThrow(ConcurrentStateModificationError);
+      // Exactly the store's exported budget — a mirrored constant here would
+      // drift from the one the loop paces against.
+      expect(spent.attempts).toBe(DEFAULT_MUTATE_ATTEMPTS);
+    });
+
+    it.each(['execution_in_progress', 'recovery_required'] as const)(
+      'returns a permanent %s refusal as itself, without retrying it',
+      async (kind) => {
+        const parent = await seedLatchableParent();
+        const refusal =
+          kind === 'recovery_required'
+            ? ({
+                kind,
+                runId: parent.parentRunId,
+                epoch: 1 as ExecutionEpoch,
+                message: 'recover first',
+              } as const)
+            : ({
+                kind,
+                runId: parent.parentRunId,
+                message: 'another process is executing',
+              } as const);
+        const spent = refuseEverySave(parent.manager, refusal);
+
+        // Passed through as itself rather than folded into `superseded`: a
+        // refusal that never clears must not be answered with "re-run and
+        // observe".
+        await expect(latch(parent)).resolves.toEqual({ kind: 'store-refused', refusal });
+        // Retrying a permanent refusal would burn the budget to reach the same
+        // answer, so the loop stops at the first one.
+        expect(spent.attempts).toBe(1);
+      },
+    );
+
+    // The two arms the store can return that are neither a refusal to report
+    // nor a race to re-derive. Both were NoCoverage: the loop's own tests drove
+    // `saveState` only to `committed` and `concurrent_modification`, so nothing
+    // said what a commit-time `claim_superseded` or `missing` degrades to.
+    it.each([
+      {
+        refusal: { kind: 'claim_superseded' as const, message: 'claim rotated under the latch' },
+        latched: { kind: 'superseded' as const },
+        why: 'the authority that captured no longer owns the run, so the intent this call reasoned about is not the one on the row',
+      },
+      {
+        refusal: { kind: 'missing' as const, message: 'run deleted under the latch' },
+        latched: { kind: 'missing' as const },
+        why: 'the parent went away between the capture and the commit',
+      },
+    ])(
+      'reports a commit-time $refusal.kind as $latched.kind — $why',
+      async ({ refusal, latched }) => {
+        const parent = await seedLatchableParent();
+        const spent = refuseEverySave(parent.manager, { ...refusal, runId: parent.parentRunId });
+
+        // Named as itself on the latch union rather than folded into the
+        // catch-all, and — like every permanent answer here — decided on the
+        // first attempt: re-deriving against a rotated claim or an absent run
+        // reaches the same answer with the budget spent.
+        await expect(latch(parent)).resolves.toEqual(latched);
+        expect(spent.attempts).toBe(1);
+      },
+    );
+
+    it('names the contended run in the exhausted-budget error', async () => {
+      // The message is what an operator sees behind RD-308, and the run id is
+      // the only part of it that is not a constant: emptied, the error still
+      // has the right type and still exits the same way, so nothing else here
+      // would notice.
+      const parent = await seedLatchableParent();
+      refuseEverySave(parent.manager, {
+        kind: 'concurrent_modification',
+        runId: parent.parentRunId,
+        message: 'lost update',
+      });
+
+      await expect(latch(parent)).rejects.toThrow(
+        new RegExp(`Run ${parent.parentRunId} changed while latching inline launch`),
+      );
     });
   });
 });

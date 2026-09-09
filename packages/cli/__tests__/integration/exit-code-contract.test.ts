@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   createTestWorkspace,
   runCliInProcess,
+  flattenEvents,
   getActiveState,
+  parseConcatenatedJson,
   readRunbookState,
   withRunTarget,
   type TestWorkspace,
@@ -104,6 +106,28 @@ rd echo --result fail
 \`\`\`
 `;
 
+/**
+ * Read the run id a launching command announced on its `runbook_started` event.
+ *
+ * The child launched inline by `run … --step 1.1` is never the workspace's
+ * active run by the time a later command has flowed back into the parent, so a
+ * test that wants to assert on the child's own lifecycle has to capture its id
+ * from the launch output.
+ *
+ * @param stdout - Stdout of the command that started the run.
+ * @returns The started run's id.
+ * @throws {Error} When the output carries no `runbook_started` event.
+ */
+function startedRunId(stdout: string): string {
+  const started = flattenEvents(parseConcatenatedJson(stdout)).find(
+    (event) => event.type === 'runbook_started',
+  );
+  if (typeof started?.runbookId !== 'string') {
+    throw new Error(`no runbook_started event in output: ${stdout}`);
+  }
+  return started.runbookId;
+}
+
 describe('exit-code contract: the exit code reports the resting run, not the named run', () => {
   let workspace: TestWorkspace;
 
@@ -169,20 +193,34 @@ describe('exit-code contract: the exit code reports the resting run, not the nam
 
     it('`fail` exits 0 when the same child stops during the transition', async () => {
       // `fail` is in scope for the rule (ADR 0004 § Scope) and was the one
-      // command the contract named but did not exercise. Same mechanism as
-      // `pass`: the child's own step 2 command exits non-zero under FAIL STOP,
-      // so the verb in flight is the only thing that differs.
+      // command the contract named but did not exercise. The mechanism differs
+      // from `pass`/`goto` in ONE way that matters to what can be asserted: the
+      // gesture IS the failure, so the child reaches its terminal at step 1
+      // under the default FAIL handler rather than advancing to step 2 and
+      // exiting non-zero there. The halt rule is the same either way, and the
+      // child's terminal is asserted below so this case cannot pass on a parent
+      // that simply never heard from a child still running.
       const parentRunId = await startParent(DEFERRING_PARENT);
       await writeFile(join(workspace.cwd, 'child.runbook.md'), CHILD_FAILS_AT_STEP_2);
 
       const launch = await runCliInProcess('run child.runbook.md --step 1.1', workspace);
       expect(launch.exitCode).toBe(0);
+      const childRunId = startedRunId(launch.stdout);
 
       const result = await runCliInProcess(await withRunTarget(['fail'], workspace), workspace);
 
       expect(result.exitCode).toBe(0);
       const parent = await readRunbookState(workspace, parentRunId);
       expect(parent!.lifecycle).toBe('running');
+      const child = await readRunbookState(workspace, childRunId);
+      expect(child!.lifecycle).toBe('stopped');
+      // `fail` announces the child's terminal through its action envelope, not
+      // through a `runbook_stopped` event — the same shape a solo `fail` under
+      // FAIL STOP emits. Pinned so the absorbed stop stays visible to an agent
+      // reading the stream at exit 0.
+      expect(flattenEvents(parseConcatenatedJson(result.stdout))).toContainEqual(
+        expect.objectContaining({ kind: 'action', action: 'stop', stopped: true }),
+      );
     });
 
     it('keeps the absorbed child stop visible on the JSON stream at exit 0', async () => {
