@@ -1569,6 +1569,42 @@ describe('RunbookCollectionService', () => {
       }
     });
 
+    it('classifies the entry boundary as loop-inferred when the terminal run carries no lastResult', async () => {
+      // The other half of the `source` discriminator. A run that reached a
+      // terminal lifecycle without an authored result — the loop ran out of
+      // steps rather than a step reporting pass/fail — must say so, because
+      // `explicit-result` claims a result the run never produced. Nothing else
+      // distinguishes the two: both boundaries carry the same lifecycle and the
+      // same `terminalTarget`.
+      const ancestor = state({ id: ancestorRunId, resolvedCompletions: {} });
+      await manager.save(ancestor);
+      const { controlled } = await seedTerminalControlled('completed', 'pass', {
+        parentLinkage: inlineLinkage,
+        lastResult: undefined,
+      });
+      const svc = makeCollectionService();
+
+      const outcome = await svc.collectDelegationOutcomes({
+        targetState: controlled,
+        steps: oneSubstepSteps,
+        callerEvidence: ORCHESTRATOR_EVIDENCE,
+        frame: activeFrame(buildFrameKey('1'), 1),
+      });
+
+      expect(outcome.kind).toBe('collection_applied');
+      if (outcome.kind === 'collection_applied') {
+        expect(outcome.progression).toMatchObject({
+          kind: 'activate',
+          entryBoundary: {
+            kind: 'after_observed_transition',
+            lifecycle: 'completed',
+            terminalTarget: 'released',
+            source: { kind: 'loop-inferred' },
+          },
+        });
+      }
+    });
+
     it('surfaces a self-linked (cyclic) inline target as a trip naming the run to prune (#602/#603)', async () => {
       // The target's inline linkage points at ITSELF — corrupt persisted state.
       // The seam's guard trips before any side effect, and collect passes the trip
