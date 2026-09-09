@@ -54,10 +54,20 @@ allowBuilds:
 #     `scannerInvisible` in override-policy.json for that reason, and the audit
 #     refuses to test them for removal. Keep them keyed per parent: a
 #     version-scoped `js-yaml@4` selector does not intersect a ^3.x declaration,
-#     so it silently drops all three back to 3.15.1 and un-patches them.
+#     so it silently drops all three back to 3.15.1 and un-patches them. Raised
+#     again to ^4.3.2 on 2026-09-09 for GHSA-2883-xcg3-v3hh (maxTotalMergeKeys
+#     does not bound CPU for empty merge sources): the ^4.3.1 floor still
+#     admitted the vulnerable 4.3.1, the same defect the ^4.2.0 floor had.
 # Category B — fix is in-range but resolution picks a vulnerable version:
-#   qs (GHSA-q8mj-m7cp-5q26 → 6.15.2). The only pin still load-bearing under a
-#     from-scratch resolve, re-proven by the audit on 2026-08-07.
+#   fast-uri (GHSA-jqff-g426-hqxp, GHSA-fph4-wmhf-6fwf, GHSA-f65p-4m7j-42xc,
+#     GHSA-5jgf-p345-68v8 → 3.1.6). Under ajv 8.x's ^3.0.1.
+#   hono (GHSA-crvj-82cr-hjcx, GHSA-g6gw-c38x-mqfc, GHSA-gqvv-2mrq-wpjv →
+#     4.13.5). Under @modelcontextprotocol/sdk's ^4.11.4.
+#   qs (GHSA-q8mj-m7cp-5q26 → 6.15.2; GHSA-x5fp-wj9c-mxmx and
+#     GHSA-4mjr-xmp4-gh2g → 6.16.0, raised from ^6.15.2 on 2026-09-09 because the
+#     old floor still admitted the vulnerable 6.15.3). The only pin still
+#     load-bearing under a from-scratch resolve, re-proven by the audit on
+#     2026-08-07.
 #
 # Pruned 2026-08-07, after the lockfile refresh that made them inert — each
 # verified individually with `pnpm run audit:overrides`, which resolves without
@@ -66,6 +76,13 @@ allowBuilds:
 # and the astro / @astrojs/internal-helpers / @changesets/parse js-yaml trio.
 # Every one was genuinely load-bearing when added. Upstream caught up, and it was
 # the stale lockfile — not the parents' ranges — holding the tree back.
+#
+# fast-uri was flagged again on 2026-09-03 and re-pinned on 2026-09-09, which is
+# the pruning note above being wrong about WHY it went inert rather than a
+# reversal. The 2026-08-07 refresh did clear it, but a refresh is not what holds
+# it: `pnpm update fast-uri` (bare, and pinned to ^3.1.7) leaves 3.1.5 in place,
+# because ajv is deep enough that update does not reach it. In-range plus
+# unreachable-by-update is the definition of Category B, not of staleness.
 #
 # brace-expansion (removed 2026-08-07) is the cautionary tale. Its premise, "the
 # only fixed release is on the 5.x line", was true when written and later false:
@@ -78,11 +95,13 @@ allowBuilds:
 # bumping the direct dep to ^5.2.2 in cli/core/plugin — no override needed.
 overrides:
   # Category A — scannerInvisible; read override-policy.json before touching.
-  "gray-matter>js-yaml": "^4.3.1"
-  "read-yaml-file>js-yaml": "^4.3.1"
-  "@istanbuljs/load-nyc-config>js-yaml": "^4.3.1"
+  "gray-matter>js-yaml": "^4.3.2"
+  "read-yaml-file>js-yaml": "^4.3.2"
+  "@istanbuljs/load-nyc-config>js-yaml": "^4.3.2"
   # Category B
-  qs: "^6.15.2"
+  qs: "^6.16.0"
+  fast-uri: "^3.1.6"
+  hono: "^4.13.5"
 
 patchedDependencies:
   gray-matter@4.0.3: patches/gray-matter@4.0.3.patch
