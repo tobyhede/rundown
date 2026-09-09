@@ -227,6 +227,12 @@ jobs:
           PKG: ${{ matrix.package }}
           SHARD: ${{ matrix.shard }}
           SCOPES: ${{ matrix.scopes }}
+          # The EFFECTIVE scope, derived from the same value the Stryker step
+          # branched on above — not from the requested TEST_SCOPE input, which
+          # the planner overrides for any shard batching a file without a
+          # dedicated test. Labelling the summary with the request would be a
+          # wrong label, and that is worse than none.
+          TEST_SCOPE: ${{ matrix.testFiles != '' && 'dedicated' || 'related' }}
         run: |
           set -uo pipefail
           # Score exactly what was mutated. `--incremental` retains baseline
@@ -250,6 +256,7 @@ jobs:
             "${args[@]}" \
             --floor 70 \
             --package-name "${PKG}" \
+            --test-scope "${TEST_SCOPE}" \
             --markdown "${RUNNER_TEMP}/mutation-summary-${PKG}-${SHARD}.md"
 
       - name: Compare test-only mutant regressions (advisory)
