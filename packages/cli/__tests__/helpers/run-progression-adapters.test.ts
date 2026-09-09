@@ -45,7 +45,9 @@ jest.unstable_mockModule('../../src/helpers/actor-service-factory', () => ({
   createCliRunbookActorService: jest.fn(() => ({})),
 }));
 
-const { driveRunProgression } = await import('../../src/helpers/run-progression-adapters.js');
+const { driveRunProgression, progressionFailedClosed } = await import(
+  '../../src/helpers/run-progression-adapters.js'
+);
 
 const RUN_ID = actualCore.assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 
@@ -231,5 +233,62 @@ describe('driveRunProgression composition wiring', () => {
     // handing back an ungated function.
     expect(gated.flush).not.toBe(output.flush);
     /* eslint-enable @typescript-eslint/unbound-method */
+  });
+});
+
+describe('progressionFailedClosed', () => {
+  // The predicate every mutating command's exit code rests on: `run`, `claim`,
+  // `collect`, `goto` and the shared transition seam all ask it whether to exit
+  // non-zero. Nothing asserted the real implementation — `goto-workflow.test.ts`
+  // and `transitions.test.ts` each substitute a local mirror of the truth table
+  // and test their own callers against that, so every arm of the production
+  // function could be flipped without failing a test.
+  //
+  // Keyed by `RunProgressionOutcome['kind']` so the table is exhaustive by
+  // construction: a new outcome kind is a compile error here until someone
+  // decides, deliberately, which side of the exit-code line it falls on.
+  const TRUTH_TABLE: Record<
+    RunProgressionOutcome['kind'],
+    { readonly outcome: RunProgressionOutcome; readonly failsClosed: boolean }
+  > = {
+    // Rests awaiting input or another process — the caller's work is not done,
+    // but nothing failed. Exits clean.
+    waiting: {
+      outcome: { kind: 'waiting', runId: RUN_ID, reason: 'awaiting_input' },
+      failsClosed: false,
+    },
+    completed: { outcome: { kind: 'completed', runId: RUN_ID }, failsClosed: false },
+    // A stopped lifecycle is an actual stop, not merely unfinished work.
+    stopped: { outcome: { kind: 'stopped', runId: RUN_ID }, failsClosed: true },
+    // `refused` and `failed` applied no terminal and did not finish the
+    // caller's work either; all three exit non-zero.
+    refused: {
+      outcome: {
+        kind: 'refused',
+        runId: RUN_ID,
+        reason: 'recovery_required',
+        message: 'the run needs an explicit recovery before it can progress',
+        recovery: 'permanent',
+      },
+      failsClosed: true,
+    },
+    failed: { outcome: DELIVERY_FAILED, failsClosed: true },
+  };
+
+  it.each(Object.entries(TRUTH_TABLE))(
+    'reports %s as the exit-code decision the commands rest on',
+    (_kind, { outcome, failsClosed }) => {
+      expect(progressionFailedClosed(outcome)).toBe(failsClosed);
+    },
+  );
+
+  it('covers every outcome kind, so no arm can be added without a decision', () => {
+    // The `Record` above makes a MISSING kind a compile error, which a runtime
+    // assertion cannot. This asserts the other half — that the table still
+    // separates the two answers — so a table quietly collapsed to all-true or
+    // all-false (which would keep every `it.each` case passing against an
+    // equally collapsed predicate) fails here instead.
+    const decisions = Object.values(TRUTH_TABLE).map(({ failsClosed }) => failsClosed);
+    expect(new Set(decisions)).toEqual(new Set([true, false]));
   });
 });
