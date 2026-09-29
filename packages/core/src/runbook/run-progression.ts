@@ -2182,8 +2182,8 @@ async function driveProgression(
     if (progression.kind === 'reselect') {
       // A reselect makes no progress: the machine selected the frontier turn,
       // another writer moved the frontier before the fenced capture, and this
-      // re-derives against the row that writer committed. CLAUDE.md
-      // § Concurrent write synchronization requires such a loop to be bounded
+      // re-derives against the row that writer committed. docs/internal/concurrency.md
+      // requires such a loop to be bounded
       // by the store's own exported budget and to report
       // `concurrent_modification` once it is spent, rather than spin — so the
       // budget and the pacing are imported, never mirrored here.

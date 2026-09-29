@@ -67,6 +67,10 @@ This index routes you to the right document based on what you're trying to do.
   verification, E2E, plugin smoke tests.
 - **[docs/internal/scenarios.md](internal/scenarios.md)** — Scenarios and test
   runbook standard.
+- **[docs/internal/concurrency.md](internal/concurrency.md)** — How run, session
+  and file-backed state is written today, pending ADR 0005.
+- **[docs/internal/mutation-testing.md](internal/mutation-testing.md)** — Local
+  mutation testing and its foot-guns.
 
 ---
 
