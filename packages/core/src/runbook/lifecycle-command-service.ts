@@ -2685,12 +2685,10 @@ export class RunbookLifecycleCommandService {
    * @returns A typed refusal or an `applied` outcome carrying observation events
    *   and a Run Progression directive. A claim-shaped target that the caller
    *   did not present refuses `claim_bearer_mismatch` before anything resolves.
+   *   An explicit `--step` / `--index` target that the captured state cannot
+   *   satisfy refuses `invalid_step_target` before the execution lease is taken.
    * @throws {Error} When state is stale/mismatched, the machine dispatch fails,
-   *   a persisted completion does not match the active cursor, or an explicit
-   *   `--step` / `--index` target cannot be satisfied by the state captured
-   *   under the execution lease — the fail-closed staleness refusal is raised
-   *   inside the fenced preparation by the in-fence cursor derivation (step
-   *   mismatch), not by pre-capture re-validation.
+   *   or a persisted completion does not match the active cursor.
    */
   async runTransition(input: LifecycleTransitionInput): Promise<LifecycleTransitionOutcome> {
     const { sessionService } = this.#deps;
