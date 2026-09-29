@@ -23,8 +23,9 @@ every mutation (a run ID authorizes nothing); a hashed Claim Ticket that lets
 exactly one agent claim a reserved Current Child and never appears in status; a
 required `--step`, plus `--index` inside loops; a Current Child reserved afresh
 on every entry into a step; a plugin hook that refuses `claim` outside a
-sub-agent and a SubagentStop gate over claimed, unfinished children; and a
-human-only, audited escape hatch for a lost top-level token.
+sub-agent and a SubagentStop gate over claimed, unfinished children that are
+still current and not cancelled; and a human-only, audited escape hatch for a
+lost top-level token.
 
 ## What survives, and why
 
@@ -75,9 +76,18 @@ are essential, not artefacts of the multi-writer race:
   Cancellation; that is harmless because Collect decides.
 - A lost Claim Ticket or unclaimed child is recovered by `retry`. A lost child
   Owner Token is recovered by Cancellation and `retry`. There is no re-claim and
-  no re-reveal. A lost top-level token is recovered only by a human, through an
-  interactive, audited `stop`; pruning a running run needs its token or the same
-  confirmation.
+  no re-reveal.
+- A sub-agent that cannot finish its child, for example because it lost the
+  child's Owner Token, runs `rundown release <child-id>`, which records the
+  child as abandoned in the child's own record so Collect sees a definite
+  result. Release is authorized by the sub-agent's `agent_id`, stamped by the
+  plugin's Bash hook and matched against the `agent_id` recorded at claim; it
+  grants nothing else. The SubagentStop gate blocks with that instruction and
+  then lets the sub-agent stop once the child is finished, abandoned, or
+  cancelled. It keeps no counter, so a sub-agent that ignores the instruction
+  loops visibly until a human interrupts it; that is accepted. A lost top-level
+  token is recovered only by a human, through an interactive, audited `stop`;
+  pruning a running run needs its token or the same confirmation.
 - The one implicit Collect is an Inline Child's result, read by the same owner
   in the command that finished the child, and read again first by the parent's
   next command after a crash.

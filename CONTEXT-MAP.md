@@ -44,9 +44,9 @@ owner. _Avoid_: delegated claim, bearer claim
 **Inline Child**: A Child Run owned by the same agent as its parent. _Avoid_:
 inline composition, embedded runbook
 
-**Child Result**: The terminal outcome a Child Run records in its own record. It
-is the child's only report; a child never writes its parent. _Avoid_: completion
-report, resolved completion, report row
+**Child Result**: The terminal outcome a Child Run records in its own record:
+passed, failed, or abandoned. It is the child's only report; a child never
+writes its parent. _Avoid_: completion report, resolved completion, report row
 
 **Collect**: The parent owner reading its current Child Results into the parent.
 It is the only way a child's outcome reaches the parent. _Avoid_: drain,
@@ -65,6 +65,11 @@ Child. _Avoid_: abort-writes-child, supersession, revocation
 
 **In Progress**: The condition of a step whose command is running in a live
 process. A second attempt at it is refused. _Avoid_: leased, claimed, executing
+
+**Release**: A sub-agent giving up a Delegation it claimed but cannot finish,
+recording the child as abandoned. It is authorized by the claiming agent's
+identity, not by the Owner Token. _Avoid_: abort, cancel (the parent's act), Run
+Release
 
 **Interrupted**: The condition of a step whose command began in a process that
 died before its finish was recorded. Rundown reports it and never repeats the
