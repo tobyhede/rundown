@@ -4760,6 +4760,37 @@ describe('RunbookLifecycleCommandService', () => {
       ).rejects.toThrow(/requires an explicit target/);
     });
 
+    it('refuses an out-of-contract --step before the fence and leaves the run usable (#763)', async () => {
+      // A bare top-level step id names no substep, so it is outside the
+      // `--step` contract even when it names the active step. The refusal is
+      // decided against the captured state BEFORE the execution lease: resolved
+      // inside the fenced `compute`, it latched `recoveryRequired` instead.
+      await activate(baseState());
+      const before = await manager.load(runId);
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'explicit-step', step: '1' },
+        terminalPolicy: RELEASE_POLICY,
+        explicitTarget: { stepId: '1' },
+      });
+
+      expect(outcome).toEqual({
+        kind: 'invalid_step_target',
+        message:
+          '--step 1 requires the runbook to be at a substep, but step "1" has no active substep',
+      });
+      expect(await manager.load(runId)).toEqual(before);
+      const bare = await seam.runTransition({
+        command: 'pass',
+        callerEvidence: runControlEvidence(runId),
+        targetSelector: { kind: 'default' },
+        terminalPolicy: RELEASE_POLICY,
+      });
+      expect(bare.kind).toBe('applied');
+    });
+
     it('does not over-tighten: a deliberate non-active --index target records at an inactive frame', async () => {
       // A deliberate `--step`/`--index` target of a non-active FOR iteration
       // resolves inside the guarded cycle to an `inactive` frame (frame-only,

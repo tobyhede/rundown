@@ -469,6 +469,11 @@ function renderRefusal(
       // the operator remedy is identical, but it is not a member of that union.
       output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
       return true;
+    case 'invalid_step_target':
+      // Refused by core before any execution lease or effect marker was
+      // written, so the run is untouched and remains usable (#763).
+      output.error(outcome.message, 'INVALID_STEP');
+      return true;
     case 'missing':
     case 'claim_superseded':
     case 'concurrent_modification':
@@ -565,9 +570,10 @@ async function renderApplied(
  * strings (step-id syntax, numeric `--index` validation, the AT-conflict
  * check), supplies typed caller evidence, renders the seam's typed outcome,
  * and activates Run Progression. The seam resolves the target exactly once and
- * derives the completion cursor from the raw target INSIDE its guarded
- * compute-and-commit cycle, against the state that cycle's compare-and-swap
- * commits onto (#500) — target resolution, policy gating,
+ * derives the completion cursor from the raw target against the state its
+ * fenced cycle captured — the state that cycle's compare-and-swap commits onto
+ * (#500) — before any execution lease is acquired, so an out-of-contract target
+ * refuses `INVALID_STEP` without touching the run (#763) — target resolution, policy gating,
  * every state-dependent target validation, the inline-child reactivation
  * decision, completion recording, the machine dispatch, and terminal release all live
  * in the seam.
@@ -578,9 +584,6 @@ async function renderApplied(
  * @param options - Parsed `--claim-id` / `--step` / `--index` options
  * @returns The applied transition (when one occurred) and whether the
  *   transition itself requests a non-zero exit code
- * @throws {Error} if the seam refuses an explicit `--step` / `--index` target
- *   against the captured state (invalid/mismatched step, missing substep,
- *   template AT expression, out-of-bounds or non-FOR iteration)
  * @throws {IndexOptionError} if `--index` syntax validation fails
  */
 export async function runSeamTransition(
@@ -598,8 +601,8 @@ export async function runSeamTransition(
     // Category-A string parsing only: numeric `--index` validation and the
     // AT-conflict check. All state-dependent validation (step match, substep
     // existence, FOR bounds, active-iteration default, frame construction)
-    // happens in core, inside the guarded compute-and-commit cycle, against the
-    // captured state that cycle's compare-and-swap commits onto (#500).
+    // happens in core, against the captured state the fenced cycle's
+    // compare-and-swap commits onto (#500), before any execution lease (#763).
     const parsedAt = parseStepIdFromString(options.step)?.at;
     const iteration = resolveIndexOption(options.index, parsedAt);
     explicitTarget = {

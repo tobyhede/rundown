@@ -59,60 +59,88 @@ export interface ExplicitCompletionCursor {
 export type ManualCompletionCursor = ExplicitCompletionCursor;
 
 /**
+ * Caller-input refusal of an explicit `--step` / `--index` target.
+ *
+ * The raw target is outside the `--step` contract (a bare step id, a step that
+ * is not active, a substep the step does not have, a template AT expression,
+ * or an iteration the step cannot take) for the state it was resolved against.
+ * It is a value rather than a throw so the lifecycle seam can refuse it BEFORE
+ * any execution lease or effect marker is written (#763) — a throw from inside
+ * the fenced `compute` is indistinguishable from a failed external effect and
+ * latches recovery.
+ */
+export interface InvalidStepTargetRefusal {
+  readonly kind: 'invalid_step_target';
+  /** Why the target was refused, naming the offending `--step` / `--index` value. */
+  readonly message: string;
+}
+
+/** Outcome of resolving an explicit `--step` / `--index` target. */
+export type ManualCompletionCursorResolution =
+  | { readonly kind: 'resolved'; readonly cursor: ExplicitCompletionCursor }
+  | InvalidStepTargetRefusal;
+
+/**
  * Resolve the substep completion cursor for an explicit `--step` / `--index`
  * pass/fail transition against the supplied runbook state.
  *
- * Derive-or-refuse: called by the lifecycle seam INSIDE its guarded
- * compute-and-commit cycle, against the captured state that cycle's
- * compare-and-swap commits onto, so the returned cursor cannot go stale
- * between resolution and the record/drain it feeds (#500). Pure — no IO.
+ * Derive-or-refuse: called by the lifecycle seam against the exact state its
+ * fenced cycle captured — before the execution lease is acquired, and against
+ * the same captured state that cycle's compare-and-swap commits onto — so the
+ * returned cursor cannot go stale between resolution and the record/drain it
+ * feeds (#500), and a refusal crosses no effect boundary (#763). Pure — no IO.
  *
  * @param steps - Parsed runbook steps for the resolved target run
  * @param activeState - Runbook state the cursor is resolved against
  * @param target - Explicit step id + optional numeric iteration
- * @returns The validated manual completion cursor
- * @throws {Error} on a missing/invalid/mismatched step target, a missing or
- *   non-existent substep, a template AT expression, or an out-of-bounds /
- *   non-FOR iteration
+ * @returns The resolved cursor, or an `invalid_step_target` refusal naming why
+ *   the target is outside the `--step` contract for this state
+ * @throws {Error} when the active step is absent from `steps` — a state /
+ *   definition mismatch the seam's freshness check already excludes, not a
+ *   caller-input error
  */
 export function resolveManualCompletionCursor(
   steps: readonly ResolvedStep[],
   activeState: RunbookState,
   target: ExplicitTransitionTarget,
-): ExplicitCompletionCursor {
+): ManualCompletionCursorResolution {
+  const invalid = (message: string): ManualCompletionCursorResolution => ({
+    kind: 'invalid_step_target',
+    message,
+  });
   const activeStep = steps.find((candidate) => candidate.name === activeState.step);
   if (!activeStep) {
     throw new Error(`Step "${activeState.step}" not found`);
   }
   // --step targets a substep, so reject if we're not in substep mode.
   if (!activeState.substep || !resolvedStepHasSubsteps(activeStep) || !activeStep.substeps.length) {
-    throw new Error(
-      `--step requires the runbook to be at a substep, but step "${activeState.step}" has no active substep`,
+    return invalid(
+      `--step ${target.stepId} requires the runbook to be at a substep, but step "${activeState.step}" has no active substep`,
     );
   }
   const parsed = parseStepIdFromString(target.stepId);
   if (!parsed) {
-    throw new Error(`Invalid step target: ${target.stepId}`);
+    return invalid(`Invalid step target: ${target.stepId}`);
   }
   if (parsed.step !== activeState.step) {
-    throw new Error(
+    return invalid(
       `--step ${target.stepId} targets step "${parsed.step}" but the active step is "${activeState.step}"`,
     );
   }
   // Require substep — bare step IDs create unreachable completions.
   if (!parsed.substep) {
-    throw new Error(`--step ${target.stepId} must include a substep (e.g., "${parsed.step}.1")`);
+    return invalid(`--step ${target.stepId} must include a substep (e.g., "${parsed.step}.1")`);
   }
   const validIds = activeStep.substeps.map((s) => s.id);
   if (!validIds.includes(parsed.substep)) {
-    throw new Error(
+    return invalid(
       `--step ${target.stepId}: substep "${parsed.substep}" does not exist in step "${parsed.step}". Valid substeps: ${validIds.join(', ')}`,
     );
   }
 
   // Reject template AT expressions — they cannot be resolved in pass/fail context.
   if (typeof parsed.at === 'string') {
-    throw new Error(
+    return invalid(
       `--step ${target.stepId} uses template AT expression "${parsed.at}", which cannot be resolved here. Use --index <number> instead.`,
     );
   }
@@ -131,7 +159,7 @@ export function resolveManualCompletionCursor(
 
   if (resolvedIndex !== undefined) {
     if (activeStep.kind !== 'for' && activeStep.kind !== 'prompted-for') {
-      throw new Error(
+      return invalid(
         `--index requires step "${parsed.step}" to be a FOR or PROMPTED-FOR step, but it is "${activeStep.kind}"`,
       );
     }
@@ -139,12 +167,12 @@ export function resolveManualCompletionCursor(
     if (activeStep.kind === 'for') {
       const fc = activeStep.forClause;
       if (resolvedIndex < fc.start) {
-        throw new Error(
+        return invalid(
           `--index ${String(resolvedIndex)} is below FOR start ${String(fc.start)} for step "${parsed.step}"`,
         );
       }
       if ('end' in fc && resolvedIndex > fc.end) {
-        throw new Error(
+        return invalid(
           `--index ${String(resolvedIndex)} exceeds FOR end ${String(fc.end)} for step "${parsed.step}"`,
         );
       }
@@ -161,10 +189,13 @@ export function resolveManualCompletionCursor(
       : inactiveFrame(targetFrameKey);
 
   return {
-    step: parsed.step,
-    substep: parsed.substep,
-    ...(resolvedIndex !== undefined ? { iteration: resolvedIndex } : {}),
-    frame,
-    at: deriveExecutionAt(parsed.step, parsed.substep, resolvedIndex),
+    kind: 'resolved',
+    cursor: {
+      step: parsed.step,
+      substep: parsed.substep,
+      ...(resolvedIndex !== undefined ? { iteration: resolvedIndex } : {}),
+      frame,
+      at: deriveExecutionAt(parsed.step, parsed.substep, resolvedIndex),
+    },
   };
 }

@@ -73,7 +73,10 @@ import {
   type UnknownRunRefusal,
 } from './command-target-resolver.js';
 import type { DELEGATION_COLLECTION_PENDING_MESSAGE } from './delegation-lifecycle-read-model.js';
-import type { EffectfulActorMutationRunner } from './effectful-actor-mutation-runner.js';
+import type {
+  EffectfulActorMutationRunner,
+  PreEffectActorMutationReturn,
+} from './effectful-actor-mutation-runner.js';
 import {
   type IssuanceAnchorResolution,
   type ResolveIssuanceAnchorOptions,
@@ -82,7 +85,9 @@ import {
 import { isRunId, type RunId } from './run-id.js';
 import {
   resolveManualCompletionCursor,
+  type ExplicitCompletionCursor,
   type ExplicitTransitionTarget,
+  type InvalidStepTargetRefusal,
 } from './manual-completion-cursor.js';
 import type {
   ActiveInlineForceTerminalPlan,
@@ -701,11 +706,13 @@ export interface LifecycleTransitionInput {
   /**
    * Raw explicit `--step` / `--index` target. Present for explicit-target
    * transitions; absent for a bare transition (the seam derives the active
-   * cursor). The seam resolves it to a cursor INSIDE its guarded
-   * compute-and-commit cycle, against the captured state that cycle's
-   * compare-and-swap commits onto (derive-or-refuse), so no pre-resolved
-   * cursor can go stale between resolution and record — the #500 TOCTOU is
-   * closed by construction.
+   * cursor). The seam resolves it to a cursor against the state its fenced
+   * cycle captured — the same state that cycle's compare-and-swap commits onto
+   * (derive-or-refuse) — so no pre-resolved cursor can go stale between
+   * resolution and record, closing the #500 TOCTOU by construction. Resolution
+   * happens before the execution lease is acquired, so a target outside the
+   * `--step` contract refuses `invalid_step_target` without latching recovery
+   * (#763).
    */
   readonly explicitTarget?: ExplicitTransitionTarget;
 }
@@ -762,6 +769,12 @@ export type LifecycleTransitionOutcome =
       readonly runId: RunId;
     }
   | UnknownRunRefusal
+  /**
+   * Refusal: the explicit `--step` / `--index` target is outside the `--step`
+   * contract for the captured state. Decided before any execution lease or
+   * effect marker is written, so the run is left exactly as it was (#763).
+   */
+  | InvalidStepTargetRefusal
   | {
       readonly kind: 'applied';
       /** Run the transition was applied to. */
@@ -3963,8 +3976,21 @@ export class RunbookLifecycleCommandService {
         }
       | undefined;
 
-    const run = (guard?: ParentAdvanceGuard): ReturnType<EffectfulActorMutationRunner['run']> =>
-      actorMutationRunner.run({
+    // The explicit target is resolved in `beforeEffect`, against the exact
+    // state the fence captured and BEFORE it acquires the execution lease or
+    // marks the effect boundary. `compute` receives that same captured state,
+    // so the cursor resolved here is the one it records. A refusal therefore
+    // writes nothing: resolved inside `compute`, it surfaced as a mid-effect
+    // failure and latched `recoveryRequired` although nothing external ran
+    // (#763).
+    let explicitCursor: ExplicitCompletionCursor | undefined;
+    const run = (
+      guard?: ParentAdvanceGuard,
+    ): Promise<
+      | Awaited<ReturnType<EffectfulActorMutationRunner['run']>>
+      | PreEffectActorMutationReturn<InvalidStepTargetRefusal>
+    > =>
+      actorMutationRunner.run<InvalidStepTargetRefusal>({
         runId: activeState.id,
         // From the AUTHORITY, not from `input.callerEvidence`: the authority
         // was minted at the point the evidence was verified against this exact
@@ -3974,12 +4000,24 @@ export class RunbookLifecycleCommandService {
         ...(authority.claimKey === undefined ? {} : { claimKey: authority.claimKey }),
         ...(guard === undefined ? {} : { guard }),
         makeRecoveryActor: (state) => actorService.createRecoveryActor(state, steps),
+        beforeEffect: (capturedState) => {
+          if (explicitTarget === undefined) return { kind: 'continue' };
+          const resolution = resolveManualCompletionCursor(steps, capturedState, explicitTarget);
+          if (resolution.kind === 'invalid_step_target') {
+            return { kind: 'return', value: resolution };
+          }
+          explicitCursor = resolution.cursor;
+          return { kind: 'continue' };
+        },
         compute: (capturedState) => {
           const initial = capturedState;
-          const cursor =
-            explicitTarget === undefined
-              ? activeCursor(initial)
-              : resolveManualCompletionCursor(steps, initial, explicitTarget);
+          const cursor = explicitTarget === undefined ? activeCursor(initial) : explicitCursor;
+          // Unreachable invariant: `compute` runs only after a continuing
+          // `beforeEffect`, which always resolved the explicit cursor first.
+          // Stryker disable next-line ConditionalExpression,StringLiteral: unreachable — a continuing beforeEffect always assigned explicitCursor
+          if (cursor === undefined) {
+            throw new Error('Explicit substep target was not resolved before the effect boundary');
+          }
           if (!cursor.substep) {
             throw new Error('Substep completion requires an active or explicit substep target');
           }
@@ -4025,6 +4063,7 @@ export class RunbookLifecycleCommandService {
       () => run(),
     );
     if (fenced.kind === 'refusal') return fenced.outcome;
+    if (fenced.value.kind === 'pre_effect_return') return fenced.value.value;
     if (fenced.value.kind !== 'committed') return fenced.value;
     if (preparedOutcome === undefined) {
       throw new Error('Fenced substep transition committed without a prepared outcome');

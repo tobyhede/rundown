@@ -11,6 +11,8 @@ import type { ForClause, ResolvedStep, Substep, Transitions } from '@rundown-org
 import {
   buildFrameKey,
   resolveManualCompletionCursor,
+  type ExplicitCompletionCursor,
+  type ManualCompletionCursorResolution,
   type RunbookState,
 } from '../../src/runbook/index.js';
 import {
@@ -91,6 +93,27 @@ function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   };
 }
 
+// Narrow a resolution to its cursor, failing the test on a refusal.
+function resolveCursor(
+  ...args: Parameters<typeof resolveManualCompletionCursor>
+): ExplicitCompletionCursor {
+  const resolution = resolveManualCompletionCursor(...args);
+  if (resolution.kind !== 'resolved') {
+    throw new Error(`expected a resolved cursor, got refusal: ${resolution.message}`);
+  }
+  return resolution.cursor;
+}
+
+// Narrow a resolution to its refusal message, failing the test on a cursor.
+function refusalMessage(resolution: ManualCompletionCursorResolution): string {
+  if (resolution.kind !== 'invalid_step_target') {
+    throw new Error(
+      `expected an invalid_step_target refusal, got cursor at ${resolution.cursor.at}`,
+    );
+  }
+  return resolution.message;
+}
+
 describe('resolveManualCompletionCursor', () => {
   it('pins the real frame-key serialization the fixtures are seeded from', () => {
     expect(buildFrameKey('1')).toBe('1|');
@@ -98,7 +121,7 @@ describe('resolveManualCompletionCursor', () => {
   });
 
   it('builds an active-frame cursor from the explicit --step target', () => {
-    const cursor = resolveManualCompletionCursor(substepSteps, makeState(), { stepId: '1.1' });
+    const cursor = resolveCursor(substepSteps, makeState(), { stepId: '1.1' });
     expect(cursor).toEqual({
       step: '1',
       substep: '1',
@@ -108,14 +131,14 @@ describe('resolveManualCompletionCursor', () => {
   });
 
   it('targets the explicit substep, not the active-state substep', () => {
-    const cursor = resolveManualCompletionCursor(substepSteps, makeState({ substep: '1' }), {
+    const cursor = resolveCursor(substepSteps, makeState({ substep: '1' }), {
       stepId: '1.2',
     });
     expect(cursor.substep).toBe('2');
   });
 
   it('carries the live active entry on an active-frame target', () => {
-    const cursor = resolveManualCompletionCursor(
+    const cursor = resolveCursor(
       substepSteps,
       makeState({ activeEntry: 2, frameEntryCounts: { [buildFrameKey('1')]: 2 } }),
       { stepId: '1.2' },
@@ -124,7 +147,7 @@ describe('resolveManualCompletionCursor', () => {
   });
 
   it('builds an inactive (sentinel) frame when --index targets a non-active FOR iteration', () => {
-    const cursor = resolveManualCompletionCursor(
+    const cursor = resolveCursor(
       forSteps({ variable: 'i', start: 1, end: 5 }),
       makeState({
         activeFrameKey: buildFrameKey('1', 1),
@@ -137,7 +160,7 @@ describe('resolveManualCompletionCursor', () => {
   });
 
   it('builds an active frame when --index targets the live FOR iteration', () => {
-    const cursor = resolveManualCompletionCursor(
+    const cursor = resolveCursor(
       forSteps({ variable: 'i', start: 1, end: 5 }),
       makeState({
         activeFrameKey: buildFrameKey('1', 3),
@@ -152,7 +175,7 @@ describe('resolveManualCompletionCursor', () => {
   it('defaults to the live FOR iteration (from forStack) without an explicit iteration', () => {
     // deriveActiveFrame reads the top of state.forStack; seed a live iteration-3
     // context so the default resolves to the real active frame key '1|3'.
-    const cursor = resolveManualCompletionCursor(
+    const cursor = resolveCursor(
       forSteps({ variable: 'i', start: 1, end: 5 }),
       makeState({
         forStack: [
@@ -180,7 +203,7 @@ describe('resolveManualCompletionCursor', () => {
     // Coverage carried over from the deleted CLI suite (#499): prompted-for has
     // no forClause, so the default-iteration path must not run a bounds check
     // and still resolves to the live iteration from the forStack.
-    const cursor = resolveManualCompletionCursor(
+    const cursor = resolveCursor(
       promptedForSteps,
       makeState({
         forStack: [
@@ -204,7 +227,7 @@ describe('resolveManualCompletionCursor', () => {
   });
 
   it('adopts a numeric AT from a three-level step id as the iteration', () => {
-    const cursor = resolveManualCompletionCursor(
+    const cursor = resolveCursor(
       forSteps({ variable: 'i', start: 1, end: 5 }),
       makeState({
         activeFrameKey: buildFrameKey('1', 1),
@@ -217,7 +240,7 @@ describe('resolveManualCompletionCursor', () => {
   });
 
   it('allows --index on a prompted-for step without a bounds check', () => {
-    const cursor = resolveManualCompletionCursor(
+    const cursor = resolveCursor(
       promptedForSteps,
       makeState({
         activeFrameKey: buildFrameKey('1', 1),
@@ -230,7 +253,7 @@ describe('resolveManualCompletionCursor', () => {
   });
 
   it('skips the upper-bound check for an open-window file source', () => {
-    const cursor = resolveManualCompletionCursor(
+    const cursor = resolveCursor(
       forSteps({ variable: 'item', start: 1, source: 'items' }),
       makeState({
         activeFrameKey: buildFrameKey('1', 1),
@@ -241,70 +264,103 @@ describe('resolveManualCompletionCursor', () => {
     expect(cursor.iteration).toBe(999);
   });
 
-  it('throws on an invalid step target', () => {
-    expect(() =>
-      resolveManualCompletionCursor(substepSteps, makeState(), { stepId: 'invalid!!!' }),
-    ).toThrow('Invalid step target: invalid!!!');
+  it('refuses on an invalid step target', () => {
+    expect(
+      refusalMessage(
+        resolveManualCompletionCursor(substepSteps, makeState(), { stepId: 'invalid!!!' }),
+      ),
+    ).toContain('Invalid step target: invalid!!!');
   });
 
-  it('throws when the explicit step does not match the active step', () => {
-    expect(() =>
-      resolveManualCompletionCursor(substepSteps, makeState(), { stepId: '2.1' }),
-    ).toThrow('targets step "2" but the active step is "1"');
+  it('refuses when the explicit step does not match the active step', () => {
+    expect(
+      refusalMessage(resolveManualCompletionCursor(substepSteps, makeState(), { stepId: '2.1' })),
+    ).toContain('targets step "2" but the active step is "1"');
   });
 
-  it('throws when the explicit target has no substep (bare step id)', () => {
-    expect(() => resolveManualCompletionCursor(substepSteps, makeState(), { stepId: '1' })).toThrow(
-      'must include a substep',
-    );
+  it('refuses when the explicit target has no substep (bare step id)', () => {
+    expect(
+      refusalMessage(resolveManualCompletionCursor(substepSteps, makeState(), { stepId: '1' })),
+    ).toContain('must include a substep');
   });
 
-  it('throws when the target substep does not exist in the step', () => {
-    expect(() =>
-      resolveManualCompletionCursor(substepSteps, makeState(), { stepId: '1.99' }),
-    ).toThrow('substep "99" does not exist');
+  it('refuses when the target substep does not exist in the step', () => {
+    expect(
+      refusalMessage(resolveManualCompletionCursor(substepSteps, makeState(), { stepId: '1.99' })),
+    ).toContain('substep "99" does not exist');
   });
 
-  it('throws when the state is not at a substep', () => {
+  it('refuses when the state is not at a substep', () => {
     const baseSteps: readonly ResolvedStep[] = [
       { kind: 'base', name: '1', description: 'one', transitions: tx },
     ];
-    expect(() =>
-      resolveManualCompletionCursor(baseSteps, makeState({ substep: undefined }), {
-        stepId: '1.1',
-      }),
-    ).toThrow('--step requires the runbook to be at a substep');
+    expect(
+      refusalMessage(
+        resolveManualCompletionCursor(baseSteps, makeState({ substep: undefined }), {
+          stepId: '1.1',
+        }),
+      ),
+    ).toBe(
+      '--step 1.1 requires the runbook to be at a substep, but step "1" has no active substep',
+    );
   });
 
-  it('throws on a template AT expression', () => {
-    expect(() =>
-      resolveManualCompletionCursor(forSteps({ variable: 'i', start: 1, end: 5 }), makeState(), {
-        stepId: '1.1 AT {{Index}}',
-      }),
-    ).toThrow('template AT expression');
+  it('refuses on a template AT expression', () => {
+    expect(
+      refusalMessage(
+        resolveManualCompletionCursor(forSteps({ variable: 'i', start: 1, end: 5 }), makeState(), {
+          stepId: '1.1 AT {{Index}}',
+        }),
+      ),
+    ).toContain('template AT expression');
   });
 
-  it('throws when the iteration is below FOR start', () => {
-    expect(() =>
-      resolveManualCompletionCursor(forSteps({ variable: 'i', start: 3, end: 5 }), makeState(), {
-        stepId: '1.1',
-        iteration: 2,
-      }),
-    ).toThrow('below FOR start 3');
+  it('refuses when the iteration is below FOR start', () => {
+    expect(
+      refusalMessage(
+        resolveManualCompletionCursor(forSteps({ variable: 'i', start: 3, end: 5 }), makeState(), {
+          stepId: '1.1',
+          iteration: 2,
+        }),
+      ),
+    ).toContain('below FOR start 3');
   });
 
-  it('throws when the iteration exceeds FOR end', () => {
-    expect(() =>
-      resolveManualCompletionCursor(forSteps({ variable: 'i', start: 1, end: 5 }), makeState(), {
-        stepId: '1.1',
-        iteration: 6,
-      }),
-    ).toThrow('exceeds FOR end 5');
+  it('refuses when the iteration exceeds FOR end', () => {
+    expect(
+      refusalMessage(
+        resolveManualCompletionCursor(forSteps({ variable: 'i', start: 1, end: 5 }), makeState(), {
+          stepId: '1.1',
+          iteration: 6,
+        }),
+      ),
+    ).toContain('exceeds FOR end 5');
   });
 
-  it('throws when an iteration targets a non-FOR step', () => {
+  it('refuses when an iteration targets a non-FOR step', () => {
+    expect(
+      refusalMessage(
+        resolveManualCompletionCursor(substepSteps, makeState(), { stepId: '1.1', iteration: 3 }),
+      ),
+    ).toContain('--index requires step "1" to be a FOR or PROMPTED-FOR step');
+  });
+
+  it('refuses a bare top-level step id when the step has no substeps (#763)', () => {
+    const baseSteps: readonly ResolvedStep[] = [
+      { kind: 'base', name: '1', description: 'one', transitions: tx },
+    ];
+    expect(
+      refusalMessage(
+        resolveManualCompletionCursor(baseSteps, makeState({ substep: undefined }), {
+          stepId: '1',
+        }),
+      ),
+    ).toBe('--step 1 requires the runbook to be at a substep, but step "1" has no active substep');
+  });
+
+  it('throws when the active step is absent from the definition (invariant, not caller input)', () => {
     expect(() =>
-      resolveManualCompletionCursor(substepSteps, makeState(), { stepId: '1.1', iteration: 3 }),
-    ).toThrow('--index requires step "1" to be a FOR or PROMPTED-FOR step');
+      resolveManualCompletionCursor(substepSteps, makeState({ step: '7' }), { stepId: '7.1' }),
+    ).toThrow('Step "7" not found');
   });
 });
