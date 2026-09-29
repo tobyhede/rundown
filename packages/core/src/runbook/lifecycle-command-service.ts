@@ -3999,12 +3999,17 @@ export class RunbookLifecycleCommandService {
         ...(guard === undefined ? {} : { guard }),
         makeRecoveryActor: (state) => actorService.createRecoveryActor(state, steps),
         beforeEffect: (capturedState) => {
+          // Equivalent mutants on both `continue` literals: the runner tests
+          // only for the OTHER arm (`preflight.kind === 'return'`); every other
+          // value continues.
+          // Stryker disable next-line ObjectLiteral,StringLiteral: equivalent — only the 'return' discriminant is ever compared
           if (explicitTarget === undefined) return { kind: 'continue' };
           const resolution = resolveManualCompletionCursor(steps, capturedState, explicitTarget);
           if (resolution.kind === 'invalid_step_target') {
             return { kind: 'return', value: resolution };
           }
           explicitCursor = resolution.cursor;
+          // Stryker disable next-line ObjectLiteral,StringLiteral: equivalent — only the 'return' discriminant is ever compared
           return { kind: 'continue' };
         },
         compute: (capturedState) => {
@@ -4012,10 +4017,11 @@ export class RunbookLifecycleCommandService {
           const cursor = explicitTarget === undefined ? activeCursor(initial) : explicitCursor;
           // Unreachable invariant: `compute` runs only after a continuing
           // `beforeEffect`, which always resolved the explicit cursor first.
-          // Stryker disable next-line ConditionalExpression,StringLiteral: unreachable — a continuing beforeEffect always assigned explicitCursor
+          // Stryker disable ConditionalExpression,BlockStatement,StringLiteral: unreachable — a continuing beforeEffect always assigned explicitCursor
           if (cursor === undefined) {
             throw new Error('Explicit substep target was not resolved before the effect boundary');
           }
+          // Stryker restore ConditionalExpression,BlockStatement,StringLiteral
           if (!cursor.substep) {
             throw new Error('Substep completion requires an active or explicit substep target');
           }

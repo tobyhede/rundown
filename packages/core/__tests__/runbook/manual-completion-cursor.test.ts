@@ -122,7 +122,9 @@ describe('resolveManualCompletionCursor', () => {
 
   it('builds an active-frame cursor from the explicit --step target', () => {
     const cursor = resolveCursor(substepSteps, makeState(), { stepId: '1.1' });
-    expect(cursor).toEqual({
+    // Strict: a non-FOR target omits `iteration` rather than carrying it as
+    // `undefined` (exactOptionalPropertyTypes contract).
+    expect(cursor).toStrictEqual({
       step: '1',
       substep: '1',
       frame: { kind: 'active', frameKey: buildFrameKey('1'), entry: 1 },
