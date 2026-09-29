@@ -413,6 +413,8 @@ export {
   resolveManualCompletionCursor,
   type ExplicitCompletionCursor,
   type ExplicitTransitionTarget,
+  type InvalidStepTargetRefusal,
+  type ManualCompletionCursorResolution,
   // Deprecated alias kept on the public surface: `manualTarget` was removed
   // from LifecycleTransitionInput (#500) but the published type name is
   // retained. The re-export itself must not trip no-deprecated.

@@ -779,6 +779,7 @@ describe('runSeamTransition — refusal render table', () => {
           | 'claim_superseded'
           | 'concurrent_modification'
           | 'unknown_run'
+          | 'invalid_step_target'
           | 'execution_in_progress'
           | 'recovery_required';
       }
@@ -816,6 +817,14 @@ describe('runSeamTransition — refusal render table', () => {
         message: 'No run matches that selector.',
       },
       code: 'RUN_TARGET_UNAVAILABLE',
+    },
+    {
+      label: 'an explicit target the active step cannot take',
+      outcome: {
+        kind: 'invalid_step_target',
+        message: 'Step "1" is not a substep of the active step.',
+      },
+      code: 'INVALID_STEP',
     },
     {
       label: 'an in-flight execution',
