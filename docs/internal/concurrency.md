@@ -39,8 +39,8 @@ lock is released deterministically on every exit path — including early `retur
 and `throw` — without a hand-rolled `try/finally`:
 
 ```typescript
-await lock.acquire(id);
-await using _guard = lock.held(id); // or: await using _guard = await lock.scope(id);
+await lock.acquire();
+await using _guard = lock.held(); // or: await using _guard = await lock.scope();
 return await doWork(); // a failed release can never mask this committed result (RD-102)
 ```
 
@@ -51,8 +51,14 @@ consumer-facing wrappers that own the best-effort, non-masking release policy.
 The artifact manifest and the sql.js driver call them directly;
 `PluginSessionLock` re-exposes them as `scope()` / `held()`.
 
-- **Lock mechanism:** Atomic file creation (`fs.open(..., 'wx')`) on
-  `.rundown/locks/<name>.lock`
+- **Lock mechanism:** The owner content is written to a unique temp file, which
+  is then `fs.link()`ed into place (`atomicCreateLock` in `file-lock.ts`).
+  `link` refuses when the lock file already exists, and the lock file is never
+  visible half-written. Do not use `open('wx')`: it exposes an empty file that a
+  concurrent stale check reclaims from a live holder.
+- **Lock paths:** `.rundown/locks/.rd-<contextId>.manifest.lock` (artifact
+  manifest), `<dbPath>.lock` (sql.js driver), and
+  `.claude/session/locks/state.lock` (`PluginSessionLock`).
 - **Stale detection:** Kill signal check (`kill(pid, 0)`) — never age-based
   expiration
 - **Retry:** Jittered backoff (50–100ms) bounded to 5 seconds
@@ -118,8 +124,10 @@ the version it commits onto (refuse, stand down, or win) and writes the durable
 span. Decide every refusal **ahead of** the latch write, or a refused attempt
 leaves a durable record of a start that never happened. Latching before the
 create does move one failure: a process that dies between them leaves the work
-latched with no child, and recovery is the sanctioned one (finish, stop, prune)
-rather than a duplicate `INSERT`.
+latched with no child. The next launch reclaims a latch whose owner process is
+dead, or whose pid was recycled (start ids disagree), and proceeds; a live owner
+makes it stand down (`classifyInlineLaunchOwnership` in
+`inline-launch-latch.ts`). Neither path duplicates the `INSERT`.
 
 **Three checks that are cheap to run and expensive to skip.**
 
@@ -145,5 +153,6 @@ rather than a duplicate `INSERT`.
   mocks the module boundary you stubbed. Nothing fails, and nothing was tested.
   Only a real multi-process test observes a genuine race.
 
-**For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock
-derived from `manifestPath(cwd)` + `.lock`.
+**For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock at
+`.rundown/locks/.rd-<contextId>.manifest.lock` (`appendArtifactManifestRecord`
+in `artifact-manifest.ts`).
