@@ -93,6 +93,10 @@ are essential, not artefacts of the multi-writer race:
   next command after a crash.
 - Nested delegation is neither refused nor supported; no code exists for it
   either way.
+- A required `--step` reverses part of #763 (PR #897). `main` refuses every bare
+  top-level `pass`/`fail --step`, including the current step, as `INVALID_STEP`.
+  The rebuild must accept `--step` naming the current top-level step and update
+  the `INVALID_STEP` row in `docs/reference/cli.md` to match.
 - Persisted XState snapshots are unchanged by this decision.
 - The rebuild is done when the six real delegating runbooks and one scenario per
   confusion mode pass end to end, and two size gates hold: at most 6,400 lines
