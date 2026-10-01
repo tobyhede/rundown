@@ -97,12 +97,16 @@ safe for correctness. That makes it the **first** knob to reach for when a run
 is too heavy, ahead of narrowing scope, and far ahead of `timeoutMS`, which is
 never a legitimate knob (see above).
 
-If you kill a mutation run mid-flight, kill the whole tree — the workers are
-children of the `stryker` process and outlive a bare `kill` on the pnpm wrapper:
+If you kill a mutation run mid-flight, kill that run's whole tree — the workers
+are children of the `stryker` process and outlive a bare `kill` on the pnpm
+wrapper. Target the run by its PID, not by pattern: `pkill -f` on a Stryker
+pattern also kills every other agent's mutation run on the machine.
 
 ```bash
-pkill -f 'child-process-proxy-worker.js'   # the memory-holding workers
-pkill -f 'stryker run'                     # the parent
+pgrep -fl 'stryker run'      # find the run you mean; note its PID
+STRYKER_PID=<pid>
+pkill -P "$STRYKER_PID"      # its memory-holding workers (direct children)
+kill "$STRYKER_PID"          # the parent
 ```
 
 Reach for the manual form below only when you need a scope the diff does not

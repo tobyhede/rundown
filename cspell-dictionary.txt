@@ -187,6 +187,7 @@ picomatch
 pindex
 pipefail
 planpath
+pgrep
 pkill
 planpath
 preamble
