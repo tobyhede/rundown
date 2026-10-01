@@ -104,7 +104,7 @@ pattern also kills every other agent's mutation run on the machine.
 
 ```bash
 pgrep -fl 'stryker run'      # find the run you mean; note its PID
-STRYKER_PID=<pid>
+STRYKER_PID='<pid>'          # replace with that PID; never derive it by pattern
 pkill -P "$STRYKER_PID"      # its memory-holding workers (direct children)
 kill "$STRYKER_PID"          # the parent
 ```
