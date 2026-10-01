@@ -91,6 +91,18 @@ are essential, not artefacts of the multi-writer race:
 - The one implicit Collect is an Inline Child's result, read by the same owner
   in the command that finished the child, and read again first by the parent's
   next command after a crash.
+- A terminal Current Child remains protected from pruning until its parent
+  durably Collects its Child Result or Cancellation makes that result
+  unnecessary. Protection also ends when the parent durably reaches a terminal
+  or is pruned, since it can no longer Collect. This applies to Delegation and
+  Inline Children, including a crash before implicit Collect. Core owns this
+  rule for every pruning caller: reaching a terminal does not by itself make a
+  Child Run disposable.
+- Bulk pruning deletes eligible runs and skips protected Current Children,
+  reporting why each was retained. This applies to `--all` too: selecting every
+  run does not override Child Result retention. Ending protection makes a
+  terminal child eligible for ordinary pruning; it neither deletes children
+  automatically nor authorizes pruning children that are still running.
 - Nested delegation is neither refused nor supported; no code exists for it
   either way.
 - A required `--step` reverses part of #763 (PR #897). `main` refuses every bare
