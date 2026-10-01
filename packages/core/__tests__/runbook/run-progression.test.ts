@@ -2047,7 +2047,7 @@ describe('activateRunProgression', () => {
 
   it('spends a bounded reselect budget and reports concurrent_modification rather than spinning', async () => {
     // The reselect arm is a re-derive after a lost race, so it makes no
-    // progress on its own. CLAUDE.md § Concurrent write synchronization
+    // progress on its own. docs/internal/concurrency.md
     // requires such a loop to be bounded by the store's own exported budget
     // and to report `concurrent_modification` when the budget is spent —
     // never to retry forever. A writer that replaces the frontier on EVERY

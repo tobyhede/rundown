@@ -277,7 +277,7 @@ describe('issue #777: run-start CAS exhaustion reports concurrent_modification',
     expect(result.ok).toBe(false);
     if (result.ok) return;
 
-    // PINNING ASSERTION. Per CLAUDE.md § Concurrent write synchronization, an
+    // PINNING ASSERTION. Per docs/internal/concurrency.md, an
     // exhausted `mutateState` attempt budget is a reachable, retryable arm —
     // "handle it or retry it, and never document it as theoretical" — and
     // `wrapper.ts` already classifies `ConcurrentStateModificationError` as
