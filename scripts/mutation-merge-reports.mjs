@@ -241,8 +241,8 @@ function collectShardStatuses(dir) {
  *   implements — so it must outrank the undetected statuses or the merged score
  *   would contradict the scoring function beside it. It sits below `Killed`
  *   because a demonstrated kill is stronger evidence than a run that hung:
- *   CLAUDE.md is explicit that a spurious timeout credits a kill no test
- *   performed.
+ *   docs/internal/mutation-testing.md is explicit that a spurious timeout
+ *   credits a kill no test performed.
  * - `Survived` (3) observed coverage and no kill. It outranks `NoCoverage` (2),
  *   which observed no test reaching the mutant at all, on the same logic as
  *   `Killed`: if one shard saw the mutant covered then it IS covered, and the

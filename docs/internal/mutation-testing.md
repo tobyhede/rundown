@@ -6,7 +6,7 @@ described in [mutation-testing-ci.md](mutation-testing-ci.md).
 
 ## `pnpm run test:mutate:changed`
 
-the default way to mutation-test your own work, and what an agent should reach
+The default way to mutation-test your own work, and what an agent should reach
 for first. It derives the diff base (merge-base with `main`) and runs **one
 Stryker invocation per changed source file**, each scoped to that file's changed
 `file:start-end` ranges (whole-file only when the file is new) and to that
@@ -97,16 +97,22 @@ safe for correctness. That makes it the **first** knob to reach for when a run
 is too heavy, ahead of narrowing scope, and far ahead of `timeoutMS`, which is
 never a legitimate knob (see above).
 
-If you kill a mutation run mid-flight, kill that run's whole tree — the workers
-are children of the `stryker` process and outlive a bare `kill` on the pnpm
-wrapper. Target the run by its PID, not by pattern: `pkill -f` on a Stryker
-pattern also kills every other agent's mutation run on the machine.
+If you kill a mutation run mid-flight, kill that run's whole process tree, from
+its outermost process down. For `test:mutate:changed` that is the
+`node scripts/mutate-changed.mjs` process — kill only the Stryker it is running
+and it starts the next file's run. For a hand-scoped run it is the
+`pnpm … exec stryker run` wrapper. Stryker retitles its own main process to a
+bare `stryker`, so a `stryker run` pattern finds the wrapper, never Stryker; the
+memory-holding workers sit two levels below the wrapper. Target the run by its
+PID, not by pattern: `pkill -f` on a Stryker pattern also kills every other
+agent's mutation run on the machine.
 
 ```bash
-pgrep -fl 'stryker run'      # find the run you mean; note its PID
-STRYKER_PID='<pid>'          # replace with that PID; never derive it by pattern
-pkill -P "$STRYKER_PID"      # its memory-holding workers (direct children)
-kill "$STRYKER_PID"          # the parent
+# full command lines of every candidate run, on macOS and Linux alike
+ps -o pid=,command= -p "$(pgrep -d, -f 'stryker run|mutate-changed')"
+ROOT_PID='<pid>'             # replace with the run's outermost PID; never derive it by pattern
+descendants() { echo "$1"; for c in $(pgrep -P "$1"); do descendants "$c"; done; }
+kill $(descendants "$ROOT_PID")   # the run and every descendant, listed before any is signalled
 ```
 
 Reach for the manual form below only when you need a scope the diff does not

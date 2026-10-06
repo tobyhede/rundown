@@ -1,9 +1,9 @@
----
-status: accepted
-supersedes: ADR 0001, ADR 0002
----
-
 # ADR 0005: One writer per run
+
+- **Status:** Accepted (not yet built)
+- **Date:** 2026-09-29
+- **Supersedes:** [ADR 0001](0001-fold-run-release-into-owning-transaction.md),
+  [ADR 0002](0002-fence-inline-launch-under-parent-claim-generation.md)
 
 Delegated and inline children wrote into their parent's record from separate
 processes, so every parent was a multi-writer row. Each race that produced was

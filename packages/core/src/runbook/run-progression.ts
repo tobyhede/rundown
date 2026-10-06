@@ -2182,11 +2182,11 @@ async function driveProgression(
     if (progression.kind === 'reselect') {
       // A reselect makes no progress: the machine selected the frontier turn,
       // another writer moved the frontier before the fenced capture, and this
-      // re-derives against the row that writer committed. docs/internal/concurrency.md
-      // requires such a loop to be bounded
-      // by the store's own exported budget and to report
-      // `concurrent_modification` once it is spent, rather than spin — so the
-      // budget and the pacing are imported, never mirrored here.
+      // re-derives against the row that writer committed.
+      // docs/internal/concurrency.md requires such a loop to be bounded by the
+      // store's own exported budget and to report `concurrent_modification`
+      // once it is spent, rather than spin — so the budget and the pacing are
+      // imported, never mirrored here.
       reselects += 1;
       if (reselects >= DEFAULT_MUTATE_ATTEMPTS) {
         const code = TRANSACTIONAL_REFUSAL_CODE_BY_KIND.concurrent_modification;

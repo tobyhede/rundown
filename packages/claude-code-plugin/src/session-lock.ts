@@ -39,8 +39,8 @@ export class PluginSessionLockTimeoutError extends FileLockTimeoutError {
  * separate OS process) from losing interleaved updates (#470 defect 1).
  *
  * Built on core's PID-aware primitives (`acquireFileLock`/`releaseFileLock`):
- * atomic temp-file-plus-`link` creation, kill-signal stale detection (never age-based),
- * jittered retry bounded to 5 seconds.
+ * atomic temp-file-plus-`link` creation, kill-signal stale detection (never
+ * age-based), jittered retry bounded to 5 seconds.
  *
  * Lock path: `.claude/session/locks/state.lock`. The project root is
  * realpath-resolved so symlinked spellings of the same directory — e.g. macOS

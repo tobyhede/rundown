@@ -164,17 +164,18 @@ describe('issue #777: run-start CAS exhaustion reports concurrent_modification',
     // On its own this is NOT reliable: measured directly, `create()`'s own
     // read-build-write attempt commits in ~2ms, a window narrow enough that
     // the hammer above routinely never lands inside it and create() wins on
-    // attempt 1 with zero contention observed — the property CLAUDE.md
-    // documents (concurrent writers decorrelate via jittered backoff) working
-    // AGAINST a deterministic test of the exhaustion arm specifically. To
-    // widen that window without faking the outcome, every `mutateState`
-    // build on this workspace's shared store pauses briefly after deriving
-    // its next state while the launch's `create()` is in flight (the hammer's
-    // writes pass through the same wrapper, so both writers slow equally,
-    // which preserves the interleaving that makes them collide). The version
-    // check, the retry count, and the backoff are all the real store's own;
-    // only the timing is nudged so the hammer's real writes reliably land
-    // inside the real vulnerable window on every one of the real attempts.
+    // attempt 1 with zero contention observed — the property
+    // docs/internal/concurrency.md documents (concurrent writers decorrelate
+    // via jittered backoff) working AGAINST a deterministic test of the
+    // exhaustion arm specifically. To widen that window without faking the
+    // outcome, every `mutateState` build on this workspace's shared store
+    // pauses briefly after deriving its next state while the launch's
+    // `create()` is in flight (the hammer's writes pass through the same
+    // wrapper, so both writers slow equally, which preserves the interleaving
+    // that makes them collide). The version check, the retry count, and the
+    // backoff are all the real store's own; only the timing is nudged so the
+    // hammer's real writes reliably land inside the real vulnerable window on
+    // every one of the real attempts.
     const WIDEN_MS = 40;
     let widenActiveForCreate = false;
     interface StoreWithMutateState {
@@ -210,8 +211,9 @@ describe('issue #777: run-start CAS exhaustion reports concurrent_modification',
     // Bounded so a run that stops contending for any reason cannot hang the
     // test: sized off the store's own exported pacing rather than a mirrored
     // number. `DEFAULT_MUTATE_ATTEMPTS` widened attempts, plus the real
-    // backoff the store itself would pace between them (CLAUDE.md: capped at
-    // ~1.4s for the default 8), plus a generous buffer for DB I/O.
+    // backoff the store itself would pace between them
+    // (docs/internal/concurrency.md: at most ~1.4s across the default 8), plus
+    // a generous buffer for DB I/O.
     const worstCaseCreateMs =
       DEFAULT_MUTATE_ATTEMPTS * WIDEN_MS +
       Array.from({ length: DEFAULT_MUTATE_ATTEMPTS - 1 }, (_unused, i) =>

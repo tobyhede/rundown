@@ -3,8 +3,11 @@
 Descriptive: this is how run, session and file-backed state is written
 **today**. [ADR 0005](../adr/0005-one-writer-per-run.md) accepts a replacement
 (one writer per run) that has not been built yet. Until it lands, code that
-touches these mechanisms must follow the rules below — but do not add new
-consumers of them.
+touches these mechanisms must follow the rules below. The patterns this page
+describes — the compare-and-swap fold, re-derive loops, compare-and-latch —
+explain how the **existing** call sites stay correct; they are not templates for
+new ones. A new run- or session-state write that seems to need any of them is a
+design question to raise with the user, per ADR 0005.
 
 When multiple CLI processes may mutate a file-backed artifact such as the
 artifact manifest, use **file-based exclusive locks** with process-aware stale
@@ -71,19 +74,21 @@ The artifact manifest and the sql.js driver call them directly;
 **Examples:** three consumers remain, and every one of them protects a
 file-backed artifact rather than run or session authority — the artifact
 manifest, the sql.js driver's durable-replacement cycle, and the plugin's
-`PluginSessionLock`. Do not add a fourth for run or session state: that belongs
-in a transaction or in the compare-and-swap. Note also that `acquireFileLock` is
-**not reentrant** — a second acquisition on the same call path blocks its own
-predecessor for the full 5s deadline and then times out, so a lock reached twice
-within one process is worse than no lock at all.
+`PluginSessionLock`. Do not add a fourth for run or session state, and do not
+reach for a new compare-and-swap consumer in its place: raise the write with the
+user (ADR 0005). Note also that `acquireFileLock` is **not reentrant** — a
+second acquisition on the same call path blocks its own predecessor for the full
+5s deadline and then times out, so a lock reached twice within one process is
+worse than no lock at all.
 
-**Writing a decision a concurrent writer could invalidate.** Derive it
-**inside** the `mutateState` build callback, so it is computed against the exact
-version the compare-and-swap commits onto and a loser re-derives against the
-committed row rather than overwriting it. Do not reach for a transaction instead
-— `SyncWork<T>` makes an async callback a compile error, and these spans await.
-This fold is what retired every run-state, completion, and delegation lock the
-codebase used to hold; four rules generalise from it.
+**How an existing write keeps a decision a concurrent writer could invalidate.**
+The decision is derived **inside** the `mutateState` build callback, so it is
+computed against the exact version the compare-and-swap commits onto and a loser
+re-derives against the committed row rather than overwriting it. A transaction
+cannot hold these spans — `SyncWork<T>` makes an async callback a compile error,
+and they await. This fold is what retired every run-state, completion, and
+delegation lock the codebase used to hold; four rules govern changes to the call
+sites that use it.
 
 - **Fold the interface, not just the write.** A seam taking a caller-supplied
   `currentState` is stale by construction, and the compare-and-swap does not
@@ -105,19 +110,21 @@ codebase used to hold; four rules generalise from it.
   whole state and needs `RunbookStateManager.mutateStateReturning`; a
   patch-shaped one uses `updateWithStateReturning` or `updateWithStateIfExists`,
   whose `null` return on a missing run IS the pre-read existence guard.
-- **When the fold is unavailable, loop from outside** — and confirm it is
-  unavailable rather than assuming. If the derivation is async and the commit's
-  work is `SyncWork`, no callback can hold the span, so wrap capture → derive →
-  commit in a bounded re-derive loop paced by the store's exported
-  `DEFAULT_MUTATE_ATTEMPTS` / `mutateBackoffMs`, never a mirrored constant.
-  Retry only the ambiguous arm: a version mismatch carries no reason, which is
-  the point of re-deriving, while every permanent refusal stays permanent. Never
-  re-run the side effect the loop sits inside, and let an exhausted budget
-  report `concurrent_modification` rather than a cause it never observed.
+- **Where the fold is unavailable, the existing site loops from outside.** If
+  the derivation is async and the commit's work is `SyncWork`, no callback can
+  hold the span, so the site wraps capture → derive → commit in a bounded
+  re-derive loop paced by the store's exported `DEFAULT_MUTATE_ATTEMPTS` /
+  `mutateBackoffMs`, never a mirrored constant. When changing such a loop, keep
+  it retrying only the ambiguous arm: a version mismatch carries no reason,
+  which is the point of re-deriving, while every permanent refusal stays
+  permanent. Never re-run the side effect the loop sits inside, and let an
+  exhausted budget report `concurrent_modification` rather than a cause it never
+  observed. A new write that seems to need such a loop is a design question for
+  the user, not another loop.
 
 **Exactly-once entry is a different shape from a read-derive-write gap.** Where
 the protected span cannot live inside a callback at all — a launch, a run
-creation — the replacement is an atomic **compare-and-latch**: a prior
+creation — the existing code uses an atomic **compare-and-latch**: a prior
 `mutateStateReturning` cycle whose callback decides the entire question against
 the version it commits onto (refuse, stand down, or win) and writes the durable
 "I own this" record in the same commit, with only the winner performing the
@@ -126,8 +133,9 @@ leaves a durable record of a start that never happened. Latching before the
 create does move one failure: a process that dies between them leaves the work
 latched with no child. The next launch reclaims a latch whose owner process is
 dead, or whose pid was recycled (start ids disagree), and proceeds; a live owner
-makes it stand down (`classifyInlineLaunchOwnership` in
-`inline-launch-latch.ts`). Neither path duplicates the `INSERT`.
+makes it stand down (`classifyInlineLaunchOwnership` in core's
+`inline-launch-start.ts`, called from the CLI's `inline-launch-latch.ts`).
+Neither path duplicates the `INSERT`.
 
 **Three checks that are cheap to run and expensive to skip.**
 

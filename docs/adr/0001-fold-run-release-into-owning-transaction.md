@@ -1,6 +1,8 @@
 # ADR 0001: Fold Run Release into the owning transaction
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR 0005](0005-one-writer-per-run.md), which is
+  accepted but not yet built. The code this ADR describes still runs; maintain
+  it, but do not extend it.
 - **Date:** 2026-08-25
 
 ## Scope

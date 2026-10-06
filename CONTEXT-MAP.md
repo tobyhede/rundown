@@ -20,7 +20,7 @@ These terms cross package boundaries: runs and their ownership are decided in
 
 **Run Owner**: The single agent whose commands may write a run. Every run has
 exactly one; a second concurrent writer is a usage error, never a race to
-resolve. _Avoid_: claim holder, controller, writer
+resolve. _Avoid_: claim holder, controller, writer (as a name for the role)
 
 **Owner Token**: The secret, bound to exactly one run, that proves a command
 comes from that run's owner. It is given only to the run's creator and never

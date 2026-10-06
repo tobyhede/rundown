@@ -90,7 +90,7 @@ test('no test:mutate:* root script carries a trailing `--`', async () => {
 // exec stryker run` runs with cwd = the package dir and forwards trailing args
 // straight to Stryker, so a scoped run either scopes correctly (package-relative
 // path) or fails loudly — never silently unscoped. It is also the exact form
-// CLAUDE.md documents as canonical.
+// docs/internal/mutation-testing.md documents as canonical.
 for (const { pkg, filter } of perPackage) {
   test(`test:mutate:${pkg} is exactly \`pnpm --filter ${filter} exec stryker run\``, async () => {
     const scripts = await rootScripts();
