@@ -74,149 +74,29 @@ for how the machine wires these actors into the per-step state graph.
 A side effect that lives in the CLI but classifies as B or C is architectural
 debt. The fix is to move it, not to rationalise its location.
 
-### Concurrent write synchronization
+### Concurrent writes
 
-When multiple CLI processes may mutate a file-backed artifact such as the
-artifact manifest, use **file-based exclusive locks** with process-aware stale
-lock reclamation. Run and session authority lives in SQLite and uses database
-transactions and execution leases instead.
+**Direction: one writer per run
+([ADR 0005](docs/adr/0005-one-writer-per-run.md)), accepted and not yet built.**
+Every run has exactly one owner, proven by its Owner Token, and only the owner's
+commands write it. A conflicting write is refused, never retried, and a child
+never writes its parent. Do not add new compare-and-swap retry loops, latches,
+fences, claim generations, grants, or file locks for run or session state, and
+do not extend the ones that exist: each is scheduled for deletion. A change that
+seems to need one is a design question to raise with the user, not a pattern to
+copy.
 
-**The replacement is not equivalent, and the difference is a failure mode, not a
-detail.** A file lock _blocks_ a contender for up to 5s and then usually
-succeeds. Of the two mechanisms that replaced it, only one behaves that way:
+**Current code still uses the multi-writer mechanisms.** Anything that touches
+them follows [docs/internal/concurrency.md](docs/internal/concurrency.md). Three
+rules from it are easy to break:
 
-- **Transaction contention** (`mutateSession`, and every `BEGIN IMMEDIATE`
-  write) blocks like the lock did — `PRAGMA busy_timeout = 5000` inside SQLite
-  plus 10 application-level retries at 25ms × attempt in the native driver.
-- **The optimistic CAS** behind `RunbookStore.mutateState` — the per-run
-  read-modify-write behind every run-state write — waits, but does not block. It
-  replays the whole cycle at most **8 times**, pausing between attempts for a
-  jittered interval scaled by attempt number (25–50ms × attempt, so at most
-  ~1.4s across the default budget). The jitter is what lets more concurrent
-  writers than the attempt budget all commit: without it the losers re-read in
-  lockstep and the writer at the back of the queue exhausts the budget before
-  its turn. Sustained contention still spends the budget, and the call then
-  returns `concurrent_modification` — a command failure where the lock would
-  have waited and won.
-
-Treat `concurrent_modification` as a reachable arm on any path that can be
-driven concurrently — handle it or retry it, and never document it as
-theoretical. `build` callbacks passed to `mutateState` run once per attempt and
-MUST therefore be free of external side effects.
-
-**Pattern:** Acquire the lock, then scope its release with `await using` so the
-lock is released deterministically on every exit path — including early `return`
-and `throw` — without a hand-rolled `try/finally`:
-
-```typescript
-await lock.acquire(id);
-await using _guard = lock.held(id); // or: await using _guard = await lock.scope(id);
-return await doWork(); // a failed release can never mask this committed result (RD-102)
-```
-
-`acquireFileLock` / `releaseFileLock` (and the `*Sync` variants) in
-`packages/core/src/runbook/file-lock.ts` are the underlying primitives;
-`heldLock` / `heldLockSync` (returning `ScopedLock` / `ScopedLockSync`) are the
-consumer-facing wrappers that own the best-effort, non-masking release policy.
-The artifact manifest and the sql.js driver call them directly;
-`PluginSessionLock` re-exposes them as `scope()` / `held()`.
-
-- **Lock mechanism:** Atomic file creation (`fs.open(..., 'wx')`) on
-  `.rundown/locks/<name>.lock`
-- **Stale detection:** Kill signal check (`kill(pid, 0)`) — never age-based
-  expiration
-- **Retry:** Jittered backoff (50–100ms) bounded to 5 seconds
-- **Release:** Best-effort and idempotent. A failed unlink only leaks a
-  self-healing lock (reclaimed by the next acquirer via PID-aware stale
-  detection) and is **never propagated** by the disposer, so it cannot mask the
-  committed outcome of the protected work. Never release a lock from a bare
-  `finally` — that is the RD-102 masking defect.
-
-**Examples:** three consumers remain, and every one of them protects a
-file-backed artifact rather than run or session authority — the artifact
-manifest, the sql.js driver's durable-replacement cycle, and the plugin's
-`PluginSessionLock`. Do not add a fourth for run or session state: that belongs
-in a transaction or in the compare-and-swap. Note also that `acquireFileLock` is
-**not reentrant** — a second acquisition on the same call path blocks its own
-predecessor for the full 5s deadline and then times out, so a lock reached twice
-within one process is worse than no lock at all.
-
-**Writing a decision a concurrent writer could invalidate.** Derive it
-**inside** the `mutateState` build callback, so it is computed against the exact
-version the compare-and-swap commits onto and a loser re-derives against the
-committed row rather than overwriting it. Do not reach for a transaction instead
-— `SyncWork<T>` makes an async callback a compile error, and these spans await.
-This fold is what retired every run-state, completion, and delegation lock the
-codebase used to hold; four rules generalise from it.
-
-- **Fold the interface, not just the write.** A seam taking a caller-supplied
-  `currentState` is stale by construction, and the compare-and-swap does not
-  rescue it: it prevents the lost update while still applying a row selected
-  against one version to the cursor of another. `applyNextResolvedCompletion`
-  applies ONE completion and takes no `currentState`; core Run Progression asks
-  XState to select each turn, invokes one apply, and synchronously delivers its
-  observation through the frontend-supplied sink before selecting again. The
-  frontend renders those observations; it does not own completion sequencing. A
-  change that fixes the write and leaves the parameter has kept the defect.
-- **Audit the callback for repeatability rather than assuming it.** It re-runs
-  once per attempt (up to 8) and must perform no external effect — filesystem
-  resolution, dynamic imports, run creation, and emitted warnings all stay
-  outside it, and the callback decides only. A clean audit is still a result
-  worth recording: the drain's reachable machine actors are effect-free for its
-  event apart from producer ARTIFACTS resolution, which is idempotent by
-  identity and already repeats on RETRY re-entry.
-- **Pick the builder the derivation needs.** An async derivation produces a
-  whole state and needs `RunbookStateManager.mutateStateReturning`; a
-  patch-shaped one uses `updateWithStateReturning` or `updateWithStateIfExists`,
-  whose `null` return on a missing run IS the pre-read existence guard.
-- **When the fold is unavailable, loop from outside** — and confirm it is
-  unavailable rather than assuming. If the derivation is async and the commit's
-  work is `SyncWork`, no callback can hold the span, so wrap capture → derive →
-  commit in a bounded re-derive loop paced by the store's exported
-  `DEFAULT_MUTATE_ATTEMPTS` / `mutateBackoffMs`, never a mirrored constant.
-  Retry only the ambiguous arm: a version mismatch carries no reason, which is
-  the point of re-deriving, while every permanent refusal stays permanent. Never
-  re-run the side effect the loop sits inside, and let an exhausted budget
-  report `concurrent_modification` rather than a cause it never observed.
-
-**Exactly-once entry is a different shape from a read-derive-write gap.** Where
-the protected span cannot live inside a callback at all — a launch, a run
-creation — the replacement is an atomic **compare-and-latch**: a prior
-`mutateStateReturning` cycle whose callback decides the entire question against
-the version it commits onto (refuse, stand down, or win) and writes the durable
-"I own this" record in the same commit, with only the winner performing the
-span. Decide every refusal **ahead of** the latch write, or a refused attempt
-leaves a durable record of a start that never happened. Latching before the
-create does move one failure: a process that dies between them leaves the work
-latched with no child, and recovery is the sanctioned one (finish, stop, prune)
-rather than a duplicate `INSERT`.
-
-**Three checks that are cheap to run and expensive to skip.**
-
-- **Establish what an exclusion actually excludes before crediting it with an
-  invariant.** The run-start delegation lock fenced a load-derive-write over the
-  parent's `substepStates` and lost updates the whole time, because it excluded
-  only other acquirers of itself while every writer of those rows (`delegate`,
-  `pass`, `fail`, `goto`, `abort`) went through the state machine and took no
-  lock at all. "It was load-bearing" and "it was decoration over a live defect"
-  need the same fix but are different changes — only the second is a
-  user-visible bug fix.
-- **Check what each refusal DEGRADES to, not only that correctness holds.**
-  Deleting an exclusion makes a formerly impossible race reachable, and the
-  refusal it produces has to be spelled correctly at every seam it surfaces
-  through: an occupied delegation is permanent, so it classifies
-  `already_linked` (no retry) and never `concurrent_modification` ("Retry.") — a
-  call that can never succeed must not tell the caller to try again. A wrapper
-  that folds failures into a generic envelope re-labels it, so pass every reason
-  a concurrent actor can cause through as itself. Move each refusal into the
-  transactional owner FIRST, one commit at a time; deleting the exclusion is
-  then a no-op rather than a lossy edit.
-- **"Stub it out and see what breaks" is a BLIND check** when every unit suite
-  mocks the module boundary you stubbed. Nothing fails, and nothing was tested.
-  Only a real multi-process test observes a genuine race.
-
-**For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock
-derived from `manifestPath(cwd)` + `.lock`.
+- `concurrent_modification` is a reachable arm on any path that can be driven
+  concurrently. Handle or retry it; never document it as theoretical.
+- `build` callbacks passed to `mutateState` run once per attempt (up to 8) and
+  must be free of external side effects.
+- File locks are released with `await using`, never from a bare `finally` (the
+  RD-102 masking defect). File locks protect file-backed artifacts only (the
+  artifact manifest, the sql.js driver, the plugin session lock).
 
 ### Actor dependencies
 
@@ -621,244 +501,16 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   warning-severity findings — so a `warn` rule such as
   `noUnusedPrivateClassMembers` is reported by `verify` and still passes it.
   ESLint (`check:lint:typed`) is the linter whose findings block.
-- **`pnpm run test:mutate:changed`** — the default way to mutation-test your own
-  work, and what an agent should reach for first. It derives the diff base
-  (merge-base with `main`) and runs **one Stryker invocation per changed source
-  file**, each scoped to that file's changed `file:start-end` ranges (whole-file
-  only when the file is new) and to that file's dedicated unit test, then
-  reports every in-scope Survived or NoCoverage mutant through
-  `assert-mutation-score.mjs`; the percentage is secondary context. For a
-  test-only change it uses Stryker's native incremental analysis and compares
-  stable mutant IDs with an existing baseline, refusing an unbounded cold run
-  when no baseline exists. It encodes every foot-gun below by construction, adds
-  `--force` to every source-change scope (mandatory there, see below), and fails
-  loudly when Stryker instrumented 0 files — the silent no-op that a
-  hand-written `--mutate` reports as success.
-
-  ```bash
-  pnpm run test:mutate:changed                    # every changed package
-  pnpm run test:mutate:changed --package core     # one package
-  pnpm run test:mutate:changed --print            # show the plan + commands, run nothing
-  pnpm run test:mutate:changed --related-tests    # drop --testFiles, use findRelatedTests
-  ```
-
-  **Read a survivor correctly.** Scoping to one dedicated test disables the jest
-  runner's `--findRelatedTests`, so a mutant killed only by an integration test
-  reports as a **survivor**. That is the intended reading — "this module's own
-  unit tests do not kill this mutant independently", which is what Stryker
-  documents `testFiles` for — not "nothing in the suite covers this". Pass
-  `--related-tests` to check the broader question, at roughly 13x the cost per
-  mutant on a widely-imported module.
-
-  The advisory PR workflow uses the same hybrid: custom changed ranges for
-  source changes, native incremental analysis for test-only changes. Dedicated
-  tests are the default fast tier; add the `mutation:related` PR label (or
-  choose `related` in a manual dispatch) to retain Jest's related-test fallback.
-
-  **`--force` is not optional on a source-change scope.** Every package config
-  sets `incremental: true`, so without `--force` Stryker may serve cached
-  results from the `main` baseline for the very lines you changed, and the score
-  you read is main's. The Stryker docs call `--force` "especially beneficial
-  when combined with a custom `--mutate` pattern" for exactly this reason. It is
-  scope-limited, so the full-report benefit of incremental mode is preserved.
-  The **test-only tier is the deliberate exception**: it passes bare
-  `--incremental` and no `--force`, because that tier's entire method is diffing
-  stable mutant IDs against the retained baseline — a forced cold rerun would
-  discard the very results it compares against.
-
-  **Never tune `timeoutMS` down for speed.** Timeout is a _detected_ state
-  (score is `detected / valid`, detected = `killed + timeout`), so a spurious
-  timeout inflates the score by crediting a kill no test performed. Measured on
-  `src/paths.ts`: 60000ms gives 11 Killed / 15 Timeout / 2 Survived / 5
-  NoCoverage = 78.79%; 8000ms gives 0 Killed / 31 Timeout / 0 Survived / 5
-  NoCoverage = 86.11% — both real survivors erased. Reduce mutant count (ranges)
-  or tests per mutant (`testFiles`) instead.
-
-  **Concurrency is bounded for you — mutation runs are memory-bound, not
-  CPU-bound.** Every package config reads `STRYKER_CONCURRENCY` (default **2**).
-  That number is not the process count: Stryker spawns a test-runner worker
-  _and_ a TypeScript checker worker per unit, so `concurrency=2` is **four**
-  Node processes, each holding the whole instrumented module graph. Memory
-  scales with the size of the mutated file, not with the number of mutants, so a
-  big module is where this bites: measured on a ~3600-line revision of
-  `lifecycle-command-service.ts`, `concurrency=2` ran 4 workers at 3–4 GB each —
-  **~14 GB**, enough to make the machine unusable for everything else.
-
-  `test:mutate:changed` therefore sets `STRYKER_CONCURRENCY=1` itself on a
-  source-change scope whose mutated file exceeds `LARGE_SOURCE_FILE_LINES`
-  (1000, in `scripts/lib/mutation-scope.mjs`, re-exported from
-  `scripts/mutate-changed.mjs`). The CI producer's shard planner keys off the
-  **same** constant, dropping a shard that mutates a file over it to concurrency
-  2 — one threshold, two policies, so they cannot drift. **Do not set it by hand
-  for that path** — an explicit `STRYKER_CONCURRENCY` in the environment always
-  wins, so doing so only overrides a size-aware default with a flat one. Two
-  paths the automatic bound does **not** cover:
-  - **The test-only tier.** It passes no `--mutate` scope, so it mutates the
-    whole package glob — the largest instrumented graph there is, and the worst
-    case for the blow-up this bound exists to prevent — at the default 2. There
-    is no file size to key on, so bound it yourself if that tier starts
-    swapping.
-  - **The manual `exec stryker run` form below**, which never goes through the
-    script. Set the variable yourself, as its large-file example does.
-
-  Bound it by hand whenever anything else is running concurrently (another
-  agent, a `pnpm run verify`, a dev server) — a mutation run must never be the
-  reason a developer's machine starts swapping. The default 2 is for a small,
-  isolated scope. Raising it above 2 needs a specific reason and a machine with
-  the RAM to match.
-
-  Concurrency trades wall-clock for memory and nothing else — it does not change
-  which mutants are tested or whether they are killed — so lowering it is always
-  safe for correctness. That makes it the **first** knob to reach for when a run
-  is too heavy, ahead of narrowing scope, and far ahead of `timeoutMS`, which is
-  never a legitimate knob (see above).
-
-  If you kill a mutation run mid-flight, kill the whole tree — the workers are
-  children of the `stryker` process and outlive a bare `kill` on the pnpm
-  wrapper:
-
-  ```bash
-  pkill -f 'child-process-proxy-worker.js'   # the memory-holding workers
-  pkill -f 'stryker run'                     # the parent
-  ```
-
-  Reach for the manual form below only when you need a scope the diff does not
-  describe (a single function, a file you did not touch).
-
-- **Scoped Stryker run** (any package) — use `exec`, and pass
-  **package-relative** paths:
-
-  ```bash
-  pnpm --filter @rundown-org/cli exec stryker run \
-    --mutate src/helpers/table-formatter.ts \
-    --testFiles __tests__/helpers/table-formatter.test.ts
-  ```
-
-  This is the canonical form. **Never run an unscoped Stryker run** — no
-  `pnpm run test:mutate:<pkg>` without `--mutate`, and never the package glob.
-
-  **Scope to changed lines, not to a file.** Whole-file `--mutate` is only
-  appropriate for a small file (roughly < 300 lines) or one that is entirely
-  new. Pointing it at a large existing module is a full run wearing a scoped
-  flag: `runbook-store.ts` is ~1450 lines, so mutating it whole to cover a
-  ~280-line change ran 17+ minutes without finishing. Use line ranges, which
-  Stryker accepts as `file:start-end` and comma-separates:
-
-  ```bash
-  # ranges from: git diff -U0 [<merge-base>] -- <file> | grep -E '^@@'
-  # this form is unscripted, so bound concurrency yourself on a >1000-line file
-  STRYKER_CONCURRENCY=1 pnpm --filter @rundown-org/core exec stryker run \
-    --mutate 'src/runbook/storage/runbook-store.ts:693-820,src/runbook/storage/runbook-store.ts:1219-1240' \
-    --testFiles __tests__/runbook/storage/runbook-store.test.ts \
-    --force
-  ```
-
-  **Derive the ranges from the diff; never guess them.** A hand-picked range
-  that is wider than the change sweeps in pre-existing untested code and reports
-  it as your survivors. Measured on `lifecycle-command-service.ts`: a guessed
-  `1240-1420` produced 12 in-scope Survived/NoCoverage mutants, **all twelve on
-  lines the branch never touched**. The diff-derived scope over the same file
-  reported none of them. Use
-  `git diff -U0 <merge-base> -- <file> | grep -E '^@@'` and convert the
-  `+start,count` hunks — and diff against the **working tree**, not
-  `main...HEAD`, whenever you have uncommitted changes, or every line number is
-  shifted relative to the file Stryker actually mutated.
-
-  Judge the result on survivors **in the lines you changed**, never on the
-  aggregate score: a scope this narrow makes the percentage meaningless. Run a
-  hand-rolled scope with `STRYKER_SCOPED=true` (as `test:mutate:changed` does)
-  so `thresholds.break` is nulled and a non-zero exit means the run actually
-  failed; without it the floor judges a partial score and fails a fine run.
-
-  **The report lists survivors from outside your scope.** With
-  `incremental: true`, the textual report and the per-file table merge cached
-  results for the whole project over the mutants this run actually tested, so a
-  clean scoped run can print hundreds of `[Survived]` entries for files and
-  lines you never mutated. This is the inverse of the two foot-guns below —
-  those make a broken run look green, this makes a green run look broken — and
-  it is why the only valid reading is to filter the survivor list by your own
-  line ranges:
-
-  ```bash
-  # after a scoped run, keep only survivors inside the ranges you mutated
-  grep -A2 '^\[Survived\]\|^\[NoCoverage\]' run.log | grep '<your-file>.ts:'
-  ```
-
-  Confirm `Instrumented N source file(s) with M mutant(s)` matches the scope you
-  asked for before trusting any score: that count, not the survivor list, tells
-  you what this run tested, and `N > 0` is what proves the scope resolved at
-  all. Two ways a scoped run can lie about success:
-  - Do **not** insert the `--` separator:
-    `pnpm --filter … exec stryker run -- --mutate <file>` (or
-    `pnpm run test:mutate:<pkg> -- --mutate <file>`) dies on
-    `error: too many arguments for 'run'` because pnpm forwards the literal `--`
-    into Stryker's Commander as a positional. The `test:mutate:<pkg>` root
-    scripts delegate to the `exec stryker run` form above, so the bare shortcut
-    `pnpm run test:mutate:<pkg> --mutate <pkg-relative-path>` (no `--`) forwards
-    cleanly and scopes correctly; adding the separator is the foot-gun.
-  - Repo-relative paths (`--mutate packages/cli/src/x.ts`) match nothing:
-    `pnpm --filter … exec` runs with cwd = the package dir, so Stryker reports
-    `Instrumented 0 source file(s) with 0 mutant(s)` and **exits 0** — a gate
-    that cannot fail. Each `stryker.config.mjs`'s own `mutate` array is
-    package-relative (`'src/**/*.ts'`) for the same reason, and so are the
-    scopes `scripts/lib/mutation-scope.mjs` emits for both the local runner and
-    CI.
-
-  Note `incremental: true`: a stale `reports/stryker-incremental.json` can print
-  a plausible aggregate over a zero-mutant run — pass `--force` (as
-  `test:mutate:changed` does) so a hand-run scope is actually executed rather
-  than replayed. **Core is included in the per-PR matrix**, as one shard per
-  changed file; that workflow is advisory (`continue-on-error` throughout, no
-  required check), so it reports but never blocks.
-
-  **A killed run leaves that report poisoned, and the next run hangs rather than
-  failing.** If you `pkill` a run mid-flight (or it dies with workers live), the
-  partially-written `stryker-incremental.json` makes every subsequent scoped run
-  stall — measured on `output-channels.ts`: a scope that had just completed in
-  seconds stopped dead at 4/20 mutants with the ETA climbing past 17m,
-  reproducibly, across two different scopes and at both concurrency 1 and 2.
-  `--force` does not rescue this; it forces re-execution but the report is still
-  read first. The fix is to delete the report and re-run:
-
-  ```bash
-  rm -f packages/<pkg>/reports/stryker-incremental.json
-  ```
-
-  It is gitignored and regenerated by the next run, so deleting it costs only
-  the incremental reuse of a baseline the kill had already corrupted. Reach for
-  this whenever a scoped run that should take seconds is still going after a
-  minute — the symptom is a stall, not an error, so nothing tells you.
-
-- **The changed-code gates are the whole day-to-day signal.**
-  `pnpm run test:mutate:changed` locally and the advisory per-PR check
-  (`.github/workflows/mutation-pr.yml`) are what you act on. The full-fidelity
-  producer (`.github/workflows/mutation.yml`) is **`workflow_dispatch`-only and
-  deliberately occasional** — an operator runs it to seed the Stryker dashboard
-  baseline the PR check diffs against, and the baseline going stale for weeks is
-  the expected state, not a gap. Its `push`-to-main trigger and weekly cron were
-  deleted (issue #670): the push run planned differentially, so it could never
-  upload a baseline and only re-measured the diff the PR gate had already
-  scored, and five weekly campaigns produced zero `core` and zero `parser`
-  reports. **Do not add an automatic trigger back**, and do not treat a stale
-  dashboard as a reason to start a campaign locally — a full campaign is ~40,000
-  mutants and ~70 machine-hours.
-
-  Numbers worth carrying, all measured (details in
-  [docs/internal/mutation-testing-ci.md](docs/internal/mutation-testing-ci.md)):
-  - **0.46 mutants per source line** across the tree (0.39–0.60 per package).
-    That is the only reliable way to estimate a scope's size; absolute mutant
-    counts go stale fast (core grew 53% in five weeks).
-  - **Throughput spans 5.55–78 mutants/min and line count does not predict it.**
-    Two core shards of essentially identical size (5860 and 5855 lines) ran 4.9x
-    apart, because wall time follows `findRelatedTests` fan-out. Budget for the
-    slow end.
-  - **Total campaign work is flat in the shard budget** — sharding trades setup
-    overhead for a shorter tail. The producer is sized at 2400 lines/shard,
-    which plans **60 jobs** today → ~66 machine-hours, a 240-minute job cap, 3
-    waves of this account's 20 concurrent job slots. Finer sharding buys nothing
-    but waves that starve PR CI. `MAX_SHARD_JOBS` (80) is the **ceiling** at
-    which the planner widens the budget, deliberately above the plan so core's
-    growth does not immediately lengthen the tail.
+- **Mutation testing:** `pnpm run test:mutate:changed` is the default way to
+  mutation-test your own work; it scopes Stryker to your changed lines and
+  encodes the foot-guns. Never run an unscoped Stryker run, never lower
+  `timeoutMS` for speed, and lower `STRYKER_CONCURRENCY` when anything else is
+  running — mutation runs are memory-bound. Judge a run only on survivors in the
+  lines you changed. The full guide, including hand-scoped runs and why a scoped
+  run can report success while testing nothing, is
+  [docs/internal/mutation-testing.md](docs/internal/mutation-testing.md); the CI
+  producer is in
+  [docs/internal/mutation-testing-ci.md](docs/internal/mutation-testing-ci.md).
 
 - `pnpm run plugin:dev -- --no-build` (skip rebuild) /
   `pnpm run plugin:dev -- -- --debug hooks,plugins` (forward flags to `claude`).
@@ -1032,6 +684,14 @@ changing it in `docs/superpowers/plans/`.
 
 Issues live in GitHub Issues on `tobyhede/rundown`, driven via the `gh` CLI. See
 `docs/agents/issue-tracker.md`.
+
+**Witness rule.** Open an issue only with a witness. A defect needs a failing
+test that pins its claim, committed or on a named branch, and linked from the
+issue. A design question needs the decision it blocks on, stated. A finding
+without a witness goes to the user in the conversation, or as a comment on the
+existing issue it concerns — never as a new issue. Epic bodies carry order and
+state only; the sub-issue tree is membership, and for a defect the test is the
+citation.
 
 ### Triage labels
 

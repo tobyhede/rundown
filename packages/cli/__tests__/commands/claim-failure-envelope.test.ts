@@ -8,7 +8,7 @@
 // (#807). Three of them are not about the token — it was found and it was
 // valid — so the code sent the holder to check the one thing that was not
 // wrong, and two of them are caused by a concurrent actor, the category
-// CLAUDE.md requires be passed through as itself.
+// docs/internal/concurrency.md requires be passed through as itself.
 //
 // Every arm is pinned by code AND message, character for character, so a drift
 // in either shows up here rather than only in an agent's routing — and the

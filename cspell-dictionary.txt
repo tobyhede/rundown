@@ -183,10 +183,10 @@ pasteable
 pathspec
 perf
 persistable
+pgrep
 picomatch
 pindex
 pipefail
-planpath
 pkill
 planpath
 preamble
