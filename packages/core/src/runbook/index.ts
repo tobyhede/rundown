@@ -141,8 +141,12 @@ export {
 export {
   activateRunProgression,
   commitRunProgressionEvent,
+  CONCURRENT_MODIFICATION_CODE,
+  ObservationDeliveryError,
   progressionDirectiveForStartedRun,
   progressionDirectiveForTerminalRun,
+  type CommitRunProgressionEventInput,
+  type RunProgressionCommitResult,
   type RunProgressionDeps,
   type RunProgressionDirective,
   type RunProgressionEntryBoundary,
@@ -159,8 +163,7 @@ export type { RunProgressionAuthority } from './run-progression-authority.js';
 export type { ProcessIdentity } from './process-identity.js';
 export {
   RunbookLifecycleCommandService,
-  type AlreadyTerminalCleanup,
-  type AttributedTerminalObservation,
+  type ConcurrentModificationRefusal,
   type LifecycleNavigationInput,
   type LifecycleNavigationCapability,
   type LifecycleNavigationMutationInput,
@@ -168,26 +171,27 @@ export {
   type LifecycleNavigationOutcome,
   type LifecycleTerminalInput,
   type LifecycleTerminalOutcome,
-  type LifecycleTerminalReleasePolicy,
   type LifecycleTransitionInput,
   type LifecycleTransitionOutcome,
-  type ResolveChildRunbook,
-  type RetryLocator,
   type RunbookLifecycleCommandServiceDependencies,
-  type TerminalReportOutcome,
+  type RunFinishedRefusal,
+  type TerminalCommandName,
+  type TransitionCommandName,
 } from './lifecycle-command-service.js';
 export {
-  resolveManualCompletionCursor,
-  type ExplicitCompletionCursor,
+  resolveTransitionCursor,
   type ExplicitTransitionTarget,
   type InvalidStepTargetRefusal,
-  type ManualCompletionCursorResolution,
-  // Deprecated alias kept on the public surface: `manualTarget` was removed
-  // from LifecycleTransitionInput (#500) but the published type name is
-  // retained. The re-export itself must not trip no-deprecated.
-  // eslint-disable-next-line @typescript-eslint/no-deprecated
-  type ManualCompletionCursor,
-} from './manual-completion-cursor.js';
+  type TransitionCursor,
+  type TransitionCursorResolution,
+} from './transition-cursor.js';
+export {
+  findUnsupportedComposition,
+  resolveOwnedRun,
+  type FinishedLifecycle,
+  type OwnedRun,
+  type OwnedRunResolution,
+} from './run-authority.js';
 export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';
 export type { RunbookMachine } from './compiler.js';
 export {
@@ -237,6 +241,7 @@ export {
   type ActorSyncResult,
   type AnyActorRef,
   type EnterExecutionUnitInput,
+  type PreparedActorMutation,
   type RunbookActorServiceOptions,
 } from './actor-service.js';
 export { inferFrameEntryFromState } from './frame-entry.js';
