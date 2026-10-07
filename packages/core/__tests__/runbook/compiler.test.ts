@@ -40,6 +40,7 @@ import type {
   StepWithSubsteps,
   ResolvedStepWithFor,
 } from '../../src/runbook/types.js';
+import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { createRunbook } from './fixtures.js';
 import {
