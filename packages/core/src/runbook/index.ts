@@ -17,15 +17,6 @@ export {
 export * from './step-id.js';
 export * from './step-utils.js';
 export * from './targeting.js';
-// Explicit re-export so consumers importing through the package barrel under
-// Jest's ESM VM (which does not resolve nested `export *` values) can reach the
-// delegation-liveness classifier, matching the DelegationScanService pattern.
-export {
-  classifyDelegationLiveness,
-  type DelegationLiveness,
-  type DelegationLivenessLinkage,
-  type DelegationLivenessParent,
-} from './targeting.js';
 // Storage is otherwise internal; the incompatible-schema error is public so the
 // CLI can classify it by type and surface the RD-305 envelope.
 export { IncompatibleSchemaError } from './storage/schema.js';
@@ -45,41 +36,6 @@ export { WalJournalModeUnavailableError } from './storage/native-sqlite-driver.j
 // "the database would not open" needs both arms or it still falls through to
 // RD-999 on exactly one class of host.
 export { NativeSqliteUnavailableError, SqljsUnavailableError } from './storage/driver-factory.js';
-// A claim row whose mirrored run-id columns contradict its delegation blob is
-// the same kind of surface: it escapes on a session READ, so `rdpath` needs an
-// `instanceof` arm or a corrupt row turns a hook invocation whose base directory
-// was already supplied into a non-zero exit.
-export {
-  InvalidPersistedClaimError,
-  InvalidPersistedSessionError,
-} from './storage/runbook-store.js';
-// The ownership-refusal result surface is public for the same reason: a CLI
-// front end must be able to narrow a session mutation's typed refusal.
-export type {
-  SessionMutationRefusal,
-  SessionMutationResult,
-} from './storage/runbook-store.js';
-// The optimistic-cycle budget and pacing are public for a narrower reason: a
-// front end that owns a read-derive-write span the store cannot hold (an async
-// derivation committed by a synchronous session transaction) must re-derive on
-// the same budget, and a mirrored constant is where that pacing drifts.
-export { DEFAULT_MUTATE_ATTEMPTS, mutateBackoffMs } from './storage/runbook-store.js';
-// `GuardedMutationResult` and `AbandonedAttemptSetOutcome` are public for the
-// same narrow reason: a CLI renderer must DERIVE the refusal union it renders
-// from these rather than re-declaring it. A hand-restatement compiles while
-// silently de-branding `RunId`/`ExecutionEpoch` and dropping fields — the
-// "no parallel result types" defect the PR 11-head planning audit names.
-export type {
-  AbandonedAttemptSetOutcome,
-  InterruptedAttemptRef,
-} from './storage/execution-lease.js';
-export {
-  assertExecutionEpoch,
-  type CapturedAuthority,
-  type ExecutionEpoch,
-  type GuardedMutationResult,
-} from './storage/mutation-result.js';
-export type { CapturedRunStateResult } from './storage/runbook-store.js';
 export {
   extractUnitOutputs,
   findStepOrThrow,
@@ -104,7 +60,6 @@ export type {
   DeriveExecutionUnitEntryInput,
   ExecutionUnitAwaiting,
   ExecutionUnitEntry,
-  ExecutionUnitInlineLaunch,
   ExecutionUnitRunnable,
 } from './execution-unit-entry.js';
 export {
@@ -147,19 +102,10 @@ export {
   RUN_ID_PREFIX,
   type RunId,
 } from './run-id.js';
-export * from './claim-activity.js';
-export * from './claim-id.js';
 export * from './duration.js';
 export * from './last-action.js';
 export * from './run-secrets.js';
-export * from './session-release.js';
 export * from './transition-kernel.js';
-// `manual-delegation-machine.js` is deliberately NOT barrelled. Publishing
-// `prepareManualDelegation` would invite a front end to drive delegation around
-// `RunbookActorService`, which owns the fenced commit — exactly the parallel
-// execution path CLAUDE.md forbids. The sanctioned entry point is
-// `RunbookActorService.prepareManualDelegationMutation`; its event and result
-// types return to this barrel if and when a front end legitimately needs them.
 export {
   generateRunId,
   RunbookStateManager,
@@ -183,172 +129,14 @@ export {
   type TemplateVarsOp,
   type VariablesOp,
 } from './state-update-ops.js';
-export {
-  SessionService,
-  type ActiveInlineForceTerminalPlan,
-  type AlreadyTerminalReleaseFence,
-  type AlreadyTerminalReleaseOutcome,
-  type ClaimAndInitialLinkInput,
-  type ClaimAndInitialLinkResult,
-  type RollbackInitialLinkInput,
-  type ClaimSeenRecordResult,
-  type InlineForceTerminalKind,
-  type PopIfActiveResult,
-  type PreparedRunControlClaim,
-  type PushIfNotActiveResult,
-  type RunningStackMemberResolution,
-  type SessionMutationRefusalOutcome,
-  type StashActiveResult,
-  type StashForClaimIdResult,
-  type UnstashForClaimIdResult,
-} from './session-service.js';
-export {
-  describeSupersededClaim,
-  resolveClaimTarget,
-  resolveCommandTarget,
-  resolveMutationAuthority,
-  resolveTerminalTarget,
-  resolveTransitionTarget,
-  type ClaimTargetResolution,
-  type CommandTargetResolution,
-  type StaleClaimRefusal,
-  type StaleClaimRefusalCode,
-  type UnknownRunRefusal,
-  type ResolveCommandTargetOptions,
-  type ResolveTransitionTargetOptions,
-  type MutationAuthorityResolution,
-  type TerminalCommandName,
-  type TerminalTargetResolution,
-  type TransitionCommandName,
-  type TransitionTargetResolution,
-} from './command-target-resolver.js';
-export {
-  resolveIssuanceAnchor,
-  type IssuanceAnchorResolution,
-  type ResolveIssuanceAnchorOptions,
-} from './issuance-anchor.js';
-export {
-  UNKNOWN_ACTOR_CONTEXT,
-  verifiedClaimContext,
-  type ActorContext,
-  type CallerEvidence,
-  type EffectiveRole,
-} from './actor-context.js';
-export {
-  classifyDelegationExposure,
-  classifyDelegationExposureDetail,
-  type DelegationExposure,
-  type DelegationExposureDetail,
-  type DelegationExposureInput,
-} from './delegation-exposure.js';
-export {
-  deriveEffectiveRole,
-  resolveCommandIntent,
-  type CommandIntent,
-  type CollectionWorkflowResult,
-  type CommandTargetSelector,
-  type DelegationPolicyOutcome,
-  type ResolveCommandIntentInput,
-} from './command-policy.js';
-export {
-  bareRoleSpecificMutation,
-  delegateClaimIdRejectionMessage,
-  delegateClaimIdValidationError,
-  mutationCommandAliases,
-  subprocessMutationWithheldMessage,
-  DELEGATE_CLAIM_ID_REJECTED_CODE,
-  GLOBAL_VALUE_TAKING_OPTION_NAMES,
-  PASS_FAIL_VALUE_TAKING_OPTION_NAMES,
-  SUBPROCESS_BOUNDARY_VALUE_TAKING_OPTIONS,
-  SUBPROCESS_MUTATION_WITHHELD_CODE,
-  type GlobalValueTakingOptionName,
-  type PassFailValueTakingOptionName,
-  type RoleSpecificMutationCommand,
-} from './subprocess-mutation-boundary.js';
-export { readActiveRunScope, type ActiveRunScope } from './session-reader.js';
-export { ExecutionLifecycleService } from './execution-lifecycle-service.js';
-export {
-  createEffectfulActorMutationRunner,
-  type EffectfulActorMutationRunner,
-  type EffectfulActorMutationRunnerInput,
-  type PreflightEffectfulActorMutationRunnerInput,
-  type PreEffectActorMutationReturn,
-  type EffectfulActorMutationSetRunnerInput,
-  type EffectfulActorMutationSetRunnerResult,
-  type EffectfulActorMutationSetTarget,
-  type CapturedActorMutationRun,
-  type PreparedActorMutationSet,
-  type PreparedActorMutationSetMember,
-  type AggregateRunRelease,
-} from './effectful-actor-mutation-runner.js';
-export {
-  RunbookCompletionService,
-  brandCurrentCursorResolvedCompletionForTest,
-  lifecycleToDelegationOutcome,
-  COMPLETION_TARGET_MISMATCH_CODE,
-  projectDelegationTerminalOutcome,
-  // Deprecated alias kept on the public surface for callers still on generic
-  // result terminology; the re-export itself must not trip no-deprecated.
-  // eslint-disable-next-line @typescript-eslint/no-deprecated
-  lifecycleToResult,
-  type AppliedResolvedCompletion,
-  type CompletionTargetMismatch,
-  type CurrentCursorResolvedCompletion,
-  type DelegationTerminalProjection,
-  type ApplyNextResolvedCompletionArgs,
-  type ApplyNextResolvedCompletionResult,
-  type RecordChildCompletionArgs,
-  type RecordCompletionResult,
-  type RecordManualCompletionArgs,
-} from './completion-service.js';
-export {
-  RunbookCollectionService,
-  collectDelegationOutcomes,
-  type CollectDelegationOutcomesInput,
-  type CollectDelegationOutcomesOperationInput,
-  type RunbookCollectionServiceDependencies,
-} from './collection-service.js';
-// Shared re-entry frontier seam (F6), consumed only through Run Progression's
-// fenced projection/consume turn.
-export {
-  FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
-  FRONTIER_CONSUME_FAILED_MESSAGE,
-  FRONTIER_PROJECTION_REFUSED_MESSAGE,
-  prepareReEntryFrontierConsume,
-  readPersistedReEntryFrontier,
-  type PrepareReEntryFrontierActorService,
-  type PrepareReEntryFrontierConsumeInput,
-  type PreparedReEntryProjection,
-} from './re-entry-frontier.js';
-// Canonical refusal-kind → symbolic-code maps. The value consts are for seams
-// that may value-import the barrel; frontends loaded under partial barrel
-// mocks restate the literal and pin it with the exported `…ByKind` types.
-export {
-  SESSION_REFUSAL_CODE_BY_KIND,
-  TRANSACTIONAL_REFUSAL_CODE_BY_KIND,
-  type SessionRefusalCodeByKind,
-  type TransactionalRefusalCodeByKind,
-} from './storage/refusal-codes.js';
 // XState-owned Run Progression activation (#851 / ADR 0003). The authority's
 // minting function is deliberately NOT exported: only core seams that verified
 // caller evidence may produce a RunProgressionAuthority.
 export {
   activateRunProgression,
   commitRunProgressionEvent,
-  progressionDirectiveForClaimedRun,
   progressionDirectiveForStartedRun,
   progressionDirectiveForTerminalRun,
-  resolveInlineAncestorProgression,
-  flowBackInlineTerminal,
-  propagateTerminalRun,
-  MAX_INLINE_ANCESTOR_DEPTH,
-  INLINE_ADVANCE_RECOVERY_BY_REASON,
-  ObservationDeliveryError,
-  recoveryForInlineAdvanceRefusal,
-  type InlineAdvanceRecoveryByReason,
-  type InlineChildDispatch,
-  type InlineChildDispatchInput,
-  type InlineChildDispatchResult,
   type RunProgressionDeps,
   type RunProgressionDirective,
   type RunProgressionEntryBoundary,
@@ -357,31 +145,8 @@ export {
   type RunProgressionRecovery,
   type RunProgressionRefusalReason,
   type RunProgressionWaitReason,
-  type TerminalPropagation,
-  type TerminalPropagationInput,
-  type TerminalPropagationResult,
-  type TerminalPropagationSource,
 } from './run-progression.js';
 export type { RunProgressionAuthority } from './run-progression-authority.js';
-export {
-  reportDelegatedTerminal,
-  INLINE_PARENT_CYCLE_CODE,
-  type InlineParentAdvanceRefusal,
-  type LinkageCycleTrip,
-} from './inline-parent-advance.js';
-export {
-  classifyInlineLaunchOwnership,
-  recordInlineLaunchStart,
-  type InlineLaunchOwnership,
-} from './inline-launch-start.js';
-export {
-  inlineTargetAlreadyResolved,
-  markInlineSubstepLaunched,
-  type InlineLaunchFenceDeps,
-  type InlineLaunchMarkInput,
-  type InlineLaunchMarkOutcome,
-  type InlineLaunchMarkRefusal,
-} from './inline-launch-fence.js';
 // The DI seam of the two above. Type-only, and exported so their signatures are
 // nameable by the CLI that calls them; the liveness readers behind it stay
 // internal to core.
@@ -390,11 +155,6 @@ export {
   RunbookLifecycleCommandService,
   type AlreadyTerminalCleanup,
   type AttributedTerminalObservation,
-  type DelegationIssuanceInput,
-  type DelegationIssuanceOutcome,
-  type ExplicitDelegationTarget,
-  type FindDelegationsByTokenHash,
-  type DelegationAbortOutcome,
   type LifecycleNavigationInput,
   type LifecycleNavigationCapability,
   type LifecycleNavigationMutationInput,
@@ -424,8 +184,6 @@ export {
 } from './manual-completion-cursor.js';
 export { compileRunbookToMachine, runbookSetup, MAX_FILE_ITERATIONS } from './compiler.js';
 export type { RunbookMachine } from './compiler.js';
-export { runRetryHook } from './retry-hook.js';
-export type { RetryHookResult, RetryHookSuccess, RetryHookError } from './retry-hook.js';
 export {
   executeCommand,
   executeCommandWithPolicy,
@@ -447,49 +205,11 @@ export { createFileProvider, computeFileSnapshot, validateFileSnapshot } from '.
 export type { FileProvider } from './file-provider.js';
 export { resolveForValue, ForResolutionError, type ResolvedIteration } from './source-resolver.js';
 export {
-  // Deprecated inference helpers (superseded by resolveDelegationIssuance) are
-  // retained on the public surface: @rundown-org/core is published and repo
-  // grep cannot rule out external consumers. The re-exports themselves must
-  // not trip no-deprecated.
-  // eslint-disable-next-line @typescript-eslint/no-deprecated
-  deriveDelegateFrontier,
-  findPendingDelegation,
-  inferAllDelegateSubsteps,
-  // eslint-disable-next-line @typescript-eslint/no-deprecated
-  inferDelegationTarget,
-  inferRunbookFromStep,
-  isPostDelegateAggregationCursor,
-  // eslint-disable-next-line @typescript-eslint/no-deprecated
-  resolveDelegateTarget,
-  resolveDelegationIssuance,
-  // eslint-disable-next-line @typescript-eslint/no-deprecated
-  resolveTargetedDelegation,
-  type DelegateTargetResolution,
-  type DelegationIssuanceRequest,
-  type DelegationIssuanceResolution,
-  type DelegationInferenceState,
-  type InferredDelegation,
-  type RequestedRunbookArg,
-  type ResolvedDelegationRunbook,
-  type ResolveDelegationRunbook,
-  type TargetedDelegateResolution,
-} from './delegation-inference.js';
-export {
   forIterateActor,
   type ForIterateInput,
   type ForIterateOutput,
   type ForResolutionFailureCode,
 } from './actors/for-iterate-actor.js';
-// The persisted-intent SHAPE guard is public so the CLI's inline-launch latch
-// narrows an opaque snapshot through core rather than a local `&&` chain. Core
-// drives it from a field-guard map keyed by
-// `keyof InlineLaunchIntentWithoutParentEntry`, so adding a field to the intent
-// breaks compilation here until the runtime check catches up — a property a copy
-// in the CLI would lose the first time the intent grew a field.
-export {
-  isInlineLaunchIntentWithoutParentEntry,
-  type InlineLaunchIntentWithoutParentEntry,
-} from './actors/inline-launch-intent-actor.js';
 export {
   commandExecActor,
   type CommandExecutionInput,
@@ -511,83 +231,10 @@ export {
   type ActorSyncResult,
   type AnyActorRef,
   type EnterExecutionUnitInput,
-  type PreparedDelegationChildLink,
-  type PreparedDelegationChildUnlink,
-  type PrepareDelegationChildLinkResult,
-  type PrepareDelegationChildUnlinkResult,
   type RunbookActorServiceOptions,
 } from './actor-service.js';
-// The runtime capability types ARE public: a front end threads verified
-// delegation capabilities through its Run Progression dependencies and
-// option bags, so it must be able to name them. `DelegationRuntimeCapabilities`
-// is the shape those bags should carry — the individual callables remain
-// exported for the narrow seams that genuinely take only one.
-export type {
-  DelegationCredentialIssuer,
-  DelegationRuntimeCapabilities,
-  DelegationTokenDeriver,
-} from './delegation-credential.js';
 export { inferFrameEntryFromState } from './frame-entry.js';
 export type { RunbookEvent } from './compiler.js';
-export {
-  createDelegation,
-  abortDelegation,
-  retryDelegation,
-  type DelegateOptions,
-  type CreateDelegationResult,
-  type CreateDelegationCreatedResult,
-  type CreateDelegationStepNotFoundResult,
-  type CreateDelegationStepNotCurrentResult,
-  type CreateDelegationSubstepRequiredResult,
-  type CreateDelegationSubstepNotFoundResult,
-  type CreateDelegationExistsResult,
-  type AbortDelegationOptions,
-  type AbortDelegationResult,
-  type AbortDelegationCancelledResult,
-  type AbortDelegationAlreadyCancelledResult,
-  type AbortDelegationNeedsForceResult,
-  type AbortDelegationNotFoundResult,
-  type ConsumedDelegationClosureReadModel,
-  type RetryDelegationOptions,
-  type RetryDelegationResult,
-  type RetryDelegationRetriedResult,
-  type RetryDelegationNotFoundResult,
-  type RetryDelegationNotCurrentResult,
-  type RetryDelegationInFlightResult,
-  type RetryDelegationErrorResult,
-  readConsumedDelegationClosure,
-  readConsumedDelegationClosureForCwd,
-} from './delegation-service.js';
-export {
-  DELEGATION_COLLECTION_PENDING_MESSAGE,
-  readDelegationCollectionPending,
-  readDelegationCollectionPendingForPolicy,
-  readDelegationOutcomeReportedFacts,
-  type DelegationCollectionPendingPolicyReadModel,
-  type DelegationCollectionPendingReadModel,
-  type DelegationOutcomeReportedFact,
-} from './delegation-lifecycle-read-model.js';
-// Credential *derivation* is not public. `deriveDelegationToken` and the nonce
-// primitives around it are reachable only through the claim-bound
-// `DelegationCredentialIssuer` / `DelegationTokenDeriver` capabilities above, so
-// no consumer can mint or reproduce a bearer without a verified claim.
-// `DelegationCredentialDescriptor` stays public because it is the parameter type
-// of those two published callables — a caller that cannot name it cannot type
-// its own deriver.
-export {
-  DELEGATION_CLAIM_MARKER,
-  DELEGATION_TOKEN_PATTERN,
-  DELEGATION_TOKEN_HASH_PATTERN,
-  assertDelegationTokenHash,
-  findDelegationClaimToken,
-  hashDelegationToken,
-  isDelegationToken,
-  isDelegationTokenHash,
-  truncateDelegationToken,
-  TOKEN_PREFIX as DELEGATION_TOKEN_PREFIX,
-  type DelegationCredentialDescriptor,
-  type DelegationTokenHash,
-} from './delegation-token.js';
 export {
   acquireFileLock,
   FileLockTimeoutError,
@@ -604,11 +251,6 @@ export {
   UnsafeFileError,
   type UnsafeFileReason,
 } from './safe-fs.js';
-export {
-  DelegationScanService,
-  type DelegationTokenScan,
-  type TokenScanResult,
-} from './delegation-scan.js';
 export {
   reconstituteContextVars,
   buildContextSnapshot,
