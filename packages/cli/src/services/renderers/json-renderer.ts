@@ -120,19 +120,8 @@ export class JSONRenderer implements OutputRenderer {
         if (event.data) {
           Object.assign(this.output, event.data);
         }
-        // Derive kind from status action. `stash`, `pop`, and `claimed` carry
-        // distinct lifecycle payloads and get their own discriminants
-        // (matching the schemas in packages/core/src/output/zod-schemas.ts).
-        // All other status actions are part of the action family.
-        if (event.action === 'stash') {
-          this.output.kind = 'stash';
-        } else if (event.action === 'pop') {
-          this.output.kind = 'pop';
-        } else if (event.action === 'claimed') {
-          this.output.kind = 'claim';
-        } else {
-          this.output.kind = 'action';
-        }
+        // Every status action is part of the action family.
+        this.output.kind = 'action';
         break;
       case 'action':
         this.renderAction(event);
@@ -372,20 +361,15 @@ export class JSONRenderer implements OutputRenderer {
 
   private publicExecutionPayload(event: RunbookEventV1): Record<string, unknown> {
     if (event.type === 'RUNBOOK_STARTED') {
-      const { claimId, ...payload } = event.payload;
+      // The ONE place the Owner Token is printed: `owner_token` on
+      // `runbook_started`. Status, step_entered and every other surface omit it.
+      const { ownerToken, ...payload } = event.payload;
       return {
         ...payload,
-        ...(claimId !== undefined ? { claim_id: claimId } : {}),
+        ...(ownerToken !== undefined ? { owner_token: ownerToken } : {}),
       };
     }
-
-    if (event.type !== 'STEP_ENTERED' || event.payload.inlineLaunch === undefined) {
-      return event.payload as unknown as Record<string, unknown>;
-    }
-
-    const { inlineLaunch, ...payload } = event.payload;
-    const { contextSnapshot: _contextSnapshot, ...publicInlineLaunch } = inlineLaunch;
-    return { ...payload, inlineLaunch: publicInlineLaunch };
+    return event.payload as unknown as Record<string, unknown>;
   }
 
   /**

@@ -4,57 +4,41 @@ import type { Command } from 'commander';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import {
-  withTransitionTargetOptions,
-  parseTransitionTarget,
-  transitionTargetFields,
-} from '../helpers/transition-target.js';
-import { runSeamTerminal, handleTerminalRecovery } from '../helpers/terminal-command.js';
+import { parseTokenOption, withTokenOption } from '../helpers/token-option.js';
+import { runSeamTerminal } from '../helpers/terminal-command.js';
 
 /**
  * Registers the 'stop' command for aborting runbooks.
  *
- * The command is a thin front end: target resolution, policy gating, the inline
- * FORCE cascade, record-before-release child propagation, and retained-tombstone
- * release all live in the core `runTerminal` seam (via {@link runSeamTerminal}).
- * The only CLI-owned logic that survives is the recovery path for an unusable
- * persisted snapshot (Category A), which only surfaces when the machine
- * rehydrates inside the seam.
+ * The command is a thin front end: the Owner Token names the run, core
+ * resolves it and applies the FORCE_STOP terminal through the lifecycle seam
+ * (via {@link runSeamTerminal}); the CLI renders the outcome.
  *
  * @param program - Commander program instance to register the command on
  */
 export function registerStopCommand(program: Command): void {
-  withTransitionTargetOptions(
+  withTokenOption(
     program
       .command('stop')
-      .description('Abort current runbook')
+      .description('Abort a running runbook')
       .argument('[message]', 'Stop message'),
   )
     .option('--text', 'Output as human-readable text')
     .action(
       async (
         message: string | undefined,
-        options: { claimId?: string; run?: string; text?: boolean },
+        options: { token?: string; run?: string; text?: boolean },
       ) => {
         await withErrorHandling(
           async () => {
             const output = new OutputEmitter({ text: options.text, command: 'stop' });
-            const cwd = getCwd();
-            const target = parseTransitionTarget(options, output);
-            if (!target) return;
-            const targetFields = transitionTargetFields(target);
-
-            try {
-              const { exitError } = await runSeamTerminal(output, cwd, 'stop', {
-                ...targetFields,
-                ...(message !== undefined ? { message } : {}),
-              });
-              if (exitError) process.exitCode = 1;
-            } catch (error: unknown) {
-              await handleTerminalRecovery('stop', error, output, cwd, {
-                ...targetFields,
-              });
-            }
+            const token = parseTokenOption(options, 'stop', output);
+            if (token === undefined) return;
+            const { exitError } = await runSeamTerminal(output, getCwd(), 'stop', {
+              token,
+              ...(message !== undefined ? { message } : {}),
+            });
+            if (exitError) process.exitCode = 1;
           },
           { text: options.text },
         );

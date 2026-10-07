@@ -2,21 +2,19 @@ import type { Command } from 'commander';
 import {
   WORK_DIR,
   RunbookStateManager,
-  SessionService,
   inspectArtifactReference,
   listArtifactAliases,
   projectArtifactPath,
   projectArtifactUri,
-  resolveCommandTarget,
   type ArtifactAliasListEntry,
   type ArtifactPathOptions,
   type PublicArtifactRecord,
   type RunbookState,
-  type StaleClaimRefusalCode,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
+import { parseRunOption } from '../helpers/run-option.js';
 
 /** A resolved artifact projection: an alias entry (scalar or array) or a bare record. */
 type ArtifactProjection = ArtifactAliasListEntry | PublicArtifactRecord;
@@ -29,13 +27,9 @@ type ActiveArtifactState =
       readonly artifactPathOptions: ArtifactPathOptions;
     }
   | { readonly kind: 'none' }
-  | {
-      readonly kind: 'stale_claim';
-      readonly message: string;
-      readonly code: StaleClaimRefusalCode;
-    };
+  | { readonly kind: 'ambiguous'; readonly runIds: readonly string[] }
+  | { readonly kind: 'unknown_run'; readonly runId: string };
 
-/** Context handed to an artifact action body once an active runbook is resolved. */
 interface ArtifactActionContext {
   readonly state: RunbookState;
   readonly artifactPathOptions: ArtifactPathOptions;
@@ -43,60 +37,78 @@ interface ArtifactActionContext {
 }
 
 /**
- * Resolve the active runbook and derive artifact path options. Pure: no output,
- * no exit-code mutation — the caller decides how to surface each outcome.
+ * Locate the run whose artifacts are inspected.
  *
- * @returns Discriminated resolution: `ok` with state + path options, `none`, or `stale_claim`
+ * `--run <id>` names it. Without `--run`, the single running run in the
+ * project is used; with several, the caller is asked to name one, because
+ * under one writer per run no run is implicitly "active".
+ *
+ * @param runId - Validated `--run` selector, when supplied
+ * @returns The resolved run with its artifact path options, or why none was chosen
  */
-async function resolveActiveArtifactState(): Promise<ActiveArtifactState> {
+async function resolveArtifactState(runId: string | undefined): Promise<ActiveArtifactState> {
   const cwd = getCwd();
   const manager = new RunbookStateManager(cwd);
-  const sessionService = new SessionService(manager);
-  const active = await resolveCommandTarget(sessionService, { allowStashed: true });
-  if (active.kind === 'none') return { kind: 'none' };
-  if (active.kind === 'stale_claim')
-    return { kind: 'stale_claim', message: active.message, code: active.code };
-  // `unknown_run` carries no state; artifact never passes a runId, so this is
-  // unreachable today — guard the `.state` narrowing below (never crash).
-  if (active.kind === 'unknown_run') return { kind: 'none' };
+  let state: RunbookState | null;
+  if (runId !== undefined) {
+    state = await manager.load(runId);
+    if (!state) return { kind: 'unknown_run', runId };
+  } else {
+    const running = (await manager.list()).filter((s) => (s.lifecycle ?? 'running') === 'running');
+    if (running.length === 0) return { kind: 'none' };
+    if (running.length > 1) return { kind: 'ambiguous', runIds: running.map((s) => s.id) };
+    state = running[0];
+  }
   const workPath =
-    typeof active.state.templateVars.WorkPath === 'string'
-      ? active.state.templateVars.WorkPath
-      : WORK_DIR;
-  return { kind: 'ok', state: active.state, artifactPathOptions: { cwd, workPath } };
+    typeof state.templateVars.WorkPath === 'string' ? state.templateVars.WorkPath : WORK_DIR;
+  return { kind: 'ok', state, artifactPathOptions: { cwd, workPath } };
 }
 
-/**
- * Run an artifact subcommand body against the active runbook, centralising error
- * handling, output construction, inactive-state reporting, and flushing.
- *
- * @param command - Command name for the output envelope (e.g. `artifact ls`)
- * @param options - Parsed subcommand options
- * @param options.text - When true, render human-readable text instead of JSON
- * @param body - Action body invoked only when an active runbook resolves
- */
 async function runArtifactAction(
   command: string,
-  options: { readonly text?: boolean },
+  options: { readonly text?: boolean; readonly run?: string },
   body: (context: ArtifactActionContext) => Promise<void> | void,
 ): Promise<void> {
   await withErrorHandling(
     async () => {
       const output = new OutputEmitter({ text: options.text, command });
-      const active = await resolveActiveArtifactState();
-      if (active.kind === 'none') {
-        output.noActiveRunbook('artifact');
-        output.flush();
-        return;
+      const run = parseRunOption(options.run, output);
+      if (!run.ok) return;
+      const active = await resolveArtifactState(run.runId);
+      switch (active.kind) {
+        case 'none':
+          output.noActiveRunbook('artifact');
+          output.flush();
+          return;
+        case 'ambiguous':
+          output.error(
+            `Several runs are running (${active.runIds.join(', ')}); name one with --run <id>.`,
+            'INVALID_SYNTAX',
+            { runIds: active.runIds },
+          );
+          output.flush();
+          process.exitCode = 1;
+          return;
+        case 'unknown_run':
+          output.error(`Run ${active.runId} not found.`, 'RUN_TARGET_UNAVAILABLE', {
+            runId: active.runId,
+          });
+          output.flush();
+          process.exitCode = 1;
+          return;
+        case 'ok':
+          await body({
+            state: active.state,
+            artifactPathOptions: active.artifactPathOptions,
+            output,
+          });
+          output.flush();
+          return;
+        default: {
+          const _exhaustive: never = active;
+          return _exhaustive;
+        }
       }
-      if (active.kind === 'stale_claim') {
-        output.error(active.message, active.code);
-        output.flush();
-        process.exitCode = 1;
-        return;
-      }
-      await body({ state: active.state, artifactPathOptions: active.artifactPathOptions, output });
-      output.flush();
     },
     { text: options.text },
   );
@@ -126,8 +138,9 @@ export function registerArtifactCommand(program: Command): void {
 
   artifact
     .command('ls')
+    .option('--run <runId>', 'Run to inspect (defaults to the single running run)')
     .option('--text', 'Output as human-readable text')
-    .action((options: { text?: boolean }) =>
+    .action((options: { text?: boolean; run?: string }) =>
       runArtifactAction('artifact ls', options, ({ state, artifactPathOptions, output }) => {
         const rows = listArtifactAliases(state, artifactPathOptions);
         output.list(rows, [
@@ -148,8 +161,9 @@ export function registerArtifactCommand(program: Command): void {
   artifact
     .command('path')
     .argument('<alias-or-uri>')
+    .option('--run <runId>', 'Run to inspect (defaults to the single running run)')
     .option('--text', 'Output as human-readable text')
-    .action((input: string, options: { text?: boolean }) =>
+    .action((input: string, options: { text?: boolean; run?: string }) =>
       runArtifactAction(
         'artifact path',
         options,
@@ -167,8 +181,9 @@ export function registerArtifactCommand(program: Command): void {
   artifact
     .command('uri')
     .argument('<alias>')
+    .option('--run <runId>', 'Run to inspect (defaults to the single running run)')
     .option('--text', 'Output as human-readable text')
-    .action((alias: string, options: { text?: boolean }) =>
+    .action((alias: string, options: { text?: boolean; run?: string }) =>
       runArtifactAction('artifact uri', options, ({ state, artifactPathOptions, output }) => {
         const record = projectArtifactUri(state, alias, artifactPathOptions);
         if (options.text) {
@@ -182,8 +197,9 @@ export function registerArtifactCommand(program: Command): void {
   artifact
     .command('inspect')
     .argument('<alias-or-uri>')
+    .option('--run <runId>', 'Run to inspect (defaults to the single running run)')
     .option('--text', 'Output as human-readable text')
-    .action((input: string, options: { text?: boolean }) =>
+    .action((input: string, options: { text?: boolean; run?: string }) =>
       runArtifactAction(
         'artifact inspect',
         options,

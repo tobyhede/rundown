@@ -1,7 +1,7 @@
 // packages/cli/src/commands/ls.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService } from '@rundown-org/core';
+import { RunbookStateManager } from '@rundown-org/core';
 import { discoverRunbooks } from '../services/discovery.js';
 import { getCwd, getStepTotal } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -15,7 +15,7 @@ import { getStatus } from '../helpers/status.js';
 export function registerLsCommand(program: Command): void {
   program
     .command('ls')
-    .description('List runbooks (active by default, --all for available)')
+    .description('List runbooks (runs by default, --all for available)')
     .option('-a, --all', 'List all available runbook files')
     .option('--text', 'Output as human-readable text')
     .option('--tags <tags>', 'Filter available runbooks by comma-separated tags')
@@ -73,17 +73,14 @@ export function registerLsCommand(program: Command): void {
             return;
           }
 
-          // MODE 2: List active runbooks (default)
+          // MODE 2: List persisted runs (default)
           const manager = new RunbookStateManager(cwd);
-          const sessionService = new SessionService(manager);
           const states = await manager.list();
-          const active = await sessionService.getActive();
-          const stashedId = await sessionService.getStashedRunbookId();
 
           // Pre-calculate derived data for table display
           const enrichedStates = await Promise.all(
             states.map(async (state) => {
-              const status = getStatus(state, active, stashedId);
+              const status = getStatus(state);
 
               const runbookPath = state.runbook.path;
               const totalSteps = await getStepTotal(cwd, state.runbook);
@@ -111,8 +108,7 @@ export function registerLsCommand(program: Command): void {
               { header: 'TITLE', key: (s) => s.title ?? '' },
             ],
             {
-              emptyMessage:
-                'No active runbooks.\nRun "rundown ls --all" to see available runbooks.',
+              emptyMessage: 'No runs.\nRun "rundown ls --all" to see available runbooks.',
               jsonMapper: (s) => ({
                 // Emit only the documented ActiveRunbookEntry fields
                 // (docs/spec/cli-output.md). Spreading the enriched state

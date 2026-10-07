@@ -9,32 +9,29 @@
  */
 
 import {
+  CONCURRENT_MODIFICATION_CODE,
   parseStepIdFromString,
   stepIdToString,
   deriveGotoActionBlock,
+  resolveOwnedRun,
   type RunbookStateManager,
   type LifecycleNavigationOutcome,
+  type OwnedRunResolution,
+  type OwnerToken,
   type ResolvedStep,
   type StepId,
   type RunbookState,
-  type ClaimId,
-  type RunId,
   type CommandExecutionStreamOptions,
   type RunbookLifecycleCommandService,
   type LifecycleNavigationCapability,
   type RunProgressionOutcome,
 } from '@rundown-org/core';
-import {
-  renderActorContextRequiredRefusal,
-  renderClaimBearerMismatchRefusal,
-} from './refusal-renderers.js';
-import { transactionalRefusalCode } from './session-mutation-result.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { resolveIndexOption, IndexOptionError } from './index-option.js';
-import { buildNonDelegatingLifecycleSeam } from './lifecycle-seam-factory.js';
-import { readLifecycleCallerEvidence } from './caller-evidence.js';
+import { buildLifecycleSeam } from './lifecycle-seam-factory.js';
 import { driveRunProgression, progressionFailedClosed } from './run-progression-adapters.js';
+import { renderOwnedRunRefusal, renderRunFinished } from './token-option.js';
 
 /**
  * Context for executing a goto operation.
@@ -46,18 +43,15 @@ export interface GotoContext {
   manager: RunbookStateManager;
   /** Core lifecycle seam that owns the decisive GOTO mutation. */
   seam: RunbookLifecycleCommandService;
-  /** Current active runbook state */
+  /** The owned run's state at resolution time */
   state: RunbookState;
   /** Current working directory for file resolution */
   cwd: string;
   /** Runtime-only routing for command subprocess stdout/stderr. */
   commandStreamOptions?: CommandExecutionStreamOptions;
   /**
-   * Verified delegation capabilities for a navigation that lands on a DELEGATE
-   * frontier, and for the continuation that projects the frontier it stored.
-   * Passed WHOLE to `runNavigationMutation`, with the delegation runtime left
-   * nested under `navigation.authority`, so neither half can travel apart from
-   * its twin.
+   * Core-verified run, authority and graph for the navigation. Passed WHOLE
+   * to `runNavigationMutation` so none of the three can travel apart.
    */
   navigation: LifecycleNavigationCapability;
 }
@@ -97,16 +91,16 @@ export function gotoResultRequiresFailureExit(
 }
 
 /**
- * Result of resolving the runbook target and building goto execution context.
+ * Result of resolving the owned run and building goto execution context.
  *
- * The refusal members are exactly the core navigation seam's refusing
- * outcomes (derived via `Exclude` so a new core refusal is a compile error in
- * the goto command's exhaustive switch rather than a silent fall-through).
- * `actor_context_required` deliberately carries no run id (accident barrier —
- * the refusal must not hand a lingering child the id it needs to bypass it).
+ * The refusal members are the refusing arms of core's token resolution
+ * (`unknown_token`, `finished`) and of the navigation seam (`run_finished`),
+ * derived via `Exclude` so a new core refusal is a compile error in the
+ * exhaustive switch rather than a silent fall-through.
  */
 export type BuildGotoContextResult =
   | { readonly kind: 'ready'; readonly ctx: GotoContext }
+  | Exclude<OwnedRunResolution, { kind: 'running' }>
   | Exclude<LifecycleNavigationOutcome, { kind: 'allowed' }>;
 
 /** A {@link BuildGotoContextResult} narrowed to its non-`ready` variants. */
@@ -116,8 +110,7 @@ export type GotoRefusal = Exclude<BuildGotoContextResult, { kind: 'ready' }>;
  * Commands that render a navigation refusal.
  *
  * Closed at the two call sites: standalone `goto`, and `run`'s launch-local
- * `--step` jump. Keeping it closed is what stops `output.noActiveRunbook` from
- * being handed a command the `no_active_runbook` envelope does not name.
+ * `--step` jump.
  */
 export type NavigationRefusalCommand = 'goto' | 'run';
 
@@ -127,17 +120,7 @@ export type NavigationRefusalCommand = 'goto' | 'run';
  * The navigation counterpart to `renderRefusal` (pass/fail, `transitions.ts`)
  * and `renderTerminalOutcome` (complete/stop, `terminal-command.ts`): each
  * command family's helper owns one named dispatcher over its outcome union,
- * returning `true` when the outcome requests a non-zero exit. `goto` previously
- * inlined this switch inside `registerGotoCommand`'s action closure, which made
- * every refusal arm reachable only by running the whole CLI — so arms for
- * outcomes the CLI cannot construct (`claim_bearer_mismatch`, #613) had no
- * testable seam at all. Naming the dispatcher restores parity with the siblings
- * and puts every arm under this module's own unit tests.
- *
- * The command name is a parameter defaulting to `'goto'` because `run` resolves
- * a `GOTO` through the same navigation outcome union and must name itself in
- * the refusal it renders. It names only the command in the rendered text;
- * `LifecycleNavigationInput` still types `command` as the literal `'goto'`.
+ * returning `true` when the outcome requests a non-zero exit.
  *
  * Exit-code-to-process mapping stays with the caller (Category A) — this
  * function decides only the polarity.
@@ -145,10 +128,8 @@ export type NavigationRefusalCommand = 'goto' | 'run';
  * @param output - Output emitter for CLI output.
  * @param refusal - The non-`ready` result returned by {@link buildGotoContext}.
  * @param commandName - Command named in the rendered refusal: `'goto'`, or
- *   `'run'` when a run's own `GOTO` resolution is refused. Closed over those
- *   two so the `no_active_runbook` envelope cannot name a third.
- * @returns `true` when the refusal requests a non-zero exit code; `false` for
- *   `none`, which is an empty-stack no-op rather than a failure.
+ *   `'run'` when a run's own `GOTO` resolution is refused.
+ * @returns `true`: every navigation refusal requests a non-zero exit code.
  */
 export function renderNavigationRefusal(
   output: OutputEmitter,
@@ -156,22 +137,12 @@ export function renderNavigationRefusal(
   commandName: NavigationRefusalCommand = 'goto',
 ): boolean {
   switch (refusal.kind) {
-    case 'none':
-      output.noActiveRunbook(commandName);
-      return false;
-    case 'stale_claim':
-      output.error(refusal.message, refusal.code);
+    case 'unknown_token':
+    case 'finished':
+      return renderOwnedRunRefusal(output, commandName, refusal);
+    case 'run_finished':
+      renderRunFinished(output, commandName, refusal.runId, refusal.lifecycle);
       return true;
-    case 'terminal_claim':
-      output.error(refusal.message, 'CLAIMED_RUNBOOK_UNAVAILABLE');
-      return true;
-    case 'unknown_run':
-      output.error(refusal.message, 'RUN_TARGET_UNAVAILABLE');
-      return true;
-    case 'actor_context_required':
-      return renderActorContextRequiredRefusal(output, commandName);
-    case 'claim_bearer_mismatch':
-      return renderClaimBearerMismatchRefusal(output, commandName);
     default: {
       // Assigning to `never` keeps the compile-time totality check — adding a
       // navigation refusal without an arm here is a build error. Returning a
@@ -188,53 +159,35 @@ export function renderNavigationRefusal(
 /**
  * Build context for goto command execution.
  *
- * Dispatches target resolution and the run-navigation policy gate into the
- * core lifecycle seam (`resolveRunNavigation`) — exactly as pass/fail dispatch
- * into `runTransition` — and keeps only Category-A work here: typed caller
- * evidence from the parsed flags, and assembling the execution context from
- * the seam's `allowed` outcome.
+ * Resolves the Owner Token through core (`resolveOwnedRun`), then dispatches
+ * the owned run into the core navigation seam (`resolveRunNavigation`) —
+ * exactly as pass/fail dispatch into `runTransition` — and keeps only
+ * Category-A work here: assembling the execution context from the seam's
+ * `allowed` outcome.
  *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
- * @param options - Optional explicit claim-id or run-id target
- * @param options.claimId - Claim id to resolve instead of the default stack
- * @param options.runId - Run id (`--run`) to resolve instead of the default
- *   stack. This selects a target run; bearer authority still comes from
- *   `claimId` when one is supplied.
+ * @param options - The parsed Owner Token and stream routing
+ * @param options.token - Owner Token naming the run to navigate
  * @param options.commandStreamOptions - Runtime-only routing for command
  * subprocess stdout/stderr while goto continues execution
- * @returns Discriminated union: `{ kind: 'ready'; ctx }` when an active runbook
- *   was resolved and a goto context is available; `{ kind: 'none' }` when no
- *   active runbook exists; `{ kind: 'stale_claim' | 'terminal_claim' }` when
- *   the supplied claim id cannot be used as a mutable child target;
- *   `{ kind: 'unknown_run' }` for an unresolvable `--run` id; or
- *   `{ kind: 'actor_context_required' }` when the run-navigation policy gate
- *   refuses the caller's evidence.
+ * @returns `{ kind: 'ready'; ctx }` when the token owns a running run, or a
+ *   typed refusal: `unknown_token`, `finished`, or `run_finished`
  */
 export async function buildGotoContext(
   output: OutputEmitter,
   cwd: string,
   options: {
-    readonly claimId?: ClaimId;
-    readonly runId?: RunId;
+    readonly token: OwnerToken;
     readonly commandStreamOptions?: CommandExecutionStreamOptions;
-  } = {},
+  },
 ): Promise<BuildGotoContextResult> {
-  const { manager, seam } = buildNonDelegatingLifecycleSeam(cwd);
+  const { manager, seam } = buildLifecycleSeam(cwd);
 
-  const callerEvidence = readLifecycleCallerEvidence(
-    options.claimId !== undefined ? { claimId: options.claimId } : {},
-  );
-  const outcome = await seam.resolveRunNavigation({
-    command: 'goto',
-    callerEvidence,
-    targetSelector:
-      options.claimId !== undefined
-        ? { kind: 'claim', claimId: options.claimId }
-        : options.runId !== undefined
-          ? { kind: 'run', runId: options.runId }
-          : { kind: 'default' },
-  });
+  const resolution = await resolveOwnedRun(manager, options.token);
+  if (resolution.kind !== 'running') return resolution;
+
+  const outcome = await seam.resolveRunNavigation({ run: resolution.run });
   if (outcome.kind !== 'allowed') {
     return outcome;
   }
@@ -366,10 +319,9 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     target,
   });
   if (mutation.kind !== 'applied') {
-    // This site needs the code rather than the rendering — the refusal travels
-    // back to the caller as a structured result — so it calls the shared
-    // mapping directly instead of restating it.
-    return { ok: false, error: mutation.message, code: transactionalRefusalCode(mutation) };
+    // The refusal travels back to the caller as a structured result; the
+    // only refusing arm is a conditional save that found the row moved.
+    return { ok: false, error: mutation.message, code: CONCURRENT_MODIFICATION_CODE };
   }
 
   output.action(

@@ -9,48 +9,29 @@
  */
 
 import {
-  RunbookStateManager,
-  SessionService,
-  ExecutionLifecycleService,
+  CONCURRENT_MODIFICATION_CODE,
   formatTransitionAction,
   parseStepIdFromString,
-  resolveCommandTarget,
+  resolveOwnedRun,
   type ActionType,
-  type CommandTargetResolution,
-  type CommandTargetSelector,
   type ExecutionEventEmitter,
   type ExplicitTransitionTarget,
-  type RunbookActorService,
-  type ResolvedStep,
   type RunbookState,
-  type ClaimId,
-  type ClaimLookupKey,
+  type RunbookStateManager,
   type RunId,
   type RunProgressionOutcome,
   type CommandExecutionStreamOptions,
-  type LifecycleTerminalReleasePolicy,
   type LifecycleTransitionOutcome,
-  type VerifiedClaim,
+  type OwnerToken,
   type TransitionObservationEvent,
 } from '@rundown-org/core';
-import { createCliRunbookActorService } from './actor-service-factory.js';
-import { buildNonDelegatingLifecycleSeam } from './lifecycle-seam-factory.js';
-import {
-  renderActorContextRequiredRefusal,
-  renderClaimBearerMismatchRefusal,
-  renderClaimGrantRequiredRefusal,
-  renderStaleClaimRefusal,
-  renderTerminalClaimConfirmed,
-  renderTerminalClaimConflict,
-} from './refusal-renderers.js';
-import { renderTransactionalMutationRefusal } from './session-mutation-result.js';
+import { buildLifecycleSeam } from './lifecycle-seam-factory.js';
 import { resolveIndexOption } from './index-option.js';
-import { getRunbookFromState } from './runbook-loader.js';
-import { readLifecycleCallerEvidence } from './caller-evidence.js';
 import { driveRunProgression, progressionFailedClosed } from './run-progression-adapters.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { transitionSinkFromEmitter, type TransitionEventSink } from './transition-orchestrator.js';
+import { renderOwnedRunRefusal, renderRunFinished } from './token-option.js';
 export type { ActionType } from '@rundown-org/core';
 
 /**
@@ -75,8 +56,6 @@ export interface TransitionConfig {
    * fail: always false
    */
   computeActionResult: (actionType: ActionType) => boolean;
-  /** Terminal release policy the core seam applies inside its fenced mutation. */
-  policy: LifecycleTerminalReleasePolicy;
 }
 
 /**
@@ -91,7 +70,6 @@ export function createPassTransitionConfig(): TransitionConfig {
     lastResult: 'pass',
     computeActionResult: (actionType: ActionType) =>
       actionType !== 'RETRY' && actionType !== 'STOP',
-    policy: { releaseOnTerminal: true },
   };
 }
 
@@ -106,217 +84,14 @@ export function createFailTransitionConfig(): TransitionConfig {
     commandName: 'fail',
     lastResult: 'fail',
     computeActionResult: () => false,
-    policy: { releaseOnTerminal: true },
   };
-}
-
-/**
- * Context for executing a transition.
- *
- * Contains all the resolved state needed for transition execution.
- */
-export interface TransitionContext {
-  /** Output emitter for CLI output */
-  output: OutputEmitter;
-  /** Runbook state manager */
-  manager: RunbookStateManager;
-  /** Actor lifecycle service */
-  actorService: RunbookActorService;
-  /** Session stack orchestration service */
-  sessionService: SessionService;
-  /** Execution lifecycle service */
-  lifecycleService: ExecutionLifecycleService;
-  /** Current runbook state */
-  state: RunbookState;
-  /** Parsed runbook steps */
-  steps: ResolvedStep[];
-  /** Current working directory */
-  cwd: string;
-  /** Runtime-only routing for command subprocess stdout/stderr. */
-  commandStreamOptions?: CommandExecutionStreamOptions;
-  /**
-   * Resolved claim record when the target was selected via `--claim-id`;
-   * undefined for the default-stack target. Identifies the bearer-verified claim
-   * whose authority core evaluates for policy. Surfaced on the base (collect)
-   * path only — see {@link buildTransitionContext}.
-   */
-  claim?: VerifiedClaim;
-}
-
-/**
- * Result of resolving the runbook target and building transition execution
- * context for a base-path (collect) caller.
- *
- * The base path routes through `resolveCommandTarget`, which never performs the
- * open-children refusal nor the confirm/conflict split, so the result is this
- * narrow union. Pass/fail no longer use this — they drive through the core
- * lifecycle seam (see {@link runSeamTransition}).
- */
-export type BaseBuildTransitionContextResult =
-  | { readonly kind: 'ready'; readonly ctx: TransitionContext }
-  | Extract<
-      CommandTargetResolution,
-      { kind: 'none' | 'stale_claim' | 'terminal_claim' | 'unknown_run' }
-    >;
-
-/**
- * Build transition execution context for the active or claimed runbook.
- *
- * Used by collect and other base-path callers. Routes through the base
- * `resolveCommandTarget` (no open-delegated-children refusal — that guard is
- * bare-pass/fail-only and now lives in the core seam). Loads the runbook and
- * parses steps.
- *
- * @param output - Output emitter for CLI output
- * @param cwd - Current working directory
- * @param options - Optional explicit claim-id or run-id target
- * @param options.claimId - Claim id to resolve instead of the default stack
- * @param options.runId - Run id (`--run`) to resolve instead of the default
- *   stack. This selects a target run; bearer authority still comes from
- *   `claimId` when one is supplied.
- * @param options.commandStreamOptions - Runtime-only routing for command
- * subprocess stdout/stderr while transition follow-on execution continues
- * @returns `{ kind: 'ready', ctx }` when a target is resolved, or a typed refusal
- * @throws {Error} if state is missing runbookSrc (corrupted state)
- */
-export async function buildTransitionContext(
-  output: OutputEmitter,
-  cwd: string,
-  options: {
-    readonly claimId?: ClaimId;
-    readonly runId?: RunId;
-    readonly commandStreamOptions?: CommandExecutionStreamOptions;
-  } = {},
-): Promise<BaseBuildTransitionContextResult> {
-  const manager = new RunbookStateManager(cwd);
-  const actorService = createCliRunbookActorService(manager);
-  const sessionService = new SessionService(manager);
-  const lifecycleService = new ExecutionLifecycleService(manager);
-
-  let state: RunbookState;
-  // Resolved claim record, surfaced so the collect command can name the
-  // bearer-verified claim for core authorization; undefined for the
-  // default-stack target.
-  let claim: VerifiedClaim | undefined;
-
-  const active = await resolveCommandTarget(sessionService, {
-    ...(options.claimId !== undefined ? { claimId: options.claimId } : {}),
-    ...(options.runId !== undefined ? { runId: options.runId } : {}),
-  });
-  switch (active.kind) {
-    case 'claim':
-      state = active.state;
-      claim = active.claim;
-      break;
-    // One arm since the release mode stopped distinguishing them: an explicit
-    // `--run` target behaves like `default` with the named state already in
-    // hand, and neither carries a claim.
-    case 'default':
-    case 'run':
-      state = active.state;
-      break;
-    case 'none':
-    case 'stale_claim':
-    case 'terminal_claim':
-    case 'unknown_run':
-      return active;
-    default: {
-      const _exhaustive: never = active;
-      return _exhaustive;
-    }
-  }
-
-  const readonlySteps = getRunbookFromState(state, cwd);
-  const steps = [...readonlySteps]; // Convert to mutable array for TransitionContext
-
-  return {
-    kind: 'ready',
-    ctx: {
-      output,
-      manager,
-      actorService,
-      sessionService,
-      lifecycleService,
-      state,
-      steps,
-      cwd,
-      commandStreamOptions: options.commandStreamOptions,
-      ...(claim ? { claim } : {}),
-    },
-  };
-}
-
-/**
- * Emit the `OPEN_DELEGATED_CHILDREN` refusal for a bare pass/fail that would
- * advance a parent with open claimed children.
- *
- * Single-sources the message/code/details shape so every refusal path that
- * surfaces it — the core seam's resolver pre-check and `runGuardedParentAdvance`
- * atomic re-check, rendered by {@link runSeamTransition} — stays identical. The
- * structured `details` payload (`parentRunId`, `claimIds`, `childRunIds`) is the
- * contract the MCP facade relies on.
- *
- * @param output - Output emitter to write the error to
- * @param command - The bare transition that was refused (`pass`/`fail`)
- * @param parentRunId - Active parent runbook id
- * @param claimIds - Open claim lookup keys blocking the advance
- * @param childRunIds - Child run ids for the open claims
- */
-export function emitOpenDelegatedChildrenError(
-  output: OutputEmitter,
-  command: 'pass' | 'fail',
-  parentRunId: RunId,
-  claimIds: readonly ClaimLookupKey[],
-  childRunIds: readonly RunId[],
-): void {
-  output.error(
-    `Cannot run bare rundown ${command}: active parent runbook has open delegated child claim(s): ${claimIds.join(', ')}. Use \`rundown ${command} --claim-id <claim_id>\` to advance a child, or resolve/collect delegated children before advancing the parent.`,
-    'OPEN_DELEGATED_CHILDREN',
-    {
-      command,
-      parentRunId,
-      claimIds,
-      childRunIds,
-    },
-  );
-}
-
-/**
- * Emit the DELEGATION_COLLECTION_PENDING refusal for a bare pass/fail.
- *
- * @param output - Output emitter to write the error to
- * @param command - Bare command that was refused
- * @param parentRunId - Delegating run that must be collected
- * @param outcomeCompletionKeys - Reported outcome completion keys blocking the command
- * @param message - Core policy guidance
- */
-export function emitDelegationCollectionPendingError(
-  output: OutputEmitter,
-  command: 'pass' | 'fail' | 'delegate' | 'complete' | 'stop',
-  parentRunId: RunId,
-  outcomeCompletionKeys: readonly string[],
-  message: string,
-): void {
-  // Include the spec's actionable ancestor-vs-controlled guidance (spec lines
-  // 584-588): the reader needs to know whether to stop or to collect.
-  output.error(
-    `Cannot run bare rundown ${command}: ${message} If this is your ancestor's run, stop here. If this is a run you control, run rundown collect.`,
-    'DELEGATION_COLLECTION_PENDING',
-    {
-      command,
-      parentRunId,
-      outcomeCompletionKeys,
-    },
-  );
 }
 
 /** CLI options forwarded to a pass/fail seam transition. */
 export interface SeamTransitionOptions {
-  /** Explicit claim-id bearer authority (`--claim-id`). */
-  readonly claimId?: ClaimId;
-  /** Explicit run target selector (`--run`); selector precedence is resolved by the caller. */
-  readonly runId?: RunId;
-  /** Explicit substep target (`--step`). */
+  /** The Owner Token naming the run (`--token`), already parsed. */
+  readonly token: OwnerToken;
+  /** Raw `--step` value; required by core, forwarded as `undefined` when absent. */
   readonly step?: string;
   /** Raw `--index` value (requires `--step`). */
   readonly index?: string;
@@ -337,15 +112,12 @@ export interface SeamTransitionResult {
     readonly status: 'continue' | 'done' | 'stopped';
     readonly runId: RunId;
     /**
-     * The closed Run Progression outcome, present exactly when the seam's
-     * directive continued progression (#854). When present, the activation
-     * already owned every terminal-propagation decision. Absence means core
-     * explicitly directed no further activation; it never transfers progression
-     * ownership back to the frontend.
+     * The closed Run Progression outcome. The seam always directs activation
+     * after an applied transition, so this is present whenever `applied` is.
      */
     readonly progression?: RunProgressionOutcome;
   };
-  /** Whether the transition itself requests a non-zero exit (before propagation). */
+  /** Whether the transition itself requests a non-zero exit (before progression). */
   readonly exitError: boolean;
 }
 
@@ -378,7 +150,7 @@ function renderTransitionEvents(
 }
 
 // Sink that renders a top-level run transition as a single buffered action
-// object (the agent-facing JSON shape for bare `rd pass` / `rd fail`).
+// object (the agent-facing JSON shape for a top-level `rd pass` / `rd fail`).
 function buildActionSink(output: OutputEmitter): TransitionEventSink {
   return {
     onErrorOccurred: (payload) => {
@@ -411,76 +183,38 @@ function buildActionSink(output: OutputEmitter): TransitionEventSink {
   };
 }
 
-// Render a refused seam outcome to the existing CLI error / idempotent envelopes.
-// Returns whether the refusal requests a non-zero exit code.
-function renderRefusal(
+/**
+ * Render a refused seam outcome to the CLI error envelopes and report whether
+ * the refusal requests a non-zero exit code.
+ *
+ * Three refusals survive under one writer per run: a `--step` / `--index`
+ * target outside the contract (`INVALID_STEP`, nothing written), a token
+ * whose run already finished (RD-303 / RD-304), and a conditional save that
+ * found the row moved (`CONCURRENT_MODIFICATION`, nothing written, never
+ * retried).
+ *
+ * @param output - Output emitter for CLI output.
+ * @param config - Transition configuration naming the command.
+ * @param outcome - A non-`applied` seam outcome.
+ * @returns `true`: every refusal requests a non-zero exit.
+ */
+export function renderRefusal(
   output: OutputEmitter,
   config: TransitionConfig,
   outcome: Exclude<LifecycleTransitionOutcome, { kind: 'applied' }>,
 ): boolean {
   switch (outcome.kind) {
-    case 'none':
-      output.noActiveRunbook(config.commandName);
-      return false;
-    case 'stale_claim':
-      return renderStaleClaimRefusal(output, outcome.message, outcome.code);
-    case 'terminal_claim_confirmed':
-      return renderTerminalClaimConfirmed(
-        output,
-        config.commandName,
-        outcome.claimId,
-        outcome.lifecycle,
-      );
-    case 'terminal_claim_conflict':
-      return renderTerminalClaimConflict(
-        output,
-        outcome.claimId,
-        outcome.expectedResult,
-        outcome.requestedResult,
-      );
-    case 'open_delegated_children':
-      emitOpenDelegatedChildrenError(
-        output,
-        config.commandName,
-        outcome.parentRunId,
-        outcome.claims.map((claim) => claim.claimKey),
-        outcome.claims.map((claim) => claim.controlledRunId),
-      );
-      return true;
-    case 'delegation_collection_pending':
-      emitDelegationCollectionPendingError(
-        output,
-        config.commandName,
-        outcome.parentRunId,
-        outcome.outcomeCompletionKeys,
-        outcome.message,
-      );
-      return true;
-    case 'actor_context_required':
-      return renderActorContextRequiredRefusal(output, config.commandName);
-    case 'claim_bearer_mismatch':
-      return renderClaimBearerMismatchRefusal(output, config.commandName);
-    case 'claim_grant_required':
-      return renderClaimGrantRequiredRefusal(output, config.commandName);
-    case 'unknown_run':
-      // NOT a transactional refusal: `unknown_run` is a target-resolution
-      // failure raised before any guarded mutation is attempted. It shares
-      // `RUN_TARGET_UNAVAILABLE` with the transactional `missing` arm because
-      // the operator remedy is identical, but it is not a member of that union.
-      output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
-      return true;
     case 'invalid_step_target':
-      // Refused by core before any execution lease or effect marker was
-      // written, so the run is untouched and remains usable (#763).
+      // Refused by core before anything was written (#763): the run is
+      // untouched and the message names the current position.
       output.error(outcome.message, 'INVALID_STEP');
       return true;
-    case 'missing':
-    case 'claim_superseded':
+    case 'run_finished':
+      renderRunFinished(output, config.commandName, outcome.runId, outcome.lifecycle);
+      return true;
     case 'concurrent_modification':
-    case 'execution_in_progress':
-    case 'recovery_required':
-      // Rendered by the one module that owns the kind → code mapping.
-      return renderTransactionalMutationRefusal(output, outcome);
+      output.error(outcome.message, CONCURRENT_MODIFICATION_CODE, { runId: outcome.runId });
+      return true;
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
@@ -488,15 +222,29 @@ function renderRefusal(
   }
 }
 
-// Render an applied transition: idempotent duplicate status, the observation
-// events from the initiating transition, then core Run Progression per the seam
-// directive. The directive carries the one core-minted authority (#854); the
-// CLI supplies wiring and rendering only.
-async function renderApplied(
+/**
+ * Render an applied transition: the observation events from the initiating
+ * transition, then core Run Progression per the seam directive.
+ *
+ * A transition at a substep streams its events through the run's event
+ * emitter (a mid substep emits a plain `step_transitioned`, the last one an
+ * aggregated transition); a top-level transition renders as the single
+ * buffered action object agents read back. The choice keys off the cursor
+ * the command resolved — rendering, not a lifecycle decision.
+ *
+ * @param output - Output emitter for CLI output.
+ * @param cwd - Current working directory.
+ * @param manager - State manager used to reload the mutated run.
+ * @param previous - The run state the transition was applied to.
+ * @param outcome - The seam's `applied` outcome.
+ * @param commandStreamOptions - Runtime-only routing for command subprocess streams.
+ * @returns The semantic status, run id, progression outcome and exit request.
+ */
+export async function renderApplied(
   output: OutputEmitter,
   cwd: string,
-  config: TransitionConfig,
   manager: RunbookStateManager,
+  previous: RunbookState,
   outcome: Extract<LifecycleTransitionOutcome, { kind: 'applied' }>,
   commandStreamOptions?: CommandExecutionStreamOptions,
 ): Promise<{
@@ -505,16 +253,6 @@ async function renderApplied(
   readonly progression?: RunProgressionOutcome;
   readonly exitError: boolean;
 }> {
-  if (outcome.duplicate) {
-    output.status(config.commandName, `Completion already recorded for ${outcome.duplicate.at}`, {
-      status: 'already-resolved',
-      at: outcome.duplicate.at,
-      frameKey: outcome.duplicate.frameKey,
-      entry: outcome.duplicate.entry,
-    });
-  }
-
-  let progression: RunProgressionOutcome | undefined;
   let emitter: ExecutionEventEmitter | undefined;
   let liveState: RunbookState | null = outcome.updatedState ?? null;
   const loadLive = async (): Promise<RunbookState | null> => {
@@ -523,65 +261,52 @@ async function renderApplied(
   };
 
   if (outcome.events.length > 0) {
-    if (outcome.mutation === 'manual-completion') {
-      const state = await loadLive();
-      if (state) {
-        emitter = createBridgedEmitter(state, output);
-        renderTransitionEvents(outcome.events, transitionSinkFromEmitter(emitter));
-      }
+    if (previous.substep !== undefined) {
+      const state = (await loadLive()) ?? previous;
+      emitter = createBridgedEmitter(state, output);
+      renderTransitionEvents(outcome.events, transitionSinkFromEmitter(emitter));
     } else {
       renderTransitionEvents(outcome.events, buildActionSink(output));
     }
   }
 
-  if (outcome.progression.kind === 'activate') {
-    const state = await loadLive();
-    if (state) {
-      emitter ??= createBridgedEmitter(state, output);
-    }
-    progression = await driveRunProgression(outcome.progression, {
-      manager,
-      cwd,
-      output,
-      ...(emitter !== undefined ? { sink: emitter } : {}),
-      ...(commandStreamOptions !== undefined ? { commandStreamOptions } : {}),
-    });
+  const state = await loadLive();
+  if (state) {
+    emitter ??= createBridgedEmitter(state, output);
   }
+  const progression = await driveRunProgression(outcome.progression, {
+    manager,
+    cwd,
+    output,
+    ...(emitter !== undefined ? { sink: emitter } : {}),
+    ...(commandStreamOptions !== undefined ? { commandStreamOptions } : {}),
+  });
 
   return {
     status: outcome.status,
     runId: outcome.runId,
-    ...(progression !== undefined ? { progression } : {}),
+    progression,
     // Semantic lifecycle and process exit are different axes. A refusal or
     // invocation failure closes this command non-zero without inventing a
-    // stopped run; conversely, a stopped inline child absorbed by a progressing
-    // parent follows the composition outcome rather than the child's local arm.
-    exitError:
-      progression === undefined
-        ? outcome.status === 'stopped'
-        : progressionFailedClosed(progression),
+    // stopped run.
+    exitError: progressionFailedClosed(progression),
   };
 }
 
 /**
  * Drive a pass/fail transition through the core lifecycle command seam.
  *
- * The CLI keeps only Category-A work: it parses the raw `--step` / `--index`
- * strings (step-id syntax, numeric `--index` validation, the AT-conflict
- * check), supplies typed caller evidence, renders the seam's typed outcome,
- * and activates Run Progression. The seam resolves the target exactly once and
- * derives the completion cursor from the raw target against the state its
- * fenced cycle captured — the state that cycle's compare-and-swap commits onto
- * (#500) — before any execution lease is acquired, so an out-of-contract target
- * refuses `INVALID_STEP` without touching the run (#763) — target resolution, policy gating,
- * every state-dependent target validation, the inline-child reactivation
- * decision, completion recording, the machine dispatch, and terminal release all live
- * in the seam.
+ * The CLI keeps only Category-A work: it resolves the Owner Token through
+ * core, parses the raw `--step` / `--index` strings (numeric `--index`
+ * validation and the AT-conflict check), renders the seam's typed outcome,
+ * and activates Run Progression. Every state-dependent decision — which run
+ * the token owns, whether `--step` names the current position, the machine
+ * dispatch, the conditional save — lives in core.
  *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
- * @param config - Transition configuration (command name, action-result policy, terminal policy)
- * @param options - Parsed `--claim-id` / `--step` / `--index` options
+ * @param config - Transition configuration (command name, action-result policy)
+ * @param options - Parsed `--token` / `--step` / `--index` options
  * @returns The applied transition (when one occurred) and whether the
  *   transition itself requests a non-zero exit code
  * @throws {IndexOptionError} if `--index` syntax validation fails
@@ -590,52 +315,35 @@ export async function runSeamTransition(
   output: OutputEmitter,
   cwd: string,
   config: TransitionConfig,
-  options: SeamTransitionOptions = {},
+  options: SeamTransitionOptions,
 ): Promise<SeamTransitionResult> {
-  const { manager, seam } = buildNonDelegatingLifecycleSeam(cwd);
+  const { manager, seam } = buildLifecycleSeam(cwd);
 
-  let targetSelector: CommandTargetSelector;
-  let explicitTarget: ExplicitTransitionTarget | undefined;
+  const resolution = await resolveOwnedRun(manager, options.token);
+  if (resolution.kind !== 'running') {
+    const exitError = renderOwnedRunRefusal(output, config.commandName, resolution);
+    output.flush();
+    return { exitError };
+  }
 
+  let target: ExplicitTransitionTarget | undefined;
   if (options.step !== undefined) {
     // Category-A string parsing only: numeric `--index` validation and the
-    // AT-conflict check. All state-dependent validation (step match, substep
-    // existence, FOR bounds, active-iteration default, frame construction)
-    // happens in core, against the captured state the fenced cycle's
-    // compare-and-swap commits onto (#500), before any execution lease (#763).
+    // AT-conflict check. Every state-dependent check (step match, substep
+    // match, FOR iteration) happens in core before anything is written.
     const parsedAt = parseStepIdFromString(options.step)?.at;
     const iteration = resolveIndexOption(options.index, parsedAt);
-    explicitTarget = {
+    target = {
       stepId: options.step,
       ...(iteration !== undefined ? { iteration } : {}),
     };
-    // Selector precedence: claim → run → explicit-step. A run selector with an
-    // explicit target composes like claim+step does: the selector names the
-    // run, `explicitTarget` carries the step/index, and the seam derives
-    // `targeted` from the explicit target's presence (run+step keeps the
-    // targeted exemption from the collection guards).
-    targetSelector = options.claimId
-      ? { kind: 'claim', claimId: options.claimId }
-      : options.runId !== undefined
-        ? { kind: 'run', runId: options.runId }
-        : { kind: 'explicit-step', step: options.step };
-  } else if (options.claimId) {
-    targetSelector = { kind: 'claim', claimId: options.claimId };
-  } else if (options.runId !== undefined) {
-    targetSelector = { kind: 'run', runId: options.runId };
-  } else {
-    targetSelector = { kind: 'default' };
   }
 
   const outcome = await seam.runTransition({
     command: config.commandName,
-    callerEvidence: readLifecycleCallerEvidence(
-      options.claimId !== undefined ? { claimId: options.claimId } : {},
-    ),
-    targetSelector,
-    terminalPolicy: config.policy,
+    run: resolution.run,
+    target,
     computeActionResult: config.computeActionResult,
-    ...(explicitTarget ? { explicitTarget } : {}),
   });
 
   if (outcome.kind !== 'applied') {
@@ -647,8 +355,8 @@ export async function runSeamTransition(
   const rendered = await renderApplied(
     output,
     cwd,
-    config,
     manager,
+    resolution.run.state,
     outcome,
     options.commandStreamOptions,
   );

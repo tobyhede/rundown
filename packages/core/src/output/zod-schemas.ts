@@ -558,7 +558,7 @@ export const ActiveRunbookEntrySchema = z
     status: z
       .string()
       .optional()
-      .describe('Runbook status (active, stashed, completed, stale, or orphaned)'),
+      .describe('Run lifecycle (running, complete, stopped, abandoned, or invalid)'),
     /** Total number of steps */
     total: z.number().optional().describe('Total number of steps'),
     /** Runbook title from metadata */
@@ -1041,12 +1041,24 @@ export const EchoResponseSchema = z
 /**
  * Prune response schema.
  *
- * Uses the same format as `ls` command - an array of ActiveRunbookEntry objects
- * representing the runbook states that were (or would be) pruned.
+ * Uses the `ls` entry shape plus an optional `retained` reason, one row per
+ * run that was (or would be) pruned or was selected but kept.
  */
-export const PruneResponseSchema = ActiveRunbookListSchema.describe(
-  'List of runbook states that were/would be pruned',
-);
+export const PruneResponseSchema = z
+  .array(
+    ActiveRunbookEntrySchema.extend({
+      /**
+       * Present on a run that was selected but kept: a running run is deleted
+       * only under its own Owner Token (`--token`), so `--active` / `--all`
+       * without one report it `retained: "token required"`.
+       */
+      retained: z
+        .string()
+        .optional()
+        .describe('Why a selected run was kept rather than deleted (e.g. "token required")'),
+    }),
+  )
+  .describe('Runs that were/would be pruned, plus running runs retained for want of a token');
 
 // ============================================================================
 // Execution Summary Schema
