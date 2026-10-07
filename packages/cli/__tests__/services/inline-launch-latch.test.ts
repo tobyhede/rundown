@@ -27,7 +27,7 @@ import {
   type RunId,
   type SubstepState,
 } from '@rundown-org/core';
-import { patchPersistedRunState } from '@rundown-org/core/testing/session-fixtures';
+import { patchPersistedRunState } from '@rundown-org/core/testing/run-fixtures';
 import { createCliRunbookActorService } from '../../src/helpers/actor-service-factory.js';
 import {
   classifyInlineChildLinkage,

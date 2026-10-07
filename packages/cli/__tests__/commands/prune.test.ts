@@ -29,7 +29,7 @@ import {
   seedExecutionOwnership,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { patchPersistedRunState } from '@rundown-org/core/testing/session-fixtures';
+import { patchPersistedRunState } from '@rundown-org/core/testing/run-fixtures';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests src/commands/prune.ts`

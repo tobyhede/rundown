@@ -12,7 +12,7 @@ import {
   withRunTarget,
   requireLatestFrontierToken,
 } from '../helpers/test-utils.js';
-import { readPersistedRunState } from '@rundown-org/core/testing/session-fixtures';
+import { readPersistedRunState } from '@rundown-org/core/testing/run-fixtures';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 

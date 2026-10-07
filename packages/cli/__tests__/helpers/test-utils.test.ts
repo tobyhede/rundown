@@ -1,7 +1,7 @@
 import { readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, it, expect } from '@jest/globals';
-import { seedRawRunState, writeRawRunJson } from '@rundown-org/core/testing/session-fixtures';
+import { seedRawRunState, writeRawRunJson } from '@rundown-org/core/testing/run-fixtures';
 import {
   createRunbook,
   createTestWorkspace,

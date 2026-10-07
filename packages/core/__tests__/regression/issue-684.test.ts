@@ -8,7 +8,7 @@ import { mintRunProgressionAuthority } from '../../src/runbook/run-progression-a
 import { SessionService } from '../../src/runbook/session-service.js';
 import { RunbookStateManager, generateRunId } from '../../src/runbook/state.js';
 import { closeRunbookStore } from '../../src/runbook/storage/store-registry.js';
-import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
+import { unwrapSessionMutation } from '../../src/testing/run-fixtures.js';
 import { createRunbook } from '../runbook/fixtures.js';
 
 const WAITING_RUNBOOK = `## 1. Wait

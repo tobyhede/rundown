@@ -9,7 +9,7 @@ import { rm, writeFile } from 'node:fs/promises';
 import {
   patchPersistedRunState,
   readPersistedRunState,
-} from '@rundown-org/core/testing/session-fixtures';
+} from '@rundown-org/core/testing/run-fixtures';
 import { join } from 'node:path';
 import { Command } from 'commander';
 import {

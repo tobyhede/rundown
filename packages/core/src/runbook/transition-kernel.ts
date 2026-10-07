@@ -10,16 +10,10 @@ import { isLastAction } from './last-action.js';
  * layer narrows `RunbookStoppedPayload['reason']` through this type.
  */
 type StoppedReason =
-  | 'actor_context_required'
   | 'policy_denied'
   | 'command_execution_failed'
   | 'fail_transition'
   | 'user_abort'
-  | 'delegation_resolution_failed'
-  | 'nested_delegation_forbidden'
-  | 'inline_launch_failed'
-  | 'inline_launch_forbidden'
-  | 'retry_error_failed'
   | 'output_capture_failed'
   | 'artifact_resolution_failed'
   | 'for_resolution_failed';
@@ -27,25 +21,20 @@ type StoppedReason =
 /**
  * Action type derived from structured LastAction.
  *
- * `RETRY_ERROR` is a machine-internal-failure signal emitted when the retry
- * hook cannot complete — `retryDelegation` returned `{ status: 'error' }`,
- * or a retry-hook invariant (missing active frame, missing canonical at)
- * was violated. It is distinct from `STOP` (a pure domain action from
- * authored STOP transitions or `rd stop`): the CLI orchestrator emits
- * `ERROR_OCCURRED` before the terminal RUNBOOK_STOPPED event.
+ * The `*_FAILED` members are machine-internal failure signals, distinct from
+ * `STOP` (a pure domain action from authored STOP transitions or
+ * `rundown stop`): the CLI orchestrator emits `ERROR_OCCURRED` before the
+ * terminal RUNBOOK_STOPPED event for them.
  */
 export type ActionType =
   | 'START'
   | 'GOTO'
   | 'RETRY'
-  | 'RETRY_ERROR'
   | 'OUTPUT_CAPTURE_FAILED'
   | 'ARTIFACT_RESOLUTION_FAILED'
   | 'FOR_RESOLUTION_FAILED'
   | 'POLICY_DENIED'
   | 'COMMAND_EXECUTION_FAILED'
-  | 'DELEGATION_ISSUANCE_FAILED'
-  | 'INLINE_LAUNCH_FAILED'
   | 'CONTINUE'
   | 'DEFER'
   | 'COMPLETE'
@@ -220,8 +209,6 @@ export function parseActionType(lastAction: LastAction | undefined): ActionType 
       return 'GOTO';
     case 'RETRY':
       return 'RETRY';
-    case 'RETRY_ERROR':
-      return 'RETRY_ERROR';
     case 'OUTPUT_CAPTURE_FAILED':
       return 'OUTPUT_CAPTURE_FAILED';
     case 'ARTIFACT_RESOLUTION_FAILED':
@@ -232,10 +219,6 @@ export function parseActionType(lastAction: LastAction | undefined): ActionType 
       return 'POLICY_DENIED';
     case 'COMMAND_EXECUTION_FAILED':
       return 'COMMAND_EXECUTION_FAILED';
-    case 'DELEGATION_ISSUANCE_FAILED':
-      return 'DELEGATION_ISSUANCE_FAILED';
-    case 'INLINE_LAUNCH_FAILED':
-      return 'INLINE_LAUNCH_FAILED';
     case 'DEFER':
       return 'DEFER';
     case 'COMPLETE':
@@ -286,13 +269,10 @@ export function isInternalFailureLastAction(
   lastAction: LastAction | undefined,
 ): lastAction is InternalFailureLastAction {
   return (
-    lastAction?.type === 'RETRY_ERROR' ||
     lastAction?.type === 'OUTPUT_CAPTURE_FAILED' ||
     lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED' ||
     lastAction?.type === 'FOR_RESOLUTION_FAILED' ||
-    lastAction?.type === 'COMMAND_EXECUTION_FAILED' ||
-    lastAction?.type === 'DELEGATION_ISSUANCE_FAILED' ||
-    lastAction?.type === 'INLINE_LAUNCH_FAILED'
+    lastAction?.type === 'COMMAND_EXECUTION_FAILED'
   );
 }
 
@@ -309,14 +289,11 @@ export function isInternalFailureLastAction(
 export function deriveStoppedReason(lastAction: LastAction | undefined): StoppedReason {
   if (lastAction?.type === 'POLICY_DENIED') return 'policy_denied';
   if (lastAction?.type === 'COMMAND_EXECUTION_FAILED') return 'command_execution_failed';
-  if (lastAction?.type === 'RETRY_ERROR') return 'retry_error_failed';
   if (lastAction?.type === 'OUTPUT_CAPTURE_FAILED') return 'output_capture_failed';
   if (lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED') {
     return 'artifact_resolution_failed';
   }
   if (lastAction?.type === 'FOR_RESOLUTION_FAILED') return 'for_resolution_failed';
-  if (lastAction?.type === 'DELEGATION_ISSUANCE_FAILED') return lastAction.reason;
-  if (lastAction?.type === 'INLINE_LAUNCH_FAILED') return lastAction.reason;
   return 'fail_transition';
 }
 
@@ -333,8 +310,5 @@ export function extractInternalFailureMessage(
   if (lastAction?.type === 'OUTPUT_CAPTURE_FAILED') return lastAction.message;
   if (lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED') return lastAction.message;
   if (lastAction?.type === 'FOR_RESOLUTION_FAILED') return lastAction.message;
-  if (lastAction?.type === 'DELEGATION_ISSUANCE_FAILED') return lastAction.message;
-  if (lastAction?.type === 'INLINE_LAUNCH_FAILED') return lastAction.message;
-  if (lastAction?.type === 'RETRY_ERROR') return lastAction.message;
   return undefined;
 }

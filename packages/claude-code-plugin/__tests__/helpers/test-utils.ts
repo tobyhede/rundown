@@ -10,7 +10,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { assertRunId, RunbookStateManager, SessionService } from '@rundown-org/core';
 import type { RunId } from '@rundown-org/core';
-import { unwrapSessionMutation } from '@rundown-org/core/testing/session-fixtures';
+import { unwrapSessionMutation } from '@rundown-org/core/testing/run-fixtures';
 import type { HookInput, SessionState } from '../../src/shared/index.js';
 
 const __filename = fileURLToPath(import.meta.url);

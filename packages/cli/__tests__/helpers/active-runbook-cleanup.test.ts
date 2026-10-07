@@ -23,7 +23,7 @@ import {
   patchPersistedRunState,
   readPersistedRunState,
   writeRawRunJson,
-} from '@rundown-org/core/testing/session-fixtures';
+} from '@rundown-org/core/testing/run-fixtures';
 import {
   cleanupOrphanedActiveStack,
   isRecoverableActiveStackError,

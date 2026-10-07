@@ -19,7 +19,7 @@ import { DEFAULT_MUTATE_ATTEMPTS, RunbookStore } from '../../src/runbook/storage
 import { SqliteExecutionLeaseService } from '../../src/runbook/storage/execution-lease.js';
 import { ExecutionEventEmitter } from '../../src/events/emitter.js';
 import type { RunbookEventV1 } from '../../src/events/types.js';
-import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
+import { unwrapSessionMutation } from '../../src/testing/run-fixtures.js';
 import { merge } from '../../src/runbook/state-update-ops.js';
 import type { CommandExecutionServices } from '../../src/runbook/actors/command-exec-actor.js';
 import type { ResolvedStep, RunbookState } from '../../src/runbook/types.js';

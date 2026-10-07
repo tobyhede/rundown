@@ -41,7 +41,7 @@ import {
   listPersistedRunIds,
   patchPersistedRunState,
   readPersistedRunState,
-} from '@rundown-org/core/testing/session-fixtures';
+} from '@rundown-org/core/testing/run-fixtures';
 import type { RunbookState } from '@rundown-org/core';
 import { CollectResponseSchema } from '../../src/schemas/output-schemas.js';
 

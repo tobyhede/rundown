@@ -20,7 +20,7 @@ import {
   issueRunControlClaimFor,
   patchPersistedRunState,
   seedRawRunState,
-} from '@rundown-org/core/testing/session-fixtures';
+} from '@rundown-org/core/testing/run-fixtures';
 import { makeDelegatedSubstepState } from '@rundown-org/core/testing/delegation-fixtures';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into

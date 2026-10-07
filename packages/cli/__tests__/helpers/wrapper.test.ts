@@ -13,7 +13,7 @@ import {
   SqljsUnavailableError,
   WalJournalModeUnavailableError,
 } from '@rundown-org/core';
-import { FOREIGN_SCHEMA_VERSION } from '@rundown-org/core/testing/session-fixtures';
+import { FOREIGN_SCHEMA_VERSION } from '@rundown-org/core/testing/run-fixtures';
 import { RunbookSyntaxError } from '@rundown-org/parser';
 
 const { withErrorHandling } = await import('../../src/helpers/wrapper.js');

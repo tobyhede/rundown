@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { listPersistedRunIds } from '@rundown-org/core/testing/session-fixtures';
+import { listPersistedRunIds } from '@rundown-org/core/testing/run-fixtures';
 import { join } from 'node:path';
 import {
   appendArtifactManifestRecordSync,

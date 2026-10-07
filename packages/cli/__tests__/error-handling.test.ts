@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { listPersistedRunIds, writeRawRunJson } from '@rundown-org/core/testing/session-fixtures';
+import { listPersistedRunIds, writeRawRunJson } from '@rundown-org/core/testing/run-fixtures';
 import { createTestWorkspace, runCli, type TestWorkspace } from './helpers/test-utils.js';
 
 describe('error handling', () => {

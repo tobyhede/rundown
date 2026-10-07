@@ -93,13 +93,11 @@ export {
   ArtifactPathResponseSchema,
   ArtifactUriResponseSchema,
   ArtifactInspectResponseSchema,
-  DelegationStatusEntrySchema,
   type ActionResponse,
   type ArtifactLsResponse,
   type ArtifactPathResponse,
   type ArtifactUriResponse,
   type ArtifactInspectResponse,
-  type DelegationStatusEntry,
   type StatusResponse as SchemaStatusResponse,
 } from './schema.js';
 
@@ -181,34 +179,12 @@ export {
   type PruneResponse,
 } from './schema.js';
 
-// Stash/Pop schemas
-export {
-  StashResponseSchema,
-  PopResponseSchema,
-  type StashResponse,
-  type PopResponse,
-} from './schema.js';
-
 // Execution schemas
 export {
   ExecutionSummarySchema,
   RunCommandResponseSchema,
   type ExecutionSummary,
   type RunCommandResponse,
-} from './schema.js';
-
-// Abort schema
-export {
-  AbortResponseSchema,
-  type AbortResponse,
-} from './schema.js';
-
-// Delegate/Claim schemas
-export {
-  DelegateResponseSchema,
-  ClaimResponseSchema,
-  type DelegateResponse,
-  type ClaimResponse,
 } from './schema.js';
 
 // Union types
@@ -219,7 +195,6 @@ export {
   isErrorResponse,
   isWarningResponse,
   isActionResponse,
-  isClaimResponse,
   isStatusResponse as isSchemaStatusResponse,
   isCheckResponse,
   isResolveResponse,

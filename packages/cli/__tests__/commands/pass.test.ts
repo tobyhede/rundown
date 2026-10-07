@@ -25,7 +25,7 @@ import {
   FOREIGN_SCHEMA_VERSION,
   patchPersistedRunState,
   readPersistedRunState,
-} from '@rundown-org/core/testing/session-fixtures';
+} from '@rundown-org/core/testing/run-fixtures';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests src/commands/pass.ts`

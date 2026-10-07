@@ -18,7 +18,7 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
   listPersistedRunIds,
   readPersistedRunState,
-} from '@rundown-org/core/testing/session-fixtures';
+} from '@rundown-org/core/testing/run-fixtures';
 import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';

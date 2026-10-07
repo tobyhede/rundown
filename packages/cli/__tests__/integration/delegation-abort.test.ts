@@ -15,7 +15,7 @@ import {
 } from '../helpers/test-utils.js';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { deletePersistedRunState } from '@rundown-org/core/testing/session-fixtures';
+import { deletePersistedRunState } from '@rundown-org/core/testing/run-fixtures';
 
 describe('Delegation abort integration', () => {
   let workspace: TestWorkspace;

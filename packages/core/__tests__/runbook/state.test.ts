@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm, stat, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getErrorMessage, isError } from '../../src/errors.js';
@@ -15,30 +15,17 @@ import {
 import type { InvalidRunStateDefect } from '../../src/errors.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import { partitionVariables } from '../../src/runbook/variable-preparation.js';
-import { SessionService } from '../../src/runbook/session-service.js';
 import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
-import { ExecutionLifecycleService } from '../../src/runbook/execution-lifecycle-service.js';
 import { makeAggregationLastAction } from '../../src/runbook/last-action.js';
-import { buildContextSnapshot } from '../../src/runbook/delegation-context.js';
-import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
-import { assertClaimLookupKey, assertClaimSecretHash } from '../../src/runbook/claim-id.js';
+import {
+  generateOwnerToken,
+  hashRunSecret,
+  type SecretHash,
+} from '../../src/runbook/run-secrets.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { MAX_FOR_BOUND } from '@rundown-org/parser';
-import {
-  parentAdvanceGuard,
-  isOpenDelegatedChildrenError,
-} from '../../src/runbook/storage/runbook-store.js';
-import { assertClaimGeneration } from '../../src/runbook/storage/mutation-result.js';
-import { makeClaimRecord } from '../../src/testing/claim-fixtures.js';
-import { makeDelegationCredentialDescriptor } from '../../src/testing/delegation-fixtures.js';
-import type {
-  Step,
-  Runbook,
-  RunId,
-  RunbookState,
-  DelegationLinkage,
-} from '../../src/runbook/types.js';
+import type { Step, Runbook, RunId } from '../../src/runbook/types.js';
 import type { ArtifactRecord } from '../../src/runbook/artifact-schema.js';
 import {
   brandTrustedArtifactArrayForTest,
@@ -107,13 +94,12 @@ describe('RunbookStateManager', () => {
   }
 
   /**
-   * Assert a spent optimistic budget surfaced as the typed, retryable refusal.
+   * Assert a lost conditional write surfaced as the typed refusal.
    *
-   * CLAUDE.md instructs callers to "handle it or retry it", which is only
-   * implementable against a typed outcome: a bare `Error` forces message
-   * matching, and reaches the CLI wrapper as RD-999 "Unknown error". Shared by
-   * every seam that can spend the budget, so the contract is pinned once rather
-   * than re-spelled per method.
+   * One writer per run (ADR 0005): the write is refused once and never retried
+   * on the caller's behalf, and the refusal has to be typed — a bare `Error`
+   * forces message matching, and reaches the CLI wrapper as RD-999 "Unknown
+   * error" instead of RD-308.
    *
    * @param error - The value the losing call rejected with.
    * @param runId - Run the refusal must name.
@@ -121,7 +107,7 @@ describe('RunbookStateManager', () => {
    *   the guard rather than casting past it, so the field assertions below
    *   cannot read a shape the value never had.
    */
-  function expectBudgetSpent(error: unknown, runId: string): void {
+  function expectRefusedConcurrent(error: unknown, runId: string): void {
     if (!isConcurrentStateModificationError(error)) {
       throw new Error(`Expected ConcurrentStateModificationError, received: ${String(error)}`);
     }
@@ -135,10 +121,13 @@ describe('RunbookStateManager', () => {
     expect(error.name).toBe('ConcurrentStateModificationError');
   }
 
+  /** A fresh owner token hash for a run whose token the test never needs. */
+  function freshHash(): SecretHash {
+    return hashRunSecret(generateOwnerToken());
+  }
+
   let testDir: string;
   let manager: RunbookStateManager;
-  let lifecycleService: ExecutionLifecycleService;
-  let sessionService: SessionService;
   const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
   const mockRunbook: Runbook = {
     title: 'Test Runbook',
@@ -149,8 +138,6 @@ describe('RunbookStateManager', () => {
   beforeEach(async () => {
     testDir = await mkdtemp(join(tmpdir(), 'ws-test-'));
     manager = new RunbookStateManager(testDir);
-    lifecycleService = new ExecutionLifecycleService(manager);
-    sessionService = new SessionService(manager);
   });
 
   describe('cwd canonicalization invariant', () => {
@@ -203,6 +190,7 @@ describe('RunbookStateManager', () => {
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
         {
+          ownerTokenHash: freshHash(),
           runbookPath: 'test.runbook.md',
         },
       );
@@ -229,7 +217,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
     );
 
     const updated = await manager.update(state.id, {
@@ -269,7 +257,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
     );
 
     await expect(
@@ -293,7 +281,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
     );
 
     const updated = await manager.update(state.id, {
@@ -341,7 +329,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
     );
 
     await expect(
@@ -349,40 +337,6 @@ describe('RunbookStateManager', () => {
         finalVars: { PlanPath: artifact, Reviews: [artifact] },
       }),
     ).rejects.toThrow(/Artifact record value for "PlanPath" is not trusted/);
-  });
-
-  it('rejects untrusted artifact-shaped resolved completion finalVars before persistence', async () => {
-    const artifact = {
-      kind: 'artifact-record' as const,
-      uri: 'rd://artifacts/ctx1/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
-      runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      contextId: 'ctx1',
-      runbook: { source: 'project' as const, path: 'planning/write-plan.runbook.md' },
-      key: 'plan.json',
-      timestamp: '2026-05-07T00:00:00.000Z',
-    } satisfies ArtifactRecord;
-
-    const state = await manager.create(
-      { source: 'project', path: 'test.runbook.md' },
-      mockRunbook,
-      { runbookPath: 'test.runbook.md' },
-    );
-
-    await expect(
-      manager.update(state.id, {
-        resolvedCompletions: merge({
-          [buildFrameKey('1')]: {
-            agentId: 'agent',
-            result: 'pass',
-            targetStep: '1',
-            targetFrameKey: buildFrameKey('1'),
-            targetEntry: 1,
-            finalVars: { PlanPath: artifact },
-            completedAt: '2026-05-07T00:00:00.000Z',
-          },
-        }),
-      }),
-    ).rejects.toThrow(/Resolved completion "1\|" carries invalid finalVars/);
   });
 
   it('creates run state with initial runtime variables separate from templateVars', async () => {
@@ -400,6 +354,7 @@ describe('RunbookStateManager', () => {
       { source: 'project', path: 'review.runbook.md' },
       mockRunbook,
       {
+        ownerTokenHash: freshHash(),
         runbookPath: 'review.runbook.md',
         runbookSrc: '# Review\n\n## 1. Step',
         templateVars: { Plain: 'value' },
@@ -429,7 +384,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
     );
 
     await manager.update(state.id, {
@@ -458,7 +413,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
     );
 
     await manager.update(state.id, { variables: merge({ Foo: 'string-output' }) });
@@ -474,7 +429,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
     );
     await manager.update(state.id, {
       lastAction: makeAggregationLastAction({ type: 'STOP' }),
@@ -487,7 +442,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
     );
 
     await manager.update(state.id, {
@@ -504,7 +459,7 @@ describe('RunbookStateManager', () => {
     const state = await manager.create(
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
-      { runbookPath: 'test.runbook.md' },
+      { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
     );
     const entries: Record<string, ArtifactRecord> = {};
     for (let i = 0; i < 120; i++) {
@@ -526,70 +481,6 @@ describe('RunbookStateManager', () => {
     expect(loaded?.variables.Var119).toMatchObject({ key: 'plan-119.json' });
   });
 
-  describe('getChildRunbookResult', () => {
-    it('should return pass when child has lifecycle completed', async () => {
-      const child = await manager.create(
-        { source: 'project', path: 'child.runbook.md' },
-        mockRunbook,
-        {
-          runbookPath: 'child.runbook.md',
-        },
-      );
-      await manager.update(child.id, { lifecycle: 'completed' });
-
-      const result = await lifecycleService.getChildRunbookResult(child.id);
-      expect(result).toBe('pass');
-    });
-
-    it('should return fail when child has lifecycle stopped', async () => {
-      const child = await manager.create(
-        { source: 'project', path: 'child.runbook.md' },
-        mockRunbook,
-        {
-          runbookPath: 'child.runbook.md',
-        },
-      );
-      await manager.update(child.id, { lifecycle: 'stopped' });
-
-      const result = await lifecycleService.getChildRunbookResult(child.id);
-      expect(result).toBe('fail');
-    });
-
-    it('should return null when child is still active', async () => {
-      const child = await manager.create(
-        { source: 'project', path: 'child.runbook.md' },
-        mockRunbook,
-        {
-          runbookPath: 'child.runbook.md',
-        },
-      );
-      await sessionService.pushRunbook(child.id);
-
-      const result = await lifecycleService.getChildRunbookResult(child.id);
-      expect(result).toBeNull();
-    });
-
-    it('should return pass when child state deleted', async () => {
-      const result = await lifecycleService.getChildRunbookResult('nonexistent-id');
-      expect(result).toBe('pass');
-    });
-
-    it('should return null when child is stashed', async () => {
-      const child = await manager.create(
-        { source: 'project', path: 'child.runbook.md' },
-        mockRunbook,
-        {
-          runbookPath: 'child.runbook.md',
-        },
-      );
-      await sessionService.pushRunbook(child.id);
-      await sessionService.stash();
-
-      const result = await lifecycleService.getChildRunbookResult(child.id);
-      expect(result).toBeNull();
-    });
-  });
-
   describe('RunbookStateManager substep initialization', () => {
     it('initializes substepStates when step has static substeps', async () => {
       const substeps = [
@@ -601,6 +492,7 @@ describe('RunbookStateManager', () => {
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
         {
+          ownerTokenHash: freshHash(),
           runbookPath: 'test.runbook.md',
         },
       );
@@ -626,6 +518,7 @@ describe('RunbookStateManager', () => {
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
         {
+          ownerTokenHash: freshHash(),
           runbookPath: 'test.runbook.md',
         },
       );
@@ -648,6 +541,7 @@ describe('RunbookStateManager', () => {
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
         {
+          ownerTokenHash: freshHash(),
           runbookPath: 'test.runbook.md',
         },
       );
@@ -680,6 +574,7 @@ describe('RunbookStateManager', () => {
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
         {
+          ownerTokenHash: freshHash(),
           runbookPath: 'test.runbook.md',
         },
       );
@@ -700,32 +595,12 @@ describe('RunbookStateManager', () => {
       const state = await manager.create(
         { source: 'project', path: 'parent.runbook.md' },
         mockRunbook,
-        {
-          runbookPath: 'parent.runbook.md',
-        },
+        { ownerTokenHash: freshHash(), runbookPath: 'parent.runbook.md' },
       );
       const frameKey = buildFrameKey('1');
-      const inline = {
-        childRunbookPath: 'runbooks/child.runbook.md',
-        childRunbookRef: { source: 'project' as const, path: 'runbooks/child.runbook.md' },
-        contextSnapshot: buildContextSnapshot(state, '1'),
-        childRunId: assertRunId('rd_11111111111111111111111111111111'),
-        createdAt: '2026-05-30T00:00:00.000Z',
-        started: null,
-      };
-      const delegation = {
-        credential: makeDelegationCredentialDescriptor(),
-        tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
-        childRunbookPath: 'runbooks/delegated.runbook.md',
-        childRunbookRef: { source: 'project' as const, path: 'runbooks/delegated.runbook.md' },
-        contextSnapshot: buildContextSnapshot(state, '1'),
-        childRunId: null,
-        createdAt: '2026-05-30T00:00:00.000Z',
-        cancelledAt: null,
-      };
 
       await manager.update(state.id, {
-        substepStates: [{ id: '1', frameKey, status: 'done', result: 'pass', delegation, inline }],
+        substepStates: [{ id: '1', frameKey, status: 'done', result: 'pass' }],
       });
 
       const reloaded = await manager.load(state.id);
@@ -733,14 +608,10 @@ describe('RunbookStateManager', () => {
       await manager.initializeSubsteps(reloaded!.id, substeps, frameKey);
 
       const initialized = await manager.load(state.id);
-      const entry = initialized?.substepStates?.find(
-        (substep) => substep.id === '1' && substep.frameKey === frameKey,
-      );
-      expect(entry).toBeDefined();
-      expect(entry?.status).toBe('done');
-      expect(entry?.result).toBe('pass');
-      expect(entry?.delegation).toEqual(delegation);
-      expect(entry?.inline).toEqual(expect.objectContaining({ childRunId: inline.childRunId }));
+      expect(initialized?.substepStates).toEqual([
+        { id: '1', frameKey, status: 'done', result: 'pass' },
+        { id: '2', frameKey, status: 'pending' },
+      ]);
     });
 
     it('adds missing substeps without resetting existing same-frame entries', async () => {
@@ -752,6 +623,7 @@ describe('RunbookStateManager', () => {
         { source: 'project', path: 'parent.runbook.md' },
         mockRunbook,
         {
+          ownerTokenHash: freshHash(),
           runbookPath: 'parent.runbook.md',
         },
       );
@@ -769,72 +641,10 @@ describe('RunbookStateManager', () => {
     });
   });
 
-  describe('RunbookStateManager substep lifecycle', () => {
-    it('completes substep with result', async () => {
-      const state = await manager.create(
-        { source: 'project', path: 'test.runbook.md' },
-        mockRunbook,
-        {
-          runbookPath: 'test.runbook.md',
-        },
-      );
-      await manager.update(state.id, {
-        substepStates: [{ id: '1', frameKey: buildFrameKey('1'), status: 'running' }],
-      });
-
-      await manager.completeSubstep(state.id, '1', 'pass', buildFrameKey('1'));
-
-      const updated = await manager.load(state.id);
-      expect(updated?.substepStates?.[0]).toEqual({
-        id: '1',
-        frameKey: buildFrameKey('1'),
-        status: 'done',
-        result: 'pass',
-      });
-    });
-
-    it('completes substep scoped by frameKey', async () => {
-      const state = await manager.create(
-        { source: 'project', path: 'test.runbook.md' },
-        mockRunbook,
-        {
-          runbookPath: 'test.runbook.md',
-        },
-      );
-      // Initialize substeps for two different frames (simulating FOR loop iterations)
-      const frameA = buildFrameKey('1', 1);
-      const frameB = buildFrameKey('1', 2);
-      await manager.update(state.id, {
-        substepStates: [
-          { id: '1', frameKey: frameA, status: 'running' },
-          { id: '1', frameKey: frameB, status: 'running' },
-        ],
-      });
-
-      // Complete only the substep in frame A
-      await manager.completeSubstep(state.id, '1', 'pass', frameA);
-
-      const updated = await manager.load(state.id);
-      expect(updated?.substepStates).toHaveLength(2);
-      // Frame A is done
-      expect(updated?.substepStates?.[0]).toEqual({
-        id: '1',
-        frameKey: frameA,
-        status: 'done',
-        result: 'pass',
-      });
-      // Frame B remains running
-      expect(updated?.substepStates?.[1]).toEqual({
-        id: '1',
-        frameKey: frameB,
-        status: 'running',
-      });
-    });
-  });
-
   describe('create with prompted flag', () => {
     it('generates canonical rd-prefixed run ids', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
       });
 
@@ -847,6 +657,7 @@ describe('RunbookStateManager', () => {
       // it is saved — and this default is what makes that refusal unreachable
       // from the one production creation path.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
       });
 
@@ -856,6 +667,7 @@ describe('RunbookStateManager', () => {
 
     it('accepts prompted option', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
         prompted: true,
       });
@@ -867,6 +679,7 @@ describe('RunbookStateManager', () => {
     it('persists canonical runbook identity through create/load round-trip', async () => {
       const runbookRef = { source: 'plugin' as const, path: 'planning/write-plan.runbook.md' };
       const state = await manager.create(runbookRef, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: '../../plugin/runbooks/planning/write-plan.runbook.md',
       });
 
@@ -882,12 +695,15 @@ describe('RunbookStateManager', () => {
   describe('List and delete operations', () => {
     it('list returns all runbook states', async () => {
       await manager.create({ source: 'project', path: 'one.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'one.md',
       });
       await manager.create({ source: 'project', path: 'two.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'two.md',
       });
       await manager.create({ source: 'project', path: 'three.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'three.md',
       });
 
@@ -903,6 +719,7 @@ describe('RunbookStateManager', () => {
 
     it('delete removes runbook state', async () => {
       const state = await manager.create({ source: 'project', path: 'delete.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'delete.md',
       });
 
@@ -919,55 +736,18 @@ describe('RunbookStateManager', () => {
   });
 
   describe('Load and save operations', () => {
-    it('accepts a session whose claim records carry lastSeenAt (#519)', async () => {
-      // lastSeenAt is a NOT NULL column, so a persisted claim structurally
-      // carries it; this pins that it survives the session round-trip.
-      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
-        runbookPath: 'test.md',
-      });
-      const claimKey = `rdclk_${'a'.repeat(32)}`;
-      await manager.saveSession({
-        defaultStack: [state.id],
-        claims: {
-          [claimKey]: {
-            claimKey: assertClaimLookupKey(claimKey),
-            secretHash: assertClaimSecretHash(`sha256:${'b'.repeat(64)}`),
-            controlledRunId: state.id,
-            grants: [{ action: 'mutate-run', runId: state.id }],
-            issuedAt: '2026-07-01T00:00:00.000Z',
-            updatedAt: '2026-07-01T00:00:00.000Z',
-            lastSeenAt: '2026-07-01T00:00:00.000Z',
-          },
-        },
-      });
-
-      const session = await manager.loadSession();
-      expect(session.defaultStack).toEqual([state.id]);
-      expect(session.claims[claimKey].lastSeenAt).toBe('2026-07-01T00:00:00.000Z');
-    });
-
-    it('ignores an unreleased session JSON file when loading the SQLite session', async () => {
-      await mkdir(join(testDir, '.rundown'), { recursive: true });
-      const legacyPath = join(testDir, '.rundown', 'session.json');
-      const invalidBytes = Buffer.from([0, 255, 123, 110, 111, 116, 45, 106, 115, 111, 110]);
-      await writeFile(legacyPath, invalidBytes);
-
-      const session = await manager.loadSession();
-      expect(session.claims).toEqual({});
-      await expect(readFile(legacyPath)).resolves.toEqual(invalidBytes);
-    });
-
     it('load returns null for nonexistent runbook', async () => {
       const result = await manager.load('nonexistent-id');
       expect(result).toBeNull();
     });
 
-    it('setLastResult updates last result', async () => {
+    it('update persists lastResult', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
       });
 
-      await lifecycleService.setLastResult(state.id, 'pass');
+      await manager.update(state.id, { lastResult: 'pass' });
 
       const updated = await manager.load(state.id);
       expect(updated?.lastResult).toBe('pass');
@@ -977,100 +757,54 @@ describe('RunbookStateManager', () => {
       await expect(manager.update('nonexistent', { step: '2' })).rejects.toThrow('not found');
     });
 
-    // The atomic-write failure path is forced by making the runs directory
-    // read-only (so the temp write fails with EACCES). This is skipped on
-    // NOTE: Cross-process serialization of run-state writes is intentionally
-    // pinned at the IN-PROCESS layer (the tests below) rather than by a
-    // multi-process spawn test. An automated test that spawns concurrent CLI
-    // processes was investigated and deliberately NOT added: process startup
-    // dwarfs the read→write critical section, so the spawned processes never
-    // reliably overlap and the test cannot dependably trigger the lost-update
-    // race it would claim to cover. A test that cannot fail when the guard is
-    // removed is worse than no test. Do NOT add a flaky cross-process spawn
-    // test in their place.
-    //
-    // The serializing mechanism is now the store's state_version CAS with
-    // optimistic retry, not a per-run file lock; the PROPERTY these pin — a
-    // concurrent read-modify-write never loses a merged field — is unchanged.
-    it('serializes concurrent update read-modify-write cycles without losing merged fields', async () => {
-      // Two concurrent same-process updates both read before either write
-      // lands, so without the version guard the second would clobber the first
-      // (lost update). The stale writer retries against fresh state instead.
-      // No wall-clock dependency.
+    // One writer per run (ADR 0005). Two of the owner's own commands racing on
+    // one run is a usage error made visible, not a race the manager serialises:
+    // both cycles read the same version, exactly one conditional save lands,
+    // and the other is refused as the typed RD-308 without being retried.
+    it('refuses the losing cycle when two updates race on one run, and retries nothing', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
       });
 
-      await Promise.all([
+      const outcomes = await Promise.allSettled([
         manager.update(state.id, { variables: merge({ A: '1' }) }),
         manager.update(state.id, { variables: merge({ B: '2' }) }),
       ]);
 
+      const fulfilled = outcomes.filter((o) => o.status === 'fulfilled');
+      const rejected = outcomes.filter((o) => o.status === 'rejected');
+      expect(fulfilled).toHaveLength(1);
+      expect(rejected).toHaveLength(1);
+      expectRefusedConcurrent((rejected[0] as PromiseRejectedResult).reason, state.id);
+
+      // Exactly one write landed, and the refused patch is nowhere in it.
       const updated = await manager.load(state.id);
-      expect(updated?.variables).toEqual({ A: '1', B: '2' });
+      expect(Object.keys(updated?.variables ?? {})).toHaveLength(1);
+      expect(await stateVersionOf(state.id)).toBe(1);
     });
 
-    it('lands every field when many updates contend on one run', async () => {
-      // Stronger than the pair above: enough concurrent writers that some are
-      // guaranteed to go stale and retry. If the version guard were dropped,
-      // later writers would clobber earlier ones and fields would go missing.
+    it('lands every field when updates are issued one after another', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
       });
       const keys = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
 
-      await Promise.all(
-        keys.map((key) => manager.update(state.id, { variables: merge({ [key]: key }) })),
-      );
+      for (const key of keys) {
+        await manager.update(state.id, { variables: merge({ [key]: key }) });
+      }
 
       const reloaded = await manager.load(state.id);
       expect(reloaded?.variables).toEqual(Object.fromEntries(keys.map((key) => [key, key])));
-    });
-
-    it('rejects legacy targetPath fields instead of stripping them on save', async () => {
-      const state = await manager.create({ source: 'project', path: 'legacy.md' }, mockRunbook, {
-        runbookPath: 'legacy.md',
-      });
-      const resolvedKey = '1||1|';
-
-      await manager.update(state.id, {
-        resolvedCompletions: merge({
-          [resolvedKey]: {
-            agentId: 'agent-1',
-            result: 'pass',
-            targetStep: '1',
-            targetFrameKey: buildFrameKey('1'),
-            targetEntry: 1,
-            completedAt: new Date().toISOString(),
-          },
-        }),
-      });
-
-      // Resolved completions are their own table, so the legacy field is planted
-      // in that row's payload rather than in state_json.
-      const store = await getRunbookStore(testDir);
-      await store.transaction((txn) => {
-        const row = txn.tx
-          .prepare(
-            'SELECT payload_json FROM resolved_completions WHERE run_id = :id AND completion_key = :k',
-          )
-          .get<{ readonly payload_json: string }>({ id: state.id, k: resolvedKey });
-        const payload = JSON.parse(row!.payload_json) as Record<string, unknown>;
-        payload.targetPath = '1';
-        txn.tx
-          .prepare(
-            'UPDATE resolved_completions SET payload_json = :json WHERE run_id = :id AND completion_key = :k',
-          )
-          .run({ json: JSON.stringify(payload), id: state.id, k: resolvedKey });
-      });
-
-      await expect(manager.load(state.id)).rejects.toThrow(/schema validation failed/);
+      expect(await stateVersionOf(state.id)).toBe(keys.length);
     });
   });
 
   describe('update variables/templateVars semantics', () => {
     it('replaces templateVars wholesale when updates.templateVars is defined', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
         templateVars: { env: 'staging', port: 3000 },
       });
@@ -1088,6 +822,7 @@ describe('RunbookStateManager', () => {
       // without templateVars, so `create` must always persist it — `{}` when
       // the caller supplies none.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
       });
 
@@ -1099,6 +834,7 @@ describe('RunbookStateManager', () => {
 
     it('preserves existing templateVars when updates.templateVars is undefined', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
         templateVars: { env: 'staging', port: 3000 },
       });
@@ -1110,6 +846,7 @@ describe('RunbookStateManager', () => {
 
     it('shallow-merges variables when updates.variables is defined', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
       });
       await manager.update(state.id, { variables: merge({ A: '1', B: '2' }) });
@@ -1121,6 +858,7 @@ describe('RunbookStateManager', () => {
 
     it('preserves existing variables when updates.variables is undefined', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
       });
       await manager.update(state.id, { variables: merge({ A: '1' }) });
@@ -1128,32 +866,6 @@ describe('RunbookStateManager', () => {
       const updated = await manager.update(state.id, { stepName: 'next' });
 
       expect(updated.variables).toEqual({ A: '1' });
-    });
-  });
-
-  describe('isPrompted', () => {
-    it('returns true when parent has prompted flag', async () => {
-      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
-        runbookPath: 'parent.md',
-        prompted: true,
-      });
-
-      const result = await lifecycleService.isPrompted(parent.id);
-      expect(result).toBe(true);
-    });
-
-    it('returns false when parent has no prompted flag', async () => {
-      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
-        runbookPath: 'parent.md',
-      });
-
-      const result = await lifecycleService.isPrompted(parent.id);
-      expect(result).toBe(false);
-    });
-
-    it('returns false for nonexistent parent', async () => {
-      const result = await lifecycleService.isPrompted('nonexistent');
-      expect(result).toBe(false);
     });
   });
 
@@ -1165,6 +877,7 @@ describe('RunbookStateManager', () => {
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
         {
+          ownerTokenHash: freshHash(),
           runbookPath: 'test.runbook.md',
           runbookSrc,
         },
@@ -1182,6 +895,7 @@ describe('RunbookStateManager', () => {
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
         {
+          ownerTokenHash: freshHash(),
           runbookPath: 'test.runbook.md',
         },
       );
@@ -1197,11 +911,12 @@ describe('RunbookStateManager', () => {
       'should set restrictive file permissions on the state database',
       async () => {
         await manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
+          ownerTokenHash: freshHash(),
           runbookPath: 'test.runbook.md',
         });
 
         // State lives in the project database now; it carries run state and
-        // hashed claim secrets, so it keeps the owner-only mode.
+        // hashed owner tokens, so it keeps the owner-only mode.
         const stats = await stat(join(testDir, '.rundown', 'rundown.db'));
 
         // Check mode is 0o600 (owner read/write only)
@@ -1214,6 +929,7 @@ describe('RunbookStateManager', () => {
   describe('FOR loop context persistence', () => {
     it('persists FOR fields through round-trip', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
       });
 
@@ -1267,6 +983,7 @@ describe('RunbookStateManager', () => {
   describe('Legacy snapshot rejection', () => {
     it('rejects state with GOTO_NEXT action in lastAction', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
       });
 
@@ -1281,6 +998,7 @@ describe('RunbookStateManager', () => {
 
     it('rejects state with instance field', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
       });
 
@@ -1294,6 +1012,7 @@ describe('RunbookStateManager', () => {
 
     it('provides helpful error message for legacy snapshots', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
       });
 
@@ -1315,10 +1034,9 @@ describe('RunbookStateManager', () => {
 
     // The two readers of persisted state must refuse a legacy run identically.
     // They did not: `RunbookStore.readRun` mirrored only the schema-version gate,
-    // so a user with a pre-existing legacy run who typed `rundown stash`/`pop`
-    // (which read through `ctx.readState`, never `load`) got a raw `ZodError`
-    // schema dump — no restart instruction, and a class outside the CLI's
-    // recovery taxonomy. Measured before the shared gate landed:
+    // so an in-transaction reader (`txn.readState`, never `load`) got a raw
+    // `ZodError` schema dump — no restart instruction, and a class outside the
+    // CLI's recovery taxonomy. Measured before the shared gate landed:
     //   GOTO_NEXT  load => LegacySnapshotError | instance   load => LegacySnapshotError
     //   GOTO_NEXT  store => ZodError "No matching discriminator"
     //   instance   store => ZodError unrecognized_keys ["instance"]
@@ -1327,6 +1045,7 @@ describe('RunbookStateManager', () => {
       ['an instance field', { instance: 2 }],
     ])('refuses %s identically through the loader and the store', async (_label, legacyShape) => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
       });
       await writeRawStateJson(state.id, { ...state, ...legacyShape });
@@ -1336,7 +1055,7 @@ describe('RunbookStateManager', () => {
       const seams = await Promise.all([
         manager.load(state.id).catch((e: unknown) => e),
         store.loadRun(runId).catch((e: unknown) => e),
-        store.mutateSession((ctx) => ctx.readState(runId)).catch((e: unknown) => e),
+        store.read((txn) => txn.readState(runId)).catch((e: unknown) => e),
       ]);
 
       // Same class and same wording from every seam — asserted as one object so
@@ -1364,6 +1083,7 @@ describe('RunbookStateManager', () => {
       };
 
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
         templateVars: templateVars,
       });
@@ -1384,6 +1104,7 @@ describe('RunbookStateManager', () => {
         { source: 'project', path: 'demo.runbook.md' },
         mockRunbook,
         {
+          ownerTokenHash: freshHash(),
           runbookPath: '/abs/demo.runbook.md',
         },
       );
@@ -1411,6 +1132,7 @@ describe('RunbookStateManager', () => {
         { source: 'project', path: 'demo.runbook.md' },
         mockRunbook,
         {
+          ownerTokenHash: freshHash(),
           runbookPath: '/abs/demo.runbook.md',
         },
       );
@@ -1419,15 +1141,15 @@ describe('RunbookStateManager', () => {
     });
   });
 
-  describe('updateWithState', () => {
-    it('applies the patch derived from the locked current state', async () => {
+  describe('mutate', () => {
+    it('applies the patch derived from the current state', async () => {
       const state = await manager.create(
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
-        { runbookPath: 'test.runbook.md' },
+        { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
       );
 
-      const updated = await manager.updateWithState(state.id, (current) => ({
+      const updated = await manager.mutate(state.id, (current) => ({
         stepName: `derived from ${current.step}`,
       }));
 
@@ -1436,379 +1158,157 @@ describe('RunbookStateManager', () => {
       expect(loaded?.stepName).toBe('derived from 1');
     });
 
-    it('leaves state unchanged and returns current state when callback returns null', async () => {
+    it('leaves state unchanged, writing nothing, when the builder returns null', async () => {
       const state = await manager.create(
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
-        { runbookPath: 'test.runbook.md' },
+        { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
       );
+      const versionBefore = await stateVersionOf(state.id);
 
-      const result = await manager.updateWithState(state.id, () => null);
+      const result = await manager.mutate(state.id, () => null);
 
       expect(result.id).toBe(state.id);
       expect(result.stepName).toBe(state.stepName);
-    });
-
-    it('throws when the runbook does not exist', async () => {
-      const buildUpdates = jest.fn(() => ({ stepName: 'unreachable' }));
-
-      await expect(manager.updateWithState('rd_missing', buildUpdates)).rejects.toThrow(
-        'Runbook rd_missing not found',
-      );
-      // Callback must never run for a missing runbook.
-      expect(buildUpdates).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('updateWithStateIfExists', () => {
-    it('applies the patch derived from the locked current state', async () => {
-      const state = await manager.create(
-        { source: 'project', path: 'test.runbook.md' },
-        mockRunbook,
-        { runbookPath: 'test.runbook.md' },
-      );
-
-      const updated = await manager.updateWithStateIfExists(state.id, (current) => ({
-        stepName: `derived from ${current.step}`,
-      }));
-
-      expect(updated?.stepName).toBe('derived from 1');
-      const loaded = await manager.load(state.id);
-      expect(loaded?.stepName).toBe('derived from 1');
-    });
-
-    it('returns current state unchanged when callback returns null', async () => {
-      const state = await manager.create(
-        { source: 'project', path: 'test.runbook.md' },
-        mockRunbook,
-        { runbookPath: 'test.runbook.md' },
-      );
-
-      const result = await manager.updateWithStateIfExists(state.id, () => null);
-
-      expect(result?.id).toBe(state.id);
-      expect(result?.stepName).toBe(state.stepName);
-    });
-
-    it('returns null without invoking the callback when the runbook does not exist', async () => {
-      const buildUpdates = jest.fn(() => ({ stepName: 'unreachable' }));
-
-      const result = await manager.updateWithStateIfExists('rd_missing', buildUpdates);
-
-      expect(result).toBeNull();
-      expect(buildUpdates).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('updateWithStateReturning', () => {
-    it('flows a typed value out alongside the patch', async () => {
-      const state = await manager.create(
-        { source: 'project', path: 'test.runbook.md' },
-        mockRunbook,
-        { runbookPath: 'test.runbook.md' },
-      );
-
-      const result = await manager.updateWithStateReturning(state.id, (current) => ({
-        updates: { stepName: `derived from ${current.step}` },
-        value: `seen:${current.step}`,
-      }));
-
-      expect(result.value).toBe(`seen:${state.step}`);
-      expect(result.state?.stepName).toBe('derived from 1');
-
-      const reloaded = await manager.load(state.id);
-      expect(reloaded?.stepName).toBe('derived from 1');
-    });
-
-    it('returns the current state and value unchanged when callback updates are null', async () => {
-      const state = await manager.create(
-        { source: 'project', path: 'test.runbook.md' },
-        mockRunbook,
-        { runbookPath: 'test.runbook.md' },
-      );
-
-      const result = await manager.updateWithStateReturning(state.id, () => ({
-        updates: null,
-        value: 'reported',
-      }));
-
-      expect(result.state?.id).toBe(state.id);
-      expect(result.value).toBe('reported');
-    });
-
-    it('returns null state and value without invoking the callback when the runbook is missing', async () => {
-      const buildResult = jest.fn(() => ({
-        updates: { stepName: 'unreachable' },
-        value: 'unused',
-      }));
-
-      const result = await manager.updateWithStateReturning('rd_missing', buildResult);
-
-      expect(result.state).toBeNull();
-      expect(result.value).toBeNull();
-      expect(buildResult).not.toHaveBeenCalled();
-    });
-  });
-
-  // The compare-and-swap primitive the lock retirement rests on: the inline-launch
-  // latch and the completion drain both route through it, and both depend on the
-  // reported value being the one derived from the state that actually committed.
-  describe('mutateStateReturning', () => {
-    /** Seed a run for a mutateStateReturning cycle. */
-    async function seedRun(): Promise<RunbookState> {
-      return await manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
-        runbookPath: 'test.runbook.md',
-      });
-    }
-
-    afterEach(() => {
-      jest.restoreAllMocks();
-    });
-
-    it('commits the derived state verbatim and reports the value alongside it', async () => {
-      const state = await seedRun();
-      const versionBefore = await stateVersionOf(state.id);
-      const build = jest.fn((current: RunbookState) => ({
-        next: { ...current, step: '2', stepName: `derived from ${current.step}` },
-        value: `seen:${current.step}`,
-      }));
-
-      const result = await manager.mutateStateReturning(state.id, build);
-
-      expect(build).toHaveBeenCalledTimes(1);
-      expect(result.value).toBe('seen:1');
-      expect(result.state?.step).toBe('2');
-      expect(result.state?.stepName).toBe('derived from 1');
-      // Positive control for the version probe the `next: null` case reads as
-      // evidence of no write: a committed cycle must move it.
-      expect(await stateVersionOf(state.id)).toBeGreaterThan(versionBefore);
-
-      const reloaded = await manager.load(state.id);
-      expect(reloaded?.step).toBe('2');
-      expect(reloaded?.stepName).toBe('derived from 1');
-    });
-
-    // The distinguishing property against its patch-shaped sibling:
-    // `updateWithStateReturning` runs the derivation through
-    // `applyRunbookStateUpdate`, which stamps a fresh `updatedAt`. This one commits
-    // whatever the callback returns, untouched — so a callback that leaves
-    // `updatedAt` alone leaves the persisted row's timestamp alone too.
-    it('does not apply patch semantics over the callback-supplied state', async () => {
-      const state = await seedRun();
-      let observedUpdatedAt: string | undefined;
-
-      const result = await manager.mutateStateReturning(state.id, (current) => {
-        observedUpdatedAt = current.updatedAt;
-        return { next: { ...current, stepName: 'verbatim' }, value: null };
-      });
-
-      expect(observedUpdatedAt).toBeDefined();
-      expect(result.state?.updatedAt).toBe(observedUpdatedAt);
-
-      const reloaded = await manager.load(state.id);
-      expect(reloaded?.updatedAt).toBe(observedUpdatedAt);
-      expect(reloaded?.stepName).toBe('verbatim');
-    });
-
-    it('writes nothing but still reports the value when the callback returns next: null', async () => {
-      const state = await seedRun();
-      const versionBefore = await stateVersionOf(state.id);
-
-      const result = await manager.mutateStateReturning(state.id, () => ({
-        next: null,
-        value: 'reported',
-      }));
-
-      expect(result.value).toBe('reported');
-      expect(result.state?.id).toBe(state.id);
-      expect(result.state?.stepName).toBe(state.stepName);
       // Field equality alone would also hold for a real write of an identical
       // value; the unmoved version is what proves no write happened at all.
       expect(await stateVersionOf(state.id)).toBe(versionBefore);
-      expect((await manager.load(state.id))?.stepName).toBe(state.stepName);
     });
 
-    // Two distinct "no such run" arms reach the same result: an id that cannot name
-    // a run at all is refused before the store is asked, while a well-formed id with
-    // no row is refused by the store's own read.
-    //
-    // The result alone does not separate them — a non-canonical id can never match a
-    // row, so deleting the id guard entirely would still produce `{null, null}` via
-    // the store's missing arm. What the guard is FOR is that the store is never
-    // asked, so that is what this asserts.
-    it('refuses an id that cannot name a run before asking the store', async () => {
-      const state = await seedRun();
-      const build = jest.fn(() => ({ next: null, value: 'unused' }));
-      // Keyed on `manager.cwd`, not `testDir`: the registry hands back one store
-      // per project root, and this assertion is only meaningful if the spy sits on
-      // the very instance `mutateStateReturning` reaches for.
-      const store = await getRunbookStore(manager.cwd);
-      const mutateState = jest.spyOn(store, 'mutateState');
+    it('throws without invoking the builder when the runbook does not exist', async () => {
+      const build = jest.fn(() => ({ stepName: 'unreachable' }));
 
-      const result = await manager.mutateStateReturning('rd_missing', build);
-
-      expect(result.state).toBeNull();
-      expect(result.value).toBeNull();
-      expect(build).not.toHaveBeenCalled();
-      expect(mutateState).not.toHaveBeenCalled();
-
-      // Positive control: without it, a spy wired to the wrong instance would
-      // satisfy the assertion above for the wrong reason and never fail.
-      await manager.mutateStateReturning(state.id, () => ({ next: null, value: null }));
-      expect(mutateState).toHaveBeenCalledTimes(1);
-    });
-
-    it('returns null state and value without invoking the callback when the run does not exist', async () => {
-      const build = jest.fn(() => ({ next: null, value: 'unused' }));
-
-      const result = await manager.mutateStateReturning(generateRunId(), build);
-
-      expect(result.state).toBeNull();
-      expect(result.value).toBeNull();
+      await expect(manager.mutate('rd_missing', build)).rejects.toThrow(
+        'Runbook rd_missing not found',
+      );
       expect(build).not.toHaveBeenCalled();
     });
 
-    // The contract the docstring claims and the whole reason the value flows out
-    // through the result rather than a closure variable: a losing attempt's
-    // derivation is discarded along with its value, so the caller can never act on
-    // a decision made against a version that did not commit.
-    it('reports the value derived from the state that actually committed after a stale retry', async () => {
-      const state = await seedRun();
+    it('runs the builder exactly once and refuses a lost write instead of re-deriving', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+      );
       const observed: string[] = [];
 
-      const result = await manager.mutateStateReturning(state.id, async (current) => {
-        observed.push(current.stepName);
-        if (observed.length === 1) {
-          // Move the version out from under this attempt exactly once, so the
-          // first derivation is discarded and the second one commits.
-          await churn(state.id);
-        }
-        return {
-          next: { ...current, stepName: `committed:${current.stepName}` },
-          value: `derived:${current.stepName}`,
-        };
-      });
-
-      expect(observed).toEqual(['Initial step', 'churn']);
-      expect(result.value).toBe('derived:churn');
-      expect(result.state?.stepName).toBe('committed:churn');
-      expect((await manager.load(state.id))?.stepName).toBe('committed:churn');
-    });
-
-    // CLAUDE.md: `concurrent_modification` is a reachable arm on any concurrently
-    // driven path, not a theoretical one. The latch and the drain both sit on such
-    // a path, so the refusal has to arrive as the typed, retryable error they
-    // classify on rather than as a bare Error reaching the CLI as RD-999 — and,
-    // critically for a method that reports a value, as a REJECTION rather than a
-    // resolved `{ state: null, value: null }` a caller would read as "no run".
-    it('throws a typed retryable error when the retry budget is spent', async () => {
-      const state = await seedRun();
-
       const error = await manager
-        .mutateStateReturning(state.id, async (current) => {
-          // Always move the version behind our back, so no attempt can land and
-          // the whole budget is spent.
+        .mutate(state.id, async (current) => {
+          observed.push(current.stepName);
+          // Move the version out from under this cycle. Under the old CAS loop
+          // the builder re-ran against the churned state and the second
+          // derivation committed; now the cycle is refused and nothing is
+          // written.
           await churn(state.id);
-          return { next: { ...current, stepName: 'never' }, value: 'never' };
+          return { stepName: `derived:${current.stepName}` };
         })
         .then(
           (value) => value,
           (reason: unknown) => reason,
         );
 
-      expectBudgetSpent(error, state.id);
-      // Nothing was written: a spent budget must not leave a losing derivation
-      // behind. Pinned as the exact value the concurrent writer left rather than
-      // as `not 'never'`, which a corrupted or empty row would also satisfy.
+      expect(observed).toEqual(['Initial step']);
+      expectRefusedConcurrent(error, state.id);
+      // Pinned as the exact value the concurrent writer left rather than as
+      // `not 'derived…'`, which a corrupted or empty row would also satisfy.
+      expect((await manager.load(state.id))?.stepName).toBe('churn');
+    });
+  });
+
+  describe('loadWithVersion and save', () => {
+    it('reads the version a run is at and saves against it', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+      );
+
+      const read = await manager.loadWithVersion(state.id);
+      expect(read?.stateVersion).toBe(0);
+
+      const saved = await manager.save({ ...read!.state, stepName: 'saved' }, read!.stateVersion);
+      expect(saved.kind).toBe('committed');
+      if (saved.kind !== 'committed') throw new Error('expected committed');
+      // `save` stamps the version and a fresh timestamp; everything else is the
+      // caller's state verbatim.
+      expect(saved.state.stepName).toBe('saved');
+      expect(saved.state.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+      expect((await manager.loadWithVersion(state.id))?.stateVersion).toBe(1);
+    });
+
+    it('returns the typed refusal rather than throwing when the version moved', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+      );
+      const read = await manager.loadWithVersion(state.id);
+      await churn(state.id);
+
+      const saved = await manager.save({ ...read!.state, stepName: 'late' }, read!.stateVersion);
+
+      expect(saved).toEqual({ kind: 'concurrent_modification' });
       expect((await manager.load(state.id))?.stepName).toBe('churn');
     });
 
-    describe('releaseOnCommit, committed with the state write (#794)', () => {
-      it('forwards the release so the session write commits with the state', async () => {
-        // The manager's job here is threading, and threading is only observable
-        // as an effect: the derivation has to reach the store's transaction, not
-        // merely be accepted as an argument.
-        const state = await seedRun();
-        const sessions = new SessionService(manager);
-        await sessions.pushRunbook(state.id);
-        expect((await manager.loadSession()).defaultStack).toContain(state.id);
+    it('reports missing for a run that does not exist and null for an id that cannot name one', async () => {
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
+      );
+      const read = await manager.loadWithVersion(state.id);
+      await manager.delete(state.id);
 
-        const result = await manager.mutateStateReturning(
-          state.id,
-          (current) => ({ next: { ...current, stepName: 'terminal' }, value: 'applied' }),
-          {
-            // Derived from the state the transaction commits, which is the whole
-            // reason the derivation receives it rather than closing over an
-            // attempt's own.
-            releaseOnCommit: (next) => [{ runId: next.id, role: 'addressed' }],
-          },
-        );
+      expect(await manager.save(read!.state, read!.stateVersion)).toEqual({ kind: 'missing' });
+      expect(await manager.loadWithVersion('rd_missing')).toBeNull();
+    });
+  });
 
-        expect(result.value).toBe('applied');
-        expect((await manager.load(state.id))?.stepName).toBe('terminal');
-        expect((await manager.loadSession()).defaultStack).not.toContain(state.id);
+  describe('findByOwnerTokenHash', () => {
+    it('resolves the hash a run was created with, and nothing else', async () => {
+      const token = generateOwnerToken();
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { ownerTokenHash: hashRunSecret(token), runbookPath: 'test.runbook.md' },
+      );
+      await manager.create({ source: 'project', path: 'other.runbook.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
+        runbookPath: 'other.runbook.md',
       });
 
-      it('leaves the session alone when no release is derived', async () => {
-        // The armed-but-empty arm, which is the common one: a caller arms this
-        // for a whole sequence and most cycles have nothing to release.
-        const state = await seedRun();
-        const sessions = new SessionService(manager);
-        await sessions.pushRunbook(state.id);
+      const found = await manager.findByOwnerTokenHash(hashRunSecret(token));
+      expect(found?.state.id).toBe(state.id);
+      expect(found?.stateVersion).toBe(0);
+      expect(await manager.findByOwnerTokenHash(freshHash())).toBeNull();
+    });
 
-        await manager.mutateStateReturning(
-          state.id,
-          (current) => ({ next: { ...current, stepName: 'ordinary' }, value: 'applied' }),
-          { releaseOnCommit: () => [] },
-        );
+    it('still resolves a finished run, so a late command can be told it finished', async () => {
+      const token = generateOwnerToken();
+      const state = await manager.create(
+        { source: 'project', path: 'test.runbook.md' },
+        mockRunbook,
+        { ownerTokenHash: hashRunSecret(token), runbookPath: 'test.runbook.md' },
+      );
+      await manager.update(state.id, { lifecycle: 'completed' });
 
-        expect((await manager.load(state.id))?.stepName).toBe('ordinary');
-        expect((await manager.loadSession()).defaultStack).toContain(state.id);
+      const found = await manager.findByOwnerTokenHash(hashRunSecret(token));
+      expect(found?.state.lifecycle).toBe('completed');
+    });
+
+    it('refuses to create a second run under a hash another run already carries', async () => {
+      const hash = freshHash();
+      await manager.create({ source: 'project', path: 'a.runbook.md' }, mockRunbook, {
+        ownerTokenHash: hash,
+        runbookPath: 'a.runbook.md',
       });
-
-      it('leaves the session alone when no derivation is supplied', async () => {
-        // The absent arm, and the reason it is spelled as omission rather than
-        // as an `undefined` field: a cycle that declares no release must reach
-        // the store with none, so an ordinary state write cannot churn session
-        // rows it never mentioned.
-        const state = await seedRun();
-        const sessions = new SessionService(manager);
-        await sessions.pushRunbook(state.id);
-
-        await manager.mutateStateReturning(state.id, (current) => ({
-          next: { ...current, stepName: 'ordinary' },
-          value: 'applied',
-        }));
-
-        expect((await manager.load(state.id))?.stepName).toBe('ordinary');
-        expect((await manager.loadSession()).defaultStack).toContain(state.id);
-      });
-
-      it('rejects and writes nothing when the release is refused', async () => {
-        // One outcome, not two. The manager surfaces the rollback rather than
-        // absorbing it: a caller that learns its release failed must not also be
-        // told its state committed.
-        const state = await seedRun();
-        const sessions = new SessionService(manager);
-        await sessions.pushRunbook(state.id);
-        const versionBefore = await stateVersionOf(state.id);
-
-        await expect(
-          manager.mutateStateReturning(
-            state.id,
-            (current) => ({ next: { ...current, stepName: 'terminal' }, value: 'applied' }),
-            {
-              releaseOnCommit: () => {
-                throw new Error('release refused');
-              },
-            },
-          ),
-        ).rejects.toThrow('release refused');
-
-        expect((await manager.load(state.id))?.stepName).not.toBe('terminal');
-        expect(await stateVersionOf(state.id)).toBe(versionBefore);
-        expect((await manager.loadSession()).defaultStack).toContain(state.id);
-      });
+      await expect(
+        manager.create({ source: 'project', path: 'b.runbook.md' }, mockRunbook, {
+          ownerTokenHash: hash,
+          runbookPath: 'b.runbook.md',
+        }),
+      ).rejects.toThrow(/already carries the owner token hash/);
     });
   });
 
@@ -1825,7 +1325,7 @@ describe('RunbookStateManager', () => {
       const state = await manager.create(
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
-        { runbookPath: 'test.runbook.md' },
+        { ownerTokenHash: freshHash(), runbookPath: 'test.runbook.md' },
       );
 
       const updated = await manager.update(state.id, {
@@ -1846,124 +1346,6 @@ describe('RunbookStateManager', () => {
       const stopped = await manager.update(state.id, { lifecycle: 'stopped' });
       expect(stopped.lifecycle).toBe('stopped');
       expect(stopped.activeEntry).toBe(BEYOND_FOR_BOUND);
-    });
-
-    it('round-trips a resolved completion recorded at an entry past the FOR ceiling', async () => {
-      // `targetEntry` is the same run-global ordinal under another name
-      // (`completionEntryForFrame`), so it shares the ceiling and the fix.
-      const state = await manager.create(
-        { source: 'project', path: 'test.runbook.md' },
-        mockRunbook,
-        { runbookPath: 'test.runbook.md' },
-      );
-
-      await manager.update(state.id, {
-        resolvedCompletions: replace({
-          [`${FRAME}::a`]: {
-            agentId: 'agent-1',
-            result: 'pass' as const,
-            targetStep: '1',
-            targetFrameKey: FRAME,
-            targetEntry: BEYOND_FOR_BOUND,
-            completedAt: '2026-08-04T00:00:00.000Z',
-          },
-        }),
-      });
-
-      const loaded = await manager.load(state.id);
-      expect(loaded?.resolvedCompletions?.[`${FRAME}::a`]?.targetEntry).toBe(BEYOND_FOR_BOUND);
-    });
-  });
-
-  describe('parent-advance guard', () => {
-    const PARENT_STEP_ID = 'a';
-    const PARENT_FRAME = buildFrameKey('1');
-    const TOKEN_HASH = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
-
-    function delegationLinkage(parentRunId: RunId): DelegationLinkage {
-      return {
-        kind: 'delegation',
-        parentRunId,
-        parentStepId: PARENT_STEP_ID,
-        parentStep: '1',
-        parentFrameKey: PARENT_FRAME,
-        parentEntry: 1,
-        tokenHash: TOKEN_HASH,
-      };
-    }
-
-    it('refuses a guarded update when the parent has a live delegated child', async () => {
-      const parent = await manager.create({ source: 'project', path: 'parent.md' }, mockRunbook, {
-        runbookPath: 'parent.md',
-      });
-      await manager.update(parent.id, {
-        substepStates: [{ id: PARENT_STEP_ID, frameKey: PARENT_FRAME, status: 'pending' }],
-      });
-      const child = await manager.create({ source: 'project', path: 'child.md' }, mockRunbook, {
-        runbookPath: 'child.md',
-        parentLinkage: delegationLinkage(parent.id),
-      });
-      const store = await getRunbookStore(testDir);
-      await store.transaction((txn) => {
-        txn.insertClaim(
-          makeClaimRecord({
-            claimKey: assertClaimLookupKey(`rdclk_${'c'.repeat(32)}`),
-            controlledRunId: child.id,
-            delegation: {
-              childRunId: child.id,
-              parentRunId: parent.id,
-              parentStepId: PARENT_STEP_ID,
-              parentStep: '1',
-              parentFrameKey: PARENT_FRAME,
-              parentEntry: 1,
-              tokenHash: TOKEN_HASH,
-            },
-            grants: [{ action: 'mutate-run', runId: child.id }],
-          }),
-          assertClaimGeneration(0),
-        );
-      });
-
-      const error: unknown = await manager
-        .update(parent.id, { step: '2' }, { guard: parentAdvanceGuard(parent.id) })
-        .then(
-          (value) => value,
-          (reason: unknown) => reason,
-        );
-      expect(isOpenDelegatedChildrenError(error)).toBe(true);
-
-      // The refusal alone is only half the contract: the manager layer sits between
-      // the store's rollback and the caller, so it must also leave the parent
-      // untouched. Without this, a future change that caught the throw and continued
-      // would keep the assertion above green while the parent silently advanced.
-      const parentAfter = await manager.load(parent.id);
-      expect(parentAfter?.step).toBe('1');
-    });
-  });
-
-  describe('optimistic CAS exhaustion', () => {
-    it('surfaces a losing read-modify-write as a typed, retryable error', async () => {
-      const state = await manager.create(
-        { source: 'project', path: 'test.runbook.md' },
-        mockRunbook,
-        { runbookPath: 'test.runbook.md' },
-      );
-
-      const error = await manager
-        .updateWithState(state.id, async () => {
-          // Always move the version behind our back, so no attempt can land and
-          // the whole budget is spent.
-          await churn(state.id);
-          return { stepName: 'never' };
-        })
-        .then(
-          (value) => value,
-          (reason: unknown) => reason,
-        );
-
-      expectBudgetSpent(error, state.id);
-      // Nothing was written: the losing cycle must not have persisted its patch.
-      expect((await manager.load(state.id))?.stepName).not.toBe('never');
     });
   });
 
@@ -2001,6 +1383,7 @@ describe('RunbookStateManager', () => {
       raw: (state: Record<string, unknown>) => unknown,
     ): Promise<string> {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
       });
       await writeRawStateJson(state.id, raw(state as unknown as Record<string, unknown>));
@@ -2106,6 +1489,7 @@ describe('RunbookStateManager', () => {
       'loads a run persisting prompted: $prompted',
       async ({ prompted }) => {
         const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+          ownerTokenHash: freshHash(),
           runbookPath: 'test.md',
           prompted,
         });
@@ -2124,6 +1508,7 @@ describe('RunbookStateManager', () => {
 
     it('names the run and its stale version when a derivation is refused', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshHash(),
         runbookPath: 'test.md',
       });
       const stale = { ...state, schemaVersion: 99 };

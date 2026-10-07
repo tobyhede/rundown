@@ -5,7 +5,7 @@ import { assertClaimId, claimKeyFromBearer } from '@rundown-org/core';
 import {
   patchPersistedClaim,
   patchPersistedRunState,
-} from '@rundown-org/core/testing/session-fixtures';
+} from '@rundown-org/core/testing/run-fixtures';
 import {
   createTestWorkspace,
   parseConcatenatedJson,

@@ -20,7 +20,7 @@ import {
   patchPersistedRunState,
   seedActiveRun,
   writeRawRunJson,
-} from '@rundown-org/core/testing/session-fixtures';
+} from '@rundown-org/core/testing/run-fixtures';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

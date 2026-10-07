@@ -13,7 +13,7 @@ import {
   listPersistedRunIds,
   patchPersistedRunState,
   readPersistedRunState,
-} from '@rundown-org/core/testing/session-fixtures';
+} from '@rundown-org/core/testing/run-fixtures';
 import { writeFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 

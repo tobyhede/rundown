@@ -11,7 +11,7 @@ import { describe, expect, it, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { assertClaimId, claimKeyFromBearer, ErrorResponseSchema } from '@rundown-org/core';
-import { patchPersistedRunState } from '@rundown-org/core/testing/session-fixtures';
+import { patchPersistedRunState } from '@rundown-org/core/testing/run-fixtures';
 import {
   createTestWorkspace,
   createRunbook,

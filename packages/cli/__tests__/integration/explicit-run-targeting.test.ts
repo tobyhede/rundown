@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
-import { writeRawRunJson } from '@rundown-org/core/testing/session-fixtures';
+import { writeRawRunJson } from '@rundown-org/core/testing/run-fixtures';
 import { join } from 'node:path';
 import {
   createTestWorkspace,

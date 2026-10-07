@@ -51,20 +51,19 @@ import type { RunbookState } from './types.js';
  * A version mismatch is a rejection, never a migration: state carrying any
  * other value is refused outright, not read, adapted, or rewritten (CLAUDE.md
  * § State Persistence). Historically, three PRs added a required field while
- * this stood at `1` — `StepInlineChild.startedAt` (#746),
- * `StepInlineChild.started` replacing it (#772), and `RunbookState.prompted`
- * (#827) — without moving it (#775). Same-version state from before those
- * fields passed the version gate and was refused later by the shared Zod parse
- * as `schema_validation_failed` (#828). That history explains why a structural
- * fixture now forces the version judgment; it does not describe current v1
- * state. Since this constant is `2`, every v1 row is foreign and is refused by
- * this gate as `invalid_schema_version` before structural parsing.
+ * this stood at `1` without moving it (#775); version `2` then recorded #854's
+ * XState progression decision states, a change inside the opaque snapshot that
+ * only this gate could refuse.
  *
- * Version `2` records #854's XState progression decision states and final
- * machine output. Those changes live inside the opaque snapshot and are
- * invisible to the Zod structural parse, so the version gate is the only way
- * to refuse a v1 snapshot whose state IDs/output contract the current machine
- * does not understand. Per the no-migration rule, development runs restart.
+ * Version `3` records the one-writer-per-run state (ADR 0005, #901).
+ * `RunbookState` lost `resolvedCompletions`, `parentLinkage` and `nested`, and
+ * `SubstepState` lost its `delegation` and `inline` records; `lifecycle` gained
+ * `abandoned`. The structural parse refuses the removed fields on its own, but
+ * the machine's context shape changed with them — the frontier, inline-launch
+ * and recovery fields left the opaque snapshot — and that is invisible to the
+ * parse. Every v1 and v2 row is foreign and is refused by this gate as
+ * `invalid_schema_version` before structural parsing. Per the no-migration
+ * rule, development runs restart.
  *
  * Move this constant when a change to `RunbookState` (`runbook/types.ts`) or
  * `RunbookStateObjectSchema` (`schemas.ts`) is one the Zod structural parse
@@ -73,7 +72,7 @@ import type { RunbookState } from './types.js';
  * shape or state IDs is invisible to it, so nothing else will refuse a stale
  * snapshot.
  */
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 3;
 
 /**
  * Thrown when a persisted state file does not match the current schema contract.

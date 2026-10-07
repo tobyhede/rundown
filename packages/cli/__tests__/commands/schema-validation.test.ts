@@ -33,7 +33,7 @@ import {
   validateWarningOutput,
 } from '../helpers/schema-validator.js';
 import { RUN_ID_PATTERN } from '@rundown-org/core';
-import { seedSession } from '@rundown-org/core/testing/session-fixtures';
+import { seedSession } from '@rundown-org/core/testing/run-fixtures';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 

@@ -77,7 +77,7 @@ import {
   retireDuringCapture,
   seedLiveDelegation,
 } from './claim-test-helpers.js';
-import { patchPersistedClaim, unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
+import { patchPersistedClaim, unwrapSessionMutation } from '../../src/testing/run-fixtures.js';
 
 import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
 

@@ -39,7 +39,7 @@ import {
   type Transitions,
 } from '../../src/runbook/index.js';
 import { inferFrameEntryFromState } from '../../src/runbook/frame-entry.js';
-import { unwrapSessionMutation } from '../../src/testing/session-fixtures.js';
+import { unwrapSessionMutation } from '../../src/testing/run-fixtures.js';
 import {
   brandInitialTemplateVarsForTest,
   brandStoredOutputsForTest,

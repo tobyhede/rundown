@@ -106,9 +106,17 @@ export * from './duration.js';
 export * from './last-action.js';
 export * from './run-secrets.js';
 export * from './transition-kernel.js';
+// The conditional-write vocabulary is public so a front end narrows the store's
+// own result union (`saveRun` / `RunbookStateManager.save`) rather than
+// re-declaring it, and names the version it read a run at.
+export type { SaveRunResult, VersionedRunState } from './storage/runbook-store.js';
+export { assertStateVersion, type StateVersion } from './storage/mutation-result.js';
 export {
+  applyRunbookStateUpdate,
   generateRunId,
   RunbookStateManager,
+  type CreateOptions,
+  type RunbookStateUpdate,
   ConcurrentStateModificationError,
   isConcurrentStateModificationError,
   // Barrelled so a front end's fixtures name the version rather than hard-code a
@@ -116,7 +124,6 @@ export {
   CURRENT_SCHEMA_VERSION,
   InvalidRunbookStateError,
   LegacySnapshotError,
-  type SessionData,
 } from './state.js';
 export {
   applyOp,
@@ -125,7 +132,6 @@ export {
   type FrameEntryCountsOp,
   type MergeOp,
   type ReplaceOp,
-  type ResolvedCompletionsOp,
   type TemplateVarsOp,
   type VariablesOp,
 } from './state-update-ops.js';

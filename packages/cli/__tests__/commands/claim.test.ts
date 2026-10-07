@@ -21,7 +21,7 @@ import { access, mkdir, writeFile } from 'node:fs/promises';
 import {
   deletePersistedRunState,
   patchPersistedRunState,
-} from '@rundown-org/core/testing/session-fixtures';
+} from '@rundown-org/core/testing/run-fixtures';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { DEFAULT_MUTATE_ATTEMPTS, ErrorResponseSchema, SessionService } from '@rundown-org/core';

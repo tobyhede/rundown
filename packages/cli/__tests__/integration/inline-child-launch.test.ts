@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import {
   deletePersistedRunState,
   patchPersistedRunState,
-} from '@rundown-org/core/testing/session-fixtures';
+} from '@rundown-org/core/testing/run-fixtures';
 import { recordInlineLaunchStart, SessionService, type InlineLaunchStart } from '@rundown-org/core';
 import {
   createTestWorkspace,

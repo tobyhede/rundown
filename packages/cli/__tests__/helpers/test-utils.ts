@@ -34,7 +34,7 @@ import {
   patchPersistedRunState,
   readPersistedRunState,
   unwrapSessionMutation,
-} from '@rundown-org/core/testing/session-fixtures';
+} from '@rundown-org/core/testing/run-fixtures';
 import { dbPath } from '@rundown-org/core';
 import { DatabaseSync } from 'node:sqlite';
 import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';

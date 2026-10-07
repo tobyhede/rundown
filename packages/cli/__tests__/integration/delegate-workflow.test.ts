@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { RunId } from '@rundown-org/core';
-import { patchPersistedRunState } from '@rundown-org/core/testing/session-fixtures';
+import { patchPersistedRunState } from '@rundown-org/core/testing/run-fixtures';
 import {
   createTestWorkspace,
   createRunbook,

@@ -85,25 +85,6 @@ describe('resetReopenedSubsteps', () => {
     ]);
   });
 
-  it('preserves a delegation record on a reset row (status/result reset only)', () => {
-    const before: SubstepState[] = [
-      {
-        id: 'a',
-        frameKey: frame,
-        status: 'done',
-        result: 'pass',
-        delegation: { token: 't' } as never,
-      },
-    ];
-    const after = resetReopenedSubsteps(step, frame, 'a', before);
-    expect(after[0]).toEqual({
-      id: 'a',
-      frameKey: frame,
-      status: 'pending',
-      delegation: { token: 't' },
-    });
-  });
-
   it('returns the input unchanged when fromSubstepId is not a declared substep', () => {
     const before: SubstepState[] = [done('a', 'pass')];
     const after = resetReopenedSubsteps(step, frame, 'zzz', before);

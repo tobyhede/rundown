@@ -1,11 +1,14 @@
 /**
  * SQLite schema for the Rundown runbook state store.
  *
- * Defines the authoritative schema version, the DDL for the six coordinated
- * tables (`runs`, `claims`, `session_stack`, `stash_slot`,
- * `resolved_completions`, `execution_attempts`), and the version-checking
- * install/validate routines. Structural lease/version triggers are layered on
- * top of this DDL in the repository task, where they are pinned red-green.
+ * Defines the authoritative schema version, the DDL for the single `runs`
+ * table, and the version-checking install/validate routines. One writer per
+ * run (ADR 0005): every run has exactly one Run Owner, proven by the Owner
+ * Token whose hash lives on the row, and only that owner's commands write it.
+ * There is no claims table, no session stack, no stash slot, no completion
+ * mailbox and no execution-attempts ledger — each of those existed to let a
+ * second writer into the row, and the one-writer model removes the writer
+ * rather than coordinating it.
  *
  * The schema version is stored in SQLite's built-in `PRAGMA user_version`. It is
  * atomic, cheap, and identical across both adapters. An on-disk database whose
@@ -24,17 +27,12 @@ import type { SqlReadTransaction, SqlTransaction } from './sql-driver.js';
  * version is invalid and rejected with an {@link IncompatibleSchemaError}; the
  * recovery path is explicit user action (finish, stop, prune, restart).
  *
- * Version 2 adds `claims_one_active_per_run`. Sharing version 1 with databases
- * created before that index existed would silently run without its invariant,
- * so those databases are rejected rather than migrated.
- *
- * The `released` execution phase widened this DDL's `phase` CHECK constraint
- * WITHOUT moving this constant, following the same call made for
- * `claims_one_active_per_run`: the store is unreleased, no persisted database
- * exists outside a development tree, and there is nothing to migrate. A stale
- * development database rejects a `released` write at the constraint; the
- * remedy is to delete `.rundown/rundown.db`. From the first release, any DDL
- * edit MUST move this constant or `IncompatibleSchemaError` can never fire.
+ * Version 3 is the one-writer-per-run schema (ADR 0005, #901): a single `runs`
+ * table carrying the Owner Token hash, nullable child-linkage and lease column
+ * groups, and `state_version`. Versions 1 and 2 carried the multi-writer tables
+ * (`claims`, `session_stack`, `stash_slot`, `resolved_completions`,
+ * `execution_attempts`); a database at either version is foreign to this build
+ * and is refused whole, because none of its coordinating rows has a home here.
  *
  * **Not the same version as `CURRENT_SCHEMA_VERSION`, and neither one covers
  * the other.** This constant gates the DDL — the whole database, via
@@ -42,12 +40,11 @@ import type { SqlReadTransaction, SqlTransaction } from './sql-driver.js';
  * `CURRENT_SCHEMA_VERSION` (`runbook/persisted-state-guards.ts`) gates the run
  * state inside each `runs.state_json` blob, one row at a time, refused as
  * RD-309. `state_json` is opaque TEXT to this DDL, so a change to the persisted
- * run-state shape moves that constant and not this one — which is why #746,
- * #772 and #827 were misses on RD-309's constant while this one was correctly
- * left alone (verified: no commit has touched this file since before #746). The
- * converse holds too: a DDL edit moves this and leaves that.
+ * run-state shape moves that constant and not this one; a DDL edit moves this
+ * and leaves that. The two happen to both read `3` today because #901 changed
+ * both the tables and the blob at once.
  */
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 /** `user_version` value of a freshly created, never-installed database. */
 const UNINITIALIZED_VERSION = 0;
@@ -87,10 +84,22 @@ export class IncompatibleSchemaError extends Error {
  *
  * Every closed union in the model is pinned by a `CHECK` constraint, so a value
  * outside it cannot be persisted even by a caller that bypasses the typed store.
- * `runs` and `execution_attempts` reference each other, so their foreign keys
- * cannot both point backwards: the `runs` → `execution_attempts` direction is
- * declared `DEFERRABLE INITIALLY DEFERRED` and checked at COMMIT, which also
- * frees a write path from ordering the attempt insert against the run update.
+ * The two nullable column groups (`parent_*`, `lease_*`) are all-or-none under
+ * their own `CHECK`s, so a half-written linkage or lease is unrepresentable.
+ *
+ * `state_version` is owned solely by the `runs_bump_state_version` trigger: it
+ * advances on every `state_json` write, for any writer present or future, so
+ * the conditional `UPDATE … WHERE state_version = :expected` in the store is a
+ * complete lost-update check by construction rather than by call-site
+ * discipline.
+ *
+ * Child linkage is cleared by the `runs_unlink_children` trigger when the
+ * parent row is deleted, not by `ON DELETE SET NULL`: the referential action
+ * nulls `parent_run_id` alone, which the all-or-none `CHECK` then refuses, so
+ * the parent could never be pruned while a child row remained. The trigger
+ * clears the whole group inside the same statement, and the foreign key (no
+ * action) still refuses any other write that would leave a dangling reference.
+ *
  * `PRAGMA user_version` is set last, inside the same transaction, so a crash
  * mid-install leaves the version at `0` and the next open re-installs rather
  * than adopting a partial schema.
@@ -98,269 +107,60 @@ export class IncompatibleSchemaError extends Error {
 const SCHEMA_DDL = `
 CREATE TABLE runs (
   id                TEXT    PRIMARY KEY NOT NULL,
-  -- Lost-update CAS: bumped by EVERY state mutation, including a valid holder's.
-  state_version     INTEGER NOT NULL DEFAULT 0,
-  -- Claim-validity CAS: authoritative here, NOT on individual claim rows.
-  -- Bumped by every write that can change claim resolution.
-  claim_generation  INTEGER NOT NULL DEFAULT 0,
-  -- Persisted machine lifecycle: running | completed | stopped. recoveryRequired
-  -- persists as 'running'; it is a machine state, not a lifecycle value.
-  lifecycle         TEXT    NOT NULL CHECK (lifecycle IN ('running', 'completed', 'stopped')),
-  -- Authoritative RunbookState JSON, with the coordinated fields (claims, stack,
-  -- stash, resolved completions) excluded — those tables are their sole home.
-  state_json        TEXT    NOT NULL,
-  -- Active execution identity. All NULL when no attempt owns the run. exec_token
-  -- is the HASHED bearer secret; exec_epoch references the active attempt row.
-  -- exec_start_id is the host's process start id for exec_pid, written by
-  -- acquireInTx and compared at recovery: a pid alone cannot tell the owner from
-  -- a process that inherited its number (see runbook/process-identity).
-  exec_pid          INTEGER,
-  exec_token        TEXT,
-  exec_epoch        INTEGER,
-  exec_start_id     TEXT,
-  created_at        TEXT    NOT NULL,
-  updated_at        TEXT    NOT NULL,
-  -- Execution identity is all-or-nothing: a half-populated identity would name
-  -- an owner the recovery path cannot resolve. exec_start_id stays optional
-  -- while owned, mirroring execution_attempts.owner_start_id — a host with no
-  -- process start id still owns the run — but must be absent when unowned.
-  CHECK (
-    (exec_epoch IS NULL AND exec_pid IS NULL AND exec_token IS NULL AND exec_start_id IS NULL)
-    OR (exec_epoch IS NOT NULL AND exec_pid IS NOT NULL AND exec_token IS NOT NULL)
-  ),
-  -- The named epoch must be a real attempt of THIS run. Deferred so the attempt
-  -- insert and the run update may land in either order within one transaction.
-  FOREIGN KEY (id, exec_epoch) REFERENCES execution_attempts(run_id, exec_epoch)
-    DEFERRABLE INITIALLY DEFERRED
-);
-
-CREATE TABLE claims (
-  key               TEXT    PRIMARY KEY NOT NULL,
-  controlled_run    TEXT    NOT NULL,
-  secret_hash       TEXT    NOT NULL,
-  -- Immutable issuance generation retained as metadata only; commit validity
-  -- compares the captured value against runs.claim_generation.
-  issued_generation INTEGER NOT NULL,
-  -- active | superseded. Rotated/released claims remain as superseded tombstones
-  -- while any active/recovery attempt can reference their issuance.
-  status            TEXT    NOT NULL DEFAULT 'active'
-                            CHECK (status IN ('active', 'superseded')),
-  -- Delegation linkage, NULL for non-delegated claims.
+  -- Persisted machine lifecycle. 'abandoned' is written only by \`rundown
+  -- release\` on a child's own row (ADR 0005) and collects as a fail.
+  lifecycle         TEXT    NOT NULL
+                            CHECK (lifecycle IN ('running', 'completed', 'stopped', 'abandoned')),
+  -- SHA-256 hash of the run's Owner Token. The token itself is printed once at
+  -- \`rundown run\` and never stored; this hash is the sole authority lookup key.
+  owner_token_hash  TEXT    NOT NULL UNIQUE,
+  -- Child linkage (nullable all-or-none; written by #903/#904).
+  -- parent_kind: 'delegation' | 'inline'.
   parent_run_id     TEXT,
-  parent_linkage_version INTEGER,
-  delegation_json   TEXT,
-  grants_json       TEXT    NOT NULL,
-  issued_at         TEXT    NOT NULL,
-  updated_at        TEXT    NOT NULL,
-  -- #519 claim-activity liveness. Distinct from updated_at ("record last
-  -- written"); refreshed only at the authorization seam.
-  last_seen_at      TEXT    NOT NULL,
-  FOREIGN KEY (controlled_run) REFERENCES runs(id) ON DELETE CASCADE,
-  FOREIGN KEY (parent_run_id)  REFERENCES runs(id) ON DELETE SET NULL
-);
-
-CREATE INDEX claims_controlled_run ON claims(controlled_run);
-CREATE INDEX claims_parent_run     ON claims(parent_run_id);
-
--- At most one active claim may control a run. resolveControllingClaim and
--- captureRunAuthority select the run's controller without a disambiguator;
--- without this constraint a second active row makes that selection arbitrary.
--- Superseded tombstones are unconstrained.
-CREATE UNIQUE INDEX claims_one_active_per_run
-  ON claims(controlled_run)
-  WHERE status = 'active';
-
--- The single project default stack. position 0 is the bottom of the stack.
-CREATE TABLE session_stack (
-  position          INTEGER PRIMARY KEY NOT NULL,
-  run_id            TEXT    NOT NULL,
-  FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
-);
-
--- The single project stash slot. At most one row (slot fixed at 0); an empty
--- stash is the absence of the row.
-CREATE TABLE stash_slot (
-  slot              INTEGER PRIMARY KEY NOT NULL CHECK (slot = 0),
-  run_id            TEXT    NOT NULL,
-  FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
-);
-
-CREATE TABLE resolved_completions (
-  run_id            TEXT    NOT NULL,
-  completion_key    TEXT    NOT NULL,
-  payload_json      TEXT    NOT NULL,
+  parent_step       TEXT,
+  parent_frame_key  TEXT,
+  parent_entry      INTEGER,
+  parent_kind       TEXT    CHECK (parent_kind IS NULL OR parent_kind IN ('delegation', 'inline')),
+  -- Execution lease (nullable all-or-none; written by #902). lease_start_id may
+  -- be NULL where the host supplies no process start id.
+  lease_attempt     INTEGER,
+  lease_pid         INTEGER,
+  lease_start_id    TEXT,
+  lease_started_at  TEXT,
+  -- Lost-update counter: bumped by the trigger below on every state_json write.
+  state_version     INTEGER NOT NULL DEFAULT 0,
+  -- Authoritative RunbookState JSON, minus \`lifecycle\`, whose home is its own
+  -- column so the CHECK above can pin it.
+  state_json        TEXT    NOT NULL,
   created_at        TEXT    NOT NULL,
-  PRIMARY KEY (run_id, completion_key),
-  FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
+  updated_at        TEXT    NOT NULL,
+  CHECK (
+    (parent_run_id IS NULL AND parent_step IS NULL AND parent_frame_key IS NULL
+      AND parent_entry IS NULL AND parent_kind IS NULL)
+    OR (parent_run_id IS NOT NULL AND parent_step IS NOT NULL AND parent_frame_key IS NOT NULL
+      AND parent_entry IS NOT NULL AND parent_kind IS NOT NULL)
+  ),
+  CHECK (
+    (lease_attempt IS NULL AND lease_pid IS NULL AND lease_start_id IS NULL
+      AND lease_started_at IS NULL)
+    OR (lease_attempt IS NOT NULL AND lease_pid IS NOT NULL AND lease_started_at IS NOT NULL)
+  ),
+  FOREIGN KEY (parent_run_id) REFERENCES runs(id)
 );
 
--- Single authoritative home of execution phase; phase is NOT duplicated on runs.
-CREATE TABLE execution_attempts (
-  run_id            TEXT    NOT NULL,
-  exec_epoch        INTEGER NOT NULL,
-  -- Hashed ExecutionToken bearer secret; never the raw token.
-  exec_token        TEXT    NOT NULL,
-  -- claimed | effect_started | recovery_pending | committed | released
-  --
-  -- 'committed' means the prepared state was durably written under this exact
-  -- (run, epoch, token) -- isExactAttemptCommitted reads it as exactly that
-  -- proof. 'released' is its counterpart for an attempt closed with no durable
-  -- state write: normally before the effect boundary, or after the one guarded
-  -- commit refusal that is proven to run before its first write. The two must
-  -- stay distinct, or a released attempt reads as a durable commit.
-  phase             TEXT    NOT NULL
-                            CHECK (phase IN ('claimed', 'effect_started', 'recovery_pending', 'committed', 'released')),
-  owner_pid         INTEGER NOT NULL,
-  -- Per-attempt record of the owner's process start id, alongside owner_pid.
-  -- NULL where the host cannot supply one. The live liveness decision reads
-  -- runs.exec_start_id; this is the attempt's own history of the same fact.
-  owner_start_id    TEXT,
-  -- Closed recovery-reason union member, NULL until recovery.
-  reason            TEXT,
-  started_at        TEXT    NOT NULL,
-  effect_started_at TEXT,
-  finished_at       TEXT,
-  PRIMARY KEY (run_id, exec_epoch),
-  FOREIGN KEY (run_id) REFERENCES runs(id) ON DELETE CASCADE
-);
+CREATE INDEX runs_parent_run ON runs(parent_run_id);
 
--- ==========================================================================
--- Structural lease/version triggers.
---
--- The two concurrency counters on runs are owned SOLELY by these triggers, never
--- by direct store writes:
---   * state_version  is bumped whenever a run's authoritative state_json changes.
---   * claim_generation is bumped whenever any claim or the stash slot controlling
---     a run changes — the set of writes that can change claim resolution.
--- This makes the invariant "every claim/stash writer bumps generation" and
--- "every state writer bumps state_version" hold by construction for ANY writer,
--- present or future, rather than by an enumerated call-site list.
---
--- The claim UPDATE triggers are scoped with UPDATE OF to the claim-resolution
--- columns. The timestamp columns are deliberately excluded: last_seen_at carries
--- the #519 activity signal and updated_at is record bookkeeping, so neither can
--- change how a presented claim resolves. An unscoped trigger would make a
--- liveness touch invalidate every authority captured before it (surfacing as a
--- spurious claim_superseded) and would fence liveness out of exactly the window
--- where it matters — while an owner holds the run.
---
--- The claim/stash BEFORE triggers additionally RAISE(ABORT) when the controlled
--- run has active execution ownership (exec_token IS NOT NULL). A trigger never
--- waits while holding the writer lock; the store converts the abort to a typed
--- execution_in_progress. An owner's own final transaction clears exec_token to
--- NULL first (in the same transaction), so its subsequent claim/stash writes pass
--- the guard.
---
--- The stash UPDATE triggers read BOTH endpoints: moving the slot from run A to
--- run B changes claim resolution for A and B alike, so both are guarded and both
--- generations bump. The store's own setStash clears and re-inserts, but the
--- invariant must hold for any writer of the slot, not just that path.
--- ==========================================================================
-
-CREATE TRIGGER claims_guard_insert BEFORE INSERT ON claims
-BEGIN
-  SELECT CASE
-    WHEN (SELECT exec_token FROM runs WHERE id = NEW.controlled_run) IS NOT NULL
-    THEN RAISE(ABORT, 'execution_in_progress')
-  END;
-END;
-
--- Scoped to the columns that can change CLAIM RESOLUTION. last_seen_at (#519
--- claim-activity liveness) and updated_at are deliberately excluded: they are
--- pure metadata, so recording claim activity must neither be refused while an
--- owner executes nor bump the generation (see claims_bump_gen_update below).
-CREATE TRIGGER claims_guard_update BEFORE UPDATE OF
-  key, controlled_run, secret_hash, issued_generation, status,
-  parent_run_id, parent_linkage_version, delegation_json, grants_json
-ON claims
-BEGIN
-  SELECT CASE
-    WHEN (SELECT exec_token FROM runs WHERE id = NEW.controlled_run) IS NOT NULL
-    THEN RAISE(ABORT, 'execution_in_progress')
-  END;
-END;
-
-CREATE TRIGGER claims_guard_delete BEFORE DELETE ON claims
-BEGIN
-  SELECT CASE
-    WHEN (SELECT exec_token FROM runs WHERE id = OLD.controlled_run) IS NOT NULL
-    THEN RAISE(ABORT, 'execution_in_progress')
-  END;
-END;
-
-CREATE TRIGGER claims_bump_gen_insert AFTER INSERT ON claims
-BEGIN
-  UPDATE runs SET claim_generation = claim_generation + 1 WHERE id = NEW.controlled_run;
-END;
-
--- Same column scope as claims_guard_update. A last_seen_at refresh does not
--- change which claim resolves to which run, so bumping the generation for it
--- would spuriously invalidate every live capture as claim_superseded at each
--- authorization seam — exactly where #519 liveness recording happens.
-CREATE TRIGGER claims_bump_gen_update AFTER UPDATE OF
-  key, controlled_run, secret_hash, issued_generation, status,
-  parent_run_id, parent_linkage_version, delegation_json, grants_json
-ON claims
-BEGIN
-  UPDATE runs SET claim_generation = claim_generation + 1 WHERE id = NEW.controlled_run;
-END;
-
-CREATE TRIGGER claims_bump_gen_delete AFTER DELETE ON claims
-BEGIN
-  UPDATE runs SET claim_generation = claim_generation + 1 WHERE id = OLD.controlled_run;
-END;
-
-CREATE TRIGGER stash_guard_insert BEFORE INSERT ON stash_slot
-BEGIN
-  SELECT CASE
-    WHEN (SELECT exec_token FROM runs WHERE id = NEW.run_id) IS NOT NULL
-    THEN RAISE(ABORT, 'execution_in_progress')
-  END;
-END;
-
--- EXISTS, not a scalar exec_token subquery: with two candidate rows a scalar
--- subquery returns only the first, so an owned endpoint could slip past behind an
--- unowned one.
-CREATE TRIGGER stash_guard_update BEFORE UPDATE ON stash_slot
-BEGIN
-  SELECT CASE
-    WHEN EXISTS (
-      SELECT 1 FROM runs WHERE id IN (OLD.run_id, NEW.run_id) AND exec_token IS NOT NULL
-    )
-    THEN RAISE(ABORT, 'execution_in_progress')
-  END;
-END;
-
-CREATE TRIGGER stash_guard_delete BEFORE DELETE ON stash_slot
-BEGIN
-  SELECT CASE
-    WHEN (SELECT exec_token FROM runs WHERE id = OLD.run_id) IS NOT NULL
-    THEN RAISE(ABORT, 'execution_in_progress')
-  END;
-END;
-
-CREATE TRIGGER stash_bump_gen_insert AFTER INSERT ON stash_slot
-BEGIN
-  UPDATE runs SET claim_generation = claim_generation + 1 WHERE id = NEW.run_id;
-END;
-
-CREATE TRIGGER stash_bump_gen_update AFTER UPDATE ON stash_slot
-BEGIN
-  UPDATE runs SET claim_generation = claim_generation + 1
-   WHERE id IN (OLD.run_id, NEW.run_id);
-END;
-
-CREATE TRIGGER stash_bump_gen_delete AFTER DELETE ON stash_slot
-BEGIN
-  UPDATE runs SET claim_generation = claim_generation + 1 WHERE id = OLD.run_id;
-END;
-
--- state_version fires only when authoritative state_json changes, so the
--- generation-bump UPDATEs above (which touch only claim_generation) never move
--- state_version, and this trigger's own state_version UPDATE never re-fires it.
 CREATE TRIGGER runs_bump_state_version AFTER UPDATE OF state_json ON runs
 BEGIN
   UPDATE runs SET state_version = state_version + 1 WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER runs_unlink_children AFTER DELETE ON runs
+BEGIN
+  UPDATE runs
+     SET parent_run_id = NULL, parent_step = NULL, parent_frame_key = NULL,
+         parent_entry = NULL, parent_kind = NULL
+   WHERE parent_run_id = OLD.id;
 END;
 `;
 
