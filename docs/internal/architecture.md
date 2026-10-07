@@ -572,457 +572,149 @@ The narrowing layer between snapshot context and observer events uses the typed
 
 ## Lifecycle Command Seam
 
-Cross-run lifecycle mutations (`rundown pass` / `rundown fail`, plus the
-transitional bare `rundown delegate` policy precheck) enter core through one
+The owner's lifecycle commands — `rundown pass` / `rundown fail`,
+`rundown complete` / `rundown stop`, and `rundown goto` — enter core through one
 seam: `RunbookLifecycleCommandService`
-(`packages/core/src/runbook/lifecycle-command-service.ts`). This is the single
-place direct-CLI cross-run pass/fail mutations cross into core, mirroring
-`RunbookCollectionService` as the resolve → gate → drive-machine model. The
-seam, not the CLI, owns the runbook logic; the CLI is a thin front end around
-it.
+(`packages/core/src/runbook/lifecycle-command-service.ts`). The seam, not the
+CLI, owns the runbook logic; the CLI is a thin front end that resolves the
+caller's Owner Token, hands the seam the run it owns, and renders what comes
+back. There is no target resolution, caller evidence, actor context, claim, or
+policy in the seam: under one writer per run
+([ADR 0005](../adr/0005-one-writer-per-run.md)) the Owner Token is the only
+authority, and it is verified before the run reaches the seam.
 
-### What the seam owns
+### Ownership is resolved once, by token
 
-`runTransition` performs, in order:
+`resolveOwnedRun(manager, token)` (`run-authority.ts`) is the sole authority
+lookup behind every mutating command. It hashes the token (`hashRunSecret`),
+looks the hash up with `findByOwnerTokenHash`, and returns one of three answers:
+`running` with an `OwnedRun` — the state **and the `state_version` it was read
+at**; `finished` with the lifecycle the run reached (`completed`, `stopped`,
+`abandoned`), which the CLI renders as RD-303 / RD-304; or `unknown_token`. A
+run id is never authority; `--run` is a read-only selector on `status` and
+nothing else. The plaintext token appears in exactly one place, the
+`runbook_started` event, and never in a message, a row, or a refusal.
 
-1. **Evidence → context mapping.** Typed `CallerEvidence` is mapped to an
-   `ActorContext` by core via `actorContextFromEvidence`
-   (`packages/core/src/runbook/actor-context.ts`). Front ends never construct a
-   final `ActorContext`; they describe who is calling and what they can prove.
-   The mapping is evaluated against an `EvidenceTarget` — the resolved run's id
-   plus its **delegation exposure**, classified at decision time by
-   `classifyDelegationExposure`
-   (`packages/core/src/runbook/delegation-exposure.ts`). A run is `delegating`
-   iff any of six clauses holds: (a) its document authors a DELEGATE substep
-   (static — protection starts before any issuance); (b) it has open claimed
-   children; (c) it has reported-but-uncollected delegation outcomes; (d) any
-   substep state carries a delegation record (sticky history — exposure never
-   decays after claims close); (e) it carries parent linkage (inline or
-   delegation); (f) it composes children inline — statically, any substep
-   carries runbook-list entries, or at runtime any substep state carries an
-   inline launch record (sticky, like d). Only a `standalone` run (all six
-   clauses fail) keeps the bare `direct_cli` convenience lane; on any
-   delegation-exposed target the only trust-granting evidence is a verified
-   bearer claim (`--claim-id`). A `--run <rd_…>` id is a target selector only,
-   never authority — it selects which run a mutation addresses but authorizes
-   nothing. Two consistency caveats are deliberate: (i) the document-derived
-   clauses (a and f's static signal) are re-parsed at decision time, so a
-   mid-run edit of the runbook document can flip a not-yet-issued run's static
-   exposure — the state-derived clauses are monotone and never decay; (ii)
-   exposure classification and target resolution are two lock-free reads, and
-   the design stays fail-closed because trust is bound to the classified run's
-   id: `deriveEffectiveRole` refuses an id mismatch with the resolved target, so
-   an interleave (e.g. an inline child popping between the reads) can never
-   transfer one run's trust onto another.
-2. **Target resolution + policy.** `resolveTransitionTarget` resolves the target
-   run and runs strict target-relative policy, returning typed refusals (`none`,
-   `stale_claim`, `terminal_claim_confirmed` / `terminal_claim_conflict`,
-   `open_delegated_children`, `delegation_collection_pending`,
-   `actor_context_required`). These are surfaced as `LifecycleTransitionOutcome`
-   variants that reuse the resolver's shapes so payloads (the
-   `DELEGATION_COLLECTION_PENDING_MESSAGE` literal, claim ids, the
-   confirm/conflict split) are preserved by construction.
-3. **Single resolution + in-seam step derivation.** The seam resolves the target
-   exactly once and derives that run's parsed steps in-seam via the injected
-   `loadSteps(state)` dependency, instead of taking `steps` as an input the
-   front end would have to resolve first. Step derivation is parsing of the
-   resolved state's in-memory `runbookSrc` plus an environment-bound
-   helper-registry + render context (Category A), not runbook-file IO.
-4. **Preserve the two ingress mutations; activate one progression path.** The
-   seam does not collapse manual completion into an unconditional actor send:
-   - **manual substep completion** (`#driveSubstepFenced`) records exactly one
-     resolved completion via `RunbookCompletionService.prepareManualCompletion`;
-     it does not apply or batch-drain completion rows inside that recording
-     commit;
-   - **top-level run transition** (`#driveTopLevel`) sends `PASS` / `FAIL`
-     through `RunbookActorService.prepareActorMutation` and commits its
-     observation boundary.
+The same module holds `findUnsupportedComposition(steps)`, the decision behind
+`RUNBOOK_COMPOSITION_UNSUPPORTED`: `rundown run` refuses a runbook whose
+substeps are authored `DELEGATE` or carry a runbook list until inline
+composition (#903) and delegation (#904) return on this model. The CLI only
+renders the ids core names.
 
-   Every newly recorded manual completion, and every continuing or terminal
-   top-level transition, returns an `activate` directive. Run Progression then
-   asks the restored compiled XState machine for the next intent and applies at
-   most one completion per CAS/observation turn. Terminal top-level ingress
-   carries an `after_observed_transition` boundary so activation propagates the
-   terminal without replaying its observation or release.
+### What the seam does
 
-   The claim-path terminal (`rundown complete`/`stop --claim-id`) obeys the same
-   rule through `progressionDirectiveForTerminalRun`, which core — not the
-   frontend — uses to answer both questions the frontend must not: whether the
-   observed terminal still owes composition a turn, and where that turn starts.
-   Only an INLINE-linked terminal continues, because a delegated child's outcome
-   is already recorded against its parent by the same fenced transaction that
-   applied the terminal, and an unlinked run composes with nothing; the
-   directive's `none` arm is how core says so. A `resume` boundary here would
-   re-announce a terminal the seam has already rendered and re-release a run the
-   applying transaction already released.
+Every method takes an `OwnedRun` and returns typed outcomes as **data**. The
+seam does not spawn processes, render, or retry.
 
-   This #854 slice owns the completion-specific choice: applicable completion,
-   target mismatch, and exhausted compare-and-swap contention are selected as
-   closed intents by the compiled machine. `awaiting_input` remains a typed
-   feedback value from the runtime's execution-unit entry classification. Fresh
-   runs, freshly claimed children, resumed runs, and terminal propagation all
-   enter this one Run Progression activation. The machine closes
-   `awaiting_input` as a typed waiting outcome throughout.
+- `runTransition({ command, run, target, computeActionResult? })` — refuse a
+  finished run (`run_finished`); confirm `--step` / `--index` against the
+  current position with `resolveTransitionCursor` (`invalid_step_target`,
+  nothing written); derive the machine transition for `PASS` / `FAIL` with
+  `RunbookActorService.prepareActorMutation`; commit it with **one** conditional
+  `manager.save(nextState, run.stateVersion)`; derive the observation
+  (`deriveTransitionObservation` reconciled against the committed lifecycle) and
+  return `applied { status, events, progression, updatedState? }`. A substep
+  completion is the same `PASS` / `FAIL` sent to the single live leaf; the
+  completion mailbox that used to record substep results is gone.
+- `runTerminal({ command, run, message? })` — the same shape for
+  `FORCE_COMPLETE` / `FORCE_STOP`, returning
+  `applied { lifecycle, events, progression }`. `progression` is core's answer
+  to whether composition owes a further turn, and is `none` until #903.
+- `resolveRunNavigation({ run })` → `allowed` with an opaque
+  `LifecycleNavigationCapability` binding authority, graph and the versioned
+  state together; `runNavigationMutation({ navigation, target })` applies the
+  `GOTO` under that version.
 
-   Both decisive bare default-target ingress mutations run inside
-   `SessionService.runGuardedParentAdvance` (the TOCTOU guard). Terminal release
-   is committed by the mutation that actually makes the run terminal: the
-   top-level transition itself or the later machine-selected completion turn.
+Two refusals are shared by every method. `run_finished` carries the lifecycle
+and the run id. `concurrent_modification` means the row's `state_version` moved
+between the owner's read and this save: nothing was written, the persisted state
+is intact, and the seam does not retry — under one writer per run the only
+concurrent writer is the owner's own second command, and a loop here would let
+it land silently behind the first. The CLI renders it as
+`CONCURRENT_MODIFICATION`; the operator re-reads the run and re-issues the
+command.
 
-5. **Bare inline-child reactivation.** When a bare (no `manualTarget`) substep
-   transition lands on a substep whose inline child is still running and whose
-   parent linkage matches, the seam resumes the child rather than recording a
-   completion. This decision ("is the child still open?") is runbook logic, so
-   it lives in core (`#reactivateRunningInlineChild`), not in the CLI. The
-   explicit `--step` / `--index` path never reactivates — it is a deliberate
-   completion against a named substep.
+### The `--step` contract
 
-   The seam also decides whether the reactivation needs the parent's Run
-   Progression activation, and returns that as the progression directive. An
-   **interrupted** launch does: the launcher takes the launch latch
-   (`inline.started`), consumes the one-shot launch intent — which releases that
-   latch — and re-establishes the child's run-control authority
-   (`SessionService.adoptRunControlClaim`) in one continuation, and a process
-   that died mid-launch leaves all three undone. Only the launch seam
-   (`launchInlineChildFromIntent`'s existing-child branch) performs them, and
-   only the parent's own progression reaches it, so the seam returns
-   `progression: { kind: 'activate', ... }` there.
+`resolveTransitionCursor(steps, state, target)` (`transition-cursor.ts`) is pure
+and is the whole of the `--step` / `--index` contract. The machine is in exactly
+one leaf, so `--step` is a confirmation of the current position, not a selector.
+In order: `--step` is required; the id must parse and may not carry a template
+AT expression; it must name the active step; at a substep it must name **that**
+substep (a bare step id is refused), while at a top-level step with no active
+substep the bare id is accepted and a substep-qualified id is refused; inside a
+FOR iteration `--index` (or the AT slot of a three-level id) is required and
+must name the current iteration, and outside one any index is refused. Every
+refusal names the current position (`the current position is 2.1`) so the next
+command can be written from the message alone, and every refusal happens before
+any write. The CLI composes none of these messages; it passes
+`target: undefined` when `--step` is absent and renders `invalid_step_target` as
+`INVALID_STEP`.
 
-   A launch that already **finished** returns `progression: { kind: 'none' }` —
-   activating progression would re-enter an execution unit the parent never
-   left, re-announcing the step and re-running any command it carries. The
-   discriminant is the surviving intent itself
-   (`#hasUnconsumedInlineLaunchIntent`), which is the same value
-   `enterExecutionUnit` re-projects, so the seam's decision and progression's
-   behaviour agree by construction.
+### Run Progression after the seam
 
-   **A child is activated only by the launch span that wins it.** The seam
-   matches on a running child with matching linkage, which is also what a
-   **live** owner mid-launch looks like — the two are one process's launch at
-   two moments, and this seam does not consult the latch. So the `none` arm is
-   the only one it activates on: there the launch is over, and the child is
-   genuinely this session's to target. On the `activate` arm a push would target
-   the session at a run this process may be about to stand down from, and
-   standing down would then have to take that push back on every refusal arm the
-   launch span has or later grows. `launchInlineChildFromIntent` performs the
-   activation instead — once the latch has said the launch is its own — and
-   every stand-down arm consequently writes nothing to the session.
+`applied` carries a `RunProgressionDirective`. The CLI renders the seam's
+events, then activates `activateRunProgression(authority, deps, entryBoundary)`
+verbatim. The activation loads the run **with its version**, asks the restored
+compiled machine for the next intent (`SELECT_RUN_PROGRESSION` → `waiting` or
+`entered`), and for a runnable unit commits exactly one `EXECUTE_COMMAND` turn
+through `commitRunProgressionEvent`: `prepareActorMutation` then one conditional
+save under the version the turn read. A moved version is the
+`command_not_committed` refusal (`CONCURRENT_MODIFICATION`, retryable) — the
+command ran, its result was not recorded, and the activation says so rather than
+retrying over whoever wrote. Observation delivery is still the commit gate
+(#853): each commit's observations are delivered synchronously before the next
+effect, and a throwing sink ends the activation with the `failed` outcome. The
+entry boundary minted by the seam (`after_observed_transition`) keeps the
+activation from re-announcing a terminal the seam already rendered.
 
-   The invariant is load-bearing in both directions: a `won` arm that executed a
-   child without pushing would leave it running with the session never targeting
-   it, and the operator's next bare command would address the parent.
-
-   Both activations go through `SessionService.pushRunbookIfNotActive`, which
-   decides "is this run already the top?" inside the transaction that acts on
-   the answer, and reports which way it went so the launch span rolls back only
-   an activation it performed itself. It is deliberately unguarded
-   (`mutateSession`, like `pushRunbook`): the ownership preflight refuses on
-   `runs.exec_token IS NOT NULL` alone, and the dead-owner probe that reclaims a
-   SIGKILLed owner's lease lives on the execution-lease acquisition path, never
-   on a session mutation — so guarding this write would refuse
-   `execution_in_progress` on exactly the crash-recovery launch it exists to
-   finish.
-
-The seam returns transition-observation events plus a Run Progression directive
-(`RunProgressionDirective`) as **data**. It does not spawn processes or render.
-
-### What the direct CLI owns
-
-The direct CLI is a thin front end over the seam. It performs only Category-A
-work:
-
-- **gathers native caller evidence** — `readLifecycleCallerEvidence`
-  (`packages/cli/src/helpers/caller-evidence.ts`) returns
-  `{ kind: 'claim_bearer', claimId }` for `--claim-id`, and
-  `{ kind: 'direct_cli' }` for everything else. A `--run <rd_…>` id is **not**
-  evidence — it is parsed separately as a target selector, not caller authority.
-  The helper no longer decides whether a bare invocation grants anything — core
-  does, from the target's delegation exposure;
-- **parses `--run`** — `parseRunOption`
-  (`packages/cli/src/helpers/run-option.ts`) validates the id format via core's
-  `isRunId` and enforces mutual exclusion with `--claim-id` (Category-A flag
-  parsing only; a `--run` id is threaded through as the target selector and
-  resolved against the session `defaultStack` in core — it never becomes caller
-  evidence);
-- **parses `--step` / `--index` syntax** into an `ExplicitTransitionTarget`
-  (`packages/cli/src/helpers/transitions.ts`) — raw-argument input handling on
-  inherently external CLI args (Category A). Core resolves that target against
-  the exact state captured by the guarded mutation;
-- **renders the seam's typed outcome** to the existing JSON/text envelopes and
-  maps semantic lifecycle and refusal/failure to separate process-exit output;
-- **activates Run Progression** per the returned directive, supplying the
-  command callable used by the machine actor plus the inline-launch,
-  terminal-propagation, and observation callables invoked by the activation.
-  Completion selection, inline launch, and upward inline flow-back are
-  machine-owned. A freshly launched child is activated through the same Run
-  Progression seam; when it reaches terminal, core resolves and validates the
-  complete contiguous inline ancestry before the core inline-terminal flow-back
-  actor records the immediate completion and recursively activates that parent.
-  Each ancestor therefore selects its own next turn through XState. The CLI does
-  not select completion turns, interpret intermediate loop statuses, or perform
-  a second terminal-propagation pass.
-
-The CLI constructs **no** `ActorContext`.
-
-### Source tagging is not trust
-
-`ActorContext` has no `source` field. Source tagging is not a trust mechanism:
-there is no `--actor-source` flag and no `RD_ACTOR_SOURCE` env var, and they
-must not be reintroduced. The only trust-granting evidence is a verified bearer
-claim id. Everything that is not a verified bearer claim — `direct_cli`
-evidence, the legacy non-authoritative `run_controller` / shape-only `claim`
-shapes, and any `plugin` or `mcp` framing — maps to `UNKNOWN_ACTOR_CONTEXT`,
-along with any agent id, session id, run id, or tool name they carry.
-
-### Terminal authority requires a bearer claim; `--run` only selects the target
-
-A terminal command (`complete` / `stop`) mutates only when it carries a verified
-bearer claim (`--claim-id`). `--run <rd_…>` names which run the terminal
-addresses; it grants nothing. A `--run`-only terminal on a delegation-exposed
-run is refused with `ACTOR_CONTEXT_REQUIRED`, exactly like a bare one — a run id
-is an identifier, not authority.
-
-The claim's authority still composes over a **contiguous inline composition
-chain**: the chain walk climbs `parentLinkage.kind === 'inline'` to the root the
-member belongs to, so a claim that controls the root reaches every inline member
-launched under it in-session. Two independent walls keep this bounded: a claimed
-child's run is never a `defaultStack` member (so `--run` cannot resolve it as a
-target), and the chain walk climbs only inline linkage, so a **delegation
-boundary always severs the chain**. Pinned by the seam tests in
-`transitions-seam.test.ts`.
+The command callable stays a Category-C dependency injected into
+`RunbookActorService` (`commandServices`) and reaches the machine through
+`compileRunbookToMachine`; the activation itself takes only
+`{ manager, actorService, loadSteps, sink }`.
 
 ### Guards do no cross-run IO or policy
 
-Cross-run IO and policy stay in the seam and `resolveTransitionTarget`, never in
-XState guards. Guards express per-run domain conditions; they do not read other
-runs' state, resolve claims, or evaluate command policy. Keeping that work in
-the seam is what lets the state machine remain a pure per-run program.
-
-### Plugin / MCP are not direct-CLI-trusted callers
-
-The plugin and MCP server reach the CLI by spawning a subprocess, so typed
-`CallerEvidence` cannot cross that boundary — a spawned `rundown pass` arrives
-as an ordinary `argv`, indistinguishable from a human invocation. They are
-therefore **not** direct-CLI-trusted callers.
-
-**Core is the primary gate.** Since R1, core itself refuses ambient direct-CLI
-trust on every delegation-exposed run (the exposure-conditional `direct_cli`
-mapping above), so the subprocess withhold set is **defense-in-depth**, no
-longer the primary protection. Its remaining job is to stop a spawned bare
-mutation from silently consuming the standalone-run convenience lane and to keep
-refusals front-end-rendered (a clear typed withhold instead of a downstream
-policy error). The shared boundary `bareRoleSpecificMutation`
-(`packages/core/src/runbook/subprocess-mutation-boundary.ts`) classifies a bare
-(default-target) `rundown pass` / `rundown fail` / `rundown goto` /
-`rundown delegate` / `rundown complete` / `rundown stop` / `rundown collect` as
-the invocations whose only available trust is `direct_cli`; the spawning front
-end withholds those.
-
-**Only the claim lane passes through.** `--claim-id` mutations are preserved:
-their `claim_bearer` evidence (`claimId`) is reconstructable CLI-side from the
-resolved claim record, so `carriesClaimEvidence` classifies them as authorized
-and the spawning front end forwards them. A `--run <rd_…>`-only mutation is
-**not** a second lane — because `--run` is a target selector and not authority,
-such an invocation is classified bare and withheld exactly like a flagless one.
-There is no `carriesExplicitRunTarget` counterpart to `carriesClaimEvidence`.
-The MCP mutating tools still expose an optional `runId` parameter mapped to
-`--run` argv for target selection, but a run id alone never authorizes the
-mutation; a bearer claim must accompany it on a delegation-exposed run. See
-[Claude Code Plugin Trust Model](./plugin-trust-model.md) for the plugin's other
-trust boundaries.
-
-### A claim-shaped target is the same fact as its bearer
-
-`runTransition`, `runTerminal`, and `resolveRunNavigation` each take caller
-evidence and a target selector as separate inputs. When the selector is
-claim-shaped these are **not** independent: a claim id carries its own live
-secret segment, so naming one is an act of presentation, not merely of
-selection. The only consistent combination is "the caller presented the bearer
-it named".
-
-Each seam reconciles the two at entry, before resolving anything from the claim,
-and refuses `CLAIM_BEARER_MISMATCH` otherwise. Without that gate the seams
-derived their actor context from the **target's** verified claim and so acted as
-the target while the caller's evidence said something else — authorizing on
-authority the caller never demonstrated it held.
-
-The refusal is deliberately separate from `ACTOR_CONTEXT_REQUIRED`. That code
-means no authority was named at all and its remediation is to supply
-`--claim-id`; here the caller supplied one, so reusing it would tell the caller
-to do the thing it already did. The envelope names neither claim — the refusal
-precedes resolution, so there is no verified claim record to reduce to a
-non-secret `claimKey`, and echoing a raw `claimId` would write a bearer secret
-to output.
-
-No CLI path can provoke it: `--claim-id` populates both fields at all three call
-sites. It is a seam contract for programmatic frontends, and it is fail-closed
-by construction rather than by convention.
-
-### Refusal messages never echo the target run id
-
-The `ACTOR_CONTEXT_REQUIRED` refusal tells the caller to pass
-`--claim-id <claimId>` using the bearer claim from their orchestration context,
-and deliberately does **not** echo the target run id in the message or the JSON
-details. A run id is only an identifier and would authorize nothing even if
-echoed, but surfacing it would still hand the lingering-child agent a copy-paste
-target it can pair with a stolen claim, so the barrier stays quiet about it. Run
-ids remain natively present elsewhere — in claim output (`parent_run_id`), on
-every event (`runbookId` — an inline child's id also rides the `inlineLaunch`
-**payload** on the launch event; there is no event type named `inlineLaunch`),
-and via `rundown status` — but a run id is a selector, and only a verified
-bearer claim authorizes a mutation.
-
-### Credential disclosure boundaries and RD-821
-
-Delegation tokens are derived, not stored: persisted state holds a non-secret
-`DelegationCredentialDescriptor` plus a `tokenHash`, and the bearer is
-reconstructed on demand by a deriver bound to the exact issuing claim
-(`createDelegationTokenDeriver`). That deriver refuses a descriptor naming a
-different `issuerClaimKey`, so every surface that hands a raw bearer back to a
-caller can fail for one of two reasons: the presenting claim is not the issuing
-claim, or the reconstructed token does not hash to the verifier the parent
-recorded at issuance. Both are refusals, not successes with a degraded value —
-neither arm returns a token.
-
-There are two disclosure boundaries, and both refuse under one error code,
-`RD-821` (`DELEGATION_INVARIANT_VIOLATED`):
-
-| Boundary                                                             | Surface                                                                                                                             |
-| -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `issueDelegation`'s same-issuer echo (`verifyEchoedDelegationToken`) | The seam returns `{ kind: 'error' }`; `rundown delegate` renders `RD-821`.                                                          |
-| Run Progression re-entering a persisted `delegateFrontier`           | The compiled machine emits a typed `projection_refused`; activation returns `RD-821`, leaves the run running, and exposes no token. |
-
-GOTO and collection are not additional boundaries. Each commits its own domain
-mutation, then returns the same core-minted `RunProgressionDirective`. The
-directive carries one authority and the exact parsed graph verified with it;
-frontends cannot supply replacement steps or a separate deriver. The CLI renders
-the command observation, then passes the directive verbatim to
-`driveRunProgression`.
-
-The machine owns the frontier sequence explicitly:
-
-1. `__progression-project-frontier` invokes the fenced projection actor.
-2. The actor derives the projection from the captured state and commits
-   `DELEGATE_FRONTIER_CONSUMED` through the SQLite execution fence.
-3. Only a committed `projected` result enters
-   `__progression-enter-after-projected-frontier`; the transient bearer array
-   flows through actor output, never persisted context. If that entry actor
-   fails, the machine emits the permanent RD-833 disclosure refusal: the consume
-   is already durable and retry cannot reconstruct the bearer.
-4. Empty frontier and ordinary entry use their own explicit entry state. Its
-   entry actor can fail the same way, and it carries the same `onError` — but
-   the refusal is the retryable RD-504 `entry_render_failed`, because that turn
-   consumed nothing and re-activating re-renders. A refusal enters
-   `__progression-refused`; it never fabricates a terminal.
-
-`projectAndConsumeReEntryFrontierFenced` is the machine actor seam. It returns
-`reselect`, `projected`, `projection_refused`, `consume_failed`,
-`claim_superseded`, `recovery_required`, `aggregate_recovery_required`, or
-`run_missing`. (`none` belongs to the inner `PreparedReEntryProjection`
-contract; the fenced seam reloads the run and answers `reselect` instead.) The
-last four preserve the storage refusal's own taxonomy. `consume_failed` is
-RD-829 and retryable; projection mismatch is RD-821 and permanent; missing
-authority and superseded authority both require authority rather than pretending
-the run stopped.
-
-Three consequences worth stating explicitly.
-
-**RD-821 is now operator-reachable.** It was introduced as an unreachable-branch
-guard — `retryDelegation`'s exhaustiveness default still uses it that way — and
-its registered description in `errors/codes.ts` has been updated to name the
-operator-reachable cause. Both boundaries are ordinary operator conditions
-rather than internal inconsistency: rotate the run-control claim between
-issuance and disclosure and the surviving descriptor names a claim nobody can
-present.
-
-**It is deliberately not `ACTOR_CONTEXT_REQUIRED`.** On projection-refused paths
-authority is present — it is simply the wrong authority — so the
-absent-authority code would name the wrong condition and its remediation ("pass
-`--claim-id`") would tell the caller to do the thing it already did. Where
-authority is genuinely absent — Run Progression reaching a pending frontier with
-no deriver — activation refuses `ACTOR_CONTEXT_REQUIRED` with
-`reason: 'actor_context_required'` and leaves the run running, the same reason
-the machine's own `delegationIssueActor` produces for the issuance half of that
-condition.
-
-**The code follows the condition, never the command.** Because GOTO and collect
-both return the same directive, the same machine state maps projection mismatch
-to RD-821 and consume contention to RD-829. `COLLECT_OPERATION_FAILED` covers
-only a completion-drain target mismatch.
-
-The frontier's other failure is a different fact and keeps its own code:
-**RD-829** (`DELEGATION_FRONTIER_CONSUME_FAILED`) means projection succeeded and
-the `DELEGATE_FRONTIER_CONSUMED` sync did not. It is retryable — the frontier is
-still persisted and no observations were surfaced — whereas `projection_refused`
-is not fixed by repetition, since the same authority refuses identically. Two
-codes because the remediations invert; RD-826 through RD-828 belong to the retry
-idempotency contract (`DELEGATION_REPLACEMENT_CONSUMED`,
-`DELEGATION_RETRY_IDENTITY_UNMATCHED`, `DELEGATION_SUPERSESSION_AMBIGUOUS`), so
-the frontier code takes RD-829.
-
-RD-829 is produced by Run Progression when its separate frontier turn cannot
-commit, including real execution-lease contention. Collection never owns that
-turn and therefore has no frontier refusal arms in `DelegationPolicyOutcome`.
-
-**RD-833** (`DELEGATION_FRONTIER_DISCLOSURE_FAILED`) is the other side of the
-commit boundary. It means the fenced consume committed, then
-`__progression-enter-after-projected-frontier` could not derive the
-`STEP_ENTERED` payload carrying the transient bearers. The machine owns and
-classifies that failure regardless of whether GOTO, collect, or another frontend
-supplied the activation directive. The frontier is gone, so retry is not a
-recovery; fix the entry/helper failure and explicitly re-delegate the step.
-`InvalidRunbookStateError` remains RD-309 instead, preserving its
-finish/stop/prune recovery.
-
-The fail-closed remedy the credentials design prescribes for a rotated issuing
-claim — explicit cancel and reissue — has no path today, because
-`abortDelegation` opens with `findDelegationByToken` and is therefore located by
-bearer only: cancelling needs the bearer, and producing the bearer needs the
-rotated-away claim. This is latent rather than live — the only production
-run-control mint is `pushRunbookWithPreparedRunControlClaim` at launch, and
-`issueRunControlClaim` / `pushRunbookWithRunControlClaim` have test-fixture
-callers only, so nothing rotates a run-control claim yet. It is recorded as an
-open design question in the PR 12 review-remediation addendum.
-
-### Residual ambient session-management lane (R1 scope decision)
-
-`stash`, `pop`, `prune` (including `--all`), `abort`, `claim`, and `status`
-remain ungated by delegation exposure. A bare `stash` can pause a delegating
-pipeline, a bare `pop` can reorder the stack, and `prune --all` can destroy live
-run state — ambient session-management disruption/DoS, but **not** run-driving
-takeover: none of these can advance, complete, or delegate on behalf of the
-orchestrator, which is the defect class R1 closes. Gating session management
-behind exposure is follow-up work tracked outside this document.
+Nothing in the seam or the activation reads another run. XState guards express
+per-run domain conditions; ownership, `--step` confirmation and the version
+check all happen at the seam boundary, which is what lets the state machine
+remain a pure per-run program.
 
 ### Lifecycle write diagnostics
 
 Every persisted write that changes `RunbookState.lifecycle` — and every
 run-state deletion — emits a `logger.debug('lifecycle-write', …)` line from the
-two persistence chokepoints, `RunbookStateManager.save` (transitions, including
-creation as `null -> running`) and `RunbookStateManager.delete`. All state
-mutators funnel through these two methods, so every writer — actor snapshot
-sync, the lifecycle command seam, collection drain, plugin-hook-spawned CLI
-processes, `cleanupOrphanedActiveStack` — is covered regardless of caller.
-Enable with `RUNDOWN_LOG_LEVEL=debug`; the logger stamps pid.
+two persistence chokepoints, `RunbookStateManager.save` (every commit, and
+creation as `running`) and `RunbookStateManager.delete`. The lifecycle seam, Run
+Progression and actor snapshot sync all funnel through `save`, so every writer
+is covered regardless of caller. Enable with `RUNDOWN_LOG_LEVEL=debug`; the
+logger stamps pid.
 
 The delete trail is emitted after the row delete commits and **before** the
 per-run outputs directory is removed, so a later `fs.rm` failure cannot suppress
-the record of a deletion that actually happened. The row delete cascades to
-claims, stack, stash, completions, and attempts, and refuses while an execution
-owns the run.
+the record of a deletion that actually happened.
 
 This is deliberately a debug signal, not a durable subsystem: the forensic
-instrumentation that root-caused #536 (pid/ppid/argv/call-site records in an
-append-only file) was scaffolding, removed once the writer was identified.
-Durable, domain-level attribution of mutations is the province of the claim-id
-and caller-evidence model (see the delegation-lifecycle roadmap's explicit
-targeting work) — identity is named by the caller, not reconstructed from
-process metadata. If an unattributed-writer class of bug ever reappears,
+instrumentation that root-caused #536 was scaffolding, removed once the writer
+was identified. If an unattributed-writer class of bug ever reappears,
 re-instrument from git history rather than re-deriving.
 
 ---
 
 ## State Persistence and Concurrency
+
+> **Being rewritten under #901 / #902.** This section still describes the
+> multi-writer model. The following no longer exist in the code: sessions, the
+> session `defaultStack` and stash, claims and claim authority, execution leases
+> and the effect fence, the `exec_token` ownership preflight and owner-identity
+> recovery, completions / the resolved-completion mailbox, delegation rows,
+> parent-advance guards, and every compare-and-swap retry loop (`mutateState`,
+> `DEFAULT_MUTATE_ATTEMPTS`, `mutateBackoffMs`). Run state is one `runs` table
+> (schema version 3) whose rows carry an `owner_token_hash` and a trigger-bumped
+> `state_version`; every write is a single conditional `UPDATE` naming the
+> version the caller read, refused on mismatch and never retried
+> ([ADR 0005](../adr/0005-one-writer-per-run.md)). The two file locks (sql.js
+> driver, artifact manifest) survive and are still described accurately below.
 
 Run, session, and claim authority live in **one SQLite database per project**,
 `.rundown/rundown.db`. Nothing else is authoritative: there is no per-run JSON
