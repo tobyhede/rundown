@@ -162,10 +162,10 @@ export interface CommandSequenceResult {
   terminalResult: 'COMPLETE' | 'STOP' | 'UNKNOWN';
   /** All captured step transitions */
   transitions: CapturedTransition[];
-  /** Tokens captured from delegate JSON responses */
+  /** Owner Tokens captured from `runbook_started.owner_token`, in emission order */
   capturedTokens: string[];
-  /** Claim IDs captured from claim JSON responses */
-  capturedClaimIds: string[];
+  /** Run ids captured from `runbook_started.runbookId`, in emission order */
+  capturedRunIds: string[];
   /** JSON error responses captured from command output */
   errors: CapturedError[];
   /** JSON warning responses captured from command output */
@@ -386,9 +386,6 @@ const DEFAULT_ACTIVE_TARGET_COMMANDS = new Set([
   'goto',
   'stop',
   'complete',
-  'stash',
-  'delegate',
-  'collect',
 ]);
 
 const DEFAULT_ACTIVE_TERMINAL_COMMANDS = new Set([
@@ -430,25 +427,162 @@ function rdTerminalClosesDefaultActiveTarget(args: readonly string[]): boolean {
 }
 
 /**
- * Substitute captured token placeholders in a command string.
+ * One scenario placeholder family: `${NAME}` / `${NAME_n}` (1-based `n`),
+ * substituted from values captured in emission order from earlier command
+ * output.
+ *
+ * Table-driven on purpose: #904 adds `${TICKET}` (from
+ * `step_entered.children[].ticket`), `${CHILD_TOKEN}` and `${CHILD_RUN}`
+ * (from `rundown claim` output) by adding rows, not code paths.
+ */
+export interface CapturePlaceholder {
+  /** Placeholder name as written in a scenario command (`TOKEN` for `${TOKEN}`). */
+  readonly name: string;
+  /** What the placeholder stands for, for the "not captured yet" error. */
+  readonly describe: string;
+  /**
+   * Read every value this placeholder captures from one parsed JSON object of
+   * a command's stdout, in the order they appear.
+   */
+  readonly capture: (value: Record<string, unknown>) => readonly string[];
+}
+
+/**
+ * The placeholder table.
+ *
+ * - `${TOKEN[_n]}` — the n-th Owner Token printed on a `runbook_started`
+ *   event (`owner_token`). A scenario's own `rundown run` supplies `${TOKEN}`;
+ *   later starts in the same scenario supply the higher indexes.
+ * - `${RUN_ID[_n]}` — the n-th run id (`runbookId`) on a `runbook_started`
+ *   event, for selector and status assertions (`status --run ${RUN_ID}`).
+ */
+export const CAPTURE_PLACEHOLDERS: readonly CapturePlaceholder[] = [
+  {
+    name: 'TOKEN',
+    describe: 'owner token from runbook_started.owner_token',
+    capture: (value) =>
+      value.type === 'runbook_started' && typeof value.owner_token === 'string'
+        ? [value.owner_token]
+        : [],
+  },
+  {
+    name: 'RUN_ID',
+    describe: 'run id from runbook_started.runbookId',
+    capture: (value) =>
+      value.type === 'runbook_started' && typeof value.runbookId === 'string'
+        ? [value.runbookId]
+        : [],
+  },
+];
+
+/** Captured values per placeholder name, in emission order. */
+export type CapturedPlaceholders = Map<string, string[]>;
+
+/**
+ * Create an empty capture accumulator with one entry per placeholder row.
+ *
+ * @returns Empty accumulator
+ */
+export function createCapturedPlaceholders(): CapturedPlaceholders {
+  return new Map(CAPTURE_PLACEHOLDERS.map((placeholder) => [placeholder.name, []]));
+}
+
+/**
+ * Substitute one placeholder family in a command string.
+ *
+ * `${NAME}` maps to `values[0]`, `${NAME_2}` maps to `values[1]`, etc.
+ *
+ * @param cmd - The command string with optional placeholders
+ * @param placeholder - The placeholder row being substituted
+ * @param values - Captured values for that row, in order
+ * @returns The command string with placeholders replaced by captured values
+ * @throws {Error} When a placeholder references a value that has not been captured yet
+ */
+export function substitutePlaceholder(
+  cmd: string,
+  placeholder: CapturePlaceholder,
+  values: readonly string[],
+): string {
+  const pattern = new RegExp(`\\$\\{${placeholder.name}(?:_(\\d+))?\\}`, 'g');
+  return cmd.replace(pattern, (match: string, indexStr: string | undefined) => {
+    const idx = indexStr ? parseInt(indexStr, 10) - 1 : 0;
+    if (idx < 0 || idx >= values.length) {
+      throw new Error(
+        `Placeholder ${match} references an uncaptured ${placeholder.describe} (have ${String(values.length)})`,
+      );
+    }
+    return values[idx];
+  });
+}
+
+/**
+ * Substitute every placeholder family in a command string.
+ *
+ * @param cmd - The command string with optional placeholders
+ * @param captured - Values captured so far, per placeholder
+ * @returns The command string with every placeholder replaced
+ * @throws {Error} When a placeholder references a value that has not been captured yet
+ */
+export function substitutePlaceholders(cmd: string, captured: CapturedPlaceholders): string {
+  let out = cmd;
+  for (const placeholder of CAPTURE_PLACEHOLDERS) {
+    out = substitutePlaceholder(out, placeholder, captured.get(placeholder.name) ?? []);
+  }
+  return out;
+}
+
+/**
+ * Substitute captured Owner Token placeholders in a command string.
  *
  * `${TOKEN}` maps to `tokens[0]`, `${TOKEN_2}` maps to `tokens[1]`, etc.
  *
  * @param cmd - The command string with optional token placeholders
- * @param tokens - Array of captured tokens in order
+ * @param tokens - Array of captured Owner Tokens in order
  * @returns The command string with placeholders replaced by actual tokens
  * @throws {Error} When a placeholder references a token that hasn't been captured yet
  */
-export function substituteTokens(cmd: string, tokens: string[]): string {
-  return cmd.replace(/\$\{TOKEN(?:_(\d+))?\}/g, (match: string, indexStr: string | undefined) => {
-    const idx = indexStr ? parseInt(indexStr, 10) - 1 : 0; // ${TOKEN} = index 0, ${TOKEN_2} = index 1
-    if (idx < 0 || idx >= tokens.length) {
-      throw new Error(
-        `Token placeholder ${match} references uncaptured token (have ${String(tokens.length)} tokens)`,
-      );
-    }
-    return tokens[idx];
-  });
+export function substituteTokens(cmd: string, tokens: readonly string[]): string {
+  return substitutePlaceholder(cmd, CAPTURE_PLACEHOLDERS[0], tokens);
+}
+
+/**
+ * Substitute captured run id placeholders in a command string.
+ *
+ * `${RUN_ID}` maps to the first captured run id, `${RUN_ID_2}` maps to the
+ * second, and so on. Mutating scenario commands use `${TOKEN}` for
+ * authority; `${RUN_ID}` remains available for selector/status assertions.
+ *
+ * @param command - Command string with optional run id placeholders
+ * @param capturedRunIds - Run ids captured from earlier `runbook_started` events
+ * @returns Command string with run id placeholders substituted
+ * @throws {Error} If a placeholder references a run id that has not been captured
+ */
+export function substituteRunIds(command: string, capturedRunIds: readonly string[]): string {
+  return substitutePlaceholder(command, CAPTURE_PLACEHOLDERS[1], capturedRunIds);
+}
+
+/**
+ * Capture an Owner Token from a parsed `runbook_started` execution event.
+ *
+ * @param value - Parsed JSON value to inspect
+ * @param capturedTokens - Array to append captured tokens into
+ */
+export function captureOwnerTokenFromJsonObject(value: unknown, capturedTokens: string[]): void {
+  if (value !== null && typeof value === 'object') {
+    capturedTokens.push(...CAPTURE_PLACEHOLDERS[0].capture(value as Record<string, unknown>));
+  }
+}
+
+/**
+ * Capture a run id from a parsed `runbook_started` execution event.
+ *
+ * @param value - Parsed JSON value to inspect
+ * @param capturedRunIds - Array to append captured run ids into
+ */
+export function captureRunIdFromJsonObject(value: unknown, capturedRunIds: string[]): void {
+  if (value !== null && typeof value === 'object') {
+    capturedRunIds.push(...CAPTURE_PLACEHOLDERS[1].capture(value as Record<string, unknown>));
+  }
 }
 
 /**
@@ -622,134 +756,6 @@ function assertArrayCapturesAreShellQuoted(cmd: string): void {
 }
 
 /**
- * Substitute captured claim id placeholders in a command string.
- *
- * `${CLAIM_ID}` maps to the first claim id, `${CLAIM_ID_2}` maps to the second.
- *
- * @param command - Command string with optional claim id placeholders
- * @param capturedClaimIds - Claim ids captured from earlier `rd claim` output
- * @returns Command string with claim id placeholders substituted
- * @throws {Error} If a placeholder references a claim id that has not been captured
- */
-export function substituteClaimIds(command: string, capturedClaimIds: readonly string[]): string {
-  return command.replace(/\$\{CLAIM_ID(?:_(\d+))?\}/g, (_match, index: string | undefined) => {
-    const offset = index === undefined ? 0 : Number(index) - 1;
-    if (offset < 0 || offset >= capturedClaimIds.length) {
-      throw new Error(`Missing captured claim id for \${CLAIM_ID${index ? `_${index}` : ''}}`);
-    }
-    return capturedClaimIds[offset];
-  });
-}
-
-/**
- * Substitute captured run-control claim id placeholders in a command string.
- *
- * `${RUN_CLAIM_ID}` maps to the first run-control bearer emitted by a
- * `runbook_started` event, `${RUN_CLAIM_ID_2}` maps to the second, and so on.
- *
- * @param command - Command string with optional run-control claim placeholders
- * @param capturedRunClaimIds - Run-control claim ids captured from earlier starts
- * @returns Command string with run-control claim placeholders substituted
- * @throws {Error} If a placeholder references a run-control claim that has not been captured
- */
-export function substituteRunClaimIds(
-  command: string,
-  capturedRunClaimIds: readonly string[],
-): string {
-  return command.replace(/\$\{RUN_CLAIM_ID(?:_(\d+))?\}/g, (_match, index: string | undefined) => {
-    const offset = index === undefined ? 0 : Number(index) - 1;
-    if (offset < 0 || offset >= capturedRunClaimIds.length) {
-      throw new Error(
-        `Missing captured run-control claim id for \${RUN_CLAIM_ID${index ? `_${index}` : ''}}`,
-      );
-    }
-    return capturedRunClaimIds[offset];
-  });
-}
-
-/**
- * Substitute captured run id placeholders in a command string.
- *
- * `${RUN_ID}` maps to the first captured run id, `${RUN_ID_2}` maps to the
- * second, and so on. Run ids are captured in emission order from
- * `runbook_started` events (`runbookId`), so a scenario's own `rundown run` start
- * output supplies `${RUN_ID}` and later starts (inline children, claimed
- * children) supply the higher indexes. Mutating scenario commands should use
- * `${CLAIM_ID}` for run-control authority; `${RUN_ID}` remains available for
- * selector/status assertions. Mirrors {@link substituteClaimIds}.
- *
- * @param command - Command string with optional run id placeholders
- * @param capturedRunIds - Run ids captured from earlier `runbook_started` events
- * @returns Command string with run id placeholders substituted
- * @throws {Error} If a placeholder references a run id that has not been captured
- */
-export function substituteRunIds(command: string, capturedRunIds: readonly string[]): string {
-  return command.replace(/\$\{RUN_ID(?:_(\d+))?\}/g, (_match, index: string | undefined) => {
-    const offset = index === undefined ? 0 : Number(index) - 1;
-    if (offset < 0 || offset >= capturedRunIds.length) {
-      throw new Error(`Missing captured run id for \${RUN_ID${index ? `_${index}` : ''}}`);
-    }
-    return capturedRunIds[offset];
-  });
-}
-
-/**
- * Capture a run id from a parsed `runbook_started` execution event.
- *
- * @param value - Parsed JSON value to inspect
- * @param capturedRunIds - Array to append captured run ids into
- */
-export function captureRunIdFromJsonObject(value: unknown, capturedRunIds: string[]): void {
-  if (
-    value !== null &&
-    typeof value === 'object' &&
-    (value as { type?: unknown }).type === 'runbook_started' &&
-    typeof (value as { runbookId?: unknown }).runbookId === 'string'
-  ) {
-    capturedRunIds.push((value as { runbookId: string }).runbookId);
-  }
-}
-
-/**
- * Capture a run-control claim id from a parsed `runbook_started` execution event.
- *
- * @param value - Parsed JSON value to inspect
- * @param capturedRunClaimIds - Array to append captured run-control claim ids into
- */
-export function captureRunClaimIdFromJsonObject(
-  value: unknown,
-  capturedRunClaimIds: string[],
-): void {
-  if (
-    value !== null &&
-    typeof value === 'object' &&
-    (value as { type?: unknown }).type === 'runbook_started' &&
-    typeof (value as { claim_id?: unknown }).claim_id === 'string'
-  ) {
-    capturedRunClaimIds.push((value as { claim_id: string }).claim_id);
-  }
-}
-
-/**
- * Capture a delegated child claim id from a parsed `rd claim` JSON object.
- *
- * @param value - Parsed JSON value to inspect
- * @param capturedClaimIds - Array to append captured claim ids into
- */
-export function captureClaimIdFromJsonObject(value: unknown, capturedClaimIds: string[]): void {
-  if (
-    value !== null &&
-    typeof value === 'object' &&
-    'action' in value &&
-    'claim_id' in value &&
-    (value as { action?: unknown }).action === 'claimed' &&
-    typeof (value as { claim_id?: unknown }).claim_id === 'string'
-  ) {
-    capturedClaimIds.push((value as { claim_id: string }).claim_id);
-  }
-}
-
-/**
  * Run a single command and capture its stdout, optionally forwarding output.
  *
  * @param command - Command descriptor: either an rd command with parsed args or a raw shell command
@@ -844,10 +850,8 @@ async function runCommandWithTee(
  *
  * @param obj - A parsed JSON object from command output
  * @param transitions - Array to push extracted transitions into
- * @param tokens - Array to push captured delegation tokens into
- * @param claimIds - Array to push captured claim ids into
- * @param runClaimIds - Array to push captured run-control claim ids into
- * @param runIds - Array to push captured run ids into (for `${RUN_ID}` substitution)
+ * @param tokens - Array to push captured Owner Tokens into (`${TOKEN}` substitution)
+ * @param runIds - Array to push captured run ids into (`${RUN_ID}` substitution)
  * @param errors - Array to push captured JSON error responses into
  * @param warnings - Array to push captured JSON warning responses into
  * @param artifactEntries - Array to push captured artifact working sets into
@@ -858,8 +862,6 @@ function processJsonObject(
   obj: Record<string, unknown>,
   transitions: CapturedTransition[],
   tokens: string[],
-  claimIds: string[],
-  runClaimIds: string[],
   runIds: string[],
   errors: CapturedError[],
   warnings: CapturedWarning[],
@@ -893,12 +895,7 @@ function processJsonObject(
     if (obj.stopped === true) terminal = 'STOP';
   }
 
-  // Extract delegation token from delegate response
-  if (obj.action === 'delegated' && typeof obj.token === 'string') {
-    tokens.push(obj.token);
-  }
-  captureClaimIdFromJsonObject(obj, claimIds);
-  captureRunClaimIdFromJsonObject(obj, runClaimIds);
+  captureOwnerTokenFromJsonObject(obj, tokens);
   captureRunIdFromJsonObject(obj, runIds);
 
   if (obj.kind === 'error') {
@@ -932,23 +929,6 @@ function processJsonObject(
         artifacts: parsedArtifacts,
         runbook: parsedRunbook.success ? parsedRunbook.data : undefined,
       });
-    }
-  }
-
-  // Extract pre-issued delegation tokens from STEP_ENTERED delegateFrontier.
-  // Emitted when `rundown run` enters a DELEGATE step: tokens are auto-issued for
-  // each delegated substep so the agent can claim without a separate
-  // `rundown delegate` command.
-  if (obj.type === 'step_entered' && Array.isArray(obj.delegateFrontier)) {
-    for (const entry of obj.delegateFrontier) {
-      if (
-        entry !== null &&
-        typeof entry === 'object' &&
-        'token' in entry &&
-        typeof (entry as { token: unknown }).token === 'string'
-      ) {
-        tokens.push((entry as { token: string }).token);
-      }
     }
   }
 
@@ -1056,8 +1036,6 @@ export function parseJsonLines(
   transitions: CapturedTransition[];
   terminal: 'COMPLETE' | 'STOP' | null;
   tokens: string[];
-  claimIds: string[];
-  runClaimIds: string[];
   runIds: string[];
   errors: CapturedError[];
   warnings: CapturedWarning[];
@@ -1066,8 +1044,6 @@ export function parseJsonLines(
 } {
   const transitions: CapturedTransition[] = [];
   const tokens: string[] = [];
-  const claimIds: string[] = [];
-  const runClaimIds: string[] = [];
   const runIds: string[] = [];
   const errors: CapturedError[] = [];
   const warnings: CapturedWarning[] = [];
@@ -1079,8 +1055,6 @@ export function parseJsonLines(
       transitions,
       terminal: null,
       tokens,
-      claimIds,
-      runClaimIds,
       runIds,
       errors,
       warnings,
@@ -1108,8 +1082,6 @@ export function parseJsonLines(
       obj,
       transitions,
       tokens,
-      claimIds,
-      runClaimIds,
       runIds,
       errors,
       warnings,
@@ -1120,8 +1092,6 @@ export function parseJsonLines(
       transitions,
       terminal,
       tokens,
-      claimIds,
-      runClaimIds,
       runIds,
       errors,
       warnings,
@@ -1155,8 +1125,6 @@ export function parseJsonLines(
       obj,
       transitions,
       tokens,
-      claimIds,
-      runClaimIds,
       runIds,
       errors,
       warnings,
@@ -1203,8 +1171,6 @@ export function parseJsonLines(
     transitions,
     terminal: rootTerminal ?? terminal,
     tokens,
-    claimIds,
-    runClaimIds,
     runIds,
     errors,
     warnings,
@@ -1680,9 +1646,7 @@ export function extractInputFileReferences(commands: string[]): string[] {
  * @param jsonResult - Parsed JSON lines result from a single command's stdout
  * @param into - Mutable accumulators shared across the command sequence loop
  * @param into.transitions - Step transitions accumulator
- * @param into.capturedTokens - Captured delegation tokens accumulator
- * @param into.capturedClaimIds - Captured claim IDs accumulator
- * @param into.capturedRunClaimIds - Captured run-control claim IDs accumulator
+ * @param into.capturedTokens - Captured Owner Tokens accumulator
  * @param into.capturedRunIds - Captured run ids accumulator (runbook_started events)
  * @param into.errors - Captured JSON error responses accumulator
  * @param into.warnings - Captured JSON warning responses accumulator
@@ -1695,8 +1659,6 @@ function aggregateJsonResult(
   into: {
     transitions: CapturedTransition[];
     capturedTokens: string[];
-    capturedClaimIds: string[];
-    capturedRunClaimIds: string[];
     capturedRunIds: string[];
     errors: CapturedError[];
     warnings: CapturedWarning[];
@@ -1709,12 +1671,6 @@ function aggregateJsonResult(
   }
   for (const tok of jsonResult.tokens) {
     into.capturedTokens.push(tok);
-  }
-  for (const claimId of jsonResult.claimIds) {
-    into.capturedClaimIds.push(claimId);
-  }
-  for (const claimId of jsonResult.runClaimIds) {
-    into.capturedRunClaimIds.push(claimId);
   }
   for (const runId of jsonResult.runIds) {
     into.capturedRunIds.push(runId);
@@ -1739,9 +1695,9 @@ function aggregateJsonResult(
  *
  * Handles `rd` commands (JSON is the default output format) and generic
  * shell commands. Prefix a command with `! ` when a non-zero exit is the
- * expected outcome. Token placeholders (`${TOKEN}`, `${TOKEN_2}`, etc.) are
- * substituted with previously captured delegation tokens before each command
- * runs. Tokens are extracted from parsed JSON `delegate` responses.
+ * expected outcome. Placeholders (`${TOKEN}`, `${RUN_ID}` and their `_n`
+ * forms) are substituted with values captured from earlier `runbook_started`
+ * events before each command runs.
  *
  * @param options - Execution options including commands, working directory, CLI path, and quiet flag
  * @returns Promise resolving to the terminal result, all transitions, and captured tokens
@@ -1752,8 +1708,6 @@ export async function executeCommandSequence(
   options: CommandSequenceOptions,
 ): Promise<CommandSequenceResult> {
   const capturedTokens: string[] = [];
-  const capturedClaimIds: string[] = [];
-  const capturedRunClaimIds: string[] = [];
   const capturedRunIds: string[] = [];
   const errors: CapturedError[] = [];
   const warnings: CapturedWarning[] = [];
@@ -1788,13 +1742,10 @@ export async function executeCommandSequence(
     const trimmedRaw = rawCmd.trimStart();
     const expectsFailure = trimmedRaw.startsWith('! ');
     const commandText = expectsFailure ? trimmedRaw.slice(2).trimStart() : rawCmd;
-    // Token substitution — replace ${TOKEN}, ${CLAIM_ID}, ${RUN_CLAIM_ID},
-    // ${RUN_ID} (and their _N indexed forms) with captured values.
+    // Placeholder substitution — replace ${TOKEN} and ${RUN_ID} (and their _N
+    // indexed forms) with values captured from earlier runbook_started events.
     const tokenSubstituted = substituteRunIds(
-      substituteRunClaimIds(
-        substituteClaimIds(substituteTokens(commandText, capturedTokens), capturedClaimIds),
-        capturedRunClaimIds,
-      ),
+      substituteTokens(commandText, capturedTokens),
       capturedRunIds,
     );
     // The `${ARTIFACT:<name>}` grammar and its `seed:` directive were retired in
@@ -1862,8 +1813,6 @@ export async function executeCommandSequence(
       const terminal = aggregateJsonResult(jsonResult, {
         transitions,
         capturedTokens,
-        capturedClaimIds,
-        capturedRunClaimIds,
         capturedRunIds,
         errors,
         warnings,
@@ -1904,8 +1853,6 @@ export async function executeCommandSequence(
       const terminal = aggregateJsonResult(jsonResult, {
         transitions,
         capturedTokens,
-        capturedClaimIds,
-        capturedRunClaimIds,
         capturedRunIds,
         errors,
         warnings,
@@ -1929,7 +1876,7 @@ export async function executeCommandSequence(
     terminalResult,
     transitions,
     capturedTokens,
-    capturedClaimIds,
+    capturedRunIds,
     errors,
     warnings,
     artifactEntries,

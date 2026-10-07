@@ -1,42 +1,12 @@
-import { expect } from '@jest/globals';
 import { mkdir, mkdtemp, rm, cp, writeFile, symlink, chmod } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import {
-  RUNBOOK_SOURCES,
-  activeFrame,
-  buildCompletionKey,
-  buildFrameKey,
-  buildResolvedCompletion,
-  exactFrame,
-  isRunId,
-  runsDir,
-  runbooksDir,
-  locksDir,
-  RunbookStateManager,
-  SessionService,
-} from '@rundown-org/core';
-import type {
-  ClaimId,
-  ClaimLookupKey,
-  ClaimRecord,
-  FrameKey,
-  RunId,
-  RunbookState,
-  SessionData,
-} from '@rundown-org/core';
-import {
-  listPersistedRunIds,
-  patchPersistedClaim,
-  patchPersistedRunState,
-  readPersistedRunState,
-  unwrapSessionMutation,
-} from '@rundown-org/core/testing/run-fixtures';
-import { dbPath } from '@rundown-org/core';
-import { DatabaseSync } from 'node:sqlite';
+import { RUNBOOK_SOURCES, isRunId, runsDir, runbooksDir, locksDir } from '@rundown-org/core';
+import type { RunbookState } from '@rundown-org/core';
+import { listPersistedRunIds, readPersistedRunState } from '@rundown-org/core/testing/run-fixtures';
 import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';
 import type { ResolvedStep, Substep } from '@rundown-org/parser';
 import {
@@ -82,19 +52,6 @@ export interface CliResult {
    */
   exitIntercepted?: boolean;
 }
-
-/**
- * Delegation frontier each run in a workspace currently advertises.
- *
- * Keyed by run id, iterated in least-recently-advertised order (a run that
- * advertises again is re-inserted at the end), so the most recent emission wins
- * a lookup. See {@link recordEmittedFrontier} for the replace-or-delete rule.
- */
-const latestEmittedFrontier = new WeakMap<TestWorkspace, Map<string, FrontierEntry[]>>();
-const emittedRunClaims = new WeakMap<TestWorkspace, Map<string, string>>();
-
-/** Cache key for a `step_entered` event that carries no attributable run id. */
-const UNATTRIBUTED_RUN = '';
 
 /**
  * Creates isolated temp directory with fixtures and .rundown structure.
@@ -184,13 +141,11 @@ export function runCli(args: string | string[], workspace: TestWorkspace): CliRe
     },
   });
 
-  const cliResult = {
+  return {
     stdout: result.stdout || '',
     stderr: result.stderr || '',
     exitCode: result.status ?? 1,
   };
-  recordEmittedFrontier(workspace, cliResult.stdout);
-  return cliResult;
 }
 
 export { stripExitArtefact };
@@ -231,107 +186,7 @@ export async function runCliInProcess(
       ...(options.env ?? {}),
     },
   });
-  recordEmittedFrontier(workspace, result.stdout);
-  const claims = emittedRunClaims.get(workspace) ?? new Map<string, string>();
-  for (const value of parseConcatenatedJson(result.stdout)) {
-    if (
-      value &&
-      typeof value === 'object' &&
-      (value as { type?: unknown }).type === 'runbook_started' &&
-      typeof (value as { runbookId?: unknown }).runbookId === 'string' &&
-      typeof (value as { claim_id?: unknown }).claim_id === 'string'
-    ) {
-      claims.set(
-        (value as { runbookId: string }).runbookId,
-        (value as { claim_id: string }).claim_id,
-      );
-    }
-  }
-  emittedRunClaims.set(workspace, claims);
   return result;
-}
-
-/**
- * Read session.json for active/stashed runbook verification.
- *
- * Maps internal session fields to test-friendly names:
- * - `defaultStack` (top of default stack) → `active`
- * - `stashedRunbookId` (from RunbookStateManager) → `stashed`
- * - `defaultStack` (default stack for runbooks) → `defaultStack`
- * - `claims` (delegated child claim registry) → `claims`
- */
-export async function readSession(workspace: TestWorkspace): Promise<{
-  active: string | null;
-  stashed: string | null;
-  stacks: Record<string, string[]>;
-  defaultStack: string[];
-  claims: Record<string, ClaimRecord>;
-}> {
-  try {
-    const session = await new RunbookStateManager(workspace.cwd).loadSession();
-    const defaultStack = [...session.defaultStack];
-    return {
-      // Active runbook is the top of the default stack.
-      active: defaultStack.length > 0 ? (defaultStack[defaultStack.length - 1] ?? null) : null,
-      stashed: session.stashedRunbookId ?? null,
-      // Per-agent stacks are a legacy shape the store no longer persists.
-      stacks: {},
-      defaultStack,
-      claims: { ...session.claims },
-    };
-  } catch {
-    return {
-      active: null,
-      stashed: null,
-      stacks: {},
-      defaultStack: [],
-      claims: {},
-    };
-  }
-}
-
-/**
- * Write session.json to set active/stashed runbook.
- *
- * Uses stack-based format:
- * - `active` is written to the top of `defaultStack`
- * - `stashed` is written to `stashedRunbookId`
- * - `claims` for delegated children
- */
-export async function writeSession(
-  workspace: TestWorkspace,
-  session: {
-    active?: string | null;
-    stashed?: string | null;
-    stacks?: Record<string, string[]>;
-    defaultStack?: string[];
-    // Matches `readSession`'s `claims` so a read→write round-trip type-checks.
-    // A test that fabricates a partial claim writes an invalid session anyway;
-    // the narrower type says so at compile time instead of at load time.
-    claims?: Record<string, ClaimRecord>;
-  },
-): Promise<void> {
-  const manager = new RunbookStateManager(workspace.cwd);
-  const current = await manager.loadSession();
-
-  const defaultStack =
-    session.defaultStack !== undefined
-      ? [...session.defaultStack]
-      : session.active !== undefined
-        ? session.active
-          ? [session.active]
-          : []
-        : [...current.defaultStack];
-
-  await manager.saveSession({
-    ...current,
-    defaultStack: defaultStack as SessionData['defaultStack'],
-    stashedRunbookId:
-      session.stashed !== undefined
-        ? ((session.stashed ?? undefined) as SessionData['stashedRunbookId'])
-        : current.stashedRunbookId,
-    claims: session.claims !== undefined ? { ...session.claims } : { ...current.claims },
-  });
 }
 
 /**
@@ -396,511 +251,6 @@ export async function readRunbookState(
 }
 
 /**
- * Get the active runbook state.
- */
-export async function getActiveState(workspace: TestWorkspace): Promise<RunbookState | null> {
-  const session = await readSession(workspace);
-  if (!session.active) return null;
-  return readRunbookState(workspace, session.active);
-}
-
-/**
- * Issue and append explicit bearer authority for the workspace's active run.
- *
- * Strict claim authority means a run id is only a selector, not mutation
- * authority. Legacy orchestrator-side tests use this helper to model the
- * bearer returned by `rundown run`.
- *
- * @param args - CLI argv to extend (e.g. `['pass']`)
- * @param workspace - Test workspace whose active run receives a bearer claim
- * @returns The argv with `--claim-id <claimId>` appended
- * @throws {Error} When no active run exists to target
- */
-export async function withRunTarget(
-  args: readonly string[],
-  workspace: TestWorkspace,
-): Promise<string[]> {
-  const state = await getActiveState(workspace);
-  if (!state) throw new Error('withRunTarget: no active run to target');
-  const emittedClaimId = emittedRunClaims.get(workspace)?.get(state.id);
-  if (emittedClaimId) return [...args, '--claim-id', emittedClaimId];
-  const manager = new RunbookStateManager(workspace.cwd);
-  const sessionService = new SessionService(manager);
-  const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
-  return [...args, '--claim-id', claimId];
-}
-
-/**
- * Append explicit --run selection for the workspace's active run.
- *
- * Use this only when the test is asserting selector behavior. Mutating
- * commands must present a bearer via {@link withRunTarget}.
- *
- * @param args - CLI argv to extend
- * @param workspace - Test workspace whose active run supplies the id
- * @returns The argv with `--run <activeRunId>` appended
- * @throws {Error} When no active run exists to target
- */
-export async function withRunSelector(
-  args: readonly string[],
-  workspace: TestWorkspace,
-): Promise<string[]> {
-  const state = await getActiveState(workspace);
-  if (!state) throw new Error('withRunSelector: no active run to target');
-  return [...args, '--run', state.id];
-}
-
-/**
- * Give a run active execution ownership, as another process holding it would.
- *
- * Writes the `execution_attempts` row and the `runs.exec_*` identity directly,
- * because acquiring a real lease needs `SqliteExecutionLeaseService`, which core
- * does not export. That is enough for what these tests exercise: the
- * `claims_guard_*` / `stash_guard_*` triggers and
- * `RunbookStore.mutateSessionGuarded`'s pre-check both key on
- * `runs.exec_token IS NOT NULL` alone.
- *
- * @param target - Test workspace whose database holds the run, or its `cwd`.
- * @param runId - Run to mark as owned.
- * @param epoch - Execution epoch to record (defaults to 1).
- */
-export function seedExecutionOwnership(
-  target: TestWorkspace | string,
-  runId: RunbookState['id'],
-  epoch = 1,
-): void {
-  const db = new DatabaseSync(dbPath(typeof target === 'string' ? target : target.cwd));
-  try {
-    db.prepare(
-      `INSERT INTO execution_attempts
-         (run_id, exec_epoch, exec_token, phase, owner_pid, started_at)
-       VALUES (:runId, :epoch, 'sha256:owned', 'claimed', :pid, :now)`,
-    ).run({ runId, epoch, pid: process.pid, now: new Date().toISOString() });
-    db.prepare(
-      `UPDATE runs SET exec_epoch = :epoch, exec_pid = :pid, exec_token = 'sha256:owned'
-        WHERE id = :runId`,
-    ).run({ runId, epoch, pid: process.pid });
-  } finally {
-    db.close();
-  }
-}
-
-/**
- * Issue bearer authority for an arbitrary run in a test workspace.
- *
- * @param workspace - Test workspace containing the run
- * @param runId - Run id to control
- * @returns A freshly issued bearer claim id
- */
-export async function issueRunControlClaim(
-  workspace: TestWorkspace,
-  runId: RunbookState['id'],
-): Promise<ClaimId> {
-  const manager = new RunbookStateManager(workspace.cwd);
-  const sessionService = new SessionService(manager);
-  const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(runId));
-  return claimId;
-}
-
-/**
- * Rewind a claim's `lastSeenAt` so a test can reach the idle threshold
- * without waiting an hour.
- *
- * @param workspace - Test workspace whose session file is rewritten.
- * @param claimKey - Non-secret claim lookup key. NEVER a bearer (`rdclm_…`) —
- *   convert with `claimKeyFromBearer` at the call site if that is what you hold.
- * @param iso - Timestamp to write, or any string when testing the corrupt path.
- * @throws If `claimKey` is absent from the session — see below.
- */
-export async function backdateClaimSeen(
-  workspace: TestWorkspace,
-  claimKey: ClaimLookupKey,
-  iso: string,
-): Promise<void> {
-  const manager = new RunbookStateManager(workspace.cwd);
-  const raw = await manager.loadSession();
-  const claim = raw.claims[claimKey] as { lastSeenAt: string } | undefined;
-  // THROW, never no-op. A helper that silently does nothing when it cannot find
-  // the key would make EVERY idle assertion in Tasks 5, 6 and 7 vacuously green —
-  // the single highest-leverage way this feature's test suite could lie to us.
-  if (claim === undefined) {
-    throw new Error(
-      `backdateClaimSeen: no claim '${claimKey}' in session. ` +
-        `Did you pass a bearer (rdclm_…) instead of a lookup key (rdclk_…)? ` +
-        `Convert with claimKeyFromBearer().`,
-    );
-  }
-  // Written to the claim column directly. `saveSession` reconciles rather than
-  // rewrites — an already-persisted claim is left untouched so a bulk save can
-  // never churn `claim_generation` or clobber this very mark — so editing the
-  // loaded snapshot and saving it back would silently no-op.
-  await patchPersistedClaim(workspace.cwd, claimKey, { lastSeenAt: iso });
-}
-
-/** Frontier entry emitted inside a STEP_ENTERED event for a DELEGATE step. */
-export interface FrontierEntry {
-  /** Qualified id of the delegated substep represented by this frontier entry. */
-  id: string;
-  /** Runbook reference delegated to the child. */
-  runbook: string;
-  /** Secret delegation token the child presents when claiming the work. */
-  token: string;
-}
-
-/** Subset of the `step_entered` event shape the delegation tests care about. */
-export interface StepEnteredEvent {
-  /** Event discriminator; `step_entered` identifies the event this helper accepts. */
-  type?: string;
-  /** Run that entered the step; scopes a frontier to the run advertising it. */
-  runbookId?: string;
-  /** Delegated work made claimable when the entered step has a DELEGATE frontier. */
-  delegateFrontier?: FrontierEntry[];
-  /** Human-readable name of the step that was entered. */
-  stepName?: string;
-  /** Execution position of the entered step, including substep or loop coordinates when present. */
-  position?: unknown;
-}
-
-/**
- * Walk a possibly-nested list of parsed JSON values and collect every
- * `step_entered` frontier, in emission order.
- *
- * A single command can enter more than one DELEGATE step (a `collect` that
- * closes one FOR iteration and opens the next, an inline handoff that launches
- * a child, a retry that re-issues in place), so the events carry a *sequence*
- * of frontiers, not one. Callers pick the end of that sequence they mean.
- *
- * @param events - Parsed JSON values from stdout
- * @returns Every emitted frontier array, oldest first
- */
-function frontiersInEvents(events: unknown[]): FrontierEntry[][] {
-  const frontiers: FrontierEntry[][] = [];
-  for (const ev of events) {
-    if (Array.isArray(ev)) {
-      frontiers.push(...frontiersInEvents(ev));
-    } else if (ev && typeof ev === 'object') {
-      const e = ev as StepEnteredEvent;
-      if (e.type === 'step_entered' && e.delegateFrontier) {
-        frontiers.push(e.delegateFrontier);
-      }
-    }
-  }
-  return frontiers;
-}
-
-/**
- * Walk a possibly-nested list of parsed JSON values and find the first
- * `step_entered` event that carries a `delegateFrontier`.
- *
- * Use this only when the assertion is genuinely about the FIRST frontier a
- * command emitted (e.g. "the entry frontier of `rundown run`"). To resolve a
- * bearer, prefer {@link requireFrontierToken}, which honours later re-issuance.
- *
- * @param events - Parsed JSON values from stdout
- * @returns The first frontier array if found, otherwise undefined
- */
-export function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {
-  return frontiersInEvents(events)[0];
-}
-
-/**
- * Walk a possibly-nested list of parsed JSON values and find the LAST
- * `step_entered` event that carries a `delegateFrontier`.
- *
- * This is the frontier the command left the run standing on. Taking the first
- * instead would hand back a bearer that a later transition in the same command
- * already superseded.
- *
- * @param events - Parsed JSON values from stdout
- * @returns The final frontier array if found, otherwise undefined
- */
-export function findLatestFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {
-  const frontiers = frontiersInEvents(events);
-  return frontiers[frontiers.length - 1];
-}
-
-/**
- * Select the frontier entry a caller meant from an emission-ordered list.
- *
- * When `id` is given the LAST matching entry wins: a command that re-issues a
- * substep's credential emits the replacement after the original, and the
- * replacement is the live bearer. When `id` is omitted the sole entry of a
- * single-substep frontier is returned.
- *
- * @param entries - Frontier entries in emission order
- * @param id - Optional qualified delegated substep id
- * @returns The selected entry, or undefined when nothing matches
- */
-function selectFrontierEntry(
-  entries: readonly FrontierEntry[] | undefined,
-  id: string | undefined,
-): FrontierEntry | undefined {
-  if (!entries) return undefined;
-  if (id === undefined) return entries[0];
-  for (let i = entries.length - 1; i >= 0; i--) {
-    if (entries[i].id === id) return entries[i];
-  }
-  return undefined;
-}
-
-/**
- * Reduce a command's events to the frontier each run last advertised.
- *
- * A `step_entered` with a `delegateFrontier` advertises that frontier for its
- * run; one without RETRACTS it — the run has moved to a step that offers no
- * delegation. Later events in the same command win, so the map records where
- * each run stood when the command finished.
- *
- * @param events - Parsed JSON values from stdout
- * @returns Run id to advertised frontier, or `undefined` where retracted
- */
-function frontiersByRunInEvents(events: unknown[]): Map<string, FrontierEntry[] | undefined> {
-  const byRun = new Map<string, FrontierEntry[] | undefined>();
-  for (const ev of events) {
-    if (Array.isArray(ev)) {
-      for (const [runId, frontier] of frontiersByRunInEvents(ev)) byRun.set(runId, frontier);
-    } else if (ev && typeof ev === 'object') {
-      const e = ev as StepEnteredEvent;
-      if (e.type !== 'step_entered') continue;
-      const runId = typeof e.runbookId === 'string' ? e.runbookId : UNATTRIBUTED_RUN;
-      byRun.set(runId, e.delegateFrontier);
-    }
-  }
-  return byRun;
-}
-
-/**
- * Record where each run stood after a command, for
- * {@link requireLatestFrontierToken}.
- *
- * Replace-or-delete **per run**, never merge. A run that entered a step with no
- * `delegateFrontier` has its cached frontier DELETED — leaving the previous one
- * in place would let a test read a bearer the run no longer offers and stay
- * green after the emission it was asserting on regressed away.
- *
- * Scoping to the emitting run is what makes that strictness safe. Delegation
- * tests interleave runs: a parent standing on its frontier while `claim` and
- * `pass` drive a child through frontier-less steps. Those child transitions say
- * nothing about the parent, so they must not retract the parent's frontier.
- *
- * @param workspace - Test workspace the command ran against
- * @param stdout - Raw stdout of that command
- */
-function recordEmittedFrontier(workspace: TestWorkspace, stdout: string): void {
-  const advertised = frontiersByRunInEvents(parseConcatenatedJson(stdout));
-  if (advertised.size === 0) return;
-  const cache = latestEmittedFrontier.get(workspace) ?? new Map<string, FrontierEntry[]>();
-  for (const [runId, frontier] of advertised) {
-    // Delete first so a re-advertising run is re-inserted at the end of the
-    // Map's iteration order, making "most recent" a positional fact.
-    cache.delete(runId);
-    if (frontier) cache.set(runId, frontier);
-  }
-  latestEmittedFrontier.set(workspace, cache);
-}
-
-/**
- * Read an intentionally emitted delegation bearer from CLI JSON output.
- *
- * Tests must not recover delegation bearers from persisted run state: state
- * stores only the non-secret credential descriptor and lookup hash.
- *
- * Entries from every frontier the output carries are considered, and the LAST
- * match for `id` wins — a re-issued credential supersedes the one it replaced.
- *
- * Resolution is EXCLUSIVELY through an emitted `step_entered.delegateFrontier`.
- * Never scrape a bearer out of raw stdout as a fallback: a token printed on some
- * other surface is not evidence that this disclosure boundary still works, and
- * guessing an entry by substep position resolves to a different substep's
- * credential — turning an id-attribution regression into a plausible wrong value
- * instead of a failure.
- *
- * @param stdout - Concatenated JSON output from a CLI transition
- * @param id - Optional qualified delegated substep id
- * @returns The emitted delegation bearer
- * @throws {Error} When the output contains no matching frontier entry
- */
-export function requireFrontierToken(stdout: string, id?: string): string {
-  const entries = frontiersInEvents(parseConcatenatedJson(stdout)).flat();
-  const entry = selectFrontierEntry(entries, id);
-  if (typeof entry?.token === 'string') return entry.token;
-
-  throw new Error(`Expected CLI output to include delegation token${id ? ` for ${id}` : ''}`);
-}
-
-/**
- * Read a delegation bearer from the frontier a preceding CLI transition left
- * standing.
- *
- * Resolves against the most recently advertised frontier (see
- * {@link recordEmittedFrontier}), so a re-issued credential always supersedes
- * the one it replaced. Once the owning run enters a step with no frontier the
- * bearer is retracted and this throws rather than serving a stale one.
- *
- * @param workspace - Test workspace whose commands advertised the frontier
- * @param id - Optional qualified delegated substep id
- * @returns The intentionally emitted delegation bearer
- * @throws {Error} When no run currently advertises a matching frontier entry
- */
-export function requireLatestFrontierToken(workspace: TestWorkspace, id?: string): string {
-  const frontiers = [...(latestEmittedFrontier.get(workspace)?.values() ?? [])];
-  const entry =
-    id === undefined
-      ? selectFrontierEntry(frontiers[frontiers.length - 1], undefined)
-      : selectFrontierEntry(frontiers.flat(), id);
-  if (typeof entry?.token !== 'string') {
-    throw new Error(`Expected a preceding CLI transition to emit token${id ? ` for ${id}` : ''}`);
-  }
-  return entry.token;
-}
-
-/**
- * Return the run-control bearer intentionally emitted when a run started.
- *
- * `runbook_started.claim_id` is the sole credential-delivery surface for the
- * run-control bearer — it is never recoverable from persisted state — so a test
- * that needs to mutate a run it started reads the bearer back from here.
- *
- * @param workspace - Test workspace whose commands were run through
- *   {@link runCliInProcess}, which records emitted run-control bearers
- * @param runId - Run id whose `runbook_started` event carried the bearer
- * @returns The emitted run-control bearer claim id
- * @throws {Error} When no `runbook_started` output for `runId` was observed —
- *   the run was started by a helper that does not record bearers, or the
- *   emission regressed
- */
-export function requireEmittedRunClaim(workspace: TestWorkspace, runId: string): string {
-  const claimId = emittedRunClaims.get(workspace)?.get(runId);
-  if (!claimId) throw new Error(`Expected runbook_started output for ${runId}`);
-  return claimId;
-}
-
-/**
- * Build a parent runbook with one DELEGATE step (step 1) containing two
- * H3 substeps, both referencing a child runbook. Step 2 is a terminal
- * step used to assert that aggregation advanced the parent correctly.
- *
- * Step 1 uses `PASS ALL CONTINUE` / `FAIL ANY STOP` so individual-substep
- * outcomes cleanly drive aggregation behavior.
- */
-function buildParentDelegate(): string {
-  return [
-    '# Parent',
-    '',
-    '## 1. Fan-out',
-    '',
-    '- DELEGATE',
-    '- PASS ALL CONTINUE',
-    '- FAIL ANY STOP',
-    '',
-    '### 1.1 Task A',
-    '',
-    '- child.runbook.md',
-    '',
-    '### 1.2 Task B',
-    '',
-    '- child.runbook.md',
-    '',
-    '## 2. Done',
-    '',
-    '- PASS COMPLETE',
-    '- FAIL STOP',
-    '',
-    'Finished.',
-    '',
-    '```bash',
-    'rd echo --result pass',
-    '```',
-    '',
-  ].join('\n');
-}
-
-/**
- * Write both a passing and a failing child runbook plus a parent DELEGATE
- * runbook to the workspace, then start the parent in prompted mode.
- *
- * Returns the parent run id and the two auto-issued tokens. The second
- * substep (1.2) references `childRef2` so callers can wire a failing child.
- *
- * @param workspace - Test workspace to write the runbooks into and run against.
- * @param childRef2 - Runbook reference for substep 1.2.
- * @returns The parent run id, both auto-issued tokens, and the start stdout.
- */
-export async function setupParentWithChildren(
-  workspace: TestWorkspace,
-  childRef2 = 'child.runbook.md',
-): Promise<{
-  parentRunId: RunId;
-  token1: string;
-  token2: string;
-  startStdout: string;
-}> {
-  const passChild = createRunbook({
-    title: 'Child Pass',
-    steps: [{ title: 'Do work', pass: 'COMPLETE', command: 'rd echo --result pass' }],
-  });
-  const failChild = createRunbook({
-    title: 'Child Fail',
-    steps: [
-      {
-        title: 'Do work',
-        pass: 'COMPLETE',
-        fail: 'STOP',
-        command: 'rd echo --result fail',
-      },
-    ],
-  });
-
-  // Both child names need to resolve; write both to every discovery location.
-  await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), passChild);
-  await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), passChild);
-  await writeFile(join(workspace.cwd, 'runbooks', 'child-fail.runbook.md'), failChild);
-  await writeFile(join(workspace.runbooksDir(), 'child-fail.runbook.md'), failChild);
-
-  const parentContent = buildParentDelegate().replace(
-    '### 1.2 Task B\n\n- child.runbook.md',
-    `### 1.2 Task B\n\n- ${childRef2}`,
-  );
-  await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentContent);
-
-  const startResult = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
-  expect(startResult.exitCode).toBe(0);
-
-  const parentState = await getActiveState(workspace);
-  expect(parentState).not.toBeNull();
-  const parentRunId = parentState!.id;
-
-  const runEvents = parseConcatenatedJson(startResult.stdout);
-  const frontier = findFrontierInEvents(runEvents) ?? [];
-  const token1 = frontier.find((f) => f.id === '1.1')?.token;
-  const token2 = frontier.find((f) => f.id === '1.2')?.token;
-  expect(token1).toBeDefined();
-  expect(token2).toBeDefined();
-
-  return {
-    parentRunId,
-    token1: token1!,
-    token2: token2!,
-    startStdout: startResult.stdout,
-  };
-}
-
-/**
- * Get agent stack active state.
- * Returns the runbook state for the top of the given agent's stack.
- */
-export async function getAgentActiveState(
-  workspace: TestWorkspace,
-  agentId: string,
-): Promise<RunbookState | null> {
-  const session = await readSession(workspace);
-  const stack = session.stacks[agentId] ?? [];
-  const topId = stack[stack.length - 1];
-  if (!topId) return null;
-  return readRunbookState(workspace, topId);
-}
-
-/**
  * Get all runbook states.
  *
  * Alias for getAllRunbookStates — prefer getAllRunbookStates in new tests.
@@ -931,15 +281,6 @@ export async function getAllRunbookStates(workspace: TestWorkspace): Promise<Run
   } catch {
     return [];
   }
-}
-
-/**
- * Get the active runbook state by reading the session and resolving the top of the default stack.
- */
-export async function getActiveRunbookState(
-  workspace: TestWorkspace,
-): Promise<RunbookState | null> {
-  return getActiveState(workspace);
 }
 
 /**
@@ -1054,19 +395,48 @@ export function parseJsonEvents(stdout: string): JsonOutputEvent[] {
 }
 
 /**
- * Extract a delegation token from a `rd delegate` JSON stdout payload.
+ * Read the Owner Token that `rundown run` printed on its `runbook_started` event.
  *
- * @param stdout - The stdout string from `rd delegate`
- * @returns The token string
- * @throws If the output is not parseable JSON or has no `token` field
+ * The token appears exactly once, as `owner_token` on that event, and is the
+ * authority every mutating command passes as `--token`.
+ *
+ * @param stdout - Captured stdout of a `rundown run` invocation
+ * @returns The plaintext Owner Token
+ * @throws If no `runbook_started` event carrying `owner_token` is present
  */
-export function extractToken(stdout: string): string {
-  const action = findActionOutput(stdout);
-  const token = action?.token;
-  if (typeof token !== 'string' || token.length === 0) {
-    throw new Error(`No token found in delegate output:\n${stdout}`);
+export function requireOwnerToken(stdout: string): string {
+  for (const value of parseConcatenatedJson(stdout)) {
+    if (
+      value &&
+      typeof value === 'object' &&
+      (value as { type?: unknown }).type === 'runbook_started' &&
+      typeof (value as { owner_token?: unknown }).owner_token === 'string'
+    ) {
+      return (value as { owner_token: string }).owner_token;
+    }
   }
-  return token;
+  throw new Error(`No runbook_started event with owner_token in output:\n${stdout}`);
+}
+
+/**
+ * Read the run id that `rundown run` printed on its `runbook_started` event.
+ *
+ * @param stdout - Captured stdout of a `rundown run` invocation
+ * @returns The run id (`rd_…`)
+ * @throws If no `runbook_started` event is present
+ */
+export function requireRunId(stdout: string): string {
+  for (const value of parseConcatenatedJson(stdout)) {
+    if (
+      value &&
+      typeof value === 'object' &&
+      (value as { type?: unknown }).type === 'runbook_started' &&
+      typeof (value as { runbookId?: unknown }).runbookId === 'string'
+    ) {
+      return (value as { runbookId: string }).runbookId;
+    }
+  }
+  throw new Error(`No runbook_started event in output:\n${stdout}`);
 }
 
 /**
@@ -1538,15 +908,10 @@ export function normalizeCliOutput(output: string, workspace: TestWorkspace): st
     text = text.split(candidate).join('<tmpdir>');
   }
 
-  // 3. Delegation tokens (TOKEN_PREFIX from packages/core/src/runbook/delegation-token.ts)
-  //    Truncated form first (`rdtk_XXX...YYYY`) so the suffix doesn't survive
-  //    after the prefix has been replaced by the broader rule below.
-  text = text.replace(/rdtk_[A-Za-z0-9]+\.{3}[A-Za-z0-9]+/g, '<token>');
-  text = text.replace(/rdtk_[A-Za-z0-9]+/g, '<token>');
-
-  // 3b. Claim ids (CLAIM_ID_PREFIX from packages/core/src/runbook/claim-id.ts)
-  text = text.replace(/rdclm_[a-f0-9]{32}_[A-Za-z0-9_-]{43}/g, '<claimId>');
-  text = text.replace(/rdclm_[A-Za-z0-9_-]{22}/g, '<claimId>');
+  // 3. Owner Tokens (`rdo_` + 43 base64url, packages/core/src/runbook/run-secrets.ts)
+  //    and claim tickets (`rdt_`). Printed once on runbook_started; never stable.
+  text = text.replace(/\brdo_[A-Za-z0-9_-]{43}/g, '<ownerToken>');
+  text = text.replace(/\brdt_[A-Za-z0-9_-]{43}/g, '<claimTicket>');
 
   // 4. SHA-256 hex digests (e.g. delegation token_hash field)
   text = text.replace(/sha256:[0-9a-f]{64}/g, '<tokenHash>');
@@ -1669,141 +1034,4 @@ export function flattenEvents(events: unknown[]): Record<string, unknown>[] {
     }
   }
   return flat;
-}
-
-/**
- * Inject a reported (uncollected) delegation outcome into the active run's state.
- *
- * Writes a `delegation`-agent resolved completion at the active frame/entry so
- * that the collection-pending policy treats the run as having an outcome that
- * must be collected before bare mutations are allowed. Used by the
- * collection-pending guard tests for `pass`, `fail`, and `delegate`.
- *
- * When `markDelegateSubstepDone` is set, the DELEGATE substep `1` is also marked
- * `done` (preserving any auto-issued delegation) so that `rd collect` can
- * aggregate the reported outcome instead of refusing with SUBSTEPS_NOT_RESOLVED.
- *
- * @param workspace - Test workspace whose active run state is mutated
- * @param options - Injection options
- * @param options.markDelegateSubstepDone - Also mark DELEGATE substep `1` resolved
- * @returns The completion key of the injected reported outcome
- * @throws If there is no active run state in the workspace
- */
-export async function injectDelegationOutcomeForActiveRun(
-  workspace: TestWorkspace,
-  options: { markDelegateSubstepDone?: boolean } = {},
-): Promise<string> {
-  const state = await getActiveState(workspace);
-  if (!state) throw new Error('Expected active state');
-  const frameKey = state.activeFrameKey ?? buildFrameKey(state.step);
-  const entry = state.activeEntry ?? 1;
-  const completionKey = buildCompletionKey(activeFrame(frameKey, entry), '1');
-  const substepStatesPatch = options.markDelegateSubstepDone
-    ? {
-        substepStates: [
-          ...(state.substepStates ?? []).filter(
-            (ss) => !(ss.id === '1' && ss.frameKey === frameKey),
-          ),
-          {
-            id: '1',
-            frameKey,
-            status: 'done' as const,
-            result: 'pass' as const,
-            ...(() => {
-              const prior = (state.substepStates ?? []).find(
-                (ss) => ss.id === '1' && ss.frameKey === frameKey,
-              );
-              return prior?.delegation !== undefined ? { delegation: prior.delegation } : {};
-            })(),
-          },
-        ],
-      }
-    : {};
-  await patchPersistedRunState(workspace.cwd, state.id, {
-    ...state,
-    substep: state.substep ?? '1',
-    activeFrameKey: frameKey,
-    activeEntry: entry,
-    frameEntryCounts: { ...(state.frameEntryCounts ?? {}), [frameKey]: entry },
-    ...substepStatesPatch,
-    resolvedCompletions: {
-      ...(state.resolvedCompletions ?? {}),
-      [completionKey]: buildResolvedCompletion({
-        agentId: 'delegation',
-        result: 'pass',
-        targetStep: state.step,
-        targetSubstep: '1',
-        targetFrame: activeFrame(frameKey, entry),
-        completedAt: '2026-01-01T00:00:00.000Z',
-      }),
-    },
-  });
-  return completionKey;
-}
-
-/**
- * Inject a reported delegation outcome at a SPECIFIC FOR-iteration frame, with
- * explicit control over the live FOR stack and active cursor.
- *
- * Unlike {@link injectDelegationOutcomeForActiveRun} (which always targets the
- * active frame), this places the outcome at `step|iteration` and lets the test
- * decide whether that frame is OPEN (present on `forStack`) or CLOSED (retained
- * in the monotonic `frameEntryCounts` but absent from `forStack`). It is used to
- * exercise the forStack-derived collection-pending guard end to end — proving a
- * closed-iteration outcome no longer wedges bare mutations.
- *
- * @param workspace - Test workspace whose active run state is mutated
- * @param opts - Frame target and cursor control
- * @param opts.step - Step id owning the delegated substep
- * @param opts.iteration - FOR iteration whose frame receives the outcome
- * @param opts.entry - Frame entry number (defaults to `iteration`)
- * @param opts.forStack - The live FOR stack to persist (controls openness)
- * @param opts.activeFrameKey - The active cursor frame to persist
- * @param opts.activeEntry - The active entry to persist (defaults to `entry`)
- * @returns The completion key of the injected reported outcome
- * @throws If there is no active run state in the workspace
- */
-export async function injectDelegationOutcomeForFrame(
-  workspace: TestWorkspace,
-  opts: {
-    step: string;
-    iteration: number;
-    entry?: number;
-    forStack: RunbookState['forStack'];
-    activeFrameKey: FrameKey;
-    activeEntry?: number;
-  },
-): Promise<string> {
-  const state = await getActiveState(workspace);
-  if (!state) throw new Error('Expected active state');
-  const frameKey = buildFrameKey(opts.step, opts.iteration);
-  const entry = opts.entry ?? opts.iteration;
-  const completionKey = buildCompletionKey(exactFrame(frameKey, entry), '1');
-  await patchPersistedRunState(workspace.cwd, state.id, {
-    ...state,
-    step: opts.step,
-    substep: '1',
-    forStack: opts.forStack,
-    activeFrameKey: opts.activeFrameKey,
-    activeEntry: opts.activeEntry ?? entry,
-    // Monotonic counter retains the frame key regardless of openness, and
-    // never regresses below an already-stored value for the same frame.
-    frameEntryCounts: {
-      ...(state.frameEntryCounts ?? {}),
-      [frameKey]: Math.max(state.frameEntryCounts?.[frameKey] ?? 0, entry),
-    },
-    resolvedCompletions: {
-      ...(state.resolvedCompletions ?? {}),
-      [completionKey]: buildResolvedCompletion({
-        agentId: 'delegation',
-        result: 'pass',
-        targetStep: opts.step,
-        targetSubstep: '1',
-        targetIteration: opts.iteration,
-        targetFrame: exactFrame(frameKey, entry),
-        completedAt: '2026-01-01T00:00:00.000Z',
-      }),
-    },
-  });
-  return completionKey;
 }
