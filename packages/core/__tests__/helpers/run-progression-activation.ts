@@ -1,13 +1,11 @@
 import { expect } from '@jest/globals';
 import {
   activateRunProgression,
-  createEffectfulActorMutationRunner,
   type ResolvedStep,
   type RunProgressionDirective,
   type RunProgressionOutcome,
   type RunbookActorService,
   type RunbookStateManager,
-  type SessionService,
 } from '../../src/runbook/index.js';
 
 /**
@@ -23,21 +21,16 @@ const SETTLED_KIND = /^(?:waiting|completed|stopped)$/;
 export interface ActivateForTestServices {
   readonly manager: RunbookStateManager;
   readonly actorService: RunbookActorService;
-  readonly sessionService: SessionService;
-  /** Project directory the effectful mutation runner is bound to. */
-  readonly tmp: string;
   /** Graph the activation resolves the run's steps against. */
   readonly steps: readonly ResolvedStep[];
 }
 
 /**
- * Drive a seam-produced `activate` directive with the standard inert stubs.
+ * Drive a seam-produced `activate` directive with an inert sink.
  *
  * Suites that exercise the LIFECYCLE seam still have to run the continuation it
  * hands back, because the durable state they assert on is written by that
- * continuation. None of them are testing composition, so the two frontend
- * callables are stubbed inert — an inline child never launches and a terminal
- * never propagates — and the sink discards observations.
+ * continuation. None of them are testing observation, so the sink discards.
  *
  * Fails the calling test on a `refused` or `failed` outcome: those mean the
  * continuation never ran, so any assertion made afterwards would be reading
@@ -48,7 +41,7 @@ export interface ActivateForTestServices {
  * of being reduced to `Expected: not "refused"`.
  *
  * @param directive - The `activate` directive the seam returned.
- * @param services - Manager, actor and session services, tmp dir, and graph.
+ * @param services - Manager, actor service and graph.
  * @returns The activation's closed outcome.
  */
 export async function activateForTest(
@@ -60,12 +53,8 @@ export async function activateForTest(
     {
       manager: services.manager,
       actorService: services.actorService,
-      sessionService: services.sessionService,
-      actorMutationRunner: createEffectfulActorMutationRunner(services.tmp),
       loadSteps: () => services.steps,
       sink: { emit() {} },
-      dispatchInlineChild: async () => ({ kind: 'waiting' }),
-      propagateTerminal: async () => ({ kind: 'propagated' }),
     },
     directive.entryBoundary,
   );

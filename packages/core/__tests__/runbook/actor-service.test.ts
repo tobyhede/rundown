@@ -3,11 +3,7 @@ import { mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createActor, waitFor, type Snapshot } from 'xstate';
-import {
-  CURRENT_SCHEMA_VERSION,
-  InvalidRunbookStateError,
-  RunbookStateManager,
-} from '../../src/runbook/state.js';
+import { InvalidRunbookStateError, RunbookStateManager } from '../../src/runbook/state.js';
 import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import {
   type ActorSyncResult,
@@ -31,15 +27,11 @@ import {
   compileRunbookToMachine,
   MAX_SELF_GOTO_PASSES,
   PENDING_MACHINE_EFFECT_TAG,
-  RECOVERY_REQUIRED_STATE_NAME,
 } from '../../src/runbook/compiler.js';
 import { MAX_FOR_BOUND } from '@rundown-org/parser';
-import { assertExecutionEpoch } from '../../src/runbook/storage/mutation-result.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
-import { assertDelegationTokenHash } from '../../src/runbook/delegation-token.js';
 import { createRunbook } from './fixtures.js';
 import {
-  brandEffectiveVarsForTest,
   brandFlattenedTemplateVarsForTest,
   brandInitialTemplateVarsForTest,
   brandTrustedArtifactArrayForTest,
@@ -48,13 +40,10 @@ import {
 import { seedRawRunState } from '../../src/testing/state-fixtures.js';
 import { getErrorMessage } from '../../src/errors.js';
 import {
-  makeDelegatedSubstepState,
-  makeDelegationCredentialIssuer,
-} from '../../src/testing/delegation-fixtures.js';
-import {
-  makeState as makeDelegationState,
-  makeSteps as makeDelegationSteps,
-} from './delegation-service-fixtures.js';
+  generateOwnerToken,
+  hashRunSecret,
+  type SecretHash,
+} from '../../src/runbook/run-secrets.js';
 
 /**
  * Build a minimal structural double for an XState actor reference. The
@@ -77,13 +66,35 @@ async function sendPreparedForTest(
   id: string,
   steps: readonly ResolvedStep[],
   event: RunbookEvent,
-  options: { readonly runtime?: Parameters<RunbookActorService['prepareActorMutation']>[4] } = {},
 ): Promise<ActorSyncResult | null> {
-  const current = await manager.load(id);
+  const current = await manager.loadWithVersion(id);
   if (current === null) return null;
-  const prepared = await service.prepareActorMutation(id, current, steps, event, options.runtime);
-  await manager.save(prepared.nextState);
+  const prepared = await service.prepareActorMutation(id, current.state, steps, event);
+  const saved = await manager.save(prepared.nextState, current.stateVersion);
+  if (saved.kind !== 'committed') {
+    throw new Error(`sendPreparedForTest: save refused (${saved.kind})`);
+  }
   return { state: prepared.nextState, snapshot: prepared.snapshot, effects: prepared.effects };
+}
+
+/**
+ * Overwrite a persisted run from a test fixture: read the current version, then
+ * save against it. Fixtures that plant invalid state have no concurrent writer,
+ * so a refused save here is a test defect and throws.
+ *
+ * @param manager - Manager owning the run.
+ * @param state - The full state to persist.
+ */
+async function saveForTest(manager: RunbookStateManager, state: RunbookState): Promise<void> {
+  const current = await manager.loadWithVersion(state.id);
+  if (current === null) throw new Error(`saveForTest: run ${state.id} not found`);
+  const saved = await manager.save(state, current.stateVersion);
+  if (saved.kind !== 'committed') throw new Error(`saveForTest: save refused (${saved.kind})`);
+}
+
+/** A fresh Owner Token hash for one seeded run (the column is UNIQUE). */
+function freshOwnerTokenHash(): SecretHash {
+  return hashRunSecret(generateOwnerToken());
 }
 
 interface LifecycleHarness {
@@ -114,6 +125,7 @@ async function createLifecycleHarness(
     { source: 'project', path: 'lifecycle-test.md' },
     mockRunbookDef,
     {
+      ownerTokenHash: freshOwnerTokenHash(),
       runbookPath: 'lifecycle-test.md',
       frontmatterOutputs: [],
     },
@@ -138,17 +150,6 @@ const ARTIFACT_RECORD = {
   key: 'plan.json',
   timestamp: '2026-05-07T00:00:00.000Z',
 } satisfies ArtifactRecord;
-
-/**
- * The inline-launch latch: the instant a launch was taken AND the process that
- * took it, persisted as one value so a later observer can ask whether the owner
- * is still running.
- */
-const INLINE_LATCH = {
-  at: '2026-05-30T00:00:01.000Z',
-  ownerPid: 4242,
-  ownerStartId: 'start-id-4242',
-} as const;
 
 describe('RunbookActorService', () => {
   let testDir: string;
@@ -213,25 +214,6 @@ npm test
     };
   }
 
-  function inlineLaunchIntent(parentFrameKey = buildFrameKey('1')) {
-    return {
-      parentRunId: assertRunId('rd_11111111111111111111111111111111'),
-      parentStepId: '1',
-      parentStep: '1',
-      parentFrameKey,
-      childRunId: assertRunId('rd_dddddddddddddddddddddddddddddddd'),
-      childRunbookPath: 'runbooks/child.runbook.md',
-      childRunbookRef: { source: 'project' as const, path: 'runbooks/child.runbook.md' },
-      contextSnapshot: {
-        vars: brandEffectiveVarsForTest({}),
-        ancestors: [],
-        step: '1',
-        substep: '1',
-        at: '1.1',
-      },
-    };
-  }
-
   beforeEach(async () => {
     testDir = await mkdtemp(join(tmpdir(), 'actor-svc-test-'));
     manager = new RunbookStateManager(testDir);
@@ -250,6 +232,7 @@ npm test
 
     it('creates and starts actor from persisted state', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const actor = await actorService.createActor(state.id, mockSteps);
@@ -261,6 +244,7 @@ npm test
       // from this mirror, so a bootstrap that drops it silently reverts every
       // machine-issued credential to the first entry.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const frameKey = buildFrameKey('1');
@@ -283,6 +267,7 @@ npm test
 
     it('does not overlay persisted frame-entry coordinates onto a rehydrated snapshot', async () => {
       const created = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const first = await actorService.createActor(created.id, mockSteps);
@@ -314,6 +299,7 @@ npm test
   describe('updateFromActor', () => {
     it('extracts substep ID from flattened machine state (step::N::M)', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -328,6 +314,7 @@ npm test
 
     it('extracts step number from simple machine state (step::N)', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -348,6 +335,7 @@ npm test
 
     it('rejects legacy persisted state IDs instead of adapting them', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -367,6 +355,7 @@ npm test
 
     it('rejects persisted state IDs that no longer exist in the runbook', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -389,6 +378,7 @@ npm test
       // transition settles. If it does appear, the runbook state has been
       // corrupted mid-flight; the only recovery is prune + restart.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -408,6 +398,7 @@ npm test
       // requires an embedded line terminator, which `.` cannot match. Without
       // the length guard this input takes seconds; with it, the regex never runs.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -425,6 +416,7 @@ npm test
       // Reaching the *missing step* diagnostic proves the parse ran rather than
       // being short-circuited by the guard — this is the off-by-one pin.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const value = `step::${'x'.repeat(994)}`;
@@ -438,6 +430,7 @@ npm test
 
     it('rejects a persisted stateValue one character past the length guard', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const value = `step::${'x'.repeat(995)}`;
@@ -466,6 +459,7 @@ exit 1
         steps,
       };
       const state = await manager.create({ source: 'project', path: 'test.md' }, runbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const channelPath = join(testDir, 'Foo');
@@ -524,6 +518,7 @@ exit 1
 
     it('creates actor and syncs state without sending event', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const result = await actorService.initializeState(state.id, mockSteps);
@@ -554,6 +549,7 @@ exit 1
         steps,
       };
       const state = await manager.create({ source: 'project', path: 'substeps.md' }, runbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'substeps.md',
         frontmatterOutputs: [],
       });
@@ -597,6 +593,7 @@ exit 1
         steps,
       };
       const state = await manager.create({ source: 'project', path: 'for.md' }, runbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'for.md',
         frontmatterOutputs: [],
       });
@@ -637,7 +634,11 @@ exit 1
       const state = await manager.create(
         { source: 'project', path: 'substeps-initialized.md' },
         { title: 'Substep reload', description: 'Fast path coverage', steps },
-        { runbookPath: 'substeps-initialized.md', frontmatterOutputs: [] },
+        {
+          ownerTokenHash: freshOwnerTokenHash(),
+          runbookPath: 'substeps-initialized.md',
+          frontmatterOutputs: [],
+        },
       );
       const initializedState = await manager.update(state.id, {
         substep: '1',
@@ -681,6 +682,7 @@ exit 1
 `);
       const runbook = { title: 'Hydrate substep', description: '', steps };
       const state = await manager.create({ source: 'project', path: 'test.md' }, runbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -711,6 +713,7 @@ exit 1
 
     it('sends event, syncs state, and returns state + snapshot', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const result = await sendPreparedForTest(actorService, manager, state.id, mockSteps, {
@@ -740,7 +743,11 @@ exit 1
       const state = await manager.create(
         { source: 'project', path: 'pass-result.md' },
         { title: 'PASS result', description: '', steps },
-        { runbookPath: 'pass-result.md', frontmatterOutputs: [] },
+        {
+          ownerTokenHash: freshOwnerTokenHash(),
+          runbookPath: 'pass-result.md',
+          frontmatterOutputs: [],
+        },
       );
 
       const result = await sendPreparedForTest(actorService, manager, state.id, steps, {
@@ -760,7 +767,11 @@ exit 1
       const state = await manager.create(
         { source: 'project', path: 'fail-result.md' },
         { title: 'FAIL result', description: '', steps },
-        { runbookPath: 'fail-result.md', frontmatterOutputs: [] },
+        {
+          ownerTokenHash: freshOwnerTokenHash(),
+          runbookPath: 'fail-result.md',
+          frontmatterOutputs: [],
+        },
       );
 
       const result = await sendPreparedForTest(actorService, manager, state.id, steps, {
@@ -789,7 +800,11 @@ echo ok
       const state = await manager.create(
         { source: 'project', path: 'command-result.md' },
         { title: 'Command result', description: '', steps },
-        { runbookPath: 'command-result.md', frontmatterOutputs: [] },
+        {
+          ownerTokenHash: freshOwnerTokenHash(),
+          runbookPath: 'command-result.md',
+          frontmatterOutputs: [],
+        },
       );
 
       const result = await sendPreparedForTest(actorService, manager, state.id, steps, {
@@ -813,6 +828,7 @@ echo ok
         { title: 'Command service', description: '', steps: stepsWithOneCommand },
         {
           runId,
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -855,6 +871,7 @@ echo ok
         { title: 'Long command', description: '', steps: stepsWithOneCommand },
         {
           runId,
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -898,6 +915,7 @@ echo ok
         { title: 'Command failure', description: '', steps: stepsWithOneCommand },
         {
           runId,
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -929,6 +947,7 @@ echo ok
         { title: 'Policy denied', description: '', steps: stepsWithOneCommand },
         {
           runId,
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -970,6 +989,7 @@ echo ok
         { title: 'Command failure', description: '', steps: stepsWithOneCommand },
         {
           runId,
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1008,6 +1028,7 @@ echo ok
         { title: 'Command effects', description: '', steps: stepsWithOneCommand },
         {
           runId,
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1065,6 +1086,7 @@ echo ok
         { title: 'Step effects', description: '', steps: stepsWithOneCommand },
         {
           runId,
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1114,6 +1136,7 @@ echo ok
         { title: 'Step effects', description: '', steps: stepsWithOneCommand },
         {
           runId,
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: templateVarsWithoutWorkPath,
@@ -1139,6 +1162,7 @@ echo ok
         { title: 'Step effects', description: '', steps: stepsWithOneCommand },
         {
           runId,
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1164,6 +1188,7 @@ echo ok
           { title: 'Step effects', description: '', steps: stepsWithOneCommand },
           {
             runId: assertRunId(runId),
+            ownerTokenHash: freshOwnerTokenHash(),
             runbookPath: 'workflow.runbook.md',
             frontmatterOutputs: [],
             templateVars: commandTemplateVars(runId),
@@ -1254,6 +1279,7 @@ echo ok
           { title: 'Step effects', description: '', steps: stepsWithOneCommand },
           {
             runId: assertRunId(runId),
+            ownerTokenHash: freshOwnerTokenHash(),
             runbookPath: 'workflow.runbook.md',
             frontmatterOutputs: [],
             templateVars: commandTemplateVars(runId),
@@ -1275,12 +1301,13 @@ echo ok
         { title: 'Step effects', description: '', steps: stepsWithOneCommand },
         {
           runId,
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
         },
       );
-      await manager.save({ ...created, frontmatterOutputs: undefined });
+      await saveForTest(manager, { ...created, frontmatterOutputs: undefined });
 
       try {
         await enterEffects(service, created.id, stepsWithOneCommand);
@@ -1310,6 +1337,7 @@ echo ok
         { title: 'Step effects', description: '', steps: stepsWithOneCommand },
         {
           runId,
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1346,7 +1374,7 @@ echo ok
         plant: async (id: string) => {
           const loaded = await manager.load(id);
           if (!loaded) throw new Error(`expected persisted state for ${id}`);
-          await manager.save({ ...loaded, frontmatterOutputs: undefined });
+          await saveForTest(manager, { ...loaded, frontmatterOutputs: undefined });
         },
       },
       {
@@ -1355,7 +1383,7 @@ echo ok
           const loaded = await manager.load(id);
           if (!loaded) throw new Error(`expected persisted state for ${id}`);
           const { WorkPath: _omitted, ...withoutWorkPath } = loaded.templateVars;
-          await manager.save({ ...loaded, templateVars: withoutWorkPath });
+          await saveForTest(manager, { ...loaded, templateVars: withoutWorkPath });
         },
       },
     ])('rejects rather than throwing when $label refuses', async ({ plant }) => {
@@ -1366,6 +1394,7 @@ echo ok
         { title: 'Step effects', description: '', steps: stepsWithOneCommand },
         {
           runId,
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1380,66 +1409,6 @@ echo ok
       ]);
 
       expect(settled.status).toBe('rejected');
-    });
-
-    it('passes inline launch child id and clock dependencies through service-created actors', async () => {
-      const steps = createRunbook(`# Parent
-
-## 1. Parent
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-- child.runbook.md
-`);
-      const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
-      const createdAt = '2026-05-30T00:00:00.000Z';
-      const state = await manager.create(
-        { source: 'project', path: 'parent.runbook.md' },
-        { title: 'Parent', description: '', steps },
-        {
-          runId: assertRunId('rd_11111111111111111111111111111111'),
-          runbookPath: 'parent.runbook.md',
-          frontmatterOutputs: [],
-          // Every real run is seeded with ContextId and WorkPath at creation, and
-          // entering a unit renders against them, so a fixture without both is a
-          // run that could not exist.
-          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
-        },
-      );
-      const service = new RunbookActorService(manager, {
-        resolveInlineRunbook: async (runbookRef) => ({
-          path: 'runbooks/child.runbook.md',
-          runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
-        }),
-        generateInlineChildRunId: () => childRunId,
-        inlineLaunchNow: () => createdAt,
-      });
-
-      const actor = await service.createActor(state.id, steps);
-      if (!actor) throw new Error('expected bootstrap actor');
-      const snapshot = await waitFor(
-        actor,
-        (candidate) => !candidate.hasTag(PENDING_MACHINE_EFFECT_TAG),
-        { timeout: 500 },
-      );
-
-      expect(snapshot.context.inlineLaunchIntent).toMatchObject({
-        childRunId,
-        childRunbookPath: 'runbooks/child.runbook.md',
-      });
-      expect(snapshot.context.substepStates).toContainEqual(
-        expect.objectContaining({
-          id: '1',
-          frameKey: buildFrameKey('1'),
-          inline: expect.objectContaining({
-            childRunId,
-            createdAt,
-          }),
-        }),
-      );
-
-      service.stopActor(actor);
     });
 
     it('preserves active substep state when repeated initialization sees an existing frame', async () => {
@@ -1459,6 +1428,7 @@ echo ok
         { source: 'project', path: 'parent.runbook.md' },
         { title: 'Parent', description: '', steps },
         {
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'parent.runbook.md',
           frontmatterOutputs: [],
         },
@@ -1492,551 +1462,6 @@ echo ok
       ]);
     });
 
-    it('treats INLINE_CHILD_STARTED without inline metadata as a no-op through sendAndSync', async () => {
-      const steps = createRunbook(`## 1. Parent
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 First
-- PASS CONTINUE
-- FAIL STOP
-`);
-      const state = await manager.create(
-        { source: 'project', path: 'parent.runbook.md' },
-        { title: 'Parent', description: '', steps },
-        {
-          runbookPath: 'parent.runbook.md',
-          frontmatterOutputs: [],
-        },
-      );
-      const initialized = await actorService.initializeState(state.id, steps);
-      expect(initialized).not.toBeNull();
-      if (!initialized) throw new Error('expected initialized state');
-      const before = initialized.substepStates;
-
-      const result = await sendPreparedForTest(actorService, manager, state.id, steps, {
-        type: 'INLINE_CHILD_STARTED',
-        parentStepId: '1',
-        parentFrameKey: buildFrameKey('1'),
-        childRunId: assertRunId('rd_dddddddddddddddddddddddddddddddd'),
-        started: INLINE_LATCH,
-      });
-
-      if (!result) throw new Error('expected sendAndSync result');
-      expect(result.state.lifecycle).toBe('running');
-      expect((await manager.load(state.id))?.substepStates).toEqual(before);
-    });
-
-    it('persists the launch latch without consuming inline launch intent through sendAndSync', async () => {
-      const frameKey = buildFrameKey('1');
-      const childRunId = assertRunId('rd_dddddddddddddddddddddddddddddddd');
-      const steps = createRunbook(`# Parent
-
-## 1. Parent
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-- child.runbook.md
-`);
-      const state = await manager.create(
-        { source: 'project', path: 'parent.runbook.md' },
-        { title: 'Parent', description: '', steps },
-        {
-          runId: assertRunId('rd_11111111111111111111111111111111'),
-          runbookPath: 'parent.runbook.md',
-          frontmatterOutputs: [],
-          // Every real run is seeded with ContextId and WorkPath at creation, and
-          // entering a unit renders against them, so a fixture without both is a
-          // run that could not exist.
-          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
-        },
-      );
-      const service = new RunbookActorService(manager, {
-        generateInlineChildRunId: () => childRunId,
-        inlineLaunchNow: () => '2026-05-30T00:00:00.000Z',
-        resolveInlineRunbook: async (runbookRef) => ({
-          path: 'runbooks/child.runbook.md',
-          runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
-        }),
-      });
-
-      const initialized = await service.initializeState(state.id, steps);
-      expect(initialized).not.toBeNull();
-      const prepared = await service.createActor(state.id, steps);
-      if (!prepared) throw new Error('expected actor');
-      await waitFor(prepared, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
-        timeout: 500,
-      });
-      service.stopActor(prepared);
-
-      const result = await sendPreparedForTest(service, manager, state.id, steps, {
-        type: 'INLINE_CHILD_STARTED',
-        parentStepId: '1',
-        parentFrameKey: frameKey,
-        childRunId,
-        started: INLINE_LATCH,
-      });
-
-      if (!result) throw new Error('expected sendAndSync result');
-      const reloaded = await manager.load(state.id);
-      const persistedSnapshot = reloaded?.snapshot as
-        | { readonly context?: RunbookContext }
-        | undefined;
-      const context = persistedSnapshot?.context;
-      expect(context?.inlineLaunchIntent).toMatchObject({
-        parentStepId: '1',
-        parentFrameKey: '1|',
-        childRunId,
-      });
-      expect(reloaded?.substepStates).toContainEqual(
-        expect.objectContaining({
-          id: '1',
-          frameKey: '1|',
-          inline: expect.objectContaining({
-            childRunId,
-            started: INLINE_LATCH,
-          }),
-        }),
-      );
-    });
-
-    it('enriches inline launch intent with active parent entry when observing STEP_ENTERED', async () => {
-      const frameKey = buildFrameKey('1');
-      const steps = createRunbook(`# Parent
-
-## 1. Parent
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-- child.runbook.md
-`);
-      const state = await manager.create(
-        { source: 'project', path: 'parent.runbook.md' },
-        { title: 'Parent', description: '', steps },
-        {
-          runId: assertRunId('rd_11111111111111111111111111111111'),
-          runbookPath: 'parent.runbook.md',
-          frontmatterOutputs: [],
-          // Every real run is seeded with ContextId and WorkPath at creation, and
-          // entering a unit renders against them, so a fixture without both is a
-          // run that could not exist.
-          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
-        },
-      );
-      const service = new RunbookActorService(manager, {
-        resolveInlineRunbook: async (runbookRef) => ({
-          path: 'runbooks/child.runbook.md',
-          runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
-        }),
-      });
-      const bootstrap = await service.createActor(state.id, steps);
-      if (!bootstrap) throw new Error('expected bootstrap actor');
-      await waitFor(bootstrap, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
-        timeout: 500,
-      });
-      const baseSnapshot = bootstrap.getPersistedSnapshot() as {
-        readonly context?: Readonly<Record<string, unknown>>;
-        readonly [key: string]: unknown;
-      };
-      service.stopActor(bootstrap);
-      await manager.update(state.id, {
-        substep: '1',
-        activeFrameKey: frameKey,
-        activeEntry: 4,
-        snapshot: {
-          ...baseSnapshot,
-          context: {
-            ...(baseSnapshot.context ?? {}),
-            inlineLaunchIntent: inlineLaunchIntent(frameKey),
-          },
-        },
-      });
-
-      const effects = await enterEffects(service, state.id, steps);
-
-      expect(effects).toHaveLength(1);
-      const effect = effects[0];
-      if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
-      // Derived from the parsed substep rather than supplied by the caller, which
-      // is the whole point of the seam: the entry describes the unit the run is
-      // on, not whatever the caller happened to pass.
-      expect(effect.event.payload.description).toBe('Runbook: child.runbook.md');
-      expect(effect.event.payload.hasCommand).toBe(false);
-      expect(effect.event.payload.inlineLaunch).toMatchObject({
-        parentEntry: 4,
-        parentStepId: '1',
-        parentFrameKey: '1|',
-      });
-      expect(effect.event.payload.delegateFrontier).toBeUndefined();
-    });
-
-    it('projects actionable runbook-list context when observing inline launch entry', async () => {
-      const frameKey = buildFrameKey('1');
-      const steps = createRunbook(`# Parent
-
-## 1. Parent
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-- child.runbook.md
-`);
-      const state = await manager.create(
-        { source: 'project', path: 'parent.runbook.md' },
-        { title: 'Parent', description: '', steps },
-        {
-          runId: assertRunId('rd_11111111111111111111111111111111'),
-          runbookPath: 'parent.runbook.md',
-          frontmatterOutputs: [],
-          // Every real run is seeded with ContextId and WorkPath at creation, and
-          // entering a unit renders against them, so a fixture without both is a
-          // run that could not exist.
-          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
-        },
-      );
-      const service = new RunbookActorService(manager, {
-        resolveInlineRunbook: async (runbookRef) => ({
-          path: 'runbooks/child.runbook.md',
-          runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
-        }),
-      });
-      const bootstrap = await service.createActor(state.id, steps);
-      if (!bootstrap) throw new Error('expected bootstrap actor');
-      await waitFor(bootstrap, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
-        timeout: 500,
-      });
-      const baseSnapshot = bootstrap.getPersistedSnapshot() as {
-        readonly context?: Readonly<Record<string, unknown>>;
-        readonly [key: string]: unknown;
-      };
-      service.stopActor(bootstrap);
-      await manager.update(state.id, {
-        substep: '1',
-        activeFrameKey: frameKey,
-        activeEntry: 1,
-        snapshot: {
-          ...baseSnapshot,
-          context: {
-            ...(baseSnapshot.context ?? {}),
-            inlineLaunchIntent: inlineLaunchIntent(frameKey),
-          },
-        },
-      });
-
-      const effects = await enterEffects(service, state.id, steps);
-
-      expect(effects).toHaveLength(1);
-      const effect = effects[0];
-      if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
-      expect(effect.event.payload).toEqual(
-        expect.objectContaining({
-          description: 'Runbook: child.runbook.md',
-          inlineLaunch: expect.objectContaining({
-            childRunbookRef: expect.objectContaining({
-              source: 'project',
-              path: 'runbooks/child.runbook.md',
-            }),
-            contextSnapshot: expect.objectContaining({
-              at: '1.1',
-            }),
-          }),
-        }),
-      );
-    });
-
-    it('falls back to frame entry count when active entry is unavailable for inline launch observation', async () => {
-      const frameKey = buildFrameKey('1');
-      const steps = createRunbook(`# Parent
-
-## 1. Parent
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-- child.runbook.md
-`);
-      const state = await manager.create(
-        { source: 'project', path: 'parent.runbook.md' },
-        { title: 'Parent', description: '', steps },
-        {
-          runId: assertRunId('rd_11111111111111111111111111111111'),
-          runbookPath: 'parent.runbook.md',
-          frontmatterOutputs: [],
-          // Every real run is seeded with ContextId and WorkPath at creation, and
-          // entering a unit renders against them, so a fixture without both is a
-          // run that could not exist.
-          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
-        },
-      );
-      const service = new RunbookActorService(manager, {
-        resolveInlineRunbook: async (runbookRef) => ({
-          path: 'runbooks/child.runbook.md',
-          runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
-        }),
-      });
-      const bootstrap = await service.createActor(state.id, steps);
-      if (!bootstrap) throw new Error('expected bootstrap actor');
-      await waitFor(bootstrap, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
-        timeout: 500,
-      });
-      const baseSnapshot = bootstrap.getPersistedSnapshot() as {
-        readonly context?: Readonly<Record<string, unknown>>;
-        readonly [key: string]: unknown;
-      };
-      service.stopActor(bootstrap);
-      await manager.update(state.id, {
-        substep: '1',
-        activeFrameKey: buildFrameKey('2'),
-        frameEntryCounts: replace({ [frameKey]: 7 }),
-        snapshot: {
-          ...baseSnapshot,
-          context: {
-            ...(baseSnapshot.context ?? {}),
-            inlineLaunchIntent: inlineLaunchIntent(frameKey),
-          },
-        },
-      });
-
-      const effects = await enterEffects(service, state.id, steps);
-
-      expect(effects).toHaveLength(1);
-      const effect = effects[0];
-      if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
-      expect(effect.event.payload.inlineLaunch).toMatchObject({
-        parentEntry: 7,
-        parentStepId: '1',
-        parentFrameKey: '1|',
-      });
-    });
-
-    it('does not project stale inline launch intent for another substep observation', async () => {
-      const frameKey = buildFrameKey('1');
-      const steps = createRunbook(`# Parent
-
-## 1. Parent
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-- child.runbook.md
-- echo sibling
-`);
-      const state = await manager.create(
-        { source: 'project', path: 'parent.runbook.md' },
-        { title: 'Parent', description: '', steps },
-        {
-          runId: assertRunId('rd_11111111111111111111111111111111'),
-          runbookPath: 'parent.runbook.md',
-          frontmatterOutputs: [],
-          // Every real run is seeded with ContextId and WorkPath at creation, and
-          // entering a unit renders against them, so a fixture without both is a
-          // run that could not exist.
-          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
-        },
-      );
-      const service = new RunbookActorService(manager, {
-        resolveInlineRunbook: async (runbookRef) => ({
-          path: 'runbooks/child.runbook.md',
-          runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
-        }),
-      });
-      const bootstrap = await service.createActor(state.id, steps);
-      if (!bootstrap) throw new Error('expected bootstrap actor');
-      await waitFor(bootstrap, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
-        timeout: 500,
-      });
-      const baseSnapshot = bootstrap.getPersistedSnapshot() as {
-        readonly context?: Readonly<Record<string, unknown>>;
-        readonly [key: string]: unknown;
-      };
-      service.stopActor(bootstrap);
-      await manager.update(state.id, {
-        substep: '2',
-        activeFrameKey: frameKey,
-        activeEntry: 4,
-        snapshot: {
-          ...baseSnapshot,
-          context: {
-            ...(baseSnapshot.context ?? {}),
-            substep: '2',
-            inlineLaunchIntent: inlineLaunchIntent(frameKey),
-          },
-        },
-      });
-
-      const effects = await enterEffects(service, state.id, steps);
-
-      expect(effects).toHaveLength(1);
-      const effect = effects[0];
-      if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
-      expect(effect.event.payload.inlineLaunch).toBeUndefined();
-    });
-
-    it('does not project stale inline launch intent for another frame observation', async () => {
-      const frameKey = buildFrameKey('1', 1);
-      const otherFrameKey = buildFrameKey('1', 2);
-      const steps = createRunbook(`# Parent
-
-## 1. Parent
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-- child.runbook.md
-`);
-      const state = await manager.create(
-        { source: 'project', path: 'parent.runbook.md' },
-        { title: 'Parent', description: '', steps },
-        {
-          runId: assertRunId('rd_11111111111111111111111111111111'),
-          runbookPath: 'parent.runbook.md',
-          frontmatterOutputs: [],
-          // Every real run is seeded with ContextId and WorkPath at creation, and
-          // entering a unit renders against them, so a fixture without both is a
-          // run that could not exist.
-          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
-        },
-      );
-      const service = new RunbookActorService(manager, {
-        resolveInlineRunbook: async (runbookRef) => ({
-          path: 'runbooks/child.runbook.md',
-          runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
-        }),
-      });
-      const bootstrap = await service.createActor(state.id, steps);
-      if (!bootstrap) throw new Error('expected bootstrap actor');
-      await waitFor(bootstrap, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
-        timeout: 500,
-      });
-      const baseSnapshot = bootstrap.getPersistedSnapshot() as {
-        readonly context?: Readonly<Record<string, unknown>>;
-        readonly [key: string]: unknown;
-      };
-      service.stopActor(bootstrap);
-      // Production-real shape: the entry counter is monotonic, so iteration 1's
-      // frame key persists after the loop advanced to iteration 2 — both `1|1`
-      // and `1|2` are present. The cursor (forStack + activeFrameKey) is live at
-      // iteration 2, so the stale intent authored at `1|1` must NOT project even
-      // though `1|1` remains in the counter.
-      await manager.update(state.id, {
-        substep: '1',
-        activeFrameKey: otherFrameKey,
-        activeEntry: 2,
-        frameEntryCounts: replace({ [frameKey]: 1, [otherFrameKey]: 2 }),
-        forStack: [
-          {
-            stepId: '1',
-            iteration: 2,
-            start: 1,
-            end: 2,
-            implicit: false,
-            source: { kind: 'range' as const },
-          },
-        ],
-        snapshot: {
-          ...baseSnapshot,
-          context: {
-            ...(baseSnapshot.context ?? {}),
-            substep: '1',
-            inlineLaunchIntent: inlineLaunchIntent(frameKey),
-          },
-        },
-      });
-
-      const effects = await enterEffects(service, state.id, steps);
-
-      expect(effects).toHaveLength(1);
-      const effect = effects[0];
-      if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
-      expect(effect.event.payload.inlineLaunch).toBeUndefined();
-    });
-
-    it('projects inline launch intent for the active FOR-iteration frame', async () => {
-      const activeFrameKey = buildFrameKey('1', 2);
-      const steps = createRunbook(`# Parent
-
-## 1. Parent
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-- child.runbook.md
-`);
-      const state = await manager.create(
-        { source: 'project', path: 'parent.runbook.md' },
-        { title: 'Parent', description: '', steps },
-        {
-          runId: assertRunId('rd_11111111111111111111111111111111'),
-          runbookPath: 'parent.runbook.md',
-          frontmatterOutputs: [],
-          // Every real run is seeded with ContextId and WorkPath at creation, and
-          // entering a unit renders against them, so a fixture without both is a
-          // run that could not exist.
-          templateVars: commandTemplateVars('rd_11111111111111111111111111111111'),
-        },
-      );
-      const service = new RunbookActorService(manager, {
-        resolveInlineRunbook: async (runbookRef) => ({
-          path: 'runbooks/child.runbook.md',
-          runbookRef,
-          childRunbookRef: { source: 'project', path: 'runbooks/child.runbook.md' },
-        }),
-      });
-      const bootstrap = await service.createActor(state.id, steps);
-      if (!bootstrap) throw new Error('expected bootstrap actor');
-      let baseSnapshot: {
-        readonly context?: Readonly<Record<string, unknown>>;
-        readonly [key: string]: unknown;
-      };
-      try {
-        await waitFor(bootstrap, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
-          timeout: 500,
-        });
-        baseSnapshot = bootstrap.getPersistedSnapshot();
-      } finally {
-        service.stopActor(bootstrap);
-      }
-      // The intent is authored at the iteration-2 frame, which is live on the
-      // stack and the active cursor frame — so it MUST project, even though
-      // iteration 1 also persists in the monotonic counter.
-      await manager.update(state.id, {
-        substep: '1',
-        activeFrameKey,
-        activeEntry: 2,
-        frameEntryCounts: replace({ [buildFrameKey('1', 1)]: 1, [activeFrameKey]: 2 }),
-        forStack: [
-          {
-            stepId: '1',
-            iteration: 2,
-            start: 1,
-            end: 2,
-            implicit: false,
-            source: { kind: 'range' as const },
-          },
-        ],
-        snapshot: {
-          ...baseSnapshot,
-          context: {
-            ...(baseSnapshot.context ?? {}),
-            substep: '1',
-            inlineLaunchIntent: inlineLaunchIntent(activeFrameKey),
-          },
-        },
-      });
-
-      const effects = await enterEffects(service, state.id, steps);
-
-      expect(effects).toHaveLength(1);
-      const effect = effects[0];
-      if (effect.event.type !== 'STEP_ENTERED') throw new Error('expected STEP_ENTERED');
-      expect(effect.event.payload.inlineLaunch).toMatchObject({
-        parentEntry: 2,
-        parentStepId: '1',
-        parentFrameKey: '1|2',
-      });
-    });
-
     it('rejects invalid state before observing STEP_ENTERED', async () => {
       const runId = assertRunId('rd_77777777777777777777777777777778');
       const service = new RunbookActorService(manager);
@@ -2045,15 +1470,13 @@ echo ok
         { title: 'Step effects', description: '', steps: stepsWithOneCommand },
         {
           runId,
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
         },
       );
-      await manager.save({
-        ...state,
-        frontmatterOutputs: undefined,
-      });
+      await saveForTest(manager, { ...state, frontmatterOutputs: undefined });
 
       await expect(enterEffects(service, state.id, stepsWithOneCommand)).rejects.toThrow(
         /Invalid runbook state.*frontmatter outputs/,
@@ -2072,7 +1495,11 @@ echo ok
       const state = await manager.create(
         { source: 'project', path: 'goto-clear.md' },
         { title: 'GOTO clear', description: '', steps },
-        { runbookPath: 'goto-clear.md', frontmatterOutputs: [] },
+        {
+          ownerTokenHash: freshOwnerTokenHash(),
+          runbookPath: 'goto-clear.md',
+          frontmatterOutputs: [],
+        },
       );
       await manager.update(state.id, { lastResult: 'fail' });
 
@@ -2093,556 +1520,6 @@ echo ok
     });
   });
 
-  describe('prepareManualDelegationMutation', () => {
-    const frameKey = buildFrameKey('1');
-
-    async function issueDelegation() {
-      const state = makeDelegationState();
-      const result = await actorService.prepareManualDelegationMutation(
-        state,
-        makeDelegationSteps(),
-        {
-          type: 'ISSUE',
-          stepId: '1.1',
-          frameKey,
-          childRunbookPath: 'child.md',
-          childRunbookRef: { source: 'project', path: 'child.md' },
-        },
-        makeDelegationCredentialIssuer(),
-      );
-      if (result.status !== 'prepared') throw new Error('expected prepared manual delegation');
-      return result.nextState;
-    }
-
-    it('returns the machine-prepared issue state without mutating its capture', async () => {
-      const state = makeDelegationState();
-      const captured = structuredClone(state);
-
-      const result = await actorService.prepareManualDelegationMutation(
-        state,
-        makeDelegationSteps(),
-        {
-          type: 'ISSUE',
-          stepId: '1.1',
-          frameKey,
-          childRunbookPath: 'child.md',
-          childRunbookRef: { source: 'project', path: 'child.md' },
-        },
-        makeDelegationCredentialIssuer(),
-      );
-
-      expect(state).toEqual(captured);
-      expect(result).toEqual({
-        status: 'prepared',
-        nextState: expect.objectContaining({
-          substepStates: expect.arrayContaining([
-            expect.objectContaining({
-              id: '1',
-              delegation: expect.objectContaining({ childRunId: null, cancelledAt: null }),
-            }),
-          ]),
-        }),
-      });
-    });
-
-    it('maps an invalid manual issue to its domain error', async () => {
-      const state = makeDelegationState();
-
-      const result = await actorService.prepareManualDelegationMutation(
-        state,
-        makeDelegationSteps(),
-        {
-          type: 'ISSUE',
-          stepId: 'missing',
-          frameKey,
-          childRunbookPath: 'child.md',
-          childRunbookRef: { source: 'project', path: 'child.md' },
-        },
-        makeDelegationCredentialIssuer(),
-      );
-
-      expect(result).toEqual({
-        status: 'error',
-        error: expect.objectContaining({ code: expect.any(String), message: expect.any(String) }),
-      });
-    });
-
-    it('propagates the branded child run id of a live-child issue refusal', async () => {
-      const issued = await issueDelegation();
-      const childRunId = assertRunId(`rd_${'e'.repeat(32)}`);
-      if (issued.substepStates === undefined) throw new Error('expected issued substep state');
-      const linked = {
-        ...issued,
-        substepStates: issued.substepStates.map((substep) =>
-          substep.delegation === undefined
-            ? substep
-            : { ...substep, delegation: { ...substep.delegation, childRunId } },
-        ),
-      };
-
-      const result = await actorService.prepareManualDelegationMutation(
-        linked,
-        makeDelegationSteps(),
-        {
-          type: 'ISSUE',
-          stepId: '1.1',
-          frameKey,
-          childRunbookPath: 'child.md',
-          childRunbookRef: { source: 'project', path: 'child.md' },
-        },
-        makeDelegationCredentialIssuer(),
-      );
-
-      expect(result).toEqual({
-        status: 'child_in_flight',
-        childRunId,
-        error: expect.objectContaining({ code: expect.any(String), message: expect.any(String) }),
-      });
-    });
-
-    it('passes through already-cancelled and needs-force abort refusals', async () => {
-      const issued = await issueDelegation();
-      const firstAbort = await actorService.prepareManualDelegationMutation(
-        issued,
-        makeDelegationSteps(),
-        { type: 'ABORT', substepId: '1', frameKey, force: false },
-        makeDelegationCredentialIssuer(),
-      );
-      if (firstAbort.status !== 'prepared') throw new Error('expected prepared abort');
-
-      await expect(
-        actorService.prepareManualDelegationMutation(
-          firstAbort.nextState,
-          makeDelegationSteps(),
-          { type: 'ABORT', substepId: '1', frameKey, force: false },
-          makeDelegationCredentialIssuer(),
-        ),
-      ).resolves.toEqual({ status: 'already_cancelled' });
-
-      const childRunId = assertRunId(`rd_${'d'.repeat(32)}`);
-      if (issued.substepStates === undefined) throw new Error('expected issued substep state');
-      const linked = {
-        ...issued,
-        substepStates: issued.substepStates.map((substep) =>
-          substep.delegation === undefined
-            ? substep
-            : { ...substep, delegation: { ...substep.delegation, childRunId } },
-        ),
-      };
-      await expect(
-        actorService.prepareManualDelegationMutation(
-          linked,
-          makeDelegationSteps(),
-          { type: 'ABORT', substepId: '1', frameKey, force: false },
-          makeDelegationCredentialIssuer(),
-        ),
-      ).resolves.toEqual({ status: 'needs_force', childRunId });
-    });
-
-    it('patches snapshot-backed abort state without a bridge event', async () => {
-      const issued = await issueDelegation();
-      const captured = {
-        ...issued,
-        schemaVersion: CURRENT_SCHEMA_VERSION,
-        snapshot: { value: 'persisted', context: { substepStates: issued.substepStates } },
-      };
-      const result = await actorService.prepareManualDelegationMutation(
-        captured,
-        makeDelegationSteps(),
-        { type: 'ABORT', substepId: '1', frameKey, force: false },
-        makeDelegationCredentialIssuer(),
-      );
-      expect(result.status).toBe('prepared');
-      if (result.status !== 'prepared') throw new Error('expected prepared abort');
-      expect(result.nextState.substepStates).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            id: '1',
-            delegation: expect.objectContaining({ cancelledAt: expect.any(String) }),
-          }),
-        ]),
-      );
-      expect(
-        (result.nextState.snapshot as { context?: { substepStates?: unknown } }).context
-          ?.substepStates,
-      ).toEqual(result.nextState.substepStates);
-    });
-  });
-
-  describe('prepared delegated-child link mutation', () => {
-    async function exercisePreparedMutation(
-      scenario:
-        | 'snapshot'
-        | 'serialization'
-        | 'unlink'
-        | 'concurrent'
-        | 'supersession'
-        | 'fallbacks'
-        | 'invalid-state',
-    ): Promise<void> {
-      const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
-      const childRunId = assertRunId(`rd_${'d'.repeat(32)}`);
-      const otherChildRunId = assertRunId(`rd_${'e'.repeat(32)}`);
-      const frameKey = buildFrameKey('1');
-      const steps = createRunbook(`## 1. Parent
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 First
-- PASS CONTINUE
-- FAIL STOP
-
-### 1.2 Second
-- PASS CONTINUE
-- FAIL STOP
-`);
-      const state = await manager.create(
-        { source: 'project', path: 'parent.runbook.md' },
-        { title: 'Parent', description: '', steps },
-        {
-          runbookPath: 'parent.runbook.md',
-          frontmatterOutputs: [],
-        },
-      );
-      const target = makeDelegatedSubstepState({
-        id: '1.1',
-        frameKey,
-        delegation: { tokenHash },
-      });
-      const sibling = makeDelegatedSubstepState({
-        id: '1.2',
-        frameKey,
-        delegation: { tokenHash },
-      });
-      await manager.update(state.id, {
-        substepStates: [target, sibling],
-        activeFrameKey: frameKey,
-        activeEntry: 1,
-        frameEntryCounts: replace({ [frameKey]: 1 }),
-      });
-      const before = await manager.load(state.id);
-      if (!before) throw new Error('expected persisted parent state');
-
-      const runtimeResolver = async () => null;
-      const service = new RunbookActorService(manager, {
-        resolveDelegationRunbook: runtimeResolver,
-      });
-      const linkage = {
-        kind: 'delegation' as const,
-        parentRunId: state.id,
-        parentStepId: '1.1',
-        parentStep: '1',
-        parentFrameKey: frameKey,
-        parentEntry: 1,
-        tokenHash,
-      };
-      const result = await service.prepareDelegationChildLink(before, steps, childRunId, linkage);
-      expect(result.kind).toBe('prepared');
-      if (result.kind !== 'prepared') throw new Error(`Expected prepared, got ${result.kind}`);
-      const prepared = result.prepared.mutation;
-
-      if (scenario === 'snapshot') {
-        expect(result.prepared.operation).toBe('link');
-        expect(prepared.nextState).not.toHaveProperty('type');
-        expect(prepared.nextState.substepStates).toEqual([
-          { ...target, delegation: { ...target.delegation, childRunId } },
-          sibling,
-        ]);
-        expect((await manager.load(state.id))?.substepStates).toEqual([target, sibling]);
-      }
-
-      if (scenario === 'serialization') {
-        const persistedContext = (prepared.snapshot as { readonly context?: unknown }).context;
-        const seen = new Set<unknown>();
-        const assertDataOnly = (value: unknown): void => {
-          expect(typeof value).not.toBe('function');
-          expect(value).not.toBe(manager);
-          expect(value).not.toBe(service);
-          expect(value).not.toBe(runtimeResolver);
-          if (!value || typeof value !== 'object' || seen.has(value)) return;
-          seen.add(value);
-          for (const nested of Object.values(value)) assertDataOnly(nested);
-        };
-        assertDataOnly(persistedContext);
-        const serialized = JSON.stringify(prepared.snapshot);
-        expect(serialized).toContain(childRunId);
-        expect(serialized).not.toContain(manager.cwd);
-        expect(() => JSON.parse(serialized)).not.toThrow();
-        expect((await manager.load(state.id))?.substepStates).toEqual([target, sibling]);
-      }
-
-      if (scenario === 'unlink') {
-        const unlink = await service.prepareDelegationChildUnlink(
-          prepared.nextState,
-          steps,
-          childRunId,
-          linkage,
-        );
-        expect(unlink.kind).toBe('prepared');
-        if (unlink.kind !== 'prepared') throw new Error(`Expected prepared, got ${unlink.kind}`);
-        expect(unlink.prepared.operation).toBe('unlink');
-        expect(unlink.prepared.mutation.nextState).not.toHaveProperty('type');
-        expect(unlink.prepared.mutation.nextState.substepStates).toEqual([target, sibling]);
-      }
-
-      if (scenario === 'concurrent') {
-        await expect(
-          service.prepareDelegationChildLink(prepared.nextState, steps, otherChildRunId, linkage),
-        ).resolves.toEqual({
-          kind: 'already_linked',
-          runId: state.id,
-          message: 'Delegation 1.1 is already linked to another child',
-          // The occupant, not `otherChildRunId` — a caller reporting this
-          // permanent refusal must name the child that holds the delegation.
-          occupyingChildRunId: childRunId,
-        });
-        await expect(
-          service.prepareDelegationChildUnlink(prepared.nextState, steps, otherChildRunId, linkage),
-        ).resolves.toEqual({
-          kind: 'already_linked',
-          runId: state.id,
-          message: 'Delegation 1.1 is linked to a newer child',
-          // Permanent on the rollback path too, and it names the holder —
-          // `otherChildRunId`, the child being rolled back, is precisely the
-          // one the delegation does NOT name.
-          occupyingChildRunId: childRunId,
-        });
-      }
-
-      if (scenario === 'supersession') {
-        await expect(
-          service.prepareDelegationChildLink(before, steps, childRunId, {
-            ...linkage,
-            parentEntry: 2,
-          }),
-        ).resolves.toEqual({
-          kind: 'delegation_superseded',
-          runId: state.id,
-          message: 'Delegation 1.1 no longer names parent entry 2',
-        });
-        await expect(
-          service.prepareDelegationChildLink(before, steps, childRunId, {
-            ...linkage,
-            tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
-          }),
-        ).resolves.toEqual(expect.objectContaining({ kind: 'delegation_superseded' }));
-        await expect(
-          service.prepareDelegationChildUnlink(prepared.nextState, steps, childRunId, {
-            ...linkage,
-            parentEntry: 2,
-          }),
-        ).resolves.toEqual(expect.objectContaining({ kind: 'delegation_superseded' }));
-        await expect(
-          service.prepareDelegationChildUnlink(prepared.nextState, steps, childRunId, {
-            ...linkage,
-            tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
-          }),
-        ).resolves.toEqual(expect.objectContaining({ kind: 'delegation_superseded' }));
-      }
-
-      const fallbackEntryState = {
-        ...before,
-        activeFrameKey: undefined,
-        activeEntry: undefined,
-      };
-      if (scenario === 'fallbacks') {
-        await expect(
-          service.prepareDelegationChildLink(fallbackEntryState, steps, childRunId, linkage),
-        ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
-        await expect(
-          service.prepareDelegationChildLink(
-            { ...fallbackEntryState, frameEntryCounts: undefined },
-            steps,
-            childRunId,
-            linkage,
-          ),
-        ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
-        await expect(
-          service.prepareDelegationChildLink(
-            { ...fallbackEntryState, frameEntryCounts: undefined },
-            steps,
-            childRunId,
-            { ...linkage, parentEntry: 2 },
-          ),
-        ).resolves.toEqual(
-          expect.objectContaining({ kind: 'delegation_superseded', runId: state.id }),
-        );
-        await expect(
-          service.prepareDelegationChildLink(
-            {
-              ...before,
-              activeFrameKey: buildFrameKey('other'),
-              activeEntry: 2,
-              frameEntryCounts: { [frameKey]: 1 },
-            },
-            steps,
-            childRunId,
-            linkage,
-          ),
-        ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
-        await expect(
-          service.prepareDelegationChildLink(
-            { ...before, activeEntry: 2, frameEntryCounts: { [frameKey]: 1 } },
-            steps,
-            childRunId,
-            linkage,
-          ),
-        ).resolves.toEqual(
-          expect.objectContaining({ kind: 'delegation_superseded', runId: state.id }),
-        );
-        await expect(
-          service.prepareDelegationChildLink(
-            { ...before, activeEntry: undefined, frameEntryCounts: { [frameKey]: 1 } },
-            steps,
-            childRunId,
-            linkage,
-          ),
-        ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
-        await expect(
-          service.prepareDelegationChildUnlink(
-            { ...prepared.nextState, activeFrameKey: undefined, activeEntry: undefined },
-            steps,
-            childRunId,
-            linkage,
-          ),
-        ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
-        await expect(
-          service.prepareDelegationChildUnlink(
-            {
-              ...prepared.nextState,
-              activeFrameKey: undefined,
-              activeEntry: undefined,
-              frameEntryCounts: undefined,
-            },
-            steps,
-            childRunId,
-            linkage,
-          ),
-        ).resolves.toEqual(expect.objectContaining({ kind: 'prepared' }));
-        await expect(
-          service.prepareDelegationChildUnlink(
-            {
-              ...prepared.nextState,
-              activeFrameKey: undefined,
-              activeEntry: undefined,
-              frameEntryCounts: undefined,
-            },
-            steps,
-            childRunId,
-            { ...linkage, parentEntry: 2 },
-          ),
-        ).resolves.toEqual(
-          expect.objectContaining({ kind: 'delegation_superseded', runId: state.id }),
-        );
-      }
-
-      if (scenario === 'invalid-state') {
-        await expect(
-          service.prepareActorMutation(before.id, before, steps, {
-            type: 'DELEGATION_CHILD_LINKED',
-            parentStepId: linkage.parentStepId,
-            parentFrameKey: linkage.parentFrameKey,
-            tokenHash: assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`),
-            childRunId,
-          }),
-        ).rejects.toThrow(`Runbook ${before.id} actor entered an error state`);
-        const unexpectedDerivationError = new Error('unexpected derivation failure');
-        const invalidSubstepStates = {
-          find: () => {
-            throw unexpectedDerivationError;
-          },
-        } as unknown as RunbookState['substepStates'];
-        await expect(
-          service.prepareDelegationChildLink(
-            { ...before, substepStates: invalidSubstepStates },
-            steps,
-            childRunId,
-            linkage,
-          ),
-        ).rejects.toBe(unexpectedDerivationError);
-        const pendingEffectParent = {
-          ...prepared.nextState,
-          snapshot: {
-            ...(prepared.snapshot as Record<string, unknown>),
-            value: { 'step::1::1': '__capture' },
-          },
-        };
-        await expect(
-          service.prepareDelegationChildUnlink(pendingEffectParent, steps, childRunId, linkage),
-        ).rejects.toThrow('Unsupported snapshot.value shape');
-      }
-    }
-
-    it('derives the exact linked snapshot without persisting it', async () => {
-      await exercisePreparedMutation('snapshot');
-    });
-
-    it('keeps the prepared snapshot data-only and JSON serializable', async () => {
-      await exercisePreparedMutation('serialization');
-    });
-
-    it('restores the original substep state with an unlink mutation', async () => {
-      await exercisePreparedMutation('unlink');
-    });
-
-    it('classifies an occupied link apart from a raced unlink', async () => {
-      await exercisePreparedMutation('concurrent');
-    });
-
-    it('classifies entry and token supersession for link and unlink', async () => {
-      await exercisePreparedMutation('supersession');
-    });
-
-    it('uses active and frame-count fallbacks when frame-entry fields are absent', async () => {
-      await exercisePreparedMutation('fallbacks');
-    });
-
-    it('rejects pending-effect and structurally invalid parent states', async () => {
-      await exercisePreparedMutation('invalid-state');
-    });
-
-    it('rejects an errored actor snapshot without persisting or leaking the actor error', async () => {
-      const steps = createRunbook(`## 1. Parent
-- PASS CONTINUE
-- FAIL STOP
-`);
-      const created = await manager.create(
-        { source: 'project', path: 'errored-parent.runbook.md' },
-        { title: 'Parent', description: '', steps },
-        { runbookPath: 'errored-parent.runbook.md', frontmatterOutputs: [] },
-      );
-      const before = await manager.load(created.id);
-      if (!before) throw new Error('Expected persisted parent state');
-
-      let errorObserverInstalled = false;
-      const actor = {
-        subscribe: (observer: unknown) => {
-          if (observer && typeof observer === 'object' && 'error' in observer) {
-            errorObserverInstalled = true;
-          }
-          return { unsubscribe: jest.fn() };
-        },
-        send: () => {
-          if (!errorObserverInstalled) throw new Error('unhandled synthetic actor error');
-        },
-        getSnapshot: () => ({ hasTag: () => false }),
-        getPersistedSnapshot: () => ({ status: 'error', value: 'step::1', context: {} }),
-        stop: jest.fn(),
-      } as unknown as AnyActorRef;
-      type ActorServiceInternals = {
-        createActorForState: (...args: readonly unknown[]) => AnyActorRef;
-      };
-      jest
-        .spyOn(actorService as unknown as ActorServiceInternals, 'createActorForState')
-        .mockReturnValue(actor);
-
-      await expect(
-        actorService.prepareActorMutation(created.id, before, steps, { type: 'PASS' }),
-      ).rejects.toThrow(`Runbook ${created.id} actor entered an error state`);
-      await expect(manager.load(created.id)).resolves.toEqual(before);
-    });
-  });
-
   describe('prepared mutation machine effects', () => {
     it('waits for tagged machine-owned invokes before persisting', async () => {
       const steps = createRunbook(`## 1. capture
@@ -2660,6 +1537,7 @@ echo hi
         steps,
       };
       const state = await manager.create({ source: 'project', path: 'test.md' }, runbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const channelPath = join(testDir, 'Foo');
@@ -2684,6 +1562,7 @@ echo hi
   describe('FOR loop context via actor', () => {
     it('syncs FOR context fields from actor snapshot', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
 
@@ -2725,6 +1604,7 @@ echo hi
 
     it('clears FOR fields when runbook completes', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
 
@@ -2767,6 +1647,7 @@ echo hi
 
     it('mirrors terminal internal-failure lastAction onto persisted runbook state', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -2799,116 +1680,9 @@ echo hi
       });
     });
 
-    // `isPersistableLastAction` gates what reaches persisted state, and its
-    // DELEGATION_ISSUANCE_FAILED arm accepts exactly three reasons. Each is a
-    // distinct machine outcome an operator must still be able to read off a
-    // stopped run: `actor_context_required` is the one a resumed inline child
-    // produces when it holds no delegation authority. Accepting each
-    // individually — and rejecting everything else — is what stops the arm
-    // silently narrowing or widening.
-    it.each([
-      'actor_context_required',
-      'delegation_resolution_failed',
-      'nested_delegation_forbidden',
-    ])('persists a terminal DELEGATION_ISSUANCE_FAILED with reason %s', async (reason) => {
-      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
-        runbookPath: 'test.md',
-      });
-      const actor = mockActor({
-        value: 'STOPPED',
-        context: {
-          variables: {},
-          lifecycle: 'stopped',
-          retryCount: 0,
-          lastAction: {
-            type: 'DELEGATION_ISSUANCE_FAILED' as const,
-            origin: 'direct',
-            reason,
-            message: 'no authority',
-          },
-        },
-      });
-
-      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
-
-      expect(updated.lastAction).toEqual({
-        type: 'DELEGATION_ISSUANCE_FAILED',
-        origin: 'direct',
-        reason,
-        message: 'no authority',
-      });
-      await expect(manager.load(state.id)).resolves.toMatchObject({
-        lastAction: { type: 'DELEGATION_ISSUANCE_FAILED', reason },
-      });
-    });
-
-    // The two rejection halves of the same conjunction: an unrecognised reason
-    // with a valid message, and a recognised reason with a non-string message.
-    // Both must drop the action rather than persist a malformed one.
-    it.each([
-      { label: 'an unrecognised reason', reason: 'credential_expired', message: 'no authority' },
-      { label: 'a non-string message', reason: 'actor_context_required', message: 42 },
-    ])(
-      'drops a terminal DELEGATION_ISSUANCE_FAILED carrying $label',
-      async ({ reason, message }) => {
-        const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
-          runbookPath: 'test.md',
-        });
-        const actor = mockActor({
-          value: 'STOPPED',
-          context: {
-            variables: {},
-            lifecycle: 'stopped',
-            retryCount: 0,
-            lastAction: { type: 'DELEGATION_ISSUANCE_FAILED', origin: 'direct', reason, message },
-          },
-        });
-
-        const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
-
-        expect(updated.lastAction).toBeUndefined();
-        // The returned state and the persisted row must agree: a guard that
-        // dropped the action from the return value while still writing it
-        // through would leave malformed data on disk for the next hydration.
-        // Only the top-level field is asserted — the opaque `snapshot` blob is
-        // the machine's own serialization and legitimately still carries it.
-        const reloaded = await manager.load(state.id);
-        expect(reloaded?.lastAction).toBeUndefined();
-      },
-    );
-  });
-
-  describe('implicit ForContext filtering', () => {
-    it('implicit ForContext entries are not persisted', async () => {
-      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
-        runbookPath: 'test.md',
-      });
-      const actor = mockActor({
-        value: 'step::1::1',
-        context: {
-          forStack: [
-            {
-              stepId: '1',
-              iteration: 1,
-              start: 1,
-              end: 1,
-              implicit: true,
-              source: { kind: 'range' as const },
-            },
-          ],
-          iterationResults: [],
-          retryCount: 0,
-          variables: {},
-          lastAction: { type: 'START', origin: 'direct' },
-        },
-      });
-
-      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
-      expect(updated.forStack).toBeUndefined();
-    });
-
     it('iterationResults not persisted for implicit loops', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -2937,6 +1711,7 @@ echo hi
 
     it('explicit ForContext entries are persisted normally', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -2966,6 +1741,7 @@ echo hi
 
     it('iterationResults preserved after explicit FOR loop exits (empty forStack)', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -2997,6 +1773,7 @@ echo hi
   describe('forStack persistence via actor', () => {
     it('persists forStack with variable source through actor update and reload', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
 
@@ -3043,6 +1820,7 @@ echo hi
 
     it('persists forStack with variable source and snapshot through actor update and reload', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
 
@@ -3110,6 +1888,7 @@ echo hi
 
       // Create with templateVars containing arrays
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         templateVars: templateVars,
       });
@@ -3159,6 +1938,7 @@ echo hi
 
     it('seeds compiler context.frontmatterOutputs from RunbookState.frontmatterOutputs', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [{ name: 'SomeVar' }],
       });
@@ -3174,6 +1954,7 @@ echo hi
 
     it('defaults context.frontmatterOutputs to [] when no outputs declared at run time', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
 
@@ -3187,6 +1968,7 @@ echo hi
 
     it('throws for stale run state missing frontmatterOutputs field', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -3202,6 +1984,7 @@ echo hi
 
     it('validates stale run state without creating an actor', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -3216,6 +1999,7 @@ echo hi
 
     it('throws for an unrecognized snapshot.value shape', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -3230,6 +2014,7 @@ echo hi
 
     it('rejects persisted pending-effect __capture snapshots as invalid state', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -3247,6 +2032,7 @@ echo hi
 
     it('throws for a malformed legacy state ID in snapshot.value', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -3261,6 +2047,7 @@ echo hi
 
     it('throws when snapshot references a step no longer in the runbook', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -3273,50 +2060,9 @@ echo hi
       );
     });
 
-    async function seedRecoveryRequiredState(): Promise<string> {
-      const created = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
-        runbookPath: 'test.md',
-        frontmatterOutputs: [],
-      });
-      const actor = await actorService.createActor(created.id, mockSteps);
-      if (!actor) throw new Error('expected an actor');
-      actor.send({
-        type: 'EXECUTION_OUTCOME_UNKNOWN',
-        epoch: 1,
-        reason: 'owner_dead',
-        interruptedStepId: '1',
-      });
-      const snapshot = actor.getPersistedSnapshot();
-      actor.stop();
-      expect(stateValueAsString((snapshot as unknown as { value: unknown }).value)).toBe(
-        'recoveryRequired',
-      );
-      await manager.update(created.id, { snapshot, lifecycle: 'running' });
-      return created.id;
-    }
-
-    it('hydrates a persisted recoveryRequired run and reconciles via GOTO', async () => {
-      const id = await seedRecoveryRequiredState();
-      const actor = await actorService.createActor(id, mockSteps);
-      if (!actor) throw new Error('expected an actor');
-      expect(stateValueAsString(actor.getSnapshot().value)).toBe('recoveryRequired');
-      actor.send({ type: 'GOTO', target: { step: '1' } });
-      expect(stateValueAsString(actor.getSnapshot().value)).toMatch(/^step::1/);
-      expect(actor.getSnapshot().context.interruptedEpoch).toBeUndefined();
-      actor.stop();
-    });
-
-    it('hydrates a persisted recoveryRequired run and accepts FORCE_STOP', async () => {
-      const id = await seedRecoveryRequiredState();
-      const actor = await actorService.createActor(id, mockSteps);
-      if (!actor) throw new Error('expected an actor');
-      actor.send({ type: 'FORCE_STOP' });
-      expect(stateValueAsString(actor.getSnapshot().value)).toBe('STOPPED');
-      actor.stop();
-    });
-
     it('seeds compiler context.templateVars from RunbookState.templateVars (flattened)', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         templateVars: { SomeVar: 'hello', Items: ['a', 'b'] },
       });
@@ -3344,6 +2090,7 @@ echo hi
       const canonicalTestDir = await realpath(testDir);
       const stream = createJsonArrayStream(join(canonicalTestDir, 'data.jsonl'));
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         templateVars: {
           Region: 'us-east-1',
@@ -3511,6 +2258,7 @@ echo hi
 
     it('persists context.finalVars to RunbookState.finalVars on STOPPED snapshot', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [{ name: 'Result' }],
         templateVars: { Result: 'failed-value' },
@@ -3528,6 +2276,7 @@ echo hi
 
     it('persists context.finalVars to RunbookState.finalVars on COMPLETE snapshot', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [{ name: 'Result' }],
         templateVars: { Result: 'passed-value' },
@@ -3542,6 +2291,7 @@ echo hi
 
     it('leaves RunbookState.finalVars undefined when no frontmatter outputs are declared', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [],
         // No frontmatterOutputs declared → context.finalVars stays {}
@@ -3555,6 +2305,7 @@ echo hi
 
     it('leaves RunbookState.finalVars undefined when context.finalVars is empty on COMPLETE', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [], // No frontmatterOutputs declared → context.finalVars stays {}
       });
@@ -3567,6 +2318,7 @@ echo hi
 
     it('persists finalVars and terminal metadata for FORCE_STOP', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [{ name: 'Result' }],
         templateVars: { Result: 'forced-stop-value' },
@@ -3590,6 +2342,7 @@ echo hi
 
     it('clears stale lastResult when FORCE_STOP persists a terminal state', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -3609,6 +2362,7 @@ echo hi
 
     it('persists finalVars and terminal metadata for FORCE_COMPLETE without moving the cursor', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [{ name: 'Result' }],
         templateVars: { Result: 'forced-complete-value' },
@@ -3635,6 +2389,7 @@ echo hi
       const helpers = new Map([['upper', (value: string) => value.toUpperCase()]]);
       const helperActorService = new RunbookActorService(manager, { helpers });
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [{ name: 'Published', value: '{{ upper Result }}' }],
         templateVars: { Result: 'prod' },
@@ -3654,6 +2409,7 @@ echo hi
       // let unsanitized shapes (e.g. GOTO without `target`) leak into persisted
       // state and bypass `isPersistableLastAction`.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -3674,6 +2430,7 @@ echo hi
 
     it('drops FOR_RESOLUTION_FAILED missing the required code discriminant', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -3698,6 +2455,7 @@ echo hi
 
     it('drops FOR_RESOLUTION_FAILED with an unrecognized code value', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -3723,6 +2481,7 @@ echo hi
 
     it('persists FOR_RESOLUTION_FAILED with a well-formed code and message', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -3753,6 +2512,7 @@ echo hi
 
     it('persists FOR_RESOLUTION_FAILED with drift-detected code', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -3788,45 +2548,6 @@ echo hi
         },
       });
     });
-
-    it('persists INLINE_LAUNCH_FAILED with a well-formed reason and message', async () => {
-      const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
-        runbookPath: 'test.md',
-        frontmatterOutputs: [],
-      });
-
-      const actor = mockActor({
-        value: 'STOPPED',
-        context: {
-          variables: {},
-          finalVars: {},
-          lifecycle: 'stopped',
-          lastAction: {
-            type: 'INLINE_LAUNCH_FAILED',
-            origin: 'direct',
-            reason: 'inline_launch_forbidden',
-            message: 'Automatic inline launch is not supported inside claimed child scopes.',
-          },
-        },
-      });
-
-      const { state: updated } = await actorService.updateFromActor(state.id, actor, mockSteps);
-
-      expect(updated.lastAction).toEqual({
-        type: 'INLINE_LAUNCH_FAILED',
-        origin: 'direct',
-        reason: 'inline_launch_forbidden',
-        message: 'Automatic inline launch is not supported inside claimed child scopes.',
-      });
-      await expect(manager.load(state.id)).resolves.toMatchObject({
-        lastAction: {
-          type: 'INLINE_LAUNCH_FAILED',
-          origin: 'direct',
-          reason: 'inline_launch_forbidden',
-          message: 'Automatic inline launch is not supported inside claimed child scopes.',
-        },
-      });
-    });
   });
 
   describe('getContextSnapshot', () => {
@@ -3841,6 +2562,7 @@ echo hi
       // effect callers of this method are not signing up for. We assert the
       // invariant directly by spying on XState's Actor.prototype.start.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       const xstate = await import('xstate');
@@ -3869,6 +2591,7 @@ echo hi
       const substepStates: SubstepState[] = [{ id: '1', frameKey, status: 'done', result: 'pass' }];
 
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       await manager.update(state.id, {
@@ -3899,6 +2622,7 @@ echo hi
       ];
 
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       await manager.update(state.id, {
@@ -3932,6 +2656,7 @@ echo hi
       const substepStates: SubstepState[] = [{ id: '1', frameKey, status: 'pending' }];
 
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       await manager.update(state.id, { substepStates });
@@ -3964,6 +2689,7 @@ echo hi
       const staleFrameKey = buildFrameKey('1', 1);
 
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       await manager.update(state.id, { activeFrameKey: staleFrameKey });
@@ -4001,6 +2727,7 @@ echo hi
       const frameKey = buildFrameKey('1');
 
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       await manager.update(state.id, { activeFrameKey: frameKey });
@@ -4029,6 +2756,7 @@ echo hi
       { source: 'project', path: options.runbookPath },
       { title: 'Artifacts', description: 'Artifacts test', steps },
       {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: options.runbookPath,
         frontmatterOutputs: [],
         templateVars: brandInitialTemplateVarsForTest({
@@ -4058,6 +2786,7 @@ echo hi
         { source: 'project', path: 'review.md' },
         { title: 'Review', description: 'Review imported plan', steps },
         {
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'review.md',
           frontmatterOutputs: [],
           templateVars: brandInitialTemplateVarsForTest({
@@ -4090,6 +2819,7 @@ echo hi
         { source: 'project', path: 'artifacts.md' },
         { steps, title: 'Artifacts' },
         {
+          ownerTokenHash: freshOwnerTokenHash(),
           runbookPath: 'artifacts.md',
           frontmatterOutputs: [],
           templateVars: brandInitialTemplateVarsForTest({
@@ -4234,39 +2964,6 @@ echo hi
       expect(JSON.stringify(state.snapshot)).toContain('enteredArtifacts');
     });
   });
-  describe('createRecoveryActor', () => {
-    it('enters the tagged recovery state through the pure recovery event', async () => {
-      const harness = await createLifecycleHarness(`## 1. First
-- PASS COMPLETE
-- FAIL STOP
-`);
-      const recovery = harness.service.createRecoveryActor(harness.state, harness.steps);
-      try {
-        // Asks one question and answers it from the live snapshot. The previous
-        // `hasTag(tag)` shape took a tag it discarded — it returned false for
-        // every tag but RECOVERY_TAG whether or not the snapshot carried it —
-        // so an assertion like `hasTag('unrelated') === false` passed without
-        // consulting the machine at all and could not tell a correct
-        // implementation from a broken one.
-        expect(recovery.isInRecoveryState()).toBe(false);
-        recovery.send({
-          type: 'EXECUTION_OUTCOME_UNKNOWN',
-          epoch: assertExecutionEpoch(1),
-          reason: 'effect_boundary_crossed',
-          interruptedStepId: '1',
-        });
-        expect(recovery.isInRecoveryState()).toBe(true);
-        expect(recovery.getPersistedSnapshot()).toMatchObject({
-          value: RECOVERY_REQUIRED_STATE_NAME,
-        });
-      } finally {
-        recovery.stop();
-        harness.service.stopActor(harness.actor);
-        await rm(harness.testDir, { recursive: true, force: true });
-      }
-    });
-  });
-
   describe('frame-entry persistence', () => {
     const FRAME_1 = buildFrameKey('1');
     const FRAME_2 = buildFrameKey('2');
@@ -4284,7 +2981,11 @@ echo hi
       const created = await manager.create(
         { source: 'project', path: 'frame-entry.md' },
         { title: 'Frame entry', description: 'Frame entry', steps: twoStepStructure },
-        { runbookPath: 'frame-entry.md', frontmatterOutputs: [] },
+        {
+          ownerTokenHash: freshOwnerTokenHash(),
+          runbookPath: 'frame-entry.md',
+          frontmatterOutputs: [],
+        },
       );
       const state = await actorService.initializeState(created.id, twoStepStructure);
       if (!state) throw new Error('bootstrap failed');
@@ -4338,6 +3039,7 @@ echo hi
       // `PersistedRunbookSnapshot.context` is optional, so this shape is
       // representable and the patch must read through it rather than assume it.
       const created = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
+        ownerTokenHash: freshOwnerTokenHash(),
         runbookPath: 'test.md',
       });
       await manager.update(created.id, {
@@ -4372,7 +3074,11 @@ echo hi
       const created = await manager.create(
         { source: 'project', path: 'self-goto.md' },
         { title: 'Self goto', description: 'Self goto', steps: selfGotoSteps },
-        { runbookPath: 'self-goto.md', frontmatterOutputs: [] },
+        {
+          ownerTokenHash: freshOwnerTokenHash(),
+          runbookPath: 'self-goto.md',
+          frontmatterOutputs: [],
+        },
       );
       await actorService.initializeState(created.id, selfGotoSteps);
 

@@ -22,34 +22,28 @@ import path from 'node:path';
 
 import { activateForTest } from '../helpers/run-progression-activation.js';
 import {
-  DelegationScanService,
   RunbookActorService,
-  RunbookCompletionService,
   RunbookLifecycleCommandService,
   RunbookStateManager,
-  SessionService,
   assertRunId,
   buildFrameKey,
-  createEffectfulActorMutationRunner,
-  type CallerEvidence,
-  type ClaimId,
-  type LifecycleTerminalReleasePolicy,
+  generateOwnerToken,
+  hashRunSecret,
+  resolveOwnedRun,
+  type OwnedRun,
+  type OwnerToken,
   type ResolvedStep,
   type RunbookState,
   type Transitions,
 } from '../../src/runbook/index.js';
 import { inferFrameEntryFromState } from '../../src/runbook/frame-entry.js';
-import { unwrapSessionMutation } from '../../src/testing/run-fixtures.js';
+import { seedRunState } from '../../src/testing/state-fixtures.js';
 import {
   brandInitialTemplateVarsForTest,
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
 
 import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
-
-const RELEASE_POLICY: LifecycleTerminalReleasePolicy = {
-  releaseOnTerminal: true,
-};
 
 const CONTINUE_TRANSITIONS: Transitions = {
   pass: { kind: 'pass', retry: 0, action: { type: 'CONTINUE' } },
@@ -81,39 +75,20 @@ describe('one mutation, one entry bump', () => {
   let tmp: string;
   let manager: RunbookStateManager;
   let actorService: RunbookActorService;
-  let completionService: RunbookCompletionService;
-  let sessionService: SessionService;
   let seam: RunbookLifecycleCommandService;
-  let runControlClaim: ClaimId;
+  let ownerToken: OwnerToken;
   let steps: readonly ResolvedStep[];
 
   beforeEach(async () => {
     tmp = await mkdtemp(path.join(tmpdir(), 'frame-entry-paths-'));
     manager = new RunbookStateManager(tmp);
-    actorService = new RunbookActorService(manager, {
-      resolveDelegationRunbook: async (runbookRef) => ({
-        path: runbookRef,
-        runbookRef,
-        childRunbookRef: { source: 'project' as const, path: runbookRef },
-      }),
-    });
-    completionService = new RunbookCompletionService(manager, actorService);
-    sessionService = new SessionService(manager);
+    actorService = new RunbookActorService(manager);
     steps = [];
 
     seam = new RunbookLifecycleCommandService({
-      sessionService,
+      manager,
       actorService,
-      completionService,
-      actorMutationRunner: createEffectfulActorMutationRunner(tmp),
-      loadRun: async (id) => (await manager.load(id)) ?? undefined,
       loadSteps: () => steps,
-      resolveChildRunbook: async (name) => ({
-        path: name,
-        ref: { source: 'project' as const, path: name },
-      }),
-      findDelegationsByTokenHash: (tokenHash) =>
-        new DelegationScanService(manager).scanByTokenHash(tokenHash),
     });
   });
 
@@ -140,7 +115,6 @@ describe('one mutation, one entry bump', () => {
         RunbookRef: { source: 'project', path: 'paths.md' },
       }),
       steps: [],
-      resolvedCompletions: {},
       frameEntryCounts: { [FRAME_1]: 1 },
       activeFrameKey: FRAME_1,
       activeEntry: 1,
@@ -153,42 +127,57 @@ describe('one mutation, one entry bump', () => {
     };
   }
 
+  /**
+   * Persist the fixture state as a run owned by a fresh Owner Token, exactly
+   * as `rundown run` leaves a started run.
+   *
+   * @param state - The run state to persist.
+   */
   async function activate(state: RunbookState): Promise<void> {
-    await manager.save(state);
-    await sessionService.pushRunbook(state.id);
-    const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
-    runControlClaim = claimId;
+    ownerToken = generateOwnerToken();
+    await seedRunState(tmp, state, hashRunSecret(ownerToken));
   }
 
-  function evidence(): CallerEvidence {
-    return { kind: 'claim_bearer', claimId: runControlClaim };
+  /**
+   * Resolve the Owner Token to its running run, as the CLI does before every
+   * mutating command.
+   *
+   * @returns The owned run with the version a save must name.
+   * @throws {Error} When the token does not resolve to a running run.
+   */
+  async function ownedRun(): Promise<OwnedRun> {
+    const resolution = await resolveOwnedRun(manager, ownerToken);
+    if (resolution.kind !== 'running') {
+      throw new Error(`expected a running run, got ${resolution.kind}`);
+    }
+    return resolution.run;
   }
 
   /**
    * Drive a pass/fail transition through the seam and require it to apply.
    *
+   * `--step` confirms the run's current position, so it is derived from the
+   * committed cursor rather than spelled per call.
+   *
    * @param command - Transition command to drive.
    * @throws {Error} When the seam refuses instead of applying.
    */
   async function drive(command: 'pass' | 'fail'): Promise<void> {
+    const run = await ownedRun();
+    const { step, substep, forStack } = run.state;
+    const iteration = forStack?.find((fc) => fc.stepId === step && !fc.implicit)?.iteration;
     const outcome = await seam.runTransition({
       command,
-      callerEvidence: evidence(),
-      targetSelector: { kind: 'run', runId },
-      terminalPolicy: RELEASE_POLICY,
+      run,
+      target: {
+        stepId: substep === undefined ? step : `${step}.${substep}`,
+        ...(iteration === undefined ? {} : { iteration }),
+      },
     });
     if (outcome.kind !== 'applied') {
       throw new Error(`expected applied, got ${outcome.kind}: ${JSON.stringify(outcome)}`);
     }
-    if (outcome.progression.kind === 'activate') {
-      await activateForTest(outcome.progression, {
-        manager,
-        actorService,
-        sessionService,
-        tmp,
-        steps,
-      });
-    }
+    await activateForTest(outcome.progression, { manager, actorService, steps });
   }
 
   /**
@@ -198,11 +187,7 @@ describe('one mutation, one entry bump', () => {
    * @throws {Error} When the seam refuses the navigation or the mutation.
    */
   async function goto(target: { step: string; substep?: string }): Promise<void> {
-    const allowed = await seam.resolveRunNavigation({
-      command: 'goto',
-      callerEvidence: evidence(),
-      targetSelector: { kind: 'run', runId },
-    });
+    const allowed = await seam.resolveRunNavigation({ run: await ownedRun() });
     if (allowed.kind !== 'allowed') {
       throw new Error(`expected allowed, got ${allowed.kind}`);
     }
