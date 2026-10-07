@@ -64,84 +64,45 @@ describe('runCli', () => {
     });
   });
 
-  it('surfaces open delegated child refusal (pass) from the CLI facade', async () => {
+  it('surfaces a TOKEN_REQUIRED refusal from the CLI facade (bare mutation)', async () => {
     const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
     const flat = {
-      error:
-        'Cannot run bare rundown pass: active parent runbook has open delegated child claim(s): rdclm_abcdefghijklmnopQRSTUV.',
-      code: 'OPEN_DELEGATED_CHILDREN',
-      command: 'pass',
-      details: {
-        parentRunId: 'rd_parent000000000000000000000001',
-        claimIds: ['rdclm_abcdefghijklmnopQRSTUV'],
-        childRunIds: ['rd_child0000000000000000000000001'],
-      },
-    };
-    error.stdout = '';
-    error.stderr = JSON.stringify(flat);
-    execFileAsync.mockRejectedValue(error);
-
-    await expect(runCli(['pass'])).resolves.toEqual({
-      success: false,
-      error: flat.error,
-      data: flat,
-    });
-  });
-
-  it('surfaces open delegated child refusal (fail) from the CLI facade', async () => {
-    const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
-    const flat = {
-      error:
-        'Cannot run bare rundown fail: active parent runbook has open delegated child claim(s): rdclm_abcdefghijklmnopQRSTUV.',
-      code: 'OPEN_DELEGATED_CHILDREN',
-      command: 'fail',
-      details: { claimIds: ['rdclm_abcdefghijklmnopQRSTUV'] },
-    };
-    error.stdout = '';
-    error.stderr = JSON.stringify(flat);
-    execFileAsync.mockRejectedValue(error);
-
-    await expect(runCli(['fail'])).resolves.toEqual({
-      success: false,
-      error: flat.error,
-      data: flat,
-    });
-  });
-
-  it('surfaces a terminal claim result conflict from the CLI facade', async () => {
-    const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
-    const flat = {
-      error: 'Claim rdclm_abcdefghijklmnopQRSTUV already resolved as fail; cannot pass it.',
-      code: 'DELEGATION_RESULT_CONFLICT',
+      error: 'rundown pass requires --token; pass --token <owner_token> from runbook_started',
+      code: 'TOKEN_REQUIRED',
       command: 'pass',
     };
     error.stdout = '';
     error.stderr = JSON.stringify(flat);
     execFileAsync.mockRejectedValue(error);
 
-    await expect(runCli(['pass', '--claim-id', 'rdclm_abcdefghijklmnopQRSTUV'])).resolves.toEqual({
+    await expect(runCli(['pass', '--step', '1'])).resolves.toEqual({
       success: false,
       error: flat.error,
       data: flat,
     });
   });
 
-  it('surfaces an unavailable claimed runbook from the CLI facade', async () => {
+  it('surfaces an INVALID_STEP refusal naming the current position', async () => {
     const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
     const flat = {
-      error: 'Claim id rdclm_abcdefghijklmnopQRSTUV does not exist.',
-      code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+      error: '--step is required; the current position is 2.1',
+      code: 'INVALID_STEP',
       command: 'pass',
     };
     error.stdout = '';
     error.stderr = JSON.stringify(flat);
     execFileAsync.mockRejectedValue(error);
 
-    await expect(runCli(['pass', '--claim-id', 'rdclm_abcdefghijklmnopQRSTUV'])).resolves.toEqual({
+    await expect(runCli(['pass', '--token', `rdo_${'A'.repeat(43)}`])).resolves.toEqual({
       success: false,
       error: flat.error,
       data: flat,
     });
+    expect(execFileAsync).toHaveBeenCalledWith(
+      'npx',
+      ['--no', 'rundown', 'pass', '--token', `rdo_${'A'.repeat(43)}`],
+      { timeout: 30000 },
+    );
   });
 
   it('extracts CLI JSON errors from stdout on command failure', async () => {
