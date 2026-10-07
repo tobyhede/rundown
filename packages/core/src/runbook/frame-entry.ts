@@ -1,4 +1,4 @@
-import { activeFrame, deriveActiveFrame, type Frame, type FrameKey } from './targeting.js';
+import type { FrameKey } from './targeting.js';
 import type { RunbookState } from './types.js';
 
 /**
@@ -76,37 +76,13 @@ export function inferFrameEntryFromState(state: FrameEntryReadModel, frameKey: F
 }
 
 /**
- * The frame target a run's live cursor resolves completion rows against.
- *
- * The single derivation of "where the drain is standing", so the resolved-
- * completion drain and the delegation collection-pending guard cannot disagree
- * about it (#749). Pair it with `completionTargetsFrame` to decide whether a
- * persisted row is reachable from here.
- *
- * The frame key is the persisted one, falling back to the cursor derivation for
- * a state that carries none. The active entry is authoritative for it — the two
- * name the same frame by construction — and {@link inferFrameEntryFromState}
- * owns the fallback to the frame's recorded count.
- *
- * @param state - Runbook state whose live cursor is read
- * @returns The active frame the cursor occupies, entry included
- * @throws {RangeError} When the inferred entry is not a positive integer, which
- *   persisted state cannot produce (the schema admits positive integers only).
- */
-export function deriveActiveCompletionFrame(state: RunbookState): Frame {
-  const frameKey = state.activeFrameKey ?? deriveActiveFrame(state).frameKey;
-  return activeFrame(frameKey, state.activeEntry ?? inferFrameEntryFromState(state, frameKey));
-}
-
-/**
  * Advance the frame-entry coordinates for one state entry.
  *
  * The single owner of the entry bump rule. Semantics are preserved verbatim
  * from the projection this replaces (`deriveActiveEntryProjection`): the entry
  * ordinal is run-global and monotonic, not per-frame-local, so entering a fresh
- * frame from entry 5 yields 6 rather than 1. `classifyDelegationLiveness` and
- * completion-key scoping are calibrated against that form — do not "fix" it to
- * a per-frame counter.
+ * frame from entry 5 yields 6 rather than 1. Entry identity across re-entries
+ * depends on that form — do not "fix" it to a per-frame counter.
  *
  * - No frame entered yet (bootstrap): the entry is the frame's recorded count,
  *   or `1` when it has none. One narrowing check, not two — the union pairs

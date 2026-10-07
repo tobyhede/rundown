@@ -12,7 +12,7 @@ import { ArtifactRecordSchema } from '../../src/runbook/artifact-schema.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import { makeRunbookStateSchema } from '../../src/schemas.js';
 
-import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/persisted-state-guards.js';
 
 const RUN_ID = assertRunId(`rd_${'a'.repeat(32)}`);
 const CTX = 'ctx';
@@ -100,7 +100,6 @@ describe('TrustedArtifactRecord brand under XState/persistence operations', () =
       templateVars: {},
       prompted: false,
       steps: [{ id: '1', status: 'running' }],
-      resolvedCompletions: {},
       frameEntryCounts: {},
       startedAt: '2026-05-25T00:00:00.000Z',
       updatedAt: '2026-05-25T00:00:00.000Z',

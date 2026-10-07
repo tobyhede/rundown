@@ -6,13 +6,10 @@ import { createActor, fromPromise, waitFor } from 'xstate';
 import { MAX_FOR_BOUND } from '@rundown-org/parser';
 import {
   compileRunbookToMachine,
-  DelegationChildLinkPreparationError,
-  deriveDelegationChildUnlinkedSubsteps,
   MAX_FILE_ITERATIONS,
   MAX_SELF_GOTO_PASSES,
   PENDING_COMMAND_EXECUTION_TAG,
   PENDING_MACHINE_EFFECT_TAG,
-  deriveDelegationChildLinkedSubsteps,
   validateGraphForTest,
 } from '../../src/runbook/compiler.js';
 import { expandLoopVariables } from '../../src/runbook/template-renderer.js';
@@ -42,33 +39,13 @@ import type {
   StepWithCommand,
   StepWithSubsteps,
   ResolvedStepWithFor,
-  SubstepState,
-  RunbookState,
 } from '../../src/runbook/types.js';
-import { createDelegation } from '../../src/runbook/delegation-service.js';
-import {
-  assertDelegationTokenHash,
-  hashDelegationToken,
-} from '../../src/runbook/delegation-token.js';
-import type {
-  DelegationCredentialIssuer,
-  DelegationCredentialLocation,
-} from '../../src/runbook/delegation-credential.js';
-import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
-import { activeFrame, buildCompletionKey, buildFrameKey } from '../../src/runbook/targeting.js';
-import { brandCurrentCursorResolvedCompletionForTest } from '../../src/runbook/completion-service.js';
+import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { createRunbook } from './fixtures.js';
 import {
   brandFlattenedTemplateVarsForTest,
-  brandInitialTemplateVarsForTest,
   brandRunIdForTest,
-  brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
-import {
-  generateDelegationToken,
-  makeDelegatedSubstepState,
-  makeDelegationCredentialDescriptor,
-} from '../../src/testing/delegation-fixtures.js';
 
 /**
  * The subset of an XState state-node config these tests read.
@@ -111,29 +88,6 @@ describe('runbook compiler', () => {
   const COMMAND_SERVICES: CommandExecutionServices = {
     runExternalCommand: async () => ({ success: true, exitCode: 0 }),
   };
-
-  const ISSUE_DELEGATION_CREDENTIAL: DelegationCredentialIssuer = (location) => {
-    const token = generateDelegationToken();
-    return {
-      token,
-      tokenHash: hashDelegationToken(token),
-      credential: makeDelegationCredentialDescriptor(location),
-    };
-  };
-
-  function compileDelegationFixtureMachine(steps: ResolvedStep[]) {
-    return compileRunbookToMachine(steps, {
-      templateVars: brandFlattenedTemplateVarsForTest({
-        RunId: brandRunIdForTest('rd_cccccccccccccccccccccccccccccccc'),
-      }),
-      resolveDelegationRunbook: async (runbookRef) => ({
-        path: `/resolved/${runbookRef}`,
-        runbookRef,
-        childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
-      }),
-      issueDelegationCredential: ISSUE_DELEGATION_CREDENTIAL,
-    });
-  }
 
   /** Infer and inject `kind` on each step object so raw literals satisfy the ResolvedStep union. */
   function inferSteps(raw: StepInput[]): ResolvedStep[] {
@@ -219,7 +173,11 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.iterationResults).toBeUndefined();
     });
 
-    it('explicit H3 runbook substeps apply inline child results and parent FAIL-routes on deferred fail', async () => {
+    it('explicit H3 runbook substeps compile to ordinary leaves whose direct PASS/FAIL route through DEFER defaults', () => {
+      // A runbook-list substep is an ordinary leaf (ADR 0005 / #901): no
+      // launch-intent substate, no completion mailbox. Its result is a direct
+      // PASS/FAIL, exactly as any other substep's. Child composition returns
+      // in #903 as a reservation on entry, not as a shadow of the old states.
       const steps = createRunbook(`## 1. Review package
 ### 1.1 Review pass
 - review-pass.runbook.md
@@ -230,74 +188,27 @@ describe('runbook compiler', () => {
 - PASS COMPLETE
 `);
 
-      const childRunIds = [
-        brandRunIdForTest('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
-        brandRunIdForTest('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'),
-      ];
-      const machine = compileRunbookToMachine(steps, {
-        templateVars: brandFlattenedTemplateVarsForTest({
-          RunId: brandRunIdForTest('rd_cccccccccccccccccccccccccccccccc'),
-        }),
-        resolveInlineRunbook: async (runbookRef) => ({
-          path: `/resolved/${runbookRef}`,
-          runbookRef,
-          childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
-        }),
-        generateChildRunId: () => {
-          const next = childRunIds.shift();
-          if (!next) throw new Error('unexpected child run id request');
-          return next;
-        },
-        now: () => '2026-01-01T00:00:00.000Z',
-      });
+      const machine = compileRunbookToMachine(steps);
+      const leaf = (machine.config.states as Record<string, TestStateConfig>)['step::1::1'];
+      expect(leaf.initial).toBe('idle');
+      expect(Object.keys(leaf.states ?? {}).sort()).toEqual(
+        [
+          '__capture',
+          '__execute-command',
+          '__progression-enter-unit',
+          '__progression-waiting-input',
+          'idle',
+        ].sort(),
+      );
+
       const actor = createActor(machine);
       actor.start();
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
 
-      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
-        timeout: 1_000,
-      });
-      expect(actor.getSnapshot().context.inlineLaunchIntent).toMatchObject({
-        parentStepId: '1',
-        childRunbookPath: '/resolved/review-pass.runbook.md',
-      });
+      actor.send({ type: 'PASS' }); // 1.1 DEFER -> advance to 1.2
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
 
-      actor.send({
-        type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
-        completionKey: buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1'),
-        completion: brandCurrentCursorResolvedCompletionForTest({
-          agentId: 'inline-child',
-          result: 'pass',
-          targetStep: '1',
-          targetSubstep: '1',
-          targetFrameKey: buildFrameKey('1'),
-          targetEntry: 1,
-          completedAt: '2026-01-01T00:00:01.000Z',
-        }),
-      });
-
-      await waitFor(actor, (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
-        timeout: 1_000,
-      });
-      expect(actor.getSnapshot().context.inlineLaunchIntent).toMatchObject({
-        parentStepId: '2',
-        childRunbookPath: '/resolved/review-fail.runbook.md',
-      });
-
-      actor.send({
-        type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
-        completionKey: buildCompletionKey(activeFrame(buildFrameKey('1'), 2), '2'),
-        completion: brandCurrentCursorResolvedCompletionForTest({
-          agentId: 'inline-child',
-          result: 'fail',
-          targetStep: '1',
-          targetSubstep: '2',
-          targetFrameKey: buildFrameKey('1'),
-          targetEntry: 2,
-          completedAt: '2026-01-01T00:00:02.000Z',
-        }),
-      });
-
-      // Inline child completion still flows through the substep's DEFER defaults.
+      actor.send({ type: 'FAIL' }); // 1.2 DEFER -> parent aggregation
       // Under Case D FAIL routing, any deferred fail result routes to the
       // parent's configured FAIL target (STOPPED).
       expect(actor.getSnapshot().value).toBe('STOPPED');
@@ -616,242 +527,6 @@ Review the plan manually.
       actor.send({ type: 'PASS' });
       expect(actor.getSnapshot().value).toBe('STOPPED');
       expect(actor.getSnapshot().context.deferredResults).toEqual(['fail', 'pass']);
-    });
-  });
-
-  describe('DELEGATION_CHILD_LINKED', () => {
-    const tokenHash = assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`);
-    const otherTokenHash = assertDelegationTokenHash(`sha256:${'b'.repeat(64)}`);
-    const childRunId = brandRunIdForTest(`rd_${'d'.repeat(32)}`);
-    const otherChildRunId = brandRunIdForTest(`rd_${'e'.repeat(32)}`);
-    const targetFrame = buildFrameKey('1', 1);
-    const collidingFrame = buildFrameKey('1', 2);
-
-    function delegationFixture(options: { readonly linkedChild?: typeof childRunId } = {}) {
-      const target = makeDelegatedSubstepState({
-        id: '1.1',
-        frameKey: targetFrame,
-        delegation: {
-          tokenHash,
-          childRunId: options.linkedChild ?? null,
-        },
-      });
-      const sameIdOtherFrame = makeDelegatedSubstepState({
-        id: '1.1',
-        frameKey: collidingFrame,
-        delegation: { tokenHash },
-      });
-      const sibling = makeDelegatedSubstepState({
-        id: '1.2',
-        frameKey: targetFrame,
-        delegation: { tokenHash },
-      });
-      return { target, sameIdOtherFrame, sibling };
-    }
-
-    function machineWithDelegations(
-      options: { readonly linkedChild?: typeof childRunId; readonly plaintextToken?: string } = {},
-    ) {
-      const fixture = delegationFixture(options);
-      return {
-        ...fixture,
-        machine: compileRunbookToMachine(
-          inferSteps([
-            {
-              name: '1',
-              description: 'Parent',
-              transitions: DEFAULT_TRANSITIONS,
-              aggregation: { strategy: 'ALL' },
-              substeps: [
-                { id: '1', description: 'First', transitions: DEFAULT_TRANSITIONS },
-                { id: '2', description: 'Second', transitions: DEFAULT_TRANSITIONS },
-              ],
-            },
-          ]),
-          {
-            substepStates: [fixture.target, fixture.sameIdOtherFrame, fixture.sibling],
-          },
-        ),
-      };
-    }
-
-    it('links only the exact step/frame/token and preserves colliding siblings', () => {
-      const { machine, target, sameIdOtherFrame, sibling } = machineWithDelegations();
-      const actor = createActor(machine);
-      const actorErrors: unknown[] = [];
-      actor.subscribe({ error: (error) => actorErrors.push(error) });
-      actor.start();
-
-      actor.send({
-        type: 'DELEGATION_CHILD_LINKED',
-        parentStepId: '1.1',
-        parentFrameKey: targetFrame,
-        tokenHash,
-        childRunId,
-      });
-
-      expect(actor.getSnapshot().context.substepStates).toEqual([
-        {
-          ...target,
-          delegation: { ...target.delegation, childRunId },
-        },
-        sameIdOtherFrame,
-        sibling,
-      ]);
-      expect(actorErrors).toEqual([]);
-      actor.stop();
-    });
-
-    it('is idempotent for the same child and refuses conflicting child or token', () => {
-      const same = machineWithDelegations({ linkedChild: childRunId });
-      const sameActor = createActor(same.machine);
-      const actorErrors: unknown[] = [];
-      sameActor.subscribe({ error: (error) => actorErrors.push(error) });
-      sameActor.start();
-      const before = sameActor.getSnapshot().context.substepStates;
-      sameActor.send({
-        type: 'DELEGATION_CHILD_LINKED',
-        parentStepId: '1.1',
-        parentFrameKey: targetFrame,
-        tokenHash,
-        childRunId,
-      });
-      expect(sameActor.getSnapshot().context.substepStates).toBe(before);
-      expect(actorErrors).toEqual([]);
-      sameActor.stop();
-
-      for (const scenario of [
-        {
-          event: {
-            type: 'DELEGATION_CHILD_LINKED' as const,
-            parentStepId: '1.1',
-            parentFrameKey: targetFrame,
-            tokenHash,
-            childRunId: otherChildRunId,
-          },
-          // The occupant is named, and it is the child that HOLDS the
-          // delegation — never `otherChildRunId`, the one being refused.
-          refusal: { reason: 'already_linked', occupyingChildRunId: childRunId },
-          message: 'Delegation 1.1 is already linked to another child',
-        },
-        {
-          event: {
-            type: 'DELEGATION_CHILD_LINKED' as const,
-            parentStepId: '1.1',
-            parentFrameKey: targetFrame,
-            tokenHash: otherTokenHash,
-            childRunId,
-          },
-          refusal: { reason: 'delegation_superseded' },
-          message: 'Delegation 1.1 no longer matches the presented token',
-        },
-      ] as const) {
-        const { target, sameIdOtherFrame, sibling } = delegationFixture({
-          linkedChild: childRunId,
-        });
-        const initial = [target, sameIdOtherFrame, sibling];
-        try {
-          deriveDelegationChildLinkedSubsteps(initial, scenario.event);
-          throw new Error('Expected delegated-child link refusal');
-        } catch (error: unknown) {
-          expect(error).toBeInstanceOf(DelegationChildLinkPreparationError);
-          expect(error).toMatchObject({ refusal: scenario.refusal, message: scenario.message });
-          expect((error as DelegationChildLinkPreparationError).refusal).toEqual(scenario.refusal);
-        }
-        expect(initial).toEqual([target, sameIdOtherFrame, sibling]);
-      }
-    });
-
-    it('refuses a link when machine-owned substep state is absent', () => {
-      expect(() =>
-        deriveDelegationChildLinkedSubsteps(undefined, {
-          type: 'DELEGATION_CHILD_LINKED',
-          parentStepId: '1.1',
-          parentFrameKey: targetFrame,
-          tokenHash,
-          childRunId,
-        }),
-      ).toThrow(/captured frame entry/);
-    });
-
-    it('unlinks only the exact child and is idempotent once absent', () => {
-      const linked = machineWithDelegations({
-        linkedChild: childRunId,
-        plaintextToken: 'rdtk_plaintext-must-not-persist',
-      });
-      const actor = createActor(linked.machine);
-      const actorErrors: unknown[] = [];
-      actor.subscribe({ error: (error) => actorErrors.push(error) });
-      actor.start();
-      const event = {
-        type: 'DELEGATION_CHILD_UNLINKED' as const,
-        parentStepId: '1.1',
-        parentFrameKey: targetFrame,
-        tokenHash,
-        childRunId,
-      };
-      actor.send(event);
-      expect(actor.getSnapshot().context.substepStates).toEqual([
-        {
-          ...linked.target,
-          delegation: { ...linked.target.delegation, childRunId: null },
-        },
-        linked.sameIdOtherFrame,
-        linked.sibling,
-      ]);
-      const unlinked = actor.getSnapshot().context.substepStates;
-      actor.send(event);
-      expect(actor.getSnapshot().context.substepStates).toBe(unlinked);
-      expect(actorErrors).toEqual([]);
-      actor.stop();
-    });
-
-    it('refuses an unlink for absent state, a changed token, or a newer child', () => {
-      const event = {
-        type: 'DELEGATION_CHILD_UNLINKED' as const,
-        parentStepId: '1.1',
-        parentFrameKey: targetFrame,
-        tokenHash,
-        childRunId,
-      };
-      const linked = machineWithDelegations({ linkedChild: childRunId });
-      const initial = [linked.target, linked.sameIdOtherFrame, linked.sibling];
-      for (const scenario of [
-        {
-          states: undefined,
-          event,
-          refusal: { reason: 'delegation_superseded' },
-          message: 'Delegation 1.1 no longer names the captured frame entry',
-        },
-        {
-          states: initial,
-          event: { ...event, tokenHash: otherTokenHash },
-          refusal: { reason: 'delegation_superseded' },
-          message: 'Delegation 1.1 no longer matches the rollback token',
-        },
-        {
-          states: initial,
-          // Occupancy by a different child is the same permanent fact on the
-          // rollback path as on the link path: the delegation names one child
-          // for the life of the entry, so no re-read frees it for the child
-          // this event is trying to unlink. The occupant is named, and it is
-          // the child that HOLDS the delegation — never `otherChildRunId`,
-          // the one whose rollback is refused.
-          event: { ...event, childRunId: otherChildRunId },
-          refusal: { reason: 'already_linked', occupyingChildRunId: childRunId },
-          message: 'Delegation 1.1 is linked to a newer child',
-        },
-      ] as const) {
-        try {
-          deriveDelegationChildUnlinkedSubsteps(scenario.states, scenario.event);
-          throw new Error('Expected delegated-child unlink refusal');
-        } catch (error: unknown) {
-          expect(error).toBeInstanceOf(DelegationChildLinkPreparationError);
-          expect(error).toMatchObject({ refusal: scenario.refusal, message: scenario.message });
-          expect((error as DelegationChildLinkPreparationError).refusal).toEqual(scenario.refusal);
-        }
-        if (scenario.states !== undefined) expect(scenario.states).toEqual(initial);
-      }
     });
   });
 
@@ -5211,40 +4886,19 @@ echo "processing"
   });
 
   describe('FOR shorthand canonicalization', () => {
-    type InlineLaunchTestOptions = {
-      readonly templateVars: ReturnType<typeof brandFlattenedTemplateVarsForTest>;
-      readonly resolveInlineRunbook: (runbookRef: string) => Promise<{
-        readonly path: string;
-        readonly runbookRef: string;
-        readonly childRunbookRef: { readonly source: 'project'; readonly path: string };
-      }>;
-      readonly generateChildRunId: () => ReturnType<typeof brandRunIdForTest>;
-      readonly now: () => string;
-    };
-
-    function inlineLaunchTestOptions(): InlineLaunchTestOptions {
-      let nextRunId = 1;
+    // Runbook-list substeps are ordinary leaves (ADR 0005 / #901): each
+    // iteration's result is a direct PASS/FAIL into the current leaf. The
+    // shorthand's canonicalisation into implicit substeps is what these cases
+    // pin; how a child runbook's result lands on the leaf is #903/#904's.
+    function inlineLaunchTestOptions(): Parameters<typeof compileRunbookToMachine>[1] {
       return {
         templateVars: brandFlattenedTemplateVarsForTest({
           RunId: brandRunIdForTest('rd_cccccccccccccccccccccccccccccccc'),
         }),
-        resolveInlineRunbook: async (runbookRef: string) => ({
-          path: `/resolved/${runbookRef}`,
-          runbookRef,
-          childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
-        }),
-        generateChildRunId: () =>
-          brandRunIdForTest(`rd_${(nextRunId++).toString(16).padStart(32, '0')}`),
-        now: () => '2026-01-01T00:00:00.000Z',
       };
     }
 
-    type InlineCompletionEvent = {
-      readonly type: 'APPLY_CURRENT_RESOLVED_COMPLETION';
-      readonly completionKey: ReturnType<typeof buildCompletionKey>;
-      readonly completion: ReturnType<typeof brandCurrentCursorResolvedCompletionForTest>;
-    };
-
+    /** The direct result event a child's completion reduces to on the leaf. */
     function inlineCompletionEvent(args: {
       readonly step: string;
       readonly substep: string;
@@ -5252,21 +4906,8 @@ echo "processing"
       readonly result: 'pass' | 'fail';
       readonly iteration?: number;
       readonly completedAt: string;
-    }): InlineCompletionEvent {
-      const frameKey = buildFrameKey(args.step, args.iteration);
-      return {
-        type: 'APPLY_CURRENT_RESOLVED_COMPLETION' as const,
-        completionKey: buildCompletionKey(activeFrame(frameKey, args.entry), args.substep),
-        completion: brandCurrentCursorResolvedCompletionForTest({
-          agentId: 'inline-child',
-          result: args.result,
-          targetStep: args.step,
-          targetSubstep: args.substep,
-          targetFrameKey: frameKey,
-          targetEntry: args.entry,
-          completedAt: args.completedAt,
-        }),
-      };
+    }): { readonly type: 'PASS' | 'FAIL' } {
+      return { type: args.result === 'pass' ? 'PASS' : 'FAIL' };
     }
 
     it('iterates a FOR step defined via step-level runbook-list shorthand', async () => {
@@ -9752,13 +9393,13 @@ echo hi
           initial: 'idle',
           states: {
             idle: {},
-            '__progression-refused': {},
-            '__progression-project-frontier': {
+            '__progression-waiting-input': {},
+            '__progression-enter-unit': {
               tags: [PENDING_MACHINE_EFFECT_TAG],
               invoke: {
-                src: 'reEntryFrontierActor',
-                onDone: { target: '#step::1.5.__progression-refused' },
-                onError: { target: '#step::1.5.__progression-refused' },
+                src: 'runProgressionEntryActor',
+                onDone: { target: '#step::1.5.__progression-waiting-input' },
+                onError: { target: '#step::1.5.__progression-waiting-input' },
               },
             },
           },
@@ -9937,67 +9578,65 @@ echo hi
       }).toThrow(/parent-entry.*onDone\.target.*generated state/);
     });
 
-    it.each([
-      '__progression-project-frontier',
-      '__progression-enter-unit',
-      '__progression-enter-after-projected-frontier',
-    ])('rejects %s child states missing PENDING_MACHINE_EFFECT_TAG', (childName) => {
-      // The three Run Progression invoking substates are side-effect leaves
-      // like every other `invoke` child: `prepareActorMutation` waits on the
-      // pending tag, so a tag-less one lets a snapshot persist mid-invoke.
-      // Before #880 the per-invoke invariants skipped them entirely because
-      // the side-effect classifier had never been extended past the six
-      // pre-progression substates.
-      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
-      const malformed = {
-        'step::1': {
-          initial: 'idle',
-          states: {
-            idle: {},
-            [childName]: {
-              // tags intentionally missing — must be flagged by validateGraph
-              invoke: {
-                src: 'runProgressionEntryActor',
-                onError: { target: 'idle' },
+    it.each(['__progression-enter-unit'])(
+      'rejects %s child states missing PENDING_MACHINE_EFFECT_TAG',
+      (childName) => {
+        // The Run Progression invoking substate is a side-effect leaf like
+        // every other `invoke` child: `prepareActorMutation` waits on the
+        // pending tag, so a tag-less one lets a snapshot persist mid-invoke.
+        // Before #880 the per-invoke invariants skipped it entirely because
+        // the side-effect classifier had never been extended past the
+        // pre-progression substates.
+        type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+        const malformed = {
+          'step::1': {
+            initial: 'idle',
+            states: {
+              idle: {},
+              [childName]: {
+                // tags intentionally missing — must be flagged by validateGraph
+                invoke: {
+                  src: 'runProgressionEntryActor',
+                  onError: { target: 'idle' },
+                },
               },
             },
           },
-        },
-      } as unknown as ValidateGraphStates;
-      expect(() => {
-        validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
-      }).toThrow(/must include ".*pending-machine-effect" tag/);
-    });
+        } as unknown as ValidateGraphStates;
+        expect(() => {
+          validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+        }).toThrow(/must include ".*pending-machine-effect" tag/);
+      },
+    );
 
-    it.each([
-      '__progression-project-frontier',
-      '__progression-enter-unit',
-      '__progression-enter-after-projected-frontier',
-    ])('rejects %s child states whose invoke has no onError', (childName) => {
-      // A Run Progression invoke that rejects with no `onError` escapes the
-      // actor unhandled and reaches the operator as RD-999 "Unknown error",
-      // which carries no recovery. Every one of the three must route its
-      // rejection to a typed refusal instead.
-      type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
-      const malformed = {
-        'step::1': {
-          initial: 'idle',
-          states: {
-            idle: {},
-            [childName]: {
-              tags: [PENDING_MACHINE_EFFECT_TAG],
-              invoke: {
-                src: 'runProgressionEntryActor',
-                onDone: { target: 'idle' },
+    it.each(['__progression-enter-unit'])(
+      'rejects %s child states whose invoke has no onError',
+      (childName) => {
+        // A Run Progression invoke that rejects with no `onError` escapes the
+        // actor unhandled and reaches the operator as RD-999 "Unknown error",
+        // which carries no recovery. It must route its rejection to a typed
+        // refusal instead.
+        type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
+        const malformed = {
+          'step::1': {
+            initial: 'idle',
+            states: {
+              idle: {},
+              [childName]: {
+                tags: [PENDING_MACHINE_EFFECT_TAG],
+                invoke: {
+                  src: 'runProgressionEntryActor',
+                  onDone: { target: 'idle' },
+                },
               },
             },
           },
-        },
-      } as unknown as ValidateGraphStates;
-      expect(() => {
-        validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
-      }).toThrow(/onError\.target/);
-    });
+        } as unknown as ValidateGraphStates;
+        expect(() => {
+          validateGraphForTest(malformed, 'step::1', new Set(['COMPLETE', 'STOPPED']), '#STOPPED');
+        }).toThrow(/onError\.target/);
+      },
+    );
 
     it('rejects a Run Progression onError that leaves the compound parent', () => {
       // A progression refusal must land back on a sibling so the leaf emits its
@@ -10026,8 +9665,8 @@ echo hi
     });
 
     it('accepts a Run Progression onDone that names a sibling through the parent id', () => {
-      // `#step::1.__progression-enter-after-projected-frontier` is how the
-      // frontier state hands the disclosed bearers to its sibling. The
+      // `#step::1.__progression-waiting-input` is the form `idle.on` uses to
+      // select a progression substate across the compound boundary. The
       // absolute-with-child form must resolve, or extending the invariants to
       // these substates would reject the real compiled graph.
       type ValidateGraphStates = Parameters<typeof validateGraphForTest>[0];
@@ -10036,22 +9675,12 @@ echo hi
           initial: 'idle',
           states: {
             idle: {},
-            '__progression-project-frontier': {
-              tags: [PENDING_MACHINE_EFFECT_TAG],
-              invoke: {
-                src: 'runProgressionFrontierActor',
-                onDone: [
-                  { target: 'idle' },
-                  { target: '#step::1.__progression-enter-after-projected-frontier' },
-                ],
-                onError: { target: 'idle' },
-              },
-            },
-            '__progression-enter-after-projected-frontier': {
+            '__progression-waiting-input': {},
+            '__progression-enter-unit': {
               tags: [PENDING_MACHINE_EFFECT_TAG],
               invoke: {
                 src: 'runProgressionEntryActor',
-                onDone: { target: 'idle' },
+                onDone: [{ target: 'idle' }, { target: '#step::1.__progression-waiting-input' }],
                 onError: { target: 'idle' },
               },
             },
@@ -10233,64 +9862,6 @@ echo hi
 
       expect(snap.value).toBe('COMPLETE');
       expect(executeCalls).toBe(1);
-    });
-
-    it('keeps APPLY_CURRENT_RESOLVED_COMPLETION scoped to idle while output capture is pending', async () => {
-      let resolveCapture: ((output: OutputCaptureOutput) => void) | undefined;
-      const steps = createRunbook(`## 1. capture
-- PASS COMPLETE
-- FAIL STOP
-- OUTPUTS
-  - Foo
-\`\`\`bash
-echo hi
-\`\`\`
-`);
-      const machine = compileRunbookToMachine(steps).provide({
-        actors: {
-          outputCaptureActor: fromPromise<OutputCaptureOutput, OutputCaptureInput>(
-            () =>
-              new Promise<OutputCaptureOutput>((resolve) => {
-                resolveCapture = resolve;
-              }),
-          ),
-        },
-      });
-      const actor = createActor(machine);
-      actor.start();
-
-      actor.send({ type: 'COMMAND_RESULT', result: 'pass', channels: [] });
-      await waitFor(actor, (snapshot) => snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG), {
-        timeout: 1_000,
-      });
-
-      actor.send({
-        type: 'APPLY_CURRENT_RESOLVED_COMPLETION',
-        completionKey: buildCompletionKey(activeFrame(buildFrameKey('1'), 1), '1'),
-        completion: brandCurrentCursorResolvedCompletionForTest({
-          agentId: 'delegation',
-          result: 'fail',
-          targetStep: '1',
-          targetSubstep: '1',
-          targetFrameKey: buildFrameKey('1'),
-          targetEntry: 1,
-          completedAt: '2026-01-01T00:00:00.000Z',
-        }),
-      });
-      expect(actor.getSnapshot().value).toEqual({ 'step::1': '__capture' });
-
-      expect(resolveCapture).toBeDefined();
-      resolveCapture!({ result: 'pass', variables: { Foo: 'first' } });
-      const snap = await waitFor(
-        actor,
-        (snapshot) => !snapshot.hasTag(PENDING_MACHINE_EFFECT_TAG),
-        {
-          timeout: 1_000,
-        },
-      );
-
-      expect(snap.value).toBe('COMPLETE');
-      expect(snap.context.variables).toEqual({ Foo: 'first' });
     });
 
     it('captures (no-op) with empty channels and still fires PASS', async () => {
@@ -11348,9 +10919,8 @@ echo ok
 
       const parentAlways = getState(machine, 'step::1').always as any[];
       const continueExit = parentAlways.find((entry) => entry.target === 'step::2');
-      // Two STOPPED entries coexist on the parent: the priority-0
-      // RETRY_ERROR router (no actions) and the FAIL-path exit (carries
-      // storeStepOutputs). Target the latter via the `actions` filter.
+      // The FAIL-path exit carries storeStepOutputs; select it via the
+      // `actions` filter so an action-less STOPPED router can never shadow it.
       const failTerminal = parentAlways.find(
         (entry) => entry.target === 'STOPPED' && entry.actions !== undefined,
       );
@@ -12379,11 +11949,9 @@ echo ok
       const machine = compileRunbookToMachine(steps);
       const parentAlways = getState(machine, 'step::1').always as any[];
 
-      // Two STOPPED entries coexist on the parent: the priority-0
-      // RETRY_ERROR router (no actions — lastAction is already the
-      // RetryErrorLastAction variant, preserved verbatim) and the
-      // FAIL-path exit entry (assigns `lastAction: { type: 'STOP', origin: 'direct' }`).
-      // This test targets the latter.
+      // The FAIL-path exit entry assigns `lastAction: { type: 'STOP', origin:
+      // 'direct' }`; select it via the `actions` filter so an action-less
+      // STOPPED router can never shadow it.
       const stoppedEntry = parentAlways.find(
         (entry) => entry.target === 'STOPPED' && entry.actions !== undefined,
       );
@@ -12436,1302 +12004,6 @@ echo ok
     });
   });
 
-  describe('parent-aggregation retry with DELEGATE substeps', () => {
-    /** Seed fresh delegations for the named substeps of step `1` (frameKey = buildFrameKey('1')). */
-    function seedDelegations(
-      steps: ResolvedStep[],
-      substepIds: string[],
-      childRunbookRefForSubstep: (substepId: string) => RunbookRef = (substepId) => ({
-        source: 'project',
-        path: `child-${substepId}.md`,
-      }),
-    ): readonly SubstepState[] {
-      const frameKey = buildFrameKey('1');
-      // Start from a minimal persistent state; createDelegation updates substepStates.
-      let state: RunbookState = {
-        prompted: false,
-        id: brandRunIdForTest(`rd_${'a'.repeat(32)}`),
-        runbook: { source: 'project', path: 'parent.md' },
-        runbookPath: 'parent.md',
-        step: '1',
-        stepName: 'Parent',
-        retryCount: 0,
-        variables: brandStoredOutputsForTest({}),
-        steps: [{ id: '1', status: 'running' }],
-        startedAt: '2026-02-27T10:00:00.000Z',
-        updatedAt: '2026-02-27T10:00:00.000Z',
-        substepStates: substepIds.map((id) => ({ id, frameKey, status: 'pending' as const })),
-        templateVars: brandInitialTemplateVarsForTest({}),
-      };
-
-      for (const substepId of substepIds) {
-        const childRunbookRef = childRunbookRefForSubstep(substepId);
-        const result = createDelegation(
-          {
-            state,
-            stepId: `1.${substepId}`,
-            childRunbookPath: childRunbookRef.path,
-            childRunbookRef,
-            ancestors: [],
-            frameKey,
-            issueCredential: ISSUE_DELEGATION_CREDENTIAL,
-          },
-          steps,
-        );
-        if (result.status !== 'created') {
-          throw new Error(`Failed to seed delegation for substep ${substepId}: ${result.status}`);
-        }
-        state = { ...state, substepStates: result.updatedSubstepStates };
-      }
-
-      return state.substepStates ?? [];
-    }
-
-    /**
-     * Build a 2-substep parent (DEFER/DEFER inside, ALL aggregation, FAIL retry:1) and
-     * seed a snapshot where substep 1.1 result = `pass` and substep 1.2 result = `fail`
-     * (or whatever `results` map specifies). Returns a started actor positioned at the
-     * parent aggregation state, ready to trigger the retry branch on its next always step.
-     */
-    function buildRetryScenario(args: {
-      results: Record<string, 'pass' | 'fail' | undefined>;
-      seedIds: string[];
-      trimSteps?: boolean;
-      childRunbookRefForSubstep?: (substepId: string) => RunbookRef;
-    }): { actor: ReturnType<typeof createActor>; frameKey: ReturnType<typeof buildFrameKey> } {
-      const substepDefer = {
-        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
-        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
-      };
-      const parentTransitions = {
-        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
-      };
-
-      // Build parent with exactly the substeps we're seeding, so aggregation fires
-      // after the final substep's result is recorded.
-      const buildParent = (ids: string[]): ResolvedStep[] =>
-        inferSteps([
-          {
-            name: '1',
-            description: 'Parent with delegate substeps',
-            transitions: parentTransitions,
-            aggregation: { strategy: 'ALL' },
-            substeps: ids.map((id): StepWithSubsteps['substeps'][number] => ({
-              id,
-              description: `Sub ${id}`,
-              transitions: substepDefer,
-              runbooks: [`child-${id}.runbook.md`],
-              delegate: true,
-            })),
-          },
-          { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-        ]);
-      const fullSteps = buildParent(args.seedIds);
-
-      // Seed delegations using the full step list — createDelegation validates
-      // the substep exists in the step definitions.
-      const seededStates = seedDelegations(fullSteps, args.seedIds, args.childRunbookRefForSubstep);
-
-      // Apply result markers (pass/fail) to the seeded delegations per args.results.
-      // Skip the active substep (the one the dispatched event is supposed to close
-      // aggregation for): pre-marking it 'done' would mask any regression where
-      // the live PASS/FAIL path stops persisting that outcome.
-      const frameKey = buildFrameKey('1');
-      const lastSeedSubstep = args.seedIds[args.seedIds.length - 1];
-      const preparedSubsteps: SubstepState[] = seededStates.map((ss) => {
-        const result = args.results[ss.id];
-        if (result === undefined) return ss;
-        if (ss.id === lastSeedSubstep && ss.frameKey === frameKey) return ss;
-        return { ...ss, status: 'done' as const, result };
-      });
-
-      // If trimSteps: drop substep '1' from the compiled runbook so retryDelegation
-      // fails validation (substep no longer exists in steps). The seeded state
-      // retains the delegation on '1', guaranteeing we hit the error branch.
-      const compileSteps: ResolvedStep[] = args.trimSteps
-        ? buildParent(args.seedIds.filter((id) => id !== '1'))
-        : fullSteps;
-
-      const machine = compileDelegationFixtureMachine(compileSteps);
-
-      // Start at the last seeded substep so the aggregation fires on next event.
-      // We use the snapshot/hydration pattern rather than stepping through PASS/FAIL
-      // because we need substepStates + activeFrameKey mirrored into context before
-      // the retry branch is evaluated.
-      const tmp = createActor(machine);
-      tmp.start();
-      const baseSnap = tmp.getSnapshot();
-      tmp.stop();
-
-      // Drive to the last substep programmatically via deferredResults/substep mirror,
-      // so the next FAIL triggers the parent aggregation and then the retry branch.
-      const resultOrder = args.seedIds
-        .map((id) => args.results[id])
-        .filter((r): r is 'pass' | 'fail' => r !== undefined);
-      const lastSubstep = args.seedIds[args.seedIds.length - 1];
-
-      const persisted = {
-        ...baseSnap,
-        value: `step::1::${lastSubstep}`,
-        context: {
-          ...baseSnap.context,
-          substepStates: preparedSubsteps,
-          activeFrameKey: frameKey,
-          substep: lastSubstep,
-          // The aggregation guards inspect deferredResults. Pre-populate with
-          // N-1 prior deferred outcomes so the final FAIL closes aggregation.
-          deferredResults: resultOrder.slice(0, -1),
-          substepCompletedCount: args.seedIds.length - 1,
-        },
-      };
-
-      const actor = createActor(machine, { snapshot: persisted });
-      actor.start();
-      return { actor, frameKey };
-    }
-
-    it('populates delegateFrontier with every delegated substep (pass and fail alike)', () => {
-      // Scenario: 1.1 pass (with delegation), 1.2 fail (with delegation).
-      // Under uniform re-delegation (docs/spec/language.md §4.2, §5), BOTH substeps
-      // re-issue on retry — the pass branch is not preserved.
-      const { actor } = buildRetryScenario({
-        seedIds: ['1', '2'],
-        results: { '1': 'pass', '2': 'fail' },
-      });
-
-      // Capture the pre-retry tokenHashes for both substeps so we can assert
-      // they are replaced with fresh tokens.
-      const preCtx = actor.getSnapshot().context as RunbookContext;
-      const preHash1 = preCtx.substepStates?.find((ss) => ss.id === '1')?.delegation?.tokenHash;
-      const preHash2 = preCtx.substepStates?.find((ss) => ss.id === '2')?.delegation?.tokenHash;
-      expect(preHash1).toBeDefined();
-      expect(preHash2).toBeDefined();
-
-      // Send the final FAIL for substep 1.2. This closes aggregation with [pass, fail],
-      // ALL strategy fails, retry guard fires → runRetryHook runs.
-      actor.send({ type: 'FAIL' });
-
-      const ctx = actor.getSnapshot().context as RunbookContext;
-
-      // Retry hook must have minted fresh tokens for BOTH substeps (uniform
-      // re-delegation). Frontier has 2 entries, one per delegated substep.
-      expect(ctx.delegateFrontier).toBeDefined();
-      expect(ctx.delegateFrontier?.length).toBe(2);
-      const frontierIds = ctx.delegateFrontier?.map((e) => e.id).sort();
-      expect(frontierIds).toEqual(['1.1', '1.2']);
-      // Assert the credential values, never the length of a mapped projection:
-      // `.map()` preserves length whatever it yields, so asserting the mapped
-      // credentials have 2 entries still passes when every credential regressed
-      // to a stale or absent descriptor. Each entry must carry the descriptor
-      // minted for its own coordinates — `toMatchObject` also fails outright on
-      // a missing credential, which the mapped-length check could not detect.
-      for (const entry of ctx.delegateFrontier ?? []) {
-        expect(entry.credential).toMatchObject({
-          version: 1,
-          parentStepId: entry.id,
-          parentFrameKey: buildFrameKey('1'),
-        });
-      }
-      expect(ctx.delegateFrontier?.every((entry) => entry.tokenHash.startsWith('sha256:'))).toBe(
-        true,
-      );
-      expect(JSON.stringify(actor.getPersistedSnapshot())).not.toContain('rdtk_');
-
-      // Each retried substep's state is reset: status pending, result cleared.
-      const post1 = ctx.substepStates?.find((ss) => ss.id === '1');
-      const post2 = ctx.substepStates?.find((ss) => ss.id === '2');
-      expect(post1?.status).toBe('pending');
-      expect(post1?.result).toBeUndefined();
-      expect(post2?.status).toBe('pending');
-      expect(post2?.result).toBeUndefined();
-
-      // Each retried substep's delegation has a fresh tokenHash (different
-      // from the seeded one). This is the "every prior token is unclaimable"
-      // invariant from retry-semantics spec §3.1 at the state level.
-      expect(post1?.delegation?.tokenHash).not.toBe(preHash1);
-      expect(post2?.delegation?.tokenHash).not.toBe(preHash2);
-
-      // lastAction is RETRY with origin: 'aggregation' (spec §3.5).
-      expect(ctx.lastAction?.type).toBe('RETRY');
-      expect(ctx.lastAction?.origin).toBe('aggregation');
-
-      // Counters incremented on success.
-      expect(ctx.parentRetryCount).toBe(1);
-      expect(ctx.retryCount).toBe(1);
-      expect((ctx as { retryHookError?: unknown }).retryHookError).toBeUndefined();
-
-      // Frame-entry invariant: the retry routing (parent-self re-enter +
-      // always hop to firstSubstepStateId) must produce exactly one new
-      // frame entry per successful retry, not two. At the substepStates
-      // level this surfaces as: each (id, frameKey) pair remains a single
-      // entry — updated in-place — not duplicated by the self-re-enter.
-      //
-      // Pre-retry: 2 substep states (ids '1','2' on the parent frameKey).
-      // Post-retry: still exactly 2 substep states on the same frameKey.
-      // A duplicated entry count (e.g. 4) would indicate the retry routing
-      // appended a new SubstepState per hop instead of updating in place.
-      const retriedFrameKey = buildFrameKey('1');
-      const activeFrameSubsteps = (ctx.substepStates ?? []).filter(
-        (ss) => ss.frameKey === retriedFrameKey,
-      );
-      expect(activeFrameSubsteps.length).toBe(2);
-      const activeFrameIds = activeFrameSubsteps.map((ss) => ss.id).sort();
-      expect(activeFrameIds).toEqual(['1', '2']);
-
-      actor.stop();
-    });
-
-    it('preserves external child runbook refs when retry reissues delegated substeps', () => {
-      const externalChildRef: RunbookRef = {
-        source: 'external',
-        path: '/tmp/external-child.runbook.md',
-      };
-      const { actor } = buildRetryScenario({
-        seedIds: ['1'],
-        results: { '1': 'fail' },
-        childRunbookRefForSubstep: () => externalChildRef,
-      });
-
-      actor.send({ type: 'FAIL' });
-
-      const ctx = actor.getSnapshot().context as RunbookContext;
-      const post = ctx.substepStates?.find((ss) => ss.id === '1');
-      expect(post?.delegation?.childRunbookRef).toEqual(externalChildRef);
-
-      actor.stop();
-    });
-
-    it('clears delegateFrontier when the frontend consumes it', () => {
-      const { actor } = buildRetryScenario({
-        seedIds: ['1', '2'],
-        results: { '1': 'pass', '2': 'fail' },
-      });
-
-      actor.send({ type: 'FAIL' });
-      expect((actor.getSnapshot().context as RunbookContext).delegateFrontier).toBeDefined();
-
-      actor.send({ type: 'DELEGATE_FRONTIER_CONSUMED' });
-
-      expect((actor.getSnapshot().context as RunbookContext).delegateFrontier).toBeUndefined();
-
-      actor.stop();
-    });
-
-    /**
-     * Build a scenario where a `RETRY_ERROR` lastAction variant is seeded
-     * directly into the actor's context before it is started.
-     *
-     * Triggering the hook error via the natural flow (making
-     * `retryDelegation` return `{ status: 'error' }`) requires a step
-     * topology that XState's state-ID parser cannot represent (substep ids
-     * containing dots) or heavy module-level mocking. The always-entry
-     * routing itself inspects `context.lastAction?.type === 'RETRY_ERROR'`;
-     * seeding that variant exercises the transition under test directly.
-     */
-    function buildSeededRetryHookError(): ReturnType<typeof buildRetryScenario> {
-      const frameKey = buildFrameKey('1');
-      const substepDefer = {
-        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
-        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
-      };
-      const parentTransitions = {
-        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
-      };
-
-      const steps = inferSteps([
-        {
-          name: '1',
-          description: 'Parent',
-          transitions: parentTransitions,
-          aggregation: { strategy: 'ALL' },
-          substeps: [
-            {
-              id: '1',
-              description: 'Sub 1',
-              transitions: substepDefer,
-              runbooks: ['child-1.runbook.md'],
-              delegate: true,
-            },
-          ],
-        },
-        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ]);
-
-      const machine = compileDelegationFixtureMachine(steps);
-      const tmp = createActor(machine);
-      tmp.start();
-      const baseSnap = tmp.getSnapshot();
-      tmp.stop();
-
-      // Seed the actor at the parent aggregation state with a RETRY_ERROR
-      // lastAction already populated. The always-entry should observe it on
-      // start and immediately route to STOPPED.
-      const persisted = {
-        ...baseSnap,
-        value: `step::1`,
-        context: {
-          ...baseSnap.context,
-          activeFrameKey: frameKey,
-          substep: undefined,
-          lastAction: {
-            type: 'RETRY_ERROR',
-            origin: 'aggregation' as const,
-            code: 'RD-902',
-            message: 'hook failed',
-          },
-          parentRetryCount: 0,
-          retryCount: 0,
-          delegateFrontier: undefined,
-        },
-      };
-
-      const actor = createActor(machine, { snapshot: persisted });
-      actor.start();
-      return { actor, frameKey };
-    }
-
-    it('seeded RETRY_ERROR lastAction routes to STOPPED with lifecycle=stopped and no retryHookError context field', () => {
-      // Seeded routing test: when context.lastAction is a RETRY_ERROR variant
-      // on actor start, the priority-0 always-entry on the parent state
-      // routes the machine to STOPPED. The STOPPED entry action assigns
-      // lifecycle='stopped'. Counters must remain at zero (retry never
-      // actually taken) and the removed `retryHookError` context field must
-      // not reappear.
-      //
-      // This test does NOT trigger createDelegation to fail; it verifies the
-      // assign → always-guard → STOPPED chain given a pre-populated variant.
-      // The only naturally-reachable RETRY_ERROR production path
-      // (RD-902) is covered separately below.
-      const { actor } = buildSeededRetryHookError();
-
-      // Nudge the actor — XState v5 resolves always transitions on event
-      // dispatch. Send a no-op event; the higher-priority always entry
-      // should fire on re-evaluation.
-      actor.send({ type: 'PASS' });
-
-      const snap = actor.getSnapshot();
-      const ctx = snap.context as RunbookContext;
-
-      expect(snap.value).toBe('STOPPED');
-      expect(ctx.lifecycle).toBe('stopped');
-      expect(ctx.lastAction?.type).toBe('RETRY_ERROR');
-      if (ctx.lastAction?.type === 'RETRY_ERROR') {
-        expect(ctx.lastAction.code).toMatch(/^RD-/);
-        expect(typeof ctx.lastAction.message).toBe('string');
-      }
-      // Counters untouched (retry never actually taken).
-      expect(ctx.parentRetryCount).toBe(0);
-      expect(ctx.retryCount).toBe(0);
-      // Old context field no longer exists (migration from retryHookError to
-      // the RetryErrorLastAction variant).
-      expect((ctx as { retryHookError?: unknown }).retryHookError).toBeUndefined();
-
-      actor.stop();
-    });
-
-    it('iteration-retry hook failure routes to STOPPED via RETRY_ERROR variant', () => {
-      // Structural sibling of the parent-aggregation RETRY_ERROR test:
-      // confirms the iteration-retry `assign` callback also writes the
-      // RETRY_ERROR variant on hook failure, and the priority-0 always-entry
-      // on the parent state routes to STOPPED. Seeds the lastAction variant
-      // directly to avoid the FOR-loop mechanics of a natural-flow trigger —
-      // the routing is independent of which assign callback set the variant.
-      const frameKey = buildFrameKey('1');
-      const substepDefer = {
-        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
-        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
-      };
-      const parentTransitions = {
-        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-      };
-
-      const steps = inferSteps([
-        {
-          name: '1',
-          description: 'Parent',
-          transitions: parentTransitions,
-          aggregation: { strategy: 'ALL' },
-          substeps: [{ id: '1', description: 'Sub 1', transitions: substepDefer }],
-        },
-        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ]);
-
-      const machine = compileDelegationFixtureMachine(steps);
-      const tmp = createActor(machine);
-      tmp.start();
-      const baseSnap = tmp.getSnapshot();
-      tmp.stop();
-
-      // Seed context as-if the iteration-retry assign had just executed
-      // with a hook error. iterationRetryCount stays at 0 (retry never
-      // actually taken). retryHookError field does not exist.
-      const persisted = {
-        ...baseSnap,
-        value: `step::1`,
-        context: {
-          ...baseSnap.context,
-          activeFrameKey: frameKey,
-          substep: undefined,
-          lastAction: {
-            type: 'RETRY_ERROR' as const,
-            origin: 'aggregation' as const,
-            code: 'RD-902',
-            message: 'iteration retry hook failed',
-          },
-          iterationRetryCount: 0,
-          retryCount: 0,
-          delegateFrontier: undefined,
-        },
-      };
-
-      const actor = createActor(machine, { snapshot: persisted });
-      actor.start();
-      actor.send({ type: 'PASS' });
-
-      const snap = actor.getSnapshot();
-      const ctx = snap.context;
-
-      expect(snap.value).toBe('STOPPED');
-      expect(ctx.lifecycle).toBe('stopped');
-      expect(ctx.lastAction?.type).toBe('RETRY_ERROR');
-      if (ctx.lastAction?.type === 'RETRY_ERROR') {
-        expect(ctx.lastAction.code).toBe('RD-902');
-        expect(ctx.lastAction.message).toMatch(/iteration retry hook failed/);
-      }
-      expect(ctx.iterationRetryCount).toBe(0);
-      expect(ctx.retryCount).toBe(0);
-
-      actor.stop();
-    });
-
-    it('excludes substeps without delegation records (command/prompt substeps)', () => {
-      // Mix scenario (uniform re-delegation per docs/spec/language.md §4.2, §5):
-      //   1.1 pass + delegation (retried — prior pass does not exclude it)
-      //   1.2 fail + no delegation (skipped — has no delegation to re-issue)
-      //   1.3 fail + delegation (retried)
-      // The hook is provenance- and result-agnostic; its inclusion criterion
-      // is "has delegation record in active frame," not prior result.
-      const frameKey = buildFrameKey('1');
-      const substepDefer = {
-        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
-        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
-      };
-      const parentTransitions = {
-        pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
-        fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
-      };
-      const steps = inferSteps([
-        {
-          name: '1',
-          description: 'Parent with mixed delegations',
-          transitions: parentTransitions,
-          aggregation: { strategy: 'ALL' },
-          substeps: [
-            {
-              id: '1',
-              description: 'Sub 1',
-              transitions: substepDefer,
-              runbooks: ['child-1.runbook.md'],
-              delegate: true,
-            },
-            { id: '2', description: 'Sub 2', transitions: substepDefer },
-            {
-              id: '3',
-              description: 'Sub 3',
-              transitions: substepDefer,
-              runbooks: ['child-3.runbook.md'],
-              delegate: true,
-            },
-          ],
-        },
-        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ]);
-
-      // Seed delegations only on 1.1 and 1.3; 1.2 has no delegation.
-      const seededStates = seedDelegations(steps, ['1', '3']);
-
-      // Capture the original 1.1 SubstepState for tokenHash comparison after re-issuance.
-      const originalSS1 = seededStates.find((ss) => ss.id === '1');
-      expect(originalSS1?.delegation).toBeDefined();
-
-      // Inject 1.2 manually without a delegation, and mark final results.
-      const preparedSubsteps: SubstepState[] = [
-        // 1.1: pass + delegation (IS re-issued under β uniform re-delegation).
-        { ...originalSS1!, status: 'done' as const, result: 'pass' as const },
-        // 1.2: fail but no delegation (skipped by hook)
-        { id: '2', frameKey, status: 'done' as const, result: 'fail' as const },
-        // 1.3: fail + delegation (retried)
-        (() => {
-          const ss = seededStates.find((s) => s.id === '3')!;
-          return { ...ss, status: 'done' as const, result: 'fail' as const };
-        })(),
-      ];
-
-      const machine = compileDelegationFixtureMachine(steps);
-      const tmp = createActor(machine);
-      tmp.start();
-      const baseSnap = tmp.getSnapshot();
-      tmp.stop();
-
-      const persisted = {
-        ...baseSnap,
-        value: `step::1::3`,
-        context: {
-          ...baseSnap.context,
-          substepStates: preparedSubsteps,
-          activeFrameKey: frameKey,
-          substep: '3',
-          deferredResults: ['pass', 'fail'] as ('pass' | 'fail')[],
-          substepCompletedCount: 2,
-        },
-      };
-
-      const actor = createActor(machine, { snapshot: persisted });
-      actor.start();
-
-      // Final FAIL closes the aggregation → ALL fails → retry fires → hook runs.
-      actor.send({ type: 'FAIL' });
-
-      const ctx = actor.getSnapshot().context;
-
-      // Under uniform re-delegation (docs/spec/language.md §4.2, §5):
-      //   1.1 (pass + delegation)    → RE-ISSUED (prior pass no longer excludes)
-      //   1.2 (fail, no delegation)  → SKIPPED (no delegation to re-issue)
-      //   1.3 (fail + delegation)    → RE-ISSUED
-      // Frontier has 2 entries: ids 1.1 and 1.3.
-      expect(ctx.delegateFrontier?.length).toBe(2);
-      const frontierIds = ctx.delegateFrontier?.map((e) => e.id).sort();
-      expect(frontierIds).toEqual(['1.1', '1.3']);
-
-      // 1.1's delegation is replaced with a fresh token (not byte-equal).
-      const post1 = ctx.substepStates?.find((ss) => ss.id === '1');
-      expect(post1?.delegation?.tokenHash).not.toBe(originalSS1?.delegation?.tokenHash);
-      // 1.1's substep state is reset (status pending, result cleared).
-      expect(post1?.status).toBe('pending');
-      expect(post1?.result).toBeUndefined();
-
-      // 1.3's delegation must have a fresh tokenHash (different from seeded).
-      const seed3Hash = seededStates.find((ss) => ss.id === '3')?.delegation?.tokenHash;
-      const post3 = ctx.substepStates?.find((ss) => ss.id === '3');
-      expect(post3?.delegation?.tokenHash).not.toBe(seed3Hash);
-      expect(post3?.status).toBe('pending');
-      expect(post3?.result).toBeUndefined();
-
-      // 1.2 has no delegation — it's skipped for delegation re-issue, but the
-      // active frame is still re-opened. Its projection is reset so the
-      // cursor-re-entry machinery cannot see a stale done/result row.
-      const post2 = ctx.substepStates?.find((ss) => ss.id === '2');
-      expect(post2?.delegation).toBeUndefined();
-      expect(post2?.status).toBe('pending');
-      expect(post2?.result).toBeUndefined();
-
-      actor.stop();
-    });
-
-    it('parent-aggregation retry hook failure emits RETRY_ERROR with origin=aggregation', () => {
-      // Natural-path regression: trimSteps drops substep '1' from compiled steps,
-      // so retryDelegation fails validation and runRetryHook returns
-      // { status: 'error' }. The assign at compiler.ts:1429-1446 fires and writes
-      // the RETRY_ERROR lastAction. Origin must be 'aggregation' — it sits on
-      // the parent-aggregation retry path, mirroring the sibling RETRY emission.
-      const { actor } = buildRetryScenario({
-        seedIds: ['1', '2'],
-        results: { '1': 'pass', '2': 'fail' },
-        trimSteps: true,
-      });
-
-      actor.send({ type: 'FAIL' });
-
-      const ctx = actor.getSnapshot().context as RunbookContext;
-      expect(ctx.lastAction?.type).toBe('RETRY_ERROR');
-      expect(ctx.lastAction?.origin).toBe('aggregation');
-
-      actor.stop();
-    });
-  });
-
-  describe('FOR iteration retry with DELEGATE substeps', () => {
-    /**
-     * Seed a delegation for a single substep on a specific iteration frame of
-     * a FOR step. Uses `createDelegation` directly so the SubstepState carries
-     * a full DelegationRecord with tokenHash (required by retryDelegation).
-     */
-    function seedIterationDelegation(
-      steps: ResolvedStep[],
-      substepId: string,
-      iteration: number,
-      childRunbookRef: RunbookRef = {
-        source: 'project',
-        path: `child-${substepId}-iter${String(iteration)}.md`,
-      },
-    ): SubstepState {
-      const frameKey = buildFrameKey('1', iteration);
-      const baseState: RunbookState = {
-        prompted: false,
-        id: brandRunIdForTest(`rd_${'b'.repeat(32)}`),
-        runbook: { source: 'project', path: 'parent.md' },
-        runbookPath: 'parent.md',
-        step: '1',
-        stepName: 'Parent',
-        retryCount: 0,
-        variables: brandStoredOutputsForTest({}),
-        steps: [{ id: '1', status: 'running' }],
-        startedAt: '2026-02-27T10:00:00.000Z',
-        updatedAt: '2026-02-27T10:00:00.000Z',
-        substepStates: [{ id: substepId, frameKey, status: 'pending' as const }],
-        templateVars: brandInitialTemplateVarsForTest({}),
-      };
-
-      const result = createDelegation(
-        {
-          state: baseState,
-          stepId: `1.${substepId}`,
-          childRunbookPath: childRunbookRef.path,
-          childRunbookRef,
-          ancestors: [],
-          frameKey,
-          issueCredential: ISSUE_DELEGATION_CREDENTIAL,
-        },
-        steps,
-      );
-
-      if (result.status !== 'created') {
-        throw new Error(`Failed to seed delegation for ${substepId}@${frameKey}: ${result.status}`);
-      }
-      const ss = result.updatedSubstepStates.find(
-        (s) => s.id === substepId && s.frameKey === frameKey,
-      );
-      if (!ss) throw new Error(`Failed to seed delegation for ${substepId}@${frameKey}`);
-      return ss;
-    }
-
-    it('iteration retry populates delegateFrontier with the iteration-frame substep', () => {
-      // FOR 1..2 with one DELEGATE substep, iteration FAIL ALL: RETRY 1 DEFER.
-      // Seed iteration 1 frame with a failed-delegated substep; iteration 2 frame
-      // also has a delegation but must NOT be touched by the hook.
-      const substepDefer = {
-        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
-        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
-      };
-      const steps = inferSteps([
-        {
-          name: '1',
-          description: 'FOR with delegate substep',
-          forClause: {
-            start: 1,
-            end: 2,
-            transitions: {
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
-              fail: { kind: 'fail' as const, retry: 1, action: { type: 'DEFER' as const } },
-            },
-            aggregation: { strategy: 'ALL' },
-          },
-          transitions: DEFAULT_TRANSITIONS,
-          aggregation: { strategy: 'ALL' },
-          substeps: [
-            {
-              id: '1',
-              description: 'Sub 1',
-              transitions: substepDefer,
-              runbooks: ['child-1.runbook.md'],
-              delegate: true,
-            },
-          ],
-        },
-        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ]);
-
-      const iter1FrameKey = buildFrameKey('1', 1);
-      const iter2FrameKey = buildFrameKey('1', 2);
-      const iter1ChildRef: RunbookRef = {
-        source: 'external',
-        path: '/tmp/external-iteration-child.runbook.md',
-      };
-
-      // Seed delegations on both iteration frames.
-      const iter1Seeded = seedIterationDelegation(steps, '1', 1, iter1ChildRef);
-      const iter2Seeded = seedIterationDelegation(steps, '1', 2);
-
-      // Iteration 1: leave pending — the dispatched FAIL below is what closes
-      // aggregation; pre-marking would mask any regression where the live PASS/FAIL
-      // path stops persisting that outcome. Iteration 2: untouched, must remain byte-equal.
-      const preparedSubsteps: SubstepState[] = [iter1Seeded, iter2Seeded];
-
-      const machine = compileDelegationFixtureMachine(steps);
-      const tmp = createActor(machine);
-      tmp.start();
-      const baseSnap = tmp.getSnapshot();
-      tmp.stop();
-
-      // Drive the actor to iteration 1's substep-1 state with all iteration
-      // machinery populated. The final FAIL closes the iteration's aggregation
-      // and triggers the iteration-retry always entry.
-      const persisted = {
-        ...baseSnap,
-        value: `step::1::1`,
-        context: {
-          ...baseSnap.context,
-          substepStates: preparedSubsteps,
-          activeFrameKey: iter1FrameKey,
-          substep: '1',
-          forStack: [
-            {
-              stepId: '1',
-              iteration: 1,
-              start: 1,
-              end: 2,
-              implicit: false,
-              source: { kind: 'range' as const },
-            },
-          ],
-          // Iteration aggregation has not yet received any results; the FAIL we
-          // send below will be the single substep's result, closing ALL aggregation.
-          deferredResults: [] as ('pass' | 'fail')[],
-          substepCompletedCount: 0,
-          iterationResults: [] as ('pass' | 'fail')[],
-        },
-      };
-
-      const actor = createActor(machine, { snapshot: persisted });
-      actor.start();
-
-      // FAIL the single substep → deferredResults=[fail] → ALL aggregation fails →
-      // iteration-retry guard fires → runRetryHook runs for iteration 1's frame.
-      actor.send({ type: 'FAIL' });
-
-      const ctx = actor.getSnapshot().context;
-
-      // The retry hook minted exactly one fresh token for iteration 1's substep.
-      // Frontier id is the canonical contextSnapshot.at (step.iteration.substep)
-      // per commit 8ce42858; for iteration 1 of step 1, substep 1 → "1.1.1".
-      expect(ctx.delegateFrontier).toBeDefined();
-      expect(ctx.delegateFrontier?.length).toBe(1);
-      expect(ctx.delegateFrontier?.[0]?.id).toBe('1.1.1');
-
-      // Iteration 1's retried substep has its state reset: status pending,
-      // prior result cleared (spec §3 step 3, §3.1 invariant).
-      const postIter1 = ctx.substepStates?.find(
-        (ss) => ss.id === '1' && ss.frameKey === iter1FrameKey,
-      );
-      expect(postIter1?.status).toBe('pending');
-      expect(postIter1?.result).toBeUndefined();
-
-      // lastAction is RETRY with origin: 'aggregation' (spec §3.5).
-      expect(ctx.lastAction?.type).toBe('RETRY');
-      expect(ctx.lastAction?.origin).toBe('aggregation');
-
-      // Iteration counters incremented on success.
-      expect(ctx.iterationRetryCount).toBe(1);
-      expect(ctx.retryCount).toBe(1);
-      expect((ctx as { retryHookError?: unknown }).retryHookError).toBeUndefined();
-
-      // Iteration 2's substep state must be byte-for-byte unchanged: same
-      // delegation object with the original tokenHash and createdAt; status and
-      // result preserved so a regression that resets non-target iteration frames
-      // would fail this assertion.
-      const post2 = ctx.substepStates?.find((ss) => ss.id === '1' && ss.frameKey === iter2FrameKey);
-      expect(post2?.delegation?.tokenHash).toBe(iter2Seeded.delegation?.tokenHash);
-      expect(post2?.delegation?.createdAt).toBe(iter2Seeded.delegation?.createdAt);
-      expect(post2?.delegation?.cancelledAt).toBe(iter2Seeded.delegation?.cancelledAt);
-      expect(post2?.status).toBe(iter2Seeded.status);
-      expect(post2?.result).toBe(iter2Seeded.result);
-
-      // Iteration 1's delegation must have a fresh tokenHash (different from seeded).
-      const post1 = ctx.substepStates?.find((ss) => ss.id === '1' && ss.frameKey === iter1FrameKey);
-      expect(post1?.delegation?.tokenHash).not.toBe(iter1Seeded.delegation?.tokenHash);
-      expect(post1?.delegation?.childRunbookRef).toEqual(iter1ChildRef);
-
-      actor.stop();
-    });
-
-    it('FOR-iteration retry hook failure emits RETRY_ERROR with origin=aggregation', () => {
-      // Natural-path regression: seed the iteration delegation against the full
-      // step set, but compile the machine with an additional non-delegated
-      // substep '2' that the seeded substepStates lacks. retryDelegation
-      // validates against compiled steps; with the delegation pointing at a
-      // substep whose iteration substepStates are stale, runRetryHook returns
-      // { status: 'error' } and the assign at compiler.ts:1550-1570 fires.
-      // Origin must be 'aggregation' — sibling iteration RETRY uses
-      // makeAggregationLastAction.
-      const substepDefer = {
-        pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
-        fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
-      };
-      const fullSteps = inferSteps([
-        {
-          name: '1',
-          description: 'FOR with delegate substep',
-          forClause: {
-            start: 1,
-            end: 2,
-            transitions: {
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
-              fail: { kind: 'fail' as const, retry: 1, action: { type: 'DEFER' as const } },
-            },
-            aggregation: { strategy: 'ALL' },
-          },
-          transitions: DEFAULT_TRANSITIONS,
-          aggregation: { strategy: 'ALL' },
-          substeps: [
-            {
-              id: '1',
-              description: 'Sub 1',
-              transitions: substepDefer,
-              runbooks: ['child-1.runbook.md'],
-              delegate: true,
-            },
-          ],
-        },
-        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ]);
-
-      // Compile a "trimmed" variant without the delegated substep so
-      // retryDelegation can't find substep '1' on the compiled steps.
-      const compiledSteps = inferSteps([
-        {
-          name: '1',
-          description: 'FOR with delegate substep',
-          forClause: {
-            start: 1,
-            end: 2,
-            transitions: {
-              pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
-              fail: { kind: 'fail' as const, retry: 1, action: { type: 'DEFER' as const } },
-            },
-            aggregation: { strategy: 'ALL' },
-          },
-          transitions: DEFAULT_TRANSITIONS,
-          aggregation: { strategy: 'ALL' },
-          substeps: [{ id: '2', description: 'Sub 2', transitions: substepDefer }],
-        },
-        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ]);
-
-      const iter1FrameKey = buildFrameKey('1', 1);
-      const iter1Seeded = seedIterationDelegation(fullSteps, '1', 1);
-
-      const machine = compileDelegationFixtureMachine(compiledSteps);
-      const tmp = createActor(machine);
-      tmp.start();
-      const baseSnap = tmp.getSnapshot();
-      tmp.stop();
-
-      const persisted = {
-        ...baseSnap,
-        value: `step::1::2`,
-        context: {
-          ...baseSnap.context,
-          substepStates: [iter1Seeded],
-          activeFrameKey: iter1FrameKey,
-          substep: '2',
-          forStack: [
-            {
-              stepId: '1',
-              iteration: 1,
-              start: 1,
-              end: 2,
-              implicit: false,
-              source: { kind: 'range' as const },
-            },
-          ],
-          deferredResults: [] as ('pass' | 'fail')[],
-          substepCompletedCount: 0,
-          iterationResults: [] as ('pass' | 'fail')[],
-        },
-      };
-
-      const actor = createActor(machine, { snapshot: persisted });
-      actor.start();
-
-      actor.send({ type: 'FAIL' });
-
-      const ctx = actor.getSnapshot().context;
-      expect(ctx.lastAction?.type).toBe('RETRY_ERROR');
-      expect(ctx.lastAction?.origin).toBe('aggregation');
-
-      actor.stop();
-    });
-  });
-
-  describe('leafIssuesDelegations: GOTO into a non-first delegated substep', () => {
-    it('routes through __issue-delegations and mints claims when GOTO targets a later delegated substep', async () => {
-      const steps = inferSteps([
-        {
-          name: '1',
-          description: 'Parent with mixed substeps',
-          transitions: DEFAULT_TRANSITIONS,
-          aggregation: { strategy: 'ALL' },
-          substeps: [
-            { id: '1', description: 'Non-delegated', transitions: DEFAULT_TRANSITIONS },
-            {
-              id: '2',
-              description: 'Delegated A',
-              transitions: DEFAULT_TRANSITIONS,
-              runbooks: ['child-a.runbook.md'],
-              delegate: true,
-            },
-            {
-              id: '3',
-              description: 'Delegated B',
-              transitions: DEFAULT_TRANSITIONS,
-              runbooks: ['child-b.runbook.md'],
-              delegate: true,
-            },
-          ],
-        },
-        { name: '2', description: 'Next', transitions: DEFAULT_TRANSITIONS },
-      ]);
-
-      const machine = compileRunbookToMachine(steps, {
-        templateVars: brandFlattenedTemplateVarsForTest({
-          RunId: brandRunIdForTest('rd_cccccccccccccccccccccccccccccccc'),
-        }),
-        resolveDelegationRunbook: async (runbookRef) => ({
-          path: `/resolved/${runbookRef}`,
-          runbookRef,
-          childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
-        }),
-        issueDelegationCredential: ISSUE_DELEGATION_CREDENTIAL,
-      });
-      const actor = createActor(machine);
-      actor.start();
-
-      actor.send({ type: 'GOTO', target: { step: '1', substep: '3' } });
-
-      await waitFor(actor, (snapshot) => {
-        const states = snapshot.context.substepStates ?? [];
-        return states.some((ss) => ss.id === '3' && ss.delegation !== undefined);
-      });
-
-      const ctx = actor.getSnapshot().context;
-      const sub2 = ctx.substepStates?.find((ss) => ss.id === '2');
-      const sub3 = ctx.substepStates?.find((ss) => ss.id === '3');
-
-      expect(sub2?.delegation?.tokenHash).toBeDefined();
-      expect(sub3?.delegation?.tokenHash).toBeDefined();
-      expect(sub2?.delegation?.childRunbookPath).toBe('/resolved/child-a.runbook.md');
-      expect(sub3?.delegation?.childRunbookPath).toBe('/resolved/child-b.runbook.md');
-
-      actor.stop();
-    });
-  });
-
-  describe('delegation credential frame-entry coordinate', () => {
-    const substepDefer = {
-      pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
-      fail: { kind: 'fail' as const, retry: 0, action: { type: 'DEFER' as const } },
-    };
-
-    /**
-     * Two steps so the machine can be started, snapshotted, and only *then*
-     * driven into the delegated frame — issuance must observe the seeded
-     * bootstrap mirror rather than whatever the fresh actor had at start.
-     */
-    function frameEntrySteps(): ResolvedStep[] {
-      return inferSteps([
-        { name: '1', description: 'Plain first step', transitions: DEFAULT_TRANSITIONS },
-        {
-          name: '2',
-          description: 'Parent with a delegated substep',
-          transitions: DEFAULT_TRANSITIONS,
-          aggregation: { strategy: 'ALL' },
-          substeps: [
-            {
-              id: '1',
-              description: 'Delegated',
-              transitions: substepDefer,
-              runbooks: ['child.runbook.md'],
-              delegate: true,
-            },
-          ],
-        },
-      ]);
-    }
-
-    async function issuedParentEntry(
-      frameEntry: Pick<RunbookState, 'activeFrameKey' | 'activeEntry' | 'frameEntryCounts'>,
-    ): Promise<number | undefined> {
-      const machine = compileDelegationFixtureMachine(frameEntrySteps());
-      const bootstrap = createActor(machine);
-      bootstrap.start();
-      const baseSnapshot = bootstrap.getSnapshot();
-      bootstrap.stop();
-
-      // The bootstrap mirror is written by the actor service from persisted
-      // state; a compiler-level test reaches it the same way the service does,
-      // through the snapshot envelope.
-      const seeded = { ...baseSnapshot, context: { ...baseSnapshot.context, frameEntry } };
-      const actor = createActor(machine, { snapshot: seeded });
-      actor.start();
-      actor.send({ type: 'PASS' });
-      await waitFor(actor, (snapshot) =>
-        (snapshot.context.substepStates ?? []).some((ss) => ss.delegation !== undefined),
-      );
-      const delegated = actor
-        .getSnapshot()
-        .context.substepStates?.find((ss) => ss.delegation !== undefined);
-      actor.stop();
-      return delegated?.delegation?.credential.parentEntry;
-    }
-
-    it('stamps the issuing frame active entry, not a hardcoded first entry', async () => {
-      const issuingFrame = buildFrameKey('2');
-
-      await expect(
-        issuedParentEntry({
-          activeFrameKey: issuingFrame,
-          activeEntry: 2,
-          frameEntryCounts: { [issuingFrame]: 2 },
-        }),
-      ).resolves.toBe(2);
-    });
-
-    it('attributes the entry to the issuing frame, not to another active frame', async () => {
-      const issuingFrame = buildFrameKey('2');
-      const otherFrame = buildFrameKey('1');
-
-      // Entering the issuing frame from another frame is a frame switch, and
-      // the machine now performs that bump itself before issuance reads the
-      // coordinates: `max(counts[issuing] = 3, activeEntry = 5) + 1 = 6`. The
-      // ordinal is run-global and monotonic, so it advances past the other
-      // frame's entry rather than resuming this frame's recorded count.
-      //
-      // Before #680 this stamped 3 — the machine read the pre-transition
-      // mirror while the post-machine projection committed 6. The claim this
-      // case makes is unchanged: the entry belongs to the ISSUING frame and is
-      // never the other frame's `activeEntry` (5).
-      await expect(
-        issuedParentEntry({
-          activeFrameKey: otherFrame,
-          activeEntry: 5,
-          frameEntryCounts: { [otherFrame]: 5, [issuingFrame]: 3 },
-        }),
-      ).resolves.toBe(6);
-    });
-  });
-
-  describe('recoveryRequired GOTO reconcile', () => {
-    const source = `## 1. Review
-- PASS CONTINUE
-- FAIL CONTINUE
-
-### 1.1 First
-- PASS CONTINUE
-- FAIL CONTINUE
-
-### 1.2 Last
-- PASS CONTINUE
-- FAIL CONTINUE
-
-## 2. Next
-- PASS COMPLETE
-`;
-
-    it('resets the target step to its first substep with no stale cursor', () => {
-      const machine = compileRunbookToMachine(createRunbook(source));
-      const fresh = createActor(machine).start();
-      const firstSubstep = fresh.getSnapshot().context.substep;
-      fresh.stop();
-      const actor = createActor(machine).start();
-      actor.send({ type: 'PASS' });
-      expect(actor.getSnapshot().context.substep).not.toBe(firstSubstep);
-      expect(actor.getSnapshot().context.substepCompletedCount).toBeGreaterThan(0);
-      actor.send({
-        type: 'EXECUTION_OUTCOME_UNKNOWN',
-        epoch: 1,
-        reason: 'owner_dead',
-        interruptedStepId: '1',
-      });
-      actor.send({ type: 'GOTO', target: { step: '1' } });
-
-      const context = actor.getSnapshot().context;
-      expect(context.substep).toBe(firstSubstep);
-      expect(context.substepCompletedCount).toBe(0);
-      expect(context.deferredResults ?? []).toEqual([]);
-      expect(context.interruptedEpoch).toBeUndefined();
-      expect(context.interruptedReason).toBeUndefined();
-      expect(context.interruptedStepId).toBeUndefined();
-      actor.stop();
-    });
-
-    it('stays in recoveryRequired until a GOTO names a step', () => {
-      // The reconcile transitions are `always` entries, re-evaluated on entry and
-      // after every microstep. Only a GOTO may leave, and the guard must say so by
-      // testing the event type FIRST: every other event reaches it without a
-      // `target`, so a guard that skipped that check would fault on the entry
-      // event itself and take the actor down rather than merely mis-transition.
-      const actor = createActor(compileRunbookToMachine(createRunbook(source))).start();
-      actor.send({
-        type: 'EXECUTION_OUTCOME_UNKNOWN',
-        epoch: 1,
-        reason: 'owner_dead',
-        interruptedStepId: '1',
-      });
-      expect(actor.getSnapshot().value).toBe('recoveryRequired');
-      expect(actor.getSnapshot().status).toBe('active');
-
-      actor.send({ type: 'PASS' });
-      actor.send({ type: 'FAIL' });
-
-      expect(actor.getSnapshot().value).toBe('recoveryRequired');
-      expect(actor.getSnapshot().status).toBe('active');
-      expect(actor.getSnapshot().context.interruptedStepId).toBe('1');
-
-      // Still reconcilable: the blocked state is a waiting room, not a dead end.
-      actor.send({ type: 'GOTO', target: { step: '1' } });
-      expect(JSON.stringify(actor.getSnapshot().value)).toContain('step::1');
-      actor.stop();
-    });
-
-    it('resets substepStates rows for the reopened frame', () => {
-      // The machine mirrors RunbookState.substepStates rather than deriving them,
-      // so a reconcile that rewinds the cursor without rewriting the rows leaves
-      // them claiming outcomes for substeps the machine now considers pending.
-      const machine = compileRunbookToMachine(createRunbook(source));
-      const tmp = createActor(machine).start();
-      const baseSnap = tmp.getPersistedSnapshot();
-      const baseContext = tmp.getSnapshot().context;
-      tmp.stop();
-      const frameKey = buildFrameKey('1');
-      const snapshot = {
-        ...baseSnap,
-        value: 'step::1::2',
-        context: {
-          ...baseContext,
-          substep: '2',
-          substepCompletedCount: 1,
-          deferredResults: ['pass'],
-          activeFrameKey: frameKey,
-          substepStates: [
-            { id: '1', frameKey, status: 'done', result: 'pass' },
-            { id: '2', frameKey, status: 'running' },
-          ],
-        },
-      } satisfies typeof baseSnap & {
-        readonly value: string;
-        readonly context: RunbookContext & Pick<RunbookState, 'activeFrameKey'>;
-      };
-      const actor = createActor(machine, {
-        snapshot,
-      }).start();
-
-      actor.send({
-        type: 'EXECUTION_OUTCOME_UNKNOWN',
-        epoch: 1,
-        reason: 'owner_dead',
-        interruptedStepId: '1',
-      });
-      actor.send({ type: 'GOTO', target: { step: '1' } });
-
-      expect(actor.getSnapshot().context.substepStates).toEqual([
-        { id: '1', frameKey, status: 'pending' },
-        { id: '2', frameKey, status: 'pending' },
-      ]);
-      actor.stop();
-    });
-
-    const forSource = `## 1. Loop
-- FOR i IN 3
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-
-### 1.1 One
-- PASS DEFER
-- FAIL DEFER
-
-### 1.2 Two
-- PASS DEFER
-- FAIL DEFER
-
-## 2. Done
-- PASS COMPLETE
-- FAIL COMPLETE
-`;
-
-    /** Drive into iteration 2 of the FOR step, then interrupt it. */
-    function interruptedInSecondIteration(): ReturnType<typeof createActor> {
-      const actor = createActor(compileRunbookToMachine(createRunbook(forSource))).start();
-      actor.send({ type: 'PASS' });
-      actor.send({ type: 'PASS' });
-      actor.send({ type: 'PASS' });
-      actor.send({
-        type: 'EXECUTION_OUTCOME_UNKNOWN',
-        epoch: 1,
-        reason: 'owner_dead',
-        interruptedStepId: '1',
-      });
-      return actor;
-    }
-
-    it('clears the FOR frame when reconciling onto a step without substeps', () => {
-      // A target with substeps has its FOR frame rebuilt by the leaf entry assign.
-      // A target without substeps has no such entry action, so an uncleared frame
-      // survives and derives a bogus activeFrameKey for the rest of the run.
-      const actor = interruptedInSecondIteration();
-
-      actor.send({ type: 'GOTO', target: { step: '2' } });
-
-      const context = actor.getSnapshot().context;
-      expect(context.forStack).toEqual([]);
-      expect(context.iterationResults).toBeUndefined();
-      actor.stop();
-    });
-
-    it('clears the iteration retry budget on reconcile', () => {
-      // Every canonical GOTO zeroes the iteration retry budget. A reconcile that
-      // leaves it consumed hands the reopened iteration a pre-spent budget.
-      const machine = compileRunbookToMachine(createRunbook(forSource));
-      const tmp = createActor(machine).start();
-      const baseSnap = tmp.getPersistedSnapshot();
-      const baseContext = tmp.getSnapshot().context;
-      tmp.stop();
-      const snapshot = {
-        ...baseSnap,
-        value: 'step::1::1',
-        context: { ...baseContext, iterationRetryCount: 3, retryMax: 3 },
-      } satisfies typeof baseSnap & {
-        readonly value: string;
-        readonly context: RunbookContext;
-      };
-      const actor = createActor(machine, {
-        snapshot,
-      }).start();
-      actor.send({
-        type: 'EXECUTION_OUTCOME_UNKNOWN',
-        epoch: 1,
-        reason: 'owner_dead',
-        interruptedStepId: '1',
-      });
-
-      actor.send({ type: 'GOTO', target: { step: '1' } });
-
-      expect(actor.getSnapshot().context.iterationRetryCount).toBe(0);
-      expect(actor.getSnapshot().context.retryMax).toBeUndefined();
-      actor.stop();
-    });
-
-    it('replays the interrupted FOR iteration exactly once', () => {
-      // Pins the semantic that makes preserving the FOR frame correct: the
-      // reconcile re-runs the interrupted iteration, it does not restart the loop.
-      // Rebuilding forStack from the clause start here would duplicate results.
-      const baseline = createActor(compileRunbookToMachine(createRunbook(forSource))).start();
-      for (let send = 0; send < 6; send += 1) baseline.send({ type: 'PASS' });
-      const uninterrupted = baseline.getSnapshot().context.iterationResults;
-      baseline.stop();
-
-      const actor = interruptedInSecondIteration();
-      actor.send({ type: 'GOTO', target: { step: '1' } });
-      for (let send = 0; send < 4; send += 1) actor.send({ type: 'PASS' });
-
-      expect(actor.getSnapshot().context.iterationResults).toEqual(uninterrupted);
-      expect(uninterrupted).toEqual(['pass', 'pass', 'pass']);
-      actor.stop();
-    });
-  });
-
   describe('machine-owned frame entry', () => {
     const DEFER_BOTH = {
       pass: { kind: 'pass' as const, retry: 0, action: { type: 'DEFER' as const } },
@@ -13741,6 +12013,9 @@ echo ok
       pass: { kind: 'pass' as const, retry: 0, action: { type: 'CONTINUE' as const } },
       fail: { kind: 'fail' as const, retry: 1, action: { type: 'STOP' as const } },
     };
+    // A DELEGATE substep compiles to an ordinary leaf (ADR 0005 / #901), so the
+    // fixture keeps the authored shape: the cases below prove the frame-entry
+    // rules hold for it exactly as for a plain substep.
     const DELEGATE_SUBSTEP = {
       id: '1',
       description: 'Hand the work to a child',
@@ -13748,29 +12023,6 @@ echo ok
       runbooks: ['child.runbook.md'],
       delegate: true as const,
     };
-
-    /**
-     * A {@link DelegationCredentialIssuer} that records every location it is
-     * handed, so a case can read back the `parentEntry` the machine stamped.
-     */
-    type RecordingIssuer = DelegationCredentialIssuer & {
-      readonly locations: DelegationCredentialLocation[];
-    };
-
-    /** Build a fresh recording issuer; `locations` accumulates in issuance order. */
-    function recordingIssuer(): RecordingIssuer {
-      const locations: DelegationCredentialLocation[] = [];
-      const issue = (location: DelegationCredentialLocation) => {
-        locations.push(location);
-        const token = generateDelegationToken();
-        return {
-          token,
-          tokenHash: hashDelegationToken(token),
-          credential: makeDelegationCredentialDescriptor(location),
-        };
-      };
-      return Object.assign(issue, { locations });
-    }
 
     // `parentArtifactSteps()` routes through `__parent-entry::`, whose invoked
     // artifact resolver refuses without `evaluationOptions.cwd`. The directory
@@ -13783,11 +12035,8 @@ echo ok
       await rm(cwd, { recursive: true, force: true });
     });
 
-    /** Compile with the delegation fixture option bag, plus an empty frame-entry seed. */
-    function compileFixture(
-      steps: ResolvedStep[],
-      issuer: DelegationCredentialIssuer = ISSUE_DELEGATION_CREDENTIAL,
-    ): ReturnType<typeof compileRunbookToMachine> {
+    /** Compile with the frame-entry fixture option bag, plus an empty frame-entry seed. */
+    function compileFixture(steps: ResolvedStep[]): ReturnType<typeof compileRunbookToMachine> {
       return compileRunbookToMachine(steps, {
         templateVars: brandFlattenedTemplateVarsForTest({
           RunId: brandRunIdForTest('rd_cccccccccccccccccccccccccccccccc'),
@@ -13795,12 +12044,6 @@ echo ok
           WorkPath: '.rundown/work',
           RunbookRef: { source: 'project', path: 'parent.md' },
         }),
-        resolveDelegationRunbook: async (runbookRef) => ({
-          path: `/resolved/${runbookRef}`,
-          runbookRef,
-          childRunbookRef: { source: 'project' as const, path: `/canonical/${runbookRef}` },
-        }),
-        issueDelegationCredential: issuer,
         evaluationOptions: { cwd },
         frameEntry: { frameEntryCounts: {} },
       });
@@ -13831,20 +12074,7 @@ echo ok
         },
       ]);
 
-    /** `delegatingSteps()` with step 2 FAIL carrying `retry: 1`, driving the parent retry hook. */
-    const delegatingRetrySteps = (): ResolvedStep[] =>
-      inferSteps([
-        { name: '1', description: 'Plain', transitions: DEFAULT_TRANSITIONS },
-        {
-          name: '2',
-          description: 'Delegating parent',
-          transitions: FAIL_RETRY_ONCE,
-          aggregation: { strategy: 'ALL' },
-          substeps: [DELEGATE_SUBSTEP],
-        },
-      ]);
-
-    /** As `delegatingRetrySteps()` but with a plain substep — retry re-entry without issuance. */
+    /** Aggregating parent `2` with FAIL `retry: 1` over one plain substep. */
     const aggregationRetrySteps = (): ResolvedStep[] =>
       inferSteps([
         { name: '1', description: 'Plain', transitions: DEFAULT_TRANSITIONS },
@@ -13999,7 +12229,7 @@ echo ok
       // the transition source when every effective target IS the source — so
       // `computeEntrySet` never adds the leaf and its `entry` array never runs.
       // The leaf's *children* are still exited and re-entered, so a self-GOTO
-      // re-fires `__issue-delegations` while skipping `syncFrameEntry`. Both
+      // re-fires the leaf's entry children while skipping `syncFrameEntry`. Both
       // halves of that are wrong: the frame is genuinely re-entered, so the
       // entry must bump, and the one-shot marker must be consumed rather than
       // left to bump the next ordinary advance.
@@ -14112,30 +12342,6 @@ echo ok
         actor.stop();
       });
 
-      it('does not mint a second credential when a self-GOTO re-enters a delegating leaf', async () => {
-        // The leaf's children are exited and re-entered on a self-target with
-        // or without `reenter`, so `__issue-delegations` fires either way.
-        // Making the leaf itself re-enter adds entry actions, not a second
-        // mint: the substep row survives frame re-entry with its delegation
-        // attached, so `inferAllDelegateSubsteps` finds no target and the
-        // actor resolves `skipped`. Re-minting here would orphan the bearer a
-        // child may already hold — that rotation is `delegate --retry`'s job.
-        const issuer = recordingIssuer();
-        const actor = createActor(compileFixture(delegatingSteps(), issuer));
-        actor.start();
-        actor.send({ type: 'PASS' }); // into frame 2, one fresh issuance
-        await settle(actor);
-        expect(issuer.locations).toHaveLength(1);
-        const before = entryOf(actor);
-
-        actor.send({ type: 'GOTO', target: { step: '2', substep: '1' } });
-        await settle(actor);
-
-        expect(issuer.locations).toHaveLength(1);
-        expect(entryOf(actor)).toBe(before + 1);
-        actor.stop();
-      });
-
       it('marks every self-targeting transition out of an entry-bearing state as reentering', () => {
         // Structural guard against a *new* self-targeting transition landing
         // without `reenter`. Walks the resolved XState graph rather than the
@@ -14206,11 +12412,10 @@ echo ok
       });
     });
 
-    it('advances the entry on entry to a leaf state, before its invoked children run', async () => {
-      // The credential the machine stamps must equal the entry the machine
-      // holds once the transition settles.
-      const issuer = recordingIssuer();
-      const actor = createActor(compileFixture(delegatingSteps(), issuer));
+    it('advances the entry on entry to a leaf state', async () => {
+      // The entry the machine holds once the transition settles is the one a
+      // side-effect child reading `context.frameEntry` would observe.
+      const actor = createActor(compileFixture(delegatingSteps()));
       actor.start();
 
       expect(actor.getSnapshot().context.frameEntry).toEqual({
@@ -14222,9 +12427,8 @@ echo ok
       actor.send({ type: 'PASS' });
       await settle(actor);
 
-      // The frame switch bumped BEFORE `__issue-delegations` read the context.
+      // The frame switch bumped on entry to `step::2::1`.
       expect(entryOf(actor)).toBe(2);
-      expect(issuer.locations.at(-1)?.parentEntry).toBe(2);
       actor.stop();
     });
 
@@ -14335,25 +12539,6 @@ echo ok
         const persisted = actor.getPersistedSnapshot() as unknown as { context: RunbookContext };
         expect(persisted.context.frameReentry).toBeUndefined();
       }
-      actor.stop();
-    });
-
-    it('stamps the retried credential with the entry the same transition commits', async () => {
-      // Parent "2" aggregates ALL with FAIL retry: 1 over one DELEGATE substep.
-      const issuer = recordingIssuer();
-      const actor = createActor(compileFixture(delegatingRetrySteps(), issuer));
-      actor.start();
-      actor.send({ type: 'PASS' }); // into frame 2, fresh issuance at entry 2
-      await settle(actor);
-      expect(issuer.locations.at(-1)?.parentEntry).toBe(2);
-
-      actor.send({ type: 'FAIL' }); // aggregation retry -> runRetryHook re-issues
-      await settle(actor);
-
-      const committed = actor.getSnapshot().context.frameEntry;
-      expect(committed?.activeEntry).toBe(3);
-      expect(issuer.locations.at(-1)?.parentEntry).toBe(3);
-      expect(issuer.locations.at(-1)?.parentEntry).toBe(committed?.activeEntry);
       actor.stop();
     });
 
@@ -14933,23 +13118,6 @@ echo ok
         const actor = startSeeded(steps, spent);
         actor.send({ type: 'PASS' });
         expect(actor.getSnapshot().value).toEqual({ 'step::2': 'idle' });
-        expect(loopCount(actor)).toBe(0);
-        actor.stop();
-      });
-
-      it('zeroes it on a recoveryRequired GOTO reconcile', () => {
-        // Reset site: `buildRecoveryReconcileTransitions`. A reconcile is a
-        // canonical GOTO, so it reopens the unit with every budget fresh.
-        const actor = startSeeded(authoredSelfGoto(), spent);
-        actor.send({
-          type: 'EXECUTION_OUTCOME_UNKNOWN',
-          epoch: 1,
-          reason: 'owner_dead',
-          interruptedStepId: '1',
-        });
-        expect(actor.getSnapshot().value).toBe('recoveryRequired');
-        actor.send({ type: 'GOTO', target: { step: '1' } });
-        expect(actor.getSnapshot().value).toEqual({ 'step::1': 'idle' });
         expect(loopCount(actor)).toBe(0);
         actor.stop();
       });

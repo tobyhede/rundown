@@ -204,32 +204,18 @@ Leaves with ARTIFACTS use `__resolve-artifacts` after iteration resolution. This
 ordering means ARTIFACTS templates may reference the loop variable for the
 current iteration.
 
-A fourth side-effect child, `__issue-delegations`, runs after
-`__resolve-artifacts` when the leaf has delegations to issue. It invokes
-`delegationIssueActor` (wired via `buildDelegationIssueInvokeBlock`) to create
-delegation tokens for the step's child runbooks before the leaf reaches `idle`.
+After `__resolve-artifacts` (or `__resolve-iteration`, or directly) every leaf
+rests in `idle`. A DELEGATE or runbook-list substep compiles to the same leaf as
+any other (ADR 0005, #901): there is no issuance or launch-intent child and no
+completion mailbox; its PASS/FAIL is sent directly by the lifecycle seam after
+`--step` validation. Child reservation on entry is #903/#904's substate, and
+`rundown run` refuses such runbooks until then.
 
-Non-DELEGATE child-runbook substeps use the adjacent `__prepare-inline-launch`
-child. The compiler chooses the post-artifact child in priority order:
-`__issue-delegations` for authored delegation frontiers,
-`__prepare-inline-launch` for inline child runbook references, otherwise `idle`.
-`__prepare-inline-launch` invokes `inlineLaunchIntentActor`, which validates
-that inline launch is allowed in the current scope, resolves the authored child
-runbook reference, allocates the child run id, snapshots inherited context,
-stores a running substep record with inline metadata, and writes
-`context.inlineLaunchIntent`. This is core-owned launch intent, not a CLI
-inference from parser shape.
-
-The actor does not start the child process or write child state. Those external
-effects remain behind the Run Progression activation's injected dispatch
-callable: activation consumes the persisted intent, creates or resumes the child
-run with the preallocated id, records `INLINE_CHILD_STARTED` on the parent, and
-sends `INLINE_LAUNCH_CONSUMED` after the one-shot intent has been handled — or
-`INLINE_LAUNCH_ABANDONED` when the launch span fails after latching, which
-releases the latch while keeping the intent so the unfinished launch stays
-re-observable. If preparation fails, the machine records `INLINE_LAUNCH_FAILED`
-and stops the active runbook; the CLI must not fall back to local substep
-execution.
+Two further children serve the machine-selected Run Progression turn:
+`__progression-waiting-input` emits the typed `waiting` intent and
+`__progression-enter-unit` invokes `runProgressionEntryActor` to render the
+unit's entry (`entered`), or emits the retryable `entry_render_failed` refusal
+when that render throws. Both route back to `idle`.
 
 The leaf also invokes `commandExecActor` directly to execute the step's command;
 that actor's completion produces the `COMMAND_RESULT` event the capture flow
@@ -250,8 +236,8 @@ Two ordering facts make the placement correct:
   entry-action slot, so appending puts the sync after the iteration is current.
   A FOR loop-back therefore reads as a frame switch with no extra wiring.
 - **Before the leaf's invoked children.** A compound state's `entry` assign runs
-  before its initial child's `invoke` input factory is read, so
-  `__issue-delegations` and `__prepare-inline-launch` see the advanced value.
+  before its initial child's `invoke` input factory is read, so any side-effect
+  child that reads `context.frameEntry` sees the advanced value.
 
 `syncFrameEntry` is **not** attached to `step::N::__parent-entry::M`: each is a
 same-frame artifact pass-through that routes on to the real leaf, and bumping
@@ -260,17 +246,15 @@ there would double-count.
 The bump rule lives in `advanceFrameEntry` (`frame-entry.ts`) and the frame-key
 derivation in `frameKeyForCursor` (`targeting.ts`), the single derivation. Every
 cursor-keyed site routes through it: `deriveActiveFrame`,
-`deriveActorStatePatch`, `syncFrameEntry`, `buildDelegationIssueInvokeBlock`,
-`buildInlineLaunchInvokeBlock`, `buildSubstepGotoResetAssignValue`, the two
-inline `advanceFrameEntry` calls on the `runRetryHook` transitions, and
-`runRetryHook`'s own `activeFrameKey`. The rule it replaced filtered `implicit`
-but never compared `stepId`; the two answers coincide for every stack
+`deriveActorStatePatch`, `syncFrameEntry`, `buildSubstepGotoResetAssignValue`,
+and the two inline `advanceFrameEntry` calls on the parent-retry transitions,
+whose substep reset is keyed on the same answer. The rule it replaced filtered
+`implicit` but never compared `stepId`; the two answers coincide for every stack
 `initForStack` can build today, so the guard is a construction rather than a
 live repair, and `targeting.test.ts` pins both the consumers and the absence of
 any fourth rewrite. The entry ordinal is run-global and monotonic —
 `max(frameEntryCounts[target] ?? 0, previousActiveEntry) + 1` — not
-per-frame-local; `classifyDelegationLiveness` and completion-key scoping depend
-on that form.
+per-frame-local; entry identity across re-entries depends on that form.
 
 **Re-entry is declared, not inferred.** Every transition that writes a `GOTO` or
 `RETRY` `lastAction` also writes the one-shot `context.frameReentry` marker,
@@ -288,15 +272,14 @@ route through, both target their own source. XState v5 defaults `reenter` to
 `computeEntrySet` never adds it and the source's `entry` array does not run —
 while `addDescendantStatesToEnter` still re-enters the leaf's children. Left
 alone that skips `syncFrameEntry` on a genuine re-entry (the transition resets
-the frame's substep rows, increments `retryCount` and re-fires
-`__issue-delegations`) and leaks the one-shot marker onto the _next_ state
-entry, which then bumps a within-frame advance. `selfTargetReentry` in
-`compiler.ts` attaches `reenter: true` wherever the routed target equals the
-source id, and only there — for a distinct target the domain is already the
-least common ancestor and the flag would be inert. The parent-aggregation retry
-also self-targets and is deliberately excluded: it carries no entry actions and
-relies on the assign settling before a sibling priority-0 `always` routes
-onward.
+the frame's substep rows, increments `retryCount` and re-fires the leaf's entry
+children) and leaks the one-shot marker onto the _next_ state entry, which then
+bumps a within-frame advance. `selfTargetReentry` in `compiler.ts` attaches
+`reenter: true` wherever the routed target equals the source id, and only there
+— for a distinct target the domain is already the least common ancestor and the
+flag would be inert. The parent-aggregation retry also self-targets and is
+deliberately excluded: it carries no entry actions and relies on the assign
+settling before a sibling priority-0 `always` routes onward.
 
 **A self-targeting `GOTO` is bounded in the machine.** `GOTO <self>` is bounded
 re-execution, not an infinite loop:
@@ -347,19 +330,18 @@ validates all three entry ordinals — `activeEntry`, `frameEntryCounts`, and
 `targetIteration`, which really is a `FOR` iteration index, keeps
 `MAX_FOR_BOUND`.
 
-**The two `runRetryHook` sites are the exception.** `runRetryHook` is invoked
-from a transition `assign`, and transition actions run before the target's entry
-actions, so `syncFrameEntry` cannot serve it. Both sites call
-`advanceFrameEntry` inline, hand the hook the advanced coordinates, and
-deliberately set no marker — the entry action that follows is then a no-op for
-that frame. On a FOR parent the frame they advance is the **bare step frame**,
-not the iteration frame: the loop has exhausted by the time the parent
-aggregation resolves, so `frameKeyForCursor` finds no active FOR context. That
-is the same derivation `runRetryHook` performs on the coordinates it receives,
-so the two agree by construction. The parent-aggregation site then assigns
-`forStack: EMPTY_FOR_STACK`, and the leaf `initForStack` that follows rebuilds
-the loop at `forClause.start` — a second, genuinely different frame, scored once
-by the entry action.
+**The two parent-retry sites are the exception.** The parent-aggregation retry
+and the FOR-iteration retry run as transition `assign`s, and transition actions
+run before the target's entry actions, so `syncFrameEntry` cannot serve them.
+Both sites call `advanceFrameEntry` inline, reset the frame's substep rows with
+`resetReopenedSubsteps` keyed on the same frame, and deliberately set no marker
+— the entry action that follows is then a no-op for that frame. On a FOR parent
+the frame they advance is the **bare step frame**, not the iteration frame: the
+loop has exhausted by the time the parent aggregation resolves, so
+`frameKeyForCursor` finds no active FOR context. The parent-aggregation site
+then assigns `forStack: EMPTY_FOR_STACK`, and the leaf `initForStack` that
+follows rebuilds the loop at `forClause.start` — a second, genuinely different
+frame, scored once by the entry action.
 
 ### Delegated Command Infrastructure Terminals
 
