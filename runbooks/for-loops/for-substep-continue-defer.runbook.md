@@ -13,11 +13,11 @@ scenarios:
     description: CONTINUE substep fails but is invisible, DEFER substep passes
     commands:
       - rd run --prompted for-substep-continue-defer.runbook.md
-      - rd fail
-      - rd pass
-      - rd fail
-      - rd pass
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd pass --token ${TOKEN} --step 1.2 --index 1
+      - rd fail --token ${TOKEN} --step 1.1 --index 2
+      - rd pass --token ${TOKEN} --step 1.2 --index 2
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

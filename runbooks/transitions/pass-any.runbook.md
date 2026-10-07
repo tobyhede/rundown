@@ -9,15 +9,15 @@ scenarios:
     description: First passes, second fails, PASS ANY fires COMPLETE
     commands:
       - rd run --prompted pass-any.runbook.md
-      - rd pass
-      - rd fail
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd fail --token ${TOKEN} --step 1.2
     result: COMPLETE
   all-fail:
     description: All substeps fail, FAIL ALL fires STOP
     commands:
       - rd run --prompted pass-any.runbook.md
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1
+      - rd fail --token ${TOKEN} --step 1.2
     result: STOP
 ---
 

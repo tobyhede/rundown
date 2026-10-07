@@ -8,9 +8,9 @@ scenarios:
     description: Iteration 1 fails (NEXT skips), iterations 2-3 pass, PASS ANY fires COMPLETE
     commands:
       - rd run --prompted for-next-at-iteration.runbook.md
-      - rd fail
-      - rd pass
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd pass --token ${TOKEN} --step 1.1 --index 2
+      - rd pass --token ${TOKEN} --step 1.1 --index 3
     result: COMPLETE
 ---
 

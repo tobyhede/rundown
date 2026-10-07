@@ -8,40 +8,40 @@ scenarios:
     description: Deployment with automatic command execution
     commands:
       - rd run deploy-service.runbook.md
-      - rd pass # 2 Announce start of deployment
-      - rd pass # 5 Announce completion of deployment
+      - rd pass --token ${TOKEN} --step 2 # 2 Announce start of deployment
+      - rd pass --token ${TOKEN} --step 5 # 5 Announce completion of deployment
     result: COMPLETE
   prompted:
     description: Deployment with prompted confirmation at each step
     commands:
       - rd run --prompted deploy-service.runbook.md
-      - rd pass  # 1.1 Verify required permissions
-      - rd pass  # 1.2 Verify environment configuration
-      - rd pass  # 1.3 Check current status
-      - rd pass  # 1.4 Create database snapshot
-      - rd pass  # 2 Announce start of deployment
-      - rd pass  # 3.1 Push deploy build
-      - rd pass  # 3.2 Migrate database
-      - rd pass  # 3.3 Restart services
-      - rd pass  # 4.1 Run smoke tests
-      - rd pass  # 4.2 Run health checks (retry 1/3)
-      - rd pass  # 4.2 Run health checks (retry 2/3)
-      - rd pass  # 4.2 Run health checks (retry 3/3)
-      - rd pass  # 4.2 CONTINUE after retries exhausted
-      - rd pass  # 5 Announce completion of deployment
+      - rd pass --token ${TOKEN} --step 1.1  # 1.1 Verify required permissions
+      - rd pass --token ${TOKEN} --step 1.2  # 1.2 Verify environment configuration
+      - rd pass --token ${TOKEN} --step 1.3  # 1.3 Check current status
+      - rd pass --token ${TOKEN} --step 1.4  # 1.4 Create database snapshot
+      - rd pass --token ${TOKEN} --step 2  # 2 Announce start of deployment
+      - rd pass --token ${TOKEN} --step 3.1  # 3.1 Push deploy build
+      - rd pass --token ${TOKEN} --step 3.2  # 3.2 Migrate database
+      - rd pass --token ${TOKEN} --step 3.3  # 3.3 Restart services
+      - rd pass --token ${TOKEN} --step 4.1  # 4.1 Run smoke tests
+      - rd pass --token ${TOKEN} --step 4.2  # 4.2 Run health checks (retry 1/3)
+      - rd pass --token ${TOKEN} --step 4.2  # 4.2 Run health checks (retry 2/3)
+      - rd pass --token ${TOKEN} --step 4.2  # 4.2 Run health checks (retry 3/3)
+      - rd pass --token ${TOKEN} --step 4.2  # 4.2 CONTINUE after retries exhausted
+      - rd pass --token ${TOKEN} --step 5  # 5 Announce completion of deployment
     result: COMPLETE
   stopped:
     description: Database migration fails, triggering rollback
     commands:
       - rd run --prompted deploy-service.runbook.md
-      - rd pass  # 1.1 Verify required permissions
-      - rd pass  # 1.2 Verify environment configuration
-      - rd pass  # 1.3 Check current status
-      - rd pass  # 1.4 Create database snapshot
-      - rd pass  # 2 Announce start of deployment
-      - rd pass  # 3.1 Push deploy build
-      - rd fail  # 3.2 Migrate database - FAIL triggers GOTO Rollback
-      - rd pass  # Rollback - PASS triggers STOP
+      - rd pass --token ${TOKEN} --step 1.1  # 1.1 Verify required permissions
+      - rd pass --token ${TOKEN} --step 1.2  # 1.2 Verify environment configuration
+      - rd pass --token ${TOKEN} --step 1.3  # 1.3 Check current status
+      - rd pass --token ${TOKEN} --step 1.4  # 1.4 Create database snapshot
+      - rd pass --token ${TOKEN} --step 2  # 2 Announce start of deployment
+      - rd pass --token ${TOKEN} --step 3.1  # 3.1 Push deploy build
+      - rd fail --token ${TOKEN} --step 3.2  # 3.2 Migrate database - FAIL triggers GOTO Rollback
+      - rd pass --token ${TOKEN} --step Rollback  # Rollback - PASS triggers STOP
     result: STOP
 ---
 

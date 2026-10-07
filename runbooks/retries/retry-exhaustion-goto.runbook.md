@@ -9,16 +9,16 @@ scenarios:
     description: Fails three times, exhausts retry, jumps to recovery step
     commands:
       - rd run --prompted retry-exhaustion-goto.runbook.md
-      - rd fail
-      - rd fail
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
   recovered:
     description: Passes on first attempt without needing recovery
     commands:
       - rd run --prompted retry-exhaustion-goto.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
     result: COMPLETE
   auto-execution:
     description: Code block auto-executes - fails three times, jumps to recovery

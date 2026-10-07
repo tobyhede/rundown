@@ -9,8 +9,8 @@ scenarios:
     description: Pass both named substeps to complete
     commands:
       - rd run --prompted dot-named-substeps.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.Prepare
+      - rd pass --token ${TOKEN} --step 1.Cleanup
     result: COMPLETE
 ---
 

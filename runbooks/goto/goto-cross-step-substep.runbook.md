@@ -9,8 +9,8 @@ scenarios:
     description: Pass substep 1.1 (GOTO 2.2), pass substep 2.2
     commands:
       - rd run --prompted goto-cross-step-substep.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 2.2
     result: COMPLETE
 ---
 

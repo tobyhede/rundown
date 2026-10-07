@@ -8,16 +8,16 @@ scenarios:
     description: Pass triggers BREAK — non-accumulating, parent sees vacuous pass → CONTINUE
     commands:
       - rd run --prompted for-iter-pass-break.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1 --index 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
   defer-fires:
     description: All fail — DEFER accumulates, parent sees failures → STOP
     commands:
       - rd run --prompted for-iter-pass-break.runbook.md
-      - rd fail
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.1 --index 2
+      - rd fail --token ${TOKEN} --step 1.1 --index 3
     result: STOP
 ---
 

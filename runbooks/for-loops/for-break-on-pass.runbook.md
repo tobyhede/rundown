@@ -8,8 +8,8 @@ scenarios:
     description: First iteration fails, second passes and breaks, step completes
     commands:
       - rd run --prompted for-break-on-pass.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd pass --token ${TOKEN} --step 1.1 --index 2
     result: COMPLETE
 ---
 

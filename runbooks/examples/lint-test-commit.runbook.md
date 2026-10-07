@@ -8,31 +8,31 @@ scenarios:
     description: Lint, Test, & Commit
     commands:
       - rd run --prompted lint-test-commit.runbook.md
-      - rd pass  # 1 Run Lint Checks - CONTINUE
-      - rd pass  # 2 Run Tests - CONTINUE
-      - rd pass  # 3 Commit - CONTINUE
+      - rd pass --token ${TOKEN} --step 1  # 1 Run Lint Checks - CONTINUE
+      - rd pass --token ${TOKEN} --step 2  # 2 Run Tests - CONTINUE
+      - rd pass --token ${TOKEN} --step 3  # 3 Commit - CONTINUE
     result: COMPLETE
   via-fix-test:
     description: Lint, Test failure with Fix, then Commit
     commands:
       - rd run --prompted lint-test-commit.runbook.md
-      - rd pass  # 1 Run Lint Checks - CONTINUE
-      - rd fail  # 2 Run Tests - GOTO FixTest
-      - rd pass  # FixTest - GOTO 2
-      - rd pass  # 2 Run Tests - CONTINUE
-      - rd pass  # 3 Commit Changes - COMPLETE
+      - rd pass --token ${TOKEN} --step 1  # 1 Run Lint Checks - CONTINUE
+      - rd fail --token ${TOKEN} --step 2  # 2 Run Tests - GOTO FixTest
+      - rd pass --token ${TOKEN} --step FixTest  # FixTest - GOTO 2
+      - rd pass --token ${TOKEN} --step 2  # 2 Run Tests - CONTINUE
+      - rd pass --token ${TOKEN} --step 3  # 3 Commit Changes - COMPLETE
     result: COMPLETE
   stopped:
     description:  Lint failure with Fix, Test failure and fix until STOP
     commands:
       - rd run --prompted lint-test-commit.runbook.md
-      - rd fail  # 1 Run Lint Checks - GOTO FixLint
-      - rd pass  # FixLint - GOTO 1
-      - rd pass  # 1 Run Lint Checks - CONTINUE
-      - rd fail  # 2 Run Tests - GOTO FixTest
-      - rd pass  # FixTest - GOTO 2
-      - rd fail  # 2 Run Tests - GOTO FixTest
-      - rd fail  # FixTest - STOP
+      - rd fail --token ${TOKEN} --step 1  # 1 Run Lint Checks - GOTO FixLint
+      - rd pass --token ${TOKEN} --step FixLint  # FixLint - GOTO 1
+      - rd pass --token ${TOKEN} --step 1  # 1 Run Lint Checks - CONTINUE
+      - rd fail --token ${TOKEN} --step 2  # 2 Run Tests - GOTO FixTest
+      - rd pass --token ${TOKEN} --step FixTest  # FixTest - GOTO 2
+      - rd fail --token ${TOKEN} --step 2  # 2 Run Tests - GOTO FixTest
+      - rd fail --token ${TOKEN} --step FixTest  # FixTest - STOP
     result: STOP
 ---
 

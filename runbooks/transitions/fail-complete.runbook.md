@@ -9,7 +9,7 @@ scenarios:
     description: Step fails, runbook completes via FAIL COMPLETE
     commands:
       - rd run --prompted fail-complete.runbook.md
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1
     result: COMPLETE
 ---
 

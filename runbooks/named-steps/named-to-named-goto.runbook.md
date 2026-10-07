@@ -10,8 +10,8 @@ scenarios:
     description: Pass Setup (GOTO Finish), pass Finish
     commands:
       - rd run --prompted named-to-named-goto.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step Setup
+      - rd pass --token ${TOKEN} --step Finish
     result: COMPLETE
 ---
 

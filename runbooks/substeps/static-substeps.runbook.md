@@ -7,8 +7,8 @@ scenarios:
     description: Tests completing all static substeps in sequence
     commands:
       - rd run --prompted static-substeps.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.2
     result: COMPLETE
 tags:
   - substeps

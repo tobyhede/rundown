@@ -9,8 +9,8 @@ scenarios:
     description: Pass substep 1.1 (GOTO 1.Cleanup), pass 1.Cleanup
     commands:
       - rd run --prompted goto-named-substep.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.Cleanup
     result: COMPLETE
 ---
 

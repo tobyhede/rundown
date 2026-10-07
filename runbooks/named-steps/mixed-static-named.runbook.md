@@ -10,19 +10,19 @@ scenarios:
     description: All steps pass, completing normally
     commands:
       - rd run --prompted mixed-static-named.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
+      - rd pass --token ${TOKEN} --step 3
     result: COMPLETE
 
   error-handled:
     description: Step 3 fails, GOTOs to ErrorHandler which stops
     commands:
       - rd run --prompted mixed-static-named.runbook.md
-      - rd pass
-      - rd pass
-      - rd fail
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
+      - rd fail --token ${TOKEN} --step 3
+      - rd pass --token ${TOKEN} --step ErrorHandler
     result: STOP
 ---
 

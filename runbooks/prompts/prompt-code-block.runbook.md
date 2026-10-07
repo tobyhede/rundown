@@ -6,8 +6,8 @@ scenarios:
   basic:
     commands:
       - rd run --prompted prompt-code-block.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 tags:
   - prompts

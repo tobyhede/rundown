@@ -6,13 +6,13 @@ scenarios:
     commands:
       - rd run --prompted for-next-no-accumulation.runbook.md
       # Iter 1: PASS → NEXT (no accumulation)
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1 --index 1
       # Iter 2: FAIL → NEXT (no accumulation)
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 2
       # Iter 3 (last): PASS → NEXT → exit to aggregation
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1 --index 3
       # Step 2: PASS → COMPLETE
-      - rd pass
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 # NEXT Non-Accumulation

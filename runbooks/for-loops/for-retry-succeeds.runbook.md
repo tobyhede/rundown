@@ -6,13 +6,13 @@ scenarios:
     commands:
       - rd run --prompted for-retry-succeeds.runbook.md
       # Iter 1 attempt 1: sub1 FAIL (DEFER), sub2 FAIL (BREAK) → retry fires
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.2 --index 1
       # Iter 1 attempt 2 (retry): sub1 PASS (DEFER), sub2 PASS (DEFER) → pass → DEFER accumulates
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1 --index 1
+      - rd pass --token ${TOKEN} --step 1.2 --index 1
       # Iter 2: sub1 PASS, sub2 PASS → pass → DEFER accumulates
-      - rd pass
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 # RETRY Succeeds — No BREAK

@@ -9,7 +9,7 @@ scenarios:
     description: Step passes, COMPLETE fires with message
     commands:
       - rd run --prompted action-messages.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
     result: COMPLETE
 ---
 
