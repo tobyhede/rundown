@@ -2,22 +2,16 @@ import { jest, expect, describe, it, beforeEach } from '@jest/globals';
 import type { HookInput } from '../../src/shared/index.js';
 import type { handleDelegationDispatch } from '../../src/workflow/hooks/delegation-dispatch.js';
 
+// The handler is mocked so this file pins the gate's PLUMBING (how a handler
+// result maps onto a GateResult). The real handler is inert today; its allow
+// behaviour is pinned end-to-end in workflow/hooks/inert-hooks.test.ts and the
+// dispatch contract tests.
 const mockHandleDelegationDispatch = jest.fn() as jest.MockedFunction<
   typeof handleDelegationDispatch
 >;
 
-// Real DelegationTokenRecordingError so the gate's `instanceof` check holds; the
-// handler itself is mocked.
-class DelegationTokenRecordingError extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
-    super(message, options);
-    this.name = 'DelegationTokenRecordingError';
-  }
-}
-
 jest.unstable_mockModule('../../src/workflow/hooks/delegation-dispatch.js', () => ({
   handleDelegationDispatch: mockHandleDelegationDispatch,
-  DelegationTokenRecordingError,
 }));
 
 const { execute } = await import('../../src/gates/on-delegation-dispatch.js');
@@ -27,7 +21,7 @@ describe('on-delegation-dispatch gate', () => {
     jest.clearAllMocks();
   });
 
-  it('returns empty result when handler returns empty', async () => {
+  it('returns the inert allow (strictly empty) when the handler returns empty', async () => {
     mockHandleDelegationDispatch.mockResolvedValue({});
 
     const input: HookInput = {
@@ -37,12 +31,14 @@ describe('on-delegation-dispatch gate', () => {
     };
 
     const result = await execute(input);
-    expect(result).toEqual({});
+    // toStrictEqual so an `{ additionalContext: undefined }` leak is caught.
+    expect(result).toStrictEqual({});
+    expect(result).not.toHaveProperty('decision');
   });
 
   it('returns additionalContext when handler returns context', async () => {
     mockHandleDelegationDispatch.mockResolvedValue({
-      context: '## Delegation Context\nrundown claim rdtk_ABC123',
+      context: '## Delegation Context\nrundown claim rdt_ABC123',
     });
 
     const input: HookInput = {
@@ -53,7 +49,7 @@ describe('on-delegation-dispatch gate', () => {
 
     const result = await execute(input);
     expect(result).toEqual({
-      additionalContext: '## Delegation Context\nrundown claim rdtk_ABC123',
+      additionalContext: '## Delegation Context\nrundown claim rdt_ABC123',
     });
   });
 
@@ -67,13 +63,13 @@ describe('on-delegation-dispatch gate', () => {
     };
 
     const result = await execute(input);
-    expect(result).toEqual({});
+    expect(result).toStrictEqual({});
     expect(mockHandleDelegationDispatch).toHaveBeenCalledWith(input);
   });
 
   it('returns block decision when handler returns violation', async () => {
     mockHandleDelegationDispatch.mockResolvedValue({
-      violation: 'Token expired',
+      violation: 'Ticket cancelled',
     });
 
     const input: HookInput = {
@@ -85,29 +81,11 @@ describe('on-delegation-dispatch gate', () => {
     const result = await execute(input);
     expect(result).toEqual({
       decision: 'block',
-      reason: 'Token expired',
+      reason: 'Ticket cancelled',
     });
   });
 
-  it('fails CLOSED with a block when handler throws DelegationTokenRecordingError', async () => {
-    mockHandleDelegationDispatch.mockRejectedValue(
-      new DelegationTokenRecordingError('Failed to record delegation token in session metadata'),
-    );
-
-    const input: HookInput = {
-      hook_event_name: 'PreToolUse',
-      cwd: '/test',
-      tool_name: 'Task',
-    };
-
-    const result = await execute(input);
-    expect(result).toMatchObject({
-      decision: 'block',
-      reason: expect.stringMatching(/record the delegation token|session state|retry/i),
-    });
-  });
-
-  it('propagates non-recording errors to the dispatcher fail-open backstop', async () => {
+  it('propagates handler errors to the dispatcher fail-open backstop', async () => {
     mockHandleDelegationDispatch.mockRejectedValue(new Error('unexpected'));
 
     const input: HookInput = {

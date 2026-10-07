@@ -1,11 +1,5 @@
 // packages/claude-code-plugin/__tests__/schemas.test.ts
-import {
-  DelegationActiveTokenMetadataSchema,
-  DelegationActiveTokensMetadataSchema,
-  HookInputSchema,
-  parseHookInput,
-  SessionStateSchema,
-} from '../src/shared/index.js';
+import { HookInputSchema, parseHookInput, SessionStateSchema } from '../src/shared/index.js';
 
 describe('HookInputSchema', () => {
   it('parses valid minimal input', () => {
@@ -148,46 +142,6 @@ describe('HookInputSchema', () => {
       // Unknown fields pass through
       expect((result.data.tool_input as Record<string, unknown>).command).toBe('echo hello');
     }
-  });
-});
-
-describe('DelegationActiveTokenMetadataSchema', () => {
-  const validMetadata = {
-    kind: 'delegation-active-token',
-    agent_id: 'agent-a',
-    session_id: 'session-a',
-    tokenHash: `sha256:${'a'.repeat(64)}`,
-    createdAt: '2026-04-28T00:00:00.000Z',
-  };
-
-  it('rejects legacy raw token fields', () => {
-    expect(
-      DelegationActiveTokenMetadataSchema.safeParse({
-        ...validMetadata,
-        token: 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567',
-      }).success,
-    ).toBe(false);
-  });
-
-  it.each([
-    ['uppercase hex', `sha256:${'A'.repeat(64)}`],
-    ['missing prefix', 'a'.repeat(64)],
-    ['too short', `sha256:${'a'.repeat(63)}`],
-  ])('rejects non-canonical tokenHash: %s', (_label, tokenHash) => {
-    expect(
-      DelegationActiveTokenMetadataSchema.safeParse({
-        ...validMetadata,
-        tokenHash,
-      }).success,
-    ).toBe(false);
-  });
-
-  it('rejects maps where the key does not match agent_id', () => {
-    expect(
-      DelegationActiveTokensMetadataSchema.safeParse({
-        'agent-b': validMetadata,
-      }).success,
-    ).toBe(false);
   });
 });
 

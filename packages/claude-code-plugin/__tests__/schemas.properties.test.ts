@@ -2,7 +2,6 @@
 import fc from 'fast-check';
 import {
   HookInputSchema,
-  ParentLinkageSchema,
   RunbookPositionBodySchema,
   RunbookStepBodySchema,
   SessionStateSchema,
@@ -10,29 +9,6 @@ import {
 } from '../src/shared/index.js';
 
 describe('Schema Property Tests', () => {
-  const hexChars = [
-    '0',
-    '1',
-    '2',
-    '3',
-    '4',
-    '5',
-    '6',
-    '7',
-    '8',
-    '9',
-    'a',
-    'b',
-    'c',
-    'd',
-    'e',
-    'f',
-  ] as const;
-
-  const tokenHashArb = fc
-    .array(fc.constantFrom(...hexChars), { minLength: 64, maxLength: 64 })
-    .map((chars) => `sha256:${chars.join('')}`);
-
   describe('HookInputSchema', () => {
     // Generator for valid hook event names
     const hookEventArb = fc.constantFrom(
@@ -270,73 +246,6 @@ describe('Schema Property Tests', () => {
           expect(RunbookStepBodySchema.safeParse(input).success).toBe(false);
         }),
         { numRuns: 100 },
-      );
-    });
-  });
-
-  describe('ParentLinkageSchema', () => {
-    const delegationLinkageArb = fc.record({
-      kind: fc.constant('delegation' as const),
-      tokenHash: tokenHashArb,
-      parentRunId: fc.string({ minLength: 1, maxLength: 16 }),
-      parentStepId: fc.string({ minLength: 1, maxLength: 10 }),
-      parentStep: fc.option(fc.string({ minLength: 1, maxLength: 10 }), { nil: undefined }),
-    });
-
-    const inlineLinkageArb = fc.record({
-      kind: fc.constant('inline' as const),
-      parentRunId: fc.string({ minLength: 1, maxLength: 16 }),
-      parentStepId: fc.string({ minLength: 1, maxLength: 10 }),
-      parentStep: fc.option(fc.string({ minLength: 1, maxLength: 10 }), { nil: undefined }),
-    });
-
-    it('accepts valid delegation linkage with tokenHash', () => {
-      fc.assert(
-        fc.property(delegationLinkageArb, (input) => {
-          expect(ParentLinkageSchema.safeParse(input).success).toBe(true);
-        }),
-        { numRuns: 100 },
-      );
-    });
-
-    it('accepts valid inline linkage without tokenHash', () => {
-      fc.assert(
-        fc.property(inlineLinkageArb, (input) => {
-          expect(ParentLinkageSchema.safeParse(input).success).toBe(true);
-        }),
-        { numRuns: 100 },
-      );
-    });
-
-    it('rejects delegation linkage missing tokenHash', () => {
-      const invalidArb = fc.record({
-        kind: fc.constant('delegation' as const),
-        parentRunId: fc.string({ minLength: 1, maxLength: 16 }),
-        parentStepId: fc.string({ minLength: 1, maxLength: 10 }),
-      });
-
-      fc.assert(
-        fc.property(invalidArb, (input) => {
-          expect(ParentLinkageSchema.safeParse(input).success).toBe(false);
-        }),
-        { numRuns: 50 },
-      );
-    });
-
-    it('rejects unknown kinds', () => {
-      const invalidArb = fc.record({
-        kind: fc
-          .string({ minLength: 1, maxLength: 20 })
-          .filter((k) => k !== 'delegation' && k !== 'inline'),
-        parentRunId: fc.string({ minLength: 1, maxLength: 16 }),
-        parentStepId: fc.string({ minLength: 1, maxLength: 10 }),
-      });
-
-      fc.assert(
-        fc.property(invalidArb, (input) => {
-          expect(ParentLinkageSchema.safeParse(input).success).toBe(false);
-        }),
-        { numRuns: 50 },
       );
     });
   });
