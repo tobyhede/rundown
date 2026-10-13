@@ -628,8 +628,7 @@ Runbook:  STOP
 
 ## goto
 
-`goto` requires `--token <owner_token>` and takes no `--step`. It is
-additionally gated behind the `run-navigation` policy intent.
+`goto` requires `--token <owner_token>` and takes no `--step`.
 
 ### `rundown goto <step> --token <owner_token>`
 
