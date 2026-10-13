@@ -20,7 +20,8 @@
  *   node scripts/measure-size.mjs --enforce    exit 1 when a total exceeds its gate
  *   --root <dir> / --allowlist <file>          override the repo root / allowlist (tests)
  *
- * `--enforce` is not yet part of `verify`; #908 wires it in.
+ * `verify` runs `--enforce` (`check:size:enforce`), so exceeding either gate fails
+ * the build; per ADR 0005 that triggers a design review, not a higher limit.
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
