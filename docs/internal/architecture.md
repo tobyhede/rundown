@@ -182,12 +182,24 @@ ordering means ARTIFACTS templates may reference the loop variable for the
 current iteration.
 
 After `__resolve-artifacts` (or `__resolve-iteration`, or directly) every leaf
-rests in `idle`. A DELEGATE or runbook-list substep compiles to the same leaf as
-any other: there is no issuance or launch-intent child and no completion
-mailbox, and its PASS/FAIL is sent directly by the lifecycle seam after `--step`
-validation. Core refuses to create a run of such a runbook
+rests in `idle`. An **inline runbook-list substep** (one runbook, no `DELEGATE`;
+#903) passes through one more child on that entry path: the transient
+`__reserve-child`, whose entry action records the substep's Current Child —
+`{ kind: 'inline', runId, entry, runbook, contextSnapshot }` on its
+`substepStates` entry (`reserveInlineChild`, `inline-child.ts`) — and leaves for
+`idle` in the same macrostep. It sits after iteration and ARTIFACTS resolution
+so the snapshot carries the resolved iteration binding, and only the entry path
+targets it, so the progression round-trips through `idle` never reserve again.
+`entry` is the frame entry `syncFrameEntry` just made current; the run id comes
+from the compile-time `generateChildRunId` callable. A loop iteration, `GOTO` or
+`RETRY` re-enters the leaf and reserves afresh, so an older reservation is stale
+by construction. The same leaf handles `CHILD_RESULT` in `idle` — the implicit
+Collect — only for its Current Child (guarded on run id and active entry): it
+merges the child's final variables (`storeCapturedVariables`) and raises the
+substep's own `PASS` or `FAIL`. A DELEGATE substep still compiles to the
+ordinary leaf; core refuses to create a run of such a runbook
 (`RUNBOOK_COMPOSITION_UNSUPPORTED`; see
-[§ Lifecycle Command Seam](#lifecycle-command-seam)).
+[§ Lifecycle Command Seam](#lifecycle-command-seam)) until #904.
 
 Two further children serve the machine-selected Run Progression turn:
 `__progression-waiting-input` emits the typed `waiting` intent and
@@ -444,8 +456,10 @@ events for stdout/stderr (and for the MCP server when it is the front end):
 `RunbookActorService.enterExecutionUnit`. Every frontend enters a unit that way
 through Run Progression's machine-owned entry states, so the payload cannot vary
 with the command that produced it. The seam also classifies the entry, returning
-`awaiting` / `runnable`; the rendered command travels only on the `runnable`
-arm, inside a nominally branded record the module is the sole producer of.
+`awaiting` / `runnable` / `inline_child`; the rendered command travels only on
+the `runnable` arm, inside a nominally branded record the module is the sole
+producer of, and the `inline_child` arm carries the substep's current
+reservation (`currentInlineReservation`).
 
 The narrowing layer between snapshot context and observer events uses the typed
 `lastAction` discriminant convention — never `lastMessage` string parsing.
@@ -478,13 +492,34 @@ nothing else. The plaintext token appears in exactly one place, the
 `runbook_started` event, and never in a message, a row, or a refusal.
 
 The same module holds `findUnsupportedComposition(steps)`, the decision behind
-`RUNBOOK_COMPOSITION_UNSUPPORTED`. `RunbookStateManager.create` applies it
-before minting a run id or writing a row, throwing
-`RunbookCompositionUnsupportedError` for a runbook whose substeps are authored
-`DELEGATE` or carry a runbook list, until inline composition (#903) and
-delegation (#904) return on this model. Every front end that creates a run is
-refused the same way; the CLI only renders the ids core names, and
-`rundown check` warns from the same predicate.
+`RUNBOOK_COMPOSITION_UNSUPPORTED`. `RunbookStateManager.create` and
+`createInlineChild` apply it before writing a row, throwing
+`RunbookCompositionUnsupportedError` for a runbook with a `DELEGATE` substep
+(until #904) or an inline substep listing more than one runbook. Every front end
+that creates a run, and every inline launch, is refused the same way; the CLI
+only renders the ids core names, and `rundown check` warns from the same
+predicate.
+
+### The command's target: the deepest running Inline Child
+
+A mutating command does not act on the token's run directly.
+`RunbookLifecycleCommandService.resolveCommandTarget(token, settle)` resolves
+the token to its root with `resolveOwnedRun`, then descends: while the run's
+cursor rests on an inline substep whose Current Child row exists and is running,
+it moves to that child. The deepest running run is the target, so `--step` then
+names a step of the child, and an `invalid_step_target` against an inline child
+names the child and its parent. If the descent finds a Current Child that is
+**terminal** — its parent's command died before the implicit Collect — it calls
+the frontend's `settle` callable (the CLI's standard Run Progression activation)
+on that parent first, with the `collect_inline_child` entry boundary: the
+activation commits only the Collect — no command turn, no launch, no ascent —
+and then the descent starts again from the root, one level per pass up an
+uncollected chain. The owner's command applies at the resulting position; a
+`pass` on a command step the Collect left owed is refused `EXECUTION_PENDING`. A
+Collect that could not land refuses the command as `settle_refused`, unless the
+run no longer owes it (another command moved it), which leaves a target to act
+on. The descent never follows a stale child: only the reservation of the active
+frame entry counts.
 
 ### What the seam does
 
@@ -504,8 +539,9 @@ seam does not spawn processes, render, or retry.
 - `runTerminal({ command, run, message? })` — the same shape for
   `FORCE_COMPLETE` / `FORCE_STOP`, returning
   `applied { lifecycle, events, progression }`. `progression` is core's answer
-  to whether composition owes a further turn; with composition refused at
-  `rundown run`, it is always `none`.
+  to whether composition owes a further turn
+  (`progressionDirectiveForTerminalRun`): `activate` at the observed terminal
+  when the run is an Inline Child, so its parent Collects it; otherwise `none`.
 - `resolveRunNavigation({ run })` → `allowed` with an opaque
   `LifecycleNavigationCapability` binding authority, graph and the versioned
   state together; `runNavigationMutation({ navigation, target })` applies the
@@ -556,15 +592,51 @@ activation from re-announcing a terminal the seam already rendered.
 
 The command callable stays a Category-C dependency injected into
 `RunbookActorService` (`commandServices`) and reaches the machine through
-`compileRunbookToMachine`; the activation itself takes only
-`{ manager, actorService, loadSteps, sink }`.
+`compileRunbookToMachine`; the activation itself takes
+`{ manager, actorService, loadSteps, sink }` plus, for composition, the
+frontend's `prepareInlineChild` and a per-run `sinkFor`.
+
+### Inline Children in Run Progression
+
+An `inline_child` entry makes the activation drive a second run
+(`driveInlineChild`, `run-progression.ts`; launch helpers in
+`inline-progression.ts`):
+
+- **Launch.** If no row carries the reserved id, the parent's unit entry is
+  announced (once, here), the frontend's `PrepareInlineChild` prepares the child
+  runbook from the reservation (Category C: discovery, file IO, variable
+  resolution under policy, inheriting the context snapshot), and core creates
+  the row with `RunbookStateManager.createInlineChild` — inline linkage, no
+  Owner Token hash — initialises its machine and emits its `RUNBOOK_STARTED` (no
+  token) through the child's own sink. A refused preparation, a delegating child
+  or nesting past `MAX_INLINE_CHILD_DEPTH` (32) is the
+  `inline_child_launch_failed` refusal; the parent rests on the substep.
+- **Descend.** While the child runs, the activation drives it with its own
+  authority (minted in core: the parent's token authorizes it), recursively. A
+  child that waits or refuses ends the activation where it rests.
+- **Collect.** Once the child is terminal, the parent commits one `CHILD_RESULT`
+  (`childResultEvent`: the Child Result read from the child's row and its
+  `finalVars`) through `commitRunProgressionEvent` at the version the parent was
+  read at, reports the parent's transition, and continues the parent's loop.
+- **Ascend.** An activation that started on an Inline Child (after the owner's
+  `pass` on its last step, say) does not stop at the child's terminal:
+  `driveProgression` drives the parent that still counts it
+  (`inlineParentCounting`), whose inline entry finds the terminal child and
+  Collects it, level by level up the chain.
+
+Both rows are written only by the parent owner's command; the child never writes
+its parent. The parent holds no execution lease while its child runs — the
+child's command turns lease the child row — and the Collect is the parent's own
+conditional write.
 
 ### Guards do no cross-run IO or policy
 
-Nothing in the seam or the activation reads another run. XState guards express
-per-run domain conditions; ownership, `--step` confirmation and the version
-check all happen at the seam boundary, which is what lets the state machine
-remain a pure per-run program.
+No machine guard reads another run. XState guards express per-run domain
+conditions — the `CHILD_RESULT` guard compares the event's child id with the
+reservation in the machine's own context; ownership, the inline descent,
+`--step` confirmation and the version check all happen at the seam and
+activation boundaries, which read child rows from the store. That is what lets
+the state machine remain a pure per-run program.
 
 ### Lifecycle write diagnostics
 
@@ -649,8 +721,8 @@ a documented mistake:
 
 | Version                      | Governs                                                                            | Where it lives         | Rule                                                |
 | ---------------------------- | ---------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------- |
-| SQLite storage schema        | The whole database — the DDL of the `runs` table and its triggers                  | `PRAGMA user_version`  | Must equal `SCHEMA_VERSION` (currently `4`)         |
-| `RunbookState.schemaVersion` | One run's structured state fields and its opaque `snapshot` blob, and nothing else | The row's `state_json` | Must equal `CURRENT_SCHEMA_VERSION` (currently `3`) |
+| SQLite storage schema        | The whole database — the DDL of the `runs` table and its triggers                  | `PRAGMA user_version`  | Must equal `SCHEMA_VERSION` (currently `6`)         |
+| `RunbookState.schemaVersion` | One run's structured state fields and its opaque `snapshot` blob, and nothing else | The row's `state_json` | Must equal `CURRENT_SCHEMA_VERSION` (currently `4`) |
 
 A wrong storage version invalidates the whole database (`RD-305`); a wrong
 `RunbookState.schemaVersion` invalidates **only that run** (`RD-309`). The two

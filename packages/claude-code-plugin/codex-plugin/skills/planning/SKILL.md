@@ -8,12 +8,10 @@ use_when: Driving a body of work from a spec through to merged implementation.
 
 <important>
 ## Runbook-Orchestrated Skill — pipeline not available in this build
-The `planning` runbook composes the `write-plan`, `review-plan`, and
-`execute-plan` runbooks, and this build runs standalone runbooks only:
+The `planning` runbook composes the `write-plan`, `review-plan`, and `execute-plan` runbooks, and its first stage is `- DELEGATE`, which this build does not run:
 `rundown run rundown:planning` is refused with
-`RUNBOOK_COMPOSITION_UNSUPPORTED` and creates no run. `review-plan` and
-`execute-plan` compose other runbooks too and are refused the same way. Inline
-composition returns in #903 and delegation in #904.
+`RUNBOOK_COMPOSITION_UNSUPPORTED` and creates no run. `review-plan` and `execute-plan` delegate too and are refused the same way. Inline
+composition (a substep listing one runbook, without `- DELEGATE`) runs; delegation returns in #904.
 
 What runs today is stage 1 on its own, `write-plan`, a standalone runbook:
 

@@ -310,6 +310,51 @@ See [Execution in progress](#execution-in-progress) and
 [Execution interrupted](#execution-interrupted) for the refusals each condition
 produces.
 
+### Child runs
+
+An Inline Child (#903) is a run with its own id and its own row, so it appears
+in the run list like any run. Each child carries `parent` — in its list entry
+and in its `--run` detail — and a run whose current step composes a child
+carries `child` in its `--run` detail. Following `parent` from any child reaches
+the root, whose Owner Token drives the whole chain. Neither field ever carries a
+token.
+
+```json
+{
+  "id": "rd_6d2c64e0c61fd41fb0a02f3a91c43f40",
+  "runbook": ".rundown/runbooks/child.runbook.md",
+  "status": "running",
+  "step": "Check",
+  "total": 0,
+  "parent": {
+    "runId": "rd_f9d07121b3784ffcefa3579c4e887f1f",
+    "step": "1.2",
+    "kind": "inline"
+  }
+}
+```
+
+```json
+{
+  "child": {
+    "runId": "rd_6d2c64e0c61fd41fb0a02f3a91c43f40",
+    "kind": "inline",
+    "status": "running"
+  }
+}
+```
+
+| Field          | Meaning                                                                                                                       |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `parent.runId` | The parent run                                                                                                                |
+| `parent.step`  | The parent substep (`step.substep`) the child runs for                                                                        |
+| `parent.kind`  | `inline` — the parent's Owner Token drives the child                                                                          |
+| `child.runId`  | The child the run's current step counts; a child from an earlier entry into the step (a loop, `GOTO` or `RETRY`) is not shown |
+| `child.status` | The child's lifecycle (`running`, `completed`, `stopped`), or `reserved` before its run exists                                |
+
+The text forms add a `PARENT` column to the list and `Parent:` / `Child:` lines
+to the detail.
+
 ### `rundown status --run <rd_…>`
 
 **Text:**
@@ -489,8 +534,38 @@ Runtime command text is rendered once per execution. The exact rendered string
 is reused for the flattened `step_entered.commandCode` field and actual command
 execution.
 
-A runbook whose steps compose other runbooks (runbook-list or `DELEGATE`
-substeps) is refused before any run is created; see
+#### Inline children
+
+A runbook-list substep without `DELEGATE` launches an Inline Child (#903). The
+stream then carries several runs' events, each under its own `runbookId` and
+`runbook`, in order: the parent's `step_entered` for the substep, the child's
+`runbook_started` — which carries **no** `owner_token`, because the parent's
+token drives the child — and the child's own events. When the child reaches a
+terminal, its `runbook_completed` / `runbook_stopped` is followed by the
+parent's `step_transitioned` for the substep, and the parent's progression
+continues. A child's terminal is not the command's exit status: where the run
+the token belongs to rests is. A `stop` / `complete` aimed at the child still
+ends with its action object naming the child (see [stop](#stop)). If the stream
+rests at a child's `step_entered`, the next `pass` / `fail --step` names that
+child's step.
+
+```jsonl
+{"type":"step_entered","position":{"current":"1","total":2,"substep":"1"},"stepName":"1","description":"Runbook: child.runbook.md","hasCommand":false,"isSubstep":true,"prompted":false,"artifacts":{},"runbookId":"rd_f9d07121b3784ffcefa3579c4e887f1f","runbook":{"source":"project","path":"parent.runbook.md"},"seq":2}
+{"type":"runbook_started","title":"Child","prompted":false,"runbookId":"rd_aab57a8fba1dd497f707f9a216cf2caf","runbook":{"source":"project","path":".rundown/runbooks/child.runbook.md"},"seq":1}
+{"type":"runbook_completed","finalPosition":{"current":"1","total":1},"runbookId":"rd_aab57a8fba1dd497f707f9a216cf2caf","runbook":{"source":"project","path":".rundown/runbooks/child.runbook.md"},"seq":6}
+{"type":"step_transitioned","action":"CONTINUE","from":"1.1","at":"2","result":"PASS","aggregated":true,"runbookId":"rd_f9d07121b3784ffcefa3579c4e887f1f","runbook":{"source":"project","path":"parent.runbook.md"},"seq":3}
+```
+
+(`timestamp` omitted, and the child's step events elided, for brevity.)
+
+An inline child that cannot be launched leaves the parent resting on the
+substep, with an `error_occurred` on the parent carrying the reason's code — the
+child preparation's own (`RUNBOOK_NOT_FOUND`, `MISSING_REQUIRED_VARS`, …),
+`RUNBOOK_COMPOSITION_UNSUPPORTED` for a child that delegates, or
+`INLINE_CHILD_LAUNCH_FAILED` — and the command exits non-zero.
+
+A runbook with a `DELEGATE` substep, or an inline substep listing more than one
+runbook, is refused before any run is created; see
 [Runbook composition unsupported](#runbook-composition-unsupported).
 
 ### `STEP_ENTERED` with artifacts
@@ -716,6 +791,15 @@ A target that does not exist is refused:
 Uses `action: "stop"` (command-name action). Stopping is a failure terminal: it
 exits non-zero after successfully stopping the run.
 
+While an inline child runs, the token targets the deepest running child, so
+`stop` and `complete` act on it: the child's `runbook_stopped` /
+`runbook_completed` streams under the child's `runbookId`, the parent's
+progression events follow (see [Inline children](#inline-children)), and the
+action object is still the last line, with `runId` naming the child and
+`message` the operator's message. The exit code follows where the parent's
+progression rests, not the child's terminal: a stopped child the parent Collects
+as FAIL and continues past exits 0; one whose parent stops exits non-zero.
+
 Force-terminal commands emit the same terminal observation events as non-force
 transitions: `runbook_completed` for complete and `runbook_stopped` for stop.
 The streamed observations precede the final command-name action object, so parse
@@ -794,6 +878,12 @@ The lifecycle filters (`--completed`, `--stopped`, `--inactive`, `--active`,
 only when `--token <owner_token>` names it, one run per invocation; `--active`
 or `--all` without a token keeps each running run and reports it with
 `retained: "token required"`.
+
+A deleted run's inline children are deleted with it and listed as rows of their
+own. Two more `retained` reasons apply to finished runs: `"parent running"` for
+an inline child whose parent is still running (it goes only with its parent),
+and `"execution in progress"` for a run with an attempt In Progress anywhere in
+its inline chain.
 
 ### `rundown prune --dry-run`
 
@@ -1152,7 +1242,8 @@ wins: `--run` alongside `--token` (`INVALID_SYNTAX`), then a missing `--token`
 (`TOKEN_REQUIRED`), then a malformed token (`INVALID_SYNTAX`), then a token no
 run carries (`UNKNOWN_TOKEN`), then a finished run (`RD-303` / `RD-304`), then
 the execution lease (`EXECUTION_IN_PROGRESS` / `EXECUTION_INTERRUPTED`), then —
-for `pass` and `fail` — the step (`INVALID_STEP`), and last the conditional save
+for `pass` and `fail` — the step (`INVALID_STEP`), then — for `pass` — a step
+whose command has not run (`EXECUTION_PENDING`), and last the conditional save
 (`CONCURRENT_MODIFICATION`). Nothing is written on any of these refusals.
 
 ### Token required
@@ -1274,7 +1365,10 @@ Code: RD-303
 
 `pass` and `fail` require `--step` naming the run's current position. A bare
 command, or a `--step` that names any other position, is refused and the message
-names the current position.
+names the current position. While an inline child runs, the position is the
+deepest running child's: a `--step` naming the parent's step is refused, and the
+message names the child
+(`… The Owner Token is driving inline child rd_… (child.runbook.md) of run rd_… at 1.1; while it runs, --step names a step of the child`).
 
 **Text:**
 
@@ -1305,14 +1399,15 @@ Code: INVALID_STEP
 
 ### Runbook composition unsupported
 
-`rundown run` refuses a runbook whose steps compose other runbooks (runbook-list
-or `DELEGATE` substeps). No run is created. `details.substeps` names every
-composing substep.
+`rundown run` refuses a runbook with a `DELEGATE` substep (delegation returns in
+#904) or an inline substep listing more than one runbook. No run is created.
+`details.substeps` names every such substep. A single-runbook inline substep
+runs (see [Inline children](#inline-children)).
 
 **Text:**
 
 ```text
-Error: Runbook composes other runbooks at 1.1; this build runs standalone runbooks only. Inline composition returns in #903 and delegation in #904.
+Error: Runbook composes other runbooks at 1.1 in a form this build does not run (a DELEGATE substep, or an inline substep listing more than one runbook). Delegation returns in #904.
 Code: RUNBOOK_COMPOSITION_UNSUPPORTED
 ```
 
@@ -1320,7 +1415,7 @@ Code: RUNBOOK_COMPOSITION_UNSUPPORTED
 
 ```json
 {
-  "error": "Runbook composes other runbooks at 1.1; this build runs standalone runbooks only. Inline composition returns in #903 and delegation in #904.",
+  "error": "Runbook composes other runbooks at 1.1 in a form this build does not run (a DELEGATE substep, or an inline substep listing more than one runbook). Delegation returns in #904.",
   "kind": "error",
   "code": "RUNBOOK_COMPOSITION_UNSUPPORTED",
   "command": "run",
@@ -1471,6 +1566,38 @@ Code: EXECUTION_INTERRUPTED
     "attempt": 2,
     "pid": 4242,
     "startedAt": "2026-10-13T12:00:00.000Z"
+  }
+}
+```
+
+### Execution pending
+
+`pass` named a step whose command Run Progression owes but never ran: the
+command that entered the step ended before running it (the process died after
+its commit, or the step was reached by Collecting an inline child a crashed
+command left uncollected). No lease is held, so nothing is in flight. Rundown
+does not pass a command that never ran, and nothing is written. `goto` onto the
+step re-enters it and runs the command; `fail --step` (the step's FAIL handler)
+or `stop` decides it without running it.
+
+**Text:**
+
+```text
+Error: Step 2 of run rd_0123456789abcdef0123456789abcdef has a command that has not run: the command that entered the step ended before running it. Rundown does not pass a command that never ran, and nothing was written. Run it with `rundown goto 2 --token <owner_token>`, or decide explicitly with `rundown fail --step 2 --token <owner_token>` or `rundown stop --token <owner_token>`.
+Code: EXECUTION_PENDING
+```
+
+**JSON:**
+
+```json
+{
+  "error": "Step 2 of run rd_0123456789abcdef0123456789abcdef has a command that has not run: the command that entered the step ended before running it. Rundown does not pass a command that never ran, and nothing was written. Run it with `rundown goto 2 --token <owner_token>`, or decide explicitly with `rundown fail --step 2 --token <owner_token>` or `rundown stop --token <owner_token>`.",
+  "kind": "error",
+  "code": "EXECUTION_PENDING",
+  "command": "pass",
+  "details": {
+    "runId": "rd_0123456789abcdef0123456789abcdef",
+    "step": "2"
   }
 }
 ```

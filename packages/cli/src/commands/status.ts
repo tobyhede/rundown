@@ -1,11 +1,20 @@
 // packages/cli/src/commands/status.ts
 
 import type { Command } from 'commander';
-import { classifyExecutionLease, RunbookStateManager } from '@rundown-org/core';
+import {
+  classifyExecutionLease,
+  currentInlineReservation,
+  RunbookStateManager,
+  type CurrentChildStatus,
+} from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { buildRunListStatus, buildRunStatus } from '../helpers/status-builder.js';
+import {
+  buildParentStatus,
+  buildRunListStatus,
+  buildRunStatus,
+} from '../helpers/status-builder.js';
 import { parseRunOption } from '../helpers/run-option.js';
 
 /**
@@ -48,8 +57,24 @@ export function registerStatusCommand(program: Command): void {
               loaded.lease === null
                 ? undefined
                 : classifyExecutionLease(loaded.state.id, loaded.lease);
+            // The chain around this run (#903): its parent, and the Current
+            // Child its step counts. Run ids and lifecycles only.
+            const parent = buildParentStatus(loaded.linkage);
+            const reservation = currentInlineReservation(loaded.state);
+            let child: CurrentChildStatus | undefined;
+            if (reservation !== undefined) {
+              const childState = await manager.load(reservation.runId);
+              child = {
+                runId: reservation.runId,
+                kind: reservation.kind,
+                status: childState === null ? 'reserved' : (childState.lifecycle ?? 'running'),
+              };
+            }
             output.detail(
-              buildRunStatus(loaded.state, cwd, condition) as unknown as Record<string, unknown>,
+              buildRunStatus(loaded.state, cwd, condition, {
+                ...(parent !== undefined ? { parent } : {}),
+                ...(child !== undefined ? { child } : {}),
+              }) as unknown as Record<string, unknown>,
               'status',
             );
             output.flush();
@@ -71,8 +96,14 @@ export function registerStatusCommand(program: Command): void {
                   ],
             ),
           );
+          const parents = new Map(
+            runs.flatMap((listed) => {
+              const parent = buildParentStatus(listed.linkage);
+              return parent === undefined ? [] : [[listed.state.id, parent] as const];
+            }),
+          );
           output.detail(
-            buildRunListStatus(states, conditions) as unknown as Record<string, unknown>,
+            buildRunListStatus(states, conditions, parents) as unknown as Record<string, unknown>,
             'status',
           );
           output.flush();

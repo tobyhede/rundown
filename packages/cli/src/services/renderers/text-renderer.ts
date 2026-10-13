@@ -73,6 +73,10 @@ interface StatusDetailData {
     pid: number;
     startedAt: string;
   };
+  /** A Child Run's parent coordinate (#903). */
+  parent?: { runId: string; step: string; kind: string };
+  /** The Current Child of the run's step (#903). */
+  child?: { runId: string; kind: string; status: string };
   /** Bare `rundown status`: every persisted run. */
   runs?: {
     id: string;
@@ -82,6 +86,7 @@ interface StatusDetailData {
     total?: number;
     title?: string;
     execution?: { condition: 'in_progress' | 'interrupted' };
+    parent?: { runId: string; step: string; kind: string };
   }[];
 }
 
@@ -258,6 +263,8 @@ export class TextRenderer implements OutputRenderer {
       vars,
       runs,
       execution,
+      parent,
+      child,
     } = data as StatusDetailData;
 
     // Bare `rundown status`: the run list.
@@ -283,6 +290,10 @@ export class TextRenderer implements OutputRenderer {
           },
           { header: 'RUNBOOK', get: (r) => r.runbook },
           { header: 'TITLE', get: (r) => r.title ?? '' },
+          {
+            header: 'PARENT',
+            get: (r) => (r.parent === undefined ? '' : `${r.parent.runId} ${r.parent.step}`),
+          },
         ]),
       );
       return;
@@ -338,6 +349,14 @@ export class TextRenderer implements OutputRenderer {
       this.writer.writeLine(
         `Execution: ${condition} (step ${execution.step}, pid ${String(execution.pid)}, started ${execution.startedAt})`,
       );
+    }
+    if (parent !== undefined) {
+      this.writer.writeLine('');
+      this.writer.writeLine(`Parent: ${parent.runId} (step ${parent.step}, ${parent.kind})`);
+    }
+    if (child !== undefined) {
+      this.writer.writeLine('');
+      this.writer.writeLine(`Child: ${child.runId} (${child.kind}, ${child.status})`);
     }
 
     this.renderVars(vars);

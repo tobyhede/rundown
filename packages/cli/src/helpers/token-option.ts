@@ -21,6 +21,7 @@ import {
   type ExecutionLeaseRefusal,
   parseOwnerToken,
   type FinishedLifecycle,
+  type CommandTargetResolution,
   type OwnedRunResolution,
   type OwnerToken,
   type RunId,
@@ -201,8 +202,9 @@ export function runFinishedCode(lifecycle: FinishedLifecycle): 'RD-303' | 'RD-30
 }
 
 /**
- * Render the refusing arms of core's `resolveOwnedRun` and report whether
- * the command exits non-zero (always, for a refusal).
+ * Render the refusing arms of core's `resolveOwnedRun` — or of the lifecycle
+ * seam's `resolveCommandTarget` — and report whether the command exits
+ * non-zero (always, for a refusal).
  *
  * @param output - Output emitter for CLI output.
  * @param command - The mutating command, named in the refusal.
@@ -212,7 +214,7 @@ export function runFinishedCode(lifecycle: FinishedLifecycle): 'RD-303' | 'RD-30
 export function renderOwnedRunRefusal(
   output: OutputEmitter,
   command: string,
-  resolution: Exclude<OwnedRunResolution, { kind: 'running' }>,
+  resolution: Exclude<OwnedRunResolution | CommandTargetResolution, { kind: 'running' }>,
 ): boolean {
   switch (resolution.kind) {
     case 'unknown_token':
@@ -220,6 +222,10 @@ export function renderOwnedRunRefusal(
       return true;
     case 'finished':
       renderRunFinished(output, command, resolution.state.id, resolution.lifecycle);
+      return true;
+    case 'settle_refused':
+      // Collecting a terminal Inline Child first (#903) did not land; the
+      // progression that tried already reported why on the event stream.
       return true;
     default: {
       const _exhaustive: never = resolution;

@@ -13,7 +13,13 @@ import {
 import { RunbookStore } from '../../src/runbook/storage/runbook-store.js';
 import { closeRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import { merge } from '../../src/runbook/state-update-ops.js';
-import type { OwnerToken } from '../../src/runbook/run-secrets.js';
+import {
+  generateOwnerToken,
+  hashRunSecret,
+  type OwnerToken,
+} from '../../src/runbook/run-secrets.js';
+import { generateRunId } from '../../src/runbook/state.js';
+import { parseRunbookDocument } from '@rundown-org/parser';
 import { seedRun } from '../../src/testing/run-fixtures.js';
 import { createRunbook } from './fixtures.js';
 import { createProcessIdentity } from '../../src/runbook/process-identity.js';
@@ -87,6 +93,19 @@ const FAIL_RETRIES = `## 1. Flaky
 ## 2. Unreached
 - PASS COMPLETE
 - FAIL STOP
+`;
+
+const MANUAL_THEN_COMMAND = `## 1. First
+- PASS CONTINUE
+- FAIL STOP
+
+## 2. Build
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`bash
+echo build
+\`\`\`
 `;
 
 /** This process's start id as the seam's injected identity reports it. */
@@ -699,6 +718,65 @@ describe('RunbookLifecycleCommandService', () => {
         expect(after?.state.step).toBe('2');
         expect(after?.lease).toBeNull();
       });
+    });
+  });
+
+  describe('a command whose progression never ran', () => {
+    // `pass` commits step 1; the process dies before Run Progression runs step
+    // 2's command, so the run rests on a runnable unit with no lease.
+    async function crashedBeforeCommand(): Promise<{ runId: string; token: OwnerToken }> {
+      // A runnable unit renders against the run's frame, as `rundown run`
+      // seeds it.
+      steps = createRunbook(MANUAL_THEN_COMMAND);
+      const token = generateOwnerToken();
+      const runId = generateRunId();
+      await manager.create(
+        { source: 'project', path: 'seeded.runbook.md' },
+        parseRunbookDocument(MANUAL_THEN_COMMAND).runbook,
+        {
+          runId,
+          runbookPath: 'seeded.runbook.md',
+          ownerTokenHash: hashRunSecret(token),
+          templateVars: { RunId: runId, WorkPath: '.rundown/work', ContextId: `ctx-${runId}` },
+        },
+      );
+      await actorService.initializeState(runId, steps);
+      const started = { runId, token };
+      const first = await seam.runTransition({
+        command: 'pass',
+        run: await owned(started.token),
+        target: { stepId: '1' },
+      });
+      if (first.kind !== 'applied') throw new Error(`refused: ${first.kind}`);
+      return started;
+    }
+
+    it('refuses pass, writing nothing, rather than pass a command step that never ran', async () => {
+      const { runId, token } = await crashedBeforeCommand();
+      const before = await version(runId);
+
+      const outcome = await seam.runTransition({
+        command: 'pass',
+        run: await owned(token),
+        target: { stepId: '2' },
+      });
+
+      expect(outcome).toMatchObject({ kind: 'execution_pending', runId, step: '2' });
+      expect(await version(runId)).toBe(before);
+      expect((await manager.load(runId))?.lifecycle).toBe('running');
+    });
+
+    it('lets fail decide the step without running its command', async () => {
+      const { runId, token } = await crashedBeforeCommand();
+
+      const outcome = await seam.runTransition({
+        command: 'fail',
+        run: await owned(token),
+        target: { stepId: '2' },
+      });
+
+      expect(outcome.kind).toBe('applied');
+      expect((await manager.load(runId))?.lifecycle).toBe('stopped');
     });
   });
 });

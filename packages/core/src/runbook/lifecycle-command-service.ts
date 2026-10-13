@@ -25,12 +25,25 @@
 
 import type { StepId } from '@rundown-org/parser';
 import type { RunbookActorService } from './actor-service.js';
-import type { RunProgressionDirective } from './run-progression.js';
+import {
+  progressionDirectiveForTerminalRun,
+  type RunProgressionDirective,
+  type RunProgressionOutcome,
+} from './run-progression.js';
 import {
   mintRunProgressionAuthority,
   type RunProgressionAuthority,
 } from './run-progression-authority.js';
-import type { FinishedLifecycle, OwnedRun, OwnedRunResolution } from './run-authority.js';
+import {
+  resolveOwnedRun,
+  type FinishedLifecycle,
+  type OwnedRun,
+  type OwnedRunResolution,
+} from './run-authority.js';
+import type { OwnerToken } from './run-secrets.js';
+import { currentInlineReservation } from './inline-child.js';
+import { deriveExecutionAt } from './targeting.js';
+import { MAX_INLINE_CHILD_DEPTH } from './inline-progression.js';
 import type { RunId } from './run-id.js';
 import type { RunbookStateManager } from './state.js';
 import {
@@ -154,6 +167,7 @@ export type LifecycleTransitionOutcome =
   | InvalidStepTargetRefusal
   | RunFinishedRefusal
   | ExecutionLeaseRefusal
+  | ExecutionPendingRefusal
   | ConcurrentModificationRefusal
   | UnknownTokenRefusal
   | {
@@ -196,7 +210,10 @@ export type LifecycleTerminalOutcome =
       readonly lifecycle: 'completed' | 'stopped';
       /** Terminal observation events for the frontend to render. */
       readonly events: readonly TransitionObservationEvent[];
-      /** Whether composition owes a further turn (always `none` until #903). */
+      /**
+       * Whether composition owes a further turn: `activate` when the run is an
+       * Inline Child, so its parent Collects it (#903); otherwise `none`.
+       */
       readonly progression: RunProgressionDirective;
     };
 
@@ -258,6 +275,63 @@ export type LifecycleNavigationMutationOutcome =
     };
 
 /**
+ * Activate Run Progression for a run whose Current Inline Child is terminal
+ * but not yet Collected. Supplied by the frontend with its standard activation
+ * wiring, which consumes the directive verbatim; core decides when to call it
+ * and mints the directive with the `collect_inline_child` entry boundary, so
+ * the activation commits only the Collect and runs nothing further.
+ */
+export type SettleInlineChild = (
+  directive: Extract<RunProgressionDirective, { readonly kind: 'activate' }>,
+) => Promise<RunProgressionOutcome>;
+
+/**
+ * Outcome of {@link RunbookLifecycleCommandService.resolveCommandTarget}.
+ *
+ * Every arm of {@link OwnedRunResolution}, where the `running` arm's run is the
+ * command's target — the deepest running Inline Child below the token's run —
+ * plus `settle_refused` when Collecting a terminal Inline Child first did not
+ * reach a resting run.
+ */
+export type CommandTargetResolution =
+  | Exclude<OwnedRunResolution, { readonly kind: 'running' }>
+  | {
+      readonly kind: 'running';
+      /** The command's target: the deepest running run on the inline chain. */
+      readonly run: OwnedRun;
+      /** The run the Owner Token is bound to: the chain's root. */
+      readonly root: RunbookState;
+    }
+  | {
+      /** The implicit Collect of a terminal Inline Child was refused or failed. */
+      readonly kind: 'settle_refused';
+      readonly outcome: Extract<RunProgressionOutcome, { readonly kind: 'refused' | 'failed' }>;
+    };
+
+/** Symbolic code for {@link ExecutionPendingRefusal}. */
+export const EXECUTION_PENDING_CODE = 'EXECUTION_PENDING';
+
+/**
+ * Refusal: `pass` named a step whose command Run Progression owes but has not
+ * run — the command that entered the step ended before its progression did
+ * (a crash after its commit, or a recovery Collect of an Inline Child, #903).
+ * Passing it would record a command that never ran, so nothing is written;
+ * `goto` re-enters the step and runs the command, and `fail` / `stop` decide
+ * it explicitly.
+ */
+export interface ExecutionPendingRefusal {
+  readonly kind: 'execution_pending';
+  /** The symbolic refusal code. */
+  readonly code: typeof EXECUTION_PENDING_CODE;
+  /** The run whose step's command has not run. */
+  readonly runId: RunId;
+  /** The step (`step` or `step.substep`) whose command is owed. */
+  readonly step: string;
+  /** Operator-facing message. */
+  readonly message: string;
+}
+
+/**
  * Map a transition command to its machine event. Exhaustive with a `never`
  * fallthrough so a future member cannot silently collapse to FAIL (No silent
  * mapping).
@@ -314,6 +388,28 @@ function finishedRefusal(run: OwnedRun): RunFinishedRefusal | undefined {
 }
 
 /**
+ * Name the Inline Child in a `--step` refusal against it (#903).
+ *
+ * While an inline child runs, the root's Owner Token targets the child, so
+ * `--step` names a step of the child. A refusal that only spoke of "the
+ * current step" would read as if it described the run the agent started.
+ *
+ * @param refusal - The cursor's refusal.
+ * @param run - The command's target.
+ * @returns The refusal, naming the child and its parent when the target is one.
+ */
+function inlineTargetRefusal(
+  refusal: InvalidStepTargetRefusal,
+  run: OwnedRun,
+): InvalidStepTargetRefusal {
+  if (run.linkage?.kind !== 'inline') return refusal;
+  return {
+    kind: 'invalid_step_target',
+    message: `${refusal.message}. The Owner Token is driving inline child ${run.state.id} (${run.state.runbook.path}) of run ${run.linkage.parentRunId} at ${run.linkage.parentStep}; while it runs, --step names a step of the child`,
+  };
+}
+
+/**
  * The `concurrent_modification` refusal for one run.
  *
  * @param runId - The run whose save was refused.
@@ -350,6 +446,88 @@ export class RunbookLifecycleCommandService {
   }
 
   /**
+   * Resolve an Owner Token to the run a mutating command targets (#903).
+   *
+   * The token resolves to the root run it owns. From there the target is the
+   * deepest running Inline Child, reached by following each run's Current
+   * Child — so `--step` then names a step of that child, and a step that
+   * belongs to a parent while its inline child runs is not the current
+   * position. Before anything else, a Current Inline Child that is terminal but
+   * not yet Collected (its parent's command died before the implicit Collect)
+   * is Collected through `settle`, scoped to that one Collect: it commits the
+   * `CHILD_RESULT` the crash lost and nothing else — no command runs and no
+   * child launches before the owner's own command — and the descent starts
+   * again from the root. A Collect that finishes the parent leaves it owing
+   * its own parent a Collect, committed on the next pass.
+   *
+   * @param token - The presented Owner Token.
+   * @param settle - Activates Run Progression on the run owing a Collect.
+   * @returns The target with its root, the root's own refusal, or the settle's.
+   * @throws {Error} When settling does not converge within the chain's depth —
+   *   each settle Collects one child, so this is a defect, not a race.
+   */
+  async resolveCommandTarget(
+    token: OwnerToken,
+    settle: SettleInlineChild,
+  ): Promise<CommandTargetResolution> {
+    let refused: Extract<CommandTargetResolution, { kind: 'settle_refused' }> | undefined;
+    for (let pass = 0; pass <= MAX_INLINE_CHILD_DEPTH; pass++) {
+      const resolution = await resolveOwnedRun(this.#deps.manager, token);
+      if (resolution.kind !== 'running') return resolution;
+      const descent = await this.#descend(resolution.run);
+      // A settle refusal whose run no longer owes the Collect (the run moved
+      // under it) still leaves a target to act on; only a Collect that is
+      // still owed after a refusal refuses the command.
+      if (descent.kind === 'target') {
+        return { kind: 'running', run: descent.run, root: resolution.run.state };
+      }
+      if (refused !== undefined) return refused;
+      const steps = await this.#deps.loadSteps(descent.run.state);
+      const outcome = await settle({
+        kind: 'activate',
+        authority: mintRunProgressionAuthority({ runId: descent.run.state.id }),
+        runbook: descent.run.state.runbook,
+        steps,
+        entryBoundary: { kind: 'collect_inline_child' },
+      });
+      if (outcome.kind === 'refused' || outcome.kind === 'failed') {
+        refused = { kind: 'settle_refused', outcome };
+      }
+    }
+    throw new Error(
+      `Collecting inline children did not settle within ${String(MAX_INLINE_CHILD_DEPTH)} passes`,
+    );
+  }
+
+  /**
+   * Follow Current Inline Children down from `run`.
+   *
+   * @param run - The run to start from.
+   * @returns The deepest running run, or the run whose Current Child is
+   *   terminal and owes a Collect.
+   * @throws {Error} When the chain is deeper than any run can drive.
+   */
+  async #descend(
+    run: OwnedRun,
+  ): Promise<{ readonly kind: 'target' | 'settle'; readonly run: OwnedRun }> {
+    let current = run;
+    for (let level = 0; level <= MAX_INLINE_CHILD_DEPTH; level++) {
+      const reservation = currentInlineReservation(current.state);
+      if (reservation === undefined) return { kind: 'target', run: current };
+      const child = await this.#deps.manager.loadWithVersion(reservation.runId);
+      // Reserved but not launched: the parent itself is the target.
+      if (child === null) return { kind: 'target', run: current };
+      if ((child.state.lifecycle ?? 'running') !== 'running') {
+        return { kind: 'settle', run: current };
+      }
+      current = child;
+    }
+    throw new Error(
+      `Inline chain below run ${run.state.id} is deeper than ${String(MAX_INLINE_CHILD_DEPTH)}`,
+    );
+  }
+
+  /**
    * Apply a pass/fail transition to the owned run.
    *
    * In order: refuse a finished run; confirm `--step` / `--index` against the
@@ -373,7 +551,11 @@ export class RunbookLifecycleCommandService {
     const steps = await this.#deps.loadSteps(previousState);
 
     const cursor = resolveTransitionCursor(steps, previousState, input.target);
-    if (cursor.kind === 'invalid_step_target') return cursor;
+    if (cursor.kind === 'invalid_step_target') return inlineTargetRefusal(cursor, input.run);
+    if (input.command === 'pass') {
+      const pending = await this.#pendingCommandRefusal(input.run, steps);
+      if (pending) return pending;
+    }
 
     const prepared = await this.#deps.actorService.prepareActorMutation(
       previousState.id,
@@ -449,7 +631,7 @@ export class RunbookLifecycleCommandService {
    * @param input - Command, owned run, optional message and display policy.
    * @returns A typed refusal or the applied terminal with its observation
    *   events. The progression directive is core's answer to whether
-   *   composition owes a further turn (`none` until #903).
+   *   composition owes a further turn: an Inline Child's parent Collects it.
    * @throws {Error} When the machine did not reach a terminal lifecycle for a
    *   FORCE event — a programming invariant, not an operator condition.
    */
@@ -495,7 +677,10 @@ export class RunbookLifecycleCommandService {
       runId: previousState.id,
       lifecycle,
       events: observation.events,
-      progression: { kind: 'none' },
+      progression: progressionDirectiveForTerminalRun(
+        { state: updatedState, linkage: input.run.linkage },
+        steps,
+      ),
     };
   }
 
@@ -591,6 +776,40 @@ export class RunbookLifecycleCommandService {
       decision,
       this.#deps.processIdentity,
     );
+  }
+
+  /**
+   * Refuse a `pass` on a step whose command Run Progression still owes.
+   *
+   * The compiled machine decides: with no lease held, a cursor the machine
+   * would enter as a `runnable` unit is a command that has not run (a command
+   * that ran either moved the cursor with its result or left the lease set).
+   * Selection performs no persistence.
+   *
+   * @param run - The owned run.
+   * @param steps - The run's parsed graph.
+   * @returns The refusal, or `undefined` when no command is owed.
+   */
+  async #pendingCommandRefusal(
+    run: OwnedRun,
+    steps: readonly ResolvedStep[],
+  ): Promise<ExecutionPendingRefusal | undefined> {
+    if (run.lease !== null) return undefined;
+    const { state } = run;
+    const intent = await this.#deps.actorService.selectRunProgressionIntent(
+      state,
+      steps,
+      mintRunProgressionAuthority({ runId: state.id }),
+    );
+    if (intent.kind !== 'entered' || intent.entered.kind !== 'runnable') return undefined;
+    const step = deriveExecutionAt(state.step, state.substep);
+    return {
+      kind: 'execution_pending',
+      code: EXECUTION_PENDING_CODE,
+      runId: state.id,
+      step,
+      message: `Step ${step} of run ${state.id} has a command that has not run: the command that entered the step ended before running it. Rundown does not pass a command that never ran, and nothing was written. Run it with \`rundown goto ${step} --token <owner_token>\`, or decide explicitly with \`rundown fail --step ${step} --token <owner_token>\` or \`rundown stop --token <owner_token>\`.`,
+    };
   }
 
   // Find a step by name, throwing on a corrupted state/steps mismatch.

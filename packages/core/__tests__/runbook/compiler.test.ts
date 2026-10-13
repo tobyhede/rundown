@@ -43,6 +43,7 @@ import type {
 import type { RunbookRef } from '../../src/runbook/runbook-ref.js';
 import { buildFrameKey } from '../../src/runbook/targeting.js';
 import { createRunbook } from './fixtures.js';
+import { assertRunId } from '../../src/runbook/run-id.js';
 import {
   brandFlattenedTemplateVarsForTest,
   brandRunIdForTest,
@@ -174,11 +175,12 @@ describe('runbook compiler', () => {
       expect(actor.getSnapshot().context.iterationResults).toBeUndefined();
     });
 
-    it('explicit H3 runbook substeps compile to ordinary leaves whose direct PASS/FAIL route through DEFER defaults', () => {
-      // A runbook-list substep is an ordinary leaf (ADR 0005 / #901): no
-      // launch-intent substate, no completion mailbox. Its result is a direct
-      // PASS/FAIL, exactly as any other substep's. Child composition returns
-      // in #903 as a reservation on entry, not as a shadow of the old states.
+    it('explicit H3 runbook substeps reserve an Inline Child on entry and still route direct PASS/FAIL through DEFER defaults', () => {
+      // A runbook-list substep reserves its Inline Child on every entry (#903):
+      // its entry path passes through the transient `__reserve-child`, which
+      // records the reservation for the frame entry and rests in `idle`. A
+      // direct PASS/FAIL — the owner deciding a substep whose child never
+      // launched — routes exactly as any other substep's.
       const steps = createRunbook(`## 1. Review package
 ### 1.1 Review pass
 - review-pass.runbook.md
@@ -188,16 +190,19 @@ describe('runbook compiler', () => {
 ## 2. Done
 - PASS COMPLETE
 `);
-
-      const machine = compileRunbookToMachine(steps);
+      const ids = ['rd_' + 'a'.repeat(32), 'rd_' + 'b'.repeat(32)];
+      const machine = compileRunbookToMachine(steps, {
+        generateChildRunId: () => assertRunId(ids.shift() ?? 'rd_' + 'f'.repeat(32)),
+      });
       const leaf = (machine.config.states as Record<string, TestStateConfig>)['step::1::1'];
-      expect(leaf.initial).toBe('idle');
+      expect(leaf.initial).toBe('__reserve-child');
       expect(Object.keys(leaf.states ?? {}).sort()).toEqual(
         [
           '__capture',
           '__execute-command',
           '__progression-enter-unit',
           '__progression-waiting-input',
+          '__reserve-child',
           'idle',
         ].sort(),
       );
@@ -205,14 +210,60 @@ describe('runbook compiler', () => {
       const actor = createActor(machine);
       actor.start();
       expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
+      expect(actor.getSnapshot().context.substepStates).toEqual([
+        expect.objectContaining({
+          id: '1',
+          frameKey: '1|',
+          child: expect.objectContaining({
+            kind: 'inline',
+            runId: 'rd_' + 'a'.repeat(32),
+            entry: 1,
+            runbook: 'review-pass.runbook.md',
+          }),
+        }),
+      ]);
 
       actor.send({ type: 'PASS' }); // 1.1 DEFER -> advance to 1.2
       expect(actor.getSnapshot().value).toEqual({ 'step::1::2': 'idle' });
+      expect(actor.getSnapshot().context.substepStates).toContainEqual(
+        expect.objectContaining({
+          id: '2',
+          child: expect.objectContaining({
+            runId: 'rd_' + 'b'.repeat(32),
+            runbook: 'review-fail.runbook.md',
+          }),
+        }),
+      );
 
       actor.send({ type: 'FAIL' }); // 1.2 DEFER -> parent aggregation
       // Under Case D FAIL routing, any deferred fail result routes to the
       // parent's configured FAIL target (STOPPED).
       expect(actor.getSnapshot().value).toBe('STOPPED');
+    });
+
+    it("collects only the substep's Current Child: a CHILD_RESULT naming any other run is dropped", () => {
+      const steps = createRunbook(`## 1. Compose
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+- child.runbook.md
+`);
+      const current = assertRunId('rd_' + 'c'.repeat(32));
+      const machine = compileRunbookToMachine(steps, { generateChildRunId: () => current });
+      const actor = createActor(machine);
+      actor.start();
+
+      actor.send({
+        type: 'CHILD_RESULT',
+        childRunId: assertRunId('rd_' + 'd'.repeat(32)),
+        result: 'pass',
+        vars: {},
+      });
+      expect(actor.getSnapshot().value).toEqual({ 'step::1::1': 'idle' });
+
+      actor.send({ type: 'CHILD_RESULT', childRunId: current, result: 'pass', vars: { Out: 'v' } });
+      expect(actor.getSnapshot().value).toBe('COMPLETE');
+      expect(actor.getSnapshot().context.variables).toMatchObject({ Out: 'v' });
     });
 
     it('Case D non-FOR parent with PASS STOP sets lastAction to STOP and preserves lastMessage', () => {

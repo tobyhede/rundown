@@ -18,6 +18,12 @@ import type { OutputEmitter } from '../../src/services/output-emitter.js';
 //
 // The module under test therefore has to be imported AFTER registration, which is
 // why the value import below is dynamic.
+// The command's target is core's decision (`resolveCommandTarget`, #903); the
+// CLI helper that supplies its settle callable is mocked to the same double.
+jest.unstable_mockModule('../../src/helpers/command-target', () => ({
+  resolveCommandTarget: (ctx: { readonly manager: unknown }, token: unknown) =>
+    resolveOwnedRun(ctx.manager as never, token as never),
+}));
 jest.unstable_mockModule('../../src/helpers/lifecycle-seam-factory', () => ({
   buildLifecycleSeam: jest.fn(),
 }));
@@ -126,7 +132,7 @@ function applied(
 }
 
 function running(state: RunbookState = fakeRootState()): OwnedRunResolution {
-  return { kind: 'running', run: { state, stateVersion: 1 as never, lease: null } };
+  return { kind: 'running', run: { state, stateVersion: 1 as never, lease: null, linkage: null } };
 }
 
 describe('runSeamTerminal', () => {
@@ -150,7 +156,7 @@ describe('runSeamTerminal', () => {
     expect(runTerminal).toHaveBeenCalledTimes(1);
     const input = (runTerminal.mock.calls as unknown as [[Record<string, unknown>]])[0][0];
     expect(input.command).toBe('complete');
-    expect(input.run).toEqual({ state, stateVersion: 1, lease: null });
+    expect(input.run).toEqual({ state, stateVersion: 1, lease: null, linkage: null });
     expect(input.message).toBe('done');
     expect(result.exitError).toBe(false);
     expect(calls.find((c) => c.method === 'complete')?.args[0]).toBe('done');

@@ -168,7 +168,7 @@ On a delegation-exposed run, every bare mutating command (`rundown pass`, `rundo
 
 ### Inline composition and derived authority
 
-When a delegation-exposed step links child runbooks **inline** (no `- DELEGATE`), a bare `rundown pass` on an inline unit is refused too. Use the orchestrator `claim_id` for the inline run you are controlling. A delegation boundary severs the chain: claimed children are never `--run`-reachable (they are not members of the default stack — reach them only with their `--claim-id`). Run ids are not secrets; they are freely available from `rundown run` output and every event's `runbookId` (names are not capabilities), so `--run` is only target selection.
+Child runbooks linked **inline** (no `- DELEGATE`) are not delegations: each runs as an Inline Child driven by the parent's own Owner Token, with no claim and no token of its own. While one runs, the parent's token targets it and `--step` names the child's step. See [Composed Runbooks](../running-runbooks/SKILL.md#composed-runbooks).
 
 ## FOR Loop Delegation
 

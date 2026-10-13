@@ -2026,8 +2026,9 @@ describe('startRunbook', () => {
       ok: false,
       reason: 'composition-unsupported',
       error:
-        'Runbook composes other runbooks at 1.1, 2.3; this build runs standalone runbooks only. ' +
-        'Inline composition returns in #903 and delegation in #904.',
+        'Runbook composes other runbooks at 1.1, 2.3 in a form this build does not run ' +
+        '(a DELEGATE substep, or an inline substep listing more than one runbook). ' +
+        'Delegation returns in #904.',
       code: 'RUNBOOK_COMPOSITION_UNSUPPORTED',
       details: { runbook: 'runbooks/parent.runbook.md', substeps: ['1.1', '2.3'] },
     });

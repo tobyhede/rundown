@@ -1,5 +1,4 @@
 // src/runbook/state.ts
-import { randomBytes } from 'node:crypto';
 import * as fsSync from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -21,6 +20,7 @@ import {
 } from './state-update-ops.js';
 import type { RunbookRef } from './runbook-ref.js';
 import type { SecretHash } from './run-secrets.js';
+import type { ChildLinkage } from './child-linkage.js';
 import { findUnsupportedComposition, RunbookCompositionUnsupportedError } from './run-authority.js';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
@@ -31,12 +31,13 @@ import {
   type VariableValue,
 } from './effective-vars.js';
 import { isArtifactRecord } from './artifact-schema.js';
-import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
+import { assertRunId, generateRunId, type RunId } from './run-id.js';
 import { runsDir as _runsDir, assertSafeId } from '../paths.js';
 import { getRunbookStore } from './storage/store-registry.js';
 import type {
   AcquireExecutionLeaseResult,
   DeleteRunResult,
+  RunAtVersion,
   RunbookStore,
   SaveRunResult,
   VersionedRunState,
@@ -190,14 +191,8 @@ export function isConcurrentStateModificationError(
   return error instanceof ConcurrentStateModificationError;
 }
 
-/**
- * Generate a concrete Rundown run identifier.
- *
- * @returns Run ID in canonical `rd_<32 lowercase hex>` form
- */
-export function generateRunId(): RunId {
-  return assertRunId(`${RUN_ID_PREFIX}${randomBytes(16).toString('hex')}`);
-}
+// Re-exported from its leaf module, the import site every consumer names.
+export { generateRunId };
 
 /**
  * Typed patch accepted by {@link RunbookStateManager.update}.
@@ -322,6 +317,20 @@ export interface CreateOptions {
 }
 
 /**
+ * Options accepted by {@link RunbookStateManager.createInlineChild}.
+ *
+ * Everything {@link CreateOptions} carries except the Owner Token hash — an
+ * Inline Child has no token of its own (#903) — plus the preallocated id its
+ * parent reserved and the linkage naming that reservation.
+ */
+export interface CreateInlineChildOptions extends Omit<CreateOptions, 'ownerTokenHash' | 'runId'> {
+  /** The child run id the parent's reservation preallocated. */
+  readonly runId: RunId;
+  /** The parent coordinate; its `kind` is `inline`. */
+  readonly linkage: ChildLinkage;
+}
+
+/**
  * Construction options for {@link RunbookStateManager}.
  */
 export interface RunbookStateManagerOptions {
@@ -341,6 +350,91 @@ export interface RunbookStateManagerOptions {
  */
 function stampForSave(state: RunbookState): RunbookState {
   return { ...state, schemaVersion: CURRENT_SCHEMA_VERSION, updatedAt: new Date().toISOString() };
+}
+
+/**
+ * Build the initial state of a new run, applying the composition refusal.
+ *
+ * `templateVars` is always written — `{}` when the caller supplies none — and
+ * so is `prompted` (`false` when the caller names no mode), because `load`
+ * refuses a persisted row without either.
+ *
+ * @param runbookRef - Canonical runbook identity
+ * @param runbook - The parsed runbook definition
+ * @param id - The run id
+ * @param options - Path, prompted flag, source and variables
+ * @returns The initial state, not yet persisted
+ * @throws {RunbookCompositionUnsupportedError} When the runbook delegates (a
+ *   `DELEGATE` substep): the compiled machine has no state for one until #904.
+ */
+function initialRunState(
+  runbookRef: RunbookRef,
+  runbook: Runbook | ResolvedRunbook,
+  id: RunId,
+  options: Omit<CreateOptions, 'ownerTokenHash' | 'runId'>,
+): RunbookState {
+  // Refused here, below the seam every run — inline children included — is
+  // created through, rather than by each frontend.
+  const composing = findUnsupportedComposition(runbook.steps);
+  if (composing.length > 0) {
+    throw new RunbookCompositionUnsupportedError(composing);
+  }
+  const now = new Date().toISOString();
+  const initialStep = runbook.steps[0];
+  return {
+    id,
+    runbook: runbookRef,
+    runbookPath: options.runbookPath,
+    title: runbook.title,
+    description: runbook.description,
+    step: initialStep.name,
+    stepName: initialStep.description,
+    retryCount: 0,
+    variables: brandStoredOutputs(assertTrustedArtifactValues(options.initialVariables ?? {})),
+    steps: [],
+    frameEntryCounts: {},
+    startedAt: now,
+    updatedAt: now,
+    prompted: options.prompted ?? false,
+    runbookSrc: options.runbookSrc,
+    templateVars: brandInitialTemplateVars(options.templateVars ?? {}),
+    frontmatterOutputs: options.frontmatterOutputs ?? [],
+    lifecycle: 'running',
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+  };
+}
+
+/**
+ * Substep tracking for one frame: a `pending` entry for every authored substep
+ * the frame does not track yet.
+ *
+ * Entries from other frames are preserved (append semantics for FOR loop
+ * iterations), existing same-frame entries for still-authored substeps keep
+ * their state, and same-frame entries for substeps no longer authored drop.
+ *
+ * @param existing - The run's substep states.
+ * @param substeps - The substep definitions from the step.
+ * @param frameKey - Frame key scoping these entries to a FOR iteration.
+ * @returns The substep states with the frame initialised.
+ */
+export function initializeSubstepStates(
+  existing: readonly SubstepState[],
+  substeps: readonly Substep[],
+  frameKey: FrameKey,
+): SubstepState[] {
+  const authoredIds = new Set(substeps.map((substep) => substep.id));
+  const preserved = existing.filter(
+    (substepState) => substepState.frameKey !== frameKey || authoredIds.has(substepState.id),
+  );
+  const existingSameFrameIds = new Set(
+    preserved
+      .filter((substepState) => substepState.frameKey === frameKey)
+      .map((substepState) => substepState.id),
+  );
+  const initialized: SubstepState[] = substeps
+    .filter((substep) => !existingSameFrameIds.has(substep.id))
+    .map((substep) => ({ id: substep.id, frameKey, status: 'pending' }));
+  return [...preserved, ...initialized];
 }
 
 /**
@@ -439,9 +533,9 @@ export class RunbookStateManager {
    * @param runbook - The parsed runbook definition
    * @param options - Owner token hash, run identity, prompted flag, variables
    * @returns The newly created RunbookState
-   * @throws {RunbookCompositionUnsupportedError} When the runbook composes
-   *   other runbooks (a `DELEGATE` or runbook-list substep). Raised before any
-   *   store access, so no run row is written.
+   * @throws {RunbookCompositionUnsupportedError} When the runbook delegates
+   *   to other runbooks (a `DELEGATE` substep). Raised before any store
+   *   access, so no run row is written.
    * @throws {StoreInvariantError} When a run already carries the id or the
    *   owner token hash.
    */
@@ -450,48 +544,52 @@ export class RunbookStateManager {
     runbook: Runbook | ResolvedRunbook,
     options: CreateOptions,
   ): Promise<RunbookState> {
-    // The compiled machine has no state for a composing substep, so no run of
-    // one may exist. Refused here, the seam every run is created through,
-    // rather than by each frontend.
-    const composing = findUnsupportedComposition(runbook.steps);
-    if (composing.length > 0) {
-      throw new RunbookCompositionUnsupportedError(composing);
-    }
-
-    const id = options.runId ?? generateRunId();
-    const now = new Date().toISOString();
-
-    const initialStep = runbook.steps[0];
-
-    const state: RunbookState = {
-      id,
-      runbook: runbookRef,
-      runbookPath: options.runbookPath,
-      title: runbook.title,
-      description: runbook.description,
-      step: initialStep.name,
-      stepName: initialStep.description,
-      retryCount: 0,
-      variables: brandStoredOutputs(assertTrustedArtifactValues(options.initialVariables ?? {})),
-      steps: [],
-      frameEntryCounts: {},
-      startedAt: now,
-      updatedAt: now,
-      // Always written, `false` when the caller names no mode: `load` refuses a
-      // persisted row without `prompted` rather than defaulting one.
-      prompted: options.prompted ?? false,
-      runbookSrc: options.runbookSrc,
-      // Always written, `{}` when the caller supplies none: `load` refuses a
-      // persisted row without templateVars rather than reconstructing it.
-      templateVars: brandInitialTemplateVars(options.templateVars ?? {}),
-      frontmatterOutputs: options.frontmatterOutputs ?? [],
-      lifecycle: 'running',
-      schemaVersion: CURRENT_SCHEMA_VERSION,
-    };
-
+    const state = initialRunState(runbookRef, runbook, options.runId ?? generateRunId(), options);
     const store = await this.store();
     await store.createRun(state, options.ownerTokenHash);
-    void logger.debug('lifecycle-write', { runId: id, next: 'running' });
+    void logger.debug('lifecycle-write', { runId: state.id, next: 'running' });
+    return state;
+  }
+
+  /**
+   * Create an Inline Child (#903) under the id its parent reserved.
+   *
+   * The parent owner's command creates the child row; the row records its
+   * linkage and carries no Owner Token hash, because the parent's token
+   * authorizes it. The same composition refusal as {@link create} applies.
+   *
+   * The row lands already initialised, in one write: `initialize` derives the
+   * child's initialised state (its machine snapshot, active substeps) from the
+   * draft in memory, and only its result is inserted. A launch therefore either
+   * creates a child its owner can drive or writes nothing — there is no row
+   * without a machine.
+   *
+   * @param runbookRef - Canonical identity of the child runbook
+   * @param runbook - The parsed child runbook definition
+   * @param options - Preallocated id, linkage, prompted flag and variables
+   * @param initialize - Derives the initialised state from the draft without
+   *   persisting it (`RunbookActorService.deriveInitialState` in production)
+   * @returns The newly created child state
+   * @throws {RunbookCompositionUnsupportedError} When the child runbook
+   *   delegates (a `DELEGATE` substep). No row is written.
+   * @throws {Error} Whatever `initialize` throws (a machine that cannot be
+   *   compiled, say), or when it returns a different run. No row is written.
+   * @throws {StoreInvariantError} When a run already carries the id.
+   */
+  async createInlineChild(
+    runbookRef: RunbookRef,
+    runbook: Runbook | ResolvedRunbook,
+    options: CreateInlineChildOptions,
+    initialize: (draft: RunbookState) => Promise<RunbookState>,
+  ): Promise<RunbookState> {
+    const draft = initialRunState(runbookRef, runbook, options.runId, options);
+    const state = await initialize(draft);
+    if (state.id !== draft.id) {
+      throw new Error(`Inline child ${draft.id} was initialised as run ${state.id}`);
+    }
+    const store = await this.store();
+    await store.createInlineChildRun(state, options.linkage);
+    void logger.debug('lifecycle-write', { runId: state.id, next: 'running' });
     return state;
   }
 
@@ -729,23 +827,39 @@ export class RunbookStateManager {
    * For a caller that decided about the run it read — `prune --token` applies
    * the execution-lease rule to the lease that version carries — so a lease
    * taken after that read refuses the delete instead of being discarded with
-   * the run. Nothing is removed on a refusal, outputs included.
+   * the run. The run's Inline Children go with it (#903), so the delete is
+   * conditional on each of them too: the caller names every inline
+   * descendant it read, at the version it read it, and decided about their
+   * leases as well. Nothing is removed on a refusal, outputs included.
    *
    * @param id - The run to delete
    * @param expectedVersion - The version the caller read the run at
+   * @param expectedInlineDescendants - Every inline descendant the caller read,
+   *   at the version it read it (`inlineDescendantsOf` in `run-deletion.ts`)
    * @returns `deleted`, or why nothing was deleted (`concurrent_modification`,
    *   `missing`)
-   * @throws {Error} If `id` is traversal-unsafe, or when removing the outputs
+   * @throws {Error} If `id` is traversal-unsafe, or when removing an outputs
    *   directory fails for a reason other than its absence
    */
-  async deleteAtVersion(id: string, expectedVersion: StateVersion): Promise<DeleteRunResult> {
+  async deleteAtVersion(
+    id: string,
+    expectedVersion: StateVersion,
+    expectedInlineDescendants: readonly RunAtVersion[],
+  ): Promise<DeleteRunResult> {
     const runId = this.toRunId(id);
     if (runId === null) return { kind: 'missing' };
     const store = await this.store();
-    const result = await store.deleteRunAtVersion(runId, expectedVersion);
+    const result = await store.deleteRunAtVersion(
+      runId,
+      expectedVersion,
+      expectedInlineDescendants,
+    );
     if (result.kind !== 'deleted') return result;
     void logger.debug('lifecycle-write', { runId: id, kind: 'delete' });
     await this.removeOutputsDir(id);
+    for (const descendant of expectedInlineDescendants) {
+      await this.removeOutputsDir(descendant.runId);
+    }
     return result;
   }
 
@@ -838,22 +952,8 @@ export class RunbookStateManager {
     substeps: readonly Substep[],
     frameKey: FrameKey,
   ): Promise<void> {
-    await this.mutate(id, (state) => {
-      const existing = state.substepStates ?? [];
-      const authoredIds = new Set(substeps.map((substep) => substep.id));
-      const preserved = existing.filter(
-        (substepState) => substepState.frameKey !== frameKey || authoredIds.has(substepState.id),
-      );
-      const existingSameFrameIds = new Set(
-        preserved
-          .filter((substepState) => substepState.frameKey === frameKey)
-          .map((substepState) => substepState.id),
-      );
-      const initialized: SubstepState[] = substeps
-        .filter((substep) => !existingSameFrameIds.has(substep.id))
-        .map((substep) => ({ id: substep.id, frameKey, status: 'pending' }));
-
-      return { substepStates: [...preserved, ...initialized] };
-    });
+    await this.mutate(id, (state) => ({
+      substepStates: initializeSubstepStates(state.substepStates ?? [], substeps, frameKey),
+    }));
   }
 }

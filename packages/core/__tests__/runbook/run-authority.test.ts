@@ -142,8 +142,13 @@ describe('findUnsupportedComposition', () => {
     expect(findUnsupportedComposition([substepStep('1', [plain, delegated])])).toEqual(['1.2']);
   });
 
-  it('names a runbook-list substep by its qualified id', () => {
-    expect(findUnsupportedComposition([substepStep('1', [inline])])).toEqual(['1.3']);
+  it('names no single-runbook inline substep: inline composition runs (#903)', () => {
+    expect(findUnsupportedComposition([substepStep('1', [inline])])).toEqual([]);
+  });
+
+  it('names an inline substep listing more than one runbook: one unit launches one child', () => {
+    const pair: Substep = { ...inline, id: '5', runbooks: ['a.runbook.md', 'b.runbook.md'] };
+    expect(findUnsupportedComposition([substepStep('1', [inline, pair])])).toEqual(['1.5']);
   });
 
   it('lists every composing substep across steps, in document order', () => {
@@ -159,7 +164,7 @@ describe('findUnsupportedComposition', () => {
         transitions: tx,
       },
     ];
-    expect(findUnsupportedComposition(steps)).toEqual(['1.2', '3.3', '3.2']);
+    expect(findUnsupportedComposition(steps)).toEqual(['1.2', '3.2']);
   });
 
   it('names the same substeps from a parsed runbook as from a resolved one', () => {
@@ -186,7 +191,7 @@ describe('findUnsupportedComposition', () => {
         '',
       ].join('\n'),
     );
-    expect(findUnsupportedComposition(parsed.runbook.steps)).toEqual(['1.2', '1.3']);
+    expect(findUnsupportedComposition(parsed.runbook.steps)).toEqual(['1.2']);
   });
 });
 
@@ -229,14 +234,14 @@ describe('run creation refuses a composing runbook', () => {
     ].join('\n'),
   ).runbook;
 
-  it('throws a typed refusal naming every composing substep and writes no run', async () => {
+  it('throws a typed refusal naming every delegating substep and writes no run', async () => {
     const created = manager.create({ source: 'project', path: 'compose.runbook.md' }, composing, {
       runbookPath: 'compose.runbook.md',
       ownerTokenHash: hashRunSecret(generateOwnerToken()),
     });
 
     await expect(created).rejects.toBeInstanceOf(RunbookCompositionUnsupportedError);
-    await expect(created).rejects.toMatchObject({ substeps: ['1.2', '1.3'] });
+    await expect(created).rejects.toMatchObject({ substeps: ['1.2'] });
     expect(await manager.listRunIds()).toEqual([]);
   });
 

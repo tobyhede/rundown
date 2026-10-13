@@ -1,7 +1,15 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { spawnSync } from 'node:child_process';
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { Errors, RunbookStateManager, type RunId } from '@rundown-org/core';
+import {
+  Errors,
+  RunbookStateManager,
+  generateRunId,
+  type ChildLinkage,
+  type RunId,
+} from '@rundown-org/core';
+import { parseRunbookDocument } from '@rundown-org/parser';
 import {
   createTestWorkspace,
   runCliInProcess,
@@ -727,6 +735,120 @@ rd echo --result pass
       const ids = await new RunbookStateManager(workspace.cwd).listRunIds();
       expect(ids).not.toContain(invalidId);
       expect(ids).toContain(runningId);
+    });
+  });
+
+  /**
+   * Inline Children (#903) carry no Owner Token: the parent's token authorizes
+   * them, and deleting the parent row deletes them with it. Planted through
+   * core's own seams, as a parent's progression would leave them.
+   */
+  describe('inline children (#903)', () => {
+    const CHILD_MARKDOWN = '# Child\n\n## 1. Only step\n\nDo it.\n';
+
+    /** Create an Inline Child of `parentRunId` under a fresh reserved id. */
+    async function startInlineChild(parentRunId: string, parentEntry = 1): Promise<RunId> {
+      const manager = new RunbookStateManager(workspace.cwd);
+      const runId = generateRunId();
+      const linkage: ChildLinkage = {
+        kind: 'inline',
+        parentRunId: parentRunId as RunId,
+        parentStep: '1.1',
+        parentFrameKey: '1|' as ChildLinkage['parentFrameKey'],
+        parentEntry,
+      };
+      await manager.createInlineChild(
+        { source: 'project', path: 'child.runbook.md' },
+        parseRunbookDocument(CHILD_MARKDOWN).runbook,
+        { runId, linkage, runbookPath: 'child.runbook.md' },
+        // Prune is under test, not the machine: insert the draft as is.
+        (draft) => Promise.resolve(draft),
+      );
+      return runId;
+    }
+
+    /**
+     * Lease a run as a command step would. `live` names the parent process,
+     * which reads In Progress from here; `dead` an exited one (Interrupted).
+     */
+    async function lease(runId: string, holder: 'live' | 'dead'): Promise<void> {
+      const manager = new RunbookStateManager(workspace.cwd);
+      const read = await manager.loadWithVersion(runId);
+      if (!read) throw new Error('run missing');
+      const pid = holder === 'live' ? process.ppid : spawnSync(process.execPath, ['-e', '0']).pid;
+      const acquired = await manager.acquireExecutionLease(read.state.id, read.stateVersion, {
+        pid,
+        startId: null,
+      });
+      if (acquired.kind !== 'acquired') throw new Error(`lease not set: ${acquired.kind}`);
+    }
+
+    async function storedIds(): Promise<string[]> {
+      return [...(await new RunbookStateManager(workspace.cwd).listRunIds())].sort();
+    }
+
+    it('refuses prune --token EXECUTION_IN_PROGRESS when an inline child is mid-command, deleting nothing', async () => {
+      const { runId, token } = await startRunning();
+      const childId = await startInlineChild(runId);
+      await lease(childId, 'live');
+
+      const result = await runCliInProcess(['prune', '--token', token], workspace);
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        kind: 'error',
+        code: 'EXECUTION_IN_PROGRESS',
+        details: { runId: childId },
+      });
+      expect(await storedIds()).toEqual([runId, childId].sort());
+    });
+
+    it('deletes the whole inline chain under prune --token, reporting each run, when no attempt is In Progress', async () => {
+      const { runId, token } = await startRunning();
+      const childId = await startInlineChild(runId);
+      const grandchildId = await startInlineChild(childId);
+      await lease(grandchildId, 'dead');
+
+      const result = await runCliInProcess(['prune', '--token', token], workspace);
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout) as Record<string, unknown>[];
+      expect(validateCommandOutput('prune', output)).toEqual({ valid: true, errors: [] });
+      expect(output.map((row) => row.id).sort()).toEqual([runId, childId, grandchildId].sort());
+      expect(output.some((row) => 'retained' in row)).toBe(false);
+      expect(await storedIds()).toEqual([]);
+    });
+
+    it('retains a finished inline child while its parent is still running', async () => {
+      const { runId } = await startRunning();
+      const childId = await startInlineChild(runId);
+      await patchPersistedRunState(workspace.cwd, childId, { lifecycle: 'completed' });
+
+      const result = await runCliInProcess('prune', workspace);
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout) as Record<string, unknown>[];
+      expect(validateCommandOutput('prune', output)).toEqual({ valid: true, errors: [] });
+      expect(output).toEqual([
+        expect.objectContaining({ id: childId, status: 'complete', retained: 'parent running' }),
+      ]);
+      expect(await storedIds()).toEqual([runId, childId].sort());
+    });
+
+    it('prunes a finished inline child with its finished parent, once each', async () => {
+      const { runId, token } = await startRunning();
+      const childId = await startInlineChild(runId);
+      await patchPersistedRunState(workspace.cwd, childId, { lifecycle: 'completed' });
+      const stopped = await runCliInProcess(`stop --token ${token}`, workspace);
+      expect(stopped.exitCode).toBe(1);
+
+      const result = await runCliInProcess('prune', workspace);
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout) as Record<string, unknown>[];
+      expect(output.map((row) => row.id).sort()).toEqual([runId, childId].sort());
+      expect(output.some((row) => 'retained' in row)).toBe(false);
+      expect(await storedIds()).toEqual([]);
     });
   });
 });

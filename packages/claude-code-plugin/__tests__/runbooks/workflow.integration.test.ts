@@ -203,6 +203,61 @@ describe('Built-in Runbook Workflow Integration', () => {
     }
   });
 
+  describe('end-to-end-test inline composition (#903)', () => {
+    it('launches write-file inline on the parent token and Collects it; review-and-collate waits for #904', () => {
+      const previousPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+      process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
+      try {
+        const start = runCli(
+          ['run', join(runbooksDir, 'end-to-end-test', 'end-to-end-test.runbook.md')],
+          tempDir,
+        );
+        expect(start.exitCode).toBe(0);
+        const rootId = startedRunId(parseJsonEvents(start.stdout));
+
+        // Step 1 is the parent's own; passing it enters step 2, whose inline
+        // substep launches write-file as an Inline Child with no token of its own.
+        const toStep2 = runCli(withOwnerToken(['pass', '--step', '1'], tempDir), tempDir);
+        expect(toStep2.exitCode).toBe(0);
+        const launched = parseJsonEvents(toStep2.stdout).filter(
+          (event) => event.type === 'runbook_started',
+        );
+        expect(launched).toHaveLength(1);
+        expect(launched[0]).not.toHaveProperty('owner_token');
+        expect((launched[0]?.runbook as { path?: string } | undefined)?.path).toBe(
+          'end-to-end-test/write-file.runbook.md',
+        );
+        const childId = String(launched[0]?.runbookId);
+
+        // The root token now targets the child, so --step names the child's
+        // step. Entering its step 2 resolves the PlanPath artifact its
+        // frontmatter OUTPUTS; completing it Collects its pass — and PlanPath —
+        // into step 2. Step 3's inline child requires that PlanPath and
+        // delegates, so its launch is refused until delegation returns.
+        const childStep = runCli(withOwnerToken(['pass', '--step', '1'], tempDir), tempDir);
+        expect(childStep.exitCode).toBe(0);
+        expect(statusOf(rootId, tempDir).position.current).toBe('2');
+        const collected = runCli(withOwnerToken(['complete'], tempDir), tempDir);
+        const errors = parseJsonEvents(collected.stdout).filter(
+          (event) => event.type === 'error_occurred',
+        );
+        expect(errors).toEqual([
+          expect.objectContaining({ code: 'RUNBOOK_COMPOSITION_UNSUPPORTED', runbookId: rootId }),
+        ]);
+        expect(statusOf(childId, tempDir).status).toBe('completed');
+        const root = statusOf(rootId, tempDir);
+        expect(root.position.current).toBe('3');
+        expect(root.vars).toHaveProperty('PlanPath');
+      } finally {
+        if (previousPluginRoot === undefined) {
+          delete process.env.CLAUDE_PLUGIN_ROOT;
+        } else {
+          process.env.CLAUDE_PLUGIN_ROOT = previousPluginRoot;
+        }
+      }
+    });
+  });
+
   describe('prompted mode step navigation', () => {
     function runPromptedUntilStep(
       runbookPath: string,

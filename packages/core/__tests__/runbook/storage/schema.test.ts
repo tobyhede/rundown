@@ -261,13 +261,99 @@ describe('storage schema', () => {
     }
   });
 
-  it('requires an owner token hash on every row', async () => {
+  it('requires an owner token hash on a run that is not an inline child', async () => {
     await using driver = await schemaDriver();
     await expect(
       driver.immediate((tx) => {
         insertRun(tx, { owner_token_hash: null });
       }),
-    ).rejects.toThrow(/NOT NULL constraint/i);
+    ).rejects.toThrow(/CHECK constraint/i);
+  });
+
+  describe('inline child authority (#903)', () => {
+    const INLINE_CHILD = {
+      ...CHILD_LINK,
+      id: 'rd_inline',
+      owner_token_hash: null,
+      parent_kind: 'inline',
+    } as const satisfies SqlParams;
+
+    it('accepts an inline child with no owner token hash of its own', async () => {
+      await using driver = await schemaDriver();
+      await expect(
+        driver.immediate((tx) => {
+          insertRun(tx);
+          insertRun(tx, INLINE_CHILD);
+          insertRun(tx, { ...INLINE_CHILD, id: 'rd_inline_2', parent_entry: 2 });
+        }),
+      ).resolves.toBeUndefined();
+    });
+
+    it('refuses an inline child carrying an owner token hash', async () => {
+      await using driver = await schemaDriver();
+      await expect(
+        driver.immediate((tx) => {
+          insertRun(tx);
+          insertRun(tx, { ...INLINE_CHILD, owner_token_hash: 'c'.repeat(64) });
+        }),
+      ).rejects.toThrow(/CHECK constraint/i);
+    });
+
+    it('deletes a deleted parent’s inline descendants, which no token can reach any more', async () => {
+      await using driver = await schemaDriver();
+      await driver.immediate((tx) => {
+        insertRun(tx);
+        insertRun(tx, INLINE_CHILD);
+        insertRun(tx, {
+          ...INLINE_CHILD,
+          id: 'rd_grandchild',
+          parent_run_id: INLINE_CHILD.id,
+        });
+        insertRun(tx, CHILD_LINK);
+      });
+      await driver.immediate((tx) => {
+        tx.prepare('DELETE FROM runs WHERE id = :id').run({ id: RUN_DEFAULTS.id });
+      });
+      const rows = await driver.read((tx) =>
+        tx.prepare('SELECT id, parent_run_id FROM runs ORDER BY id').all<Record<string, unknown>>(),
+      );
+      // The delegation child survives, unlinked; the inline chain went with its root.
+      expect(rows).toEqual([{ id: CHILD_LINK.id, parent_run_id: null }]);
+    });
+
+    it('unlinks a delegation child of a deleted inline descendant rather than refusing the delete', async () => {
+      await using driver = await schemaDriver();
+      await driver.immediate((tx) => {
+        insertRun(tx);
+        insertRun(tx, INLINE_CHILD);
+        insertRun(tx, {
+          ...INLINE_CHILD,
+          id: 'rd_grandchild',
+          parent_run_id: INLINE_CHILD.id,
+        });
+        // Delegated from the inline grandchild, two levels below the deleted root.
+        insertRun(tx, { ...CHILD_LINK, id: 'rd_delegate', parent_run_id: 'rd_grandchild' });
+      });
+      await driver.immediate((tx) => {
+        tx.prepare('DELETE FROM runs WHERE id = :id').run({ id: RUN_DEFAULTS.id });
+      });
+      const rows = await driver.read((tx) =>
+        tx
+          .prepare('SELECT id, parent_run_id, parent_kind FROM runs ORDER BY id')
+          .all<Record<string, unknown>>(),
+      );
+      expect(rows).toEqual([{ id: 'rd_delegate', parent_run_id: null, parent_kind: null }]);
+    });
+
+    it('refuses a delegation child without an owner token hash', async () => {
+      await using driver = await schemaDriver();
+      await expect(
+        driver.immediate((tx) => {
+          insertRun(tx);
+          insertRun(tx, { ...CHILD_LINK, owner_token_hash: null });
+        }),
+      ).rejects.toThrow(/CHECK constraint/i);
+    });
   });
 
   it('refuses two rows carrying the same owner token hash', async () => {

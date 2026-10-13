@@ -58,7 +58,13 @@
     "packages/cli/src/helpers/transition-target.ts",
     "packages/cli/src/helpers/active-runbook-cleanup.ts",
     "packages/cli/src/helpers/run-progression-adapters.ts",
-    "packages/cli/src/services/inline-launch-latch.ts"
+    "packages/cli/src/services/inline-launch-latch.ts",
+    "packages/core/src/runbook/child-linkage.ts",
+    "packages/core/src/runbook/inline-child.ts",
+    "packages/core/src/runbook/inline-progression.ts",
+    "packages/core/src/runbook/run-deletion.ts",
+    "packages/cli/src/helpers/command-target.ts",
+    "packages/cli/src/helpers/inline-child-preparer.ts"
   ],
   "machinery": [
     "packages/core/src/runbook/lifecycle-command-service.ts",

@@ -15,10 +15,13 @@ import {
   CLIErrorCodes,
   ExecutionEventEmitter,
   type CommandExecutionStreamOptions,
+  type RunbookState,
   type RunbookStateManager,
   type RunProgressionDirective,
   type RunProgressionOutcome,
 } from '@rundown-org/core';
+import { createBridgedEmitter } from './execution-emitter.js';
+import { createInlineChildPreparer } from './inline-child-preparer.js';
 import { createCliCommandServices } from '../services/execution.js';
 import { createCliRunbookActorService } from './actor-service-factory.js';
 import { getRunbookFromState } from './runbook-loader.js';
@@ -59,9 +62,11 @@ export function createCliRunProgressionDriver(
  * Activate core Run Progression for one run with the CLI's standard wiring.
  *
  * The ONE frontend assembly of the activation's dependencies, shared by every
- * entry path (run start, pass/fail continuation, goto): CLI command callables
- * behind the machine-owned command actor, the step loader, and the sink the
- * caller supplied — or a fresh emitter bridged to the command's output.
+ * entry path (run start, pass/fail continuation, goto, the implicit Collect
+ * before a command): CLI command callables behind the machine-owned command
+ * actor, the step loader, the Inline Child preparer (#903), a bridged emitter
+ * per run progression reaches, and the sink the caller supplied for the
+ * activation's own run — or a fresh emitter bridged to the command's output.
  *
  * The `failed` arm's diagnostic is rendered here best-effort: it is the one
  * outcome whose message cannot ride the observation stream, and a second
@@ -84,6 +89,17 @@ export async function driveRunProgression(
       ctx.output.executionEvent(event);
     });
   }
+  // One emitter per run for the whole activation, so each Inline Child's (and
+  // each parent's) events carry that run's identity and their own sequence.
+  const emitters = new Map<string, ExecutionEventEmitter>([[activation.authority.runId, sink]]);
+  const sinkFor = (state: RunbookState): ExecutionEventEmitter => {
+    let emitter = emitters.get(state.id);
+    if (emitter === undefined) {
+      emitter = createBridgedEmitter(state, ctx.output);
+      emitters.set(state.id, emitter);
+    }
+    return emitter;
+  };
   const outcome = await activateRunProgression(
     activation.authority,
     {
@@ -91,6 +107,8 @@ export async function driveRunProgression(
       actorService,
       loadSteps: (state) => getRunbookFromState(state, ctx.cwd),
       sink,
+      sinkFor,
+      prepareInlineChild: createInlineChildPreparer(ctx.cwd, ctx.output),
     },
     activation.entryBoundary,
   );

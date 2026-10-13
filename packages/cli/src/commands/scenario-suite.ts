@@ -59,6 +59,10 @@ import { assertSafeRelativeArtifactPath } from '../helpers/artifact-path.js';
 import { assertContainedPath } from '../helpers/path-containment.js';
 import { getEffectiveResult } from '../schemas/scenarios.js';
 import { runCliInProcess } from '../services/in-process-cli-runner.js';
+import {
+  collectAuthoredRunbookRefs,
+  shouldStageAuthoredRunbookRef,
+} from '../helpers/scenario-workflow.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -228,23 +232,22 @@ async function executeSuiteCase(
     const allRefs = extractRunbookReferences(suiteCase.commands);
     const referenced = allRefs.filter((r) => r !== suiteCase.file && r !== mainBasename);
     const mainRunbookSourceDir = dirname(resolve(suiteDir, suiteCase.file));
-    for (const ref of referenced) {
+    // Stage one child runbook into the isolated workspace, trying each base in
+    // order. A child found in none of them fails the case up front with
+    // CHILD_RUNBOOK_NOT_FOUND rather than as a later launch refusal.
+    const stageChildRunbook = (ref: string, bases: readonly string[]): void => {
       validateRelativePath(ref);
       const dest = join(runbooksDirPath, ref);
       mkdirSync(dirname(dest), { recursive: true });
-      // Try main runbook's directory first (bare filenames), then suite directory (nested paths)
-      let copied = false;
-      for (const base of [mainRunbookSourceDir, suiteDir]) {
-        const sourcePath = resolve(base, ref);
+      assertDestinationPathContained(dest, runbooksDirPath, ref);
+      for (const base of bases) {
         try {
-          assertDestinationPathContained(dest, runbooksDirPath, ref);
-          const realSourcePath = copyContainedRunbook(sourcePath, dest, base, ref);
+          const realSourcePath = copyContainedRunbook(resolve(base, ref), dest, base, ref);
           stagedRunbooks.push({
             sourcePath: realSourcePath,
             sourceRoots: [dirname(realSourcePath), suiteDir],
           });
-          copied = true;
-          break;
+          return;
         } catch (e: unknown) {
           if (isNodeError(e) && e.code === 'ENOENT') {
             continue; // try next base
@@ -252,11 +255,28 @@ async function executeSuiteCase(
           throw e; // permission/IO errors propagate immediately
         }
       }
-      if (!copied) {
-        throw new Error(
-          `CHILD_RUNBOOK_NOT_FOUND: ${ref} (required by case "${caseName}", ` +
-            `searched in: ${[mainRunbookSourceDir, suiteDir].join(', ')})`,
-        );
+      throw new Error(
+        `CHILD_RUNBOOK_NOT_FOUND: ${ref} (required by case "${caseName}", ` +
+          `searched in: ${bases.join(', ')})`,
+      );
+    };
+
+    // Try main runbook's directory first (bare filenames), then suite directory (nested paths)
+    for (const ref of referenced) {
+      stageChildRunbook(ref, [mainRunbookSourceDir, suiteDir]);
+    }
+
+    // Stage the children the staged runbooks compose (#903), transitively, so
+    // an inline child resolves in the isolated workspace exactly as a bare
+    // filename command does. Each is found beside the runbook that names it,
+    // then under the suite directory.
+    const stagedRefs = new Set<string>([mainBasename, ...referenced]);
+    for (let i = 0; i < stagedRunbooks.length; i++) {
+      const parent = stagedRunbooks[i];
+      for (const ref of collectAuthoredRunbookRefs(parent.sourcePath)) {
+        if (!shouldStageAuthoredRunbookRef(ref) || stagedRefs.has(ref)) continue;
+        stageChildRunbook(ref, [dirname(parent.sourcePath), suiteDir]);
+        stagedRefs.add(ref);
       }
     }
 

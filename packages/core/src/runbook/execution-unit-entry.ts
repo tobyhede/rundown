@@ -11,8 +11,9 @@
  * (#799); `undefined`-as-signal is a missing type.
  *
  * Both are answered here. {@link deriveExecutionUnitEntry} renders against the
- * run's own frame and returns {@link ExecutionUnitEntry} — `awaiting` or
- * `runnable`. The command travels only on the `runnable` arm, inside a
+ * run's own frame and returns {@link ExecutionUnitEntry} — `awaiting`,
+ * `runnable`, or `inline_child` for an inline runbook-list substep (#903). The
+ * command travels only on the `runnable` arm, inside a
  * {@link RenderedUnitCommand} whose brand is mintable only in this module, so
  * there is no path from the result back to unexpanded text.
  *
@@ -44,7 +45,8 @@ import {
   type TemplateRenderOptions,
 } from './template-renderer.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
-import type { ResolvedStep, RunbookState } from './types.js';
+import type { InlineChildReservation, ResolvedStep, RunbookState } from './types.js';
+import { currentInlineReservation, inlineRunbookOf } from './inline-child.js';
 import type { RunId } from './run-id.js';
 import type { StepPosition } from '../cli/types.js';
 
@@ -125,6 +127,19 @@ export interface ExecutionUnitRunnable extends ExecutionUnitEntryBase {
 }
 
 /**
+ * An inline runbook-list substep (#903): the unit launches, or resumes, the
+ * Inline Child its entry reserved. Classified ahead of `awaiting`/`runnable`
+ * because composition is not a command — a prompted run launches its inline
+ * children too.
+ */
+export interface ExecutionUnitInlineChild extends ExecutionUnitEntryBase {
+  /** Discriminant. */
+  readonly kind: 'inline_child';
+  /** The Current Child the machine reserved for this entry into the unit. */
+  readonly reservation: InlineChildReservation;
+}
+
+/**
  * What entering one execution unit leaves the caller to do.
  *
  * Exhaustive by construction, which is the point: it replaces the loop's use of
@@ -133,7 +148,10 @@ export interface ExecutionUnitRunnable extends ExecutionUnitEntryBase {
  * at all — three conditions the caller previously spelled out itself and can no
  * longer get wrong.
  */
-export type ExecutionUnitEntry = ExecutionUnitAwaiting | ExecutionUnitRunnable;
+export type ExecutionUnitEntry =
+  | ExecutionUnitAwaiting
+  | ExecutionUnitRunnable
+  | ExecutionUnitInlineChild;
 
 /** Inputs to {@link deriveExecutionUnitEntry}. */
 export interface DeriveExecutionUnitEntryInput {
@@ -281,7 +299,8 @@ function persistedContext(state: RunbookState): Record<string, unknown> {
  * @throws {InvalidRunbookStateError} When the run carries no `ContextId` or
  *   `WorkPath` to render against.
  * @throws {Error} When the run's cursor names a step the parsed runbook does not
- *   define, or when a `--helpers` helper throws while expanding a field.
+ *   define, when a `--helpers` helper throws while expanding a field, or when
+ *   the cursor rests on an inline substep with no Current Child reserved.
  */
 export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): ExecutionUnitEntry {
   const { state, steps } = input;
@@ -360,6 +379,19 @@ export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): 
   // command. `hasCommand` comes off the parsed unit rather than off whether an
   // expansion produced text, so a command that renders to the empty string is
   // still runnable.
+  if (state.substep !== undefined && inlineRunbookOf(currentStep, state.substep) !== undefined) {
+    const reservation = currentInlineReservation(state);
+    if (reservation === undefined) {
+      // The machine reserves on every entry into the substep, so a cursor
+      // resting here without a current reservation is a defect, not a state
+      // to adapt (CLAUDE.md § State Persistence).
+      throw new Error(
+        `Run ${state.id} rests on inline substep ${state.step}.${state.substep} with no Current Child reserved for its entry`,
+      );
+    }
+    return { kind: 'inline_child', effects, reservation };
+  }
+
   if (entry.prompted || code === undefined) {
     return { kind: 'awaiting', effects };
   }

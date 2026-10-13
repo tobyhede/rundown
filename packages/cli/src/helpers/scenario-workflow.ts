@@ -80,7 +80,14 @@ export interface LoadedRunbook {
   scenarios: Scenarios;
 }
 
-function collectAuthoredRunbookRefs(filePath: string): string[] {
+/**
+ * Every runbook a runbook's substeps reference by name, in document order —
+ * the children a scenario must stage for composition (#903) to resolve them.
+ *
+ * @param filePath - The runbook file to read.
+ * @returns The authored runbook references.
+ */
+export function collectAuthoredRunbookRefs(filePath: string): string[] {
   const source = readFileSync(filePath, 'utf-8');
   const parsed = parseRunbookDocument(source, basename(filePath));
   const refs: string[] = [];
@@ -97,7 +104,15 @@ function collectAuthoredRunbookRefs(filePath: string): string[] {
   return refs;
 }
 
-function shouldStageAuthoredRunbookRef(ref: string): boolean {
+/**
+ * Whether an authored reference names a plain relative runbook file a
+ * scenario can stage (not a template, an absolute path, a parent escape or a
+ * namespaced reference).
+ *
+ * @param ref - The authored reference.
+ * @returns True when the reference can be staged.
+ */
+export function shouldStageAuthoredRunbookRef(ref: string): boolean {
   return (
     ref.endsWith('.runbook.md') &&
     !ref.includes('{{') &&

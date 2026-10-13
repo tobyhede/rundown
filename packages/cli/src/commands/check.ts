@@ -53,9 +53,9 @@ export function registerCheckCommand(program: Command): void {
       warnings.push(...forWarnings);
 
       // Composition is valid language, so it never fails the check; but this
-      // build's `rundown run` refuses it, and the author should learn that
-      // here rather than at launch. Core names the substeps, as it does for
-      // the refusal itself.
+      // build's `rundown run` refuses delegation (until #904) and multi-runbook
+      // inline substeps, and the author should learn that here rather than at
+      // launch. Core names the substeps, as it does for the refusal itself.
       const composing = findUnsupportedComposition(result.runbook.steps);
       if (composing.length > 0) {
         warnings.push({

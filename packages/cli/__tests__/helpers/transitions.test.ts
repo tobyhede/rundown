@@ -45,6 +45,12 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   formatTransitionAction: mockFn<(action: ActionType) => string>().mockReturnValue('ACTION_LABEL'),
 }));
 
+// The command's target is core's decision (`resolveCommandTarget`, #903); the
+// CLI helper that supplies its settle callable is mocked to the same double.
+jest.unstable_mockModule('../../src/helpers/command-target', () => ({
+  resolveCommandTarget: (ctx: { readonly manager: unknown }, token: unknown) =>
+    mockResolveOwnedRun(ctx.manager as never, token as never),
+}));
 jest.unstable_mockModule('../../src/helpers/lifecycle-seam-factory', () => ({
   buildLifecycleSeam: mockFn<() => unknown>().mockImplementation(() => ({
     manager: mockManager,
@@ -135,7 +141,7 @@ function makeState(overrides: Record<string, unknown> = {}): RunbookState {
 }
 
 function running(state: RunbookState = makeState()): OwnedRunResolution {
-  return { kind: 'running', run: { state, stateVersion: 3 as never, lease: null } };
+  return { kind: 'running', run: { state, stateVersion: 3 as never, lease: null, linkage: null } };
 }
 
 function stepEvent(
@@ -227,7 +233,7 @@ describe('runSeamTransition — token resolution', () => {
 
     expect(mockResolveOwnedRun).toHaveBeenCalledWith(mockManager, TOKEN);
     expect(seamInput().command).toBe('pass');
-    expect(seamInput().run).toEqual({ state, stateVersion: 3, lease: null });
+    expect(seamInput().run).toEqual({ state, stateVersion: 3, lease: null, linkage: null });
     expect(result.applied?.runId).toBe(RUN_ID);
     expect(result.exitError).toBe(false);
   });

@@ -271,6 +271,86 @@ The result is {{ Result }}.
     });
   });
 
+  describe('on an inline child (#903)', () => {
+    /** Parent whose inline substep 1.1 runs child.runbook.md; FAIL takes `failAction`. */
+    async function startInline(failAction: 'STOP' | 'CONTINUE'): Promise<string> {
+      await writeFile(
+        join(workspace.cwd, 'inline.runbook.md'),
+        [
+          '# Inline',
+          '',
+          '## 1. Parent',
+          '',
+          '- PASS ALL CONTINUE',
+          `- FAIL ANY ${failAction}`,
+          '',
+          '- child.runbook.md',
+          '',
+          '## 2. After',
+          '',
+          '- PASS COMPLETE',
+          '- FAIL STOP',
+          '',
+          'Finish.',
+          '',
+        ].join('\n'),
+      );
+      await writeFile(
+        join(workspace.cwd, 'child.runbook.md'),
+        ['# Child', '', '## Check', '', '- PASS COMPLETE', '- FAIL STOP', '', 'Check.', ''].join(
+          '\n',
+        ),
+      );
+      const result = await runCliInProcess('run inline.runbook.md', workspace);
+      expect(result.exitCode).toBe(0);
+      token = requireOwnerToken(result.stdout);
+      runId = requireRunId(result.stdout);
+      const started = parseConcatenatedJson(result.stdout).filter(
+        (document) => (document as Record<string, unknown>).type === 'runbook_started',
+      ) as Record<string, unknown>[];
+      expect(started).toHaveLength(2);
+      return String(started[1]?.runbookId);
+    }
+
+    it('ends with the stop action object naming the child and carrying --message, after the progression events', async () => {
+      const child = await startInline('STOP');
+
+      const result = await runCliInProcess(['stop', 'Abandon child', '--token', token], workspace);
+
+      // The parent Collects the stopped child as FAIL and its FAIL ANY STOP
+      // stops it: the command exits by where progression rests.
+      expect(result.exitCode).toBe(1);
+      const lines = parseConcatenatedJson(result.stdout) as Record<string, unknown>[];
+      expect(
+        lines.some((line) => line.type === 'runbook_stopped' && line.runbookId === runId),
+      ).toBe(true);
+      expect(parseFinalCliJsonObject(result.stdout)).toMatchObject({
+        kind: 'action',
+        action: 'stop',
+        stopped: true,
+        runId: child,
+        message: 'Abandon child',
+      });
+      expect((await readRunbookState(workspace, child))?.lifecycle).toBe('stopped');
+    });
+
+    it('still ends with the stop action object when the parent continues, exiting clean', async () => {
+      const child = await startInline('CONTINUE');
+
+      const result = await runCliInProcess(['stop', '--token', token], workspace);
+
+      // FAIL ANY CONTINUE: the parent moves on and rests waiting at step 2.
+      expect(result.exitCode).toBe(0);
+      expect(parseFinalCliJsonObject(result.stdout)).toMatchObject({
+        kind: 'action',
+        action: 'stop',
+        stopped: true,
+        runId: child,
+      });
+      expect((await readRunbookState(workspace, runId))?.step).toBe('2');
+    });
+  });
+
   describe('JSON output', () => {
     beforeEach(async () => {
       await start('runbooks/simple.runbook.md');

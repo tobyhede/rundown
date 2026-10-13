@@ -105,6 +105,25 @@ any derivation, and `status` renders the condition as `execution`.
 The lease is never retried, backed off or waited on. A refused set is a refused
 turn.
 
+**Inline Children (#903).** The lease is per run row. An Inline Child's command
+turns set and clear the **child** row's lease, and every rule above applies to
+the child as to any run: the owner's `pass` / `fail` / `goto` / `stop` /
+`complete` target the deepest running inline child, so an In Progress or
+Interrupted child refuses them exactly as a top-level run would. The parent
+holds **no** lease while its inline child runs: its unit is composition, not an
+external effect. Launching writes only the child row — an insert under the
+reserved id, which a racing command's insert of the same id refuses. The parent
+row is written once in the child's life, by the implicit Collect: an ordinary
+conditional save at the version the parent was read at. A moved version refuses
+the Collect `CONCURRENT_MODIFICATION` and leaves the child's terminal for the
+owner's next command to Collect. That recovery Collect is a scoped activation
+(`collect_inline_child`): it commits the Collect and nothing else — no command
+turn, no launch, no ascent — before the owner's command applies. If the Collect
+leaves the parent on a command step, that command is owed and has not run: the
+seam refuses `pass` there `EXECUTION_PENDING` (the machine's selection for a
+lease-free cursor is a `runnable` unit), exactly as after a crash between any
+commit and its Run Progression; `goto` onto the step runs it.
+
 ## No other coordination
 
 There are no file locks, compare-and-swap retry budgets, latches, fences, claim

@@ -451,8 +451,10 @@ export const ContextSnapshotSchema = z
   });
 
 /**
- * Zod schema for SubstepState
- * Tracks runtime state of a substep within a step
+ * Zod schema for SubstepState, which tracks the runtime state of a substep
+ * within a step and the Current Child reserved for it. A reservation carries
+ * the child's identity only: the context an Inline Child inherits is read from
+ * the parent row at launch, so no variable space is copied here.
  */
 const SubstepStateSchema = z
   .object({
@@ -460,10 +462,21 @@ const SubstepStateSchema = z
     frameKey: FrameKeySchema,
     status: z.enum(['pending', 'running', 'done']),
     result: z.enum(['pass', 'fail']).optional(),
+    // The Current Child reservation (#903). Only `inline` exists until #904.
+    child: z
+      .object({
+        kind: z.literal('inline'),
+        runId: RunIdSchema,
+        entry: z.number().int().positive(),
+        runbook: z.string(),
+      })
+      .strict()
+      .optional(),
   })
-  // Strict, so a record this version does not carry — the v2 `delegation` and
-  // `inline` child records, or any later drift — is refused by the structural
-  // parse rather than silently stripped on read (the no-migration rule).
+  // Strict, so a record this version does not carry — the v2 `delegation`
+  // and `inline` child records, or any later drift — is refused by the
+  // structural parse rather than silently stripped on read (the
+  // no-migration rule).
   .strict();
 
 /**
@@ -765,8 +778,9 @@ function makeAncestorSnapshotSchema(projectRoot: string): z.ZodType {
  * `ancestors[].vars` with path-validated variants so that all
  * JsonArrayStream paths in a context snapshot are boundary-checked against
  * `projectRoot` on state load. Nothing in the persisted run state carries a
- * snapshot today; the Current Child reservation records (#903/#904) will, and
- * they must parse their snapshots through this rather than the static schema.
+ * snapshot today — an Inline Child's reservation reads its context from the
+ * parent row at launch (#903) — but a delegation record (#904) that persists
+ * one must parse it through this rather than the static schema.
  *
  * @param projectRoot - Absolute project root for path boundary enforcement
  * @returns Zod schema for ContextSnapshot with path-validated vars and ancestors
