@@ -19,6 +19,8 @@ Commander program. For the user guide, see [cli.md](cli.md).
   - [`rundown stop`](#rundown-stop)
   - [`rundown claim`](#rundown-claim)
   - [`rundown collect`](#rundown-collect)
+  - [`rundown retry`](#rundown-retry)
+  - [`rundown release`](#rundown-release)
   - [`rundown ls`](#rundown-ls)
   - [`rundown echo`](#rundown-echo)
   - [`rundown check`](#rundown-check)
@@ -90,6 +92,10 @@ Commands:
                                 start it (prints its owner token)
   collect [options]             Collect the results of the run's current
                                 delegated children
+  retry [options]               Cancel a delegated child and reserve a fresh one
+                                with a new claim ticket
+  release [options] <child-id>  Abandon a delegated child you claimed but cannot
+                                finish (collected as a fail)
   ls [options]                  List runbooks (runs by default, --all for
                                 available)
   echo [options] [command...]   Echo command for runbook testing
@@ -253,6 +259,35 @@ Collect the results of the run's current delegated children
 Options:
   --token <token>  Owner token of the run to mutate (owner_token from
                    runbook_started)
+  --text           Output as human-readable text
+  -h, --help       display help for command
+```
+
+### `rundown retry`
+
+```text
+Usage: rundown retry [options]
+
+Cancel a delegated child and reserve a fresh one with a new claim ticket
+
+Options:
+  --token <token>   Owner token of the run to mutate (owner_token from
+                    runbook_started)
+  --step <stepId>   The delegated substep to retry (required, e.g. 2.1)
+  --index <number>  Current FOR loop iteration (requires --step)
+  --text            Output as human-readable text
+  -h, --help        display help for command
+```
+
+### `rundown release`
+
+```text
+Usage: rundown release [options] <child-id>
+
+Abandon a delegated child you claimed but cannot finish (collected as a fail)
+
+Options:
+  --agent-id <id>  Identity of the releasing agent; must match the claim
   --text           Output as human-readable text
   -h, --help       display help for command
 ```

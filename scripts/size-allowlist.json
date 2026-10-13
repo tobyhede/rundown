@@ -68,7 +68,10 @@
     "packages/core/src/runbook/child-preparation.ts",
     "packages/core/src/runbook/delegation-child.ts",
     "packages/core/src/runbook/delegation-tickets.ts",
-    "packages/core/src/runbook/delegation-progression.ts"
+    "packages/core/src/runbook/delegation-progression.ts",
+    "packages/core/src/runbook/delegation-recovery.ts",
+    "packages/cli/src/commands/retry.ts",
+    "packages/cli/src/commands/release.ts"
   ],
   "machinery": [
     "packages/core/src/runbook/lifecycle-command-service.ts",

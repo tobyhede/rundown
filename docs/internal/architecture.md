@@ -203,8 +203,11 @@ by construction.
   entry (`reserveDelegationChildren`, `delegation-child.ts`), so a fan-out's
   children are all reserved when the first is entered. The snapshot is captured
   here, from machine context, because the child is claimed later by another
-  agent and a sibling Collected in between must not leak into it. The transient
-  state's `always` also raises the substep's `PASS` / `FAIL` when its
+  agent and a sibling Collected in between must not leak into it. A reservation
+  of an earlier entry that this one replaces is appended to the substep state's
+  `replaced` list (`{ runId, ticketHash }`), Collected or not, so its ticket and
+  its child's commands are refused as no longer counted rather than unknown. The
+  transient state's `always` also raises the substep's `PASS` / `FAIL` when its
   reservation was already Collected out of order (below).
 
 Every composing leaf handles `CHILD_RESULT` in `idle` — Collect — for its own
@@ -219,7 +222,15 @@ any order and still drive the authored handlers in document order. A child for a
 substep the cursor has passed matches no guard. `ISSUE_CLAIM_TICKETS` is a
 machine-root handler: it records the ticket hashes Run Progression minted, all
 or nothing, on reservations of the active entry that have none
-(`recordClaimTickets`).
+(`recordClaimTickets`). Every leaf of a step that delegates also handles
+`RETRY_DELEGATION { substepId, ticketHash }` in `idle` (#905): guarded on the
+named substep's Delegation of the active entry still counting
+(`retryableDelegation`), its assign cancels it and reserves a fresh child at the
+same entry under a newly minted run id, carrying the event's ticket hash and the
+cancelled reservation's runbook and context snapshot (`replaceDelegation`), and
+records the cancelled one as `replaced`. `ABANDON` is a machine-root handler
+targeting the `ABANDONED` final state, which assigns `lifecycle: 'abandoned'`
+and stores no frontmatter outputs.
 
 Two further children serve the machine-selected Run Progression turn:
 `__progression-waiting-input` emits the typed `waiting` intent and
@@ -447,9 +458,11 @@ are sent by the lifecycle command seam for `rundown stop` / `rundown complete`;
 `COMMAND_RESULT` comes from the compiled machine's own command actor;
 `CHILD_RESULT` is sent by Run Progression (an Inline Child's implicit Collect)
 and by the lifecycle seam's `runCollect` (`rundown collect`);
-`ISSUE_CLAIM_TICKETS` is sent by Run Progression; and `SET_VARIABLES` has a
-machine handler but no front-end sender. None of them appear above.
-`packages/core/src/runbook/compiler.ts` remains the authority on the union.
+`ISSUE_CLAIM_TICKETS` is sent by Run Progression; `RETRY_DELEGATION` by the
+lifecycle seam's `runRetry` (`rundown retry`); `ABANDON` by `releaseDelegation`
+(`rundown release`); and `SET_VARIABLES` has a machine handler but no front-end
+sender. None of them appear above. `packages/core/src/runbook/compiler.ts`
+remains the authority on the union.
 
 The rule new work must satisfy is the direction of the arrow: a new CLI
 subcommand dispatches into existing events, and any new event arrives with its
@@ -529,11 +542,12 @@ Before descending, `resolveCommandTarget` checks the token's run's standing as a
 Delegation (`delegationStandingOf`, `delegation-progression.ts`): a delegated
 child whose parent finished or was pruned (its linkage reads
 `orphaned_delegation`) is refused `parent_run_finished`, and one its parent no
-longer counts (`countsDelegation`: reserved at the parent's active entry, not
-yet Collected, for the cursor's substep or a later one) is refused
-`delegation_cancelled`. Every other run is `current`. The check is skipped for
-`stop` alone (the caller names its command, `CommandTargetPurpose`): the child's
-owner owns the child's row and may end it, though nothing collects its result.
+longer counts (recorded on the parent as `replaced`, or by `countsDelegation`:
+reserved at the parent's active entry, not yet Collected, for the cursor's
+substep or a later one) is refused `delegation_cancelled`. Every other run is
+`current`. The check is skipped for `stop` alone (the caller names its command,
+`CommandTargetPurpose`): the child's owner owns the child's row and may end it,
+though nothing collects its result.
 
 ### The command's target: the deepest running Inline Child
 
@@ -665,7 +679,7 @@ its parent. The parent holds no execution lease while its child runs — the
 child's command turns lease the child row — and the Collect is the parent's own
 conditional write.
 
-### Delegations: tickets, claim and Collect
+### Delegations: tickets, claim, Collect, retry and release
 
 A `delegation` entry never runs a command and never drives its child: the child
 belongs to whichever agent claims it.
@@ -699,6 +713,20 @@ belongs to whichever agent claims it.
   (`after_observed_transition`), so the frontend's activation announces the next
   unit — with its own tickets, if it delegates — or, for an Inline Child that
   delegates and just finished, ascends into its parent.
+- **Retry.** `RunbookLifecycleCommandService.runRetry` → `retryDelegation`
+  (`delegation-recovery.ts`, #905) refuses under the execution lease, confirms
+  `--step` / `--index` with `resolveRetryTarget` (`transition-cursor.ts`: any
+  substep of the current step, at the current iteration), refuses a substep with
+  no counted Delegation `NOTHING_TO_RETRY`, mints the new Claim Ticket, and
+  commits `RETRY_DELEGATION` carrying its hash with one conditional save. The
+  plaintext is returned once for the CLI's `DELEGATION_RETRIED` event. The
+  parent never writes the cancelled child: its next command reads its standing.
+- **Release.** `releaseDelegation` (`delegation-recovery.ts`, #905) is the one
+  write not authorized by an Owner Token. It loads the child by id, requires a
+  Delegation linkage (live or orphaned) whose `claimedBy` equals the presented
+  agent id (both absent match), refuses a finished child and a live lease, and
+  commits `ABANDON` on the child with one conditional save. It never reads the
+  parent for writing; the parent's Collect reads `abandoned` as FAIL.
 
 ### Guards do no cross-run IO or policy
 

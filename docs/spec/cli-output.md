@@ -677,6 +677,49 @@ Pending and unclaimed children exit 0. Refusals are error envelopes with
 `NOTHING_TO_COLLECT`. The text form prints `Child <step> <runId>: <status>` per
 child.
 
+## retry
+
+### `rundown retry --token <owner_token> --step <substep> [--index <n>]`
+
+One `delegation_retried` event for the run the token targets:
+
+```jsonl
+{"type":"delegation_retried","step":"1.1","cancelledRunId":"rd_7af1d92df90a405edbf718ca20012b3f","children":[{"step":"1.1","runId":"rd_3c0e5a4b2f6d48d1a9e07c51b2f8d6e4","runbook":"child.runbook.md","ticket":"rdt_CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"}],"runbookId":"rd_46cbdd5f19324d3b91667e2ff0e96386","runbook":{"source":"project","path":"parent.runbook.md"},"seq":1}
+```
+
+| Field               | Meaning                                                                        |
+| ------------------- | ------------------------------------------------------------------------------ |
+| `step`              | The delegated substep retried (`step.substep`)                                 |
+| `index`             | The FOR iteration, inside a loop                                               |
+| `cancelledRunId`    | The child the retry cancelled; its commands and ticket are refused from now on |
+| `children`          | The fresh child, in the shape of `step_entered`'s `children`                   |
+| `children[].ticket` | Its new Claim Ticket, printed here once and nowhere else                       |
+
+Refusals are error envelopes with `command: "retry"`: `TOKEN_REQUIRED`,
+`INVALID_SYNTAX`, `UNKNOWN_TOKEN`, `RD-303` / `RD-304`, `EXECUTION_IN_PROGRESS`
+/ `EXECUTION_INTERRUPTED`, `INVALID_STEP`, `NOTHING_TO_RETRY` and
+`CONCURRENT_MODIFICATION`. The text form prints
+`Retried <step>: cancelled <runId>`, then the fresh child as `step_entered`'s
+text form does.
+
+## release
+
+### `rundown release <child-id> [--agent-id <id>]`
+
+The released child's `runbook_abandoned` event, naming its parent while the
+parent exists:
+
+```jsonl
+{"type":"runbook_abandoned","parent":{"runId":"rd_46cbdd5f19324d3b91667e2ff0e96386","step":"1.1"},"runbookId":"rd_7af1d92df90a405edbf718ca20012b3f","runbook":{"source":"project","path":"child.runbook.md"},"seq":1}
+```
+
+Refusals are error envelopes with `command: "release"`: `INVALID_RUN_ID`,
+`INVALID_SYNTAX` (an empty `--agent-id`), `RUN_TARGET_UNAVAILABLE`,
+`NOT_A_DELEGATION`, `AGENT_MISMATCH`, `RD-303` / `RD-304`,
+`EXECUTION_IN_PROGRESS` and `CONCURRENT_MODIFICATION`. Nothing is written on any
+of them. The text form prints
+`Run <runId> abandoned; run <parent> collects it at <step> as a fail`.
+
 ## `rundown artifact`
 
 `rundown artifact ls`, `inspect`, `path`, and `uri` expose core artifact
@@ -1523,20 +1566,23 @@ Code: RUNBOOK_COMPOSITION_UNSUPPORTED
 
 ### Delegation refusals
 
-Delegation (#904) adds five refusals. Each writes nothing, exits 1 and carries
-`details` only where shown.
+Delegation (#904) and its recovery (#905) add eight refusals. Each writes
+nothing, exits 1 and carries `details` only where shown.
 
-| Code                   | Command                                          | When                                                                                                                                                |
-| ---------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `UNKNOWN_TICKET`       | `claim`                                          | A well-formed Claim Ticket no reservation carries                                                                                                   |
-| `ALREADY_CLAIMED`      | `claim`                                          | The ticket's child was already claimed                                                                                                              |
-| `DELEGATION_CANCELLED` | `claim`, and any command on the child but `stop` | The parent no longer counts the child (its substep was decided by hand, or the step re-entered); `details.runId` names the child on a child command |
-| `PARENT_RUN_FINISHED`  | `claim`, and any command on the child but `stop` | The parent reached a terminal or was pruned; `details.runId` names the child on a child command                                                     |
-| `NOTHING_TO_COLLECT`   | `collect`                                        | The run's current step delegates nothing                                                                                                            |
+| Code                   | Command                                          | When                                                                                                                                                           |
+| ---------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `UNKNOWN_TICKET`       | `claim`                                          | A well-formed Claim Ticket no reservation carries                                                                                                              |
+| `ALREADY_CLAIMED`      | `claim`                                          | The ticket's child was already claimed                                                                                                                         |
+| `DELEGATION_CANCELLED` | `claim`, and any command on the child but `stop` | The parent no longer counts the child (its substep was decided by hand or retried, or the step re-entered); `details.runId` names the child on a child command |
+| `PARENT_RUN_FINISHED`  | `claim`, and any command on the child but `stop` | The parent reached a terminal or was pruned; `details.runId` names the child on a child command                                                                |
+| `NOTHING_TO_COLLECT`   | `collect`                                        | The run's current step delegates nothing                                                                                                                       |
+| `NOTHING_TO_RETRY`     | `retry`                                          | The substep delegates nothing, or its child was already collected or decided by hand                                                                           |
+| `AGENT_MISMATCH`       | `release`                                        | The agent id differs from the one the claim recorded (both absent match)                                                                                       |
+| `NOT_A_DELEGATION`     | `release`                                        | The run is not a delegated child                                                                                                                               |
 
 ```json
 {
-  "error": "Run rd_7af1d92df90a405edbf718ca20012b3f is a delegation that run rd_46cbdd5f19324d3b91667e2ff0e96386 no longer counts at 1.1 (the step was decided or entered again); its result would never be collected, so nothing was written. Stop working on it, and end it with `rundown stop --token <owner_token>`.",
+  "error": "Run rd_7af1d92df90a405edbf718ca20012b3f is a delegation that run rd_46cbdd5f19324d3b91667e2ff0e96386 no longer counts at 1.1 (the substep was decided, retried or entered again); its result would never be collected, so nothing was written. Stop working on it, and end it with `rundown stop --token <owner_token>`.",
   "kind": "error",
   "code": "DELEGATION_CANCELLED",
   "command": "pass",

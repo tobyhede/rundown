@@ -626,7 +626,7 @@ export class RunbookLifecycleCommandService {
           kind: 'delegation_cancelled',
           code: DELEGATION_CANCELLED_CODE,
           runId: run.state.id,
-          message: `Run ${run.state.id} is a delegation that run ${standing.parentRunId} no longer counts at ${standing.parentStep} (the step was decided or entered again); its result would never be collected, so nothing was written. Stop working on it, and end it with \`rundown stop --token <owner_token>\`.`,
+          message: `Run ${run.state.id} is a delegation that run ${standing.parentRunId} no longer counts at ${standing.parentStep} (the substep was decided, retried or entered again); its result would never be collected, so nothing was written. Stop working on it, and end it with \`rundown stop --token <owner_token>\`.`,
         };
       case 'parent_finished':
         return {
