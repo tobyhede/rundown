@@ -17,20 +17,20 @@ known. To look it up from the `write-plan` run, read the `uri` field of
 (`rundown artifact ls --run <run_id>` lists the aliases).
 
 The `execute-plan` runbook delegates its implement, review, and fix stages to
-other runbooks, and this build runs standalone runbooks only:
-`rundown run rundown:execute-plan --artifacts PlanPath=<rd://… plan URI>` is
-refused with `RUNBOOK_COMPOSITION_UNSUPPORTED` and creates no run (delegation
-returns in #904). Input refusals are reported before that one, so fixing
-`PlanPath` does not make it start.
-
-What runs today is the implementation leaf on its own, a standalone runbook:
+child runbooks (`- DELEGATE`) and owns the review and verify gates:
 
 1. Load and follow the bundled `running-runbooks` skill.
-2. `rundown run rundown:implement-plan --artifacts PlanPath=<rd://… plan URI>`,
+2. `rundown run rundown:execute-plan --artifacts PlanPath=<rd://… plan URI>`,
    then follow the running-runbooks protocol (capture `owner_token` from
    `runbook_started`; report each step with `--token` and `--step`).
+3. Each delegated step's `step_entered` lists `children` with Claim Tickets:
+   hand each ticket to a sub-agent (or claim and drive it yourself if you cannot
+   dispatch sub-agents), then apply the results with
+   `rundown collect --token <owner_token>`; see running-runbooks. Never pass a
+   delegated substep yourself.
 
-Tell the user the review and verify gates will not run as part of it.
+To implement without the gates, run the leaf on its own:
+`rundown run rundown:implement-plan --artifacts PlanPath=<rd://… plan URI>`.
 </important>
 
 Implement a written plan one task at a time, holding each task to its own tests

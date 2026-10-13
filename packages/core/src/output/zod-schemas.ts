@@ -55,14 +55,21 @@ export const CLISymbolicErrorCodeValues = [
   // `UNKNOWN_TOKEN`; a token on a finished run is RD-303/RD-304.
   'TOKEN_REQUIRED',
   'UNKNOWN_TOKEN',
-  // `rundown run` refuses a runbook with a DELEGATE substep (until #904) or an
-  // inline substep listing more than one runbook; an inline child whose
-  // runbook does so is refused at launch.
+  // `rundown run` refuses a runbook with a substep listing more than one
+  // runbook; a child run whose runbook does so is refused at launch or claim.
   'RUNBOOK_COMPOSITION_UNSUPPORTED',
   // An inline child could not be launched for a reason with no code of its
   // own (#903); preparation failures report their own code.
   'INLINE_CHILD_LAUNCH_FAILED',
   'CONCURRENT_MODIFICATION',
+  // Delegation (#904): `claim` of a ticket no reservation carries, or of a
+  // child already claimed; a Delegation's command once its parent no longer
+  // counts it or finished; `collect` on a step that delegates nothing.
+  'UNKNOWN_TICKET',
+  'ALREADY_CLAIMED',
+  'DELEGATION_CANCELLED',
+  'PARENT_RUN_FINISHED',
+  'NOTHING_TO_COLLECT',
   // The execution lease (#902): a live attempt holds the run's step, or the
   // attempt that held it died and the decision would pass it.
   'EXECUTION_IN_PROGRESS',
@@ -457,6 +464,22 @@ export const CurrentChildStatusSchema = z
   })
   .describe("The Current Child of the run's step");
 
+/**
+ * One Delegation of a run's active entry, as status shows it (#904): by id,
+ * lifecycle and result only — never a Claim Ticket.
+ */
+export const DelegationChildStatusSchema = z
+  .object({
+    runId: z.string().regex(RUN_ID_PATTERN).describe('The reserved child run id'),
+    step: z.string().describe('Parent unit (`step.substep`) the child runs for'),
+    index: z.number().int().positive().optional().describe('FOR iteration, inside a loop'),
+    status: z
+      .enum(['reserved', 'running', 'completed', 'stopped', 'abandoned'])
+      .describe('The child lifecycle, or reserved before any agent claimed it'),
+    result: z.enum(['pass', 'fail']).optional().describe('The Child Result, once terminal'),
+  })
+  .describe("One Delegation of the run's active entry");
+
 export const StatusResponseSchema = z
   .object({
     /** Response kind discriminant */
@@ -516,6 +539,10 @@ export const StatusResponseSchema = z
     ),
     parent: ParentLinkStatusSchema.optional(),
     child: CurrentChildStatusSchema.optional(),
+    children: z
+      .array(DelegationChildStatusSchema)
+      .optional()
+      .describe("The Delegations of the run's active entry (#904)"),
     vars: z
       .record(z.string(), z.string())
       .optional()

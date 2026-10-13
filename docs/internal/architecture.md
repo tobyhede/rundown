@@ -182,24 +182,44 @@ ordering means ARTIFACTS templates may reference the loop variable for the
 current iteration.
 
 After `__resolve-artifacts` (or `__resolve-iteration`, or directly) every leaf
-rests in `idle`. An **inline runbook-list substep** (one runbook, no `DELEGATE`;
-#903) passes through one more child on that entry path: the transient
-`__reserve-child`, whose entry action records the substep's Current Child —
-`{ kind: 'inline', runId, entry, runbook, contextSnapshot }` on its
-`substepStates` entry (`reserveInlineChild`, `inline-child.ts`) — and leaves for
+rests in `idle`. A **composing runbook-list substep** passes through one more
+child on that entry path: the transient `__reserve-child`, whose entry action
+records the substep's Current Child on its `substepStates` entry and leaves for
 `idle` in the same macrostep. It sits after iteration and ARTIFACTS resolution
-so the snapshot carries the resolved iteration binding, and only the entry path
+so a child inherits the resolved iteration binding, and only the entry path
 targets it, so the progression round-trips through `idle` never reserve again.
-`entry` is the frame entry `syncFrameEntry` just made current; the run id comes
-from the compile-time `generateChildRunId` callable. A loop iteration, `GOTO` or
+`entry` is the frame entry `syncFrameEntry` just made current; run ids come from
+the compile-time `generateChildRunId` callable. A loop iteration, `GOTO` or
 `RETRY` re-enters the leaf and reserves afresh, so an older reservation is stale
-by construction. The same leaf handles `CHILD_RESULT` in `idle` — the implicit
-Collect — only for its Current Child (guarded on run id and active entry): it
-merges the child's final variables (`storeCapturedVariables`) and raises the
-substep's own `PASS` or `FAIL`. A DELEGATE substep still compiles to the
-ordinary leaf; core refuses to create a run of such a runbook
-(`RUNBOOK_COMPOSITION_UNSUPPORTED`; see
-[§ Lifecycle Command Seam](#lifecycle-command-seam)) until #904.
+by construction.
+
+- An **inline substep** (one runbook, no `DELEGATE`; #903) reserves
+  `{ kind: 'inline', runId, entry, runbook }` (`reserveInlineChild`,
+  `inline-child.ts`); the context its child inherits is read from the parent row
+  at launch.
+- A **delegated substep** (one runbook, `DELEGATE`; #904) reserves a
+  `{ kind: 'delegation', runId, entry, runbook, contextSnapshot, ticketHash: null }`
+  for itself and every later delegated substep of the step that has none at this
+  entry (`reserveDelegationChildren`, `delegation-child.ts`), so a fan-out's
+  children are all reserved when the first is entered. The snapshot is captured
+  here, from machine context, because the child is claimed later by another
+  agent and a sibling Collected in between must not leak into it. The transient
+  state's `always` also raises the substep's `PASS` / `FAIL` when its
+  reservation was already Collected out of order (below).
+
+Every composing leaf handles `CHILD_RESULT` in `idle` — Collect — for its own
+Current Child (guarded on run id, active entry and not yet `collected`): it
+merges the child's final variables (`storeCapturedVariables`), records the
+reservation `collected` (`recordChildCollected`) and raises the substep's own
+`PASS` or `FAIL`. Every leaf of a step that delegates also takes the result of a
+**later** delegated substep's child of the same entry: it merges the variables
+and records it `collected` without moving the cursor, and that substep's
+`__reserve-child` raises it on arrival — so a fan-out's results are applied in
+any order and still drive the authored handlers in document order. A child for a
+substep the cursor has passed matches no guard. `ISSUE_CLAIM_TICKETS` is a
+machine-root handler: it records the ticket hashes Run Progression minted, all
+or nothing, on reservations of the active entry that have none
+(`recordClaimTickets`).
 
 Two further children serve the machine-selected Run Progression turn:
 `__progression-waiting-input` emits the typed `waiting` intent and
@@ -424,10 +444,12 @@ translating snapshot transitions.
 **It is not the whole `RunbookEvent` union.** `FORCE_STOP` and `FORCE_COMPLETE`
 are sent by the lifecycle command seam for `rundown stop` / `rundown complete`;
 `SELECT_RUN_PROGRESSION` and `EXECUTE_COMMAND` are sent by Run Progression;
-`COMMAND_RESULT` comes from the compiled machine's own command actor; and
-`SET_VARIABLES` has a machine handler but no front-end sender. None of them
-appear above. `packages/core/src/runbook/compiler.ts` remains the authority on
-the union.
+`COMMAND_RESULT` comes from the compiled machine's own command actor;
+`CHILD_RESULT` is sent by Run Progression (an Inline Child's implicit Collect)
+and by the lifecycle seam's `runCollect` (`rundown collect`);
+`ISSUE_CLAIM_TICKETS` is sent by Run Progression; and `SET_VARIABLES` has a
+machine handler but no front-end sender. None of them appear above.
+`packages/core/src/runbook/compiler.ts` remains the authority on the union.
 
 The rule new work must satisfy is the direction of the arrow: a new CLI
 subcommand dispatches into existing events, and any new event arrives with its
@@ -456,10 +478,14 @@ events for stdout/stderr (and for the MCP server when it is the front end):
 `RunbookActorService.enterExecutionUnit`. Every frontend enters a unit that way
 through Run Progression's machine-owned entry states, so the payload cannot vary
 with the command that produced it. The seam also classifies the entry, returning
-`awaiting` / `runnable` / `inline_child`; the rendered command travels only on
-the `runnable` arm, inside a nominally branded record the module is the sole
-producer of, and the `inline_child` arm carries the substep's current
-reservation (`currentInlineReservation`).
+`awaiting` / `runnable` / `inline_child` / `delegation`; the rendered command
+travels only on the `runnable` arm, inside a nominally branded record the module
+is the sole producer of; the `inline_child` arm carries the substep's current
+reservation (`currentInlineReservation`), and the `delegation` arm the
+Delegations the entry counts. Run Progression adds `children` — with each Claim
+Ticket it issued in that turn — to a delegation entry's `STEP_ENTERED`.
+`rundown collect` emits `CHILDREN_COLLECTED { children }` through the run's
+emitter before the transitions its Collect observed.
 
 The narrowing layer between snapshot context and observer events uses the typed
 `lastAction` discriminant convention — never `lastMessage` string parsing.
@@ -492,13 +518,22 @@ nothing else. The plaintext token appears in exactly one place, the
 `runbook_started` event, and never in a message, a row, or a refusal.
 
 The same module holds `findUnsupportedComposition(steps)`, the decision behind
-`RUNBOOK_COMPOSITION_UNSUPPORTED`. `RunbookStateManager.create` and
-`createInlineChild` apply it before writing a row, throwing
-`RunbookCompositionUnsupportedError` for a runbook with a `DELEGATE` substep
-(until #904) or an inline substep listing more than one runbook. Every front end
-that creates a run, and every inline launch, is refused the same way; the CLI
-only renders the ids core names, and `rundown check` warns from the same
-predicate.
+`RUNBOOK_COMPOSITION_UNSUPPORTED`. `RunbookStateManager.create`,
+`createInlineChild` and `claimDelegationChild` apply it before writing a row,
+throwing `RunbookCompositionUnsupportedError` for a runbook with a substep
+listing more than one runbook. Every front end that creates a run, every inline
+launch and every claim is refused the same way; the CLI only renders the ids
+core names, and `rundown check` warns from the same predicate.
+
+Before descending, `resolveCommandTarget` checks the token's run's standing as a
+Delegation (`delegationStandingOf`, `delegation-progression.ts`): a delegated
+child whose parent finished or was pruned (its linkage reads
+`orphaned_delegation`) is refused `parent_run_finished`, and one its parent no
+longer counts (`countsDelegation`: reserved at the parent's active entry, not
+yet Collected, for the cursor's substep or a later one) is refused
+`delegation_cancelled`. Every other run is `current`. The check is skipped for
+`stop` alone (the caller names its command, `CommandTargetPurpose`): the child's
+owner owns the child's row and may end it, though nothing collects its result.
 
 ### The command's target: the deepest running Inline Child
 
@@ -594,7 +629,7 @@ The command callable stays a Category-C dependency injected into
 `RunbookActorService` (`commandServices`) and reaches the machine through
 `compileRunbookToMachine`; the activation itself takes
 `{ manager, actorService, loadSteps, sink }` plus, for composition, the
-frontend's `prepareInlineChild` and a per-run `sinkFor`.
+frontend's `prepareChildRun` and a per-run `sinkFor`.
 
 ### Inline Children in Run Progression
 
@@ -603,14 +638,15 @@ An `inline_child` entry makes the activation drive a second run
 `inline-progression.ts`):
 
 - **Launch.** If no row carries the reserved id, the parent's unit entry is
-  announced (once, here), the frontend's `PrepareInlineChild` prepares the child
+  announced (once, here), the frontend's `PrepareChildRun` prepares the child
   runbook from the reservation (Category C: discovery, file IO, variable
   resolution under policy, inheriting the context snapshot), and core creates
   the row with `RunbookStateManager.createInlineChild` — inline linkage, no
   Owner Token hash — initialises its machine and emits its `RUNBOOK_STARTED` (no
-  token) through the child's own sink. A refused preparation, a delegating child
-  or nesting past `MAX_INLINE_CHILD_DEPTH` (32) is the
-  `inline_child_launch_failed` refusal; the parent rests on the substep.
+  token) through the child's own sink. A refused preparation, a child with a
+  substep listing more than one runbook, or nesting past
+  `MAX_INLINE_CHILD_DEPTH` (32) is the `inline_child_launch_failed` refusal; the
+  parent rests on the substep.
 - **Descend.** While the child runs, the activation drives it with its own
   authority (minted in core: the parent's token authorizes it), recursively. A
   child that waits or refuses ends the activation where it rests.
@@ -628,6 +664,41 @@ Both rows are written only by the parent owner's command; the child never writes
 its parent. The parent holds no execution lease while its child runs — the
 child's command turns lease the child row — and the Collect is the parent's own
 conditional write.
+
+### Delegations: tickets, claim and Collect
+
+A `delegation` entry never runs a command and never drives its child: the child
+belongs to whichever agent claims it.
+
+- **Tickets.** The turn that announces a delegation entry mints a Claim Ticket
+  for every counted reservation with a null `ticketHash` (`issueClaimTickets`,
+  `delegation-tickets.ts`), commits only their hashes as `ISSUE_CLAIM_TICKETS`
+  with one conditional save (a moved version refuses the turn
+  `claim_tickets_not_issued`, `CONCURRENT_MODIFICATION`), and emits the entry's
+  `STEP_ENTERED` with `children` carrying the plaintext tickets. An entry
+  announced again lists the children without tickets. Then the turn waits. A
+  parent resting on a delegated substep that still owes a ticket
+  (`owesClaimTickets`, `delegation-child.ts`) is activated again by the owner's
+  `collect`, whose activation re-enters the unit and issues them.
+- **Claim.** `claimDelegation` (`delegation-progression.ts`) reads only the runs
+  whose `state_json` records the ticket's hash (`findByTicketHash`), finds the
+  reservation whose `ticketHash` the ticket hashes to, checks its standing on
+  the parent, prepares the child runbook through the same `PrepareChildRun`
+  frontend service an Inline Child's launch uses (`child-preparation.ts`), mints
+  the child's Owner Token, and calls `RunbookStateManager.claimDelegationChild`:
+  one transaction that re-reads the parent, re-runs the standing check on it,
+  and inserts the initialised child row under the reserved id with delegation
+  linkage and the claiming agent. The primary key refuses a second claim
+  `already_claimed`. The CLI then emits the child's `RUNBOOK_STARTED` with its
+  token and drives the child's first activation, as `rundown run` does.
+- **Collect.** `RunbookLifecycleCommandService.runCollect` →
+  `collectDelegations` reads the active entry's Delegations in document order;
+  for each terminal child the parent still counts it derives one `CHILD_RESULT`
+  and commits it with one conditional save, re-reading the version between
+  saves. Only a Collect that moved the cursor returns an `activate` directive
+  (`after_observed_transition`), so the frontend's activation announces the next
+  unit — with its own tickets, if it delegates — or, for an Inline Child that
+  delegates and just finished, ascends into its parent.
 
 ### Guards do no cross-run IO or policy
 
@@ -696,23 +767,27 @@ DDL edit must move `SCHEMA_VERSION`.
 
 One row per run. Besides `id`, `created_at` and `updated_at`, it carries:
 
-| Column                                                                            | Meaning                                                                                                                                                                                                                             |
-| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lifecycle`                                                                       | `running`, `completed`, `stopped`, or `abandoned`, pinned by a `CHECK`. Its home is this column, not the state JSON.                                                                                                                |
-| `owner_token_hash`                                                                | `UNIQUE` SHA-256 hash of the Owner Token. The token itself is printed once on `runbook_started` and never stored; this hash is the only authority lookup key.                                                                       |
-| `parent_run_id`, `parent_step`, `parent_frame_key`, `parent_entry`, `parent_kind` | Child linkage, nullable all-or-none under a `CHECK`. Nothing writes it today: core refuses to create a run of a composing runbook.                                                                                                  |
-| `lease_attempt`, `lease_pid`, `lease_start_id`, `lease_started_at`                | Execution lease, nullable all-or-none under a `CHECK`. Set by Run Progression before a command turn and cleared by the state write that commits its finish; see [concurrency.md § Execution lease](concurrency.md#execution-lease). |
-| `state_version`                                                                   | Lost-update counter, bumped only by the `runs_bump_state_version` trigger on every `state_json` or `lease_attempt` write.                                                                                                           |
-| `state_json`                                                                      | The authoritative `RunbookState` (minus `lifecycle`), including the opaque XState `snapshot`.                                                                                                                                       |
+| Column                                                                            | Meaning                                                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `lifecycle`                                                                       | `running`, `completed`, `stopped`, or `abandoned`, pinned by a `CHECK`. Its home is this column, not the state JSON.                                                                                                                                                                                                                 |
+| `owner_token_hash`                                                                | `UNIQUE` SHA-256 hash of the Owner Token. The token itself is printed once on `runbook_started` and never stored; this hash is the only authority lookup key.                                                                                                                                                                        |
+| `parent_run_id`, `parent_step`, `parent_frame_key`, `parent_entry`, `parent_kind` | Child linkage, nullable all-or-none under a `CHECK`, written once when a child row is inserted: an Inline Child at launch (`inline`, no `owner_token_hash`), a Delegation at claim (`delegation`, its own `owner_token_hash`). Pruning a Delegation's parent nulls `parent_run_id` alone (the one orphaned form the `CHECK` admits). |
+| `claim_agent_id`                                                                  | The agent id `rundown claim --agent-id` recorded on a Delegation; NULL for every other row (`CHECK`). Part of the linkage: an orphaned Delegation keeps it.                                                                                                                                                                          |
+| `lease_attempt`, `lease_pid`, `lease_start_id`, `lease_started_at`                | Execution lease, nullable all-or-none under a `CHECK`. Set by Run Progression before a command turn and cleared by the state write that commits its finish; see [concurrency.md § Execution lease](concurrency.md#execution-lease).                                                                                                  |
+| `state_version`                                                                   | Lost-update counter, bumped only by the `runs_bump_state_version` trigger on every `state_json` or `lease_attempt` write.                                                                                                                                                                                                            |
+| `state_json`                                                                      | The authoritative `RunbookState` (minus `lifecycle`), including the opaque XState `snapshot`.                                                                                                                                                                                                                                        |
 
 Two triggers complete the schema. `runs_bump_state_version` owns
 `state_version`, so the conditional write below is a complete lost-update check
 for every writer by construction rather than by call-site discipline. It fires
 on the lease column too, so setting the execution lease moves the version and
-the lease's `attempt` is the version it produced. `runs_unlink_children` clears
-the whole linkage group of any row naming a deleted run as its parent; the
-referential action `ON DELETE SET NULL` would null `parent_run_id` alone, which
-the all-or-none `CHECK` then refuses.
+the lease's `attempt` is the version it produced. `runs_unlink_children` unlinks
+any Delegation naming a deleted run as its parent by nulling `parent_run_id`
+alone and keeping the rest of the group — the one orphaned form the linkage
+`CHECK` admits, read as `orphaned_delegation` so the child's commands are
+refused `PARENT_RUN_FINISHED` — and deletes the deleted run's Inline Children.
+The referential action `ON DELETE SET NULL` is not used, so the trigger, not the
+foreign key, decides what an orphan keeps.
 
 ### Two schema versions, deliberately distinct
 
@@ -721,7 +796,7 @@ a documented mistake:
 
 | Version                      | Governs                                                                            | Where it lives         | Rule                                                |
 | ---------------------------- | ---------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------- |
-| SQLite storage schema        | The whole database — the DDL of the `runs` table and its triggers                  | `PRAGMA user_version`  | Must equal `SCHEMA_VERSION` (currently `6`)         |
+| SQLite storage schema        | The whole database — the DDL of the `runs` table and its triggers                  | `PRAGMA user_version`  | Must equal `SCHEMA_VERSION` (currently `8`)         |
 | `RunbookState.schemaVersion` | One run's structured state fields and its opaque `snapshot` blob, and nothing else | The row's `state_json` | Must equal `CURRENT_SCHEMA_VERSION` (currently `4`) |
 
 A wrong storage version invalidates the whole database (`RD-305`); a wrong

@@ -356,7 +356,11 @@ describe('saveRun — one conditional write, no retry', () => {
       stepName: 'mutated',
     });
 
-    expect(result).toEqual({ kind: 'committed', state: { ...state, stepName: 'mutated' } });
+    expect(result).toEqual({
+      kind: 'committed',
+      state: { ...state, stepName: 'mutated' },
+      stateVersion: 1,
+    });
     expect((await store.loadRun(state.id))?.stepName).toBe('mutated');
     expect(await versionOf(state.id)).toBe(1);
   });
@@ -595,5 +599,133 @@ describe('inline child rows (#903)', () => {
     await store.createInlineChildRun(child, linkageTo(parent));
     await store.deleteRun(parent.id);
     expect(await store.loadRun(child.id)).toBeNull();
+  });
+});
+
+describe('delegation child claim (#904)', () => {
+  /** Delegation linkage naming `parent` at frame entry 1 of step 1, substep 1. */
+  function delegationTo(parent: RunbookState, claimedBy?: string): ChildLinkage {
+    return {
+      kind: 'delegation',
+      parentRunId: parent.id,
+      parentStep: '1.1',
+      parentFrameKey: '1|' as FrameKey,
+      parentEntry: 1,
+      ...(claimedBy !== undefined ? { claimedBy } : {}),
+    };
+  }
+
+  it('inserts the child under its own token, with its linkage and claiming agent, once the parent check passes', async () => {
+    const parent = await newState();
+    await store.createRun(parent, freshHash());
+    const child = await newState();
+    const childToken = generateOwnerToken();
+    const seen: (RunId | null)[] = [];
+
+    const claimed = await store.claimDelegationChild({
+      parentRunId: parent.id,
+      verify: (read) => {
+        seen.push(read?.state.id ?? null);
+        return undefined;
+      },
+      state: child,
+      ownerTokenHash: hashRunSecret(childToken),
+      linkage: delegationTo(parent, 'agent-7'),
+    });
+
+    expect(claimed).toEqual({ kind: 'claimed' });
+    expect(seen).toEqual([parent.id]);
+    expect(await store.loadRunWithVersion(child.id)).toEqual({
+      state: child,
+      stateVersion: 0,
+      lease: null,
+      linkage: delegationTo(parent, 'agent-7'),
+    });
+    expect((await store.findRunByOwnerTokenHash(hashRunSecret(childToken)))?.state.id).toBe(
+      child.id,
+    );
+  });
+
+  it('writes nothing when the parent check refuses', async () => {
+    const parent = await newState();
+    await store.createRun(parent, freshHash());
+    const child = await newState();
+
+    const refused = await store.claimDelegationChild({
+      parentRunId: parent.id,
+      verify: () => 'cancelled' as const,
+      state: child,
+      ownerTokenHash: freshHash(),
+      linkage: delegationTo(parent),
+    });
+
+    expect(refused).toEqual({ kind: 'refused', refusal: 'cancelled' });
+    expect(await store.loadRun(child.id)).toBeNull();
+  });
+
+  it('hands the check a missing parent as null', async () => {
+    const parent = await newState();
+    const child = await newState();
+    const refused = await store.claimDelegationChild({
+      parentRunId: parent.id,
+      verify: (read) => (read === null ? ('parent_missing' as const) : undefined),
+      state: child,
+      ownerTokenHash: freshHash(),
+      linkage: delegationTo(parent),
+    });
+    expect(refused).toEqual({ kind: 'refused', refusal: 'parent_missing' });
+  });
+
+  it('refuses a second claim of the same preallocated id by its primary key', async () => {
+    const parent = await newState();
+    await store.createRun(parent, freshHash());
+    const child = await newState();
+    const claim = () =>
+      store.claimDelegationChild({
+        parentRunId: parent.id,
+        verify: () => undefined,
+        state: child,
+        ownerTokenHash: freshHash(),
+        linkage: delegationTo(parent),
+      });
+
+    expect(await claim()).toEqual({ kind: 'claimed' });
+    expect(await claim()).toEqual({ kind: 'already_claimed' });
+  });
+
+  it('refuses inline linkage: a delegation child carries its own token', async () => {
+    const parent = await newState();
+    await store.createRun(parent, freshHash());
+    const child = await newState();
+    await expect(
+      store.claimDelegationChild({
+        parentRunId: parent.id,
+        verify: () => undefined,
+        state: child,
+        ownerTokenHash: freshHash(),
+        linkage: { ...delegationTo(parent), kind: 'inline' },
+      }),
+    ).rejects.toBeInstanceOf(StoreInvariantError);
+  });
+
+  it('orphans, rather than deletes, a delegation child whose parent is deleted', async () => {
+    const parent = await newState();
+    await store.createRun(parent, freshHash());
+    const child = await newState();
+    await store.claimDelegationChild({
+      parentRunId: parent.id,
+      verify: () => undefined,
+      state: child,
+      ownerTokenHash: freshHash(),
+      linkage: delegationTo(parent, 'agent-7'),
+    });
+    await store.deleteRun(parent.id);
+    expect((await store.loadRunWithVersion(child.id))?.linkage).toEqual({
+      kind: 'orphaned_delegation',
+      parentStep: delegationTo(parent).parentStep,
+      parentFrameKey: delegationTo(parent).parentFrameKey,
+      parentEntry: delegationTo(parent).parentEntry,
+      claimedBy: 'agent-7',
+    });
   });
 });

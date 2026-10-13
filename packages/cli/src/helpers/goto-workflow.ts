@@ -146,6 +146,8 @@ export function renderNavigationRefusal(
     case 'unknown_token':
     case 'finished':
     case 'settle_refused':
+    case 'delegation_cancelled':
+    case 'parent_run_finished':
       return renderOwnedRunRefusal(output, commandName, refusal);
     case 'run_finished':
       renderRunFinished(output, commandName, refusal.runId, refusal.lifecycle);
@@ -205,6 +207,7 @@ export async function buildGotoContext(
         : {}),
     },
     options.token,
+    'goto',
   );
   if (resolution.kind !== 'running') return resolution;
 

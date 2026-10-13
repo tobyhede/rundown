@@ -122,6 +122,7 @@ describe('storage schema', () => {
       'parent_frame_key',
       'parent_entry',
       'parent_kind',
+      'claim_agent_id',
       'lease_attempt',
       'lease_pid',
       'lease_start_id',
@@ -342,7 +343,25 @@ describe('storage schema', () => {
           .prepare('SELECT id, parent_run_id, parent_kind FROM runs ORDER BY id')
           .all<Record<string, unknown>>(),
       );
-      expect(rows).toEqual([{ id: 'rd_delegate', parent_run_id: null, parent_kind: null }]);
+      expect(rows).toEqual([{ id: 'rd_delegate', parent_run_id: null, parent_kind: 'delegation' }]);
+    });
+
+    it('records the claiming agent on a delegation child, and on nothing else (#904)', async () => {
+      await using driver = await schemaDriver();
+      await driver.immediate((tx) => {
+        insertRun(tx);
+        insertRun(tx, CHILD_LINK);
+        tx.prepare("UPDATE runs SET claim_agent_id = 'agent-1' WHERE id = :id").run({
+          id: CHILD_LINK.id,
+        });
+      });
+      await expect(
+        driver.immediate((tx) => {
+          tx.prepare("UPDATE runs SET claim_agent_id = 'agent-1' WHERE id = :id").run({
+            id: RUN_DEFAULTS.id,
+          });
+        }),
+      ).rejects.toThrow(/CHECK constraint/i);
     });
 
     it('refuses a delegation child without an owner token hash', async () => {
@@ -380,7 +399,11 @@ describe('storage schema', () => {
     });
 
     it.each([
-      ['parent_run_id', { ...CHILD_LINK, parent_run_id: null }],
+      // Only a Delegation has an orphaned form (parent pruned, #904).
+      [
+        'parent_run_id',
+        { ...CHILD_LINK, parent_kind: 'inline', owner_token_hash: null, parent_run_id: null },
+      ],
       ['parent_step', { ...CHILD_LINK, parent_step: null }],
       ['parent_frame_key', { ...CHILD_LINK, parent_frame_key: null }],
       ['parent_entry', { ...CHILD_LINK, parent_entry: null }],
@@ -418,10 +441,10 @@ describe('storage schema', () => {
       ).rejects.toThrow(/FOREIGN KEY/i);
     });
 
-    it('clears the whole linkage group when the parent row is deleted', async () => {
-      // The plan's `ON DELETE SET NULL` cannot coexist with the all-or-none
-      // CHECK: nulling `parent_run_id` alone fails the constraint and the parent
-      // could never be pruned. The trigger clears the group as one write.
+    it("keeps a delegation's linkage but its parent id when the parent row is deleted (#904)", async () => {
+      // The trigger, not `ON DELETE SET NULL`, unlinks the child: it nulls only
+      // `parent_run_id`, the orphaned form the CHECK admits for a Delegation, so
+      // the row still says it was a Delegation whose parent is gone.
       await using driver = await schemaDriver();
       await driver.immediate((tx) => {
         insertRun(tx);
@@ -441,11 +464,20 @@ describe('storage schema', () => {
       );
       expect(child).toEqual({
         parent_run_id: null,
-        parent_step: null,
-        parent_frame_key: null,
-        parent_entry: null,
-        parent_kind: null,
+        parent_step: CHILD_LINK.parent_step,
+        parent_frame_key: CHILD_LINK.parent_frame_key,
+        parent_entry: CHILD_LINK.parent_entry,
+        parent_kind: 'delegation',
       });
+    });
+
+    it('admits a delegation linkage with no parent id, the orphaned form (#904)', async () => {
+      await using driver = await schemaDriver();
+      await expect(
+        driver.immediate((tx) => {
+          insertRun(tx, { ...CHILD_LINK, parent_run_id: null });
+        }),
+      ).resolves.toBeUndefined();
     });
   });
 

@@ -110,6 +110,7 @@ jest.unstable_mockModule('../../src/helpers/command-sequence', () => ({
   findUnassertedWarnings: jest.fn(),
   matchArtifactAssertions: jest.fn(),
   matchEnteredAssertions: jest.fn(),
+  matchCollectedAssertions: actualCommandSequence.matchCollectedAssertions,
   emitScenarioTiming: jest.fn(),
   createInProcessCommandExecutor: actualCommandSequence.createInProcessCommandExecutor,
   formatErrorAssertionDescription: actualCommandSequence.formatErrorAssertionDescription,
@@ -525,6 +526,7 @@ describe('executeScenario', () => {
       warnings: [],
       artifactEntries: [],
       enteredSteps: [],
+      collectedChildren: [],
       commandTimings: [],
       ...overrides,
     };

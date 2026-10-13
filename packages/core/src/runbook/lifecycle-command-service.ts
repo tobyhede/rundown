@@ -42,6 +42,13 @@ import {
 } from './run-authority.js';
 import type { OwnerToken } from './run-secrets.js';
 import { currentInlineReservation } from './inline-child.js';
+import {
+  collectDelegations,
+  delegationStandingOf,
+  DELEGATION_CANCELLED_CODE,
+  PARENT_RUN_FINISHED_CODE,
+  type CollectDelegationsOutcome,
+} from './delegation-progression.js';
 import { deriveExecutionAt } from './targeting.js';
 import { MAX_INLINE_CHILD_DEPTH } from './inline-progression.js';
 import type { RunId } from './run-id.js';
@@ -286,6 +293,42 @@ export type SettleInlineChild = (
 ) => Promise<RunProgressionOutcome>;
 
 /**
+ * The mutating command a target is resolved for. A Delegation its parent no
+ * longer counts, or whose parent finished or was pruned, refuses every one of
+ * them but `stop` (#904): the child's owner owns the child's row and may end
+ * it, though its result is never collected.
+ */
+export type CommandTargetPurpose = 'pass' | 'fail' | 'goto' | 'stop' | 'complete' | 'collect';
+
+/**
+ * Whether a command may act on a Delegation its parent no longer counts.
+ *
+ * Exhaustive with a `never` fallthrough so a new command cannot silently act
+ * on a cancelled or orphaned child.
+ *
+ * @param command - The command the target is resolved for.
+ * @returns True for `stop` only: ending the child writes nothing anyone will
+ *   Collect, and is how its owner closes a row nobody counts any more.
+ * @throws {Error} When an unhandled command is supplied.
+ */
+function actsOnUncountedDelegation(command: CommandTargetPurpose): boolean {
+  switch (command) {
+    case 'stop':
+      return true;
+    case 'pass':
+    case 'fail':
+    case 'goto':
+    case 'complete':
+    case 'collect':
+      return false;
+    default: {
+      const _exhaustive: never = command;
+      throw new Error(`Unsupported command: ${String(_exhaustive)}`);
+    }
+  }
+}
+
+/**
  * Outcome of {@link RunbookLifecycleCommandService.resolveCommandTarget}.
  *
  * Every arm of {@link OwnedRunResolution}, where the `running` arm's run is the
@@ -295,6 +338,7 @@ export type SettleInlineChild = (
  */
 export type CommandTargetResolution =
   | Exclude<OwnedRunResolution, { readonly kind: 'running' }>
+  | DelegationStandingRefusal
   | {
       readonly kind: 'running';
       /** The command's target: the deepest running run on the inline chain. */
@@ -307,6 +351,42 @@ export type CommandTargetResolution =
       readonly kind: 'settle_refused';
       readonly outcome: Extract<RunProgressionOutcome, { readonly kind: 'refused' | 'failed' }>;
     };
+
+/**
+ * Refusal: the token's run is a Delegation its parent no longer counts, or
+ * whose parent finished (#904). The child's commands stop doing work nobody
+ * will Collect. Nothing was written.
+ */
+export type DelegationStandingRefusal =
+  | {
+      readonly kind: 'delegation_cancelled';
+      /** The symbolic refusal code. */
+      readonly code: typeof DELEGATION_CANCELLED_CODE;
+      /** The child the token resolved to. */
+      readonly runId: RunId;
+      /** Operator-facing message. */
+      readonly message: string;
+    }
+  | {
+      readonly kind: 'parent_run_finished';
+      /** The symbolic refusal code. */
+      readonly code: typeof PARENT_RUN_FINISHED_CODE;
+      /** The child the token resolved to. */
+      readonly runId: RunId;
+      /** Operator-facing message. */
+      readonly message: string;
+    };
+
+/** Input to {@link RunbookLifecycleCommandService.runCollect}. */
+export interface LifecycleCollectInput {
+  /** The run resolved from the caller's Owner Token, with the version it was read at. */
+  readonly run: OwnedRun;
+  /** Optional display-result policy for the transition observation projection. */
+  readonly computeActionResult?: (actionType: ActionType) => boolean;
+}
+
+/** Result of `rundown collect` through the seam. */
+export type LifecycleCollectOutcome = RunFinishedRefusal | CollectDelegationsOutcome;
 
 /** Symbolic code for {@link ExecutionPendingRefusal}. */
 export const EXECUTION_PENDING_CODE = 'EXECUTION_PENDING';
@@ -460,8 +540,13 @@ export class RunbookLifecycleCommandService {
    * again from the root. A Collect that finishes the parent leaves it owing
    * its own parent a Collect, committed on the next pass.
    *
+   * A Delegation its parent no longer counts, or whose parent finished or was
+   * pruned, is refused for every command but `stop`, which ends the child's
+   * own row (#904).
+   *
    * @param token - The presented Owner Token.
    * @param settle - Activates Run Progression on the run owing a Collect.
+   * @param command - The mutating command the target is resolved for.
    * @returns The target with its root, the root's own refusal, or the settle's.
    * @throws {Error} When settling does not converge within the chain's depth —
    *   each settle Collects one child, so this is a defect, not a race.
@@ -469,11 +554,16 @@ export class RunbookLifecycleCommandService {
   async resolveCommandTarget(
     token: OwnerToken,
     settle: SettleInlineChild,
+    command: CommandTargetPurpose,
   ): Promise<CommandTargetResolution> {
     let refused: Extract<CommandTargetResolution, { kind: 'settle_refused' }> | undefined;
     for (let pass = 0; pass <= MAX_INLINE_CHILD_DEPTH; pass++) {
       const resolution = await resolveOwnedRun(this.#deps.manager, token);
       if (resolution.kind !== 'running') return resolution;
+      const standing = actsOnUncountedDelegation(command)
+        ? undefined
+        : await this.#standingRefusal(resolution.run);
+      if (standing !== undefined) return standing;
       const descent = await this.#descend(resolution.run);
       // A settle refusal whose run no longer owes the Collect (the run moved
       // under it) still leaves a target to act on; only a Collect that is
@@ -497,6 +587,46 @@ export class RunbookLifecycleCommandService {
     throw new Error(
       `Collecting inline children did not settle within ${String(MAX_INLINE_CHILD_DEPTH)} passes`,
     );
+  }
+
+  /**
+   * Refuse a Delegation its parent no longer counts or whose parent finished
+   * (#904), before the child's command does work nobody will Collect.
+   *
+   * @param run - The run the token resolved to.
+   * @returns The refusal, or `undefined` for a current child or any other run.
+   */
+  async #standingRefusal(run: OwnedRun): Promise<DelegationStandingRefusal | undefined> {
+    const standing = await delegationStandingOf(this.#deps, run);
+    switch (standing.kind) {
+      case 'current':
+        return undefined;
+      case 'cancelled':
+        return {
+          kind: 'delegation_cancelled',
+          code: DELEGATION_CANCELLED_CODE,
+          runId: run.state.id,
+          message: `Run ${run.state.id} is a delegation that run ${standing.parentRunId} no longer counts at ${standing.parentStep} (the step was decided or entered again); its result would never be collected, so nothing was written. Stop working on it, and end it with \`rundown stop --token <owner_token>\`.`,
+        };
+      case 'parent_finished':
+        return {
+          kind: 'parent_run_finished',
+          code: PARENT_RUN_FINISHED_CODE,
+          runId: run.state.id,
+          message: `Run ${run.state.id} is a delegation of run ${standing.parentRunId}, which has finished; its result would never be collected, so nothing was written. Stop working on it, and end it with \`rundown stop --token <owner_token>\`.`,
+        };
+      case 'parent_pruned':
+        return {
+          kind: 'parent_run_finished',
+          code: PARENT_RUN_FINISHED_CODE,
+          runId: run.state.id,
+          message: `Run ${run.state.id} is a delegation at ${standing.parentStep} whose parent run was pruned; its result would never be collected, so nothing was written. Stop working on it, and end it with \`rundown stop --token <owner_token>\`.`,
+        };
+      default: {
+        const _exhaustive: never = standing;
+        return _exhaustive;
+      }
+    }
   }
 
   /**
@@ -623,6 +753,20 @@ export class RunbookLifecycleCommandService {
       },
       updatedState,
     };
+  }
+
+  /**
+   * Collect the owned run's Current Children (#904): `rundown collect`.
+   *
+   * @param input - The owned run and display policy.
+   * @returns A refusal, or the Collect report with its observation events and
+   *   progression directive.
+   * @throws {Error} As {@link collectDelegations}.
+   */
+  async runCollect(input: LifecycleCollectInput): Promise<LifecycleCollectOutcome> {
+    const finished = finishedRefusal(input.run);
+    if (finished) return finished;
+    return collectDelegations(this.#deps, input.run, input.computeActionResult);
   }
 
   /**

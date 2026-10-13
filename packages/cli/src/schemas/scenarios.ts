@@ -87,6 +87,23 @@ export const EnteredAssertionSchema = z.object({
 export type EnteredAssertion = z.infer<typeof EnteredAssertionSchema>;
 
 /**
+ * Schema for assertions on the children a `rundown collect` reported (#904).
+ *
+ * Matched in order against every child of every `children_collected` event.
+ */
+export const CollectedAssertionSchema = z.object({
+  step: z.union([z.string(), z.number()]).transform(String).optional(),
+  index: z.number().int().positive().optional(),
+  status: z
+    .enum(['collected', 'already_collected', 'pending', 'unclaimed', 'cancelled'])
+    .optional(),
+  result: z.enum(['pass', 'fail']).optional(),
+});
+
+/** A parsed collected-child assertion. */
+export type CollectedAssertion = z.infer<typeof CollectedAssertionSchema>;
+
+/**
  * Schema for rich assertions on scenario execution state.
  *
  * All fields are optional — only specified fields are matched.
@@ -98,6 +115,7 @@ export const ScenarioExpectSchema = z.object({
   warnings: z.array(WarningAssertionSchema).optional(),
   artifacts: z.array(ArtifactAssertionSchema).optional(),
   entered: z.array(EnteredAssertionSchema).optional(),
+  collected: z.array(CollectedAssertionSchema).optional(),
 });
 
 /**

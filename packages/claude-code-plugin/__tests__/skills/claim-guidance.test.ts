@@ -62,7 +62,24 @@ describe('running-runbooks owner-token guidance', () => {
 
     expect(skill).not.toContain('--claim-id');
     expect(skill).not.toContain('ACTOR_CONTEXT_REQUIRED');
-    expect(skill).not.toMatch(/rundown (?:claim|collect|delegate|stash|pop)\b/);
+    expect(skill).not.toMatch(/rundown (?:delegate|abort|stash|pop)\b/);
+  });
+
+  it('teaches a claimed child to drive with its own token and stop when cancelled', () => {
+    const claimed = section(readSkill('running-runbooks/SKILL.md'), '## Claimed Delegations');
+
+    expect(claimed).toContain('rundown claim <ticket>');
+    expect(claimed).toMatch(/child's \*\*own\*\*\s+`owner_token`/);
+    expect(claimed).toContain('`DELEGATION_CANCELLED`');
+    expect(claimed).toContain('`PARENT_RUN_FINISHED`');
+  });
+
+  it('sends the orchestrator to collect, never to pass the delegated substep', () => {
+    const composed = section(readSkill('running-runbooks/SKILL.md'), '## Composed Runbooks');
+
+    expect(composed).toContain('`rundown collect --token <owner_token>`');
+    expect(composed).toMatch(/never `pass` the delegated substep/);
+    expect(composed).not.toContain('RUNBOOK_COMPOSITION_UNSUPPORTED');
   });
 
   it('says the token is printed once and cannot be recovered', () => {
@@ -74,30 +91,61 @@ describe('running-runbooks owner-token guidance', () => {
   });
 });
 
-// delegating-runbooks is parked unchanged until delegation returns (#904).
-describe('delegating-runbooks claim guidance (parked for #904)', () => {
-  it('requires explicit claim-id targeting within the claim flow', () => {
-    const claim = section(
-      readSkill('delegating-runbooks/SKILL.md'),
-      '### 3. Child claims and executes',
-    );
+describe('delegating-runbooks Delegation protocol', () => {
+  const skill = readSkill('delegating-runbooks/SKILL.md');
 
-    expect(claim).not.toBe('');
-    expect(claim).toContain('rundown pass --claim-id <claim_id>');
-    expect(claim).toContain('rundown fail --claim-id <claim_id>');
-    expect(claim).not.toMatch(/rundown pass\s+(?:#|$)/m);
-    expect(claim).not.toMatch(/rundown fail\s+(?:#|$)/m);
+  it('has the orchestrator read tickets from step_entered children and collect with its own token', () => {
+    const orchestrator = section(skill, '## Orchestrator Choreography');
+
+    expect(orchestrator).not.toBe('');
+    expect(orchestrator).toContain('children: [{ step, index?, runId, runbook, ticket }]');
+    expect(orchestrator).toContain('rundown collect --token <owner_token>');
+    expect(orchestrator).toContain('`children_collected`');
+    for (const status of ['collected', 'already_collected', 'pending', 'unclaimed', 'cancelled']) {
+      expect(orchestrator).toContain(`| \`${status}\``);
+    }
   });
 
-  it('keeps delegation idempotency examples aligned with delegate output and retry forms', () => {
-    const delegate = section(
-      readSkill('delegating-runbooks/SKILL.md'),
-      '### 1. Delegate a substep',
-    );
+  it('puts the ticket and the claim command in the dispatched prompt, because the hooks are inert', () => {
+    const orchestrator = section(skill, '## Orchestrator Choreography');
 
-    expect(delegate).not.toBe('');
-    expect(delegate).toContain('action: "already-delegated"');
-    expect(delegate).not.toContain('command: "already-delegated"');
-    expect(delegate).toContain('rundown delegate --retry --claim-id <claim_id>');
+    expect(orchestrator).toMatch(/rundown claim rdt_… --agent-id/);
+    expect(orchestrator).toContain('Skill(skill: "rundown:running-runbooks")');
+    expect(orchestrator).toMatch(/hooks are inert/);
+  });
+
+  it('has the sub-agent claim, drive with the child token, and stop on cancellation', () => {
+    const subAgent = section(skill, '## Sub-agent Choreography');
+
+    expect(subAgent).toContain('rundown claim <ticket>');
+    expect(subAgent).toContain('rundown pass --token <child owner_token> --step <child step>');
+    expect(subAgent).toContain('`DELEGATION_CANCELLED`');
+    expect(subAgent).toContain('`PARENT_RUN_FINISHED`');
+    expect(subAgent).toMatch(/never collect/);
+  });
+
+  it('covers every Delegation refusal code', () => {
+    const refusals = section(skill, '## Refusals');
+
+    for (const code of [
+      'UNKNOWN_TICKET',
+      'ALREADY_CLAIMED',
+      'DELEGATION_CANCELLED',
+      'PARENT_RUN_FINISHED',
+      'NOTHING_TO_COLLECT',
+    ]) {
+      expect(refusals).toContain(`\`${code}\``);
+    }
+  });
+
+  it('teaches no retired or unbuilt delegation surface', () => {
+    expect(skill).not.toContain('--claim-id');
+    expect(skill).not.toContain('rdtk_');
+    expect(skill).not.toContain('RD_CLAIM_TOKEN');
+    expect(skill).not.toMatch(/rundown (?:delegate|abort|retry|release)\b/);
+    expect(skill).not.toMatch(
+      /ACTOR_CONTEXT_REQUIRED|OPEN_DELEGATED_CHILDREN|DELEGATION_SUPERSEDED/,
+    );
+    expect(skill).not.toMatch(/#904/);
   });
 });

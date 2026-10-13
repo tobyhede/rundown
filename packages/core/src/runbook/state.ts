@@ -36,6 +36,7 @@ import { runsDir as _runsDir, assertSafeId } from '../paths.js';
 import { getRunbookStore } from './storage/store-registry.js';
 import type {
   AcquireExecutionLeaseResult,
+  ClaimDelegationChildResult,
   DeleteRunResult,
   RunAtVersion,
   RunbookStore,
@@ -331,6 +332,20 @@ export interface CreateInlineChildOptions extends Omit<CreateOptions, 'ownerToke
 }
 
 /**
+ * Options accepted by {@link RunbookStateManager.claimDelegationChild}.
+ *
+ * Everything {@link CreateOptions} carries, plus the preallocated id the
+ * parent's reservation names and the linkage naming that reservation. A
+ * Delegation carries its own Owner Token, unlike an Inline Child.
+ */
+export interface ClaimDelegationChildOptions extends Omit<CreateOptions, 'runId'> {
+  /** The child run id the parent's reservation preallocated. */
+  readonly runId: RunId;
+  /** The parent coordinate; its `kind` is `delegation`. */
+  readonly linkage: ChildLinkage;
+}
+
+/**
  * Construction options for {@link RunbookStateManager}.
  */
 export interface RunbookStateManagerOptions {
@@ -364,8 +379,8 @@ function stampForSave(state: RunbookState): RunbookState {
  * @param id - The run id
  * @param options - Path, prompted flag, source and variables
  * @returns The initial state, not yet persisted
- * @throws {RunbookCompositionUnsupportedError} When the runbook delegates (a
- *   `DELEGATE` substep): the compiled machine has no state for one until #904.
+ * @throws {RunbookCompositionUnsupportedError} When a substep lists more than
+ *   one runbook: the machine reserves one Current Child per substep.
  */
 function initialRunState(
   runbookRef: RunbookRef,
@@ -533,9 +548,9 @@ export class RunbookStateManager {
    * @param runbook - The parsed runbook definition
    * @param options - Owner token hash, run identity, prompted flag, variables
    * @returns The newly created RunbookState
-   * @throws {RunbookCompositionUnsupportedError} When the runbook delegates
-   *   to other runbooks (a `DELEGATE` substep). Raised before any store
-   *   access, so no run row is written.
+   * @throws {RunbookCompositionUnsupportedError} When a substep lists more
+   *   than one runbook. Raised before any store access, so no run row is
+   *   written.
    * @throws {StoreInvariantError} When a run already carries the id or the
    *   owner token hash.
    */
@@ -570,8 +585,8 @@ export class RunbookStateManager {
    * @param initialize - Derives the initialised state from the draft without
    *   persisting it (`RunbookActorService.deriveInitialState` in production)
    * @returns The newly created child state
-   * @throws {RunbookCompositionUnsupportedError} When the child runbook
-   *   delegates (a `DELEGATE` substep). No row is written.
+   * @throws {RunbookCompositionUnsupportedError} When a substep of the child
+   *   runbook lists more than one runbook. No row is written.
    * @throws {Error} Whatever `initialize` throws (a machine that cannot be
    *   compiled, say), or when it returns a different run. No row is written.
    * @throws {StoreInvariantError} When a run already carries the id.
@@ -591,6 +606,55 @@ export class RunbookStateManager {
     await store.createInlineChildRun(state, options.linkage);
     void logger.debug('lifecycle-write', { runId: state.id, next: 'running' });
     return state;
+  }
+
+  /**
+   * Claim a Delegation (#904): create its row under the id its parent reserved,
+   * if — in the same transaction — `verify` finds the reservation still
+   * claimable on the parent as read there.
+   *
+   * The row lands already initialised, in one write, exactly as
+   * {@link createInlineChild}'s does; a second claim of the same reservation
+   * is refused by the row's primary key.
+   *
+   * @template R - The caller's refusal type.
+   * @param runbookRef - Canonical identity of the child runbook
+   * @param runbook - The parsed child runbook definition
+   * @param options - Preallocated id, linkage, owner token hash and variables
+   * @param initialize - Derives the initialised state from the draft without
+   *   persisting it (`RunbookActorService.deriveInitialState` in production)
+   * @param verify - Decides, on the parent read inside the claim's transaction,
+   *   whether the reservation may still be claimed
+   * @returns `claimed`, `already_claimed`, or `verify`'s refusal
+   * @throws {RunbookCompositionUnsupportedError} When the child runbook
+   *   composes in a form this build does not run. No row is written.
+   * @throws {Error} Whatever `initialize` throws, or when it returns a
+   *   different run. No row is written.
+   */
+  async claimDelegationChild<R>(
+    runbookRef: RunbookRef,
+    runbook: Runbook | ResolvedRunbook,
+    options: ClaimDelegationChildOptions,
+    initialize: (draft: RunbookState) => Promise<RunbookState>,
+    verify: (parent: VersionedRunState | null) => R | undefined,
+  ): Promise<ClaimDelegationChildResult<R> & { readonly state: RunbookState }> {
+    const draft = initialRunState(runbookRef, runbook, options.runId, options);
+    const state = await initialize(draft);
+    if (state.id !== draft.id) {
+      throw new Error(`Delegation ${draft.id} was initialised as run ${state.id}`);
+    }
+    const store = await this.store();
+    const claimed = await store.claimDelegationChild({
+      parentRunId: options.linkage.parentRunId,
+      verify,
+      state,
+      ownerTokenHash: options.ownerTokenHash,
+      linkage: options.linkage,
+    });
+    if (claimed.kind === 'claimed') {
+      void logger.debug('lifecycle-write', { runId: state.id, next: 'running' });
+    }
+    return { ...claimed, state };
   }
 
   /**
@@ -660,6 +724,23 @@ export class RunbookStateManager {
   async findByOwnerTokenHash(ownerTokenHash: SecretHash): Promise<VersionedRunState | null> {
     const store = await this.store();
     return store.findRunByOwnerTokenHash(ownerTokenHash);
+  }
+
+  /**
+   * Find the run that issued a Claim Ticket, by the ticket's hash (#904).
+   *
+   * Reads only the runs whose persisted state records the hash, so a claim
+   * neither validates nor warns about any other run in the project.
+   *
+   * @param ticketHash - Hash of the presented Claim Ticket
+   * @returns Every run recording the hash, validated (at most one in practice)
+   * @throws {InvalidRunbookStateError} If a matching record fails the
+   *   persisted-state gates or the structural parse
+   * @throws {LegacySnapshotError} If a matching record uses deprecated snapshots
+   */
+  async findByTicketHash(ticketHash: SecretHash): Promise<readonly VersionedRunState[]> {
+    const store = await this.store();
+    return store.findRunsByTicketHash(ticketHash);
   }
 
   /**

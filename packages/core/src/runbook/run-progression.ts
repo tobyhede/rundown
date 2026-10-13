@@ -19,9 +19,12 @@
  * terminal returns `refused` and emits no `runbook_stopped` observation.
  *
  * The machine owns two decisions here (Fact 2 of the #901 plan): whether the
- * cursor waits for input or enters its execution unit. Composition — inline
- * children (#903) and delegation (#904) — returns on this model later; the
- * frontend supplies only the command callable through the actor service.
+ * cursor waits for input or enters its execution unit. Composition rides the
+ * same turns: an Inline Child is launched, driven and implicitly Collected
+ * within the parent's progression (#903), and a Delegation's entry issues its
+ * Claim Tickets (#904) — a Delegation's result reaches the parent only by the
+ * owner's explicit Collect. The frontend supplies the command callable
+ * through the actor service and the child-runbook preparer.
  *
  * @module runbook/run-progression
  */
@@ -75,10 +78,11 @@ import {
   INLINE_CHILD_LAUNCH_FAILED_CODE,
   launchInlineChild,
   MAX_INLINE_CHILD_DEPTH,
-  type PrepareInlineChild,
 } from './inline-progression.js';
 import type { ExecutionUnitInlineChild } from './execution-unit-entry.js';
+import type { PrepareChildRun } from './child-preparation.js';
 import { currentInlineReservation } from './inline-child.js';
+import { issueClaimTickets, withEnteredChildren } from './delegation-tickets.js';
 import { countNumberedSteps } from './step-utils.js';
 import { buildStepPosition } from './targeting.js';
 import { extractLastMessage } from './transition-kernel.js';
@@ -137,10 +141,15 @@ export type RunProgressionWaitReason = 'awaiting_input' | 'collected';
  * - `entry_render_failed` — rendering the selected unit's entry threw; nothing
  *   was committed and re-activation re-renders.
  * - `inline_child_launch_failed` — the Inline Child an inline substep reserved
- *   could not be launched: its runbook did not prepare, delegates (refused
- *   until #904), nests deeper than {@link MAX_INLINE_CHILD_DEPTH}, or another
+ *   could not be launched: its runbook did not prepare, composes in a form
+ *   this build does not run, nests deeper than {@link MAX_INLINE_CHILD_DEPTH}, or another
  *   of the owner's commands launched it first. The parent rests on the
  *   substep; the owner decides it with `pass` / `fail --step` (#903).
+ * - `claim_tickets_not_issued` — the Claim Tickets for the entry's
+ *   Delegations could not be recorded: another of the owner's commands moved
+ *   the run since this activation read it. Nothing was written and no ticket
+ *   was printed (#904). The owner's `rundown collect` activates the unit
+ *   again, which issues and prints them.
  */
 export type RunProgressionRefusalReason =
   | 'run_missing'
@@ -150,7 +159,8 @@ export type RunProgressionRefusalReason =
   | 'execution_interrupted'
   | 'command_outcome_unknown'
   | 'entry_render_failed'
-  | 'inline_child_launch_failed';
+  | 'inline_child_launch_failed'
+  | 'claim_tickets_not_issued';
 
 /**
  * Enumerated invocation-layer disruption.
@@ -242,10 +252,10 @@ export interface RunProgressionDeps {
    */
   readonly processIdentity?: ProcessIdentity;
   /**
-   * The frontend service that prepares an Inline Child's runbook for launch
-   * (#903). Without it an inline substep refuses `inline_child_launch_failed`.
+   * The frontend service that prepares a child runbook (#903, #904). Without
+   * it an inline substep refuses `inline_child_launch_failed`.
    */
-  readonly prepareInlineChild?: PrepareInlineChild;
+  readonly prepareChildRun?: PrepareChildRun;
   /**
    * The observation sink for a run other than the activation's own — an
    * Inline Child progression descends into, or a parent it ascends to — so
@@ -1056,7 +1066,7 @@ async function driveRun(
     return { kind: lifecycle, runId };
   }
   if (lifecycle === 'abandoned') {
-    // Written only by a released child (#904); nothing here drives one.
+    // Written only by a released child (#905); nothing here drives one.
     throw new Error(`Run ${runId} is abandoned and cannot be driven`);
   }
 
@@ -1152,6 +1162,28 @@ async function driveRun(
       });
       if (composed.kind === 'rest') return composed.outcome;
       current = composed.parent;
+      continue;
+    }
+
+    if (entered.kind === 'delegation') {
+      // A Delegation resolves only by Collect (#904): the turn issues a Claim
+      // Ticket to every counted child that has none — one conditional save of
+      // their hashes — and announces the entry with the tickets, then waits.
+      const issued = await issueClaimTickets({
+        deps: { manager, actorService },
+        run: current,
+        steps,
+        delegations: entered.delegations,
+      });
+      if (issued.kind === 'missing') return runMissingRefusal(runId, sink);
+      if (issued.kind === 'concurrent_modification') {
+        return claimTicketsNotIssuedRefusal(runId, sink);
+      }
+      current = issued.run;
+      for (const effect of withEnteredChildren(entered.effects, issued.children)) {
+        sink.emit(effect.event);
+      }
+      feedback = { kind: 'awaiting_input' };
       continue;
     }
 
@@ -1509,6 +1541,30 @@ function collectNotOwedRefusal(
     kind: 'refused',
     runId,
     reason: 'command_not_committed',
+    code: CONCURRENT_MODIFICATION_CODE,
+    message,
+    recovery: 'retryable',
+  };
+}
+
+/**
+ * Refuse a turn whose Claim Tickets could not be recorded because the run
+ * moved since it was read (#904). The minted tickets were never printed.
+ *
+ * @param runId - The run whose entry could not issue its tickets.
+ * @param sink - The run's gated sink.
+ * @returns The closed refusal.
+ */
+function claimTicketsNotIssuedRefusal(
+  runId: RunId,
+  sink: Pick<ExecutionEventEmitter, 'emit'>,
+): RunProgressionOutcome {
+  const message = `Run ${runId} was modified by another writer before its Claim Tickets were recorded; nothing was written and no ticket was issued — run \`rundown collect --token <owner_token>\` on this run to issue them`;
+  sink.emit({ type: 'ERROR_OCCURRED', payload: { message, code: CONCURRENT_MODIFICATION_CODE } });
+  return {
+    kind: 'refused',
+    runId,
+    reason: 'claim_tickets_not_issued',
     code: CONCURRENT_MODIFICATION_CODE,
     message,
     recovery: 'retryable',

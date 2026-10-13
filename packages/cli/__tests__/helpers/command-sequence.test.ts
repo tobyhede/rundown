@@ -20,12 +20,13 @@ import {
   executeCommandSequence,
   createInProcessCommandExecutor,
   substituteRunIds,
-  captureOwnerTokenFromJsonObject,
-  captureRunIdFromJsonObject,
   CAPTURE_PLACEHOLDERS,
   createCapturedPlaceholders,
   substitutePlaceholder,
   substitutePlaceholders,
+  capturedValues,
+  matchCollectedAssertions,
+  type CapturedCollectedChild,
 } from '../../src/helpers/command-sequence.js';
 import type { InProcessCliRunner } from '../../src/helpers/command-sequence.js';
 import type { ArtifactAssertion, StepAssertion } from '../../src/schemas/scenarios.js';
@@ -131,7 +132,7 @@ describe('parseJsonLines', () => {
     ].join('\n');
     const result = parseJsonLines(stdout);
     expect(result.terminal).toBe('STOP');
-    expect(result.runIds[0]).toBe('rd_root');
+    expect(capturedValues(result.captured, 'RUN_ID')[0]).toBe('rd_root');
   });
 
   it('adopts the payload first runbook_started for a root completion too', () => {
@@ -208,8 +209,8 @@ describe('parseJsonLines', () => {
     const stdout =
       '{"type":"runbook_started","prompted":false,"owner_token":"rdo_abc123","runbookId":"rd_1"}\n';
     const result = parseJsonLines(stdout);
-    expect(result.tokens).toEqual(['rdo_abc123']);
-    expect(result.runIds).toEqual(['rd_1']);
+    expect(capturedValues(result.captured, 'TOKEN')).toEqual(['rdo_abc123']);
+    expect(capturedValues(result.captured, 'RUN_ID')).toEqual(['rd_1']);
   });
 
   it('captures JSON error responses', () => {
@@ -268,8 +269,8 @@ describe('parseJsonLines', () => {
       '{"type":"runbook_started","owner_token":"rdo_second","runbookId":"rd_b"}',
     ].join('\n');
     const result = parseJsonLines(stdout);
-    expect(result.tokens).toEqual(['rdo_first', 'rdo_second']);
-    expect(result.runIds).toEqual(['rd_a', 'rd_b']);
+    expect(capturedValues(result.captured, 'TOKEN')).toEqual(['rdo_first', 'rdo_second']);
+    expect(capturedValues(result.captured, 'RUN_ID')).toEqual(['rd_a', 'rd_b']);
   });
 
   it('ignores a non-string owner_token and owner_token on other events', () => {
@@ -279,8 +280,8 @@ describe('parseJsonLines', () => {
       JSON.stringify({ type: 'runbook_started', runbookId: 'rd_b' }),
     ].join('\n');
     const result = parseJsonLines(stdout);
-    expect(result.tokens).toHaveLength(0);
-    expect(result.runIds).toEqual(['rd_a', 'rd_b']);
+    expect(capturedValues(result.captured, 'TOKEN')).toHaveLength(0);
+    expect(capturedValues(result.captured, 'RUN_ID')).toEqual(['rd_a', 'rd_b']);
   });
 
   it('captures artifacts from step_entered events', () => {
@@ -362,7 +363,7 @@ describe('parseJsonLines', () => {
       '{"complete":true,"action":"COMPLETE","result":true}',
     ].join('\n');
     const result = parseJsonLines(stdout);
-    expect(result.tokens).toHaveLength(0);
+    expect(capturedValues(result.captured, 'TOKEN')).toHaveLength(0);
   });
 
   it('falls through to line-by-line parsing when input is a JSON array', () => {
@@ -1120,21 +1121,60 @@ describe('substituteRunIds', () => {
 });
 
 describe('CAPTURE_PLACEHOLDERS', () => {
-  it('names TOKEN and RUN_ID, both captured from runbook_started', () => {
-    expect(CAPTURE_PLACEHOLDERS.map((row) => row.name)).toEqual(['TOKEN', 'RUN_ID']);
+  it('names TOKEN and RUN_ID from a root run start, and the #904 delegation rows', () => {
+    expect(CAPTURE_PLACEHOLDERS.map((row) => row.name)).toEqual([
+      'TOKEN',
+      'RUN_ID',
+      'TICKET',
+      'CHILD_TOKEN',
+      'CHILD_RUN',
+    ]);
     const started = { type: 'runbook_started', owner_token: 'rdo_x', runbookId: 'rd_x' };
-    expect(CAPTURE_PLACEHOLDERS.map((row) => row.capture(started))).toEqual([['rdo_x'], ['rd_x']]);
+    expect(CAPTURE_PLACEHOLDERS.map((row) => row.capture(started))).toEqual([
+      ['rdo_x'],
+      ['rd_x'],
+      [],
+      [],
+      [],
+    ]);
     expect(
       CAPTURE_PLACEHOLDERS.map((row) =>
         row.capture({ type: 'step_entered', owner_token: 'rdo_x' }),
       ),
-    ).toEqual([[], []]);
+    ).toEqual([[], [], [], [], []]);
+  });
+
+  it('captures a claimed child start as CHILD_TOKEN / CHILD_RUN, never TOKEN / RUN_ID', () => {
+    const claimed = {
+      type: 'runbook_started',
+      owner_token: 'rdo_c',
+      runbookId: 'rd_c',
+      parent: { runId: 'rd_p', step: '1.1' },
+    };
+    expect(CAPTURE_PLACEHOLDERS.map((row) => row.capture(claimed))).toEqual([
+      [],
+      [],
+      [],
+      ['rdo_c'],
+      ['rd_c'],
+    ]);
+  });
+
+  it('captures every ticket a step entry lists, in order', () => {
+    const entered = {
+      type: 'step_entered',
+      children: [{ ticket: 'rdt_1' }, { runId: 'rd_x' }, { ticket: 'rdt_2' }],
+    };
+    expect(CAPTURE_PLACEHOLDERS.find((row) => row.name === 'TICKET')?.capture(entered)).toEqual([
+      'rdt_1',
+      'rdt_2',
+    ]);
   });
 
   it('createCapturedPlaceholders has one empty entry per row', () => {
     const captured = createCapturedPlaceholders();
-    expect([...captured.keys()]).toEqual(['TOKEN', 'RUN_ID']);
-    expect([...captured.values()]).toEqual([[], []]);
+    expect([...captured.keys()]).toEqual(['TOKEN', 'RUN_ID', 'TICKET', 'CHILD_TOKEN', 'CHILD_RUN']);
+    expect([...captured.values()]).toEqual([[], [], [], [], []]);
   });
 
   it('substitutePlaceholders substitutes every row from the accumulator', () => {
@@ -1153,26 +1193,20 @@ describe('CAPTURE_PLACEHOLDERS', () => {
   });
 });
 
-describe('captureOwnerTokenFromJsonObject', () => {
-  it('captures owner_token from runbook_started events in emission order', () => {
-    const captured: string[] = [];
-    captureOwnerTokenFromJsonObject({ type: 'runbook_started', owner_token: 'rdo_1' }, captured);
-    captureOwnerTokenFromJsonObject({ type: 'step_entered', owner_token: 'rdo_x' }, captured);
-    captureOwnerTokenFromJsonObject({ type: 'runbook_started', owner_token: 'rdo_2' }, captured);
-    captureOwnerTokenFromJsonObject({ type: 'runbook_started' }, captured);
-    captureOwnerTokenFromJsonObject(null, captured);
-    expect(captured).toEqual(['rdo_1', 'rdo_2']);
-  });
-});
-
-describe('captureRunIdFromJsonObject', () => {
-  it('captures runbookId from runbook_started events in emission order', () => {
-    const captured: string[] = [];
-    captureRunIdFromJsonObject({ type: 'runbook_started', runbookId: 'rd_1' }, captured);
-    captureRunIdFromJsonObject({ type: 'step_entered', runbookId: 'rd_x' }, captured);
-    captureRunIdFromJsonObject({ type: 'runbook_started', runbookId: 'rd_2' }, captured);
-    captureRunIdFromJsonObject({ type: 'runbook_started' }, captured);
-    expect(captured).toEqual(['rd_1', 'rd_2']);
+describe('parseJsonLines — TOKEN and RUN_ID capture', () => {
+  it('captures owner_token and runbookId from runbook_started events only, in emission order', () => {
+    const result = parseJsonLines(
+      [
+        { type: 'runbook_started', owner_token: 'rdo_1', runbookId: 'rd_1' },
+        { type: 'step_entered', owner_token: 'rdo_x', runbookId: 'rd_x' },
+        { type: 'runbook_started', owner_token: 'rdo_2', runbookId: 'rd_2' },
+        { type: 'runbook_started' },
+      ]
+        .map((value) => JSON.stringify(value))
+        .join('\n'),
+    );
+    expect(capturedValues(result.captured, 'TOKEN')).toEqual(['rdo_1', 'rdo_2']);
+    expect(capturedValues(result.captured, 'RUN_ID')).toEqual(['rd_1', 'rd_2']);
   });
 });
 
@@ -1607,5 +1641,224 @@ describe('executeCommandSequence — Owner Token redaction in observations', () 
       expect(observed).not.toContain(OWNER_TOKEN);
     }
     expect(started[1]).toContain('rd pass --token rdo_');
+  });
+});
+
+describe('collected children (#904)', () => {
+  it('captures every child a children_collected event reports, and placeholders alongside', () => {
+    const result = parseJsonLines(
+      [
+        JSON.stringify({
+          type: 'step_entered',
+          children: [{ step: '1.1', runId: 'rd_a', runbook: 'c.md', ticket: 'rdt_a' }],
+        }),
+        'not json',
+        JSON.stringify({
+          type: 'children_collected',
+          children: [
+            { step: '1.1', runId: 'rd_a', status: 'pending' },
+            { step: '1.2', index: 2, runId: 'rd_b', status: 'collected', result: 'fail' },
+          ],
+        }),
+      ].join('\n'),
+    );
+    expect(capturedValues(result.captured, 'TICKET')).toEqual(['rdt_a']);
+    expect(result.collectedChildren).toEqual([
+      { step: '1.1', runId: 'rd_a', status: 'pending' },
+      { step: '1.2', index: 2, runId: 'rd_b', status: 'collected', result: 'fail' },
+    ]);
+  });
+
+  it('matches assertions in order, skipping children between them', () => {
+    const children: CapturedCollectedChild[] = [
+      { step: '1.1', runId: 'rd_a', status: 'pending' },
+      { step: '1.2', runId: 'rd_b', status: 'collected', result: 'pass' },
+      { step: '1.1', runId: 'rd_a', status: 'collected', result: 'pass' },
+    ];
+    expect(
+      matchCollectedAssertions(
+        [
+          { step: '1.1', status: 'pending' },
+          { step: '1.1', status: 'collected', result: 'pass' },
+          { step: '1.2', status: 'collected' },
+        ],
+        children,
+      ).map((result) => result.matched),
+    ).toEqual([true, true, false]);
+  });
+});
+
+describe('executeCommandSequence — placeholder capture model (#904)', () => {
+  const line = (value: Record<string, unknown>): string => `${JSON.stringify(value)}\n`;
+  const claimedStart = line({
+    type: 'runbook_started',
+    runbookId: 'rd_child',
+    owner_token: 'rdo_child',
+    parent: { runId: 'rd_root', step: '1.1' },
+  });
+  const rootStart = line({
+    type: 'runbook_started',
+    runbookId: 'rd_root',
+    owner_token: 'rdo_root',
+  });
+
+  it('never adopts a claimed child start as the root run, across commands', async () => {
+    const calls: string[][] = [];
+    const result = await executeCommandSequence({
+      // The claim's output precedes the root's start, so a capture model that
+      // counted the claimed start as a RUN_ID would scope the root to the child.
+      commands: [
+        'rundown claim rdt_x',
+        'rundown run p.md',
+        'rundown pass --token ${CHILD_TOKEN} --step 1',
+        'rundown status --run ${RUN_ID} --child ${CHILD_RUN} --token ${TOKEN}',
+      ],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      commandExecutor: {
+        runRd: async (args) => {
+          calls.push(args);
+          const stdoutFor: Record<string, string> = {
+            claim: claimedStart,
+            run: rootStart,
+            // NDJSON, so the payload reaches root scoping (a lone object does not).
+            pass:
+              line({ type: 'step_entered', runbookId: 'rd_child', position: { current: '2' } }) +
+              line({ type: 'runbook_completed', runbookId: 'rd_child' }),
+            status: '',
+          };
+          return { stdout: stdoutFor[args[0]] ?? '', stderr: '', exitCode: 0 };
+        },
+      },
+    });
+
+    expect(calls[2]).toEqual(['pass', '--token', 'rdo_child', '--step', '1']);
+    expect(calls[3]).toEqual([
+      'status',
+      '--run',
+      'rd_root',
+      '--child',
+      'rd_child',
+      '--token',
+      'rdo_root',
+    ]);
+    // The child completing is another run's terminal, not the scenario's.
+    expect(result.terminalResult).toBe('UNKNOWN');
+    expect(result.capturedTokens).toEqual(['rdo_root']);
+    expect(result.capturedRunIds).toEqual(['rd_root']);
+  });
+
+  it('never adopts a claimed child start as the root run within one payload', async () => {
+    const result = await executeCommandSequence({
+      commands: ['rundown run p.md'],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      commandExecutor: {
+        runRd: async () => ({
+          stdout: [
+            claimedStart,
+            rootStart,
+            line({ type: 'runbook_completed', runbookId: 'rd_child' }),
+            line({ type: 'runbook_stopped', runbookId: 'rd_root' }),
+          ].join(''),
+          stderr: '',
+          exitCode: 0,
+        }),
+      },
+    });
+
+    expect(result.terminalResult).toBe('STOP');
+    expect(result.capturedRunIds).toEqual(['rd_root']);
+  });
+
+  it("never takes a child's lone lifecycle terminal as the scenario's terminal", async () => {
+    const calls: string[][] = [];
+    const result = await executeCommandSequence({
+      commands: ['rundown run p.md', 'rundown claim rdt_x', 'rundown pass --token ${CHILD_TOKEN}'],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      commandExecutor: {
+        runRd: async (args) => {
+          calls.push(args);
+          const stdoutFor: Record<string, string> = {
+            run: rootStart,
+            claim: claimedStart,
+            // A lone object, not NDJSON: the child's run completing.
+            pass: line({ type: 'runbook_completed', runbookId: 'rd_child' }),
+          };
+          return { stdout: stdoutFor[args[0]] ?? '', stderr: '', exitCode: 0 };
+        },
+      },
+    });
+
+    expect(calls[2]).toEqual(['pass', '--token', 'rdo_child']);
+    expect(result.terminalResult).toBe('UNKNOWN');
+  });
+
+  it("takes the root's own lone lifecycle terminal as the scenario's terminal", async () => {
+    const result = await executeCommandSequence({
+      commands: ['rundown run p.md', 'rundown stop --token ${TOKEN}'],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      commandExecutor: {
+        runRd: async (args) => ({
+          stdout:
+            args[0] === 'run' ? rootStart : line({ type: 'runbook_stopped', runbookId: 'rd_root' }),
+          stderr: '',
+          exitCode: 0,
+        }),
+      },
+    });
+
+    expect(result.terminalResult).toBe('STOP');
+  });
+
+  it('captures tickets, collected children and tokens from shell and rd output alike', async () => {
+    const calls: string[][] = [];
+    const entered = {
+      type: 'step_entered',
+      children: [{ step: '1.1', runId: 'rd_a', ticket: 'rdt_a' }],
+    };
+    const result = await executeCommandSequence({
+      commands: [
+        // A pretty-printed single object, as a flushed command envelope prints.
+        `node -e "console.log(JSON.stringify(${JSON.stringify(entered).replaceAll('"', '\\"')}, null, 2))"`,
+        'rundown claim ${TICKET}',
+        'rundown collect --token ${CHILD_TOKEN}',
+      ],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      commandExecutor: {
+        runRd: async (args) => {
+          calls.push(args);
+          const stdoutFor: Record<string, string> = {
+            claim: claimedStart,
+            collect: line({
+              type: 'children_collected',
+              children: [
+                { step: '1.1', runId: 'rd_a', status: 'collected', result: 'pass' },
+                { step: '1.2', runId: 7, status: 'pending' },
+              ],
+            }),
+          };
+          return { stdout: stdoutFor[args[0]] ?? '', stderr: '', exitCode: 0 };
+        },
+      },
+    });
+
+    expect(calls).toEqual([
+      ['claim', 'rdt_a'],
+      ['collect', '--token', 'rdo_child'],
+    ]);
+    expect(result.collectedChildren).toEqual([
+      { step: '1.1', runId: 'rd_a', status: 'collected', result: 'pass' },
+    ]);
+    expect(result.capturedTokens).toEqual([]);
+    expect(result.enteredSteps).toHaveLength(1);
   });
 });

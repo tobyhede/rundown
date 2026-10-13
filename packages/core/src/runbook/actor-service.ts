@@ -306,6 +306,7 @@ function lastResultSyncForEvent(
     case 'RETRY':
     case 'SET_VARIABLES':
     case 'SELECT_RUN_PROGRESSION':
+    case 'ISSUE_CLAIM_TICKETS':
       return { kind: 'preserve' };
     default: {
       const _exhaustive: never = event;

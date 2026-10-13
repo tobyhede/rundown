@@ -16,6 +16,7 @@ import { getErrorMessage } from './errors.js';
 import { RunbookRefSchema } from './runbook/runbook-ref.js';
 import { ArtifactRecordSchema, type ArtifactRecord } from './runbook/artifact-schema.js';
 import { LastActionSchema } from './runbook/last-action.js';
+import { SecretHashSchema } from './runbook/run-secrets.js';
 
 /**
  * Zod schema that parses strings and brands them as {@link FrameKey}.
@@ -451,33 +452,64 @@ export const ContextSnapshotSchema = z
   });
 
 /**
- * Zod schema for SubstepState, which tracks the runtime state of a substep
- * within a step and the Current Child reserved for it. A reservation carries
- * the child's identity only: the context an Inline Child inherits is read from
- * the parent row at launch, so no variable space is copied here.
+ * Build the Zod schema for SubstepState, which tracks the runtime state of a
+ * substep within a step and the Current Child reserved for it.
+ *
+ * An Inline Child's reservation carries the child's identity only: the
+ * context it inherits is read from the parent row at launch (#903). A
+ * Delegation's reservation also carries the context snapshot captured when it
+ * was made and the hash of its Claim Ticket (#904); the snapshot is parsed
+ * through `contextSnapshotSchema`, so the path-validated state schema checks
+ * its file-stream paths against the project root.
+ *
+ * @param contextSnapshotSchema - Schema for the delegation reservation's context snapshot
+ * @returns The strict SubstepState schema
  */
-const SubstepStateSchema = z
-  .object({
-    id: z.string(),
-    frameKey: FrameKeySchema,
-    status: z.enum(['pending', 'running', 'done']),
-    result: z.enum(['pass', 'fail']).optional(),
-    // The Current Child reservation (#903). Only `inline` exists until #904.
-    child: z
+// The return type stays inferred: it is the exact strict object schema the
+// run-state schema embeds, which spelling out would duplicate field by field.
+// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+function makeSubstepStateSchema(contextSnapshotSchema: z.ZodType) {
+  const collected = z.enum(['pass', 'fail']).optional();
+  return (
+    z
       .object({
-        kind: z.literal('inline'),
-        runId: RunIdSchema,
-        entry: z.number().int().positive(),
-        runbook: z.string(),
+        id: z.string(),
+        frameKey: FrameKeySchema,
+        status: z.enum(['pending', 'running', 'done']),
+        result: z.enum(['pass', 'fail']).optional(),
+        // The Current Child reservation: `inline` (#903) or `delegation` (#904).
+        child: z
+          .discriminatedUnion('kind', [
+            z
+              .object({
+                kind: z.literal('inline'),
+                runId: RunIdSchema,
+                entry: z.number().int().positive(),
+                runbook: z.string(),
+                collected,
+              })
+              .strict(),
+            z
+              .object({
+                kind: z.literal('delegation'),
+                runId: RunIdSchema,
+                entry: z.number().int().positive(),
+                runbook: z.string(),
+                contextSnapshot: contextSnapshotSchema,
+                ticketHash: SecretHashSchema.nullable(),
+                collected,
+              })
+              .strict(),
+          ])
+          .optional(),
       })
+      // Strict, so a record this version does not carry — the v2 `delegation`
+      // and `inline` child records, or any later drift — is refused by the
+      // structural parse rather than silently stripped on read (the
+      // no-migration rule).
       .strict()
-      .optional(),
-  })
-  // Strict, so a record this version does not carry — the v2 `delegation`
-  // and `inline` child records, or any later drift — is refused by the
-  // structural parse rather than silently stripped on read (the
-  // no-migration rule).
-  .strict();
+  );
+}
 
 /**
  * Zod schema for {@link ForSource} — source descriptor for the unified variable model.
@@ -599,7 +631,7 @@ const RunbookStateObjectSchema = z
     frameEntryCounts: z.record(z.string(), z.number().int().positive()).optional(),
     activeFrameKey: FrameKeySchema.optional(),
     activeEntry: z.number().int().positive().optional(),
-    substepStates: z.array(SubstepStateSchema).optional(),
+    substepStates: z.array(makeSubstepStateSchema(ContextSnapshotSchema)).optional(),
     // FOR loop tracking: stack of loop contexts for nested loops
     forStack: z.array(ForStackEntrySchema).optional(),
     iterationResults: z.array(z.enum(['pass', 'fail'])).optional(),
@@ -777,10 +809,10 @@ function makeAncestorSnapshotSchema(projectRoot: string): z.ZodType {
  * Replaces the static `TemplateVarValueSchema` used in `vars` and
  * `ancestors[].vars` with path-validated variants so that all
  * JsonArrayStream paths in a context snapshot are boundary-checked against
- * `projectRoot` on state load. Nothing in the persisted run state carries a
- * snapshot today — an Inline Child's reservation reads its context from the
- * parent row at launch (#903) — but a delegation record (#904) that persists
- * one must parse it through this rather than the static schema.
+ * `projectRoot` on state load. A Delegation's reservation (#904) persists the
+ * context it inherits, so the path-validated run-state schema parses it
+ * through this rather than the static schema; an Inline Child's reservation
+ * carries none (#903).
  *
  * @param projectRoot - Absolute project root for path boundary enforcement
  * @returns Zod schema for ContextSnapshot with path-validated vars and ancestors
@@ -837,6 +869,9 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodType {
     templateVars: VarsSchema.transform((v) => brandInitialTemplateVars(v)),
     variables: VariablesSchema.transform((v) => brandStoredOutputs(v)),
     finalVars: VariablesSchema.optional(),
+    substepStates: z
+      .array(makeSubstepStateSchema(makeContextSnapshotSchema(projectRoot)))
+      .optional(),
   }).superRefine((value, ctx) => {
     rejectRemovedRunbookRefField(value, ctx);
     rejectRemovedArtifactVarsField(value, ctx);

@@ -19,10 +19,12 @@ const optionalIndex = z.number().int().nonnegative().optional();
 /**
  * Tool descriptions and input schemas for the CLI-facade MCP surface.
  *
- * Mutating tools (`pass`, `fail`, `goto`, `complete`, `stop`) take the Owner
- * Token; `pass`/`fail` also require `step` (the current position) and accept
- * `index` for a FOR iteration. Read-only tools stay bare; `status` narrows by
- * `runId`. The delegation tools (`claim`, `collect`) return in #904.
+ * Mutating tools (`pass`, `fail`, `goto`, `complete`, `stop`, `collect`) take
+ * the Owner Token; `pass`/`fail` also require `step` (the current position)
+ * and accept `index` for a FOR iteration. `claim` takes the Claim Ticket a
+ * delegated step's `step_entered` listed, and its response carries the
+ * child's own Owner Token (#904). Read-only tools stay bare; `status` narrows
+ * by `runId`.
  */
 export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefinition> = {
   validate: {
@@ -81,6 +83,16 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
   stop: {
     description: 'Stop the runbook. Requires the owner token.',
     inputSchema: z.object({ ...tokenShape, message: z.string().optional() }),
+  },
+  claim: {
+    description:
+      'Claim a delegated child by the Claim Ticket its parent step listed, and start it. The response carries the child owner token.',
+    inputSchema: z.object({ ticket: z.string(), agentId: z.string().optional() }),
+  },
+  collect: {
+    description:
+      "Collect the results of the run's current delegated children into the run. Requires the owner token.",
+    inputSchema: z.object({ ...tokenShape }),
   },
 };
 

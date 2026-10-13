@@ -580,7 +580,7 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
     ).rejects.toBeInstanceOf(IncompatibleSchemaError);
   });
 
-  it('clears child linkage when the parent run is deleted', async () => {
+  it("orphans a delegation child's linkage when the parent run is deleted", async () => {
     await using driver = await adapter.open();
     const now = '2026-07-20T00:00:00.000Z';
 
@@ -608,7 +608,7 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
           id: 'rd_child',
         }),
     );
-    expect(child).toEqual({ parent_run_id: null, parent_kind: null });
+    expect(child).toEqual({ parent_run_id: null, parent_kind: 'delegation' });
   });
 
   it('reports foreign_keys as enabled', async () => {

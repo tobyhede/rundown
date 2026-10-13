@@ -34,4 +34,12 @@ describe('planning skill', () => {
     expect(skill).toMatch(/executing-plans/);
     expect(skill).toMatch(/running-runbooks/);
   });
+
+  it('drives the delegated stages through collect instead of reporting them refused', () => {
+    const skill = readSkill();
+    expect(skill).toContain('`rundown collect --token <owner_token>`');
+    expect(skill).toMatch(/\[delegating-runbooks\]\(\.\.\/delegating-runbooks\/SKILL\.md\)/);
+    expect(skill).not.toContain('RUNBOOK_COMPOSITION_UNSUPPORTED');
+    expect(skill).not.toMatch(/#904|not available in this build/);
+  });
 });

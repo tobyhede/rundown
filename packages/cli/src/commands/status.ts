@@ -4,6 +4,7 @@ import type { Command } from 'commander';
 import {
   classifyExecutionLease,
   currentInlineReservation,
+  delegationChildrenStatus,
   RunbookStateManager,
   type CurrentChildStatus,
 } from '@rundown-org/core';
@@ -57,8 +58,9 @@ export function registerStatusCommand(program: Command): void {
               loaded.lease === null
                 ? undefined
                 : classifyExecutionLease(loaded.state.id, loaded.lease);
-            // The chain around this run (#903): its parent, and the Current
-            // Child its step counts. Run ids and lifecycles only.
+            // The chain around this run (#903, #904): its parent, and the
+            // Current Children its step counts. Run ids, lifecycles and
+            // results only — never a Claim Ticket.
             const parent = buildParentStatus(loaded.linkage);
             const reservation = currentInlineReservation(loaded.state);
             let child: CurrentChildStatus | undefined;
@@ -70,10 +72,12 @@ export function registerStatusCommand(program: Command): void {
                 status: childState === null ? 'reserved' : (childState.lifecycle ?? 'running'),
               };
             }
+            const children = await delegationChildrenStatus(manager, loaded.state);
             output.detail(
               buildRunStatus(loaded.state, cwd, condition, {
                 ...(parent !== undefined ? { parent } : {}),
                 ...(child !== undefined ? { child } : {}),
+                children,
               }) as unknown as Record<string, unknown>,
               'status',
             );

@@ -189,12 +189,12 @@ Every run has exactly one owner, proven by its **Owner Token**
 output). No other command, status response, or listing ever shows it again, so
 capture it when the run starts.
 
-- **Mutating commands** — `pass`, `fail`, `goto`, `stop`, `complete`, and
-  `prune --token` — name the run they change with `--token <owner_token>`. The
-  token both selects the run and proves the caller owns it. A command without
-  `--token` is refused `TOKEN_REQUIRED`; a token no run carries is refused
-  `UNKNOWN_TOKEN`; a token whose run has already finished is refused `RD-303`
-  (completed) or `RD-304` (stopped or abandoned).
+- **Mutating commands** — `pass`, `fail`, `goto`, `stop`, `complete`, `collect`,
+  and `prune --token` — name the run they change with `--token <owner_token>`.
+  The token both selects the run and proves the caller owns it. A command
+  without `--token` is refused `TOKEN_REQUIRED`; a token no run carries is
+  refused `UNKNOWN_TOKEN`; a token whose run has already finished is refused
+  `RD-303` (completed) or `RD-304` (stopped or abandoned).
 - **Read-only commands** — `status`, `ls`, and `artifact` — take no token.
   `--run <rd_…>` (the run id, carried as `runbookId` on every event) selects a
   run for `status` and `artifact`. `--run` is never mutation authority:
@@ -226,6 +226,18 @@ capture it when the run starts.
   command commits only the collect first — it runs no further step and launches
   no child — and then applies at the parent's resulting position. See
   [Composition](#composition) under `rundown run`.
+- **Delegations** — a `DELEGATE` runbook-list substep is a child run owned by
+  whichever agent claims it. The step's `step_entered` event lists each child
+  with a **Claim Ticket** (`rdt_<43 base64url characters>`), printed there once
+  and never in status. `rundown claim <ticket>` starts the child and prints the
+  child's own Owner Token; its owner drives it like any run it owns. Every
+  command on a Delegation first checks the child still counts: once its parent
+  re-entered the step or decided the substep by hand it is refused
+  `DELEGATION_CANCELLED`, and once the parent finished or was pruned
+  `PARENT_RUN_FINISHED`. `rundown stop` is the one command such a child still
+  accepts: it ends the child's own run, whose result is never collected. The
+  child never writes its parent; the parent's owner reads its result with
+  `rundown collect`. See [Delegation](#delegation).
 
 Mutating commands check their arguments in a fixed order, and the first refusal
 wins; nothing is written on any of them. See
@@ -331,15 +343,126 @@ per entry — composes an **Inline Child**:
   next step or launching a child, and then applies at the parent's resulting
   position. If that collect finished the run, the command is refused as on any
   finished run.
-- An inline child that cannot be launched (its runbook is not found, misses a
-  required input, or delegates) leaves the parent resting on the substep; the
-  command reports the refusal, and `rundown pass` /
-  `rundown fail --step <parent substep>` decides it by hand.
+- An inline child that cannot be launched (its runbook is not found, or misses a
+  required input) leaves the parent resting on the substep; the command reports
+  the refusal, and `rundown pass` / `rundown fail --step <parent substep>`
+  decides it by hand.
 
-Two forms are refused before any run is created, with
-`RUNBOOK_COMPOSITION_UNSUPPORTED`: a `DELEGATE` substep (delegation returns in
-#904) and an inline substep listing more than one runbook. An inline child whose
-own runbook delegates is refused the same way when it launches.
+A substep listing more than one runbook is refused before any run is created,
+with `RUNBOOK_COMPOSITION_UNSUPPORTED`: each substep composes one child. A child
+whose own runbook does so is refused the same way when it launches or is
+claimed.
+
+#### Delegation
+
+A runbook-list substep marked `- DELEGATE` (or every substep of a step marked
+`- DELEGATE`) composes a **Delegation**: a child run owned by whichever agent
+claims it.
+
+- Entering a delegated substep reserves its child — and the child of every later
+  delegated substep of the step — in the parent's own record: a preallocated run
+  id, the runbook, and the context the child inherits (the parent's variables
+  and, inside a FOR loop, the iteration binding), captured at that moment. Each
+  entry reserves afresh, so a FOR iteration, a `GOTO` back onto the step, or a
+  `RETRY` reserves new children, and a child of an earlier entry no longer
+  counts.
+- The `step_entered` event that announces the entry lists the children:
+  `children: [{ step, index?, runId, runbook, ticket }]`. The `ticket` is a
+  Claim Ticket, printed only on the entry that issued it — hand each to one
+  sub-agent. Status and later events never show it, so a lost ticket cannot be
+  read again.
+- `rundown claim <ticket>` (see
+  [claim](#rundown-claim-ticket---claim-a-delegation)) creates the child under
+  its reserved run id, prints its `runbook_started` with the child's own
+  `owner_token` and its `parent`, and starts its execution loop. A ticket claims
+  its child once: a second claim is refused `ALREADY_CLAIMED`. A `--prompted`
+  parent's children are prompted too.
+- The sub-agent drives the child with the child's token. A child that is
+  terminal has a Child Result — `completed` as PASS, `stopped` or `abandoned` as
+  FAIL — and its frontmatter `outputs:`; it never writes them into the parent.
+- The parent's owner applies them with `rundown collect --token <owner_token>`
+  (see [collect](#rundown-collect---collect-delegated-results)). Collect reads
+  every child of the step's current entry: each terminal child not yet applied
+  is applied, in any order — the substep the parent rests on takes its result at
+  once, and a later substep's result is held until the parent reaches it — and
+  the rest are reported `pending` or `unclaimed`, with nothing applied for them.
+  Collect is the only way a Delegation's result reaches its parent.
+- The owner may decide a delegated substep by hand with `rundown pass` /
+  `fail --step <substep>` (with `--index` inside a FOR loop); its child then no
+  longer counts, and its sub-agent's next command is refused
+  `DELEGATION_CANCELLED`. The sub-agent ends the child with
+  `rundown stop --token <child owner_token>`, the one command a cancelled child
+  still accepts (as does a child whose parent finished or was pruned); nothing
+  collects its result.
+- If the turn that entered the step could not record the Claim Tickets (another
+  of the owner's commands wrote the run first, refused
+  `CONCURRENT_MODIFICATION`), no ticket was printed. The owner's
+  `rundown collect --token <owner_token>` enters the step again and prints the
+  tickets in its `step_entered`; a ticket is printed only once.
+- An Inline Child may delegate: its step entry issues the tickets, and the
+  root's Owner Token collects into it like any command on the inline chain; when
+  the collect finishes the inline child, its parent collects it in the same
+  command.
+
+#### `rundown claim <ticket>` - Claim a Delegation
+
+Start the delegated child a Claim Ticket names. The ticket is the command's only
+authority; it takes no `--token`.
+
+```bash
+rundown claim rdt_…                    # Start the child; prints its owner_token once
+rundown claim rdt_… --agent-id <id>    # Record the claiming agent on the child
+```
+
+**Flags:**
+
+- `--agent-id <id>` — Identity of the claiming agent, recorded on the child; a
+  later `release` of the child is matched against it. The Claude Code plugin's
+  hook supplies it; a human may pass it by hand.
+- `--text` — Human-readable output.
+
+In one transaction, `claim` verifies the reservation is still a child its parent
+counts and the parent is running, and creates the child run under the reserved
+run id. The output is the child's event stream, exactly as `rundown run`'s:
+`runbook_started` carries the child's `owner_token` and its
+`parent: { runId, step }`.
+
+Refusals (nothing is created): `INVALID_SYNTAX` for a value that is not a Claim
+Ticket (never echoed), `UNKNOWN_TICKET` for a ticket no reservation carries,
+`ALREADY_CLAIMED` for a second claim, `DELEGATION_CANCELLED` when the parent no
+longer counts the child, `PARENT_RUN_FINISHED` when the parent finished, and the
+child runbook's own preparation failures (`RUNBOOK_NOT_FOUND`,
+`MISSING_REQUIRED_VARS`, …).
+
+#### `rundown collect` - Collect Delegated Results
+
+Apply the results of the run's delegated children (see
+[Delegation](#delegation)).
+
+```bash
+rundown collect --token <owner_token>
+```
+
+The token resolves as for every mutating command — to the deepest running inline
+child — and collect reads the Delegations of that run's current step entry. The
+output is one `children_collected` event,
+`children: [{ step, index?, runId, status, result? }]`, where `status` is:
+
+| `status`            | Meaning                                                                       |
+| ------------------- | ----------------------------------------------------------------------------- |
+| `collected`         | Terminal; this collect applied its Child Result                               |
+| `already_collected` | An earlier collect applied it                                                 |
+| `pending`           | Claimed and still running; nothing applied                                    |
+| `unclaimed`         | Reserved, but no agent has claimed its ticket yet; nothing applied            |
+| `cancelled`         | The run no longer counts it (the owner decided its substep, or left the step) |
+
+When a result moves the run, the transition and the run's continuation follow as
+for `pass`: the next step's `step_entered` (with fresh tickets if it delegates),
+or the run's terminal. Pending and unclaimed children exit 0. Refusals:
+`TOKEN_REQUIRED`, `UNKNOWN_TOKEN`, `RD-303` / `RD-304`, `EXECUTION_IN_PROGRESS`
+/ `EXECUTION_INTERRUPTED`, `CONCURRENT_MODIFICATION` (the results applied before
+it stand), and `NOTHING_TO_COLLECT` when the run's current step delegates
+nothing.
 
 #### `rundown stop` - Abort Runbook
 
@@ -576,8 +699,10 @@ see
 Inline children are runs too, so the chain from root to child is visible: each
 child's list entry and detail carry `parent: { runId, step, kind }`, and a run
 whose step composes a child carries `child: { runId, kind, status }` in its
-detail (`status` is `reserved` before the child's run exists). Neither ever
-carries a token; see
+detail (`status` is `reserved` before the child's run exists). A run whose step
+delegates carries `children: [{ runId, step, index?, status, result? }]` — its
+Delegations of the current entry by id, lifecycle and Child Result only. None
+ever carries a token or a Claim Ticket; see
 [docs/spec/cli-output.md § Child runs](../spec/cli-output.md#child-runs).
 
 **Output (bare, `--text`):**
@@ -680,11 +805,10 @@ Line 15: Step 3 missing (expected sequential numbering)
 Line 22: Invalid transition: GOTO 10 (step does not exist)
 ```
 
-Warnings do not fail the check. A runbook with a `- DELEGATE` substep, or an
-inline substep listing more than one runbook, is valid but gets a warning naming
-those substeps, because `rundown run` refuses it with
-`RUNBOOK_COMPOSITION_UNSUPPORTED` (delegation returns in #904). A single-runbook
-inline substep runs and is not warned about.
+Warnings do not fail the check. A runbook with a substep listing more than one
+runbook is valid but gets a warning naming those substeps, because `rundown run`
+refuses it with `RUNBOOK_COMPOSITION_UNSUPPORTED`. A single-runbook inline or
+`DELEGATE` substep runs and is not warned about.
 
 ### Maintenance
 
@@ -1089,15 +1213,20 @@ and `details` where known. Their exact shapes are in
 | `INVALID_AT_TARGET`                         | `--index` or `AT` aimed at a step with no FOR clause                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Drop `--index`, or target the FOR step                                                                                                                                                                                                                                                                                                                                      |
 | "FOR loop references undefined data source" | Sourced FOR clause without matching source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Define source via --input-json, config.yaml, or --input-file                                                                                                                                                                                                                                                                                                                |
 | "File drift detected"                       | Data file changed during iteration                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Ensure file stability or restart runbook                                                                                                                                                                                                                                                                                                                                    |
-| `TOKEN_REQUIRED`                            | A mutating command (`pass`, `fail`, `goto`, `stop`, `complete`) was issued without `--token`                                                                                                                                                                                                                                                                                                                                                                                                                                               | Pass `--token <owner_token>`, copied from the `runbook_started` event printed by `rundown run`                                                                                                                                                                                                                                                                              |
+| `TOKEN_REQUIRED`                            | A mutating command (`pass`, `fail`, `goto`, `stop`, `complete`, `collect`) was issued without `--token`                                                                                                                                                                                                                                                                                                                                                                                                                                    | Pass `--token <owner_token>`, copied from the `runbook_started` event printed by `rundown run` (or, for a delegated child, by `rundown claim`)                                                                                                                                                                                                                              |
 | `INVALID_SYNTAX`                            | `--run` combined with `--token` on a mutating command (`--run` is a read-only selector, never authority); a malformed `--token` (not `rdo_<43 base64url characters>` — the value is never echoed); `run --step` without `--prompted`; a malformed `--index`; or a runbook syntax error                                                                                                                                                                                                                                                     | Pass `--token <owner_token>` alone on mutating commands; copy the token exactly; add `--prompted` to `run --step`                                                                                                                                                                                                                                                           |
 | `UNKNOWN_TOKEN`                             | A well-formed token that no run carries — mistyped, or the token of a run that has been pruned                                                                                                                                                                                                                                                                                                                                                                                                                                             | Copy `owner_token` from the `runbook_started` event of the run you mean to drive. A lost token cannot be recovered from `status` or `ls`; stop driving that run and start a new one                                                                                                                                                                                         |
 | `RD-303` (`RUNBOOK_COMPLETED`)              | The token's run has already completed, so the mutation cannot be applied. `details` names the run and its lifecycle. Also emitted by `run --prompted --step` when the run completes during launch                                                                                                                                                                                                                                                                                                                                          | Nothing to do on that run; start a new one with `rundown run`                                                                                                                                                                                                                                                                                                               |
 | `RD-304` (`RUNBOOK_STOPPED`)                | The token's run has already ended without completing (`stopped` or `abandoned`)                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Start a new run with `rundown run`                                                                                                                                                                                                                                                                                                                                          |
 | `INVALID_STEP`                              | `pass` / `fail` was issued without `--step`, or `--step` / `--index` does not confirm the run's current position: another step, a bare step id while a substep is active, a substep other than the current one, a missing or wrong `--index` inside a FOR iteration, or an `--index` outside one. While an inline child runs, the current position is the child's, so a `--step` naming the parent's step is refused too. Refused before anything is written; the message names the current position (and, for an inline child, the child) | Pass the current position: `--step 2` at a top-level step, `--step 2.1` at a substep, `--step 1.1 --index 3` inside FOR iteration 3                                                                                                                                                                                                                                         |
-| `RUNBOOK_COMPOSITION_UNSUPPORTED`           | `rundown run` was given a runbook with a `DELEGATE` substep or an inline substep listing more than one runbook (no run is created; `details.substeps` names them), or an inline child being launched has one (an `error_occurred` on the parent; the parent rests on the substep)                                                                                                                                                                                                                                                          | Delegation returns in #904; give each inline substep one runbook, or decide the parent substep with `pass` / `fail --step`                                                                                                                                                                                                                                                  |
+| `RUNBOOK_COMPOSITION_UNSUPPORTED`           | `rundown run` was given a runbook with a substep listing more than one runbook (no run is created; `details.substeps` names them), or a child being launched or claimed has one (for an inline child, an `error_occurred` on the parent, which rests on the substep)                                                                                                                                                                                                                                                                       | Give each substep one runbook, or decide the parent substep with `pass` / `fail --step`                                                                                                                                                                                                                                                                                     |
 | `INLINE_CHILD_LAUNCH_FAILED`                | An inline child could not be launched or initialised for a reason with no code of its own (for example, inline children nested more than 32 deep). A child whose runbook is not found, or misses a required input, reports that preparation code instead (`RUNBOOK_NOT_FOUND`, `MISSING_REQUIRED_VARS`, …). The parent rests on the substep; nothing else was written                                                                                                                                                                      | Fix the child runbook, or decide the parent substep by hand with `pass` / `fail --step`                                                                                                                                                                                                                                                                                     |
 | `CONCURRENT_MODIFICATION`                   | A mutating command's single conditional save found that another write landed on the run since it was read — two of the owner's own commands raced. Nothing was written; the persisted state is intact. `details.runId` names the run                                                                                                                                                                                                                                                                                                       | Re-read the run (`rundown status --run <run_id>`) and re-issue the command if it still applies; it is never retried on your behalf                                                                                                                                                                                                                                          |
+| `UNKNOWN_TICKET`                            | `rundown claim` was given a well-formed Claim Ticket that no reservation carries — mistyped, or its parent was pruned                                                                                                                                                                                                                                                                                                                                                                                                                      | Copy the ticket from the `children` of the `step_entered` event that issued it                                                                                                                                                                                                                                                                                              |
+| `ALREADY_CLAIMED`                           | `rundown claim` was given a ticket whose child was already claimed; a ticket claims its child once. Nothing is written                                                                                                                                                                                                                                                                                                                                                                                                                     | Drive the child with the `owner_token` the first claim printed; a lost one is recovered by the parent's owner retrying the step                                                                                                                                                                                                                                             |
+| `DELEGATION_CANCELLED`                      | A delegated child's command (or a claim of its ticket) after its parent stopped counting it: the parent's owner decided the substep by hand, or re-entered the step. Nothing is written                                                                                                                                                                                                                                                                                                                                                    | Stop working on the child and end it with `rundown stop --token <owner_token>`, the one command it still accepts; its result would never be collected                                                                                                                                                                                                                       |
+| `PARENT_RUN_FINISHED`                       | A delegated child's command (or a claim of its ticket) after its parent reached a terminal or was pruned. Nothing is written                                                                                                                                                                                                                                                                                                                                                                                                               | Stop working on the child and end it with `rundown stop --token <owner_token>`, the one command it still accepts; its parent can no longer collect it                                                                                                                                                                                                                       |
+| `NOTHING_TO_COLLECT`                        | `rundown collect` on a run whose current step delegates nothing                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Collect only while the run rests on a step whose `step_entered` listed `children`                                                                                                                                                                                                                                                                                           |
 | `EXECUTION_IN_PROGRESS`                     | The run's current step holds the execution lease and the process running its command is alive. Every mutating command is refused so the command never runs twice; nothing was written. `details` names `runId`, `step`, `attempt`, `pid`, `startedAt`                                                                                                                                                                                                                                                                                      | Wait for the command to finish, then re-read the run (`rundown status --run <run_id>`)                                                                                                                                                                                                                                                                                      |
 | `EXECUTION_INTERRUPTED`                     | The run's current step holds the execution lease but the process that started its command is gone, so its outcome is unknown. `pass` and `complete` are refused; Rundown never repeats the command. `details` as for `EXECUTION_IN_PROGRESS`                                                                                                                                                                                                                                                                                               | Decide explicitly: `rundown fail --token <owner_token> --step <step>` (the FAIL handler, including an authored `RETRY`), `rundown goto <step> --token <owner_token>`, `rundown stop --token <owner_token>`, or discard the run with `rundown prune --token <owner_token>`                                                                                                   |
 | `EXECUTION_PENDING`                         | `pass` named a step whose command has not run: the command that entered the step ended before running it, so no lease is held. Nothing is written. `details`: `runId`, `step`                                                                                                                                                                                                                                                                                                                                                              | Run it with `rundown goto <step> --token <owner_token>`, or decide explicitly with `rundown fail --token <owner_token> --step <step>` or `rundown stop --token <owner_token>`                                                                                                                                                                                               |
@@ -1156,6 +1285,10 @@ longer change it.
 rundown run <file>                              # Start runbook; prints owner_token once
 rundown stop [message] --token <owner_token>    # Abort runbook with optional message
 rundown complete [message] --token <owner_token> # Force early completion (auto-complete on final step)
+
+# Delegation
+rundown claim <ticket>                          # Claim a delegated child; prints its owner_token once
+rundown collect --token <owner_token>           # Apply the delegated children's results
 
 # Transitions
 rundown pass --token <owner_token> --step <N>   # Step succeeded (aliases: yes, ok)

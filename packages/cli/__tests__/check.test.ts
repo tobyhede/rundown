@@ -315,9 +315,10 @@ Hello.
         '',
         'do work',
         '',
-        '### 1.2 Delegated',
+        '### 1.2 Delegated pair',
         '- DELEGATE',
         '- child.runbook.md',
+        '- other.runbook.md',
         '',
       ].join('\n'),
     );
@@ -329,10 +330,36 @@ Hello.
     expect(json.warnings).toContainEqual({
       message:
         'Runbook composes other runbooks at 1.2 in a form this build does not run ' +
-        '(a DELEGATE substep, or an inline substep listing more than one runbook), ' +
-        'so `rundown run` refuses it (RUNBOOK_COMPOSITION_UNSUPPORTED). ' +
-        'Delegation returns in #904.',
+        '(a substep listing more than one runbook: each substep composes one child), ' +
+        'so `rundown run` refuses it (RUNBOOK_COMPOSITION_UNSUPPORTED).',
     });
+  });
+
+  it('does not warn about a single-runbook DELEGATE substep, which runs (#904)', async () => {
+    const runbookPath = path.join(workspace.cwd, 'check-delegate.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      [
+        '# Check Delegate',
+        '## 1. Fan out',
+        '- DELEGATE',
+        '- PASS ALL COMPLETE',
+        '- FAIL ANY STOP',
+        '',
+        '- child.runbook.md',
+        '- other.runbook.md',
+        '',
+      ].join('\n'),
+    );
+
+    const res = await runCliInProcess(['check', runbookPath], workspace);
+    const json = JSON.parse(res.stdout);
+    expect(res.exitCode).toBe(0);
+    expect(json.warnings ?? []).not.toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining('RUNBOOK_COMPOSITION_UNSUPPORTED'),
+      }),
+    );
   });
 
   it('does not warn about an inline runbook-list substep, which runs (#903)', async () => {
