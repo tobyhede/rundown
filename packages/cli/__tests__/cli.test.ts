@@ -305,7 +305,7 @@ describe('CLI program', () => {
       expect(output).toHaveProperty('command', 'pass');
     });
 
-    it.each(['stash', 'pop', 'delegate', 'claim', 'abort', 'collect'])(
+    it.each(['stash', 'pop', 'delegate', 'abort'])(
       'no longer registers the %s command',
       (command) => {
         const result = runCli(command, workspace);

@@ -26,6 +26,9 @@ import {
   createCapturedPlaceholders,
   substitutePlaceholder,
   substitutePlaceholders,
+  captureFromStdout,
+  matchCollectedAssertions,
+  type CapturedCollectedChild,
 } from '../../src/helpers/command-sequence.js';
 import type { InProcessCliRunner } from '../../src/helpers/command-sequence.js';
 import type { ArtifactAssertion, StepAssertion } from '../../src/schemas/scenarios.js';
@@ -1120,21 +1123,60 @@ describe('substituteRunIds', () => {
 });
 
 describe('CAPTURE_PLACEHOLDERS', () => {
-  it('names TOKEN and RUN_ID, both captured from runbook_started', () => {
-    expect(CAPTURE_PLACEHOLDERS.map((row) => row.name)).toEqual(['TOKEN', 'RUN_ID']);
+  it('names TOKEN and RUN_ID from a root run start, and the #904 delegation rows', () => {
+    expect(CAPTURE_PLACEHOLDERS.map((row) => row.name)).toEqual([
+      'TOKEN',
+      'RUN_ID',
+      'TICKET',
+      'CHILD_TOKEN',
+      'CHILD_RUN',
+    ]);
     const started = { type: 'runbook_started', owner_token: 'rdo_x', runbookId: 'rd_x' };
-    expect(CAPTURE_PLACEHOLDERS.map((row) => row.capture(started))).toEqual([['rdo_x'], ['rd_x']]);
+    expect(CAPTURE_PLACEHOLDERS.map((row) => row.capture(started))).toEqual([
+      ['rdo_x'],
+      ['rd_x'],
+      [],
+      [],
+      [],
+    ]);
     expect(
       CAPTURE_PLACEHOLDERS.map((row) =>
         row.capture({ type: 'step_entered', owner_token: 'rdo_x' }),
       ),
-    ).toEqual([[], []]);
+    ).toEqual([[], [], [], [], []]);
+  });
+
+  it('captures a claimed child start as CHILD_TOKEN / CHILD_RUN, never TOKEN / RUN_ID', () => {
+    const claimed = {
+      type: 'runbook_started',
+      owner_token: 'rdo_c',
+      runbookId: 'rd_c',
+      parent: { runId: 'rd_p', step: '1.1' },
+    };
+    expect(CAPTURE_PLACEHOLDERS.map((row) => row.capture(claimed))).toEqual([
+      [],
+      [],
+      [],
+      ['rdo_c'],
+      ['rd_c'],
+    ]);
+  });
+
+  it('captures every ticket a step entry lists, in order', () => {
+    const entered = {
+      type: 'step_entered',
+      children: [{ ticket: 'rdt_1' }, { runId: 'rd_x' }, { ticket: 'rdt_2' }],
+    };
+    expect(CAPTURE_PLACEHOLDERS.find((row) => row.name === 'TICKET')?.capture(entered)).toEqual([
+      'rdt_1',
+      'rdt_2',
+    ]);
   });
 
   it('createCapturedPlaceholders has one empty entry per row', () => {
     const captured = createCapturedPlaceholders();
-    expect([...captured.keys()]).toEqual(['TOKEN', 'RUN_ID']);
-    expect([...captured.values()]).toEqual([[], []]);
+    expect([...captured.keys()]).toEqual(['TOKEN', 'RUN_ID', 'TICKET', 'CHILD_TOKEN', 'CHILD_RUN']);
+    expect([...captured.values()]).toEqual([[], [], [], [], []]);
   });
 
   it('substitutePlaceholders substitutes every row from the accumulator', () => {
@@ -1607,5 +1649,53 @@ describe('executeCommandSequence — Owner Token redaction in observations', () 
       expect(observed).not.toContain(OWNER_TOKEN);
     }
     expect(started[1]).toContain('rd pass --token rdo_');
+  });
+});
+
+describe('collected children (#904)', () => {
+  it('captures every child a children_collected event reports, and placeholders alongside', () => {
+    const captured = createCapturedPlaceholders();
+    const collected: CapturedCollectedChild[] = [];
+    captureFromStdout(
+      [
+        JSON.stringify({
+          type: 'step_entered',
+          children: [{ step: '1.1', runId: 'rd_a', runbook: 'c.md', ticket: 'rdt_a' }],
+        }),
+        'not json',
+        JSON.stringify({
+          type: 'children_collected',
+          children: [
+            { step: '1.1', runId: 'rd_a', status: 'pending' },
+            { step: '1.2', index: 2, runId: 'rd_b', status: 'collected', result: 'fail' },
+          ],
+        }),
+      ].join('\n'),
+      captured,
+      collected,
+    );
+    expect(captured.get('TICKET')).toEqual(['rdt_a']);
+    expect(collected).toEqual([
+      { step: '1.1', runId: 'rd_a', status: 'pending' },
+      { step: '1.2', index: 2, runId: 'rd_b', status: 'collected', result: 'fail' },
+    ]);
+  });
+
+  it('matches assertions in order, skipping children between them', () => {
+    const children: CapturedCollectedChild[] = [
+      { step: '1.1', runId: 'rd_a', status: 'pending' },
+      { step: '1.2', runId: 'rd_b', status: 'collected', result: 'pass' },
+      { step: '1.1', runId: 'rd_a', status: 'collected', result: 'pass' },
+    ];
+    expect(
+      matchCollectedAssertions(
+        [
+          { step: '1.1', status: 'pending' },
+          { step: '1.1', status: 'collected', result: 'pass' },
+          { step: '1.2', status: 'collected' },
+        ],
+        children,
+      ).map((result) => result.matched),
+    ).toEqual([true, true, false]);
   });
 });

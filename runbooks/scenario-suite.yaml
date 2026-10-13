@@ -299,6 +299,57 @@ cases:
       - rd pass --token ${TOKEN} --step 1.2
     result: COMPLETE
 
+  # delegation/ — Delegations claimed by ticket and Collected by the owner (#904)
+  delegation-fan-out-collected:
+    description: Four sub-agents claim their tickets and pass; one collect applies all four and the step aggregates
+    file: delegation/delegate-fan-out.runbook.md
+    commands:
+      - rd run delegate-fan-out.runbook.md
+      - rd claim ${TICKET}
+      - rd claim ${TICKET_2}
+      - rd claim ${TICKET_3}
+      - rd claim ${TICKET_4}
+      - rd pass --token ${CHILD_TOKEN_4} --step Check
+      - rd pass --token ${CHILD_TOKEN_3} --step Check
+      - rd pass --token ${CHILD_TOKEN_2} --step Check
+      - rd pass --token ${CHILD_TOKEN} --step Check
+      - rd collect --token ${TOKEN}
+      - rd pass --token ${TOKEN} --step 2
+    result: COMPLETE
+    expect:
+      collected:
+        - step: '1.1'
+          status: collected
+        - step: '1.4'
+          status: collected
+
+  delegation-for-each-collected:
+    description: FOR + DELEGATE issues a fresh ticket on each iteration's entry
+    file: delegation/delegate-for-each.runbook.md
+    commands:
+      - rd run delegate-for-each.runbook.md
+      - rd claim ${TICKET}
+      - rd pass --token ${CHILD_TOKEN} --step Check
+      - rd collect --token ${TOKEN}
+      - rd claim ${TICKET_2}
+      - rd pass --token ${CHILD_TOKEN_2} --step Check
+      - rd collect --token ${TOKEN}
+    result: COMPLETE
+
+  delegation-outputs-flow:
+    description: A claimed child's frontmatter outputs reach the parent at Collect
+    file: delegation/delegate-outputs.runbook.md
+    commands:
+      - rd run delegate-outputs.runbook.md
+      - rd claim ${TICKET}
+      - rd collect --token ${TOKEN}
+      - rd pass --token ${TOKEN} --step 2
+    result: COMPLETE
+    expect:
+      entered:
+        - at: '2'
+          description: Verdict approved
+
   # named-steps/ (new coverage)
   named-step-for-loop-completed:
     description: Named step iterates normally with FOR loop
@@ -324,6 +375,17 @@ cases:
       - rd run inline-chain.runbook.md
       - "! rd pass --token ${TOKEN} --step 1.1"
       - rd pass --token ${TOKEN} --step Check
+    result: COMPLETE
+
+  inline-delegation-collected:
+    description: An Inline Child that delegates is Collected into by the root token, then implicitly into its parent
+    file: composition/inline-delegation.runbook.md
+    commands:
+      - rd run inline-delegation.runbook.md
+      - rd claim ${TICKET}
+      - rd pass --token ${CHILD_TOKEN} --step 1
+      - rd collect --token ${TOKEN}
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 
   inline-goto-reentry-completed:
