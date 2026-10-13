@@ -342,6 +342,8 @@ export class RunbookStore {
    * @param expectedVersion - The version the caller read the run at.
    * @param holder - The process starting the effect.
    * @returns The acquired lease and its version, or why it was not set.
+   * @throws {StoreInvariantError} When the set landed but the row does not read
+   *   back at the attempt's version.
    */
   acquireExecutionLease(
     runId: RunId,
@@ -600,6 +602,8 @@ function leaseFromRow(row: LeaseRow): ExecutionLease | null {
  * @param holder - Process starting the effect.
  * @param startedAt - ISO-8601 time the lease is set.
  * @returns The acquired lease, or why it was not set.
+ * @throws {StoreInvariantError} When the set landed but the row does not read
+ *   back at the attempt's version — a tampered schema, not a race.
  */
 function acquireLease(
   tx: SqlTransaction,

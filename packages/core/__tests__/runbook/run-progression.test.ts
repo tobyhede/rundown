@@ -1059,6 +1059,37 @@ describe('execution lease (#902)', () => {
     expect(after?.lease).not.toBeNull();
   });
 
+  it('refuses command_not_started without running the command when the version moved before the lease', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const runner = jest.fn(async () => ({ success: true, exitCode: 0 }));
+    const actorService = actorServiceWith({ runExternalCommand: runner });
+    const state = await seedRun(steps, actorService, 'not-started.runbook.md');
+    // Another of the owner's commands lands between this activation's read
+    // and its lease set.
+    const realAcquire = manager.acquireExecutionLease.bind(manager);
+    jest.spyOn(manager, 'acquireExecutionLease').mockImplementation(async (...args) => {
+      await new RunbookStateManager(dir).update(state.id, {
+        variables: merge({ raced: 'yes' }),
+      });
+      return realAcquire(...args);
+    });
+    const { emitter } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'command_not_started',
+      code: CONCURRENT_MODIFICATION_CODE,
+      recovery: 'retryable',
+    });
+    expect(runner).not.toHaveBeenCalled();
+    expect((await manager.loadWithVersion(state.id))?.lease).toBeNull();
+  });
+
   it('does not commit the finish of an attempt that lost its lease', async () => {
     const steps = createRunbook(COMMAND_RUNBOOK);
     let decidedVersion: number | undefined;

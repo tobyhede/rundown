@@ -17,8 +17,6 @@
 import { Option, type Command } from 'commander';
 import {
   CLIErrorCodes,
-  EXECUTION_IN_PROGRESS_CODE,
-  EXECUTION_INTERRUPTED_CODE,
   InvalidRunSecretError,
   type ExecutionLeaseRefusal,
   parseOwnerToken,
@@ -254,8 +252,8 @@ export function renderRunFinished(
 /**
  * Render a core execution-lease refusal (#902) as its error envelope.
  *
- * Core decided the refusal and composed its message; this only names the
- * code and carries the lease's public fields as details. The lease never
+ * Core decided the refusal, its code and its message; this only carries the
+ * lease's public fields as details. The lease never
  * carries a secret.
  *
  * @param output - Output emitter for CLI output.
@@ -266,11 +264,7 @@ export function renderExecutionLeaseRefusal(
   output: OutputEmitter,
   refusal: ExecutionLeaseRefusal,
 ): true {
-  const code =
-    refusal.kind === 'execution_in_progress'
-      ? EXECUTION_IN_PROGRESS_CODE
-      : EXECUTION_INTERRUPTED_CODE;
-  output.error(refusal.message, code, {
+  output.error(refusal.message, refusal.code, {
     runId: refusal.runId,
     step: refusal.step,
     attempt: refusal.lease.attempt,

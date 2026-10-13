@@ -106,6 +106,8 @@ export type LeaseDecision = 'pass' | 'complete' | 'fail' | 'goto' | 'stop';
 /** Refusal: a live attempt holds the lease. Nothing was written. */
 export interface ExecutionInProgressRefusal {
   readonly kind: 'execution_in_progress';
+  /** The symbolic refusal code. */
+  readonly code: typeof EXECUTION_IN_PROGRESS_CODE;
   /** The run whose step is In Progress. */
   readonly runId: RunId;
   /** The step (`step` or `step.substep`) whose effect is running. */
@@ -119,6 +121,8 @@ export interface ExecutionInProgressRefusal {
 /** Refusal: the attempt holding the lease died and the decision would pass it. */
 export interface ExecutionInterruptedRefusal {
   readonly kind: 'execution_interrupted';
+  /** The symbolic refusal code. */
+  readonly code: typeof EXECUTION_INTERRUPTED_CODE;
   /** The run whose step is Interrupted. */
   readonly runId: RunId;
   /** The step (`step` or `step.substep`) whose effect was interrupted. */
@@ -164,6 +168,7 @@ export function executionLeaseRefusal(
   if (condition.kind === 'in_progress') {
     return {
       kind: 'execution_in_progress',
+      code: EXECUTION_IN_PROGRESS_CODE,
       runId,
       step,
       lease,
@@ -172,6 +177,7 @@ export function executionLeaseRefusal(
   }
   return {
     kind: 'execution_interrupted',
+    code: EXECUTION_INTERRUPTED_CODE,
     runId,
     step,
     lease,

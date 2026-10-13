@@ -45,8 +45,6 @@ import type { OwnedRun } from './run-authority.js';
 import {
   classifyExecutionLease,
   currentLeaseHolder,
-  EXECUTION_IN_PROGRESS_CODE,
-  EXECUTION_INTERRUPTED_CODE,
   executionLeaseRefusal,
 } from './execution-lease.js';
 import type { ProcessIdentity } from './process-identity.js';
@@ -700,8 +698,7 @@ async function acquireTurnLease(
     case 'held': {
       const condition = classifyExecutionLease(leased.lease, deps.processIdentity);
       const refusal = executionLeaseRefusal(runId, current.state, condition);
-      const inProgress = refusal.kind === 'execution_in_progress';
-      const code = inProgress ? EXECUTION_IN_PROGRESS_CODE : EXECUTION_INTERRUPTED_CODE;
+      const { code } = refusal;
       sink.emit({ type: 'ERROR_OCCURRED', payload: { message: refusal.message, code } });
       return {
         kind: 'refused',
@@ -713,7 +710,7 @@ async function acquireTurnLease(
           message: refusal.message,
           // In Progress clears when the live attempt finishes; Interrupted
           // needs a different, explicit decision from the owner.
-          recovery: inProgress ? 'retryable' : 'permanent',
+          recovery: refusal.kind === 'execution_in_progress' ? 'retryable' : 'permanent',
         },
       };
     }

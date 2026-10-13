@@ -66,8 +66,8 @@ async function startRun(workspace: TestWorkspace, runbook: string): Promise<Star
     },
   });
   let stdout = '';
-  child.stdout?.setEncoding('utf8');
-  child.stdout?.on('data', (chunk: string) => {
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk: string) => {
     stdout += chunk;
   });
   const exited = new Promise<string>((resolve) => {
@@ -151,12 +151,7 @@ describe('execution lease across processes', () => {
 
   afterEach(async () => {
     const child = running?.child;
-    if (
-      child !== undefined &&
-      child.exitCode === null &&
-      child.signalCode === null &&
-      child.pid !== undefined
-    ) {
+    if (child?.exitCode === null && child.signalCode === null && child.pid !== undefined) {
       process.kill(-child.pid, 'SIGKILL');
       await running?.exited;
     }
