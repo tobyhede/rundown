@@ -152,7 +152,7 @@ describe('rundown stop --run: the human escape hatch (#906)', () => {
       host: hostname(),
       message: 'Lost the owner token',
     });
-    expect(state?.humanStop?.at >= before).toBe(true);
+    expect(String(state?.humanStop?.at) >= before).toBe(true);
     // The token still resolves, and is told the run finished.
     const late = await runCliInProcess(['pass', '--token', token, '--step', '1'], workspace);
     expect(errorEnvelope(late.stdout)).toMatchObject({ code: 'RD-304' });
