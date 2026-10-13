@@ -62,6 +62,7 @@
     "packages/core/src/runbook/child-linkage.ts",
     "packages/core/src/runbook/inline-child.ts",
     "packages/core/src/runbook/inline-progression.ts",
+    "packages/core/src/runbook/run-deletion.ts",
     "packages/cli/src/helpers/command-target.ts",
     "packages/cli/src/helpers/inline-child-preparer.ts"
   ],

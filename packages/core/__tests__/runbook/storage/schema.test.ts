@@ -321,6 +321,30 @@ describe('storage schema', () => {
       expect(rows).toEqual([{ id: CHILD_LINK.id, parent_run_id: null }]);
     });
 
+    it('unlinks a delegation child of a deleted inline descendant rather than refusing the delete', async () => {
+      await using driver = await schemaDriver();
+      await driver.immediate((tx) => {
+        insertRun(tx);
+        insertRun(tx, INLINE_CHILD);
+        insertRun(tx, {
+          ...INLINE_CHILD,
+          id: 'rd_grandchild',
+          parent_run_id: INLINE_CHILD.id,
+        });
+        // Delegated from the inline grandchild, two levels below the deleted root.
+        insertRun(tx, { ...CHILD_LINK, id: 'rd_delegate', parent_run_id: 'rd_grandchild' });
+      });
+      await driver.immediate((tx) => {
+        tx.prepare('DELETE FROM runs WHERE id = :id').run({ id: RUN_DEFAULTS.id });
+      });
+      const rows = await driver.read((tx) =>
+        tx
+          .prepare('SELECT id, parent_run_id, parent_kind FROM runs ORDER BY id')
+          .all<Record<string, unknown>>(),
+      );
+      expect(rows).toEqual([{ id: 'rd_delegate', parent_run_id: null, parent_kind: null }]);
+    });
+
     it('refuses a delegation child without an owner token hash', async () => {
       await using driver = await schemaDriver();
       await expect(

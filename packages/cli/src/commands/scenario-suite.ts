@@ -232,23 +232,22 @@ async function executeSuiteCase(
     const allRefs = extractRunbookReferences(suiteCase.commands);
     const referenced = allRefs.filter((r) => r !== suiteCase.file && r !== mainBasename);
     const mainRunbookSourceDir = dirname(resolve(suiteDir, suiteCase.file));
-    for (const ref of referenced) {
+    // Stage one child runbook into the isolated workspace, trying each base in
+    // order. A child found in none of them fails the case up front with
+    // CHILD_RUNBOOK_NOT_FOUND rather than as a later launch refusal.
+    const stageChildRunbook = (ref: string, bases: readonly string[]): void => {
       validateRelativePath(ref);
       const dest = join(runbooksDirPath, ref);
       mkdirSync(dirname(dest), { recursive: true });
-      // Try main runbook's directory first (bare filenames), then suite directory (nested paths)
-      let copied = false;
-      for (const base of [mainRunbookSourceDir, suiteDir]) {
-        const sourcePath = resolve(base, ref);
+      assertDestinationPathContained(dest, runbooksDirPath, ref);
+      for (const base of bases) {
         try {
-          assertDestinationPathContained(dest, runbooksDirPath, ref);
-          const realSourcePath = copyContainedRunbook(sourcePath, dest, base, ref);
+          const realSourcePath = copyContainedRunbook(resolve(base, ref), dest, base, ref);
           stagedRunbooks.push({
             sourcePath: realSourcePath,
             sourceRoots: [dirname(realSourcePath), suiteDir],
           });
-          copied = true;
-          break;
+          return;
         } catch (e: unknown) {
           if (isNodeError(e) && e.code === 'ENOENT') {
             continue; // try next base
@@ -256,12 +255,15 @@ async function executeSuiteCase(
           throw e; // permission/IO errors propagate immediately
         }
       }
-      if (!copied) {
-        throw new Error(
-          `CHILD_RUNBOOK_NOT_FOUND: ${ref} (required by case "${caseName}", ` +
-            `searched in: ${[mainRunbookSourceDir, suiteDir].join(', ')})`,
-        );
-      }
+      throw new Error(
+        `CHILD_RUNBOOK_NOT_FOUND: ${ref} (required by case "${caseName}", ` +
+          `searched in: ${bases.join(', ')})`,
+      );
+    };
+
+    // Try main runbook's directory first (bare filenames), then suite directory (nested paths)
+    for (const ref of referenced) {
+      stageChildRunbook(ref, [mainRunbookSourceDir, suiteDir]);
     }
 
     // Stage the children the staged runbooks compose (#903), transitively, so
@@ -273,24 +275,8 @@ async function executeSuiteCase(
       const parent = stagedRunbooks[i];
       for (const ref of collectAuthoredRunbookRefs(parent.sourcePath)) {
         if (!shouldStageAuthoredRunbookRef(ref) || stagedRefs.has(ref)) continue;
-        validateRelativePath(ref);
-        const dest = join(runbooksDirPath, ref);
-        mkdirSync(dirname(dest), { recursive: true });
-        assertDestinationPathContained(dest, runbooksDirPath, ref);
-        for (const base of [dirname(parent.sourcePath), suiteDir]) {
-          try {
-            const realSourcePath = copyContainedRunbook(resolve(base, ref), dest, base, ref);
-            stagedRunbooks.push({
-              sourcePath: realSourcePath,
-              sourceRoots: [dirname(realSourcePath), suiteDir],
-            });
-            stagedRefs.add(ref);
-            break;
-          } catch (e: unknown) {
-            if (isNodeError(e) && e.code === 'ENOENT') continue;
-            throw e;
-          }
-        }
+        stageChildRunbook(ref, [dirname(parent.sourcePath), suiteDir]);
+        stagedRefs.add(ref);
       }
     }
 

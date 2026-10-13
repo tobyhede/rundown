@@ -112,9 +112,17 @@ export * from './transition-kernel.js';
 export type {
   DeleteRunResult,
   LeaseRefusingSaveResult,
+  RunAtVersion,
   SaveRunResult,
   VersionedRunState,
 } from './storage/runbook-store.js';
+export {
+  hasRunningInlineAncestor,
+  inlineDescendantsOf,
+  planRunDeletions,
+  refuseDeletionUnderLease,
+  type RunDeletion,
+} from './run-deletion.js';
 export { assertStateVersion, type StateVersion } from './storage/mutation-result.js';
 export {
   applyRunbookStateUpdate,
@@ -196,6 +204,8 @@ export {
 } from './execution-lease.js';
 export {
   RunbookLifecycleCommandService,
+  EXECUTION_PENDING_CODE,
+  type ExecutionPendingRefusal,
   type ConcurrentModificationRefusal,
   type LifecycleNavigationInput,
   type LifecycleNavigationCapability,

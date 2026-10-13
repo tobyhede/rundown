@@ -37,6 +37,7 @@ import { getRunbookStore } from './storage/store-registry.js';
 import type {
   AcquireExecutionLeaseResult,
   DeleteRunResult,
+  RunAtVersion,
   RunbookStore,
   SaveRunResult,
   VersionedRunState,
@@ -404,6 +405,39 @@ function initialRunState(
 }
 
 /**
+ * Substep tracking for one frame: a `pending` entry for every authored substep
+ * the frame does not track yet.
+ *
+ * Entries from other frames are preserved (append semantics for FOR loop
+ * iterations), existing same-frame entries for still-authored substeps keep
+ * their state, and same-frame entries for substeps no longer authored drop.
+ *
+ * @param existing - The run's substep states.
+ * @param substeps - The substep definitions from the step.
+ * @param frameKey - Frame key scoping these entries to a FOR iteration.
+ * @returns The substep states with the frame initialised.
+ */
+export function initializeSubstepStates(
+  existing: readonly SubstepState[],
+  substeps: readonly Substep[],
+  frameKey: FrameKey,
+): SubstepState[] {
+  const authoredIds = new Set(substeps.map((substep) => substep.id));
+  const preserved = existing.filter(
+    (substepState) => substepState.frameKey !== frameKey || authoredIds.has(substepState.id),
+  );
+  const existingSameFrameIds = new Set(
+    preserved
+      .filter((substepState) => substepState.frameKey === frameKey)
+      .map((substepState) => substepState.id),
+  );
+  const initialized: SubstepState[] = substeps
+    .filter((substep) => !existingSameFrameIds.has(substep.id))
+    .map((substep) => ({ id: substep.id, frameKey, status: 'pending' }));
+  return [...preserved, ...initialized];
+}
+
+/**
  * Record a committed state write on the lifecycle diagnostic trail.
  *
  * Enable with RUNDOWN_LOG_LEVEL=debug; the logger stamps pid (#536 was found
@@ -524,20 +558,35 @@ export class RunbookStateManager {
    * linkage and carries no Owner Token hash, because the parent's token
    * authorizes it. The same composition refusal as {@link create} applies.
    *
+   * The row lands already initialised, in one write: `initialize` derives the
+   * child's initialised state (its machine snapshot, active substeps) from the
+   * draft in memory, and only its result is inserted. A launch therefore either
+   * creates a child its owner can drive or writes nothing — there is no row
+   * without a machine.
+   *
    * @param runbookRef - Canonical identity of the child runbook
    * @param runbook - The parsed child runbook definition
    * @param options - Preallocated id, linkage, prompted flag and variables
+   * @param initialize - Derives the initialised state from the draft without
+   *   persisting it (`RunbookActorService.deriveInitialState` in production)
    * @returns The newly created child state
    * @throws {RunbookCompositionUnsupportedError} When the child runbook
    *   delegates (a `DELEGATE` substep). No row is written.
+   * @throws {Error} Whatever `initialize` throws (a machine that cannot be
+   *   compiled, say), or when it returns a different run. No row is written.
    * @throws {StoreInvariantError} When a run already carries the id.
    */
   async createInlineChild(
     runbookRef: RunbookRef,
     runbook: Runbook | ResolvedRunbook,
     options: CreateInlineChildOptions,
+    initialize: (draft: RunbookState) => Promise<RunbookState>,
   ): Promise<RunbookState> {
-    const state = initialRunState(runbookRef, runbook, options.runId, options);
+    const draft = initialRunState(runbookRef, runbook, options.runId, options);
+    const state = await initialize(draft);
+    if (state.id !== draft.id) {
+      throw new Error(`Inline child ${draft.id} was initialised as run ${state.id}`);
+    }
     const store = await this.store();
     await store.createInlineChildRun(state, options.linkage);
     void logger.debug('lifecycle-write', { runId: state.id, next: 'running' });
@@ -778,23 +827,39 @@ export class RunbookStateManager {
    * For a caller that decided about the run it read — `prune --token` applies
    * the execution-lease rule to the lease that version carries — so a lease
    * taken after that read refuses the delete instead of being discarded with
-   * the run. Nothing is removed on a refusal, outputs included.
+   * the run. The run's Inline Children go with it (#903), so the delete is
+   * conditional on each of them too: the caller names every inline
+   * descendant it read, at the version it read it, and decided about their
+   * leases as well. Nothing is removed on a refusal, outputs included.
    *
    * @param id - The run to delete
    * @param expectedVersion - The version the caller read the run at
+   * @param expectedInlineDescendants - Every inline descendant the caller read,
+   *   at the version it read it (`inlineDescendantsOf` in `run-deletion.ts`)
    * @returns `deleted`, or why nothing was deleted (`concurrent_modification`,
    *   `missing`)
-   * @throws {Error} If `id` is traversal-unsafe, or when removing the outputs
+   * @throws {Error} If `id` is traversal-unsafe, or when removing an outputs
    *   directory fails for a reason other than its absence
    */
-  async deleteAtVersion(id: string, expectedVersion: StateVersion): Promise<DeleteRunResult> {
+  async deleteAtVersion(
+    id: string,
+    expectedVersion: StateVersion,
+    expectedInlineDescendants: readonly RunAtVersion[],
+  ): Promise<DeleteRunResult> {
     const runId = this.toRunId(id);
     if (runId === null) return { kind: 'missing' };
     const store = await this.store();
-    const result = await store.deleteRunAtVersion(runId, expectedVersion);
+    const result = await store.deleteRunAtVersion(
+      runId,
+      expectedVersion,
+      expectedInlineDescendants,
+    );
     if (result.kind !== 'deleted') return result;
     void logger.debug('lifecycle-write', { runId: id, kind: 'delete' });
     await this.removeOutputsDir(id);
+    for (const descendant of expectedInlineDescendants) {
+      await this.removeOutputsDir(descendant.runId);
+    }
     return result;
   }
 
@@ -887,22 +952,8 @@ export class RunbookStateManager {
     substeps: readonly Substep[],
     frameKey: FrameKey,
   ): Promise<void> {
-    await this.mutate(id, (state) => {
-      const existing = state.substepStates ?? [];
-      const authoredIds = new Set(substeps.map((substep) => substep.id));
-      const preserved = existing.filter(
-        (substepState) => substepState.frameKey !== frameKey || authoredIds.has(substepState.id),
-      );
-      const existingSameFrameIds = new Set(
-        preserved
-          .filter((substepState) => substepState.frameKey === frameKey)
-          .map((substepState) => substepState.id),
-      );
-      const initialized: SubstepState[] = substeps
-        .filter((substep) => !existingSameFrameIds.has(substep.id))
-        .map((substep) => ({ id: substep.id, frameKey, status: 'pending' }));
-
-      return { substepStates: [...preserved, ...initialized] };
-    });
+    await this.mutate(id, (state) => ({
+      substepStates: initializeSubstepStates(state.substepStates ?? [], substeps, frameKey),
+    }));
   }
 }

@@ -543,9 +543,11 @@ stream then carries several runs' events, each under its own `runbookId` and
 token drives the child — and the child's own events. When the child reaches a
 terminal, its `runbook_completed` / `runbook_stopped` is followed by the
 parent's `step_transitioned` for the substep, and the parent's progression
-continues. A child's terminal is not the command's outcome: the run the token
-belongs to is. If the stream rests at a child's `step_entered`, the next `pass`
-/ `fail --step` names that child's step.
+continues. A child's terminal is not the command's exit status: where the run
+the token belongs to rests is. A `stop` / `complete` aimed at the child still
+ends with its action object naming the child (see [stop](#stop)). If the stream
+rests at a child's `step_entered`, the next `pass` / `fail --step` names that
+child's step.
 
 ```jsonl
 {"type":"step_entered","position":{"current":"1","total":2,"substep":"1"},"stepName":"1","description":"Runbook: child.runbook.md","hasCommand":false,"isSubstep":true,"prompted":false,"artifacts":{},"runbookId":"rd_f9d07121b3784ffcefa3579c4e887f1f","runbook":{"source":"project","path":"parent.runbook.md"},"seq":2}
@@ -789,6 +791,15 @@ A target that does not exist is refused:
 Uses `action: "stop"` (command-name action). Stopping is a failure terminal: it
 exits non-zero after successfully stopping the run.
 
+While an inline child runs, the token targets the deepest running child, so
+`stop` and `complete` act on it: the child's `runbook_stopped` /
+`runbook_completed` streams under the child's `runbookId`, the parent's
+progression events follow (see [Inline children](#inline-children)), and the
+action object is still the last line, with `runId` naming the child and
+`message` the operator's message. The exit code follows where the parent's
+progression rests, not the child's terminal: a stopped child the parent Collects
+as FAIL and continues past exits 0; one whose parent stops exits non-zero.
+
 Force-terminal commands emit the same terminal observation events as non-force
 transitions: `runbook_completed` for complete and `runbook_stopped` for stop.
 The streamed observations precede the final command-name action object, so parse
@@ -867,6 +878,12 @@ The lifecycle filters (`--completed`, `--stopped`, `--inactive`, `--active`,
 only when `--token <owner_token>` names it, one run per invocation; `--active`
 or `--all` without a token keeps each running run and reports it with
 `retained: "token required"`.
+
+A deleted run's inline children are deleted with it and listed as rows of their
+own. Two more `retained` reasons apply to finished runs: `"parent running"` for
+an inline child whose parent is still running (it goes only with its parent),
+and `"execution in progress"` for a run with an attempt In Progress anywhere in
+its inline chain.
 
 ### `rundown prune --dry-run`
 
@@ -1225,7 +1242,8 @@ wins: `--run` alongside `--token` (`INVALID_SYNTAX`), then a missing `--token`
 (`TOKEN_REQUIRED`), then a malformed token (`INVALID_SYNTAX`), then a token no
 run carries (`UNKNOWN_TOKEN`), then a finished run (`RD-303` / `RD-304`), then
 the execution lease (`EXECUTION_IN_PROGRESS` / `EXECUTION_INTERRUPTED`), then —
-for `pass` and `fail` — the step (`INVALID_STEP`), and last the conditional save
+for `pass` and `fail` — the step (`INVALID_STEP`), then — for `pass` — a step
+whose command has not run (`EXECUTION_PENDING`), and last the conditional save
 (`CONCURRENT_MODIFICATION`). Nothing is written on any of these refusals.
 
 ### Token required
@@ -1548,6 +1566,38 @@ Code: EXECUTION_INTERRUPTED
     "attempt": 2,
     "pid": 4242,
     "startedAt": "2026-10-13T12:00:00.000Z"
+  }
+}
+```
+
+### Execution pending
+
+`pass` named a step whose command Run Progression owes but never ran: the
+command that entered the step ended before running it (the process died after
+its commit, or the step was reached by Collecting an inline child a crashed
+command left uncollected). No lease is held, so nothing is in flight. Rundown
+does not pass a command that never ran, and nothing is written. `goto` onto the
+step re-enters it and runs the command; `fail --step` (the step's FAIL handler)
+or `stop` decides it without running it.
+
+**Text:**
+
+```text
+Error: Step 2 of run rd_0123456789abcdef0123456789abcdef has a command that has not run: the command that entered the step ended before running it. Rundown does not pass a command that never ran, and nothing was written. Run it with `rundown goto 2 --token <owner_token>`, or decide explicitly with `rundown fail --step 2 --token <owner_token>` or `rundown stop --token <owner_token>`.
+Code: EXECUTION_PENDING
+```
+
+**JSON:**
+
+```json
+{
+  "error": "Step 2 of run rd_0123456789abcdef0123456789abcdef has a command that has not run: the command that entered the step ended before running it. Rundown does not pass a command that never ran, and nothing was written. Run it with `rundown goto 2 --token <owner_token>`, or decide explicitly with `rundown fail --step 2 --token <owner_token>` or `rundown stop --token <owner_token>`.",
+  "kind": "error",
+  "code": "EXECUTION_PENDING",
+  "command": "pass",
+  "details": {
+    "runId": "rd_0123456789abcdef0123456789abcdef",
+    "step": "2"
   }
 }
 ```

@@ -4008,14 +4008,10 @@ export function compileRunbookToMachine(
           }
           return reserveInlineChild({
             substepStates: context.substepStates ?? [],
-            stepName,
             substepId,
             runbook,
             frameKey: frameKeyForCursor(stepName, context.forStack),
             entry,
-            templateVars: sourceTemplateVars,
-            variables: context.variables,
-            forStack: context.forStack,
             runId: mintChildRunId(),
           });
         },

@@ -96,9 +96,9 @@ export interface SeamTerminalOptions {
  * @param message - Optional operator-supplied terminal message for the applied
  *   complete/stopped summary; falls back to the default summary when absent.
  * @param inlineChild - Whether the command's target is an Inline Child (#903).
- *   Its terminal streams under the child's run id and is not summarized as
- *   the command's outcome: the parent Collects it and progression decides
- *   where the run rests.
+ *   Its terminal streams under the child's run id and its action object names
+ *   the child, but a stopped child does not by itself request a non-zero exit:
+ *   the parent Collects it and progression decides where the run rests.
  * @returns `true` when the outcome requests a non-zero exit code.
  */
 export async function renderTerminalOutcome(
@@ -131,10 +131,14 @@ export async function renderTerminalOutcome(
           bridge.emit({ id: state.id, runbook: state.runbook }, event);
         }
       }
-      if (inlineChild) return false;
+      // The action object names the run the command acted on, an Inline Child
+      // included, and stays the last JSON line: the renderer accumulates it
+      // and the caller flushes after any progression it drives.
       if (outcome.lifecycle === 'stopped') {
         output.stopped(message ?? 'Runbook stopped');
-        return true;
+        // An Inline Child's stop is Collected by its parent as FAIL; the
+        // command exits by where that progression rests, not by this terminal.
+        return !inlineChild;
       }
       output.complete(message ?? 'Runbook completed successfully');
       return false;

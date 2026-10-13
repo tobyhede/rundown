@@ -511,11 +511,15 @@ names a step of the child, and an `invalid_step_target` against an inline child
 names the child and its parent. If the descent finds a Current Child that is
 **terminal** — its parent's command died before the implicit Collect — it calls
 the frontend's `settle` callable (the CLI's standard Run Progression activation)
-on that parent first, which Collects the child and continues the parent, and
-then descends again from the root. A Collect that could not land refuses the
-command as `settle_refused`; anything after the Collect (say, the next inline
-child failing to launch) leaves a target to act on. The descent never follows a
-stale child: only the reservation of the active frame entry counts.
+on that parent first, with the `collect_inline_child` entry boundary: the
+activation commits only the Collect — no command turn, no launch, no ascent —
+and then the descent starts again from the root, one level per pass up an
+uncollected chain. The owner's command applies at the resulting position; a
+`pass` on a command step the Collect left owed is refused `EXECUTION_PENDING`. A
+Collect that could not land refuses the command as `settle_refused`, unless the
+run no longer owes it (another command moved it), which leaves a target to act
+on. The descent never follows a stale child: only the reservation of the active
+frame entry counts.
 
 ### What the seam does
 
@@ -717,7 +721,7 @@ a documented mistake:
 
 | Version                      | Governs                                                                            | Where it lives         | Rule                                                |
 | ---------------------------- | ---------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------- |
-| SQLite storage schema        | The whole database — the DDL of the `runs` table and its triggers                  | `PRAGMA user_version`  | Must equal `SCHEMA_VERSION` (currently `5`)         |
+| SQLite storage schema        | The whole database — the DDL of the `runs` table and its triggers                  | `PRAGMA user_version`  | Must equal `SCHEMA_VERSION` (currently `6`)         |
 | `RunbookState.schemaVersion` | One run's structured state fields and its opaque `snapshot` blob, and nothing else | The row's `state_json` | Must equal `CURRENT_SCHEMA_VERSION` (currently `4`) |
 
 A wrong storage version invalidates the whole database (`RD-305`); a wrong

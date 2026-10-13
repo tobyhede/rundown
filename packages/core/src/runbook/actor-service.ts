@@ -28,6 +28,7 @@ import { getErrorMessage, isError } from '../errors.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import {
   applyRunbookStateUpdate,
+  initializeSubstepStates,
   type RunbookStateManager,
   type RunbookStateUpdate,
 } from './state.js';
@@ -529,6 +530,45 @@ function hydrateSnapshot(
       variables: state.variables,
     },
   } as unknown as Snapshot<unknown>;
+}
+
+/**
+ * The patch that bootstraps a running run's active substep frame, or `null`
+ * when nothing needs it.
+ *
+ * When the cursor rests on a step with substeps, the active frame gets its
+ * `pending` substep entries (if it has none yet) and the cursor its first
+ * substep (if it names none).
+ *
+ * @param state - The run after actor synchronisation.
+ * @param steps - Parsed runbook steps.
+ * @returns The bootstrap patch, or `null`.
+ */
+function activeSubstepsPatch(
+  state: RunbookState,
+  steps: readonly ResolvedStep[],
+): RunbookStateUpdate | null {
+  if (state.lifecycle !== 'running') return null;
+  const currentStep = steps.find((step) => step.name === state.step);
+  if (!currentStep || !resolvedStepHasSubsteps(currentStep) || currentStep.substeps.length === 0) {
+    return null;
+  }
+  const { frameKey } = deriveActiveFrame(state);
+  const alreadyInitialized =
+    state.substepStates?.some((substepState) => substepState.frameKey === frameKey) ?? false;
+  if (alreadyInitialized && state.substep !== undefined) return null;
+  return {
+    ...(alreadyInitialized
+      ? {}
+      : {
+          substepStates: initializeSubstepStates(
+            state.substepStates ?? [],
+            currentStep.substeps,
+            frameKey,
+          ),
+        }),
+    ...(state.substep === undefined ? { substep: currentStep.substeps[0].id } : {}),
+  };
 }
 
 /**
@@ -1255,51 +1295,63 @@ export class RunbookActorService {
   }
 
   /**
+   * Derive a new run's initialised state in memory, persisting nothing.
+   *
+   * The same initialisation as {@link initializeState} — start the compiled
+   * machine on the draft, let its entry effects settle, sync the snapshot into
+   * the state, and bootstrap the active substep frame — computed without a
+   * write, so the caller inserts the result as the run's first and only row
+   * write. An Inline Child is launched this way (#903): a child whose machine
+   * cannot be built throws here, before any row exists.
+   *
+   * @param draft - The run's initial state, not yet persisted.
+   * @param steps - Parsed runbook steps.
+   * @returns The initialised state.
+   * @throws {Error} When the machine cannot be compiled (an unknown GOTO
+   *   target, say), its entry effects do not settle, or the actor enters an
+   *   error state.
+   */
+  async deriveInitialState(
+    draft: RunbookState,
+    steps: readonly ResolvedStep[],
+  ): Promise<RunbookState> {
+    const actor = this.createActorForState(draft.id, draft, steps);
+    try {
+      await this.waitForMachineEffects(actor);
+      const snapshot = actor.getPersistedSnapshot() as unknown as PersistedRunbookSnapshot;
+      if (snapshot.status === 'error') {
+        throw new Error(`Runbook ${draft.id} actor entered an error state`, {
+          cause: (actor.getSnapshot() as { readonly error?: unknown }).error,
+        });
+      }
+      const now = new Date().toISOString();
+      const synced = applyRunbookStateUpdate(
+        draft,
+        deriveActorStatePatch(draft.id, snapshot, steps, undefined),
+        now,
+      );
+      const substeps = activeSubstepsPatch(synced, steps);
+      return substeps === null ? synced : applyRunbookStateUpdate(synced, substeps, now);
+    } finally {
+      this.stopActor(actor);
+    }
+  }
+
+  /**
    * Ensure the active substep frame has persisted substep state.
    *
    * @param id - Runbook state ID
    * @param state - Persisted state after actor synchronization and active-entry bootstrap
    * @param steps - Parsed runbook steps
-   * @returns State reloaded after any substep bootstrap writes
+   * @returns State after any substep bootstrap write
    */
   private async initializeActiveSubsteps(
     id: string,
     state: RunbookState,
     steps: readonly ResolvedStep[],
   ): Promise<RunbookState> {
-    if (state.lifecycle !== 'running') {
-      return state;
-    }
-
-    const currentStep = steps.find((step) => step.name === state.step);
-    if (
-      !currentStep ||
-      !resolvedStepHasSubsteps(currentStep) ||
-      currentStep.substeps.length === 0
-    ) {
-      return state;
-    }
-
-    const activeFrame = deriveActiveFrame(state);
-    const alreadyInitialized = state.substepStates?.some(
-      (substepState) => substepState.frameKey === activeFrame.frameKey,
-    );
-
-    if (!alreadyInitialized) {
-      await this.manager.initializeSubsteps(id, currentStep.substeps, activeFrame.frameKey);
-    }
-
-    if (alreadyInitialized && state.substep !== undefined) {
-      return state;
-    }
-
-    if (state.substep !== undefined) {
-      const reloaded = await this.manager.load(id);
-      if (!reloaded) throw new Error(`Runbook ${id} not found after substep initialization`);
-      return reloaded;
-    }
-
-    return this.manager.update(id, { substep: currentStep.substeps[0].id });
+    const patch = activeSubstepsPatch(state, steps);
+    return patch === null ? state : this.manager.update(id, patch);
   }
 
   /**

@@ -56,6 +56,8 @@ const LEAF_MANUAL = `# Leaf manual
 Check by hand.
 `;
 
+const LEAF_PASS_COMMAND = '```bash\necho after\n```';
+
 const MIDDLE = `# Middle
 
 ## Nest
@@ -139,7 +141,50 @@ const SELF = `# Self
 - self.runbook.md
 `;
 
+// Each command on the deepest Grow child launches one more Grow child, so a
+// chain built one level per activation is bounded only by its root.
+const GROW = `# Grow
+
+## 1. Wait
+- PASS CONTINUE
+- FAIL STOP
+
+Check by hand.
+
+## 2. Again
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+- grow.runbook.md
+`;
+
+const BAD_GOTO = `# Bad goto
+
+## 1. Work
+- PASS GOTO 9
+- FAIL STOP
+
+Check by hand.
+`;
+
+const LEAF_LOOP = `# Leaf loop
+
+## 1. Loop
+- FOR i IN 1 TO 2
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+### 1.1 Body
+- PASS CONTINUE
+- FAIL STOP
+
+Check {{i}} by hand.
+`;
+
 const SOURCES: Readonly<Partial<Record<string, string>>> = {
+  'leaf-loop.runbook.md': LEAF_LOOP,
+  'bad-goto.runbook.md': BAD_GOTO,
+  'grow.runbook.md': GROW,
   'leaf-pass.runbook.md': LEAF_PASS,
   'leaf-manual.runbook.md': LEAF_MANUAL,
   'leaf-outputs.runbook.md': LEAF_OUTPUTS,
@@ -514,5 +559,151 @@ describe('Inline Child launch and implicit Collect (#903)', () => {
     expect(outcome).toEqual({ kind: 'completed', runId: stale.id });
     expect((await manager.load(root.id))?.step).toBe('1');
     expect((await manager.load(fresh.id))?.lifecycle).toBe('running');
+  });
+
+  it('bounds the chain from its root when it grows one level per command', async () => {
+    const { root, token } = await start(GROW);
+    expect((await manager.load(root.id))?.step).toBe('1');
+
+    // Each pass on the deepest run launches one more child from an activation
+    // that starts at that run; the bound must still count from the root.
+    let last: RunProgressionOutcome | undefined;
+    for (let command = 0; command <= MAX_INLINE_CHILD_DEPTH; command++) {
+      const resolved = await target(token, root);
+      if (resolved.kind !== 'running')
+        throw new Error(`expected a running target: ${resolved.kind}`);
+      const applied = await seam().runTransition({
+        command: 'pass',
+        run: resolved.run,
+        target: { stepId: '1' },
+      });
+      if (applied.kind !== 'applied') throw new Error(`refused: ${applied.kind}`);
+      last = await activate(applied.progression, root);
+    }
+
+    expect(last).toMatchObject({
+      kind: 'refused',
+      reason: 'inline_child_launch_failed',
+      code: 'INLINE_CHILD_LAUNCH_FAILED',
+    });
+    const children = (await manager.listWithVersion()).filter((run) => run.linkage !== null);
+    expect(children).toHaveLength(MAX_INLINE_CHILD_DEPTH);
+    // The owner can still command the chain: the deepest run is the target.
+    const resolved = await target(token, root);
+    expect(resolved.kind).toBe('running');
+  }, 120_000);
+
+  it('Collects an uncollected child without driving the parent further before the command', async () => {
+    let commands = 0;
+    actorService = new RunbookActorService(manager, {
+      commandServices: {
+        runExternalCommand: async () => {
+          commands++;
+          return { success: true, exitCode: 0 };
+        },
+      },
+    });
+    const { root, token } = await start(
+      PARENT_MANUAL.replace('Finish by hand.', LEAF_PASS_COMMAND),
+    );
+    const child = await childOf(root);
+    const owned = await manager.loadWithVersion(child.id);
+    if (owned === null) throw new Error('child missing');
+    // The child reaches its terminal; the process dies before the implicit
+    // Collect, so the parent still rests on the inline substep.
+    const applied = await seam().runTransition({
+      command: 'pass',
+      run: owned,
+      target: { stepId: 'Check' },
+    });
+    expect(applied.kind).toBe('applied');
+    expect(commands).toBe(0);
+
+    const resolved = await target(token, root);
+
+    // The recovery commits only the Collect: step 2's command does not run
+    // before the owner's command is applied at the parent's new position.
+    expect(commands).toBe(0);
+    expect(resolved.kind === 'running' && resolved.run.state.id).toBe(root.id);
+    expect(resolved.kind === 'running' && resolved.run.state.step).toBe('2');
+    expect((await manager.load(child.id))?.lifecycle).toBe('completed');
+
+    // The owner's pass on that position must not pass step 2 without running
+    // its command.
+    if (resolved.kind !== 'running') throw new Error('expected a running target');
+    const passed = await seam().runTransition({
+      command: 'pass',
+      run: resolved.run,
+      target: { stepId: '2' },
+    });
+    expect(passed.kind).toBe('execution_pending');
+    expect(commands).toBe(0);
+    expect((await manager.load(root.id))?.lifecycle).toBe('running');
+
+    // `goto` onto the step is how the owner runs the owed command.
+    const again = await target(token, root);
+    if (again.kind !== 'running') throw new Error('expected a running target');
+    const navigation = await seam().resolveRunNavigation({ run: again.run });
+    if (navigation.kind !== 'allowed') throw new Error(`refused: ${navigation.kind}`);
+    const moved = await seam().runNavigationMutation({
+      navigation: navigation.navigation,
+      target: { step: '2' },
+    });
+    if (moved.kind !== 'applied') throw new Error(`refused: ${moved.kind}`);
+    expect(await activate(moved.progression, root)).toEqual({
+      kind: 'completed',
+      runId: root.id,
+    });
+    expect(commands).toBe(1);
+  });
+
+  it('Collects an uncollected chain one level per pass, up to a finished root', async () => {
+    const { root, token } = await start(PARENT_TWO_DEEP);
+    const middle = await childOf(root);
+    const leaf = await childOf(middle);
+    const owned = await manager.loadWithVersion(leaf.id);
+    if (owned === null) throw new Error('leaf missing');
+    // The leaf reaches its terminal; the process dies before any Collect.
+    const applied = await seam().runTransition({
+      command: 'pass',
+      run: owned,
+      target: { stepId: 'Check' },
+    });
+    expect(applied.kind).toBe('applied');
+
+    const resolved = await target(token, root);
+
+    // The leaf's pass completes the middle, whose pass completes the root.
+    expect(resolved).toMatchObject({ kind: 'finished', lifecycle: 'completed' });
+    expect((await manager.load(middle.id))?.lifecycle).toBe('completed');
+    expect((await manager.load(root.id))?.lifecycle).toBe('completed');
+  });
+
+  it('leaves no child row when the child cannot be initialised', async () => {
+    // The child row and its initialised snapshot land in one write, so a child
+    // whose machine cannot be built leaves nothing for the token to target.
+    const { root, token, outcome } = await start(PARENT_PASS.replace('leaf-pass', 'bad-goto'));
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      runId: root.id,
+      reason: 'inline_child_launch_failed',
+      code: 'INLINE_CHILD_LAUNCH_FAILED',
+    });
+    expect((await manager.listWithVersion()).filter((run) => run.linkage !== null)).toEqual([]);
+    // The parent rests on the substep, and the owner's token still decides it.
+    const resolved = await target(token, root);
+    expect(resolved.kind === 'running' && resolved.run.state.id).toBe(root.id);
+  });
+
+  it('launches a child whose first step is a FOR loop already resting on its first substep', async () => {
+    const { root } = await start(PARENT_MANUAL.replace('leaf-manual', 'leaf-loop'));
+    const child = await childOf(root);
+
+    expect(child).toMatchObject({ step: '1', substep: '1', lifecycle: 'running' });
+    expect(child.snapshot).toBeDefined();
+    expect(child.substepStates).toEqual([
+      expect.objectContaining({ id: '1', frameKey: '1|1', status: 'pending' }),
+    ]);
   });
 });

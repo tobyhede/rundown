@@ -210,7 +210,10 @@ capture it when the run starts.
   Interrupted: Rundown never repeats the command, `pass` and `complete` are
   refused `EXECUTION_INTERRUPTED`, and the owner decides with `fail --step`
   (which takes the step's FAIL handler, including an authored `RETRY`), `goto`,
-  or `stop`. `rundown status` shows either condition as `execution`.
+  or `stop`. `rundown status` shows either condition as `execution`. A step
+  whose command never started — the process died after the commit that entered
+  it — holds no lease; `pass` on it is refused `EXECUTION_PENDING` rather than
+  passing a command that never ran, and `goto <step>` runs it.
 - **Inline children** — a runbook-list substep without `DELEGATE` launches an
   Inline Child: a child run owned by you, authorized by your Owner Token, with
   no token of its own (its `runbook_started` event carries no `owner_token`).
@@ -220,8 +223,9 @@ capture it when the run starts.
   child to a terminal, the same command collects its result (completed = pass,
   stopped = fail, plus its frontmatter `outputs:`) into the parent substep and
   continues the parent. If the process died before that collect, your next
-  command collects it first. See [Composition](#composition) under
-  `rundown run`.
+  command commits only the collect first — it runs no further step and launches
+  no child — and then applies at the parent's resulting position. See
+  [Composition](#composition) under `rundown run`.
 
 Mutating commands check their arguments in a fixed order, and the first refusal
 wins; nothing is written on any of them. See
@@ -321,6 +325,12 @@ per entry — composes an **Inline Child**:
   as FAIL — and its frontmatter `outputs:` flow into the parent substep in the
   same command, and the parent's handlers decide what happens next. Children
   nest: a child's own inline substeps launch grandchildren the same way.
+- If the process died after the child's terminal but before that collect, your
+  next mutating command (`stop` and `complete` included) commits the collect
+  alone — level by level up an uncollected chain — without running the parent's
+  next step or launching a child, and then applies at the parent's resulting
+  position. If that collect finished the run, the command is refused as on any
+  finished run.
 - An inline child that cannot be launched (its runbook is not found, misses a
   required input, or delegates) leaves the parent resting on the substep; the
   command reports the refusal, and `rundown pass` /
@@ -347,6 +357,12 @@ rundown stop "Abandon release" --token <owner_token>
 Marks the run as stopped and preserves its row in `.rundown/rundown.db` for
 inspection. `rundown stop` is a failure terminal: it exits non-zero after
 successfully stopping the run.
+
+While an inline child runs, `stop` and `complete` act on the deepest running
+child: the parent Collects it (stopped as FAIL, completed as PASS) in the same
+command, and the command exits by where the parent then rests — a stopped child
+whose parent's FAIL handler continues exits 0. The final action object names the
+child's run id and carries the message.
 
 <a id="force-terminal-targeting"></a>
 
@@ -694,6 +710,16 @@ are reached only by `--inactive` or `--all` (they are listed with
 `status: "invalid"`); a bare `rundown prune` never sees them. `prune` takes no
 `--run`: naming a run id is refused `INVALID_SYNTAX`, since a run id is never
 authority to delete.
+
+Deleting a run deletes its inline children with it, transitively, and lists each
+of them. The execution-lease rule covers that whole chain: an attempt In
+Progress on the token's run or any of its inline children refuses the invocation
+`EXECUTION_IN_PROGRESS` with nothing deleted, and a run selected by a filter is
+kept with `retained: "execution in progress"`. A finished inline child whose
+parent is still running is never deleted on its own — its parent has not
+collected it — and is kept with `retained: "parent running"`; it goes with its
+parent. If any run in a chain changes between prune's read and its delete, the
+delete is refused `CONCURRENT_MODIFICATION`, never retried.
 
 ### Testing and Utilities
 
@@ -1074,6 +1100,7 @@ and `details` where known. Their exact shapes are in
 | `CONCURRENT_MODIFICATION`                   | A mutating command's single conditional save found that another write landed on the run since it was read — two of the owner's own commands raced. Nothing was written; the persisted state is intact. `details.runId` names the run                                                                                                                                                                                                                                                                                                       | Re-read the run (`rundown status --run <run_id>`) and re-issue the command if it still applies; it is never retried on your behalf                                                                                                                                                                                                                                          |
 | `EXECUTION_IN_PROGRESS`                     | The run's current step holds the execution lease and the process running its command is alive. Every mutating command is refused so the command never runs twice; nothing was written. `details` names `runId`, `step`, `attempt`, `pid`, `startedAt`                                                                                                                                                                                                                                                                                      | Wait for the command to finish, then re-read the run (`rundown status --run <run_id>`)                                                                                                                                                                                                                                                                                      |
 | `EXECUTION_INTERRUPTED`                     | The run's current step holds the execution lease but the process that started its command is gone, so its outcome is unknown. `pass` and `complete` are refused; Rundown never repeats the command. `details` as for `EXECUTION_IN_PROGRESS`                                                                                                                                                                                                                                                                                               | Decide explicitly: `rundown fail --token <owner_token> --step <step>` (the FAIL handler, including an authored `RETRY`), `rundown goto <step> --token <owner_token>`, `rundown stop --token <owner_token>`, or discard the run with `rundown prune --token <owner_token>`                                                                                                   |
+| `EXECUTION_PENDING`                         | `pass` named a step whose command has not run: the command that entered the step ended before running it, so no lease is held. Nothing is written. `details`: `runId`, `step`                                                                                                                                                                                                                                                                                                                                                              | Run it with `rundown goto <step> --token <owner_token>`, or decide explicitly with `rundown fail --token <owner_token> --step <step>` or `rundown stop --token <owner_token>`                                                                                                                                                                                               |
 | `RUN_TARGET_UNAVAILABLE`                    | A read-only command (`status`, `artifact`) was given a well-formed `--run` id that names no run. Also streamed as an `error_occurred` event when a run is deleted (for example by a concurrent `rundown prune`) while a command is advancing it                                                                                                                                                                                                                                                                                            | Use a run id from `rundown status`; a deleted run cannot be resumed — restart it from source                                                                                                                                                                                                                                                                                |
 | `INVALID_RUN_ID`                            | Malformed `--run` value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Supply a valid run id — `rd_<32 hex characters>`                                                                                                                                                                                                                                                                                                                            |
 | `RD-305` (`INCOMPATIBLE_STATE_SCHEMA`)      | `.rundown/rundown.db` carries a schema version this build cannot read, and Rundown never migrates persisted state. Affects the whole database, so every in-flight run is unrecoverable                                                                                                                                                                                                                                                                                                                                                     | Delete `.rundown/rundown.db` and restart your runbooks from source                                                                                                                                                                                                                                                                                                          |

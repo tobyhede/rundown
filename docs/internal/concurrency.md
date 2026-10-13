@@ -116,7 +116,13 @@ reserved id, which a racing command's insert of the same id refuses. The parent
 row is written once in the child's life, by the implicit Collect: an ordinary
 conditional save at the version the parent was read at. A moved version refuses
 the Collect `CONCURRENT_MODIFICATION` and leaves the child's terminal for the
-owner's next command to Collect.
+owner's next command to Collect. That recovery Collect is a scoped activation
+(`collect_inline_child`): it commits the Collect and nothing else — no command
+turn, no launch, no ascent — before the owner's command applies. If the Collect
+leaves the parent on a command step, that command is owed and has not run: the
+seam refuses `pass` there `EXECUTION_PENDING` (the machine's selection for a
+lease-free cursor is a `runnable` unit), exactly as after a crash between any
+commit and its Run Progression; `goto` onto the step runs it.
 
 ## No other coordination
 

@@ -2,10 +2,11 @@ import { describe, expect, it } from '@jest/globals';
 import {
   childResultOf,
   currentInlineReservation,
+  inlineChildContext,
   inlineRunbookOf,
   reserveInlineChild,
 } from '../../src/runbook/inline-child.js';
-import { brandInitialTemplateVars } from '../../src/runbook/effective-vars.js';
+import { brandInitialTemplateVars, brandStoredOutputs } from '../../src/runbook/effective-vars.js';
 import { assertRunId } from '../../src/runbook/run-id.js';
 import type { FrameKey } from '../../src/runbook/targeting.js';
 import type {
@@ -50,7 +51,6 @@ function reservation(overrides: Partial<InlineChildReservation> = {}): InlineChi
     runId: CHILD,
     entry: 2,
     runbook: 'child.runbook.md',
-    contextSnapshot: { vars: {} as never, ancestors: [] },
     ...overrides,
   };
 }
@@ -100,14 +100,10 @@ describe('reserveInlineChild', () => {
 
     const reserved = reserveInlineChild({
       substepStates: [sibling, earlier],
-      stepName: '1',
       substepId: '2',
       runbook: 'child.runbook.md',
       frameKey,
       entry: 2,
-      templateVars: brandInitialTemplateVars({ Who: 'parent' }),
-      variables: { Out: 'v' },
-      forStack: [],
       runId: CHILD,
     });
 
@@ -122,14 +118,30 @@ describe('reserveInlineChild', () => {
           runId: CHILD,
           entry: 2,
           runbook: 'child.runbook.md',
-          contextSnapshot: {
-            vars: { Who: 'parent', Out: 'v' },
-            ancestors: [],
-            step: '1',
-            substep: '2',
-            at: '1.2',
-          },
         },
+      },
+    ]);
+  });
+
+  it('records only the child’s identity, never a copy of the parent’s variables', () => {
+    // A FOR loop reserves one child per iteration and every reservation stays
+    // on its frame's substep state, so a copy of the parent's variables here
+    // would grow the parent's row by one variable space per iteration (G5-F1).
+    const frameKey = '1|1' as FrameKey;
+    const reserved = reserveInlineChild({
+      substepStates: [],
+      substepId: '2',
+      runbook: 'child.runbook.md',
+      frameKey,
+      entry: 1,
+      runId: CHILD,
+    });
+    expect(reserved).toEqual([
+      {
+        id: '2',
+        frameKey,
+        status: 'pending',
+        child: { kind: 'inline', runId: CHILD, entry: 1, runbook: 'child.runbook.md' },
       },
     ]);
   });
@@ -137,14 +149,10 @@ describe('reserveInlineChild', () => {
   it('appends a pending substep state when the frame has none yet', () => {
     const reserved = reserveInlineChild({
       substepStates: [],
-      stepName: '1',
       substepId: '2',
       runbook: 'child.runbook.md',
       frameKey: '1|2' as FrameKey,
       entry: 3,
-      templateVars: brandInitialTemplateVars({}),
-      variables: {},
-      forStack: [],
       runId: CHILD,
     });
     expect(reserved).toEqual([
@@ -186,6 +194,50 @@ describe('currentInlineReservation', () => {
     expect(
       currentInlineReservation(stateAt([{ id: '2', frameKey, status: 'pending' }])),
     ).toBeUndefined();
+  });
+});
+
+describe('inlineChildContext', () => {
+  // The parent row is invariant while its cursor rests on the reservation's
+  // frame entry, so the child's context is read from it at launch — a crash
+  // between reservation and launch relaunches with the same inputs.
+  const frameKey = '1|3' as FrameKey;
+  const forStack = [
+    {
+      stepId: '1',
+      iteration: 3,
+      start: 1,
+      end: 5,
+      variable: 'item',
+      implicit: false,
+      source: { kind: 'variable' as const, name: 'items' },
+      currentValue: 'third',
+    },
+  ];
+  const parent = (child: InlineChildReservation) =>
+    stateAt([{ id: '2', frameKey, status: 'pending', child }], {
+      activeEntry: 4,
+      forStack,
+      templateVars: brandInitialTemplateVars({ Who: 'parent' }),
+      variables: brandStoredOutputs({ Out: 'v' }),
+    });
+
+  it('is the parent’s context at the reservation’s iteration, binding included', () => {
+    const current = reservation({ entry: 4 });
+    expect(inlineChildContext(parent(current), current)).toEqual({
+      vars: { Who: 'parent', Out: 'v' },
+      ancestors: [],
+      step: '1',
+      substep: '2',
+      at: '1.3.2',
+      index: 3,
+      iterationBinding: { kind: 'item', index: 3, variable: 'item', value: 'third' },
+    });
+  });
+
+  it('refuses a reservation the parent no longer counts', () => {
+    const stale = reservation({ entry: 3 });
+    expect(() => inlineChildContext(parent(stale), stale)).toThrow(/not the current child/);
   });
 });
 

@@ -70,6 +70,7 @@ import type { RunbookStateManager } from './state.js';
 import type { VersionedRunState } from './storage/runbook-store.js';
 import {
   childResultEvent,
+  inlineDepthOf,
   inlineParentCounting,
   INLINE_CHILD_LAUNCH_FAILED_CODE,
   launchInlineChild,
@@ -104,10 +105,13 @@ export type RunProgressionRecovery = 'retryable' | 'permanent';
 /**
  * Why an activation yielded without a terminal.
  *
- * `awaiting_input` — the cursor rests on a unit that needs an operator
- * gesture (`rundown pass` / `rundown fail`).
+ * - `awaiting_input` — the cursor rests on a unit that needs an operator
+ *   gesture (`rundown pass` / `rundown fail`).
+ * - `collected` — a `collect_inline_child` activation committed the implicit
+ *   Collect and rests at the parent's resulting position without driving it
+ *   further (#903).
  */
-export type RunProgressionWaitReason = 'awaiting_input';
+export type RunProgressionWaitReason = 'awaiting_input' | 'collected';
 
 /**
  * Why an activation refused without applying a terminal.
@@ -258,13 +262,22 @@ export interface RunProgressionDeps {
  * initiating commit and is consumed only after the frontend delivers that
  * commit's observation, so activation never re-announces a terminal the seam
  * already rendered.
+ *
+ * `collect_inline_child` is minted by core's command-target resolution for a
+ * parent whose Current Inline Child is terminal but was never Collected (its
+ * command died first). The activation commits that Collect — the one write the
+ * crash lost — and rests: it launches nothing, runs no command, and does not
+ * ascend, so the owner's command then applies at the parent's resulting
+ * position (#903). A parent that no longer owes the Collect is refused
+ * `command_not_committed` with nothing written.
  */
 export type RunProgressionEntryBoundary =
   | { readonly kind: 'resume' }
   | {
       readonly kind: 'after_observed_transition';
       readonly lifecycle: 'running' | 'completed' | 'stopped';
-    };
+    }
+  | { readonly kind: 'collect_inline_child' };
 
 /**
  * Core's explicit decision about whether a committed domain operation should
@@ -951,7 +964,11 @@ async function driveProgression(
   deps: RunProgressionDeps,
   entryBoundary: RunProgressionEntryBoundary,
 ): Promise<RunProgressionOutcome> {
-  let outcome = await driveRun(authority, deps, entryBoundary, deps.sink, 0);
+  let outcome = await driveRun(authority, deps, entryBoundary, deps.sink);
+  // A Collect-only activation rests where its Collect left the parent; a
+  // parent that the Collect finished owes its own parent a Collect, which the
+  // owner's next command target resolution commits the same way.
+  if (entryBoundary.kind === 'collect_inline_child') return outcome;
   // Ascend: the child reached a terminal, so its parent — the same owner —
   // Collects it and continues. Bounded by the chain's depth; each ascent moves
   // one level up.
@@ -965,7 +982,6 @@ async function driveProgression(
       deps,
       { kind: 'resume' },
       sinkForRun(deps, parent.state),
-      0,
     );
   }
   throw new Error(`Run Progression ascended past ${String(MAX_INLINE_CHILD_DEPTH)} inline levels`);
@@ -994,7 +1010,6 @@ function sinkForRun(
  * @param deps - Services, graph loader and sink.
  * @param entryBoundary - Observation state of the transition that entered progression.
  * @param rawSink - This run's observation sink, before gating.
- * @param depth - How many Inline Children deep this run is below the activation.
  * @returns The closed progression outcome.
  * @throws {Error} When the entry boundary names a terminal the durable row
  *   does not carry, when an `abandoned` run is activated, or when a committed
@@ -1005,7 +1020,6 @@ async function driveRun(
   deps: RunProgressionDeps,
   entryBoundary: RunProgressionEntryBoundary,
   rawSink: Pick<ExecutionEventEmitter, 'emit'>,
-  depth: number,
 ): Promise<RunProgressionOutcome> {
   const { manager, actorService } = deps;
   const runId = authority.runId;
@@ -1046,6 +1060,7 @@ async function driveRun(
     throw new Error(`Run ${runId} is abandoned and cannot be driven`);
   }
 
+  const collectOnly = entryBoundary.kind === 'collect_inline_child';
   let feedback: RunProgressionMachineFeedback = { kind: 'activation' };
 
   // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
@@ -1059,6 +1074,15 @@ async function driveRun(
       feedback,
     );
     feedback = { kind: 'activation' };
+
+    // A Collect-only activation takes no turn but the Collect itself.
+    if (
+      collectOnly &&
+      intent.kind !== 'refused' &&
+      (intent.kind !== 'entered' || intent.entered.kind !== 'inline_child')
+    ) {
+      return collectNotOwedRefusal(runId, sink);
+    }
 
     if (intent.kind === 'waiting') {
       // Waiting is the only machine intent whose turn performs no effect. Use
@@ -1124,7 +1148,7 @@ async function driveRun(
         steps,
         currentStep,
         sink,
-        depth,
+        collectOnly,
       });
       if (composed.kind === 'rest') return composed.outcome;
       current = composed.parent;
@@ -1305,6 +1329,11 @@ type InlineChildTurn =
  * before Collect), the parent Collects its Child Result with one `CHILD_RESULT`
  * commit at the version the parent was read at, and reports the transition.
  *
+ * With `collectOnly` (a `collect_inline_child` activation) the turn launches
+ * and drives nothing: it Collects a child that is already terminal and rests
+ * at the parent's resulting position, or refuses a parent that no longer owes
+ * that Collect.
+ *
  * The parent holds no execution lease across this turn: launching and Collect
  * are writes of the owner's own command, each one conditional on a version,
  * and the child's commands take the child row's lease.
@@ -1317,7 +1346,7 @@ type InlineChildTurn =
  * @param args.steps - The parent's parsed graph.
  * @param args.currentStep - The parent step owning the inline substep.
  * @param args.sink - The parent's gated sink.
- * @param args.depth - How deep the parent is below the activation.
+ * @param args.collectOnly - Commit only the Collect of an already-terminal child.
  * @returns Whether progression rests, or the parent continues.
  * @throws {Error} When the child row is linked to another parent, or the
  *   Collect commit did not move the parent off the child's entry.
@@ -1330,15 +1359,19 @@ async function driveInlineChild(args: {
   readonly steps: readonly ResolvedStep[];
   readonly currentStep: ResolvedStep;
   readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
-  readonly depth: number;
+  readonly collectOnly: boolean;
 }): Promise<InlineChildTurn> {
-  const { authority, deps, parent, entered, steps, currentStep, sink, depth } = args;
+  const { authority, deps, parent, entered, steps, currentStep, sink, collectOnly } = args;
   const runId = parent.state.id;
   const { reservation } = entered;
   let child = await deps.manager.loadWithVersion(reservation.runId);
+  if (collectOnly && (child === null || (child.state.lifecycle ?? 'running') === 'running')) {
+    return { kind: 'rest', outcome: collectNotOwedRefusal(runId, sink) };
+  }
 
   if (child === null) {
-    if (depth >= MAX_INLINE_CHILD_DEPTH) {
+    // Counted from the root, so a chain grown across commands is bounded too.
+    if ((await inlineDepthOf(deps.manager, parent)) >= MAX_INLINE_CHILD_DEPTH) {
       return {
         kind: 'rest',
         outcome: launchRefusal(runId, sink, {
@@ -1372,7 +1405,6 @@ async function driveInlineChild(args: {
       deps,
       { kind: 'resume' },
       sinkForRun(deps, child.state),
-      depth + 1,
     );
     if (outcome.kind !== 'completed' && outcome.kind !== 'stopped') {
       return { kind: 'rest', outcome };
@@ -1449,9 +1481,38 @@ async function driveInlineChild(args: {
     );
     return { kind: 'rest', outcome: { kind: committedState.lifecycle, runId } };
   }
+  if (collectOnly)
+    return { kind: 'rest', outcome: { kind: 'waiting', runId, reason: 'collected' } };
   const next = await deps.manager.loadWithVersion(runId);
   if (!next) return { kind: 'rest', outcome: runMissingRefusal(runId, sink) };
   return { kind: 'collected', parent: next };
+}
+
+/**
+ * Refuse a `collect_inline_child` activation whose run no longer owes the
+ * Collect it was minted for: its cursor left the inline substep, or its
+ * Current Child is not a terminal row. Under one writer per run only another
+ * of the owner's commands moves it, so nothing is written and the command is
+ * re-issued against the run as it now is.
+ *
+ * @param runId - The run activated for the Collect.
+ * @param sink - The run's gated sink.
+ * @returns The closed refusal.
+ */
+function collectNotOwedRefusal(
+  runId: RunId,
+  sink: Pick<ExecutionEventEmitter, 'emit'>,
+): RunProgressionOutcome {
+  const message = `Run ${runId} no longer owes the Collect of a terminal inline child: another command moved it since it was read; nothing was written — re-read the run and re-issue the command`;
+  sink.emit({ type: 'ERROR_OCCURRED', payload: { message, code: CONCURRENT_MODIFICATION_CODE } });
+  return {
+    kind: 'refused',
+    runId,
+    reason: 'command_not_committed',
+    code: CONCURRENT_MODIFICATION_CODE,
+    message,
+    recovery: 'retryable',
+  };
 }
 
 /**

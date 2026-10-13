@@ -32,8 +32,7 @@ import { prepareRunnableRunbook } from './runbook-pipeline.js';
  * @returns The preparer.
  */
 export function createInlineChildPreparer(cwd: string, output: OutputEmitter): PrepareInlineChild {
-  return async ({ reservation }) => {
-    const snapshot = reservation.contextSnapshot;
+  return async ({ reservation, contextSnapshot: snapshot }) => {
     const prepared = await prepareRunnableRunbook(reservation.runbook, {}, cwd, {
       runId: reservation.runId,
       inheritedContextVars: reconstituteContextVars(snapshot),

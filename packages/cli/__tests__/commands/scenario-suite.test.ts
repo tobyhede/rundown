@@ -1244,6 +1244,46 @@ cases:
       expect(parsed.actual).toContain('CHILD_RUNBOOK_NOT_FOUND');
     }, 30000);
 
+    it('reports CHILD_RUNBOOK_NOT_FOUND when a child composed by a staged runbook is missing', async () => {
+      const parentRunbook = `---
+name: composing-parent
+---
+
+# Composing Parent
+
+## 1. Compose
+
+### 1.1 Run child
+- PASS CONTINUE
+- FAIL STOP
+
+- missing-inline-child.runbook.md
+`;
+      await writeFile(join(workspace.cwd, 'composing-parent.runbook.md'), parentRunbook);
+      const suite = `version: 1
+name: Transitive Child Test
+cases:
+  needs-inline-child:
+    file: composing-parent.runbook.md
+    commands:
+      - rd run --prompted composing-parent.runbook.md
+    result: COMPLETE
+`;
+      await writeFile(join(workspace.cwd, 'inline-child.scenario-suite.yaml'), suite);
+
+      const result = await runCliInProcess(
+        'scenario-suite run inline-child.scenario-suite.yaml needs-inline-child',
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.result).toBe(false);
+      expect(parsed.actual).toContain(
+        'CHILD_RUNBOOK_NOT_FOUND: missing-inline-child.runbook.md (required by case "needs-inline-child"',
+      );
+    }, 30000);
+
     it('errors for invalid suite file', async () => {
       await writeFile(join(workspace.cwd, 'bad.scenario-suite.yaml'), 'not: valid\n');
 

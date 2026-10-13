@@ -222,6 +222,10 @@ export function renderRefusal(
     case 'execution_in_progress':
     case 'execution_interrupted':
       return renderExecutionLeaseRefusal(output, outcome);
+    case 'execution_pending':
+      // Core refused to pass a step whose command never ran; nothing written.
+      output.error(outcome.message, outcome.code, { runId: outcome.runId, step: outcome.step });
+      return true;
     case 'unknown_token':
       // The run was pruned between token resolution and the save: the token no
       // longer resolves, exactly as if it had been unknown from the start.

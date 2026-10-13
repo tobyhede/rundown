@@ -3,9 +3,11 @@
  *
  * The Owner Token resolves to its root run; core then descends to the deepest
  * running Inline Child, Collecting first any terminal child a crashed command
- * left uncollected. The Collect continues the parent's progression, which
- * this module supplies with the CLI's standard activation wiring — the only
- * frontend part of the decision.
+ * left uncollected. That Collect is a scoped Run Progression activation —
+ * core mints its directive with the `collect_inline_child` entry boundary, so
+ * it commits only the Collect and runs no command or launch before the
+ * owner's command — and this module supplies it with the CLI's standard
+ * activation wiring, the only frontend part of the decision.
  *
  * @module helpers/command-target
  */

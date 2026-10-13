@@ -67,6 +67,8 @@ export const CLISymbolicErrorCodeValues = [
   // attempt that held it died and the decision would pass it.
   'EXECUTION_IN_PROGRESS',
   'EXECUTION_INTERRUPTED',
+  // `pass` named a step whose command Run Progression owes but never ran.
+  'EXECUTION_PENDING',
   'RUN_TARGET_UNAVAILABLE',
   'INVALID_STEP',
   'INVALID_INDEX',
@@ -1119,7 +1121,10 @@ export const PruneResponseSchema = z
       /**
        * Present on a run that was selected but kept: a running run is deleted
        * only under its own Owner Token (`--token`), so `--active` / `--all`
-       * without one report it `retained: "token required"`.
+       * without one report it `retained: "token required"`. A finished inline
+       * child whose parent is still running is kept as `"parent running"`,
+       * and a run with an attempt In Progress in its inline chain as
+       * `"execution in progress"`.
        */
       retained: z
         .string()

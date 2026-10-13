@@ -165,10 +165,10 @@ duplicate or reconstruct it here.** When stepping through a runbook, follow the
 `TOKEN_REQUIRED`. `pass`/`fail` also require `--step` naming the current
 position, and `--index` inside a FOR iteration. `--run <rd_…>` (the `runbookId`
 on events) is a read-only selector, never mutation authority: combining it with
-`--token` is rejected `INVALID_SYNTAX`. Runbooks whose substeps compose other
-runbooks are refused at `run` with `RUNBOOK_COMPOSITION_UNSUPPORTED` until
-inline composition (#903) and delegation (#904) return. Read-only commands stay
-bare.
+`--token` is rejected `INVALID_SYNTAX`. An inline substep's child runbook runs
+on the parent's Owner Token; `DELEGATE` substeps are refused at `run` with
+`RUNBOOK_COMPOSITION_UNSUPPORTED` until delegation (#904) returns. Read-only
+commands stay bare.
 
 - [docs/reference/cli.md](docs/reference/cli.md) — every `rundown`/`rd` command
   (run, pass/fail, goto, status, stop, complete, ls, check, resolve, echo,
@@ -306,7 +306,7 @@ applies to all run data written to SQLite: structured `RunbookState` fields
 (step, variables, lifecycle, etc.) and the opaque `state.snapshot` blob stored
 inside `RunbookState`. Neither is exempt. Persisted runbook state carries the
 schema version in `CURRENT_SCHEMA_VERSION`
-(`packages/core/src/runbook/persisted-state-guards.ts`, currently `3`); state
+(`packages/core/src/runbook/persisted-state-guards.ts`, currently `4`); state
 with any other schema version or incompatible structure is invalid. On schema
 changes, running runbooks should be completed/closed and restarted. The CLI
 should detect invalid state (via schema version or structural guard) and prompt
@@ -321,14 +321,15 @@ not. Historically, #746, #772, and #827 each added a required field and left
 structural parse (#775). Version `2` now records #854's opaque XState
 progression snapshot contract, so every v1 row is foreign and is refused as
 `invalid_schema_version` before structural parsing; version `3` records #901's
-one-writer `runs` table. In general, moving the constant changes _which_
-rejection fires — `invalid_schema_version` (RD-309, via the cheap equality
-check) instead of `schema_validation_failed` (via the full parse) — so treat it
-as worth doing when that distinction matters, not as mandatory on every shape
-edit. See `CURRENT_SCHEMA_VERSION`'s own TSDoc for the one case where it is not
-optional: the opaque `snapshot` field is declared `z.unknown()` on purpose, so a
-change to the XState machine's context shape or state IDs is invisible to the
-structural parse and only the version gate can refuse it.
+one-writer `runs` table; version `4` records #903's inline child reservation in
+the machine context. In general, moving the constant changes _which_ rejection
+fires — `invalid_schema_version` (RD-309, via the cheap equality check) instead
+of `schema_validation_failed` (via the full parse) — so treat it as worth doing
+when that distinction matters, not as mandatory on every shape edit. See
+`CURRENT_SCHEMA_VERSION`'s own TSDoc for the one case where it is not optional:
+the opaque `snapshot` field is declared `z.unknown()` on purpose, so a change to
+the XState machine's context shape or state IDs is invisible to the structural
+parse and only the version gate can refuse it.
 
 `packages/core/__tests__/runbook/persisted-state-shape.test.ts` fails whenever
 the shape changes, whether or not that change needs a version bump — it is a

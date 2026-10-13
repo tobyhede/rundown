@@ -235,6 +235,61 @@ This step should not become the persisted cursor.
     expect(result.stdout).not.toContain('rdo_');
   });
 
+  it('on an inline child (#903), ends with the complete action object naming the child and carrying --message', async () => {
+    await writeFile(
+      join(workspace.cwd, 'inline.runbook.md'),
+      [
+        '# Inline',
+        '',
+        '## 1. Parent',
+        '',
+        '- PASS ALL CONTINUE',
+        '- FAIL ANY STOP',
+        '',
+        '- child.runbook.md',
+        '',
+        '## 2. After',
+        '',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Finish.',
+        '',
+      ].join('\n'),
+    );
+    await writeFile(
+      join(workspace.cwd, 'child.runbook.md'),
+      ['# Child', '', '## Check', '', '- PASS COMPLETE', '- FAIL STOP', '', 'Check.', ''].join(
+        '\n',
+      ),
+    );
+    const started = await runCliInProcess('run inline.runbook.md', workspace);
+    expect(started.exitCode).toBe(0);
+    token = requireOwnerToken(started.stdout);
+    runId = requireRunId(started.stdout);
+    const child = String(
+      (
+        parseConcatenatedJson(started.stdout).filter(
+          (document) => (document as Record<string, unknown>).type === 'runbook_started',
+        )[1] as Record<string, unknown> | undefined
+      )?.runbookId,
+    );
+
+    const result = await runCliInProcess(['complete', 'Child done', '--token', token], workspace);
+
+    // The parent Collects the completed child as PASS and rests waiting at step 2.
+    expect(result.exitCode).toBe(0);
+    expect(parseFinalCliJsonObject(result.stdout)).toMatchObject({
+      kind: 'action',
+      action: 'complete',
+      complete: true,
+      runId: child,
+      message: 'Child done',
+    });
+    expect((await readRunbookState(workspace, child))?.lifecycle).toBe('completed');
+    expect((await readRunbookState(workspace, runId))?.step).toBe('2');
+  });
+
   it('fails closed on a foreign schemaVersion instead of migrating or deleting it', async () => {
     await start('runbooks/simple.runbook.md');
     await patchPersistedRunState(workspace.cwd, runId, {

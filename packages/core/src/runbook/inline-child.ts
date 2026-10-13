@@ -5,8 +5,10 @@
  * A runbook-list substep without `DELEGATE` launches an Inline Child: a Child
  * Run owned by the same agent as its parent. When the cursor enters such a
  * substep the compiled machine reserves the child in the parent's own record —
- * a preallocated run id and the parent's context — keyed by the substep's frame
- * and that frame's entry. Run Progression then creates the child row under the
+ * a preallocated run id and the runbook it runs — keyed by the substep's frame
+ * and that frame's entry. The context the child inherits is read from the
+ * parent row at launch ({@link inlineChildContext}), never copied onto the
+ * reservation. Run Progression then creates the child row under the
  * reserved id and drives it; when the child reaches a terminal, the same owner
  * Collects its Child Result into the parent.
  *
@@ -20,11 +22,10 @@
 
 import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import { buildContextSnapshot } from './delegation-context.js';
-import type { InitialTemplateVars, VariableValue } from './effective-vars.js';
 import type { RunId } from './run-id.js';
 import { deriveActiveFrame, upsertSubstepStateChild, type FrameKey } from './targeting.js';
 import type {
-  ForContext,
+  ContextSnapshot,
   InlineChildReservation,
   Lifecycle,
   ResolvedStep,
@@ -56,8 +57,6 @@ export function inlineRunbookOf(step: ResolvedStep, substepId: string): string |
 export interface ReserveInlineChildInput {
   /** The parent's substep states before the reservation. */
   readonly substepStates: readonly SubstepState[];
-  /** The step owning the inline substep. */
-  readonly stepName: string;
   /** The inline substep. */
   readonly substepId: string;
   /** The runbook the child runs. */
@@ -66,12 +65,6 @@ export interface ReserveInlineChildInput {
   readonly frameKey: FrameKey;
   /** That frame's entry, as the leaf's frame-entry sync made it current. */
   readonly entry: number;
-  /** The parent's seeded template variables. */
-  readonly templateVars: InitialTemplateVars;
-  /** The parent's accumulated OUTPUTS and ARTIFACTS. */
-  readonly variables: Readonly<Record<string, VariableValue>>;
-  /** The parent's FOR stack; the child inherits the iteration binding. */
-  readonly forStack: readonly ForContext[];
   /** The preallocated child run id. */
   readonly runId: RunId;
 }
@@ -92,15 +85,6 @@ export function reserveInlineChild(input: ReserveInlineChildInput): readonly Sub
     runId: input.runId,
     entry: input.entry,
     runbook: input.runbook,
-    contextSnapshot: buildContextSnapshot(
-      {
-        step: input.stepName,
-        templateVars: input.templateVars,
-        variables: input.variables,
-        forStack: input.forStack,
-      },
-      input.substepId,
-    ),
   };
   return upsertSubstepStateChild(input.substepStates, input.substepId, input.frameKey, child);
 }
@@ -122,6 +106,35 @@ export function currentInlineReservation(state: RunbookState): InlineChildReserv
     (candidate) => candidate.id === state.substep && candidate.frameKey === frameKey,
   )?.child;
   return child?.kind === 'inline' && child.entry === state.activeEntry ? child : undefined;
+}
+
+/**
+ * The context an Inline Child inherits from its parent at launch.
+ *
+ * Read from the parent row rather than recorded on the reservation: while the
+ * parent counts the reservation, its cursor rests on the reservation's frame
+ * entry and nothing that feeds the snapshot (step, substep, FOR stack, template
+ * variables, OUTPUTS) can change without leaving that entry. So this is the
+ * context at reservation time — including the FOR iteration binding — and a
+ * launch after a crash between reservation and launch inherits the same one.
+ *
+ * @param parent - The parent run, as read from its row.
+ * @param reservation - The reservation being launched.
+ * @returns The context snapshot the child inherits.
+ * @throws {Error} When the parent no longer counts the reservation, whose
+ *   context is then gone.
+ */
+export function inlineChildContext(
+  parent: RunbookState,
+  reservation: InlineChildReservation,
+): ContextSnapshot {
+  const current = currentInlineReservation(parent);
+  if (current?.runId !== reservation.runId) {
+    throw new Error(
+      `Inline child ${reservation.runId} is not the current child of run ${parent.id}`,
+    );
+  }
+  return buildContextSnapshot(parent, parent.substep);
 }
 
 /** A Child Result: the outcome a terminal child records in its own row. */

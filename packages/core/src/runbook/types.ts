@@ -545,8 +545,6 @@ export interface InlineChildReservation {
   readonly entry: number;
   /** The authored (resolved) runbook reference the child runs. */
   readonly runbook: string;
-  /** The parent's context at reservation, inherited by the child at launch. */
-  readonly contextSnapshot: ContextSnapshot;
 }
 
 /** A Current Child reservation recorded on a substep state. */
