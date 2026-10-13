@@ -595,6 +595,20 @@ export interface DelegationChildReservation {
 export type ChildReservation = InlineChildReservation | DelegationChildReservation;
 
 /**
+ * A Delegation its parent cancelled by reserving another child in its place
+ * (#905): `rundown retry`, or a re-entry into the frame before its result was
+ * Collected. Kept so the parent records the cancellation rather than leaving
+ * it to be inferred from an absence: the cancelled child's commands and its
+ * Claim Ticket are refused `DELEGATION_CANCELLED`, not `UNKNOWN_TICKET`.
+ */
+export interface CancelledDelegation {
+  /** The cancelled child run id. */
+  readonly runId: RunId;
+  /** Hash of its Claim Ticket, or `null` when it was never issued one. */
+  readonly ticketHash: SecretHash | null;
+}
+
+/**
  * Runtime state of a substep within a step
  */
 export interface SubstepState {
@@ -604,6 +618,8 @@ export interface SubstepState {
   readonly result?: 'pass' | 'fail'; // Result when done
   /** The Current Child reserved for this substep's latest entry, if it composes one. */
   readonly child?: ChildReservation;
+  /** Delegations of this substep the parent cancelled by reserving afresh (#905), oldest first. */
+  readonly cancelled?: readonly CancelledDelegation[];
 }
 
 /**

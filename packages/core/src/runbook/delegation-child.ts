@@ -25,6 +25,7 @@ import type { RunId } from './run-id.js';
 import type { SecretHash } from './run-secrets.js';
 import { findSubstepState, upsertSubstepStateChild, type FrameKey } from './targeting.js';
 import type {
+  CancelledDelegation,
   ContextSnapshot,
   DelegationChildReservation,
   ResolvedStep,
@@ -104,8 +105,105 @@ export function reserveDelegationChildren(
       ticketHash: null,
     };
     substepStates = upsertSubstepStateChild(substepStates, substep.id, input.frameKey, child);
+    // An earlier entry's child its parent never Collected is cancelled by the
+    // re-entry, and recorded as such: its ticket is refused as cancelled.
+    if (existing?.kind === 'delegation' && existing.collected === undefined) {
+      substepStates = recordCancelled(substepStates, substep.id, input.frameKey, existing);
+    }
   }
   return substepStates;
+}
+
+/**
+ * Append a replaced Delegation to its substep state's cancellation record.
+ *
+ * @param substepStates - The substep states, the replacement already recorded.
+ * @param substepId - The substep whose Delegation was replaced.
+ * @param frameKey - The frame it was reserved in.
+ * @param cancelled - The replaced reservation.
+ * @returns The substep states with the cancellation recorded.
+ */
+function recordCancelled(
+  substepStates: readonly SubstepState[],
+  substepId: string,
+  frameKey: FrameKey,
+  cancelled: DelegationChildReservation,
+): readonly SubstepState[] {
+  const record: CancelledDelegation = {
+    runId: cancelled.runId,
+    ticketHash: cancelled.ticketHash,
+  };
+  return substepStates.map((substepState) =>
+    substepState.id === substepId && substepState.frameKey === frameKey
+      ? { ...substepState, cancelled: [...(substepState.cancelled ?? []), record] }
+      : substepState,
+  );
+}
+
+/**
+ * The Delegation `rundown retry` may replace: the one reserved for `substepId`
+ * at the active frame entry, while the parent still counts it.
+ *
+ * @param view - The parent's frame-entry coordinates and substep states.
+ * @param step - The step owning the substep.
+ * @param cursorSubstep - The substep the cursor rests on.
+ * @param substepId - The delegated substep named by `--step`.
+ * @returns The Delegation, or `undefined` when there is none to retry.
+ */
+export function retryableDelegation(
+  view: DelegationFrameView,
+  step: ResolvedStep,
+  cursorSubstep: string | undefined,
+  substepId: string,
+): CurrentDelegation | undefined {
+  const delegation = activeEntryDelegations(view).find(
+    (candidate) => candidate.substepId === substepId,
+  );
+  return delegation !== undefined && countsDelegation({ substep: cursorSubstep }, step, delegation)
+    ? delegation
+    : undefined;
+}
+
+/**
+ * Cancel a Delegation and reserve a fresh child in its place, at the same
+ * frame entry, issued `ticketHash` (#905, `rundown retry`).
+ *
+ * The fresh child runs the same runbook with the context the cancelled one
+ * was reserved with — a sibling Collected since must not leak into it — under
+ * a new run id and a new Claim Ticket. The cancelled one is recorded on the
+ * substep state. Every other substep state is left untouched.
+ *
+ * @param view - The parent's frame-entry coordinates and substep states.
+ * @param delegation - The Delegation to cancel, from {@link retryableDelegation}.
+ * @param runId - The fresh child's preallocated run id.
+ * @param ticketHash - Hash of the fresh child's Claim Ticket.
+ * @returns The substep states with the replacement and the cancellation recorded.
+ * @throws {Error} When the view has no active frame — a retryable Delegation
+ *   always has one, so this is a defect.
+ */
+export function replaceDelegation(
+  view: DelegationFrameView,
+  delegation: CurrentDelegation,
+  runId: RunId,
+  ticketHash: SecretHash,
+): readonly SubstepState[] {
+  const { reservation } = delegation;
+  const fresh: DelegationChildReservation = {
+    kind: 'delegation',
+    runId,
+    entry: reservation.entry,
+    runbook: reservation.runbook,
+    contextSnapshot: reservation.contextSnapshot,
+    ticketHash,
+  };
+  const frameKey = view.activeFrameKey;
+  if (frameKey === undefined) throw new Error('A Delegation was retried with no active frame');
+  return recordCancelled(
+    upsertSubstepStateChild(view.substepStates ?? [], delegation.substepId, frameKey, fresh),
+    delegation.substepId,
+    frameKey,
+    reservation,
+  );
 }
 
 /** The frame-entry coordinates and substep states a Current-Children read needs. */
@@ -273,6 +371,9 @@ export function delegationStanding(
     parentRunId: linkage.parentRunId,
     parentStep: linkage.parentStep,
   };
+  if (findCancelledDelegation(parent, (record) => record.runId === childRunId) !== undefined) {
+    return cancelled;
+  }
   const step = parentSteps.find((candidate) => candidate.name === parent.step);
   const delegation = activeEntryDelegations(parent).find(
     (candidate) => candidate.reservation.runId === childRunId,
@@ -302,6 +403,22 @@ export function findTicketReservation(
     }
   }
   return undefined;
+}
+
+/**
+ * Find a Delegation the parent recorded as cancelled.
+ *
+ * @param state - The parent run.
+ * @param matches - Selects the cancellation sought.
+ * @returns The substep state recording it, or `undefined`.
+ */
+export function findCancelledDelegation(
+  state: Pick<RunbookState, 'substepStates'>,
+  matches: (record: CancelledDelegation) => boolean,
+): SubstepState | undefined {
+  return (state.substepStates ?? []).find((substepState) =>
+    (substepState.cancelled ?? []).some(matches),
+  );
 }
 
 /** One issued Claim Ticket, as the machine records it: its hash only. */

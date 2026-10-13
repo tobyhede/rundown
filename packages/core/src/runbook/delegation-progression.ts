@@ -35,6 +35,7 @@ import {
   activeEntryDelegations,
   countsDelegation,
   delegationStanding,
+  findCancelledDelegation,
   findTicketReservation,
   owesClaimTickets,
   type CurrentDelegation,
@@ -60,6 +61,7 @@ import {
 } from './run-secrets.js';
 import type { RunbookStateManager } from './state.js';
 import type { ClaimDelegationChildResult, VersionedRunState } from './storage/runbook-store.js';
+import { frameKeyStep } from './targeting.js';
 import type { ActionType } from './transition-kernel.js';
 import type { ResolvedStep, RunbookState } from './types.js';
 
@@ -164,7 +166,7 @@ function claimRefused(refusal: ClaimRefusal, parentRunId: RunId, step: string): 
     : {
         kind: 'refused',
         code: DELEGATION_CANCELLED_CODE,
-        message: `Run ${parentRunId} no longer counts this delegation at ${step} (the step was decided or entered again); nothing was written. Ask the parent's owner for the current ticket.`,
+        message: `Run ${parentRunId} no longer counts this delegation at ${step} (the substep was decided, retried or entered again); nothing was written. Ask the parent's owner for the current ticket.`,
       };
 }
 
@@ -195,6 +197,19 @@ export async function claimDelegation(
     if (substepState !== undefined) {
       found = { parent: run, substepState };
       break;
+    }
+    // A ticket whose child the parent cancelled (`retry`, or a re-entry) is
+    // told so: the owner holds the current ticket (#905).
+    const cancelled = findCancelledDelegation(
+      run.state,
+      (record) => record.ticketHash === ticketHash,
+    );
+    if (cancelled !== undefined) {
+      return claimRefused(
+        'cancelled',
+        run.state.id,
+        `${frameKeyStep(cancelled.frameKey)}.${cancelled.id}`,
+      );
     }
   }
   if (found === undefined) {
