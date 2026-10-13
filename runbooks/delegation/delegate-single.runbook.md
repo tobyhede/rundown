@@ -199,6 +199,24 @@ scenarios:
         - code: AGENT_MISMATCH
           command: release
 
+  claude-code-agent-id:
+    description: Inside Claude Code (CLAUDECODE=1) a claim the plugin did not stamp with --agent-id is AGENT_ID_REQUIRED; the stamped claim succeeds; and a release carrying --agent-id twice is INVALID_SYNTAX, never last-wins (#907)
+    commands:
+      - rd run delegate-single.runbook.md
+      - "! CLAUDECODE=1 rd claim ${TICKET}"
+      - CLAUDECODE=1 rd claim ${TICKET} --agent-id reviewer-1
+      - "! rd release ${CHILD_RUN} --agent-id reviewer-2 --agent-id reviewer-1"
+      - rd pass --token ${CHILD_TOKEN} --step Check
+      - rd collect --token ${TOKEN}
+      - rd pass --token ${TOKEN} --step 2
+    result: COMPLETE
+    expect:
+      errors:
+        - code: AGENT_ID_REQUIRED
+          command: claim
+        - code: INVALID_SYNTAX
+          command: release
+
   prune-keeps-uncollected-child:
     description: prune --all keeps the finished child its parent has not collected, so its ticket cannot claim a second child; collect then applies it (#906)
     commands:

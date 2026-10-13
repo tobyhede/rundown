@@ -86,7 +86,11 @@ describe('cli.ts hook entrypoint contract', () => {
     const { stdout, exitCode } = await runCLIWithStdin(payload);
     expect(exitCode).toBe(0);
     expect(JSON.parse(stdout)).toMatchObject({
-      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny' },
+      hookSpecificOutput: {
+        hookEventName: 'PreToolUse',
+        permissionDecision: 'deny',
+        permissionDecisionReason: expect.stringMatching(/CLAIM_OUTSIDE_SUBAGENT/),
+      },
     });
   });
 

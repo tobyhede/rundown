@@ -123,20 +123,25 @@ pruned ([Child Result retention](../reference/cli.md#prune-retention)).
 `claim` records the claiming agent's id (`--agent-id`), and `release` is
 authorized only for that id. In Claude Code the plugin supplies it:
 
-- Its `PreToolUse` hook on `Bash` stamps the subagent's own `agent_id` on every
-  `rundown claim` and `rundown release`, replacing any `--agent-id` typed, so no
-  agent passes it and none can claim or release under another's id. A `claim`
-  from the top-level agent (no `agent_id`) is refused: the orchestrator never
-  claims its own children. A top-level `release` carries no agent id, so it
-  releases only a child claimed without one.
+- Its `PreToolUse` hook on `Bash` stamps the subagent's own `agent_id` as
+  `--agent-id` on every plain `rundown claim` and `rundown release`, replacing
+  any `--agent-id` typed, so no agent passes it and none can claim or release
+  under another's id. A `claim` from the top-level agent (no `agent_id`) is
+  denied (`CLAIM_OUTSIDE_SUBAGENT`): the orchestrator never claims its own
+  children. A top-level `release` carries no agent id, so it releases only a
+  child claimed without one. Any other command runs untouched.
+- The CLI refuses what the hook could not stamp: inside Claude Code
+  (`CLAUDECODE=1`) a `claim` without `--agent-id` is `AGENT_ID_REQUIRED`, and
+  `--agent-id` given twice is `INVALID_SYNTAX`. Run `claim` and `release` as
+  plain commands. The stamp guards against confusion, not a malicious agent.
 - Its `SubagentStop` hook blocks a subagent from stopping while a child it
   claimed is running and your run still counts it, telling it to finish the
   child or release it; it allows the stop once the child is finished, abandoned
   or cancelled. The question is core's, asked through
   `rundown status --claimed-by <agent_id>`.
 
-Without those hooks — the Codex plugin, a person, the scenario harness — the
-claimant passes one stable id of its own by hand, the same on `claim` and
+Without those hooks — the Codex plugin, MCP, a person, the scenario harness —
+the claimant passes one stable id of its own by hand, the same on `claim` and
 `release`, and nothing holds its stop. See
 [docs/internal/plugin-trust-model.md](../internal/plugin-trust-model.md).
 

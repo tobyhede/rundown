@@ -390,6 +390,7 @@ unhomed
 bypassable
 cloexec
 CLOEXEC
+CLAUDECODE
 ELFCLASS
 ENOSYS
 EOPNOTSUPP

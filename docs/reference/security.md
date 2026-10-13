@@ -263,10 +263,10 @@ Default file access:
 - Read allow: `{repo}/**`, `{tmp}/**`
 - Read deny: `**/.env`, `**/.env.*`, `**/credentials.json`, `**/*secret*`,
   `**/*password*`, `**/id_rsa`, `**/id_ed25519`, `**/*.pem`, `**/*.key`
-- Write allow: `{repo}/.claude/**`, `{repo}/.rundown/runs/**`,
-  `{repo}/.rundown/locks/**`, `{repo}/.rundown/contexts/**`,
-  `{repo}/.rundown/rundown.db`, `{repo}/.rundown/rundown.db-wal`,
-  `{repo}/.rundown/rundown.db-shm`, `{repo}/.rundown/work/**`, `{tmp}/**`
+- Write allow: `{repo}/.rundown/runs/**`, `{repo}/.rundown/locks/**`,
+  `{repo}/.rundown/contexts/**`, `{repo}/.rundown/rundown.db`,
+  `{repo}/.rundown/rundown.db-wal`, `{repo}/.rundown/rundown.db-shm`,
+  `{repo}/.rundown/work/**`, `{tmp}/**`
 - Write deny: `**/.env`, `**/.env.*`, `**/credentials.json`, `**/*secret*`,
   `**/*password*`, `{repo}/.rundown/config.yaml`
 

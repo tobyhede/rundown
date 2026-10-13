@@ -31,6 +31,7 @@ import {
 import { claimDelegation } from '../../src/runbook/delegation-progression.js';
 import { delegationsHeldBy, releaseDelegation } from '../../src/runbook/delegation-recovery.js';
 import type { RunId } from '../../src/runbook/run-id.js';
+import type { DelegationAgent } from '../../src/runbook/delegation-agent.js';
 import type { PrepareChildRun } from '../../src/runbook/child-preparation.js';
 
 // Delegation (#904, ADR 0005) through the public seams: Run Progression's
@@ -424,10 +425,18 @@ function ticketsOf(runId: string) {
     .flatMap((child) => (child.ticket === undefined ? [] : [child.ticket]));
 }
 
-async function claim(ticket: string, agentId?: string) {
+/** The claiming or releasing agent a test names: an id, or none. */
+function agentOf(agentId: string | undefined): DelegationAgent {
+  return agentId === undefined ? { kind: 'anonymous' } : { kind: 'agent', agentId };
+}
+
+async function claim(ticket: string, agentId?: string | DelegationAgent) {
   const outcome = await claimDelegation(
     { manager, actorService, loadSteps, prepareChildRun: prepare },
-    { ticket: parseClaimTicket(ticket), ...(agentId !== undefined ? { agentId } : {}) },
+    {
+      ticket: parseClaimTicket(ticket),
+      agent: typeof agentId === 'object' ? agentId : agentOf(agentId),
+    },
   );
   if (outcome.kind === 'claimed') {
     await activate(outcome.progression, outcome.child.state);
@@ -995,10 +1004,10 @@ async function retry(token: OwnerToken, step: string | undefined, index?: number
 }
 
 /** Drive `rundown release <child-id> [--agent-id]` as a sub-agent does. */
-function release(runId: string, agentId?: string) {
+function release(runId: string, agentId?: string | DelegationAgent) {
   return releaseDelegation(
     { manager, actorService, loadSteps },
-    { runId: runId as RunId, ...(agentId !== undefined ? { agentId } : {}) },
+    { runId: runId as RunId, agent: typeof agentId === 'object' ? agentId : agentOf(agentId) },
   );
 }
 
@@ -1337,7 +1346,7 @@ describe('Release (#905)', () => {
 
     const outcome = await releaseDelegation(
       { manager: racing, actorService, loadSteps },
-      { runId: child.runId as RunId },
+      { runId: child.runId as RunId, agent: { kind: 'anonymous' } },
     );
 
     expect(outcome.kind).toBe('concurrent_modification');
@@ -1453,7 +1462,7 @@ describe('Release (#905)', () => {
 
     const outcome = await releaseDelegation(
       { manager: racing, actorService, loadSteps },
-      { runId: child.runId as RunId },
+      { runId: child.runId as RunId, agent: { kind: 'anonymous' } },
     );
 
     expect(outcome).toMatchObject({ kind: 'concurrent_modification', runId: grandchild.state.id });

@@ -23,7 +23,7 @@ __tests__/
 │   └── on-subagent-stop.test.ts
 ├── workflow/hooks/                  # Gate handler logic
 │   ├── delegation-dispatch.test.ts  # Claim Ticket marker + prompt rewrite
-│   ├── stamp-agent-id.test.ts       # Bash hook: --agent-id stamp, claim refusal
+│   ├── stamp-agent-id.test.ts       # Bash hook: --agent-id stamp, claim denial, passthrough
 │   ├── delegation-hooks.integration.test.ts  # all three hooks over the real CLI
 │   └── rundown.test.ts
 ├── runbooks/                        # Bundled-runbook runtime + validation
@@ -33,22 +33,22 @@ __tests__/
 ├── shared/
 │   └── logger.test.ts
 ├── *.contract.test.ts               # CLI entrypoint + minimal-dispatch contracts
-├── *-fail-closed.regression.test.ts # Enforcement-gate fail-closed guards
+├── hook-module-loading.integration.test.ts # a Bash hook call never loads core
 ├── untrusted-repo*.regression.test.ts
 ├── *.properties.test.ts             # fast-check property tests
-├── hook-output.test.ts, schemas.test.ts, session.test.ts, types.test.ts, errors.test.ts
+├── hook-output.test.ts, schemas.test.ts, types.test.ts, errors.test.ts
 └── plan-schema*.test.ts, review-schema.test.ts, rdx*.test.ts, plan-validators.test.ts
 ```
 
 ### Categories
 
-1. **Unit** — individual functions in isolation (gates, handlers, schemas,
-   session).
+1. **Unit** — individual functions in isolation (gates, handlers, schemas).
 2. **Contract** — `cli-entrypoint.contract.test.ts`,
    `minimal-dispatch.contract.test.ts` pin the stdin → dispatch → stdout
    behaviour and the route → gate mapping.
-3. **Regression** — fail-closed enforcement (`*-fail-closed.regression.test.ts`)
-   and untrusted-repo safety (project config can never enable/disable gates).
+3. **Regression** — the SubagentStop gate's fail-closed block
+   (`gates/on-subagent-stop.test.ts`) and untrusted-repo safety (project config
+   can never enable/disable gates).
 4. **Integration** — `*.integration.test.ts`, bundled-runbook runtime under
    `runbooks/`.
 5. **Property** — `*.properties.test.ts` (fast-check).
@@ -70,7 +70,7 @@ From the repo root, scoped runs:
 
 ```bash
 pnpm --filter @rundown-org/claude-code-plugin test
-pnpm --filter @rundown-org/claude-code-plugin test -- session.test.ts
+pnpm --filter @rundown-org/claude-code-plugin test -- stamp-agent-id.test.ts
 pnpm run test:mutate:plugin
 ```
 

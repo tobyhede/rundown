@@ -1,8 +1,6 @@
 // dispatcher.ts
 import { type HookInput, type GateResult, logger, getErrorMessage } from './shared/index.js';
 import * as onBashCommand from './gates/on-bash-command.js';
-import * as onDelegationDispatch from './gates/on-delegation-dispatch.js';
-import * as onSubagentStop from './gates/on-subagent-stop.js';
 
 /** Dispatch pipeline result. */
 export interface DispatchResult {
@@ -52,13 +50,19 @@ function routeOf(input: HookInput): Route | null {
 /**
  * Select the fixed, plugin-owned gates for a route.
  *
+ * The Bash gate is imported statically: it runs on every Bash call and loads
+ * nothing beyond a string prefix. The gates that need `@rundown-org/core`
+ * (Agent/Task dispatch, SubagentStop) are imported only when their route
+ * fires, so a Bash call never loads core (review finding H7).
+ *
  * @param route - The matched route
  * @returns The ordered gates to run
  */
-function gatesFor(route: Route): Gate[] {
-  if (route.event === 'SubagentStop') return [onSubagentStop.execute];
+async function gatesFor(route: Route): Promise<Gate[]> {
+  if (route.event === 'SubagentStop')
+    return [(await import('./gates/on-subagent-stop.js')).execute];
   if (route.tool === 'Bash') return [onBashCommand.execute];
-  return [onDelegationDispatch.execute]; // Agent | Task
+  return [(await import('./gates/on-delegation-dispatch.js')).execute]; // Agent | Task
 }
 
 /**
@@ -78,17 +82,16 @@ export async function dispatch(input: HookInput): Promise<DispatchResult> {
 
   let context = '';
   let updatedInput: Record<string, unknown> | undefined;
-  for (const gate of gatesFor(route)) {
+  for (const gate of await gatesFor(route)) {
     let result: GateResult;
     try {
       result = await gate(input);
     } catch (error) {
-      // Fail-open backstop: a throwing gate is logged and skipped. This is safe
-      // because every ENFORCEMENT gate fails CLOSED on its own internal errors
-      // BEFORE this catch is reached: on-subagent-stop blocks when it cannot
-      // ask the CLI which children hold the agent, on-bash-command denies a
-      // command it failed to read, and on-delegation-dispatch denies a dispatch
-      // it failed to inspect. The router can never silently bypass them here.
+      // Fail-open backstop: a throwing gate is logged and skipped. No gate
+      // reaches it today: on-subagent-stop fails CLOSED on its own errors
+      // (it blocks when it cannot ask the CLI which children hold the agent),
+      // and the Bash stamp and the dispatch decision are pure functions of
+      // the tool input with no error path.
       await logger.error('Gate execution failed', {
         event: input.hook_event_name,
         tool: input.tool_name,

@@ -76,6 +76,9 @@ export const CLISymbolicErrorCodeValues = [
   'NOTHING_TO_RETRY',
   'AGENT_MISMATCH',
   'NOT_A_DELEGATION',
+  // `claim` inside Claude Code with no `--agent-id`: one the plugin's Bash
+  // hook did not stamp (#907).
+  'AGENT_ID_REQUIRED',
   // Prune protection and the human escape hatch (#906): `prune --token` naming
   // a Current Child its parent still counts; `stop --run` with no human at an
   // interactive terminal, declined by the human, or naming a Child Run.

@@ -40,7 +40,7 @@ flowchart TD
 
         subgraph handlers["src/workflow/hooks/"]
             H1["delegation-dispatch.ts<br/>+ shared/claim-ticket-marker.ts"]
-            H2["stamp-agent-id.ts<br/>+ shell-command.ts"]
+            H2["stamp-agent-id.ts"]
             H3["subagent-stop.ts"]
             HR["rundown.ts<br/>execFileSync → rundown CLI"]
         end
@@ -73,8 +73,11 @@ stderr plus exit code 2, the universal blocking channel of the hook protocol
 Anything else returns `{}` and emits nothing. A gate's `decision: 'block'`
 short-circuits; its `updatedInput` becomes the tool input Claude Code runs; its
 `additionalContext` accumulates. A gate that throws is logged and skipped (the
-fail-open backstop), which is safe only because every enforcement gate turns its
-own errors into a block first.
+fail-open backstop). No gate reaches it: the SubagentStop gate turns its own
+errors into a block first, and the Bash and dispatch decisions are pure
+functions of the tool input. The Bash gate is imported statically and loads no
+part of `@rundown-org/core`; the dispatch and SubagentStop gates are imported
+lazily on their routes, so a Bash call never loads core.
 
 ### 1.3 The gates and handlers
 
@@ -84,28 +87,34 @@ own errors into a block first.
   `shared/claim-ticket-marker.ts` — in the Agent/Task prompt and description.
   One ticket: the dispatch proceeds with the claim instructions appended to the
   sub-agent's prompt through `updatedInput` (a PreToolUse `additionalContext`
-  reaches the caller, not the spawned agent). Two tickets, or a marker that is
-  not a ticket: blocked. No marker: untouched. Fails closed only for a marked
-  dispatch.
+  reaches the caller, not the spawned agent). Two tickets, a marker that is not
+  a ticket, or any other line naming `RD_CLAIM_TICKET` (inline code, trailing
+  text, mid-sentence): blocked. Any line ending, CRLF included, ends a marker.
+  No marker: untouched. The handler returns a typed decision (`untouched` /
+  `claim` / `blocked`) and has no error path.
 - **Bash command** (`gates/on-bash-command.ts`,
   `workflow/hooks/stamp-agent-id.ts`, `workflow/hooks/shell-command.ts`). A
-  conservative shell scanner finds every `rundown claim` / `rundown release`
-  (also its short rd bin, `node …/cli.js`, behind `cd …&&`, `VAR=…`, `env`,
-  `npx`, `pnpm exec`, global options, pipes and redirections). It removes any
-  `--agent-id` the agent typed and inserts `--agent-id '<agent_id>'` from the
-  hook input right after the subcommand. Without an `agent_id` (the top-level
-  agent), `claim` is denied and `release` is only stripped, so it matches only a
-  claim recorded without an id. A claim or release hidden in command
-  substitution, backticks, a here-document, `sh -c`, `eval` or `xargs` is
-  denied. The rewrite carries no `permissionDecision`, so Claude Code still
-  applies the user's permission rules to it. Fails closed.
+  small reader finds each `rundown claim` / `rundown release` it can name with
+  confidence (also its short rd bin, `npx @rundown-org/cli`,
+  `node …cli/dist/cli.js`, in `&&` / `;` / `|` chains, behind `VAR=x`, `env`,
+  `timeout N`, `nice`, `npx`, `pnpm exec`). It removes any `--agent-id` the
+  agent typed and inserts `--agent-id '<agent_id>'` right after the subcommand.
+  Without an `agent_id` (the top-level agent), such a `claim` is denied
+  (`CLAIM_OUTSIDE_SUBAGENT`) and such a `release` is only stripped. Every other
+  command — including one it cannot read: a here-document, command substitution,
+  an expansion in command position, `sh -c`, `eval` — passes byte for byte,
+  never denied on doubt, so the user's Bash permission rules match it as typed.
+  The CLI fails closed on what it misses: `claim` without `--agent-id` under
+  `CLAUDECODE=1` is `AGENT_ID_REQUIRED`, and `--agent-id` given twice is
+  `INVALID_SYNTAX`. The rewrite carries no `permissionDecision`.
 - **Subagent stop** (`gates/on-subagent-stop.ts`,
-  `workflow/hooks/subagent-stop.ts`). With an `agent_id` and an existing
-  `.rundown/rundown.db`, runs `rundown status --claimed-by <agent_id>` and
-  blocks with the finish-or-release instruction while any Delegation is listed
-  (core's `delegationsHeldBy`: running, claimed under that id, still counted by
-  its parent). It keeps no counter and never creates the store. Fails closed: a
-  CLI failure blocks.
+  `workflow/hooks/subagent-stop.ts`). With an `agent_id`, runs
+  `rundown status --claimed-by <agent_id>` in each of `CLAUDE_PROJECT_DIR` (the
+  session's project root, which does not follow `cd`) and the hook's `cwd` that
+  has a `.rundown/rundown.db`, and blocks with the finish-or-release instruction
+  while any Delegation is listed (core's `delegationsHeldBy`: running, claimed
+  under that id, still counted by its parent). It keeps no counter and never
+  creates the store. Fails closed: a CLI failure blocks.
 - **`rundown.ts`** resolves `@rundown-org/cli` with `require.resolve` and runs
   `node <cliPath> <args>` through `execFileSync` with an argv array (no shell).
   `setExecSync` injects a fake in tests.
@@ -169,16 +178,16 @@ with `rundown retry --token <owner_token> --step <substep>`.
 
 ## Quick file map
 
-| Concern                                 | File                                                                                             |
-| --------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Entry point (stdin → dispatch → stdout) | `src/cli.ts`, `src/hook-refusal.ts`                                                              |
-| Router                                  | `src/dispatcher.ts`                                                                              |
-| Hook JSON builder                       | `src/hook-output.ts`                                                                             |
-| Gates                                   | `src/gates/on-{delegation-dispatch,bash-command,subagent-stop}.ts`                               |
-| Handlers                                | `src/workflow/hooks/{delegation-dispatch,stamp-agent-id,shell-command,subagent-stop,rundown}.ts` |
-| Claim Ticket marker                     | `src/shared/claim-ticket-marker.ts`                                                              |
-| Hook registration                       | `hooks/hooks.json`                                                                               |
-| Plugin manifest                         | `.claude-plugin/plugin.json`                                                                     |
-| Sibling bins                            | `src/rdpath.ts`, `src/rdx.ts` (+ `rdx-core`, `rdx-validate`, `*-schema`, `plan-validators`)      |
-| Skills                                  | `skills/running-runbooks/SKILL.md`, `skills/delegating-runbooks/SKILL.md`                        |
-| Trust model                             | [`docs/internal/plugin-trust-model.md`](../../../docs/internal/plugin-trust-model.md)            |
+| Concern                                 | File                                                                                        |
+| --------------------------------------- | ------------------------------------------------------------------------------------------- |
+| Entry point (stdin → dispatch → stdout) | `src/cli.ts`, `src/hook-refusal.ts`                                                         |
+| Router                                  | `src/dispatcher.ts`                                                                         |
+| Hook JSON builder                       | `src/hook-output.ts`                                                                        |
+| Gates                                   | `src/gates/on-{delegation-dispatch,bash-command,subagent-stop}.ts`                          |
+| Handlers                                | `src/workflow/hooks/{delegation-dispatch,stamp-agent-id,subagent-stop,rundown}.ts`          |
+| Claim Ticket marker                     | `src/shared/claim-ticket-marker.ts`                                                         |
+| Hook registration                       | `hooks/hooks.json`                                                                          |
+| Plugin manifest                         | `.claude-plugin/plugin.json`                                                                |
+| Sibling bins                            | `src/rdpath.ts`, `src/rdx.ts` (+ `rdx-core`, `rdx-validate`, `*-schema`, `plan-validators`) |
+| Skills                                  | `skills/running-runbooks/SKILL.md`, `skills/delegating-runbooks/SKILL.md`                   |
+| Trust model                             | [`docs/internal/plugin-trust-model.md`](../../../docs/internal/plugin-trust-model.md)       |

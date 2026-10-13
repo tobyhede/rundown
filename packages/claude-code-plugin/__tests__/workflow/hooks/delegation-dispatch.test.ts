@@ -11,8 +11,8 @@ import {
   CLAIM_TICKET_MARKER,
   findClaimTicketMarkers,
   formatClaimTicketMarker,
-  type HookInput,
-} from '../../../src/shared/index.js';
+} from '../../../src/shared/claim-ticket-marker.js';
+import type { HookInput } from '../../../src/shared/index.js';
 
 const TICKET = parseClaimTicket(`rdt_${'A'.repeat(43)}`);
 const OTHER = parseClaimTicket(`rdt_${'B'.repeat(43)}`);
@@ -43,11 +43,40 @@ describe('the Claim Ticket marker', () => {
   });
 
   it('is not found mid-sentence, and a value that is not a ticket is counted, not returned', () => {
-    expect(findClaimTicketMarkers(`see RD_CLAIM_TICKET=${TICKET} above`).tickets).toEqual([]);
+    expect(findClaimTicketMarkers(`see RD_CLAIM_TICKET=${TICKET} above`)).toEqual({
+      tickets: [],
+      malformed: 1,
+    });
     expect(findClaimTicketMarkers('RD_CLAIM_TICKET=rdt_short')).toEqual({
       tickets: [],
       malformed: 1,
     });
+  });
+});
+
+describe('near-miss markers (review finding H6)', () => {
+  it('accepts a marker line ending in CRLF', () => {
+    expect(
+      findClaimTicketMarkers(`Review it.\r\nRD_CLAIM_TICKET=${TICKET}\r\nThanks.\r\n`),
+    ).toEqual({
+      tickets: [TICKET],
+      malformed: 0,
+    });
+  });
+
+  it.each([
+    ['inline code', `\`RD_CLAIM_TICKET=${TICKET}\``],
+    ['trailing text', `RD_CLAIM_TICKET=${TICKET} (your ticket)`],
+    ['a mid-sentence marker', `Your ticket: RD_CLAIM_TICKET=${TICKET}`],
+    ['a spaced key', `RD_CLAIM_TICKET = ${TICKET}`],
+  ])('counts %s as malformed, never silently ignoring it', (_label, line) => {
+    expect(findClaimTicketMarkers(`Review it.\n${line}\n`)).toEqual({ tickets: [], malformed: 1 });
+  });
+
+  it('blocks a dispatch whose only marker is a near miss', async () => {
+    const result = await dispatch(agent(`Review it.\n\`RD_CLAIM_TICKET=${TICKET}\``));
+    expect(result.blockReason).toMatch(/RD_CLAIM_TICKET/);
+    expect(result.blockReason).not.toContain(TICKET);
   });
 });
 
@@ -93,7 +122,7 @@ describe('PreToolUse(Agent|Task) dispatch', () => {
 
   it('blocks a malformed marker without echoing it', async () => {
     const result = await dispatch(agent('RD_CLAIM_TICKET=rdt_typo123'));
-    expect(result.blockReason).toMatch(/does not carry a Claim Ticket/);
+    expect(result.blockReason).toMatch(/is not a marker/);
     expect(result.blockReason).not.toContain('rdt_typo123');
   });
 

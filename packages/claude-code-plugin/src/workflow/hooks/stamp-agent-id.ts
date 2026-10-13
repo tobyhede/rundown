@@ -1,9 +1,8 @@
 // src/workflow/hooks/stamp-agent-id.ts
 
-import type { HookInput } from '../../shared/index.js';
+import type { HookInput } from '../../shared/types.js';
 import {
   rundownInvocationOf,
-  runsAnotherCommandLine,
   scanShellCommand,
   shellQuote,
   type RundownInvocation,
@@ -12,7 +11,7 @@ import {
 /**
  * What the PreToolUse(Bash) hook does with a command (#907, ADR 0005).
  *
- * - `allow` — the command runs as written.
+ * - `allow` — the command runs exactly as written.
  * - `rewrite` — the command runs as `command`: every `rundown claim` /
  *   `rundown release` in it carries the hook's `--agent-id` and no other.
  *   Claude Code still applies the user's permission rules to the rewrite.
@@ -25,31 +24,24 @@ export type BashCommandDecision =
 
 /** Refusal for `rundown claim` outside a sub-agent. */
 export const CLAIM_OUTSIDE_SUBAGENT_REASON =
-  'Rundown refused `rundown claim` here: a Claim Ticket is claimed by the sub-agent it was dispatched to, never by the orchestrating agent, and this call carries no sub-agent identity. Dispatch an Agent whose prompt carries the ticket (`RD_CLAIM_TICKET=<ticket>`), and collect its result with `rundown collect --token <owner_token>`.';
-
-/**
- * Refusal for a command the hook cannot read that may hide a claim or release.
- *
- * @param construct - The construct the scanner would not see through.
- * @returns The reason shown to the agent.
- */
-function opaqueReason(construct: string): string {
-  return `Rundown refused this command: it may run \`rundown claim\` or \`rundown release\` through ${construct}, where the plugin cannot stamp your agent id. Run \`rundown claim <ticket>\` / \`rundown release <child run id>\` as a plain command.`;
-}
-
-/** Text that may name a claim or a release, for the opaque-command check. */
-const MAY_CLAIM = /\b(rundown|rd|cli\.js)\b[\s\S]*\b(claim|release)\b/;
+  'Rundown refused `rundown claim` here (CLAIM_OUTSIDE_SUBAGENT): a Claim Ticket is claimed by the sub-agent it was dispatched to, never by the orchestrating agent, and this call carries no sub-agent identity. Dispatch an Agent whose prompt carries the ticket on a line of its own (`RD_CLAIM_TICKET=<ticket>`), and collect its result with `rundown collect --token <owner_token>`.';
 
 /**
  * Decide what the Bash hook does with a command: stamp the calling agent's id
- * on `rundown claim` and `rundown release`, replacing any `--agent-id` the
- * agent passed itself, so no agent can claim or release under another's id.
+ * on every `rundown claim` and `rundown release` it reads with confidence,
+ * replacing any `--agent-id` the agent passed itself.
  *
- * Release is authorized by the agent id its claim recorded, matched in core
- * (both absent match). A call with no `agent_id` — the top-level agent — has
- * none: its `rundown claim` is refused outright, and its `rundown release` is
- * stripped of any `--agent-id` it passed, so it matches only a claim recorded
- * without one (a person's, or the scenario harness's) and never a sub-agent's.
+ * It never denies on doubt. A command it cannot read (a here-document,
+ * command substitution, an expansion in command position, `sh -c`, `eval`,
+ * global options before the subcommand) runs untouched, so the user's
+ * permission rules see it exactly as typed; a claim hidden in one reaches the
+ * CLI without `--agent-id`, and the CLI refuses it inside Claude Code
+ * (`AGENT_ID_REQUIRED`). A smuggled `--agent-id` beside the stamp makes two,
+ * which the CLI refuses `INVALID_SYNTAX`.
+ *
+ * A call with no `agent_id` — the top-level agent — has no id to stamp: its
+ * `rundown claim` is denied, and its `rundown release` is stripped of any
+ * `--agent-id`, so it matches only a claim recorded without one.
  *
  * @param command - The Bash command the agent is about to run.
  * @param agentId - The hook input's `agent_id`, absent outside a sub-agent.
@@ -60,14 +52,7 @@ export function decideBashCommand(
   agentId: string | undefined,
 ): BashCommandDecision {
   const scan = scanShellCommand(command);
-  if (scan.kind === 'opaque') {
-    return MAY_CLAIM.test(command)
-      ? { kind: 'deny', reason: opaqueReason(scan.construct) }
-      : { kind: 'allow' };
-  }
-  if (MAY_CLAIM.test(command) && scan.commands.some(runsAnotherCommandLine)) {
-    return { kind: 'deny', reason: opaqueReason('another shell or interpreter') };
-  }
+  if (scan.kind === 'opaque') return { kind: 'allow' };
   const invocations = scan.commands.flatMap((words) => rundownInvocationOf(words) ?? []);
   if (invocations.length === 0) return { kind: 'allow' };
   if (agentId === undefined && invocations.some((found) => found.subcommand === 'claim')) {

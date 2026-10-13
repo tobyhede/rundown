@@ -2,7 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { CLAIM_TICKET_MARKER } from '../../src/shared/index.js';
+import { CLAIM_TICKET_MARKER } from '../../src/shared/claim-ticket-marker.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -165,7 +165,12 @@ describe('delegating-runbooks Delegation protocol', () => {
     expect(skill).not.toContain('--agent-id <id>');
     expect(skill).not.toMatch(/nothing stamps it/);
     expect(subAgent).toMatch(/stamps your agent id/);
+    expect(subAgent).toMatch(/as plain commands/);
+    expect(subAgent).toContain('`AGENT_ID_REQUIRED`');
     expect(subAgent).toMatch(/cannot stop while/);
+    expect(skill).not.toContain('RUNDOWN_AGENT_ID');
+    expect(section(skill, '## Refusals')).toContain('`CLAIM_OUTSIDE_SUBAGENT`');
+    expect(section(skill, '## Refusals')).toContain('`AGENT_ID_REQUIRED`');
   });
 
   it('teaches no nested-delegation pattern (ADR 0005: neither supported nor refused)', () => {
@@ -209,6 +214,9 @@ describe('running-runbooks Delegation recovery (#905), in both plugin copies', (
     const claimed = section(copies.claude, '## Claimed Delegations');
     expect(copies.claude).not.toContain('--agent-id');
     expect(claimed).toMatch(/stamps\s+your\s+agent\s+id/);
+    expect(claimed).toMatch(/as plain commands/);
+    expect(claimed).toContain('`AGENT_ID_REQUIRED`');
+    expect(copies.claude).not.toContain('RUNDOWN_AGENT_ID');
   });
 
   it('codex: Codex runs no plugin hook, so the claimed child passes one stable id by hand (#907)', () => {
@@ -217,6 +225,8 @@ describe('running-runbooks Delegation recovery (#905), in both plugin copies', (
     expect(claimed).toContain('rundown release <child run id> --agent-id <id>');
     expect(claimed).toMatch(/same\s+`--agent-id`/);
     expect(claimed).toMatch(/no\s+hook/);
+    expect(claimed).toMatch(/given twice is\s+refused `INVALID_SYNTAX`/);
+    expect(copies.codex).not.toContain('RUNDOWN_AGENT_ID');
   });
 });
 

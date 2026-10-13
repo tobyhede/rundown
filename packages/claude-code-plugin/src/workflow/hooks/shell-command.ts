@@ -2,18 +2,18 @@
 
 /**
  * A small, conservative reader of the Bash commands an agent runs, for the
- * one thing the plugin needs from them (#907): finding `rundown claim` and
- * `rundown release` invocations and the exact source span of every word, so
- * the Bash hook can rewrite `--agent-id` without disturbing anything else.
+ * one thing the plugin needs from them (#907): finding the `rundown claim` /
+ * `rundown release` invocations it can read with confidence, and the exact
+ * source span of their words, so the Bash hook can stamp `--agent-id` without
+ * disturbing anything else.
  *
  * It is not a shell. It splits on control operators (`;`, `&`, `|`, `&&`,
  * `||`, newlines, parentheses), honours single and double quotes and
- * backslash escapes, drops redirections and comments, and skips the prefixes
- * agents put before a command (`VAR=value`, `env`, `command`, `exec`, `npx`,
- * `pnpm exec`, …). Anything whose words it cannot know without running a
- * shell — command substitution, backticks, process substitution, here-docs,
- * or a command handed to another interpreter (`sh -c`, `eval`, `xargs`) — is
- * reported `opaque`, and the hook fails closed on it when it may hide a claim.
+ * backslash escapes, and drops redirections and comments. Anything whose
+ * words it cannot know without running a shell — command substitution,
+ * backticks, process substitution, a here-document, an unterminated quote —
+ * makes the whole command `opaque`, and the hook leaves it untouched: the
+ * CLI refuses a claim that reaches it unstamped inside Claude Code.
  *
  * @module workflow/hooks/shell-command
  */
@@ -22,6 +22,8 @@
 export interface ShellWord {
   /** The word's value after quote removal. */
   readonly text: string;
+  /** False when the word holds a `$` expansion the shell would rewrite. */
+  readonly literal: boolean;
   /** Offset of the word's first character in the source. */
   readonly start: number;
   /** Offset just past the word's last character in the source. */
@@ -35,11 +37,7 @@ export type ShellScan =
       /** Each simple command's words, redirections removed, in source order. */
       readonly commands: readonly (readonly ShellWord[])[];
     }
-  | {
-      readonly kind: 'opaque';
-      /** The construct the scanner will not see through. */
-      readonly construct: string;
-    };
+  | { readonly kind: 'opaque' };
 
 /** A Rundown subcommand the Bash hook stamps the agent id on. */
 export type StampedSubcommand = 'claim' | 'release';
@@ -57,45 +55,8 @@ export interface RundownInvocation {
 /** Characters that end a word and the simple command it belongs to. */
 const CONTROL = new Set([';', '&', '|', '\n', '(', ')']);
 
-/** Interpreters that run another command line the scanner cannot see. */
-const INTERPRETERS = new Set(['sh', 'bash', 'zsh', 'dash', 'eval', 'xargs', 'source', '.']);
-
-/** Words that may lead a command without being it. */
-const PREFIX_WORDS = new Set([
-  '{',
-  '}',
-  '!',
-  'if',
-  'then',
-  'else',
-  'elif',
-  'do',
-  'while',
-  'until',
-  'time',
-  'command',
-  'exec',
-  'nohup',
-  'npx',
-  'bunx',
-]);
-
-/**
- * The program-level `rundown` options that take a value (`cli.ts`). A value
- * is skipped while looking for the subcommand; an option not listed is read
- * as a flag.
- */
-const GLOBAL_VALUE_OPTIONS = new Set([
-  '--allow-run',
-  '--allow-read',
-  '--allow-write',
-  '--allow-env',
-  '--policy',
-  '--helpers',
-]);
-
-/** Package runners whose next word may be `exec` / `dlx` before the binary. */
-const PACKAGE_RUNNERS = new Set(['pnpm', 'npm', 'yarn', 'bun']);
+/** A leading `NAME=value` assignment. */
+const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 
 /**
  * Split a Bash command into simple commands of words.
@@ -107,14 +68,16 @@ export function scanShellCommand(source: string): ShellScan {
   const commands: ShellWord[][] = [];
   let words: ShellWord[] = [];
   let text = '';
+  let literal = true;
   let start = -1;
   let redirectTarget = false;
 
   const endWord = (end: number): void => {
     if (start < 0) return;
     if (redirectTarget) redirectTarget = false;
-    else words.push({ text, start, end });
+    else words.push({ text, literal, start, end });
     text = '';
+    literal = true;
     start = -1;
   };
   const endCommand = (): void => {
@@ -129,16 +92,12 @@ export function scanShellCommand(source: string): ShellScan {
   while (i < source.length) {
     const ch = source[i];
     const next = source[i + 1];
-    if (ch === '`' || (ch === '$' && next === '(')) {
-      return { kind: 'opaque', construct: ch === '`' ? 'backticks' : 'command substitution' };
-    }
-    if ((ch === '<' || ch === '>') && next === '(') {
-      return { kind: 'opaque', construct: 'process substitution' };
-    }
+    if (ch === '`' || (ch === '$' && next === '(')) return { kind: 'opaque' };
+    if ((ch === '<' || ch === '>') && next === '(') return { kind: 'opaque' };
     if (ch === "'") {
       begin(i);
       const close = source.indexOf("'", i + 1);
-      if (close < 0) return { kind: 'opaque', construct: 'an unterminated quote' };
+      if (close < 0) return { kind: 'opaque' };
       text += source.slice(i + 1, close);
       i = close + 1;
       continue;
@@ -148,18 +107,17 @@ export function scanShellCommand(source: string): ShellScan {
       i += 1;
       while (i < source.length && source[i] !== '"') {
         const inner = source[i];
-        if (inner === '`' || (inner === '$' && source[i + 1] === '(')) {
-          return { kind: 'opaque', construct: 'command substitution' };
-        }
+        if (inner === '`' || (inner === '$' && source[i + 1] === '(')) return { kind: 'opaque' };
         if (inner === '\\' && i + 1 < source.length && '"\\$`\n'.includes(source[i + 1])) {
           if (source[i + 1] !== '\n') text += source[i + 1];
           i += 2;
           continue;
         }
+        if (inner === '$') literal = false;
         text += inner;
         i += 1;
       }
-      if (i >= source.length) return { kind: 'opaque', construct: 'an unterminated quote' };
+      if (i >= source.length) return { kind: 'opaque' };
       i += 1;
       continue;
     }
@@ -178,7 +136,7 @@ export function scanShellCommand(source: string): ShellScan {
       continue;
     }
     if (ch === '<' || ch === '>') {
-      if (ch === '<' && next === '<') return { kind: 'opaque', construct: 'a here-document' };
+      if (ch === '<' && next === '<') return { kind: 'opaque' };
       // A file-descriptor number glued to the operator (`2>`) is not a word.
       if (start >= 0 && /^\d+$/.test(text) && source.slice(start, i) === text) {
         text = '';
@@ -211,6 +169,7 @@ export function scanShellCommand(source: string): ShellScan {
       continue;
     }
     begin(i);
+    if (ch === '$') literal = false;
     text += ch;
     i += 1;
   }
@@ -230,83 +189,118 @@ function baseName(word: string): string {
 }
 
 /**
- * Whether a word names the Rundown CLI: `rundown`, `rd`, either by path, or
- * the CLI package's entry script run through `node`.
+ * The literal text of a word.
  *
  * @param words - The command's words.
- * @param at - Index of the candidate binary word.
- * @returns The index of the first word after the binary, or -1.
+ * @param at - Index of the word.
+ * @returns Its text, or undefined past the end or for a word holding an expansion.
  */
-function rundownBinaryEnd(words: readonly ShellWord[], at: number): number {
-  const word = words.at(at)?.text;
-  if (word === undefined) return -1;
-  const base = baseName(word);
-  if (base === 'rundown' || base === 'rd') return at + 1;
-  if (base === 'node') {
-    const script = words[at + 1]?.text ?? '';
-    if (/(^|\/)(rundown|rd)$/.test(script) || /(@rundown-org\/cli|packages\/cli)\//.test(script)) {
-      return at + 2;
-    }
-  }
-  return -1;
+function literalAt(words: readonly ShellWord[], at: number): string | undefined {
+  const word = words.at(at);
+  return word?.literal === true ? word.text : undefined;
 }
 
 /**
- * The index of the command word, past assignments and prefix words.
+ * Skip a `timeout [options] DURATION` prefix.
  *
  * @param words - The command's words.
- * @returns Index of the first word that is the command itself.
+ * @param at - Index of the first word after `timeout`.
+ * @returns Index of the wrapped command, or -1 when not confident.
  */
-function commandWordIndex(words: readonly ShellWord[]): number {
+function skipTimeout(words: readonly ShellWord[], at: number): number {
+  let k = at;
+  for (;;) {
+    const word = literalAt(words, k);
+    if (word === undefined) return -1;
+    if (['--foreground', '--preserve-status', '-v', '--verbose'].includes(word)) k += 1;
+    else if (word === '-s' || word === '-k') k += 2;
+    else if (word.startsWith('--signal=') || word.startsWith('--kill-after=')) k += 1;
+    else if (/^\d+(\.\d+)?(s|m|h|d)?$/.test(word)) return k + 1;
+    else return -1;
+  }
+}
+
+/**
+ * Skip a `nice [options]` prefix.
+ *
+ * @param words - The command's words.
+ * @param at - Index of the first word after `nice`.
+ * @returns Index of the wrapped command, or -1 when not confident.
+ */
+function skipNice(words: readonly ShellWord[], at: number): number {
+  let k = at;
+  for (;;) {
+    const word = literalAt(words, k);
+    if (word === undefined) return -1;
+    if (word === '-n') k += 2;
+    else if (/^-\d+$/.test(word) || word.startsWith('--adjustment=')) k += 1;
+    else if (word.startsWith('-')) return -1;
+    else return k;
+  }
+}
+
+/**
+ * Find where the Rundown CLI's own arguments start: past assignments, the
+ * wrappers `env`, `timeout`, `nice`, `pnpm exec` / `npm exec`, and the
+ * binary itself — `rundown`, `rd`, `npx @rundown-org/cli` / `npx rundown`, or
+ * the CLI package's `cli.js` run through `node`.
+ *
+ * @param words - The simple command's words.
+ * @returns Index of the first word after the binary, or -1 when the command
+ *   is not one the reader can name with confidence.
+ */
+function rundownArgumentsStart(words: readonly ShellWord[]): number {
   let at = 0;
-  while (at < words.length) {
-    const word = words[at].text;
-    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(word) || PREFIX_WORDS.has(word)) {
+  while (at < words.length && ASSIGNMENT.test(words[at].text)) at += 1;
+  for (;;) {
+    const word = literalAt(words, at);
+    if (word === undefined) return -1;
+    const base = baseName(word);
+    if (base === 'rundown' || base === 'rd') return at + 1;
+    if (base === 'env') {
       at += 1;
-      continue;
-    }
-    if (word === 'env' || word === 'sudo') {
+      while (at < words.length && ASSIGNMENT.test(words[at].text)) at += 1;
+    } else if (base === 'timeout') {
+      at = skipTimeout(words, at + 1);
+    } else if (base === 'nice') {
+      at = skipNice(words, at + 1);
+    } else if ((base === 'pnpm' || base === 'npm') && literalAt(words, at + 1) === 'exec') {
+      at += 2;
+    } else if (base === 'npx') {
       at += 1;
-      while (at < words.length && /^-|^[A-Za-z_][A-Za-z0-9_]*=/.test(words[at].text)) at += 1;
-      continue;
+      while (['-y', '--yes', '-q', '--quiet'].includes(literalAt(words, at) ?? '')) at += 1;
+      const pkg = literalAt(words, at);
+      const isCli =
+        pkg === 'rundown' || pkg === '@rundown-org/cli' || pkg?.startsWith('@rundown-org/cli@');
+      return isCli === true ? at + 1 : -1;
+    } else if (base === 'node') {
+      const script = literalAt(words, at + 1) ?? '';
+      const isCli =
+        /(^|\/)(rundown|rd)$/.test(script) ||
+        /(@rundown-org\/cli|packages\/cli)\/(dist\/)?cli\.js$/.test(script);
+      return isCli ? at + 2 : -1;
+    } else {
+      return -1;
     }
-    if (PACKAGE_RUNNERS.has(word)) {
-      at += 1;
-      if (words[at]?.text === 'exec' || words[at]?.text === 'dlx' || words[at]?.text === 'x') {
-        at += 1;
-      }
-      continue;
-    }
-    if (word.startsWith('-') && at > 0) {
-      // A prefix's own flag, such as `npx --yes`.
-      at += 1;
-      continue;
-    }
-    return at;
+    if (at < 0) return -1;
   }
-  return at;
 }
 
 /**
- * Find a `rundown claim` / `rundown release` invocation in one simple command.
+ * Find a `rundown claim` / `rundown release` invocation in one simple command,
+ * when the reader can name it with confidence: every word up to and including
+ * the subcommand is literal, and the subcommand follows the binary directly.
  *
  * @param words - The simple command's words.
  * @returns The invocation, or undefined when the command is not one.
  */
 export function rundownInvocationOf(words: readonly ShellWord[]): RundownInvocation | undefined {
-  let at = rundownBinaryEnd(words, commandWordIndex(words));
+  const at = rundownArgumentsStart(words);
   if (at < 0) return undefined;
-  while (at < words.length) {
-    const word = words[at].text;
-    if (word === '--') {
-      at += 1;
-      break;
-    }
-    if (!word.startsWith('-')) break;
-    at += GLOBAL_VALUE_OPTIONS.has(word) ? 2 : 1;
-  }
   const subcommandWord = words.at(at);
-  if (subcommandWord?.text !== 'claim' && subcommandWord?.text !== 'release') return undefined;
+  if (subcommandWord?.literal !== true) return undefined;
+  const subcommand = subcommandWord.text;
+  if (subcommand !== 'claim' && subcommand !== 'release') return undefined;
   const agentIds: { start: number; end: number }[] = [];
   for (let k = at + 1; k < words.length; k += 1) {
     const word = words[k];
@@ -319,19 +313,7 @@ export function rundownInvocationOf(words: readonly ShellWord[]): RundownInvocat
       k += 1;
     }
   }
-  return { subcommand: subcommandWord.text, subcommandWord, agentIds };
-}
-
-/**
- * Whether a simple command hands another command line to an interpreter
- * (`sh -c`, `eval`, `xargs`, …), whose words the scanner never sees.
- *
- * @param words - The simple command's words.
- * @returns True for an interpreter invocation.
- */
-export function runsAnotherCommandLine(words: readonly ShellWord[]): boolean {
-  const word = words.at(commandWordIndex(words))?.text;
-  return word !== undefined && INTERPRETERS.has(baseName(word));
+  return { subcommand, subcommandWord, agentIds };
 }
 
 /**

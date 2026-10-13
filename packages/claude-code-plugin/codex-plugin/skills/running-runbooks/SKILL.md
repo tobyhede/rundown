@@ -215,7 +215,8 @@ the child's steps. Extra rules:
 - Pass the same `--agent-id` on `claim` and on `release` — one stable id of your
   own, such as your task name: release is authorized only for the agent id the
   claim recorded. Codex runs no hook, so nothing stamps it for you (in Claude
-  Code the plugin's hook does).
+  Code the plugin's hook does). Pass it once: `--agent-id` given twice is
+  refused `INVALID_SYNTAX`.
 - If you cannot finish the child — you lost its `owner_token` — run
   `rundown release <child run id> --agent-id <id>` with the child's `runbookId`
   and the same `--agent-id` your claim used. The child ends `abandoned`, with

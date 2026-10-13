@@ -19,5 +19,6 @@ export * from './errors.js';
 export * from './utils.js';
 export * from './logger.js';
 
-// Claim Ticket marker (#907)
-export * from './claim-ticket-marker.js';
+// The Claim Ticket marker (#907) is imported from './claim-ticket-marker.js'
+// directly, never re-exported here: it loads @rundown-org/core, and this
+// module is on every hook's path, the Bash hook's included.

@@ -44,6 +44,25 @@ export function finishOrReleaseInstruction(held: HeldDelegations): string {
 }
 
 /**
+ * The directories whose Rundown store may hold a claim by the stopping agent.
+ *
+ * First the session's project directory, `CLAUDE_PROJECT_DIR`: Claude Code
+ * exports it to every command hook as the project root the session started
+ * in, independent of later `cd`s. Then the hook input's `cwd`, which follows
+ * the agent's `cd` — a run started in a subdirectory keeps its store there,
+ * since the CLI stores runs under its own working directory. Both are read,
+ * so a claim in either holds the agent.
+ *
+ * @param input - Hook event payload.
+ * @returns The distinct directories to ask, project directory first.
+ */
+export function storeDirectories(input: HookInput): readonly string[] {
+  const projectDir = process.env.CLAUDE_PROJECT_DIR;
+  const dirs = projectDir === undefined || projectDir === '' ? [] : [projectDir];
+  return dirs.includes(input.cwd) ? dirs : [...dirs, input.cwd];
+}
+
+/**
  * Handle a SubagentStop hook event (#907, ADR 0005).
  *
  * Asks the CLI, never the store, which Delegations still hold the stopping
@@ -55,9 +74,13 @@ export function finishOrReleaseInstruction(held: HeldDelegations): string {
  * ignores the instruction is blocked again on every stop until a person
  * interrupts it (accepted by the ADR).
  *
- * A stop with no `agent_id`, or in a project with no Rundown store, holds
- * nothing: the Bash hook refuses every claim made without an agent id, and
- * no claim exists before the store does. The store is never created here.
+ * The question is asked in the session's project directory and in the hook's
+ * `cwd` (see {@link storeDirectories}), so a sub-agent that moved into a
+ * subdirectory is still held.
+ *
+ * A stop with no `agent_id`, or where neither directory has a Rundown store, holds
+ * nothing: a claim with no agent id records none, so it holds no sub-agent,
+ * and no claim exists before the store does. The store is never created here.
  *
  * @param input - Hook event payload
  * @returns A violation while a child holds the agent; otherwise empty
@@ -67,10 +90,14 @@ export function finishOrReleaseInstruction(held: HeldDelegations): string {
 export function handleSubagentStop(input: HookInput): Promise<SubagentStopResult> {
   const agentId = input.agent_id;
   if (agentId === undefined || agentId === '') return Promise.resolve({});
-  if (!existsSync(dbPath(input.cwd))) return Promise.resolve({});
-  const answer = ClaimedDelegationsResponseSchema.parse(
-    JSON.parse(rundown(['status', '--claimed-by', agentId], input.cwd)),
-  );
-  if (answer.delegations.length === 0) return Promise.resolve({});
-  return Promise.resolve({ violation: finishOrReleaseInstruction(answer.delegations) });
+  const held = storeDirectories(input)
+    .filter((dir) => existsSync(dbPath(dir)))
+    .flatMap(
+      (dir) =>
+        ClaimedDelegationsResponseSchema.parse(
+          JSON.parse(rundown(['status', '--claimed-by', agentId], dir)),
+        ).delegations,
+    );
+  if (held.length === 0) return Promise.resolve({});
+  return Promise.resolve({ violation: finishOrReleaseInstruction(held) });
 }

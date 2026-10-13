@@ -249,7 +249,7 @@ Claim a delegated child by its Claim Ticket and start it (prints its owner
 token)
 
 Options:
-  --agent-id <id>  Identity of the claiming agent, recorded on the child
+  --agent-id <id>  Identity of the claiming agent, recorded on the child (once)
   --text           Output as human-readable text
   -h, --help       display help for command
 ```
@@ -292,7 +292,7 @@ Usage: rundown release [options] <child-id>
 Abandon a delegated child you claimed but cannot finish (collected as a fail)
 
 Options:
-  --agent-id <id>  Identity of the releasing agent; must match the claim
+  --agent-id <id>  Identity of the releasing agent; must match the claim (once)
   --text           Output as human-readable text
   -h, --help       display help for command
 ```

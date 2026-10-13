@@ -1,48 +1,35 @@
-import { type HookInput, type GateResult, logger, getErrorMessage } from '../shared/index.js';
+import type { GateResult, HookInput } from '../shared/types.js';
 import { handleBashCommand } from '../workflow/hooks/stamp-agent-id.js';
 
 /**
  * Bash Command Gate (#907, ADR 0005)
  *
  * Routes PreToolUse(Bash) events to {@link handleBashCommand}: a `rundown
- * claim` or `rundown release` runs with the calling sub-agent's `--agent-id`
- * stamped on it, and a `claim` outside a sub-agent is denied. Every other
- * command passes untouched.
+ * claim` / `rundown release` it reads with confidence runs with the calling
+ * sub-agent's `--agent-id` stamped on it, and such a claim outside a
+ * sub-agent is denied. Every other command passes byte for byte, with no
+ * output, so the user's Bash permission rules match it as typed. A rewrite
+ * carries no permission decision either: Claude Code applies the user's
+ * rules to the stamped command.
  *
- * This is an ENFORCEMENT gate: it fails CLOSED. A command the handler fails
- * to read is denied rather than run unstamped, so the dispatcher's fail-open
- * catch can never let a claim through without its agent id.
+ * The decision is a pure function of the command, with no error path, and
+ * this module loads nothing from `@rundown-org/core`.
  *
  * @param input - Hook input containing Bash tool metadata
  * @returns Gate result: block on deny; `updatedInput` on a rewrite; or empty
  */
-export async function execute(input: HookInput): Promise<GateResult> {
-  try {
-    const decision = handleBashCommand(input);
-    switch (decision.kind) {
-      case 'allow':
-        return {};
-      case 'deny':
-        return { decision: 'block', reason: decision.reason };
-      case 'rewrite':
-        return { updatedInput: { ...input.tool_input, command: decision.command } };
-      default: {
-        const _exhaustive: never = decision;
-        return _exhaustive;
-      }
+export function execute(input: HookInput): Promise<GateResult> {
+  const decision = handleBashCommand(input);
+  switch (decision.kind) {
+    case 'allow':
+      return Promise.resolve({});
+    case 'deny':
+      return Promise.resolve({ decision: 'block', reason: decision.reason });
+    case 'rewrite':
+      return Promise.resolve({ updatedInput: { ...input.tool_input, command: decision.command } });
+    default: {
+      const exhaustive: never = decision;
+      return exhaustive;
     }
-  } catch (error) {
-    try {
-      await logger.error('Bash command gate failed; failing closed', {
-        error: getErrorMessage(error),
-      });
-    } catch {
-      // Do not let logging failures bypass the blocking decision.
-    }
-    return {
-      decision: 'block',
-      reason:
-        'Rundown could not read this command to stamp your agent id on `rundown claim` / `rundown release`, so it was not run. Run the rundown command on its own.',
-    };
   }
 }

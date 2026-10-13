@@ -511,6 +511,86 @@ describe('rundown claim / rundown collect (#904)', () => {
     });
   });
 
+  describe('the agent id inside Claude Code, and duplicate --agent-id (#907)', () => {
+    const insideClaudeCode = { env: { CLAUDECODE: '1' } };
+
+    async function heldBy(agentId: string): Promise<unknown> {
+      const held = await runCliInProcess(['status', '--claimed-by', agentId], workspace);
+      return envelopes(held.stdout)[0]?.delegations;
+    }
+
+    it('refuses an unstamped claim inside Claude Code AGENT_ID_REQUIRED and writes nothing', async () => {
+      const { runId, ticket } = await start();
+
+      const claim = await runCliInProcess(['claim', ticket], workspace, insideClaudeCode);
+
+      expect(claim.exitCode).toBe(1);
+      expect(errorEnvelope(claim.stdout)).toMatchObject({
+        code: 'AGENT_ID_REQUIRED',
+        command: 'claim',
+      });
+      expect(claim.stdout).not.toContain(ticket);
+      const status = await runCliInProcess(['status', '--run', runId], workspace);
+      expect(envelopes(status.stdout)[0]?.children).toEqual([
+        expect.objectContaining({ status: 'reserved' }),
+      ]);
+    });
+
+    it('claims inside Claude Code under the --agent-id the plugin stamped', async () => {
+      const { ticket } = await start();
+
+      const claim = await runCliInProcess(
+        ['claim', ticket, '--agent-id', 'sub-1'],
+        workspace,
+        insideClaudeCode,
+      );
+
+      expect(claim.exitCode).toBe(0);
+      expect(await heldBy('sub-1')).toEqual([expect.objectContaining({ step: '1.1' })]);
+    });
+
+    it('refuses a second --agent-id INVALID_SYNTAX on claim and release, never last-wins', async () => {
+      const { ticket } = await start();
+
+      const claim = await runCliInProcess(
+        ['claim', ticket, '--agent-id', 'sub-2', '--agent-id=sub-1'],
+        workspace,
+      );
+      expect(claim.exitCode).toBe(1);
+      expect(errorEnvelope(claim.stdout)).toMatchObject({
+        code: 'INVALID_SYNTAX',
+        command: 'claim',
+      });
+      expect(await heldBy('sub-1')).toEqual([]);
+
+      const claimed = await runCliInProcess(['claim', ticket, '--agent-id', 'sub-1'], workspace);
+      const childId = requireRunId(claimed.stdout);
+      const release = await runCliInProcess(
+        ['release', childId, '--agent-id', 'sub-2', '--agent-id=sub-1'],
+        workspace,
+      );
+      expect(release.exitCode).toBe(1);
+      expect(errorEnvelope(release.stdout)).toMatchObject({
+        code: 'INVALID_SYNTAX',
+        command: 'release',
+      });
+      expect(await heldBy('sub-1')).toEqual([expect.objectContaining({ runId: childId })]);
+    });
+
+    it('lets an unstamped release inside Claude Code end only a claim that recorded no agent', async () => {
+      const { ticket } = await start();
+      const claim = await runCliInProcess(['claim', ticket], workspace);
+      const childId = requireRunId(claim.stdout);
+
+      const release = await runCliInProcess(['release', childId], workspace, insideClaudeCode);
+
+      expect(release.exitCode).toBe(0);
+      expect(envelopes(release.stdout)).toEqual([
+        expect.objectContaining({ type: 'runbook_abandoned', runbookId: childId }),
+      ]);
+    });
+  });
+
   describe('rundown status --claimed-by (#907)', () => {
     async function claimAs(agentId: string) {
       const { token, runId, ticket } = await start();

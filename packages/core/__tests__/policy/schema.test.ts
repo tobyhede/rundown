@@ -238,6 +238,21 @@ describe('Policy Schema', () => {
       expect(allowedWrites).not.toContain('{repo}/.rundown/runbooks/**');
     });
 
+    it('pins the whole default write allow-list, with nothing under .claude/ (#907)', () => {
+      // The plugin's .claude/session/ state was deleted with PluginSessionLock;
+      // no runbook, plugin path or test writes under {repo}/.claude any more.
+      expect(DEFAULT_POLICY.default.write.allow).toEqual([
+        '{repo}/.rundown/runs/**',
+        '{repo}/.rundown/locks/**',
+        '{repo}/.rundown/contexts/**',
+        '{repo}/.rundown/rundown.db',
+        '{repo}/.rundown/rundown.db-wal',
+        '{repo}/.rundown/rundown.db-shm',
+        '{repo}/.rundown/work/**',
+        '{tmp}/**',
+      ]);
+    });
+
     it('grants write to the state database and its WAL/SHM sidecars', () => {
       // A nested `rundown pass`/`fail` spawned from a runbook step runs under this
       // policy and mutates run state via SQLite, which creates -wal/-shm sidecars
@@ -252,14 +267,14 @@ describe('Policy Schema', () => {
     it('does not grant write to build-output directories by default', () => {
       // Build dirs are unused by Rundown-managed runbooks and, on Linux (allow-
       // list only), would be unguarded blast radius. Build-writing runbooks must
-      // opt in via --allow-write. .claude/** is retained for the plugin's session
-      // state, and {tmp}/** is retained for scratch space.
+      // opt in via --allow-write. .claude/** is gone with the plugin's session
+      // state (#907), and {tmp}/** is retained for scratch space.
       const allowedWrites = DEFAULT_POLICY.default.write.allow;
       expect(allowedWrites).not.toContain('{repo}/node_modules/**');
       expect(allowedWrites).not.toContain('{repo}/dist/**');
       expect(allowedWrites).not.toContain('{repo}/build/**');
       expect(allowedWrites).not.toContain('{repo}/.next/**');
-      expect(allowedWrites).toContain('{repo}/.claude/**');
+      expect(allowedWrites).not.toContain('{repo}/.claude/**');
       expect(allowedWrites).toContain('{tmp}/**');
     });
   });

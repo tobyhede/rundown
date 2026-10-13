@@ -74,6 +74,10 @@ export function runCli(args: string | string[], cwd: string): CliResult {
       ...process.env,
       NO_COLOR: '1',
       RUNDOWN_LOG: '0',
+      // Run as from a plain shell, not the Claude Code session running the
+      // tests (#907): CLAUDECODE=1 refuses an unnamed claim.
+      CLAUDECODE: undefined,
+      CLAUDE_CODE_ENTRYPOINT: undefined,
     },
   });
 

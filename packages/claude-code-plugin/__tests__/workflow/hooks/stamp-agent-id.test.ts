@@ -1,9 +1,12 @@
 // __tests__/workflow/hooks/stamp-agent-id.test.ts
 //
-// The PreToolUse(Bash) hook (#907, ADR 0005): it stamps the calling agent's
-// id on `rundown claim` / `rundown release`, replaces any id the agent typed,
-// and refuses `claim` outside a sub-agent. Driven through the hook's public
-// decision and through the dispatcher, as Claude Code calls it.
+// The PreToolUse(Bash) hook (#907, ADR 0005): it stamps the calling
+// sub-agent's id on every `rundown claim` / `rundown release` it can read with
+// confidence, strips any `--agent-id` the agent typed, and denies a claim it
+// reads from an agent with no `agent_id`. Every other command — including one
+// it cannot read — passes through byte for byte, so the user's Bash
+// permission rules still match it; the CLI refuses an unstamped claim inside
+// Claude Code (delegation-hooks.integration.test.ts drives that).
 import { describe, expect, it } from '@jest/globals';
 import { dispatch } from '../../../src/dispatcher.js';
 import { buildHookOutput } from '../../../src/hook-output.js';
@@ -12,44 +15,54 @@ import { decideBashCommand } from '../../../src/workflow/hooks/stamp-agent-id.js
 
 const TICKET = `rdt_${'A'.repeat(43)}`;
 const CHILD = `rd_${'0123456789abcdef'.repeat(2)}`;
+const STAMP = "--agent-id 'agent-1'";
 
-describe('stamping --agent-id on claim and release', () => {
+describe('stamping --agent-id on a claim or release it reads with confidence', () => {
   it.each([
-    [`rundown claim ${TICKET}`, `rundown claim --agent-id 'agent-1' ${TICKET}`],
-    [`rd claim ${TICKET}`, `rd claim --agent-id 'agent-1' ${TICKET}`],
-    [`rundown release ${CHILD}`, `rundown release --agent-id 'agent-1' ${CHILD}`],
+    [`rundown claim ${TICKET}`, `rundown claim ${STAMP} ${TICKET}`],
+    [`rd claim ${TICKET}`, `rd claim ${STAMP} ${TICKET}`],
+    [`rundown release ${CHILD}`, `rundown release ${STAMP} ${CHILD}`],
     [
       `cd /repo && RUNDOWN_LOG=0 rundown claim ${TICKET}`,
-      `cd /repo && RUNDOWN_LOG=0 rundown claim --agent-id 'agent-1' ${TICKET}`,
+      `cd /repo && RUNDOWN_LOG=0 rundown claim ${STAMP} ${TICKET}`,
     ],
     [
-      `env RUNDOWN_LOG=0 npx rundown claim ${TICKET} | tee out.json`,
-      `env RUNDOWN_LOG=0 npx rundown claim --agent-id 'agent-1' ${TICKET} | tee out.json`,
+      `env RUNDOWN_LOG=0 rundown claim ${TICKET} | tee out.json`,
+      `env RUNDOWN_LOG=0 rundown claim ${STAMP} ${TICKET} | tee out.json`,
     ],
+    [`timeout 30 rundown claim ${TICKET}`, `timeout 30 rundown claim ${STAMP} ${TICKET}`],
     [
-      `rundown --policy p.yaml claim ${TICKET} 2>&1`,
-      `rundown --policy p.yaml claim --agent-id 'agent-1' ${TICKET} 2>&1`,
+      `timeout -k 5 --signal=TERM 2m rundown claim ${TICKET}`,
+      `timeout -k 5 --signal=TERM 2m rundown claim ${STAMP} ${TICKET}`,
     ],
+    [`nice -n 10 rundown claim ${TICKET}`, `nice -n 10 rundown claim ${STAMP} ${TICKET}`],
+    [`npx @rundown-org/cli claim ${TICKET}`, `npx @rundown-org/cli claim ${STAMP} ${TICKET}`],
+    [`npx -y rundown claim ${TICKET}`, `npx -y rundown claim ${STAMP} ${TICKET}`],
+    [`pnpm exec rundown claim ${TICKET}`, `pnpm exec rundown claim ${STAMP} ${TICKET}`],
     [
       `node packages/cli/dist/cli.js claim ${TICKET}`,
-      `node packages/cli/dist/cli.js claim --agent-id 'agent-1' ${TICKET}`,
+      `node packages/cli/dist/cli.js claim ${STAMP} ${TICKET}`,
     ],
     [
       `rundown status; rundown release ${CHILD} > release.json`,
-      `rundown status; rundown release --agent-id 'agent-1' ${CHILD} > release.json`,
+      `rundown status; rundown release ${STAMP} ${CHILD} > release.json`,
+    ],
+    [
+      `rundown claim ${TICKET} && rundown release ${CHILD}`,
+      `rundown claim ${STAMP} ${TICKET} && rundown release ${STAMP} ${CHILD}`,
     ],
   ])('rewrites %s', (command, expected) => {
     expect(decideBashCommand(command, 'agent-1')).toEqual({ kind: 'rewrite', command: expected });
   });
 
-  it('replaces an agent id the agent passed itself, in either spelling', () => {
+  it('strips an agent id the agent typed, in either spelling', () => {
     expect(decideBashCommand(`rundown claim ${TICKET} --agent-id other`, 'agent-1')).toEqual({
       kind: 'rewrite',
-      command: `rundown claim --agent-id 'agent-1' ${TICKET}`,
+      command: `rundown claim ${STAMP} ${TICKET}`,
     });
     expect(
       decideBashCommand(`rundown release --agent-id="spoofed id" ${CHILD}`, 'agent-1'),
-    ).toEqual({ kind: 'rewrite', command: `rundown release --agent-id 'agent-1' ${CHILD}` });
+    ).toEqual({ kind: 'rewrite', command: `rundown release ${STAMP} ${CHILD}` });
   });
 
   it('quotes an agent id as one shell word', () => {
@@ -58,42 +71,18 @@ describe('stamping --agent-id on claim and release', () => {
       command: `rundown claim --agent-id 'a'\\''; rm -rf ~; '\\''' ${TICKET}`,
     });
   });
-
-  it('stamps every claim and release of a compound command', () => {
-    expect(
-      decideBashCommand(`rundown claim ${TICKET} && rundown release ${CHILD}`, 'agent-1'),
-    ).toEqual({
-      kind: 'rewrite',
-      command: `rundown claim --agent-id 'agent-1' ${TICKET} && rundown release --agent-id 'agent-1' ${CHILD}`,
-    });
-  });
-
-  it.each([
-    'rundown pass --token rdo_x --step 1',
-    'rundown status --claimed-by agent-1',
-    'git commit -m "rundown claim docs"',
-    'echo claim release',
-    `rundown run claim.runbook.md`,
-  ])('leaves %s alone', (command) => {
-    expect(decideBashCommand(command, 'agent-1')).toEqual({ kind: 'allow' });
-  });
 });
 
 describe('outside a sub-agent (no agent_id)', () => {
-  it('refuses claim, naming the dispatch it should have been', () => {
-    const decision = decideBashCommand(`rundown claim ${TICKET}`, undefined);
+  it('denies a claim it reads, naming the dispatch it should have been', () => {
+    const decision = decideBashCommand(`timeout 30 rundown claim ${TICKET}`, undefined);
     expect(decision).toMatchObject({ kind: 'deny' });
+    expect(decision.kind === 'deny' && decision.reason).toMatch(/CLAIM_OUTSIDE_SUBAGENT/);
     expect(decision.kind === 'deny' && decision.reason).toMatch(/sub-agent/);
     expect(decision.kind === 'deny' && decision.reason).not.toContain(TICKET);
   });
 
-  it('refuses a claim it carries an agent id for, too: the top level cannot borrow one', () => {
-    expect(
-      decideBashCommand(`rundown claim ${TICKET} --agent-id agent-1`, undefined),
-    ).toMatchObject({ kind: 'deny' });
-  });
-
-  it('strips any agent id from release, so it matches only an unstamped claim', () => {
+  it('strips any agent id from a release, so it matches only an unstamped claim', () => {
     expect(decideBashCommand(`rundown release ${CHILD} --agent-id agent-1`, undefined)).toEqual({
       kind: 'rewrite',
       command: `rundown release ${CHILD}`,
@@ -102,18 +91,37 @@ describe('outside a sub-agent (no agent_id)', () => {
   });
 });
 
-describe('commands the hook cannot read', () => {
+describe('commands it leaves byte for byte, never denying on doubt', () => {
+  const HEREDOC_COMMIT = [
+    "git commit -m \"$(cat <<'EOF'",
+    'fix(plugin): rundown release notes',
+    '',
+    'rundown claim is stamped by the hook.',
+    'EOF',
+    ')"',
+  ].join('\n');
+
   it.each([
+    'git status',
+    'rundown pass --token rdo_x --step 1',
+    'rundown status --claimed-by agent-1',
+    'git commit -m "rundown claim docs"',
+    'echo claim release',
+    'rundown run claim.runbook.md',
+    HEREDOC_COMMIT,
     `echo $(rundown claim ${TICKET})`,
     `x=\`rundown claim ${TICKET}\``,
     `bash -c "rundown claim ${TICKET}"`,
+    `eval "rundown claim ${TICKET}"`,
     `echo ${TICKET} | xargs rundown claim`,
-  ])('fails closed on %s', (command) => {
-    expect(decideBashCommand(command, 'agent-1')).toMatchObject({ kind: 'deny' });
-  });
-
-  it('allows an opaque command that names no claim or release', () => {
-    expect(decideBashCommand('echo $(date)', 'agent-1')).toEqual({ kind: 'allow' });
+    `S=claim; rundown $S ${TICKET}`,
+    `R=rundown; $R claim ${TICKET}`,
+    `rundown --policy p.yaml claim ${TICKET}`,
+    `sudo -u other rundown claim ${TICKET}`,
+    `rundown claim ${TICKET} 'unterminated`,
+  ])('allows %j untouched, for any caller', (command) => {
+    expect(decideBashCommand(command, 'agent-1')).toEqual({ kind: 'allow' });
+    expect(decideBashCommand(command, undefined)).toEqual({ kind: 'allow' });
   });
 });
 
@@ -136,7 +144,7 @@ describe('PreToolUse(Bash) through the dispatcher', () => {
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         updatedInput: {
-          command: `rundown claim --agent-id 'agent-1' ${TICKET}`,
+          command: `rundown claim ${STAMP} ${TICKET}`,
           description: 'Claim the child',
           timeout: 60000,
         },
@@ -154,8 +162,8 @@ describe('PreToolUse(Bash) through the dispatcher', () => {
     });
   });
 
-  it('emits nothing for an ordinary command', async () => {
-    const input = bash('rundown pass --token rdo_x --step 1', 'agent-1');
+  it('emits nothing for an ordinary command, so permission rules see it as typed', async () => {
+    const input = bash('git status', 'agent-1');
     expect(buildHookOutput(input, await dispatch(input))).toEqual({});
   });
 });
