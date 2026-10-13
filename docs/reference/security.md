@@ -68,23 +68,22 @@ User
 The user is trusted to approve prompts, configure policy files, and choose CLI
 overrides. A runbook is not inherently trusted.
 
-### Inline composition trust boundary
+### Run authority trust boundary
 
 Same-user processes sharing one working directory are trusted to cooperate: the
 SQLite state file (`.rundown/rundown.db`) is the actual access boundary, and any
-local process that can open it is already inside every claim the system tracks.
-Claims exist to keep cooperating orchestrators from driving each other's runs by
-accident, not to defend against a hostile local process.
+local process that can open it can write any run. Owner Tokens and Claim Tickets
+keep cooperating — and often confused — agents from driving each other's runs by
+accident; they are not a defence against a hostile local process.
 
-Within that boundary, `rundown run --step` attaches a child to the active
-composing parent without presenting a claim, and the attachment is fenced rather
-than bearer-gated (ADR 0002): the launch captures the parent's controlling
-run-control claim when it resolves the linkage, and the substep mark commits
-only under that claim generation. A parent re-claimed in the window refuses
-`INLINE_PARENT_CLAIM_SUPERSEDED` and rolls the child back. The fence records
-which authority was current — it does not prove the caller held it. A sibling
-process that launches first still attaches, under the then-current generation;
-that residual is this documented boundary.
+Within that boundary, every mutation names its run by Owner Token, stored only
+as a hash; a run id authorizes nothing. An Inline Child has no token of its own:
+the parent owner's command launches it and the parent's token drives it, so no
+other process can attach to it. A Delegation is created only by claiming its
+Claim Ticket, also stored only as a hash and never shown by status, and a ticket
+claims at most one child. A second writer racing the owner's own write is
+refused `CONCURRENT_MODIFICATION`, never retried. See
+[ADR 0005](../adr/0005-one-writer-per-run.md).
 
 <a id="sandbox-usage"></a>
 

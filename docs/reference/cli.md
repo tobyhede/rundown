@@ -454,10 +454,10 @@ hook could not read reaches the CLI unstamped, and inside Claude Code
 (`CLAUDECODE=1`, which Claude Code sets in every Bash tool command) `claim`
 without `--agent-id` is refused `AGENT_ID_REQUIRED`; an `--agent-id` smuggled in
 beside the stamp makes two, refused `INVALID_SYNTAX`. Outside Claude Code an
-unnamed claim records no agent, as before. The stamp guards against agent
-confusion, not a malicious agent: one that deliberately builds an `--agent-id`
-the hook cannot see, or strips `CLAUDECODE` from its own environment, is outside
-that threat model and is not prevented.
+unnamed claim records no agent. The stamp guards against agent confusion, not a
+malicious agent: one that deliberately builds an `--agent-id` the hook cannot
+see, or strips `CLAUDECODE` from its own environment, is outside that threat
+model and is not prevented.
 
 In one transaction, `claim` verifies the reservation is still a child its parent
 counts and the parent is running, and creates the child run under the reserved

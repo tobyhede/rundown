@@ -1747,8 +1747,8 @@ Code: RUNBOOK_COMPOSITION_UNSUPPORTED
 
 ### Delegation refusals
 
-Delegation (#904) and its recovery (#905) add eight refusals. Each writes
-nothing, exits 1 and carries `details` only where shown.
+Delegation and its recovery have eight refusals. Each writes nothing, exits 1
+and carries `details` only where shown.
 
 | Code                   | Command                                          | When                                                                                                                                                           |
 | ---------------------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -2161,18 +2161,18 @@ Being scoped to one run is also why `context` names it. `runId` is the affected
 run, `reason` is a closed set naming which refusal fired (`unparseable_json`,
 `invalid_schema_version`, `missing_template_vars`, `missing_prompted`,
 `schema_validation_failed`, `legacy_dynamic_step_snapshot`,
-`malformed_delegate_frontier`, `unrecognized_recovery_reason`,
 `missing_render_context`, `unsupported_snapshot_state_value`,
-`snapshot_step_not_in_runbook`, `cursor_step_not_in_runbook`), and
-`schemaVersion` — present only for `invalid_schema_version` — is the version the
-row claims, reported exactly as persisted and deliberately not narrowed to a
-number. That last field appears **nowhere** in the message prose, so structured
-context is the only way to read it.
+`snapshot_step_not_in_runbook`, `cursor_step_not_in_runbook`,
+`missing_frontmatter_outputs`), and `schemaVersion` — present only for
+`invalid_schema_version` — is the version the row claims, reported exactly as
+persisted and deliberately not narrowed to a number. That last field appears
+**nowhere** in the message prose, so structured context is the only way to read
+it.
 
 **Text:**
 
 ```text
-Error RD-309: Invalid persisted run state - Invalid runbook state for "rd_0123456789abcdef0123456789abcdef": invalid schemaVersion; expected schema version 3. Rundown never migrates persisted state, so this run cannot be resumed, completed or stopped: discard it with "rundown prune --inactive", then re-run the runbook from source.
+Error RD-309: Invalid persisted run state - Invalid runbook state for "rd_0123456789abcdef0123456789abcdef": invalid schemaVersion; expected schema version 4. Rundown never migrates persisted state, so this run cannot be resumed, completed or stopped: discard it with "rundown prune --inactive", then re-run the runbook from source.
 ```
 
 **JSON:**
@@ -2180,7 +2180,7 @@ Error RD-309: Invalid persisted run state - Invalid runbook state for "rd_012345
 ```json
 {
   "kind": "error",
-  "error": "Invalid persisted run state - Invalid runbook state for \"rd_0123456789abcdef0123456789abcdef\": invalid schemaVersion; expected schema version 3. Rundown never migrates persisted state, so this run cannot be resumed, completed or stopped: discard it with \"rundown prune --inactive\", then re-run the runbook from source.",
+  "error": "Invalid persisted run state - Invalid runbook state for \"rd_0123456789abcdef0123456789abcdef\": invalid schemaVersion; expected schema version 4. Rundown never migrates persisted state, so this run cannot be resumed, completed or stopped: discard it with \"rundown prune --inactive\", then re-run the runbook from source.",
   "code": "RD-309",
   "details": {
     "category": "STATE",

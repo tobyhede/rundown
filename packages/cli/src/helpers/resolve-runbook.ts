@@ -6,7 +6,14 @@ import {
   type RunbookRef,
   type RunbookSource,
 } from '@rundown-org/core';
-import { findRunbookByName, findRunbookByNameInSource } from '../services/discovery.js';
+import {
+  findRunbookByNameIn,
+  findRunbookByNameInSource,
+  runtimeSearchRoots,
+  scanDirectory,
+  type RunbookDirectoryScanner,
+  type RunbookSearchRoots,
+} from '../services/discovery.js';
 import { getBundledRunbooksPath } from './bundled-runbooks.js';
 import { getPluginRoot } from './plugin-root.js';
 
@@ -165,62 +172,114 @@ async function resolveAbsolutePath(cwd: string, filename: string): Promise<Resol
 }
 
 /**
- * Resolve runbook file by path (existing logic).
+ * Where a relative runbook identifier resolves, before source-root bookkeeping.
+ */
+export interface LocatedRunbook {
+  /** Absolute path to the runbook file. */
+  readonly path: string;
+  /** The source whose root held it. */
+  readonly source: DiscoverableRunbookSource;
+  /** The search directory that held it: a project, plugin runbooks, cwd or bundled root. */
+  readonly root: string;
+  /** Whether it was found as a path under a root or by name discovery. */
+  readonly via: 'path' | 'discovery';
+}
+
+/**
+ * Locate a relative runbook file by path.
  * Search order:
- * 1. .rundown/runbooks/ (project-local)
- * 2. Plugin runbooks (via CLAUDE_PLUGIN_ROOT env var or sibling package discovery)
+ * 1. The project runbooks directory (`.rundown/runbooks/`)
+ * 2. Plugin runbooks (`<plugin>/runbooks/`)
  * 3. Relative to cwd
  * 4. Bundled runbooks (lowest priority)
  *
- * @param cwd - Current working directory
- * @param filename - Runbook filename to find
- * @returns Resolved runbook with path and source, or null if not found
+ * @param roots - The directories to search
+ * @param filename - Relative runbook path to find
+ * @returns The located runbook, or null if not found
  */
-async function resolveByPath(cwd: string, filename: string): Promise<ResolvedRunbook | null> {
-  if (path.isAbsolute(filename)) {
-    return resolveAbsolutePath(cwd, filename);
+async function locateByPath(
+  roots: RunbookSearchRoots,
+  filename: string,
+): Promise<LocatedRunbook | null> {
+  const candidates: { root: string; path: string; source: DiscoverableRunbookSource }[] = [];
+  if (roots.project !== null) {
+    candidates.push({
+      root: roots.project,
+      path: path.join(roots.project, filename),
+      source: 'project',
+    });
   }
-
-  // 1. Check project-local .rundown/runbooks/
-  const localPath = path.join(runbooksDir(cwd), filename);
-  try {
-    await fs.access(localPath);
-    return { path: localPath, source: 'project', sourceRoot: cwd };
-  } catch {
-    /* not found */
+  if (roots.plugin !== null) {
+    const pluginRunbooks = path.join(roots.plugin, 'runbooks');
+    candidates.push({
+      root: pluginRunbooks,
+      path: path.join(pluginRunbooks, filename),
+      source: 'plugin',
+    });
   }
+  if (roots.cwd !== null) {
+    candidates.push({
+      root: roots.cwd,
+      path: path.resolve(roots.cwd, filename),
+      source: 'project',
+    });
+  }
+  candidates.push({
+    root: roots.bundled,
+    path: path.join(roots.bundled, filename),
+    source: 'bundled',
+  });
 
-  // 2. Check plugin runbooks directory (env var or sibling package discovery)
-  const pluginRoot = getPluginRoot();
-  if (pluginRoot) {
-    const pluginPath = path.join(pluginRoot, 'runbooks', filename);
+  for (const candidate of candidates) {
     try {
-      await fs.access(pluginPath);
-      return { path: pluginPath, source: 'plugin', sourceRoot: path.join(pluginRoot, 'runbooks') };
+      await fs.access(candidate.path);
+      return { ...candidate, via: 'path' };
     } catch {
       /* not found */
     }
   }
-
-  // 3. Check relative to cwd
-  const relativePath = path.resolve(cwd, filename);
-  try {
-    await fs.access(relativePath);
-    return { path: relativePath, source: 'project', sourceRoot: cwd };
-  } catch {
-    /* not found */
-  }
-
-  // 4. Check bundled runbooks (lowest priority)
-  const bundledPath = path.join(getBundledRunbooksPath(), filename);
-  try {
-    await fs.access(bundledPath);
-    return { path: bundledPath, source: 'bundled', sourceRoot: getBundledRunbooksPath() };
-  } catch {
-    /* not found */
-  }
-
   return null;
+}
+
+/**
+ * Locate a relative runbook identifier over explicit search roots — the one
+ * resolution rule both the runtime ({@link resolveRunbookFile}) and scenario
+ * suite staging use.
+ *
+ * A path identifier (containing `/` or ending in `.md`) is tried as a path
+ * under each root in turn; a bare `*.runbook.md` filename found under none
+ * falls back to name discovery by its stem. A plain name goes straight to name
+ * discovery: the first runbook, in project, plugin, bundled order, whose
+ * frontmatter `name` or filename stem matches.
+ *
+ * @param roots - The directories to search
+ * @param name - Relative runbook path or name (no namespace, not absolute)
+ * @param scan - Directory scanner for name discovery; defaults to the runtime's
+ * @returns The located runbook, or null if not found
+ */
+export async function locateRunbook(
+  roots: RunbookSearchRoots,
+  name: string,
+  scan: RunbookDirectoryScanner = scanDirectory,
+): Promise<LocatedRunbook | null> {
+  let lookupName = name;
+  if (isPathIdentifier(name)) {
+    const byPath = await locateByPath(roots, name);
+    if (byPath) return byPath;
+    // Bare .runbook.md filename not found by path — try name-based discovery
+    // (handles runbooks in subdirectories)
+    if (name.includes('/') || !name.endsWith('.runbook.md')) return null;
+    lookupName = name.replace(/\.runbook\.md$/, '');
+  }
+  const discovered = await findRunbookByNameIn(roots, lookupName, scan);
+  return discovered
+    ? {
+        path: discovered.runbook.path,
+        source: discovered.runbook.source,
+        root: discovered.searchRoot,
+        via: 'discovery',
+      }
+    : null;
 }
 
 /**
@@ -279,25 +338,19 @@ export async function resolveRunbookFile(
     return discovered ? resolvedFromDiscovered(cwd, discovered) : null;
   }
 
-  // Detect if identifier is path-based or name-based
-  if (isPathIdentifier(name)) {
-    // Path-based resolution: use existing logic
-    const result = await resolveByPath(cwd, name);
-    if (result) return result;
-
-    // Bare .runbook.md filename not found by path — try name-based discovery
-    // (handles bundled runbooks in subdirectories)
-    if (!name.includes('/') && name.endsWith('.runbook.md')) {
-      const stem = name.replace(/\.runbook\.md$/, '');
-      const discovered = await findRunbookByName(cwd, stem);
-      return discovered ? resolvedFromDiscovered(cwd, discovered) : null;
-    }
-    return null;
-  } else {
-    // Name-based resolution: use discovery service
-    const discovered = await findRunbookByName(cwd, name);
-    return discovered ? resolvedFromDiscovered(cwd, discovered) : null;
+  if (path.isAbsolute(name)) {
+    return resolveAbsolutePath(cwd, name);
   }
+
+  const located = await locateRunbook(runtimeSearchRoots(cwd), name);
+  if (!located) return null;
+  return located.via === 'discovery'
+    ? resolvedFromDiscovered(cwd, located)
+    : {
+        path: located.path,
+        source: located.source,
+        sourceRoot: sourceRootForDiscovered(cwd, located.source),
+      };
 }
 
 async function resolvedFromDiscovered(

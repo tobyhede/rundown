@@ -30,15 +30,14 @@ evaluator, or the file formats consumed by tools that read paths emitted by
 
 ## 2. Terminology
 
-| Term           | Meaning                                                                                                                         |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Tool           | The `rdpath` binary shipped with `@rundown-org/claude-code-plugin`.                                                             |
-| Scope          | The resolved pair of base directory and optional context identifier used to assemble paths.                                     |
-| Base directory | The unscoped artifact root, supplied by `--dir`, `$RD_WORK_PATH`, or active runbook `WorkPath`.                                 |
-| Context        | A scope identifier that adds a `.rd-<id>/` subdirectory under the base directory.                                               |
-| Active state   | Persisted runbook state read through the core session reader to derive `WorkPath` and `ContextId` when not explicitly supplied. |
-| Pattern        | The glob pattern argument accepted by `find`.                                                                                   |
-| Date prefix    | The `YYYY-MM-DD-` filename prefix used by `--file`.                                                                             |
+| Term           | Meaning                                                                                     |
+| -------------- | ------------------------------------------------------------------------------------------- |
+| Tool           | The `rdpath` binary shipped with `@rundown-org/claude-code-plugin`.                         |
+| Scope          | The resolved pair of base directory and optional context identifier used to assemble paths. |
+| Base directory | The unscoped artifact root, supplied by `--dir` or `$RD_WORK_PATH`.                         |
+| Context        | A scope identifier that adds a `.rd-<id>/` subdirectory under the base directory.           |
+| Pattern        | The glob pattern argument accepted by `find`.                                               |
+| Date prefix    | The `YYYY-MM-DD-` filename prefix used by `--file`.                                         |
 
 ## 3. Tool Identity
 
@@ -76,10 +75,10 @@ resolve scope before performing any path assembly or filesystem access.
 
 ### 5.1 Sources
 
-| Field | Resolution order                                                    |
-| ----- | ------------------------------------------------------------------- |
-| `dir` | `--dir` flag, then `$RD_WORK_PATH`, then active-state `WorkPath`.   |
-| `ctx` | `--ctx` flag, then `$RD_CONTEXT_ID`, then active-state `ContextId`. |
+| Field | Resolution order                     |
+| ----- | ------------------------------------ |
+| `dir` | `--dir` flag, then `$RD_WORK_PATH`.  |
+| `ctx` | `--ctx` flag, then `$RD_CONTEXT_ID`. |
 
 If no source yields a value for `dir`, the tool MUST write
 `error: --dir is required (or set $RD_WORK_PATH)` to stderr and exit with status
@@ -88,32 +87,10 @@ If no source yields a value for `dir`, the tool MUST write
 If no source yields a value for `ctx`, scope assembly MUST proceed without a
 context segment.
 
-### 5.2 Active-State Lookup
-
-Active-state lookup reads persisted runbook state through the core session
-reader. It runs in two distinct modes:
-
-| Mode        | Trigger                                                        | Failure behavior                                                                                                                       |
-| ----------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Mandatory   | `dir` cannot be resolved from flag or environment.             | Errors from active-state reading MUST propagate so the user sees the real cause.                                                       |
-| Best-effort | `dir` is known from flag or environment, but `ctx` is missing. | Recoverable active-state errors MUST be silently treated as "no active context". The path MUST resolve without a `.rd-<ctx>/` segment. |
-
-A recoverable active-state error in best-effort mode is one of:
-
-| Class              | Condition                                                                                                                                                                        |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Invalid schema     | Error class `InvalidRunbookStateError`, or messages indicating schema-validation failure, invalid schema versions, legacy per-agent session formats, or invalid session entries. |
-| Invalid identifier | Error class `InvalidActiveStateError`, or a message containing `invalid id`.                                                                                                     |
-| Parse failure      | `SyntaxError` raised while reading session or run state.                                                                                                                         |
-| Filesystem access  | <!-- cspell:ignore Errno EISDIR ENOTDIR --> A `NodeJS.ErrnoException` with code `EACCES`, `EPERM`, `EISDIR`, or `ENOTDIR` whose `path` includes `.rundown`.                      |
-
-Any other error from active-state reading MUST propagate. The tool MUST NOT
-migrate, rewrite, resume, shim, or otherwise adapt persisted runbook state when
-performing best-effort context inference. Best-effort skipping is equivalent to
-running with no available `--ctx`, `$RD_CONTEXT_ID`, or active `ContextId`.
-
-This rule mirrors the runtime's no-migration contract; see
-[docs/reference/runtime.md §Invalid Persisted State / No Migration](runtime.md#invalid-persisted-state--no-migration).
+The CLI exports `RD_WORK_PATH` and `RD_CONTEXT_ID` into every command block it
+runs, so a step's command needs neither flag. The tool MUST NOT open the run
+store to infer a scope: a run is named by its Owner Token, not discovered as an
+"active" run ([ADR 0005](../adr/0005-one-writer-per-run.md)).
 
 ## 6. Argument Contracts
 
@@ -271,12 +248,12 @@ after the result.
 
 ## 11. Exit Codes
 
-| Code | Subcommand | Meaning                                                                                                                               |
-| ---- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | `path`     | Path successfully assembled and written to stdout.                                                                                    |
-| `0`  | `find`     | One or more matches written to stdout, or zero matches when `--allow-empty` is set.                                                   |
-| `1`  | `path`     | Any failure: invalid argument, unresolved `--dir`, propagated active-state error. stderr MUST contain a line beginning with `error:`. |
-| `1`  | `find`     | Either zero matches without `--allow-empty` (stderr empty) or any failure (stderr begins with `error:`).                              |
+| Code | Subcommand | Meaning                                                                                                  |
+| ---- | ---------- | -------------------------------------------------------------------------------------------------------- |
+| `0`  | `path`     | Path successfully assembled and written to stdout.                                                       |
+| `0`  | `find`     | One or more matches written to stdout, or zero matches when `--allow-empty` is set.                      |
+| `1`  | `path`     | Any failure: invalid argument or unresolved `--dir`. stderr MUST contain a line beginning with `error:`. |
+| `1`  | `find`     | Either zero matches without `--allow-empty` (stderr empty) or any failure (stderr begins with `error:`). |
 
 Callers distinguish "zero matches" from "real error" on `find` by inspecting
 stderr, not exit code.
@@ -290,14 +267,11 @@ silently degrade.
 | Case                                                             | Behavior                                                                            |
 | ---------------------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | `--dir` unresolved                                               | Fail visibly with the canonical message `--dir is required (or set $RD_WORK_PATH)`. |
-| Mandatory active-state lookup raises any error                   | Propagate the underlying error message verbatim under the `error:` prefix.          |
-| Best-effort active-state lookup raises a non-recoverable error   | Propagate the underlying error message verbatim under the `error:` prefix.          |
 | `--ctx` fails validation                                         | Fail visibly with `Invalid ctx: ...`.                                               |
 | `--file` fails validation                                        | Fail visibly with `Invalid file: ...`.                                              |
 | Pattern is absolute or contains `..`                             | Fail visibly with `Invalid pattern: ...`.                                           |
 | `find` scope directory is missing                                | Fail visibly with `Directory not found: <path>`.                                    |
 | `find` scope directory is not a directory                        | Fail visibly with `Not a directory: <path>`.                                        |
-| Best-effort active-state lookup raises a recoverable error       | Treat as no active context; assemble path without `.rd-<ctx>/`.                     |
 | Match symlink escapes the scope directory                        | Silently skip the match.                                                            |
 | Match resolution returns `ENOENT`, `EACCES`, `EPERM`, or `ELOOP` | Silently skip the match.                                                            |
 
@@ -312,36 +286,31 @@ A conforming `rdpath` implementation MUST satisfy these requirements:
 1. Expose exactly the `path` (default) and `find` subcommands defined in
    [§4](#4-subcommand-surface) and no others.
 2. Resolve scope using the precedence in [§5.1](#51-sources) — flag, then
-   `RD_WORK_PATH` / `RD_CONTEXT_ID`, then active runbook state.
+   `RD_WORK_PATH` / `RD_CONTEXT_ID` — and never by reading the run store.
 3. Fail visibly with the canonical `--dir is required` message and exit `1` when
    no source yields a base directory.
-4. Treat active-state lookup as mandatory when `dir` is unresolved and as
-   best-effort when only `ctx` is unresolved, applying the recoverable-error
-   classification in [§5.2](#52-active-state-lookup).
-5. Never migrate, rewrite, shim, or adapt persisted runbook state when reading
-   active state.
-6. Validate `--ctx` against `^[a-zA-Z0-9_-]+$` and reject any other input.
-7. Validate `--file` against `^[a-zA-Z0-9._-]+$`, additionally rejecting `.` and
+4. Validate `--ctx` against `^[a-zA-Z0-9_-]+$` and reject any other input.
+5. Validate `--file` against `^[a-zA-Z0-9._-]+$`, additionally rejecting `.` and
    `..`.
-8. Reject absolute glob patterns and glob patterns containing `..` segments.
-9. Compose paths as `<dir>[/.rd-<ctx>][/YYYY-MM-DD-<file>]` using platform path
+6. Reject absolute glob patterns and glob patterns containing `..` segments.
+7. Compose paths as `<dir>[/.rd-<ctx>][/YYYY-MM-DD-<file>]` using platform path
    joining and never touch the filesystem during `path` assembly.
-10. Use the calendar date in UTC, formatted as `YYYY-MM-DD`, for the `--file`
-    date prefix.
-11. Use Node.js `fs.glob` with `cwd` set to the resolved scope directory and no
-    other options for `find`.
-12. Emit only regular files from `find`, sorted lexicographically.
-13. Resolve every glob match to its realpath and exclude matches that escape the
+8. Use the calendar date in UTC, formatted as `YYYY-MM-DD`, for the `--file`
+   date prefix.
+9. Use Node.js `fs.glob` with `cwd` set to the resolved scope directory and no
+   other options for `find`.
+10. Emit only regular files from `find`, sorted lexicographically.
+11. Resolve every glob match to its realpath and exclude matches that escape the
     resolved scope directory.
-14. Silently skip matches that fail resolution with `ENOENT`, `EACCES`, `EPERM`,
+12. Silently skip matches that fail resolution with `ENOENT`, `EACCES`, `EPERM`,
     or `ELOOP`, and propagate any other resolution error.
-15. Exit `0` for successful `path` assembly and for `find` with at least one
+13. Exit `0` for successful `path` assembly and for `find` with at least one
     match, or with zero matches when `--allow-empty` is set.
-16. Exit `1` with empty stderr when `find` produces zero matches without
+14. Exit `1` with empty stderr when `find` produces zero matches without
     `--allow-empty`.
-17. Exit `1` with a single `error: ...` line on stderr for every failure mode in
+15. Exit `1` with a single `error: ...` line on stderr for every failure mode in
     [§12](#12-failure-semantics).
-18. Write only the assembled path or one match per line to stdout, each
+16. Write only the assembled path or one match per line to stdout, each
     terminated by `\n`, and never interleave diagnostics on stdout.
 
 ## 14. Examples (non-normative)
@@ -382,18 +351,18 @@ rdpath --dir .rundown/work find '**/*.json'
 rdpath --dir .rundown/work find '*.md' --allow-empty
 ```
 
-### 14.3 Falling Back to Active Runbook State
+### 14.3 Inside a Step Command
 
-When invoked inside a project with an active runbook, `--dir` and `--ctx` may be
-omitted:
+A step's command runs with `RD_WORK_PATH` and `RD_CONTEXT_ID` set, so `--dir`
+and `--ctx` may be omitted there:
 
 ```bash
-# Assembles using active-runbook WorkPath and ContextId
+# Assembles using the step's RD_WORK_PATH and RD_CONTEXT_ID
 rdpath --file plan.md
 ```
 
-If no `dir` is resolvable from flag, environment, or active state, the tool
-exits `1` with `error: --dir is required (or set $RD_WORK_PATH)` on stderr.
+If neither `--dir` nor `$RD_WORK_PATH` is set, the tool exits `1` with
+`error: --dir is required (or set $RD_WORK_PATH)` on stderr.
 
 ### 14.4 Workflow
 

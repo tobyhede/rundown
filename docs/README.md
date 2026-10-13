@@ -34,7 +34,8 @@ This index routes you to the right document based on what you're trying to do.
 - **[docs/guides/scripting.md](guides/scripting.md)** — Scripting and automation
   guide.
 - **[docs/guides/agent-orchestration.md](guides/agent-orchestration.md)** —
-  Driving a run from an agent: the Owner Token, step positions, refusals.
+  Driving a run from an agent: the Owner Token, step positions, refusals, and
+  delegating to subagents by Claim Ticket, collect, retry and release.
 
 ### Use the MCP server or RDX/rdpath tools
 
@@ -67,8 +68,9 @@ This index routes you to the right document based on what you're trying to do.
   verification, E2E, plugin smoke tests.
 - **[docs/internal/scenarios.md](internal/scenarios.md)** — Scenarios and test
   runbook standard.
-- **[docs/internal/concurrency.md](internal/concurrency.md)** — How run, session
-  and file-backed state is written today, pending ADR 0005.
+- **[docs/internal/concurrency.md](internal/concurrency.md)** — How run state
+  and file-backed artifacts are written: one writer per run, one conditional
+  save per write (ADR 0005).
 - **[docs/internal/mutation-testing.md](internal/mutation-testing.md)** — Local
   mutation testing and its foot-guns.
 

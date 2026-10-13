@@ -22,7 +22,7 @@ Every run has exactly one owner, proven by its **Owner Token**. `rundown run`
 prints the token once, as `owner_token` on the `runbook_started` event, and no
 later command or status response shows it again. The agent that starts a run
 keeps the token and passes it as `--token` on every command that changes the
-run: `pass`, `fail`, `goto`, `stop`, and `complete`.
+run: `pass`, `fail`, `goto`, `stop`, `complete`, `collect`, and `retry`.
 
 ```bash
 rundown run --prompted deploy.runbook.md
