@@ -365,8 +365,8 @@ export type CollectDelegationsOutcome =
       /** Transition observations of each Collect that moved the cursor. */
       readonly events: readonly TransitionObservationEvent[];
       /**
-       * Whether Run Progression continues: `activate` when a Collect was
-       * committed (it may have entered the next step, finished the run, or
+       * Whether Run Progression continues: `activate` when a Collect moved the
+       * cursor (it may have entered the next unit, finished the run, or
        * finished an Inline Child its parent now Collects), `none` otherwise.
        */
       readonly progression: RunProgressionDirective;
@@ -376,6 +376,7 @@ export type CollectDelegationsOutcome =
  * The report entry for one Delegation, before any Collect is applied.
  *
  * @param state - The parent as last read.
+ * @param stepName - The step the Delegation was reserved for.
  * @param step - The parent's current step.
  * @param delegation - One Delegation of the active entry.
  * @param child - The child row, or null when unclaimed.
@@ -383,13 +384,14 @@ export type CollectDelegationsOutcome =
  */
 function standingOf(
   state: RunbookState,
+  stepName: string,
   step: ResolvedStep | undefined,
   delegation: CurrentDelegation,
   child: VersionedRunState | null,
 ): { readonly report: CollectedChild; readonly apply: boolean } {
   const { reservation } = delegation;
   const base = {
-    step: `${state.step}.${delegation.substepId}`,
+    step: `${stepName}.${delegation.substepId}`,
     ...(reservation.contextSnapshot.index !== undefined
       ? { index: reservation.contextSnapshot.index }
       : {}),
@@ -449,9 +451,12 @@ export async function collectDelegations(
   }
 
   let current: VersionedRunState = run;
+  // Every Delegation of the active entry belongs to the step the cursor rests
+  // on now; a Collect below may move the cursor on, the reports do not.
+  const reservedFor = run.state.step;
   const children: CollectedChild[] = [];
   const events: TransitionObservationEvent[] = [];
-  let committed = false;
+  let moved = false;
   for (const delegation of delegations) {
     const step = steps.find((candidate) => candidate.name === current.state.step);
     const child = await deps.manager.loadWithVersion(delegation.reservation.runId);
@@ -461,7 +466,7 @@ export async function collectDelegations(
       activeEntryDelegations(current.state).find(
         (candidate) => candidate.reservation.runId === delegation.reservation.runId,
       ) ?? delegation;
-    const { report, apply } = standingOf(current.state, step, live, child);
+    const { report, apply } = standingOf(current.state, reservedFor, step, live, child);
     if (!apply || child === null || step === undefined) {
       children.push(
         current.state.lifecycle === 'running' || report.status === 'already_collected'
@@ -487,9 +492,9 @@ export async function collectDelegations(
         message: `Run ${previous.id} was modified by another writer while it Collected ${child.state.id}; that result was not applied. Collects before it stand. Re-read the run and re-issue the command.`,
       };
     }
-    committed = true;
     children.push(report);
     if (live.substepId === previous.substep) {
+      moved = true;
       // The cursor's own result: a transition the owner observes.
       const observation = deriveTransitionObservation({
         steps,
@@ -527,7 +532,9 @@ export async function collectDelegations(
     runId: run.state.id,
     children,
     events,
-    progression: committed
+    // Only a Collect that moved the cursor continues Run Progression; a result
+    // held for a later substep leaves the parent resting where it was.
+    progression: moved
       ? {
           kind: 'activate',
           authority: mintRunProgressionAuthority({ runId: run.state.id }),
