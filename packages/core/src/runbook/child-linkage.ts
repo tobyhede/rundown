@@ -19,8 +19,8 @@ import type { FrameKey } from './targeting.js';
  *
  * - `inline` — the same agent owns both; the parent's Owner Token authorizes
  *   the child, which has no token of its own (#903).
- * - `delegation` — a different agent owns the child through its own token
- *   (#904). The column admits it; nothing writes it yet.
+ * - `delegation` — a different agent owns the child through its own token,
+ *   inserted by `rundown claim` (#904).
  */
 export type ChildKind = 'inline' | 'delegation';
 
@@ -36,4 +36,10 @@ export interface ChildLinkage {
   readonly parentFrameKey: FrameKey;
   /** The parent frame entry the reservation was made at. */
   readonly parentEntry: number;
+  /**
+   * The agent id `rundown claim --agent-id` recorded for a Delegation (#904),
+   * the identity a later `release` is matched against. Absent for an Inline
+   * Child and for a claim made without one.
+   */
+  readonly claimedBy?: string;
 }

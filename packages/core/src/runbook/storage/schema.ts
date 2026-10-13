@@ -51,9 +51,12 @@ import type { SqlReadTransaction, SqlTransaction } from './sql-driver.js';
  * Version 6 (#903) rewrites the `runs_unlink_children` trigger so a child
  * that is not inline, linked to an Inline Child the trigger deletes, is
  * unlinked rather than left dangling (which the foreign key refused, aborting
- * the whole delete).
+ * the whole delete). Version 7 (#904) adds `claim_agent_id`: the agent id
+ * `rundown claim` records on a Delegation's row, the identity a later
+ * `release` is matched against. It belongs to the linkage: the unlink trigger
+ * clears it with the rest of the group.
  */
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 7;
 
 /** `user_version` value of a freshly created, never-installed database. */
 const UNINITIALIZED_VERSION = 0;
@@ -145,6 +148,9 @@ CREATE TABLE runs (
   parent_frame_key  TEXT,
   parent_entry      INTEGER,
   parent_kind       TEXT    CHECK (parent_kind IS NULL OR parent_kind IN ('delegation', 'inline')),
+  -- The agent id \`rundown claim --agent-id\` recorded for a Delegation (#904);
+  -- NULL for every other row, and for a claim made without one.
+  claim_agent_id    TEXT    CHECK (claim_agent_id IS NULL OR COALESCE(parent_kind, '') = 'delegation'),
   -- Execution lease (nullable all-or-none). Set by one conditional update
   -- before an external effect; cleared by the state write that commits its
   -- finish. lease_attempt is the state_version the set produced.
@@ -187,7 +193,7 @@ CREATE TRIGGER runs_unlink_children AFTER DELETE ON runs
 BEGIN
   UPDATE runs
      SET parent_run_id = NULL, parent_step = NULL, parent_frame_key = NULL,
-         parent_entry = NULL, parent_kind = NULL
+         parent_entry = NULL, parent_kind = NULL, claim_agent_id = NULL
    WHERE parent_kind IS NOT 'inline' AND parent_run_id IN (
      WITH RECURSIVE removed(id) AS (
        SELECT OLD.id

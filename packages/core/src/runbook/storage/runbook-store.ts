@@ -127,6 +127,37 @@ export type DeleteRunResult =
   | { readonly kind: 'concurrent_modification' }
   | { readonly kind: 'missing' };
 
+/** Input to {@link RunbookStore.claimDelegationChild}. */
+export interface ClaimDelegationChildInput<R> {
+  /** The parent whose reservation the claim names. */
+  readonly parentRunId: RunId;
+  /**
+   * Decide, on the parent as read inside the claim's transaction, whether the
+   * reservation may still be claimed: `undefined` to insert, or the refusal.
+   * Synchronous and pure, so the decision and the insert see one state.
+   */
+  readonly verify: (parent: VersionedRunState | null) => R | undefined;
+  /** The child's initialised state, carrying the reservation's preallocated id. */
+  readonly state: RunbookState;
+  /** Hash of the child's own Owner Token. */
+  readonly ownerTokenHash: SecretHash;
+  /** The parent coordinate; its `kind` must be `delegation`. */
+  readonly linkage: ChildLinkage;
+}
+
+/**
+ * Outcome of {@link RunbookStore.claimDelegationChild}.
+ *
+ * - `claimed` — the child row is inserted under the preallocated id.
+ * - `already_claimed` — a row already carries that id: the primary key
+ *   refused a second claim. Nothing was written.
+ * - `refused` — the parent check refused; nothing was written.
+ */
+export type ClaimDelegationChildResult<R> =
+  | { readonly kind: 'claimed' }
+  | { readonly kind: 'already_claimed' }
+  | { readonly kind: 'refused'; readonly refusal: R };
+
 /**
  * Outcome of {@link RunbookStore.acquireExecutionLease}.
  *
@@ -343,6 +374,52 @@ export class RunbookStore {
       });
     } catch (error: unknown) {
       throw uniqueViolationAsInvariant(error, state.id);
+    }
+  }
+
+  /**
+   * Claim a Delegation (#904): in one transaction, read the parent, let the
+   * caller decide on it whether the reservation is still claimable, and
+   * insert the child row under the reservation's preallocated id with its own
+   * Owner Token hash, its linkage and the claiming agent.
+   *
+   * The child's id is the row's primary key, so a second claim of the same
+   * reservation is refused by the insert itself (`already_claimed`), whoever
+   * races whom. The parent row is read, never written: the child never writes
+   * its parent (ADR 0005).
+   *
+   * @template R - The caller's refusal type.
+   * @param input - The parent, the check, and the child row.
+   * @returns `claimed`, `already_claimed`, or the check's refusal.
+   * @throws {StoreInvariantError} When the linkage is not `delegation`, or the
+   *   child's owner token hash is already carried by another row.
+   * @throws {InvalidRunbookStateError} When the parent row fails the
+   *   persisted-state gates or the structural parse.
+   */
+  async claimDelegationChild<R>(
+    input: ClaimDelegationChildInput<R>,
+  ): Promise<ClaimDelegationChildResult<R>> {
+    if (input.linkage.kind !== 'delegation') {
+      throw new StoreInvariantError(
+        `Delegation child ${input.state.id} was handed ${input.linkage.kind} linkage.`,
+      );
+    }
+    try {
+      return await this.transaction((txn): ClaimDelegationChildResult<R> => {
+        const refusal = input.verify(txn.readStateWithVersion(input.parentRunId));
+        if (refusal !== undefined) return { kind: 'refused', refusal };
+        try {
+          insertChildRun(txn.tx, input.state, input.ownerTokenHash, input.linkage);
+        } catch (error: unknown) {
+          if (/UNIQUE constraint failed: runs\.id\b/.test(getErrorMessage(error))) {
+            return { kind: 'already_claimed' };
+          }
+          throw error;
+        }
+        return { kind: 'claimed' };
+      });
+    } catch (error: unknown) {
+      throw uniqueViolationAsInvariant(error, input.state.id);
     }
   }
 
@@ -785,7 +862,8 @@ function inlineChainMatches(
 const LEASE_COLUMNS = 'lease_attempt, lease_pid, lease_start_id, lease_started_at';
 
 /** The child-linkage column group. */
-const LINKAGE_COLUMNS = 'parent_run_id, parent_step, parent_frame_key, parent_entry, parent_kind';
+const LINKAGE_COLUMNS =
+  'parent_run_id, parent_step, parent_frame_key, parent_entry, parent_kind, claim_agent_id';
 
 /** Columns a versioned read selects: everything a validated, versioned state needs. */
 const VERSIONED_ROW_COLUMNS = `id, state_version, lifecycle, state_json, ${LEASE_COLUMNS}, ${LINKAGE_COLUMNS}`;
@@ -797,6 +875,7 @@ type LinkageRow = {
   readonly parent_frame_key: string | null;
   readonly parent_entry: number | null;
   readonly parent_kind: string | null;
+  readonly claim_agent_id: string | null;
 };
 
 /** The lease column group as read. All-or-none under the table's `CHECK`. */
@@ -857,6 +936,7 @@ function linkageFromRow(row: LinkageRow): ChildLinkage | null {
     parentStep: row.parent_step,
     parentFrameKey: row.parent_frame_key as FrameKey,
     parentEntry: row.parent_entry,
+    ...(row.claim_agent_id !== null ? { claimedBy: row.claim_agent_id } : {}),
   };
 }
 
@@ -989,21 +1069,42 @@ function insertInlineChildRun(
       `Inline child ${state.id} was handed ${linkage.kind} linkage; only an inline child carries no token.`,
     );
   }
+  insertChildRun(tx, state, null, linkage);
+}
+
+/**
+ * Insert a new Child Run row at `state_version` 0 with its linkage group, its
+ * Owner Token hash (`null` for an Inline Child) and, for a Delegation, the
+ * claiming agent.
+ *
+ * @param tx - Open writing transaction.
+ * @param state - Initial child run state.
+ * @param ownerTokenHash - Hash of the child's own Owner Token, or `null`.
+ * @param linkage - The parent coordinate.
+ */
+function insertChildRun(
+  tx: SqlTransaction,
+  state: RunbookState,
+  ownerTokenHash: SecretHash | null,
+  linkage: ChildLinkage,
+): void {
   tx.prepare(
     `INSERT INTO runs (id, lifecycle, owner_token_hash,
-       parent_run_id, parent_step, parent_frame_key, parent_entry, parent_kind,
+       parent_run_id, parent_step, parent_frame_key, parent_entry, parent_kind, claim_agent_id,
        state_version, state_json, created_at, updated_at)
-     VALUES (:id, :lifecycle, NULL,
-       :parentRunId, :parentStep, :parentFrameKey, :parentEntry, :parentKind,
+     VALUES (:id, :lifecycle, :ownerTokenHash,
+       :parentRunId, :parentStep, :parentFrameKey, :parentEntry, :parentKind, :claimAgentId,
        0, :stateJson, :startedAt, :updatedAt)`,
   ).run({
     id: state.id,
     lifecycle: state.lifecycle ?? 'running',
+    ownerTokenHash,
     parentRunId: linkage.parentRunId,
     parentStep: linkage.parentStep,
     parentFrameKey: linkage.parentFrameKey,
     parentEntry: linkage.parentEntry,
     parentKind: linkage.kind,
+    claimAgentId: linkage.claimedBy ?? null,
     stateJson: serializeStateJson(state),
     startedAt: state.startedAt,
     updatedAt: state.updatedAt,
