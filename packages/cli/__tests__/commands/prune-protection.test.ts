@@ -102,7 +102,7 @@ function errorEnvelope(stdout: string): Envelope | undefined {
 /** The Claim Ticket the last `step_entered` of `stdout` lists. */
 function ticketOf(stdout: string): string {
   const entered = envelopes(stdout).filter((event) => event.type === 'step_entered');
-  const [child] = (entered.at(-1)?.children ?? []) as Envelope[];
+  const [child] = (entered.at(-1)?.children ?? []) as (Envelope | undefined)[];
   return String(child?.ticket);
 }
 

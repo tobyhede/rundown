@@ -119,12 +119,23 @@ export type {
   VersionedRunState,
 } from './storage/runbook-store.js';
 export {
-  hasRunningInlineAncestor,
   inlineDescendantsOf,
   planRunDeletions,
   refuseDeletionUnderLease,
   type RunDeletion,
 } from './run-deletion.js';
+// Prune protection (#906): one rule for every pruning caller.
+export {
+  CURRENT_CHILD_PROTECTED_CODE,
+  planPrune,
+  protectingParentOf,
+  type CurrentChildProtectedRefusal,
+  type PrunePlan,
+  type PrunePlanInput,
+  type PruneRetentionReason,
+  type PruneSelection,
+  type RetainedRun,
+} from './run-pruning.js';
 export { assertStateVersion, type StateVersion } from './storage/mutation-result.js';
 export {
   applyRunbookStateUpdate,

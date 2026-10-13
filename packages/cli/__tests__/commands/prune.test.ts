@@ -21,6 +21,7 @@ import {
 } from '../helpers/test-utils.js';
 import { patchPersistedRunState, seedRun } from '@rundown-org/core/testing/run-fixtures';
 import { validateCommandOutput } from '../helpers/schema-validator.js';
+import type { HumanConfirmation } from '../../src/services/human-confirmation.js';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests src/commands/prune.ts`
@@ -61,7 +62,7 @@ describe('prune command wiring', () => {
     expect(byLong.get('--completed')?.description).toBe('Prune successfully completed run state');
     expect(byLong.get('--stopped')?.description).toBe('Prune stopped (aborted/failed) run state');
     expect(byLong.get('--active')?.description).toBe(
-      'Prune running run state (each running run needs its --token)',
+      'Prune running run state (each needs its --token, or your confirmation at a terminal)',
     );
     expect(byLong.get('--inactive')?.description).toBe('Prune invalid or abandoned run state');
     expect(byLong.get('--all')?.description).toBe('Prune all run state');
@@ -344,6 +345,89 @@ describe('prune command', () => {
       const statesAfter = await listRunbookStates(workspace);
       expect(statesAfter.length).toBe(2);
       expect(statesAfter).toContain(`${completedId}.json`);
+    });
+  });
+
+  /**
+   * A running run selected by --active / --all, with no token naming it, is
+   * deleted only when the human at an interactive terminal confirms it (#906).
+   */
+  describe('--active at an interactive terminal (#906)', () => {
+    /** A human who answers every question `answer`, and records each one. */
+    function humanAnswering(answer: boolean): HumanConfirmation & { readonly asked: string[] } {
+      const asked: string[] = [];
+      return {
+        interactive: true,
+        asked,
+        confirm: (question: string) => {
+          asked.push(question);
+          return Promise.resolve(answer);
+        },
+      };
+    }
+
+    it('deletes a running run the human confirms, asking once and naming it', async () => {
+      const { runId } = await startRunning();
+      const human = humanAnswering(true);
+
+      const result = await runCliInProcess('prune --active', workspace, { human });
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout) as Record<string, unknown>[];
+      expect(validateCommandOutput('prune', output)).toEqual({ valid: true, errors: [] });
+      expect(output).toEqual([expect.objectContaining({ id: runId, status: 'running' })]);
+      expect(output[0]).not.toHaveProperty('retained');
+      expect(human.asked).toEqual([expect.stringContaining(runId)]);
+      expect(await listRunbookStates(workspace)).toEqual([]);
+    });
+
+    it('retains a running run the human declines as "not confirmed"', async () => {
+      const { runId } = await startRunning();
+
+      const result = await runCliInProcess('prune --all', workspace, {
+        human: humanAnswering(false),
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([
+        expect.objectContaining({ id: runId, retained: 'not confirmed' }),
+      ]);
+      expect(await listRunbookStates(workspace)).toEqual([`${runId}.json`]);
+    });
+
+    it('never asks under --dry-run, nor under --non-interactive', async () => {
+      const { runId } = await startRunning();
+      const human = humanAnswering(true);
+
+      for (const args of [
+        ['prune', '--active', '--dry-run'],
+        ['--non-interactive', 'prune', '--active'],
+      ]) {
+        const result = await runCliInProcess(args, workspace, { human });
+        expect(result.exitCode).toBe(0);
+        expect(JSON.parse(result.stdout)).toEqual([
+          expect.objectContaining({ id: runId, retained: 'token required' }),
+        ]);
+      }
+      expect(human.asked).toEqual([]);
+      expect(await listRunbookStates(workspace)).toEqual([`${runId}.json`]);
+    });
+
+    it('does not ask about a run the token already names, nor about finished runs', async () => {
+      const completedId = await startCompleted();
+      const { runId, token } = await startRunning();
+      const human = humanAnswering(false);
+
+      const result = await runCliInProcess(['prune', '--all', '--token', token], workspace, {
+        human,
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(human.asked).toEqual([]);
+      expect(
+        (JSON.parse(result.stdout) as Record<string, unknown>[]).map((row) => row.id).sort(),
+      ).toEqual([completedId, runId].sort());
+      expect(await listRunbookStates(workspace)).toEqual([]);
     });
   });
 
@@ -819,7 +903,10 @@ rd echo --result pass
       expect(await storedIds()).toEqual([]);
     });
 
-    it('retains a finished inline child while its parent is still running', async () => {
+    // A running parent protects only the child its cursor's reservation names
+    // (#906); this one names none, so the finished child is not its Current
+    // Child. prune-protection.test.ts pins the reserved case.
+    it('prunes a finished inline child its running parent no longer counts, leaving the parent', async () => {
       const { runId } = await startRunning();
       const childId = await startInlineChild(runId);
       await patchPersistedRunState(workspace.cwd, childId, { lifecycle: 'completed' });
@@ -829,10 +916,9 @@ rd echo --result pass
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout) as Record<string, unknown>[];
       expect(validateCommandOutput('prune', output)).toEqual({ valid: true, errors: [] });
-      expect(output).toEqual([
-        expect.objectContaining({ id: childId, status: 'complete', retained: 'parent running' }),
-      ]);
-      expect(await storedIds()).toEqual([runId, childId].sort());
+      expect(output).toEqual([expect.objectContaining({ id: childId, status: 'complete' })]);
+      expect(output[0]).not.toHaveProperty('retained');
+      expect(await storedIds()).toEqual([runId]);
     });
 
     it('prunes a finished inline child with its finished parent, once each', async () => {

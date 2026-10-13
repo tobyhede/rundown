@@ -76,6 +76,9 @@ export const CLISymbolicErrorCodeValues = [
   'NOTHING_TO_RETRY',
   'AGENT_MISMATCH',
   'NOT_A_DELEGATION',
+  // Prune protection (#906): `prune --token` naming a Current Child its
+  // parent still counts.
+  'CURRENT_CHILD_PROTECTED',
   // The execution lease (#902): a live attempt holds the run's step, or the
   // attempt that held it died and the decision would pass it.
   'EXECUTION_IN_PROGRESS',
@@ -1152,20 +1155,27 @@ export const PruneResponseSchema = z
   .array(
     ActiveRunbookEntrySchema.extend({
       /**
-       * Present on a run that was selected but kept: a running run is deleted
-       * only under its own Owner Token (`--token`), so `--active` / `--all`
-       * without one report it `retained: "token required"`. A finished inline
-       * child whose parent is still running is kept as `"parent running"`,
-       * and a run with an attempt In Progress in its inline chain as
-       * `"execution in progress"`.
+       * Present on a run that was selected but kept (#906): `"token required"`
+       * for a running run no `--token` names and no human at a terminal
+       * confirmed, `"not confirmed"` for one the human declined,
+       * `"uncollected"` for a terminal Current Child whose running parent has
+       * not Collected it, `"current child"` for a running one, and
+       * `"execution in progress"` for a run with an attempt In Progress in its
+       * inline chain.
        */
       retained: z
-        .string()
+        .enum([
+          'token required',
+          'not confirmed',
+          'uncollected',
+          'current child',
+          'execution in progress',
+        ])
         .optional()
-        .describe('Why a selected run was kept rather than deleted (e.g. "token required")'),
+        .describe('Why a selected run was kept rather than deleted'),
     }),
   )
-  .describe('Runs that were/would be pruned, plus running runs retained for want of a token');
+  .describe('Runs that were/would be pruned, plus each selected run retained, with its reason');
 
 // ============================================================================
 // Execution Summary Schema
