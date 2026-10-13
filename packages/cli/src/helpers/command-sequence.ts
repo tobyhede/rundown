@@ -11,6 +11,7 @@ import { spawn } from 'node:child_process';
 import { performance } from 'node:perf_hooks';
 import {
   isPublicArtifactRecord,
+  redactRunSecret,
   RunbookRefSchema,
   type PublicArtifactRecord,
   type RunbookRef,
@@ -1775,7 +1776,11 @@ export async function executeCommandSequence(
       ? await substituteCapturedArtifacts(tokenSubstituted, options.resolveCapturedArtifact)
       : tokenSubstituted;
 
-    options.onCommandStart?.(expectsFailure ? `! ${cmd}` : cmd);
+    // Only the executed command carries the substituted Owner Token; every
+    // observation of it (echo, timing record, error message) shows the redacted
+    // form, so the token appears only where `runbook_started` printed it.
+    const shownCmd = redactRunSecret(cmd);
+    options.onCommandStart?.(expectsFailure ? `! ${shownCmd}` : shownCmd);
 
     const rdCommand = parseRdCommandWithEnv(cmd);
     if (
@@ -1785,7 +1790,7 @@ export async function executeCommandSequence(
       rdCommandRequiresDefaultActiveTarget(rdCommand.args)
     ) {
       throw new Error(
-        `Scenario command ran after terminal result ${defaultActiveTerminalResult}: ${cmd}. ` +
+        `Scenario command ran after terminal result ${defaultActiveTerminalResult}: ${shownCmd}. ` +
           'Remove stale commands or mark an intentional negative assertion with !.',
       );
     }
@@ -1800,7 +1805,7 @@ export async function executeCommandSequence(
         { kind: 'rd', args: rdCommand.args },
         { cwd, quiet, cliPath, env: commandEnv, commandExecutor },
       );
-      recordTiming(cmd, 'rd', commandStart, result.exitCode, expectsFailure);
+      recordTiming(shownCmd, 'rd', commandStart, result.exitCode, expectsFailure);
       stdout = result.stdout;
 
       // Parse JSON output to extract transitions, terminal state, and tokens
@@ -1828,10 +1833,10 @@ export async function executeCommandSequence(
 
       // If the command failed and no terminal result was parsed, propagate the failure
       if (expectsFailure && result.exitCode === 0) {
-        throw new Error(`Command was expected to fail but exited 0: ${cmd}`);
+        throw new Error(`Command was expected to fail but exited 0: ${shownCmd}`);
       }
       if (!expectsFailure && result.exitCode !== 0 && jsonResult.terminal === null) {
-        throw new Error(`Command failed with exit code ${String(result.exitCode)}: ${cmd}`);
+        throw new Error(`Command failed with exit code ${String(result.exitCode)}: ${shownCmd}`);
       }
     } else {
       // Shell command — execute directly
@@ -1840,7 +1845,7 @@ export async function executeCommandSequence(
         { kind: 'shell', cmd },
         { cwd, quiet, cliPath, env, commandExecutor },
       );
-      recordTiming(cmd, 'shell', commandStart, result.exitCode, expectsFailure);
+      recordTiming(shownCmd, 'shell', commandStart, result.exitCode, expectsFailure);
       stdout = result.stdout;
 
       // Parse JSON output from shell commands as well (e.g., shell scripts that wrap rd commands)
@@ -1864,10 +1869,12 @@ export async function executeCommandSequence(
       }
 
       if (expectsFailure && result.exitCode === 0) {
-        throw new Error(`Shell command was expected to fail but exited 0: ${cmd}`);
+        throw new Error(`Shell command was expected to fail but exited 0: ${shownCmd}`);
       }
       if (!expectsFailure && result.exitCode !== 0) {
-        throw new Error(`Shell command failed with exit code ${String(result.exitCode)}: ${cmd}`);
+        throw new Error(
+          `Shell command failed with exit code ${String(result.exitCode)}: ${shownCmd}`,
+        );
       }
     }
   }

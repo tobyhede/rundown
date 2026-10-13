@@ -1526,3 +1526,51 @@ describe('extractInputFileReferences', () => {
     expect(result).toEqual(['data/sources.yaml']);
   });
 });
+
+describe('executeCommandSequence — Owner Token redaction in observations', () => {
+  const OWNER_TOKEN = `rdo_${'A'.repeat(43)}`;
+
+  it('passes the real token to the command but never to an echo, timing or error', async () => {
+    const executed: string[][] = [];
+    const started: string[] = [];
+    const timed: string[] = [];
+
+    const run = executeCommandSequence({
+      commands: ['rd run x.runbook.md --prompted', 'rd pass --token ${TOKEN} --step 1'],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      onCommandStart: (command) => started.push(command),
+      onCommandComplete: (timing) => timed.push(timing.command),
+      commandExecutor: {
+        runRd: async (args) => {
+          executed.push(args);
+          return args[0] === 'run'
+            ? {
+                stdout: `${JSON.stringify({ type: 'runbook_started', runbookId: `rd_${'0'.repeat(32)}`, owner_token: OWNER_TOKEN })}\n`,
+                stderr: '',
+                exitCode: 0,
+              }
+            : { stdout: '', stderr: '', exitCode: 1 };
+        },
+      },
+    });
+
+    // The refused pass has no terminal result, so the sequence throws naming it.
+    const error = await run.then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(String(error)).toContain('rd pass --token');
+    expect(String(error)).not.toContain(OWNER_TOKEN);
+
+    // The command itself must still receive the secret it authenticates with.
+    expect(executed[1]).toContain(OWNER_TOKEN);
+    expect(started).toHaveLength(2);
+    expect(timed).toHaveLength(2);
+    for (const observed of [...started, ...timed]) {
+      expect(observed).not.toContain(OWNER_TOKEN);
+    }
+    expect(started[1]).toContain('rd pass --token rdo_');
+  });
+});
