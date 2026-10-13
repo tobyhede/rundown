@@ -90,8 +90,8 @@ own errors into a block first.
 - **Bash command** (`gates/on-bash-command.ts`,
   `workflow/hooks/stamp-agent-id.ts`, `workflow/hooks/shell-command.ts`). A
   conservative shell scanner finds every `rundown claim` / `rundown release`
-  (also `rd`, `node …/cli.js`, behind `cd …&&`, `VAR=…`, `env`, `npx`,
-  `pnpm exec`, global options, pipes and redirections). It removes any
+  (also its short rd bin, `node …/cli.js`, behind `cd …&&`, `VAR=…`, `env`,
+  `npx`, `pnpm exec`, global options, pipes and redirections). It removes any
   `--agent-id` the agent typed and inserts `--agent-id '<agent_id>'` from the
   hook input right after the subcommand. Without an `agent_id` (the top-level
   agent), `claim` is denied and `release` is only stripped, so it matches only a
