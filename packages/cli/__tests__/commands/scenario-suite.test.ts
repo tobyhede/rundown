@@ -1284,6 +1284,114 @@ cases:
       );
     }, 30000);
 
+    it('stages composed children the runtime resolves from the runbooks root: a root-relative path and a bare name in a subdirectory', async () => {
+      // Plugin runbooks compose `planning/write-plan.runbook.md` (relative to
+      // the `runbooks/` root, not to the composing file) and bare names such as
+      // `review-plan-collate.runbook.md` that live in a subdirectory. The
+      // runtime resolves both, so the suite must stage both.
+      const childBody = (name: string): string => `---
+name: ${name}
+---
+
+# ${name}
+
+## 1. Done
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`bash
+rd echo --result pass
+\`\`\`
+`;
+      await mkdir(join(workspace.cwd, 'runbooks', 'parent'), { recursive: true });
+      await mkdir(join(workspace.cwd, 'runbooks', 'sub'), { recursive: true });
+      await mkdir(join(workspace.cwd, 'runbooks', 'deep', 'er'), { recursive: true });
+      await writeFile(
+        join(workspace.cwd, 'runbooks', 'parent', 'parent.runbook.md'),
+        `---
+name: parent
+---
+
+# Parent
+
+## 1. Root-relative child
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+- sub/root-relative.runbook.md
+
+## 2. Bare-named child in a subdirectory
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+- bare-nested.runbook.md
+`,
+      );
+      await writeFile(
+        join(workspace.cwd, 'runbooks', 'sub', 'root-relative.runbook.md'),
+        childBody('root-relative'),
+      );
+      await writeFile(
+        join(workspace.cwd, 'runbooks', 'deep', 'er', 'bare-nested.runbook.md'),
+        childBody('bare-nested'),
+      );
+      // A harness outside `runbooks/` names the same root-relative child: the
+      // suite directory's own `runbooks/` is a root, as `$CLAUDE_PLUGIN_ROOT/runbooks` is.
+      await mkdir(join(workspace.cwd, 'harnesses'), { recursive: true });
+      await writeFile(
+        join(workspace.cwd, 'harnesses', 'harness.runbook.md'),
+        `---
+name: harness
+---
+
+# Harness
+
+## 1. Compose a plugin runbook
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+- parent/parent.runbook.md
+`,
+      );
+      await writeFile(
+        join(workspace.cwd, 'roots.scenario-suite.yaml'),
+        `version: 1
+name: Runbooks Root Staging
+cases:
+  composes-from-root:
+    file: runbooks/parent/parent.runbook.md
+    commands:
+      - rd run parent.runbook.md
+    result: COMPLETE
+  harness-composes-from-suite-root:
+    file: harnesses/harness.runbook.md
+    commands:
+      - rd run harness.runbook.md
+    result: COMPLETE
+`,
+      );
+
+      const result = await runCliInProcess(
+        'scenario-suite run roots.scenario-suite.yaml --all',
+        workspace,
+      );
+
+      const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      expect(parsed.cases).toEqual([
+        expect.objectContaining({
+          scenario: 'composes-from-root',
+          result: true,
+          actual: 'COMPLETE',
+        }),
+        expect.objectContaining({
+          scenario: 'harness-composes-from-suite-root',
+          result: true,
+          actual: 'COMPLETE',
+        }),
+      ]);
+      expect(result.exitCode).toBe(0);
+    }, 30000);
+
     it('errors for invalid suite file', async () => {
       await writeFile(join(workspace.cwd, 'bad.scenario-suite.yaml'), 'not: valid\n');
 
