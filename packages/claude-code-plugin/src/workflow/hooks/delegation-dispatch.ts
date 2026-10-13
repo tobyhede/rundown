@@ -74,7 +74,7 @@ export function handleDelegationDispatch(input: HookInput): Promise<DelegationDi
       violation: `Rundown blocked this dispatch: it marks ${String(found.tickets.length)} Claim Tickets. Dispatch one sub-agent per ticket, each prompt carrying one ${CLAIM_TICKET_MARKER}= line.`,
     });
   }
-  const [ticket] = found.tickets;
+  const ticket = found.tickets.at(0);
   if (ticket === undefined) return Promise.resolve({});
   return Promise.resolve({ prompt: `${prompt}\n\n${claimInstructions(ticket)}` });
 }

@@ -1,7 +1,7 @@
 // @rundown-org/claude-code-plugin shared - Shared types and utilities
 
 // Core types and schemas
-export * from './types.js';
+export type * from './types.js';
 export {
   HookInputSchema,
   type ParseResult,

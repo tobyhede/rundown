@@ -76,7 +76,7 @@ function start(): { parentId: string; ticket: string } {
   const run = events(runCli(['run', 'parent.runbook.md'], cwd).stdout);
   const started = run.find((event) => event.type === 'runbook_started');
   const entered = run.find((event) => event.type === 'step_entered');
-  const [child] = (entered?.children ?? []) as { ticket?: string }[];
+  const child = ((entered?.children ?? []) as { ticket?: string }[]).at(0);
   return { parentId: String(started?.runbookId), ticket: String(child?.ticket) };
 }
 
@@ -94,7 +94,8 @@ async function bashAs(agentId: string | undefined, command: string) {
   if (hook?.permissionDecision === 'deny') {
     return { denied: String(hook.permissionDecisionReason), events: [] as Event[] };
   }
-  const run = String(hook?.updatedInput?.command ?? command);
+  const rewritten = hook?.updatedInput?.command;
+  const run = typeof rewritten === 'string' ? rewritten : command;
   const result = spawnSync('bash', ['-c', run], {
     cwd,
     encoding: 'utf-8',

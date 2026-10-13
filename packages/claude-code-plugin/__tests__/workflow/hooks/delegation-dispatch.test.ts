@@ -58,7 +58,7 @@ describe('PreToolUse(Agent|Task) dispatch', () => {
 
     const output = buildHookOutput(input, await dispatch(input));
 
-    const updated = output.hookSpecificOutput?.updatedInput as Record<string, unknown>;
+    const updated = output.hookSpecificOutput!.updatedInput!;
     expect(output.hookSpecificOutput).not.toHaveProperty('permissionDecision');
     expect(updated).toMatchObject({
       description: '1.1 review-file',

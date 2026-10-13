@@ -169,7 +169,7 @@ export function scanShellCommand(source: string): ShellScan {
         continue;
       }
       begin(i);
-      if (next !== undefined) text += next;
+      if (i + 1 < source.length) text += next;
       i += 2;
       continue;
     }
@@ -238,7 +238,7 @@ function baseName(word: string): string {
  * @returns The index of the first word after the binary, or -1.
  */
 function rundownBinaryEnd(words: readonly ShellWord[], at: number): number {
-  const word = words[at]?.text;
+  const word = words.at(at)?.text;
   if (word === undefined) return -1;
   const base = baseName(word);
   if (base === 'rundown' || base === 'rd') return at + 1;
@@ -305,7 +305,7 @@ export function rundownInvocationOf(words: readonly ShellWord[]): RundownInvocat
     if (!word.startsWith('-')) break;
     at += GLOBAL_VALUE_OPTIONS.has(word) ? 2 : 1;
   }
-  const subcommandWord = words[at];
+  const subcommandWord = words.at(at);
   if (subcommandWord?.text !== 'claim' && subcommandWord?.text !== 'release') return undefined;
   const agentIds: { start: number; end: number }[] = [];
   for (let k = at + 1; k < words.length; k += 1) {
@@ -314,7 +314,7 @@ export function rundownInvocationOf(words: readonly ShellWord[]): RundownInvocat
     if (word.text.startsWith('--agent-id=')) {
       agentIds.push({ start: word.start, end: word.end });
     } else if (word.text === '--agent-id') {
-      const value = words[k + 1];
+      const value = words.at(k + 1);
       agentIds.push({ start: word.start, end: value?.end ?? word.end });
       k += 1;
     }
@@ -330,7 +330,7 @@ export function rundownInvocationOf(words: readonly ShellWord[]): RundownInvocat
  * @returns True for an interpreter invocation.
  */
 export function runsAnotherCommandLine(words: readonly ShellWord[]): boolean {
-  const word = words[commandWordIndex(words)]?.text;
+  const word = words.at(commandWordIndex(words))?.text;
   return word !== undefined && INTERPRETERS.has(baseName(word));
 }
 
