@@ -1,6 +1,7 @@
 import { CommanderError } from 'commander';
 import { ConsoleWriter, getErrorMessage, resetColorCache, setWriter } from '@rundown-org/core';
 import { resetPolicyContext } from './policy-context.js';
+import { NO_HUMAN, type HumanConfirmation } from './human-confirmation.js';
 
 /** Result of running the CLI in the current Node process. */
 export interface InProcessCliRunResult {
@@ -22,6 +23,12 @@ export interface InProcessCliRunOptions {
   cwd: string;
   /** Per-invocation environment overrides, restored after the command finishes. */
   env?: Readonly<Record<string, string | undefined>>;
+  /**
+   * The human at the terminal (#906). Defaults to none: an in-process run is
+   * a harness or a test, never a person at a terminal, so the human-only
+   * escape hatch is refused unless a test injects one.
+   */
+  human?: HumanConfirmation;
 }
 
 /** Sentinel error thrown when a command calls process.exit() in-process. */
@@ -176,7 +183,7 @@ export async function runCliInProcess(
     };
 
     const { createProgram } = await import('../cli.js');
-    const program = createProgram();
+    const program = createProgram({ human: options.human ?? NO_HUMAN });
     program.exitOverride();
     await program.parseAsync([...options.args], { from: 'user' });
 

@@ -91,10 +91,10 @@ A held lease has one of two conditions, decided by `classifyExecutionLease`:
   Without this rule a long-lived host (an MCP server) whose finish failed would
   read In Progress — refusing even `fail`, `goto` and `stop` — until it exited.
 
-| Condition       | Holder                                      | Refused                                                                                                                                           | Clears it                                                                                                         |
-| --------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| **In Progress** | alive (this process: attempt registered)    | every owner decision (`pass`, `fail`, `goto`, `stop`, `complete`, `prune --token`) and a second Run Progression attempt — `EXECUTION_IN_PROGRESS` | the command's own finish                                                                                          |
-| **Interrupted** | gone (this process: attempt not registered) | `pass`, `complete` and Run Progression — `EXECUTION_INTERRUPTED`                                                                                  | the owner's `fail` (FAIL handler, including an authored RETRY), `goto` or `stop`; `prune --token` deletes the run |
+| Condition       | Holder                                      | Refused                                                                                                                                   | Clears it                                                                                                         |
+| --------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **In Progress** | alive (this process: attempt registered)    | every owner decision (`pass`, `fail`, `goto`, `stop`, `complete`, `prune`) and a second Run Progression attempt — `EXECUTION_IN_PROGRESS` | the command's own finish                                                                                          |
+| **Interrupted** | gone (this process: attempt not registered) | `pass`, `complete` and Run Progression — `EXECUTION_INTERRUPTED`                                                                          | the owner's `fail` (FAIL handler, including an authored RETRY), `goto` or `stop`; `prune --token` deletes the run |
 
 `pass` and `complete` are refused on an Interrupted step because each would
 treat an effect of unknown outcome as having succeeded. Rundown never repeats an
@@ -176,6 +176,33 @@ write on the parent.
   and a live command holding any of those rows' execution lease refuses the
   release. Its authority is the agent id recorded at claim, a second identity
   that grants this one write and nothing else; it never writes the parent.
+
+## Prune and the human escape hatch
+
+- **Prune** (#906) decides on one listing (`planPrune`, `run-pruning.ts`) and
+  then makes one `deleteAtVersion` per delete, each a single `BEGIN IMMEDIATE`
+  transaction naming every row it removes — the root and its inline children —
+  at the version it was read at. A write, a newly taken lease or a newly
+  launched child since the listing refuses that delete
+  `CONCURRENT_MODIFICATION`, never retried. Current Child protection needs no
+  lock of its own: it is read from the same listing, and it only ever ends — a
+  Collected, cancelled or replaced reservation is never counted again, and a
+  finished or deleted parent never runs again — so a child unprotected at the
+  read stays unprotected. A child row inserted after the listing (a claim) is
+  not in it, so prune never deletes it. A finished child whose protection ends
+  because the same plan deletes its parent is deleted after the parent, so a
+  parent whose delete is refused stops the prune before its child goes. Each
+  parent's runbook is parsed once per listing; one that cannot be parsed keeps
+  its delegations protected rather than aborting the prune. Asking a human to
+  confirm a running top-level run happens between the read and the delete; a run
+  that moved meanwhile is refused by the same version check.
+- **`stop --run`**, the human escape hatch, reads the named run and each running
+  inline child it composes with its version, and applies the lease rule to each
+  before the human is asked. The stop is one `saveRuns` write
+  (`saveRunsResolvingLeases`, as `release` uses): every run's `FORCE_STOP`, and
+  the named run's `humanStop` audit, commit at the versions read, or none do. A
+  write to any of them while the human decided refuses it
+  `CONCURRENT_MODIFICATION`, never retried.
 
 ## No other coordination
 

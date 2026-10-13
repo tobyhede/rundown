@@ -382,6 +382,23 @@ cases:
           status: collected
           result: fail
 
+  delegation-prune-keeps-uncollected-child:
+    description: prune --all keeps the finished child its parent has not collected, so its ticket cannot claim a second child (#906)
+    file: delegation/delegate-single.runbook.md
+    commands:
+      - rd run delegate-single.runbook.md
+      - rd claim ${TICKET}
+      - rd pass --token ${CHILD_TOKEN} --step Check
+      - rd prune --all
+      - "! rd claim ${TICKET}"
+      - rd collect --token ${TOKEN}
+      - rd pass --token ${TOKEN} --step 2
+    result: COMPLETE
+    expect:
+      errors:
+        - code: ALREADY_CLAIMED
+          command: claim
+
   # named-steps/ (new coverage)
   named-step-for-loop-completed:
     description: Named step iterates normally with FOR loop

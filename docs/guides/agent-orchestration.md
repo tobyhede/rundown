@@ -106,6 +106,16 @@ counts it; the `runbook_abandoned` event's `parent.standing` says whether it
 does. Release grants nothing else and never touches your run. See
 [docs/reference/cli.md § Delegation](../reference/cli.md#delegation).
 
+Your own top-level `owner_token` has no agent recovery. If you lose it, ask the
+user: only a person at an interactive terminal can stop the run, with the
+audited escape hatch `rundown stop --run <run-id>`
+([docs/reference/cli.md](../reference/cli.md#escape-hatch)). Never run it
+yourself; it is refused `INTERACTIVE_REQUIRED` without a terminal.
+
+A finished child whose result you have not collected is kept by `rundown prune`,
+`--all` included, until you collect it, retry it, or your run finishes or is
+pruned ([Child Result retention](../reference/cli.md#prune-retention)).
+
 The Claude Code plugin's `PreToolUse` (`Agent|Task`) and `SubagentStop` hooks
 are registered but currently allow every call without injecting context, so the
 dispatched prompt must carry the ticket and the claim instruction itself; see

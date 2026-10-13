@@ -8,9 +8,9 @@
  * it removes, not only the one it names: the execution-lease rule applies to
  * each, and the conditional delete names each at the version it was read at.
  *
- * Pure functions over one listing (`RunbookStateManager.listWithVersion`),
- * so a front end such as `rundown prune` derives the chain from storage linkage
- * rather than re-deriving it.
+ * Pure functions over one listing (`RunbookStateManager.listWithVersion`).
+ * Which runs a prune selects, and which it keeps, is decided over these by
+ * `run-pruning.ts` (#906).
  *
  * @module runbook/run-deletion
  */
@@ -55,37 +55,6 @@ export function inlineDescendantsOf(
     frontier = level.map((run) => run.state.id);
   }
   return descendants;
-}
-
-/**
- * Whether a run is an Inline Child some running run above it in its inline
- * chain has not finished with.
- *
- * Such a child is never deleted on its own, whatever its lifecycle: the
- * running parent's reservation still names it, so deleting it would make the
- * parent's next progression launch it again from scratch, re-running its
- * commands and losing its result. It goes only with its root.
- *
- * @param run - The run to test.
- * @param runs - One listing of the store.
- * @returns True when an inline ancestor of `run` is running; false for a run
- *   that is not an Inline Child.
- */
-export function hasRunningInlineAncestor(
-  run: VersionedRunState,
-  runs: readonly VersionedRunState[],
-): boolean {
-  const byId = new Map(runs.map((listed) => [listed.state.id, listed]));
-  const seen = new Set<RunId>();
-  let linkage = run.linkage;
-  while (linkage?.kind === 'inline' && !seen.has(linkage.parentRunId)) {
-    seen.add(linkage.parentRunId);
-    const parent = byId.get(linkage.parentRunId);
-    if (parent === undefined) return false;
-    if ((parent.state.lifecycle ?? 'running') === 'running') return true;
-    linkage = parent.linkage;
-  }
-  return false;
 }
 
 /**

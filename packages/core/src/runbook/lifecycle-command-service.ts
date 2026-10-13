@@ -192,10 +192,8 @@ export type LifecycleTransitionOutcome =
       readonly updatedState?: RunbookState;
     };
 
-/** Input to {@link RunbookLifecycleCommandService.runTerminal}. */
-export interface LifecycleTerminalInput {
-  /** The terminal command being run. Drives FORCE_COMPLETE vs FORCE_STOP, never a literal. */
-  readonly command: TerminalCommandName;
+/** Fields every {@link LifecycleTerminalInput} carries. */
+interface LifecycleTerminalInputFields {
   /** The run resolved from the caller's Owner Token, with the version it was read at. */
   readonly run: OwnedRun;
   /** Optional terminal message forwarded to the machine (`FORCE_*.message`). */
@@ -203,6 +201,15 @@ export interface LifecycleTerminalInput {
   /** Optional display-result policy for the transition observation projection. */
   readonly computeActionResult?: (actionType: ActionType) => boolean;
 }
+
+/**
+ * Input to {@link RunbookLifecycleCommandService.runTerminal}, discriminated on
+ * the terminal command (it drives FORCE_COMPLETE vs FORCE_STOP, never a
+ * literal).
+ */
+export type LifecycleTerminalInput = LifecycleTerminalInputFields & {
+  readonly command: TerminalCommandName;
+};
 
 /** Result of a complete/stop command through the seam. */
 export type LifecycleTerminalOutcome =

@@ -76,6 +76,13 @@ export const CLISymbolicErrorCodeValues = [
   'NOTHING_TO_RETRY',
   'AGENT_MISMATCH',
   'NOT_A_DELEGATION',
+  // Prune protection and the human escape hatch (#906): `prune --token` naming
+  // a Current Child its parent still counts; `stop --run` with no human at an
+  // interactive terminal, declined by the human, or naming a Child Run.
+  'CURRENT_CHILD_PROTECTED',
+  'INTERACTIVE_REQUIRED',
+  'NOT_CONFIRMED',
+  'NOT_A_TOP_LEVEL_RUN',
   // The execution lease (#902): a live attempt holds the run's step, or the
   // attempt that held it died and the decision would pass it.
   'EXECUTION_IN_PROGRESS',
@@ -398,6 +405,11 @@ export const ActionResponseSchema = z
     complete: z.boolean().optional().describe('Whether the runbook completed'),
     /** Whether this resulted in runbook stopping */
     stopped: z.boolean().optional().describe('Whether the runbook was stopped'),
+    /** The running Inline Children the human escape hatch stopped with the run (#906) */
+    stoppedInline: z
+      .array(z.string().regex(RUN_ID_PATTERN))
+      .optional()
+      .describe('Running inline children stopped with the run by `stop --run`, nearest first'),
     /** Runbook context */
     runbook: RunbookContextSchema.optional().describe('Runbook context information'),
     // Flat format fields
@@ -549,6 +561,15 @@ export const StatusResponseSchema = z
       .array(DelegationChildStatusSchema)
       .optional()
       .describe("The Delegations of the run's active entry (#904)"),
+    humanStop: z
+      .object({
+        at: z.string().describe('When the human confirmed the stop (ISO 8601)'),
+        user: z.string().describe('Login name of the user at the terminal'),
+        host: z.string().describe('Host the terminal was on'),
+        message: z.string().optional().describe('The stop message: the human’s reason'),
+      })
+      .optional()
+      .describe('Present on a run stopped by the human escape hatch, `stop --run` (#906)'),
     vars: z
       .record(z.string(), z.string())
       .optional()
@@ -1152,20 +1173,53 @@ export const PruneResponseSchema = z
   .array(
     ActiveRunbookEntrySchema.extend({
       /**
-       * Present on a run that was selected but kept: a running run is deleted
-       * only under its own Owner Token (`--token`), so `--active` / `--all`
-       * without one report it `retained: "token required"`. A finished inline
-       * child whose parent is still running is kept as `"parent running"`,
-       * and a run with an attempt In Progress in its inline chain as
-       * `"execution in progress"`.
+       * Present on a run that was selected but kept (#906): `"token required"`
+       * for a running top-level run no `--token` names and no human at a
+       * terminal confirmed, `"not confirmed"` for one the human declined,
+       * `"child run"` for a running child run (never offered for
+       * confirmation), `"uncollected"` for a terminal Current Child whose
+       * running parent has not Collected it, `"current child"` for a running
+       * one, `"parent unreadable"` for a delegation whose running parent's
+       * runbook could not be parsed, and `"execution in progress"` for a run
+       * with an attempt In Progress in its inline chain.
        */
       retained: z
+        .enum([
+          'token required',
+          'not confirmed',
+          'child run',
+          'uncollected',
+          'current child',
+          'parent unreadable',
+          'execution in progress',
+        ])
+        .optional()
+        .describe('Why a selected run was kept rather than deleted'),
+      /**
+       * With `retained: "child run"`, the recoveries that reach the child;
+       * with `"parent unreadable"`, why the parent could not be read.
+       */
+      detail: z
         .string()
         .optional()
-        .describe('Why a selected run was kept rather than deleted (e.g. "token required")'),
+        .describe('What to do about a retained child run, or why its parent is unreadable'),
+      /**
+       * On a running run deleted without its Owner Token: the human who
+       * confirmed it at an interactive terminal. The row is gone, so the
+       * command's output is the record.
+       */
+      confirmedBy: z
+        .object({
+          at: z.string().describe('ISO-8601 time the human confirmed the delete'),
+          user: z.string().describe('Login name of the user at the terminal'),
+          host: z.string().describe('Host the terminal was on'),
+        })
+        .strict()
+        .optional()
+        .describe('The human who confirmed deleting this running run without its token'),
     }),
   )
-  .describe('Runs that were/would be pruned, plus running runs retained for want of a token');
+  .describe('Runs that were/would be pruned, plus each selected run retained, with its reason');
 
 // ============================================================================
 // Execution Summary Schema

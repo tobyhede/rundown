@@ -21,6 +21,7 @@ import {
   runCliInProcess as runCliInProcessCore,
   stripExitArtefact,
 } from '../../src/services/in-process-cli-runner.js';
+import type { HumanConfirmation } from '../../src/services/human-confirmation.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -164,6 +165,8 @@ export { stripExitArtefact };
 export interface RunCliInProcessOptions {
   /** Per-invocation environment overrides, restored after the command finishes. */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** The human at the terminal (#906); none unless the test injects one. */
+  readonly human?: HumanConfirmation;
 }
 
 /**
@@ -193,6 +196,7 @@ export async function runCliInProcess(
       CLAUDE_PLUGIN_ROOT: pluginDir,
       ...(options.env ?? {}),
     },
+    ...(options.human !== undefined ? { human: options.human } : {}),
   });
   return result;
 }

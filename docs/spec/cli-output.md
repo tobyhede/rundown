@@ -60,7 +60,9 @@ pretty-printed.
   `rundown claim` — and appears in no other output. A Claim Ticket (`rdt_…`) is
   printed once, in the `children` of the `step_entered` event that issued it,
   and is `rundown claim`'s only authority. `--run <rd_…>` is a read-only
-  selector (`status`, `artifact`) and is never mutation authority.
+  selector (`status`, `artifact`) and is never mutation authority, except in the
+  human escape hatch `rundown stop --run`, which requires a person at an
+  interactive terminal ([Escape hatch](#escape-hatch-refusals)).
 
 ### Schema Reference
 
@@ -381,6 +383,38 @@ Result only:
 
 The text forms add a `PARENT` column to the list and `Parent:` / `Child:` /
 `Delegation:` lines to the detail.
+
+### Human stop audit
+
+A run stopped through the human escape hatch
+([`rundown stop --run`](#escape-hatch-refusals)) carries the audit the stop
+recorded, in the detail form:
+
+```json
+{
+  "kind": "status",
+  "active": false,
+  "status": "stopped",
+  "runId": "rd_0123456789abcdef0123456789abcdef",
+  "humanStop": {
+    "at": "2026-10-14T09:30:00.000Z",
+    "user": "alice",
+    "host": "build-07",
+    "message": "Lost the owner token"
+  }
+}
+```
+
+| Field               | Meaning                                                  |
+| ------------------- | -------------------------------------------------------- |
+| `humanStop.at`      | ISO-8601 time the human confirmed the stop               |
+| `humanStop.user`    | Login name of the user at the terminal                   |
+| `humanStop.host`    | Host the terminal was on                                 |
+| `humanStop.message` | The stop message, the human's reason; absent without one |
+
+The text form adds a
+`Stopped by <user> on <host> at <at>, without the owner token[: <message>]`
+line.
 
 ### `rundown status --run <rd_…>`
 
@@ -930,7 +964,8 @@ A target that does not exist is refused:
 
 ## stop
 
-`stop` requires `--token <owner_token>`.
+`stop` requires `--token <owner_token>`, except for the human escape hatch,
+[`stop --run`](#escape-hatch-refusals).
 
 ### `rundown stop [message] --token <owner_token>`
 
@@ -973,6 +1008,44 @@ Runbook:  STOP
 {"type":"step_transitioned","action":"STOP","from":"1","at":"1","result":"FAIL","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":1}
 {"type":"runbook_stopped","message":"User requested stop","position":{"current":"1","total":3},"reason":"fail_transition","timestamp":"2026-05-07T00:00:00.000Z","runbookId":"rd_0123456789abcdef0123456789abcdef","runbook":{"source":"project","path":"runbooks/deploy.runbook.md"},"seq":2}
 {"file":"runbooks/deploy.runbook.md","state":".rundown/rundown.db","runId":"rd_0123456789abcdef0123456789abcdef","action":"stop","stopped":true,"kind":"action","message":"User requested stop"}
+```
+
+<a id="escape-hatch-refusals"></a>
+
+### `rundown stop [message] --run <run-id>` (human escape hatch)
+
+The one mutation a run id drives: a person at an interactive terminal stops a
+top-level run whose Owner Token was lost, with every running inline child it
+composes. On an explicit yes to the prompt (written to stderr, so stdout stays
+JSON), the output is that of `stop --token` above: the named run's observation
+events, then each stopped inline child's (each attributed to its own
+`runbookId`), then the action object naming the named run, which adds
+`stoppedInline` — the stopped inline children's run ids, nearest first — when
+there are any. The text output adds one `Inline:   <run-id> STOP` line per
+child. The named run records `humanStop` (see
+[Human stop audit](#human-stop-audit)); the children are stopped by the same
+all-or-nothing write. Every refusal writes nothing and exits 1:
+
+| Code                      | When                                                                                                                                                                                                              |
+| ------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `INTERACTIVE_REQUIRED`    | No human at an interactive terminal (stdin and stderr are not both a TTY), or `--non-interactive`; nobody is asked                                                                                                |
+| `INVALID_RUN_ID`          | The id is malformed; nobody is asked                                                                                                                                                                              |
+| `RUN_TARGET_UNAVAILABLE`  | No run carries the id; nobody is asked                                                                                                                                                                            |
+| `RD-303` / `RD-304`       | The run already finished; nobody is asked                                                                                                                                                                         |
+| `NOT_A_TOP_LEVEL_RUN`     | The id names a child run; the message names only the recoveries that reach it (an inline child's root, or a delegation's own `stop --token` / `release`, and `retry` while its parent counts it); nobody is asked |
+| `EXECUTION_IN_PROGRESS`   | An attempt is In Progress on the run or a running inline child it composes; nobody is asked                                                                                                                       |
+| `NOT_CONFIRMED`           | The human answered anything but `y` / `yes`, including end of input (Ctrl-D) or Ctrl-C                                                                                                                            |
+| `CONCURRENT_MODIFICATION` | The run or one of its running inline children changed while the human decided; nothing is stopped, never retried                                                                                                  |
+| `INVALID_SYNTAX`          | `--run` was combined with `--token`                                                                                                                                                                               |
+
+```json
+{
+  "error": "rundown stop --run is the human escape hatch for a lost owner token: it asks for confirmation at an interactive terminal and records who stopped the run. There is no terminal here, so nothing was stopped. An agent must not use it: stop the run with --token <owner_token>, or ask the user to run `rundown stop --run <id>` themselves.",
+  "kind": "error",
+  "code": "INTERACTIVE_REQUIRED",
+  "command": "stop",
+  "details": { "runId": "rd_0123456789abcdef0123456789abcdef" }
+}
 ```
 
 ---
@@ -1020,23 +1093,56 @@ its text `ID` column is not truncated. Dry-run and actual prune print the same
 rows: the runs selected for removal.
 
 The lifecycle filters (`--completed`, `--stopped`, `--inactive`, `--active`,
-`--all`) select finished and invalid runs freely. A **running** run is deleted
-only when `--token <owner_token>` names it, one run per invocation; `--active`
-or `--all` without a token keeps each running run and reports it with
-`retained: "token required"`.
+`--all`) select finished and invalid runs. A **running** run is deleted when
+`--token <owner_token>` names it, one run per invocation, or — a top-level run
+selected by `--active` / `--all` — when a human at an interactive terminal
+confirms it. Without one (and always under `--dry-run`) it is kept and reported
+with `retained: "token required"`; one the human declines with
+`retained: "not confirmed"`. A running child run is never offered for
+confirmation: it is kept with `retained: "child run"` and a `detail` naming the
+recoveries that reach it.
 
-A deleted run's inline children are deleted with it and listed as rows of their
-own. Two more `retained` reasons apply to finished runs: `"parent running"` for
-an inline child whose parent is still running (it goes only with its parent),
-and `"execution in progress"` for a run with an attempt In Progress anywhere in
-its inline chain.
+Each row a human-confirmed delete removes carries the audit the deleted row can
+no longer hold — `confirmedBy: { at, user, host }` (ISO-8601 time of the
+confirmation, login name, host name) — and the text `NOTE` column shows
+`confirmed by <user>@<host> at <time>`.
+
+A current child its running parent still counts is never deleted on its own:
+`"uncollected"` for a finished one whose result the parent has not collected,
+`"current child"` for a running one
+([Child Result retention](../reference/cli.md#prune-retention)). When the same
+prune deletes the parent, a finished child the filters select is deleted after
+it, and a running one is kept as `"child run"`. A delegation whose running
+parent's runbook cannot be parsed is kept as `"parent unreadable"`, with a
+`detail` saying why. A deleted run's inline children are deleted with it and
+listed as rows of their own. The last reason, `"execution in progress"`, is a
+run with an attempt In Progress anywhere in its inline chain. `retained` is one
+of exactly these seven strings; `detail` appears only with `"child run"` and
+`"parent unreadable"`.
+
+`rundown prune --token` naming a protected current child is refused, with
+nothing deleted:
+
+```json
+{
+  "error": "Run rd_fedcba9876543210fedcba9876543210 is the current child of run rd_0123456789abcdef0123456789abcdef at 1.1 and holds a result it has not collected, so nothing was deleted. It becomes prunable once the parent collects it, cancels it with `rundown retry`, finishes, or is pruned.",
+  "kind": "error",
+  "code": "CURRENT_CHILD_PROTECTED",
+  "command": "prune",
+  "details": {
+    "runId": "rd_fedcba9876543210fedcba9876543210",
+    "parentRunId": "rd_0123456789abcdef0123456789abcdef",
+    "parentStep": "1.1"
+  }
+}
+```
 
 ### `rundown prune --dry-run`
 
 **Text:**
 
 ```text
-ID                                   STATUS    RUNBOOK                     TITLE                   RETAINED
+ID                                   STATUS    RUNBOOK                     TITLE                   RETAINED  NOTE
 rd_0123456789abcdef0123456789abcdef  stopped   runbooks/deploy.runbook.md  [Deploy to Production]
 rd_fedcba9876543210fedcba9876543210  complete  runbooks/retry.runbook.md   [Retry]
 ```
@@ -1065,7 +1171,7 @@ rd_fedcba9876543210fedcba9876543210  complete  runbooks/retry.runbook.md   [Retr
 **Text:**
 
 ```text
-ID                                   STATUS   RUNBOOK                     TITLE                   RETAINED
+ID                                   STATUS   RUNBOOK                     TITLE                   RETAINED        NOTE
 rd_0123456789abcdef0123456789abcdef  running  runbooks/deploy.runbook.md  [Deploy to Production]  token required
 ```
 
@@ -1079,6 +1185,45 @@ rd_0123456789abcdef0123456789abcdef  running  runbooks/deploy.runbook.md  [Deplo
     "status": "running",
     "title": "Deploy to Production",
     "retained": "token required"
+  }
+]
+```
+
+### `rundown prune --all` at an interactive terminal
+
+The human confirmed deleting the running top-level run; its running delegation
+is kept.
+
+**Text:**
+
+```text
+ID                                   STATUS   RUNBOOK                     TITLE                   RETAINED   NOTE
+rd_0123456789abcdef0123456789abcdef  running  runbooks/deploy.runbook.md  [Deploy to Production]             confirmed by ada@desk at 2026-05-07T00:00:00.000Z
+rd_fedcba9876543210fedcba9876543210  running  runbooks/verify.runbook.md  [Verify]                child run  Run rd_fedcba9876543210fedcba9876543210 is a running child run, …
+```
+
+**JSON:**
+
+```json
+[
+  {
+    "id": "rd_0123456789abcdef0123456789abcdef",
+    "runbook": "runbooks/deploy.runbook.md",
+    "status": "running",
+    "title": "Deploy to Production",
+    "confirmedBy": {
+      "at": "2026-05-07T00:00:00.000Z",
+      "user": "ada",
+      "host": "desk"
+    }
+  },
+  {
+    "id": "rd_fedcba9876543210fedcba9876543210",
+    "runbook": "runbooks/verify.runbook.md",
+    "status": "running",
+    "title": "Verify",
+    "retained": "child run",
+    "detail": "Run rd_fedcba9876543210fedcba9876543210 is a running child run, which prune deletes only with its own token or its root; its owner stops it with `rundown stop --token <owner_token>`, or its claiming agent ends it with `rundown release rd_fedcba9876543210fedcba9876543210` (with the `--agent-id` it claimed with, if any)."
   }
 ]
 ```

@@ -231,6 +231,9 @@ Arguments:
 Options:
   --token <token>  Owner token of the run to mutate (owner_token from
                    runbook_started)
+  --run <runId>    Human escape hatch for a lost owner token: stop this
+                   top-level run by id after confirming at an interactive
+                   terminal (audited; never for agents)
   --text           Output as human-readable text
   -h, --help       display help for command
 ```
@@ -368,7 +371,8 @@ Options:
   --dry-run        Show what would be removed without deleting
   --completed      Prune successfully completed run state
   --stopped        Prune stopped (aborted/failed) run state
-  --active         Prune running run state (each running run needs its --token)
+  --active         Prune running run state (each needs its --token, or your
+                   confirmation at a terminal)
   --inactive       Prune invalid or abandoned run state
   --all            Prune all run state
   --text           Output as human-readable text

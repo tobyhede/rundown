@@ -208,3 +208,29 @@ describe('running-runbooks Delegation recovery (#905), in both plugin copies', (
     },
   );
 });
+
+describe('the human escape hatch is the user’s, never an agent’s (#906), in both plugin copies', () => {
+  const codexSkill = (name: string): string =>
+    readFileSync(path.join(skillsDir, '..', 'codex-plugin', 'skills', name, 'SKILL.md'), 'utf-8');
+  const copies = {
+    claude: readSkill('running-runbooks/SKILL.md'),
+    codex: codexSkill('running-runbooks'),
+  };
+
+  it.each(Object.entries(copies))(
+    '%s: a lost top-level owner_token is the user’s to recover with stop --run; the agent asks',
+    (_copy, skill) => {
+      const owner = section(skill, '## The Owner Token');
+      expect(owner).toContain('rundown stop --run <run_id>');
+      expect(owner).toMatch(/[Nn]ever run\s+`rundown stop --run`/);
+      expect(owner).toMatch(/ask the user\s+to run/);
+      expect(section(skill, '## Refusals')).toContain('`INTERACTIVE_REQUIRED`');
+    },
+  );
+
+  it('delegating-runbooks keeps a lost child token on retry and release, never the escape hatch', () => {
+    const skill = readSkill('delegating-runbooks/SKILL.md');
+    expect(skill).toMatch(/[Nn]ever run\s+`rundown stop --run`/);
+    expect(skill).not.toMatch(/rundown stop --run <child/);
+  });
+});

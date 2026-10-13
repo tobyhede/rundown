@@ -34,13 +34,15 @@ describe('stop command wiring', () => {
     expect(stop?.description()).toBe('Abort a running runbook');
 
     const byLong = new Map(stop!.options.map((o) => [o.long, o]));
-    expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--token', '--text']));
+    expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--token', '--run', '--text']));
     expect(byLong.get('--token')?.description).toBe(
       'Owner token of the run to mutate (owner_token from runbook_started)',
     );
     expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
-    // `--run` is accepted only so the combination can be refused INVALID_SYNTAX.
-    expect(byLong.get('--run')?.hidden).toBe(true);
+    // `--run` is the human escape hatch (#906), so it is documented, as human-only.
+    expect(byLong.get('--run')?.hidden).toBe(false);
+    expect(byLong.get('--run')?.description).toContain('Human escape hatch for a lost owner token');
+    expect(byLong.get('--run')?.description).toContain('never for agents');
   });
 });
 
