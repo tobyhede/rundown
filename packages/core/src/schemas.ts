@@ -502,8 +502,8 @@ function makeSubstepStateSchema(contextSnapshotSchema: z.ZodType) {
               .strict(),
           ])
           .optional(),
-        // Delegations the parent cancelled by reserving afresh (#905).
-        cancelled: z
+        // Delegations the parent replaced by reserving afresh (#905).
+        replaced: z
           .array(z.object({ runId: RunIdSchema, ticketHash: SecretHashSchema.nullable() }).strict())
           .optional(),
       })

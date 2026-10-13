@@ -35,7 +35,7 @@ import {
   activeEntryDelegations,
   countsDelegation,
   delegationStanding,
-  findCancelledDelegation,
+  findReplacedDelegation,
   findTicketReservation,
   owesClaimTickets,
   type CurrentDelegation,
@@ -198,17 +198,18 @@ export async function claimDelegation(
       found = { parent: run, substepState };
       break;
     }
-    // A ticket whose child the parent cancelled (`retry`, or a re-entry) is
-    // told so: the owner holds the current ticket (#905).
-    const cancelled = findCancelledDelegation(
+    // A ticket whose child the parent replaced (`retry`, or a re-entry) is
+    // told the parent no longer counts it: the owner holds the current ticket
+    // (#905).
+    const replaced = findReplacedDelegation(
       run.state,
       (record) => record.ticketHash === ticketHash,
     );
-    if (cancelled !== undefined) {
+    if (replaced !== undefined) {
       return claimRefused(
         'cancelled',
         run.state.id,
-        `${frameKeyStep(cancelled.frameKey)}.${cancelled.id}`,
+        `${frameKeyStep(replaced.frameKey)}.${replaced.id}`,
       );
     }
   }
