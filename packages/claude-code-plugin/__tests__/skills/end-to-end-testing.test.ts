@@ -30,15 +30,19 @@ describe('end-to-end-testing skill', () => {
     expect(skill).not.toMatch(/npm install|npm run build|installation|Local Setup/i);
   });
 
-  it('runs the inline steps and reports the delegation refusal instead of improvising', () => {
+  it('runs the delegated review step to completion through claim tickets and collect', () => {
     const skill = readSkill();
 
-    // Inline children run on the Owner Token (#903); step 3's child delegates,
-    // so its launch is refused until #904.
+    // Steps 2 and 3 compose inline (#903); step 3's child delegates review and
+    // collation, which the orchestrator dispatches by ticket and collects (#904).
     expect(skill).toMatch(/compose their runbooks inline/);
-    expect(skill).toContain('`RUNBOOK_COMPOSITION_UNSUPPORTED`');
-    expect(skill).toContain('#904');
-    expect(skill).toMatch(/Report the refusal to the user as the result and stop/);
+    expect(skill).toContain('dispatch one sub-agent per `ticket`');
+    expect(skill).toContain('`rundown claim <ticket>`');
+    expect(skill).toContain('`rundown collect --token <owner_token>`');
+    expect(skill).toMatch(/until no child is `pending` or `unclaimed`/);
+    expect(skill).toContain('Run every step to completion');
+    expect(skill).not.toContain('RUNBOOK_COMPOSITION_UNSUPPORTED');
+    expect(skill).not.toMatch(/Report the refusal/);
   });
 
   it('drives steps with the owner token, never retired authority', () => {
@@ -47,7 +51,7 @@ describe('end-to-end-testing skill', () => {
     expect(skill).toContain('`--token <owner_token>`');
     expect(skill).toContain('`--step <position>`');
     expect(skill).not.toContain('--claim-id');
-    expect(skill).not.toMatch(/rundown (?:claim|collect)\b/);
+    expect(skill).not.toMatch(/rundown (?:delegate|abort)\b/);
   });
 
   it('uses transition output as the normal agent context', () => {

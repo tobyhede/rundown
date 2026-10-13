@@ -7,21 +7,20 @@ use_when: Driving a body of work from a spec through to merged implementation.
 # Planning
 
 <important>
-## Runbook-Orchestrated Skill — pipeline not available in this build
-The `planning` runbook composes the `write-plan`, `review-plan`, and `execute-plan` runbooks, and its first stage is `- DELEGATE`, which this build does not run:
-`rundown run rundown:planning` is refused with
-`RUNBOOK_COMPOSITION_UNSUPPORTED` and creates no run. `review-plan` and `execute-plan` delegate too and are refused the same way. Inline
-composition (a substep listing one runbook, without `- DELEGATE`) runs; delegation returns in #904.
-
-What runs today is stage 1 on its own, `write-plan`, a standalone runbook:
+## Runbook-Orchestrated Skill
+The `planning` runbook owns the sequence and the gates. Start it and drive it:
 
 1. `Skill(skill: "rundown:running-runbooks")`
-2. `rundown run rundown:write-plan`, then follow the running-runbooks protocol
+2. `rundown run rundown:planning`, then follow the running-runbooks protocol
    (capture `owner_token` from `runbook_started`; report each step with
    `--token` and `--step`).
-
-Tell the user the review and execute stages cannot run as runbooks yet before
-starting, so they can choose stage 1 alone. </important>
+3. When a `- DELEGATE` step is entered (stage 1, and steps inside
+   `review-plan` and `execute-plan`), its `step_entered` lists `children` with
+   Claim Tickets. Follow [delegating-runbooks](../delegating-runbooks/SKILL.md):
+   dispatch one sub-agent per ticket, then apply the results with
+   `rundown collect --token <owner_token>`. Never pass a delegated substep
+   yourself.
+</important>
 
 ## Overview
 

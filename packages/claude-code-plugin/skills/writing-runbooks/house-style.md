@@ -114,7 +114,7 @@ Keep runbooks small and single-purpose. Each produces one artifact and declares 
 
 ### Composition & delegation
 
-The inline shape below runs; the `- DELEGATE` shape is refused by `rundown run` in this build (delegation returns in #904); see [Composition in this build](SKILL.md#composition-in-this-build). Both remain the house style for parents written now.
+Both shapes below run; see [Inline and delegated children](SKILL.md#inline-and-delegated-children).
 
 Run child runbooks by listing their paths in an H2 step body:
 
@@ -126,7 +126,7 @@ Run child runbooks by listing their paths in an H2 step body:
 - end-to-end-test/write-file.runbook.md
 ```
 
-Add bare `- DELEGATE` to push the children to subagents instead of running inline. The idiomatic shape is a wrapper that **delegates the fan-out review, then delegates collation** as a second step — never collate from the parent:
+Add bare `- DELEGATE` to push the children to subagents instead of running inline: each child is claimed by a sub-agent with its Claim Ticket and its result reaches the parent through `rundown collect`. The idiomatic shape is a wrapper that **delegates the fan-out review, then delegates collation** as a second step — never collate from the parent:
 
 ```markdown
 ## 1. Delegate subagents to review

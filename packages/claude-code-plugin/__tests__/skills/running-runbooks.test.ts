@@ -30,8 +30,10 @@ describe('running-runbooks skill description', () => {
     expect(readDescription()).toMatch(/start/i);
   });
 
-  it('no longer advertises delegation claim tokens', () => {
-    expect(readDescription()).not.toMatch(/claim/i);
+  it('triggers on a handed-over Claim Ticket, never on retired claim tokens', () => {
+    const description = readDescription();
+    expect(description).toMatch(/Claim Ticket \(rdt_…\)/);
+    expect(description).not.toMatch(/rdtk_|claim[_ -]id/i);
   });
 });
 

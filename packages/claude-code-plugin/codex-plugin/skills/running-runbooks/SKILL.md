@@ -1,6 +1,6 @@
 ---
 name: running-runbooks
-description: Use when stepping through a Rundown runbook that is already active or has just been started, or when rundown CLI commands appear in step output. For cold-start "run the X runbook" requests with nothing active, the rundown launcher skill starts the runbook first.
+description: Use when stepping through a Rundown runbook that is already active or has just been started, when handed a Rundown Claim Ticket (rdt_…) to claim and drive a delegated child run, or when rundown CLI commands appear in step output. For cold-start "run the X runbook" requests with nothing active, the rundown launcher skill starts the runbook first.
 ---
 
 # Running Runbooks
@@ -15,7 +15,8 @@ the current surface, use the `rundown` CLI directly. MCP and CLI routes are thin
 front ends over the same CLI/core state machine, and JSON remains the
 agent-facing output. The MCP tools take the same authority as the CLI flags
 below: `token`, `step`, and `index` on `pass` / `fail` / `goto`, `token` on
-`stop` / `complete`, and `runId` on `status`.
+`stop` / `complete` / `collect`, `ticket` (and optional `agentId`) on `claim`,
+and `runId` on `status`.
 
 ## When to Use
 
@@ -160,23 +161,62 @@ no second token — the child's `runbook_started` event carries no `owner_token`
   leaves the parent waiting on that substep; report it to the user, or decide
   the substep with `rundown fail --token <owner_token> --step <parent substep>`.
 
-A runbook with a `- DELEGATE` substep is refused at `rundown run` with
-`RUNBOOK_COMPOSITION_UNSUPPORTED`; no run is created. Delegation returns in
-#904. Report the refusal to the user and stop.
+A substep marked `- DELEGATE` is a **delegation**: a child run owned by the
+agent that claims it. Its `step_entered` lists
+`children: [{ step, index?, runId, runbook, ticket }]`; each `ticket` (`rdt_…`,
+a Claim Ticket) is printed only on that event, never again. As the orchestrator:
+
+1. Hand each ticket to one sub-agent, with the claim command and this skill in
+   its prompt. If your surface cannot dispatch sub-agents, claim and drive each
+   child yourself as in [Claimed Delegations](#claimed-delegations).
+2. Apply the results with `rundown collect --token <owner_token>`. Its
+   `children_collected` event reports each child `collected`,
+   `already_collected`, `pending`, `unclaimed`, or `cancelled`, and applies
+   every terminal child in any order. Pending and unclaimed children exit 0:
+   collect again once they finish. When the cursor moves, the output continues
+   as for `pass` (the next `step_entered`, possibly with new tickets).
+3. Never `pass` / `fail` the delegated substep yourself: deciding it by hand
+   cancels its child. Collect is the only way a delegated result reaches the
+   parent.
+
+Children inherit the parent's variables (including `ContextId`) as captured when
+they were reserved, and their frontmatter `outputs:` flow into the parent at
+collect. Inside a FOR loop each iteration reserves its own child and ticket. A
+lost ticket has no agent recovery in this build: tell the user.
+
+## Claimed Delegations
+
+If you were handed a Claim Ticket, you own that child run:
+
+```bash
+rundown claim <ticket> --agent-id <id>    # --agent-id is optional
+```
+
+`claim` prints the child's `runbook_started` with the child's **own**
+`owner_token`; use it as `<owner_token>` in the loop above, and `--step` names
+the child's steps. Two extra rules:
+
+- Stop at the child's terminal. You never write or collect the parent; its owner
+  collects your result.
+- `DELEGATION_CANCELLED` or `PARENT_RUN_FINISHED` on any command means your work
+  will never be collected: stop and report.
 
 ## Refusals
 
 A refused command writes nothing. Fix the cause and re-issue it.
 
-| Code                              | Cause                                                                                        | Fix                                                                        |
-| --------------------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `TOKEN_REQUIRED`                  | Mutating command without `--token`                                                           | Add `--token <owner_token>`                                                |
-| `UNKNOWN_TOKEN`                   | No run carries that token (mistyped, or the run was pruned)                                  | Copy `owner_token` verbatim from `runbook_started`; if lost, tell the user |
-| `INVALID_STEP`                    | `--step` / `--index` missing or not the current position (an inline child's, while one runs) | The message names the current position; re-issue with it                   |
-| `INVALID_SYNTAX`                  | `--run` combined with `--token`, among other syntax errors                                   | Drop `--run` from mutating commands                                        |
-| `RD-303` / `RD-304`               | The run already completed / stopped                                                          | Nothing to drive; report the outcome                                       |
-| `CONCURRENT_MODIFICATION`         | Another write landed on the run first                                                        | Re-read with `rundown status --run <run_id>`, then re-issue                |
-| `RUNBOOK_COMPOSITION_UNSUPPORTED` | The runbook (or an inline child) delegates                                                   | See [Composed Runbooks](#composed-runbooks)                                |
+| Code                                           | Cause                                                                                        | Fix                                                                        |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `TOKEN_REQUIRED`                               | Mutating command without `--token`                                                           | Add `--token <owner_token>`                                                |
+| `UNKNOWN_TOKEN`                                | No run carries that token (mistyped, or the run was pruned)                                  | Copy `owner_token` verbatim from `runbook_started`; if lost, tell the user |
+| `INVALID_STEP`                                 | `--step` / `--index` missing or not the current position (an inline child's, while one runs) | The message names the current position; re-issue with it                   |
+| `INVALID_SYNTAX`                               | `--run` combined with `--token`, among other syntax errors                                   | Drop `--run` from mutating commands                                        |
+| `RD-303` / `RD-304`                            | The run already completed / stopped                                                          | Nothing to drive; report the outcome                                       |
+| `CONCURRENT_MODIFICATION`                      | Another write landed on the run first                                                        | Re-read with `rundown status --run <run_id>`, then re-issue                |
+| `RUNBOOK_COMPOSITION_UNSUPPORTED`              | A substep lists more than one runbook                                                        | Report it to the user and stop                                             |
+| `NOTHING_TO_COLLECT`                           | `collect` while the current step delegates nothing                                           | Collect only after a `step_entered` that listed `children`                 |
+| `UNKNOWN_TICKET` / `ALREADY_CLAIMED`           | `claim` with an unknown ticket / a ticket already claimed                                    | Copy the ticket verbatim; claim once and keep its `owner_token`            |
+| `DELEGATION_CANCELLED` / `PARENT_RUN_FINISHED` | Your delegated child no longer counts / its parent finished                                  | Stop working on the child and report                                       |
 
 A `policy_denied` event means the security policy refused a command step and the
 run stopped. Report it to the user; permission is theirs to grant (see the

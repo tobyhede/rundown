@@ -54,9 +54,10 @@ Every `SKILL.md` holds two kinds of content. Conversion separates them.
 | Fan-out ("dispatch a subagent per item")                       | `- DELEGATE` steps + delegate-then-collate                                                   |
 | Domain knowledge: rules, syntax, rationale, examples           | **Stays in the skill.** Step 1 says "Invoke and read the `<skill>` skill"; bodies point back |
 
-A parent that composes leaves inline runs; a `- DELEGATE` fan-out is refused by
-`rundown run` until #904; see
-[Composition in this build](../writing-runbooks/SKILL.md#composition-in-this-build).
+A parent that composes leaves inline runs on its own Owner Token; a `- DELEGATE`
+fan-out runs with one sub-agent (or claimant) per Claim Ticket and
+`rundown collect` in the parent; see
+[Inline and delegated children](../writing-runbooks/SKILL.md#inline-and-delegated-children).
 
 **The primary quality gate is the no-duplication scan.** If a step body is
 teaching, that content belongs in the skill — do not restate it in the runbook.
@@ -130,8 +131,9 @@ checklist. Run it with `--input SkillPath=<path-to-SKILL.md>`.
 - [writing-runbooks/house-style.md](../writing-runbooks/house-style.md) —
   idiomatic runbook conventions
 - [writing-runbooks](../writing-runbooks/SKILL.md) — runbook syntax
-- Stage 1 delegated child dispatch note: automatic Codex child-agent
-  orchestration requires Stage 2 hook support
+- Delegated child dispatch: Codex has no automatic child-agent hooks; the
+  orchestrator hands out Claim Tickets itself (see
+  [running-runbooks](../running-runbooks/SKILL.md#composed-runbooks))
 - [running-runbooks](../running-runbooks/SKILL.md) — executing the produced
   runbook
 - [writing-plans](../writing-plans/SKILL.md) — planning the work a runbook will

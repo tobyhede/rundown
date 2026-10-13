@@ -152,10 +152,8 @@ re-derive their paths.
 
 ### Composition & delegation
 
-The inline shape below runs; the `- DELEGATE` shape is refused by `rundown run`
-in this build (delegation returns in #904); see
-[Composition in this build](SKILL.md#composition-in-this-build). Both remain the
-house style for parents written now.
+Both shapes below run; see
+[Inline and delegated children](SKILL.md#inline-and-delegated-children).
 
 Run child runbooks by listing their paths in an H2 step body:
 
@@ -168,8 +166,10 @@ Run child runbooks by listing their paths in an H2 step body:
 ```
 
 Add bare `- DELEGATE` to push the children to subagents instead of running
-inline. The idiomatic shape is a wrapper that **delegates the fan-out review,
-then delegates collation** as a second step — never collate from the parent:
+inline: each child is claimed by a sub-agent with its Claim Ticket and its
+result reaches the parent through `rundown collect`. The idiomatic shape is a
+wrapper that **delegates the fan-out review, then delegates collation** as a
+second step — never collate from the parent:
 
 ```markdown
 ## 1. Delegate subagents to review
