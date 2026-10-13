@@ -14,6 +14,13 @@ export interface GateResult {
   // Success - add context and continue
   additionalContext?: string;
 
+  /**
+   * PreToolUse only: the complete tool input to run instead of the agent's.
+   * Claude Code replaces the whole input and still applies the user's
+   * permission rules to it, so a rewrite never grants permission.
+   */
+  updatedInput?: Record<string, unknown>;
+
   // Block agent from proceeding
   decision?: 'block';
   reason?: string;
