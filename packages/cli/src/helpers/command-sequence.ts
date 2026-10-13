@@ -274,6 +274,15 @@ export function createInProcessCommandExecutor(
   };
 }
 
+/**
+ * The environment markers Claude Code sets in its Bash tool commands, cleared
+ * so scenario commands behave as from a plain shell (#907).
+ */
+const CLAUDE_CODE_MARKERS_CLEARED: Readonly<Record<string, undefined>> = {
+  CLAUDECODE: undefined,
+  CLAUDE_CODE_ENTRYPOINT: undefined,
+};
+
 /** Options for command sequence execution. */
 export interface CommandSequenceOptions {
   /** Commands to execute in order */
@@ -1784,7 +1793,12 @@ export async function executeCommandSequence(
   const commandTimings: CommandTiming[] = [];
   let terminalResult: 'COMPLETE' | 'STOP' | 'UNKNOWN' = 'UNKNOWN';
 
-  const { commands, cwd, cliPath, quiet, env, commandExecutor } = options;
+  const { commands, cwd, cliPath, quiet, commandExecutor } = options;
+  // The harness plays every agent itself, naming each with `--agent-id` by
+  // hand (#907). Run from a Claude Code session, it would inherit that
+  // session's CLAUDECODE=1, under which an unnamed claim is refused; scenario
+  // commands run as from a plain shell, so clear Claude Code's markers.
+  const env = { ...CLAUDE_CODE_MARKERS_CLEARED, ...options.env };
 
   const recordTiming = (
     command: string,

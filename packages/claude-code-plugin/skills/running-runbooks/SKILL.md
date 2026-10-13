@@ -35,12 +35,12 @@ the run.
 
 No other command, status response, or listing ever shows it again, and it cannot
 be recovered. If you lose it, you can still read the run but no longer drive it.
-Stopping it is then the user's decision, not yours: `rundown stop --run <run_id>`
-is a human-only escape hatch that asks a person at a terminal to confirm, stops
-the whole run — with any inline child runbook it is running — and records who
-stopped it. Never run `rundown stop --run` yourself — it is
-refused `INTERACTIVE_REQUIRED` without a person at a terminal. Tell the user you
-lost the token, give them the run id, and ask the user to run
+Stopping it is then the user's decision, not yours:
+`rundown stop --run <run_id>` is a human-only escape hatch that asks a person at
+a terminal to confirm, stops the whole run — with any inline child runbook it is
+running — and records who stopped it. Never run `rundown stop --run` yourself —
+it is refused `INTERACTIVE_REQUIRED` without a person at a terminal. Tell the
+user you lost the token, give them the run id, and ask the user to run
 `rundown stop --run <run_id>` themselves if the run should stop.
 
 The same event carries the **run id** (`runbookId`, `rd_…`). The run id is for
@@ -109,7 +109,7 @@ Read the JSON for what happened.
 
 ```bash
 rundown goto <step> --token <owner_token>            # Jump to a step (e.g. 3 or 3.1; --index for a FOR iteration)
-rundown stop [message] --token <owner_token>         # Abort the run
+rundown stop [message] --token <owner_token>         # Stop the run
 rundown complete [message] --token <owner_token>     # Force early completion
 
 rundown status                    # List every run (read-only)
@@ -173,48 +173,54 @@ ticket once.
 If you were handed a Claim Ticket, you own that child run:
 
 ```bash
-rundown claim <ticket> --agent-id <id>    # your agent id; release needs the same one
+rundown claim <ticket>
 ```
 
 `claim` prints the child's `runbook_started` with the child's **own**
 `owner_token`; use it as `<owner_token>` in the loop above, and `--step` names
 the child's steps. Extra rules:
 
-- Stop at the child's terminal. You never write or collect the parent; its
-  owner collects your result.
-- `DELEGATION_CANCELLED` or `PARENT_RUN_FINISHED` on any command means your
-  work will never be collected: end the child with
+- Stop at the child's terminal. You never write or collect the parent; its owner
+  collects your result.
+- `DELEGATION_CANCELLED` or `PARENT_RUN_FINISHED` on any command means your work
+  will never be collected: end the child with
   `rundown stop --token <owner_token>` (the one command it still accepts), then
   report.
-- Pass the same `--agent-id` on `claim` and on `release`: release is
-  authorized only for the agent id the claim recorded, and nothing stamps it
-  for you.
+- The plugin stamps your agent id on `rundown claim` and `rundown release` when
+  you run them as plain commands, exactly as shown. Never pass an agent id
+  yourself, and never hide the command in a script, a variable or a subshell:
+  Rundown refuses a claim the plugin did not stamp (`AGENT_ID_REQUIRED`), and an
+  agent id given twice (`INVALID_SYNTAX`). Release is authorized only for the
+  agent id your claim recorded.
+- You cannot stop while the child is running and its parent still counts it:
+  finish it, or release it.
 - If you cannot finish the child — you lost its `owner_token` — run
-  `rundown release <child run id> --agent-id <id>` with the child's
-  `runbookId` and the same `--agent-id` your claim used. The child ends
-  `abandoned`, with any inline child it was running; its parent collects it as
-  a fail while it still counts it (`parent.standing` on `runbook_abandoned`).
+  `rundown release <child run id>` with the child's `runbookId`. The child ends
+  `abandoned`, with any inline child it was running; its parent collects it as a
+  fail while it still counts it (`parent.standing` on `runbook_abandoned`).
   Release grants nothing else.
 
 ## Refusals
 
 A refused command writes nothing. Fix the cause and re-issue it.
 
-| Code                              | Cause                                                                                        | Fix                                                                        |
-| --------------------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `TOKEN_REQUIRED`                  | Mutating command without `--token`                                                           | Add `--token <owner_token>`                                                |
-| `UNKNOWN_TOKEN`                   | No run carries that token (mistyped, or the run was pruned)                                  | Copy `owner_token` verbatim from `runbook_started`; if lost, tell the user |
-| `INVALID_STEP`                    | `--step` / `--index` missing or not the current position (an inline child's, while one runs) | The message names the current position; re-issue with it                   |
-| `INVALID_SYNTAX`                  | `--run` combined with `--token`, among other syntax errors                                   | Drop `--run` from mutating commands                                        |
-| `INTERACTIVE_REQUIRED`            | `rundown stop --run`, the human escape hatch, run without a person at a terminal             | Never use it; for a lost `owner_token`, ask the user to run it             |
-| `RD-303` / `RD-304`               | The run already completed / stopped                                                          | Nothing to drive; report the outcome                                       |
-| `CONCURRENT_MODIFICATION`         | Another write landed on the run first                                                        | Re-read with `rundown status --run <run_id>`, then re-issue                |
-| `RUNBOOK_COMPOSITION_UNSUPPORTED` | A substep lists more than one runbook | Report it to the user and stop |
-| `NOTHING_TO_COLLECT` | `collect` while the current step delegates nothing | Collect only after a `step_entered` that listed `children` |
-| `UNKNOWN_TICKET` / `ALREADY_CLAIMED` | `claim` with an unknown ticket / a ticket already claimed | Copy the ticket verbatim; claim once and keep its `owner_token` |
-| `DELEGATION_CANCELLED` / `PARENT_RUN_FINISHED` | Your delegated child no longer counts / its parent finished or was pruned | `rundown stop --token <owner_token>` on the child, then report |
-| `NOTHING_TO_RETRY` | `retry` of a substep whose child was collected or decided, or that delegates nothing | Retry only a pending or unclaimed delegated substep of the current step |
-| `AGENT_MISMATCH` / `NOT_A_DELEGATION` | `release` with another agent id than the claim's / of a run that is not a delegated child | Release only the child you claimed, by its `runbookId`, with the claim's `--agent-id` |
+| Code                                           | Cause                                                                                        | Fix                                                                                              |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `TOKEN_REQUIRED`                               | Mutating command without `--token`                                                           | Add `--token <owner_token>`                                                                      |
+| `UNKNOWN_TOKEN`                                | No run carries that token (mistyped, or the run was pruned)                                  | Copy `owner_token` verbatim from `runbook_started`; if lost, tell the user                       |
+| `INVALID_STEP`                                 | `--step` / `--index` missing or not the current position (an inline child's, while one runs) | The message names the current position; re-issue with it                                         |
+| `INVALID_SYNTAX`                               | `--run` combined with `--token`, among other syntax errors                                   | Drop `--run` from mutating commands                                                              |
+| `INTERACTIVE_REQUIRED`                         | `rundown stop --run`, the human escape hatch, run without a person at a terminal             | Never use it; for a lost `owner_token`, ask the user to run it                                   |
+| `RD-303` / `RD-304`                            | The run already completed / stopped                                                          | Nothing to drive; report the outcome                                                             |
+| `CONCURRENT_MODIFICATION`                      | Another write landed on the run first                                                        | Re-read with `rundown status --run <run_id>`, then re-issue                                      |
+| `RUNBOOK_COMPOSITION_UNSUPPORTED`              | A substep lists more than one runbook                                                        | Report it to the user and stop                                                                   |
+| `NOTHING_TO_COLLECT`                           | `collect` while the current step delegates nothing                                           | Collect only after a `step_entered` that listed `children`                                       |
+| `UNKNOWN_TICKET` / `ALREADY_CLAIMED`           | `claim` with an unknown ticket / a ticket already claimed                                    | Copy the ticket verbatim; claim once and keep its `owner_token`                                  |
+| `DELEGATION_CANCELLED` / `PARENT_RUN_FINISHED` | Your delegated child no longer counts / its parent finished or was pruned                    | `rundown stop --token <owner_token>` on the child, then report                                   |
+| `NOTHING_TO_RETRY`                             | `retry` of a substep whose child was collected or decided, or that delegates nothing         | Retry only a pending or unclaimed delegated substep of the current step                          |
+| `AGENT_ID_REQUIRED`                            | `claim` the plugin did not stamp: not a plain command                                        | Run `rundown claim <ticket>` as a plain command, from the sub-agent the ticket was dispatched to |
+| `CLAIM_OUTSIDE_SUBAGENT` (hook denial)         | `claim` by the top-level agent, which has no agent id                                        | Dispatch a sub-agent with the ticket on its own `RD_CLAIM_TICKET=<ticket>` line                  |
+| `AGENT_MISMATCH` / `NOT_A_DELEGATION`          | `release` by another agent than the claim's / of a run that is not a delegated child         | Release only the child you claimed, by its `runbookId`                                           |
 
 A `policy_denied` event means the security policy refused a command step and the
 run stopped. Report it to the user; permission is theirs to grant (see the

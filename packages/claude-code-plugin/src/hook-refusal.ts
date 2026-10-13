@@ -65,7 +65,7 @@ export function refusalMessage(refusal: HookDispatchRefusal): string {
     case 'invalid_payload':
       return `Rundown hook refused (fail-closed): malformed hook payload — ${refusal.detail}. Delegation safety cannot be verified, so the event was blocked. Retry the operation.`;
     case 'dispatch_failed':
-      return `Rundown hook refused (fail-closed): hook dispatch failed — ${refusal.detail}. Run \`rundown status\`, close any open delegations, then retry.`;
+      return `Rundown hook refused (fail-closed): hook dispatch failed — ${refusal.detail}. Delegation safety cannot be verified, so the event was blocked. Retry the operation; if this persists, rebuild the plugin.`;
   }
 }
 

@@ -1,11 +1,5 @@
 // packages/claude-code-plugin/__tests__/errors.test.ts
-import {
-  isNodeError,
-  isError,
-  getErrorMessage,
-  type SessionLoadError,
-  isFileNotFoundError,
-} from '../src/shared/index.js';
+import { isNodeError, isError, getErrorMessage } from '../src/shared/index.js';
 
 describe('isNodeError', () => {
   it('returns true for NodeJS.ErrnoException', () => {
@@ -45,30 +39,5 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage('string error')).toBe('string error');
     expect(getErrorMessage(123)).toBe('123');
     expect(getErrorMessage(null)).toBe('null');
-  });
-});
-
-describe('SessionLoadError', () => {
-  it('isFileNotFoundError returns true for file_not_found', () => {
-    const error: SessionLoadError = { type: 'file_not_found', path: '/test' };
-    expect(isFileNotFoundError(error)).toBe(true);
-  });
-
-  it('isFileNotFoundError returns false for parse_error', () => {
-    const error: SessionLoadError = {
-      type: 'parse_error',
-      path: '/test',
-      message: 'Unexpected token',
-    };
-    expect(isFileNotFoundError(error)).toBe(false);
-  });
-
-  it('isFileNotFoundError returns false for validation_error', () => {
-    const error: SessionLoadError = {
-      type: 'validation_error',
-      path: '/test',
-      message: 'Invalid type',
-    };
-    expect(isFileNotFoundError(error)).toBe(false);
   });
 });

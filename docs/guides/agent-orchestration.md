@@ -76,10 +76,13 @@ subagent that claims it.
 1. Entering the step lists each child on `step_entered`:
    `children: [{ step, runId, runbook, ticket }]`. The `ticket` (`rdt_…`) is a
    Claim Ticket, printed only there, once.
-2. Dispatch one subagent per child, with its ticket in the prompt and the
-   instruction to run `rundown claim <ticket>`. The claim prints the child's own
-   `owner_token`; the subagent drives the child with it like any run it owns,
-   and stops at the child's terminal.
+2. Dispatch one subagent per child, with its ticket in the prompt on a line of
+   its own: `RD_CLAIM_TICKET=<ticket>`. In Claude Code the plugin sees the
+   marker and appends the claim instructions to the subagent's prompt; on a host
+   without the plugin's hooks, put the instruction to run
+   `rundown claim <ticket>` in the prompt yourself. The claim prints the child's
+   own `owner_token`; the subagent drives the child with it like any run it
+   owns, and stops at the child's terminal.
 3. Apply the results with `rundown collect --token <owner_token>`. Collect
    reports each child (`collected`, `pending`, `unclaimed`, …) and applies every
    terminal one, in any order; when the step's children are all applied the run
@@ -98,12 +101,11 @@ hand, retried it, or the step was entered again — is refused
 was pruned; either means stop, and end the child with
 `rundown stop --token <child owner_token>`, the one command it still accepts. A
 subagent that cannot finish its child — it lost the child's `owner_token` — runs
-`rundown release <child run id> --agent-id <id>` with the agent id its claim
-used — the subagent passes that id by hand on both `claim` and `release`, since
-no hook stamps it yet (#907): the child ends `abandoned` (with any Inline Child
-it was running), and your collect applies it as a FAIL while your run still
-counts it; the `runbook_abandoned` event's `parent.standing` says whether it
-does. Release grants nothing else and never touches your run. See
+`rundown release <child run id>`, authorized by the agent id its claim recorded:
+the child ends `abandoned` (with any Inline Child it was running), and your
+collect applies it as a FAIL while your run still counts it; the
+`runbook_abandoned` event's `parent.standing` says whether it does. Release
+grants nothing else and never touches your run. See
 [docs/reference/cli.md § Delegation](../reference/cli.md#delegation).
 
 Your own top-level `owner_token` has no agent recovery. If you lose it, ask the
@@ -116,9 +118,31 @@ A finished child whose result you have not collected is kept by `rundown prune`,
 `--all` included, until you collect it, retry it, or your run finishes or is
 pruned ([Child Result retention](../reference/cli.md#prune-retention)).
 
-The Claude Code plugin's `PreToolUse` (`Agent|Task`) and `SubagentStop` hooks
-are registered but currently allow every call without injecting context, so the
-dispatched prompt must carry the ticket and the claim instruction itself; see
+### Agent identity and the Claude Code plugin hooks
+
+`claim` records the claiming agent's id (`--agent-id`), and `release` is
+authorized only for that id. In Claude Code the plugin supplies it:
+
+- Its `PreToolUse` hook on `Bash` stamps the subagent's own `agent_id` as
+  `--agent-id` on every plain `rundown claim` and `rundown release`, replacing
+  any `--agent-id` typed, so no agent passes it and none can claim or release
+  under another's id. A `claim` from the top-level agent (no `agent_id`) is
+  denied (`CLAIM_OUTSIDE_SUBAGENT`): the orchestrator never claims its own
+  children. A top-level `release` carries no agent id, so it releases only a
+  child claimed without one. Any other command runs untouched.
+- The CLI refuses what the hook could not stamp: inside Claude Code
+  (`CLAUDECODE=1`) a `claim` without `--agent-id` is `AGENT_ID_REQUIRED`, and
+  `--agent-id` given twice is `INVALID_SYNTAX`. Run `claim` and `release` as
+  plain commands. The stamp guards against confusion, not a malicious agent.
+- Its `SubagentStop` hook blocks a subagent from stopping while a child it
+  claimed is running and your run still counts it, telling it to finish the
+  child or release it; it allows the stop once the child is finished, abandoned
+  or cancelled. The question is core's, asked through
+  `rundown status --claimed-by <agent_id>`.
+
+Without those hooks — the Codex plugin, MCP, a person, the scenario harness —
+the claimant passes one stable id of its own by hand, the same on `claim` and
+`release`, and nothing holds its stop. See
 [docs/internal/plugin-trust-model.md](../internal/plugin-trust-model.md).
 
 ---

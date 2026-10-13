@@ -37,7 +37,7 @@ describe('end-to-end-testing skill', () => {
     // collation, which the orchestrator dispatches by ticket and collects (#904).
     expect(skill).toMatch(/compose their runbooks inline/);
     expect(skill).toContain('dispatch one sub-agent per `ticket`');
-    expect(skill).toContain('`rundown claim <ticket>`');
+    expect(skill).toContain('`RD_CLAIM_TICKET=<ticket>`');
     expect(skill).toContain('`rundown collect --token <owner_token>`');
     expect(skill).toMatch(/until no child is `pending` or `unclaimed`/);
     expect(skill).toContain('Run every step to completion');

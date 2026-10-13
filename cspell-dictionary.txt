@@ -390,6 +390,7 @@ unhomed
 bypassable
 cloexec
 CLOEXEC
+CLAUDECODE
 ELFCLASS
 ENOSYS
 EOPNOTSUPP
@@ -495,3 +496,5 @@ cursorless
 unmigrated
 watchpoints
 reselects
+bunx
+nohup

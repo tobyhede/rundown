@@ -416,6 +416,32 @@ The text form adds a
 `Stopped by <user> on <host> at <at>, without the owner token[: <message>]`
 line.
 
+### `rundown status --claimed-by <agent-id>`
+
+The Delegations that still hold an agent: running, claimed under that agent id,
+and still counted by their parent. The Claude Code plugin's `SubagentStop` hook
+blocks a sub-agent while the list is not empty. Run ids and step labels only:
+
+```json
+{
+  "kind": "claimed_delegations",
+  "agentId": "a5a1f32a3ad196aa7",
+  "delegations": [
+    {
+      "runId": "rd_7af1d92df90a405edbf718ca20012b3f",
+      "runbook": "child.runbook.md",
+      "parentRunId": "rd_46cbdd5f19324d3b91667e2ff0e96386",
+      "step": "1.1"
+    }
+  ]
+}
+```
+
+A finished, abandoned or cancelled child, one whose parent finished or was
+pruned, and another agent's child are not listed; an agent holding nothing gets
+`"delegations": []`. `--claimed-by` with `--run`, or empty, is refused
+`INVALID_SYNTAX`.
+
 ### `rundown status --run <rd_…>`
 
 **Text:**
@@ -679,7 +705,9 @@ carries the child's own `owner_token` (printed nowhere else) and its `parent`:
 ```
 
 Refusals are error envelopes with `command: "claim"`: `INVALID_SYNTAX` (not a
-Claim Ticket; the value is never echoed), `UNKNOWN_TICKET`, `ALREADY_CLAIMED`,
+Claim Ticket, whose value is never echoed; an empty `--agent-id`; or
+`--agent-id` given more than once), `AGENT_ID_REQUIRED` (inside Claude Code,
+`CLAUDECODE=1`, with no `--agent-id`), `UNKNOWN_TICKET`, `ALREADY_CLAIMED`,
 `DELEGATION_CANCELLED`, `PARENT_RUN_FINISHED`, and the child runbook's own
 preparation codes. Nothing is created on any of them.
 
@@ -752,10 +780,10 @@ Children the child composed, abandoned with it in the same write:
 ```
 
 Refusals are error envelopes with `command: "release"`: `INVALID_RUN_ID`,
-`INVALID_SYNTAX` (an empty `--agent-id`), `RUN_TARGET_UNAVAILABLE`,
-`NOT_A_DELEGATION`, `AGENT_MISMATCH`, `RD-303` / `RD-304`,
-`EXECUTION_IN_PROGRESS` and `CONCURRENT_MODIFICATION`. Nothing is written on any
-of them. The text form prints one line per standing —
+`INVALID_SYNTAX` (an empty `--agent-id`, or `--agent-id` given more than once),
+`RUN_TARGET_UNAVAILABLE`, `NOT_A_DELEGATION`, `AGENT_MISMATCH`, `RD-303` /
+`RD-304`, `EXECUTION_IN_PROGRESS` and `CONCURRENT_MODIFICATION`. Nothing is
+written on any of them. The text form prints one line per standing —
 `Run <runId> abandoned; run <parent> collects it at <step> as a fail`,
 `…; run <parent> no longer counts it at <step>, so nothing collects it`,
 `…; run <parent> has finished, so nothing collects it at <step>`, or
@@ -1730,6 +1758,7 @@ nothing, exits 1 and carries `details` only where shown.
 | `PARENT_RUN_FINISHED`  | `claim`, and any command on the child but `stop` | The parent reached a terminal or was pruned; `details.runId` names the child on a child command                                                                |
 | `NOTHING_TO_COLLECT`   | `collect`                                        | The run's current step delegates nothing                                                                                                                       |
 | `NOTHING_TO_RETRY`     | `retry`                                          | The substep delegates nothing, or its child was already collected or decided by hand                                                                           |
+| `AGENT_ID_REQUIRED`    | `claim`                                          | Inside Claude Code (`CLAUDECODE=1`) with no `--agent-id`: a claim the plugin's Bash hook did not stamp                                                         |
 | `AGENT_MISMATCH`       | `release`                                        | The agent id differs from the one the claim recorded (both absent match)                                                                                       |
 | `NOT_A_DELEGATION`     | `release`                                        | The run is not a delegated child                                                                                                                               |
 

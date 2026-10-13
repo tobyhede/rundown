@@ -437,10 +437,27 @@ rundown claim rdt_… --agent-id <id>    # Record the claiming agent on the chil
 **Flags:**
 
 - `--agent-id <id>` — Identity of the claiming agent, recorded on the child; a
-  later `release` of the child is matched against it. The agent passes it by
-  hand, and must pass the same id to `release`: no plugin hook stamps it yet
-  (#907).
+  later `release` of the child is matched against it. Given more than once it is
+  refused `INVALID_SYNTAX`, never resolved last-wins. Elsewhere than Claude Code
+  — Codex, MCP, a person, the scenario harness — the claimant passes one stable
+  id by hand, and the same id to `release`.
 - `--text` — Human-readable output.
+
+**In Claude Code.** The plugin's `PreToolUse(Bash)` hook stamps
+`--agent-id '<agent_id>'` from the sub-agent's `agent_id` on every
+`rundown claim` / `rundown release` it reads with confidence — a plain command,
+in an `&&` / `;` / `|` chain, behind `VAR=x`, `env`, `timeout`, `nice`, `npx` or
+`pnpm exec` — replacing any `--agent-id` typed, and denies such a claim from the
+top-level agent (`CLAIM_OUTSIDE_SUBAGENT`, a hook denial). Every other command
+runs untouched, so the user's Bash permission rules still match it. A claim the
+hook could not read reaches the CLI unstamped, and inside Claude Code
+(`CLAUDECODE=1`, which Claude Code sets in every Bash tool command) `claim`
+without `--agent-id` is refused `AGENT_ID_REQUIRED`; an `--agent-id` smuggled in
+beside the stamp makes two, refused `INVALID_SYNTAX`. Outside Claude Code an
+unnamed claim records no agent, as before. The stamp guards against agent
+confusion, not a malicious agent: one that deliberately builds an `--agent-id`
+the hook cannot see, or strips `CLAUDECODE` from its own environment, is outside
+that threat model and is not prevented.
 
 In one transaction, `claim` verifies the reservation is still a child its parent
 counts and the parent is running, and creates the child run under the reserved
@@ -527,8 +544,12 @@ rundown release rd_… --agent-id <id>
 
 - `--agent-id <id>` — Identity of the releasing agent. It must equal the agent
   id the claim recorded; a child claimed without one is released without one.
-  The agent passes it by hand — the same id it gave `claim` — since no plugin
-  hook stamps it yet (#907).
+  Given more than once it is refused `INVALID_SYNTAX`. In Claude Code the
+  plugin's Bash hook stamps the sub-agent's own `agent_id` (see
+  [claim](#rundown-claim-ticket---claim-a-delegation)), replacing any value
+  typed, and strips it from a top-level agent's release, so that releases only a
+  child claimed without one. Elsewhere the claimant passes the id its claim
+  used.
 - `--text` — Human-readable output.
 
 Release is authorized by that agent id, not an Owner Token, and grants nothing
@@ -590,12 +611,12 @@ the one mutation a run id may drive, and it is interactive and audited:
   inline child runs on the token of the run at the top of its inline chain, so
   the refusal names that run (`rundown stop --run <root-id>` if its token is
   lost), never an intermediate inline child. A delegation is ended by its own
-  `stop --token`, or by its claiming agent's `rundown release <child-id>` (with
-  the `--agent-id` it claimed with); while its parent still counts it, the
-  parent's owner can also `rundown retry` it. An orphaned delegation (its parent
-  was pruned) has no parent to ask. An attempt In Progress on the run or any
-  running inline child it composes refuses it `EXECUTION_IN_PROGRESS`, so the
-  human is never asked to confirm a stop that would be refused.
+  `stop --token`, or by its claiming agent's `rundown release <child-id>` (under
+  the agent id it claimed with); while its parent still counts it, the parent's
+  owner can also `rundown retry` it. An orphaned delegation (its parent was
+  pruned) has no parent to ask. An attempt In Progress on the run or any running
+  inline child it composes refuses it `EXECUTION_IN_PROGRESS`, so the human is
+  never asked to confirm a stop that would be refused.
 - It then asks on stderr, naming the run, its runbook, its step, the running
   inline children that will stop with it, and the user and host it will record.
   Anything but `y` / `yes` — an empty answer, end of input (Ctrl-D), or Ctrl-C —
@@ -816,6 +837,7 @@ Show every run, or one run in detail. `status` is read-only and takes no
 rundown status                       # List every run (JSON output by default)
 rundown status --run <run_id>        # Show one run in detail
 rundown status --run <run_id> --text # Human-readable detail
+rundown status --claimed-by <agent-id> # Delegations still holding an agent
 ```
 
 **Flags:**
@@ -823,6 +845,14 @@ rundown status --run <run_id> --text # Human-readable detail
 - `--run <runId>` — Show one run in detail. A malformed id is refused
   `INVALID_RUN_ID`; a well-formed id that names no run is refused
   `RUN_TARGET_UNAVAILABLE`.
+- `--claimed-by <agent-id>` — List the Delegations that still hold an agent:
+  running, claimed under that agent id (`claim --agent-id`), and still counted
+  by their parent. The answer is
+  `{ kind: "claimed_delegations", agentId, delegations: [{ runId, runbook, parentRunId, step }] }`;
+  a finished, abandoned or cancelled child, or one whose parent finished or was
+  pruned, is not listed. The Claude Code plugin's `SubagentStop` hook reads it
+  to hold a sub-agent until it finishes or releases its child. Combined with
+  `--run`, or empty, it is refused `INVALID_SYNTAX`.
 
 While a run's step command is running or was interrupted, both forms carry
 `execution: { condition: "in_progress" | "interrupted", step, attempt, pid, startedAt }`;
@@ -1399,6 +1429,7 @@ and `details` where known. Their exact shapes are in
 | `PARENT_RUN_FINISHED`                       | A delegated child's command (or a claim of its ticket) after its parent reached a terminal or was pruned. Nothing is written                                                                                                                                                                                                                                                                                                                                                                                                               | Stop working on the child and end it with `rundown stop --token <owner_token>`, the one command it still accepts; its parent can no longer collect it                                                                                                                                                                                                                       |
 | `NOTHING_TO_COLLECT`                        | `rundown collect` on a run whose current step delegates nothing                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Collect only while the run rests on a step whose `step_entered` listed `children`                                                                                                                                                                                                                                                                                           |
 | `NOTHING_TO_RETRY`                          | `rundown retry` named a substep that delegates nothing, or whose child was already collected or decided by hand. Nothing is written                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `AGENT_ID_REQUIRED`                         | `rundown claim` inside Claude Code (`CLAUDECODE=1`) without `--agent-id`: a claim the plugin's Bash hook did not stamp. Run it as a plain command from the sub-agent the ticket was dispatched to, or pass `--agent-id` by hand without the plugin. Nothing is written                                                                                                                                                                                                                                                                     |
 | `AGENT_MISMATCH`                            | `rundown release` named another agent id than the claim recorded (or one where the claim recorded none, or none where it did). Nothing is written                                                                                                                                                                                                                                                                                                                                                                                          |
 | `NOT_A_DELEGATION`                          | `rundown release` named a run that is not a delegated child. Nothing is written                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `CURRENT_CHILD_PROTECTED`                   | `rundown prune --token` named a current child its running parent still counts: a delegation that is running, or finished with a result the parent has not collected. Nothing is deleted; `details` names the run, its parent and the parent step                                                                                                                                                                                                                                                                                           | Let the parent collect it (or `rundown retry` it), or finish or prune the parent; the child is prunable once [protection ends](#prune-retention)                                                                                                                                                                                                                            |

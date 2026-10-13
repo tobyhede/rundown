@@ -1,4 +1,4 @@
-import { describe, it, expect } from '@jest/globals';
+import { afterEach, describe, it, expect } from '@jest/globals';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1860,5 +1860,38 @@ describe('executeCommandSequence — placeholder capture model (#904)', () => {
     ]);
     expect(result.capturedTokens).toEqual([]);
     expect(result.enteredSteps).toHaveLength(1);
+  });
+});
+
+describe('Claude Code markers (#907)', () => {
+  const saved = { CLAUDECODE: process.env.CLAUDECODE, ENTRY: process.env.CLAUDE_CODE_ENTRYPOINT };
+  afterEach(() => {
+    if (saved.CLAUDECODE === undefined) delete process.env.CLAUDECODE;
+    else process.env.CLAUDECODE = saved.CLAUDECODE;
+    if (saved.ENTRY === undefined) delete process.env.CLAUDE_CODE_ENTRYPOINT;
+    else process.env.CLAUDE_CODE_ENTRYPOINT = saved.ENTRY;
+  });
+
+  it('runs scenario commands as from a plain shell, never inheriting a Claude Code session', async () => {
+    process.env.CLAUDECODE = '1';
+    process.env.CLAUDE_CODE_ENTRYPOINT = 'cli';
+    const seen: (Record<string, string | undefined> | undefined)[] = [];
+
+    await executeCommandSequence({
+      commands: ['rd claim rdt_x', 'CLAUDECODE=1 rd claim rdt_y'],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      commandExecutor: {
+        runRd: async (_args, options) => {
+          seen.push(options.env);
+          return { stdout: '', stderr: '', exitCode: 0 };
+        },
+      },
+    });
+
+    expect(seen[0]).toMatchObject({ CLAUDECODE: undefined, CLAUDE_CODE_ENTRYPOINT: undefined });
+    expect(seen[0]).toHaveProperty('CLAUDECODE');
+    expect(seen[1]?.CLAUDECODE).toBe('1');
   });
 });

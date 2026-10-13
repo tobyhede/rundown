@@ -549,6 +549,32 @@ export class RunbookStore {
   }
 
   /**
+   * The running Delegations whose claim recorded `agentId` (#907).
+   *
+   * One read selecting by the `claim_agent_id` column, so the SubagentStop
+   * gate validates only the rows it concerns. A Delegation whose parent was
+   * pruned keeps its agent id and is returned too; whether its parent still
+   * counts it is the caller's question.
+   *
+   * @param agentId - The agent id `rundown claim --agent-id` recorded.
+   * @returns The validated running Delegations, in id order.
+   * @throws {LegacySnapshotError} When a matching row carries a deprecated
+   *   dynamic-step snapshot shape.
+   * @throws {InvalidRunbookStateError} When a matching row fails the
+   *   persisted-state gates or the structural parse.
+   */
+  findRunningDelegationsClaimedBy(agentId: string): Promise<readonly VersionedRunState[]> {
+    return this.driver.read((tx) =>
+      tx
+        .prepare(
+          `SELECT ${VERSIONED_ROW_COLUMNS} FROM runs WHERE claim_agent_id = :agent AND lifecycle = 'running' ORDER BY id`,
+        )
+        .all<VersionedRunRow>({ agent: agentId })
+        .map((row) => this.validateVersionedRow(row)),
+    );
+  }
+
+  /**
    * Persist a run's complete state if and only if nobody wrote it since the
    * caller read it and it holds no execution lease.
    *

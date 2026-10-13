@@ -227,10 +227,24 @@ export {
   type DelegationDeps,
   type DelegationRefusal,
 } from './delegation-progression.js';
+// Which agent runs `claim` / `release` (#907): the `--agent-id` the command
+// carried (stamped by the Claude Code plugin's Bash hook), and whether the
+// command runs inside Claude Code (read by the front end).
+export {
+  AGENT_ID_REQUIRED_CODE,
+  type DelegationAgent,
+  type DelegationAgentResolution,
+  recordedAgentId,
+  resolveDelegationAgent,
+} from './delegation-agent.js';
 // Delegation recovery (#905): `rundown retry` by the parent's owner and
-// `rundown release` by the claiming agent.
+// `rundown release` by the claiming agent; and the Delegations that still
+// hold an agent, read by `rundown status --claimed-by` for the plugin's
+// SubagentStop gate (#907).
 export {
   AGENT_MISMATCH_CODE,
+  delegationsHeldBy,
+  type HeldDelegation,
   NOT_A_DELEGATION_CODE,
   NOTHING_TO_RETRY_CODE,
   RUN_TARGET_UNAVAILABLE_CODE,

@@ -17,6 +17,10 @@
  *   recorded (both absent match), never an Owner Token, and it grants nothing
  *   else: it never touches the parent, whose Collect reads an abandoned child
  *   as a fail while it still counts it.
+ * - {@link delegationsHeldBy} — the plugin's SubagentStop gate (#907) asks
+ *   which children still hold a stopping sub-agent: the running Delegations
+ *   its claim recorded whose parent still counts them. The gate blocks while
+ *   any is held, with the finish-or-release instruction, and keeps no record.
  *
  * @module runbook/delegation-recovery
  */
@@ -43,6 +47,7 @@ import type { RunId } from './run-id.js';
 import type { RunWriteAtVersion, VersionedRunState } from './storage/runbook-store.js';
 import type { RunbookState } from './types.js';
 import { generateClaimTicket, hashRunSecret, type ClaimTicket } from './run-secrets.js';
+import { recordedAgentId, type DelegationAgent } from './delegation-agent.js';
 import {
   resolveRetryTarget,
   type ExplicitTransitionTarget,
@@ -205,7 +210,7 @@ export type ReleaseDelegationOutcome =
  *
  * The one write not authorized by an Owner Token, so its authority is exact:
  * the run must be a Delegation (its parent may have been pruned), and
- * `agentId` must equal the agent id recorded at claim — both absent is a
+ * the releasing agent's id must equal the agent id recorded at claim — both absent is a
  * match, one absent is not. It refuses a run that finished, or whose live
  * command holds the execution lease; an Interrupted one it clears, as `stop`
  * does.
@@ -222,7 +227,8 @@ export type ReleaseDelegationOutcome =
  * @param deps - Store, actor service, graph loader and process identity.
  * @param input - The child run id and the releasing agent.
  * @param input.runId - The child to release.
- * @param input.agentId - The releasing agent's id, if any.
+ * @param input.agent - The releasing agent. An anonymous one matches only a
+ *   claim that recorded no agent.
  * @returns `released` with the committed child, or a refusal. Nothing is
  *   written on a refusal.
  * @throws {Error} When a committed run is not `abandoned` — the machine
@@ -230,7 +236,7 @@ export type ReleaseDelegationOutcome =
  */
 export async function releaseDelegation(
   deps: DelegationRecoveryDeps,
-  input: { readonly runId: RunId; readonly agentId?: string },
+  input: { readonly runId: RunId; readonly agent: DelegationAgent },
 ): Promise<ReleaseDelegationOutcome> {
   const child = await deps.manager.loadWithVersion(input.runId);
   if (child === null) {
@@ -248,7 +254,7 @@ export async function releaseDelegation(
       message: `Run ${state.id} is not a delegation; only a claimed delegation can be released. Nothing was written.`,
     };
   }
-  if (linkage.claimedBy !== input.agentId) {
+  if (linkage.claimedBy !== recordedAgentId(input.agent)) {
     return {
       kind: 'refused',
       code: AGENT_MISMATCH_CODE,
@@ -360,4 +366,49 @@ async function abandonedParent(
   return standing.kind === 'parent_pruned'
     ? { standing: 'parent_pruned', step: linkage.parentStep }
     : { standing: standing.kind, runId: linkage.parentRunId, step: linkage.parentStep };
+}
+
+/** A running Delegation that still holds the agent that claimed it (#907). */
+export interface HeldDelegation {
+  /** The child run. */
+  readonly runId: RunId;
+  /** The child's runbook, as its run records it. */
+  readonly runbook: string;
+  /** The parent run that still counts it. */
+  readonly parentRunId: RunId;
+  /** The parent unit (`step.substep`) the child runs for. */
+  readonly step: string;
+}
+
+/**
+ * The Delegations an agent must finish or release before it stops: every
+ * running Delegation whose claim recorded `agentId` and whose parent still
+ * counts it (standing `current`). A finished, abandoned or cancelled child,
+ * one whose parent finished or was pruned, and another agent's child hold
+ * nothing.
+ *
+ * Read-only; it writes nothing and records nothing about the asking agent.
+ *
+ * @param deps - Store and graph loader.
+ * @param agentId - The agent id the claims recorded.
+ * @returns The held Delegations, in run id order.
+ * @throws {Error} Whatever reading the runs' persisted state throws.
+ */
+export async function delegationsHeldBy(
+  deps: Pick<DelegationDeps, 'manager' | 'loadSteps'>,
+  agentId: string,
+): Promise<readonly HeldDelegation[]> {
+  const held: HeldDelegation[] = [];
+  for (const child of await deps.manager.findRunningDelegationsClaimedBy(agentId)) {
+    const { linkage } = child;
+    if (linkage?.kind !== 'delegation') continue;
+    if ((await delegationStandingOf(deps, child)).kind !== 'current') continue;
+    held.push({
+      runId: child.state.id,
+      runbook: child.state.runbook.path,
+      parentRunId: linkage.parentRunId,
+      step: linkage.parentStep,
+    });
+  }
+  return held;
 }

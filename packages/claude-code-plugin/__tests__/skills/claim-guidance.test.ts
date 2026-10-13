@@ -2,6 +2,7 @@ import { describe, expect, it } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { CLAIM_TICKET_MARKER } from '../../src/shared/claim-ticket-marker.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -69,6 +70,7 @@ describe('running-runbooks owner-token guidance', () => {
     const claimed = section(readSkill('running-runbooks/SKILL.md'), '## Claimed Delegations');
 
     expect(claimed).toContain('rundown claim <ticket>');
+    expect(claimed).toMatch(/cannot stop while/);
     expect(claimed).toMatch(/child's \*\*own\*\*\s+`owner_token`/);
     expect(claimed).toContain('`DELEGATION_CANCELLED`');
     expect(claimed).toContain('`PARENT_RUN_FINISHED`');
@@ -106,12 +108,13 @@ describe('delegating-runbooks Delegation protocol', () => {
     }
   });
 
-  it('puts the ticket and the claim command in the dispatched prompt, because the hooks are inert', () => {
+  it('marks the ticket in the dispatched prompt; the plugin hook appends the claim instructions (#907)', () => {
     const orchestrator = section(skill, '## Orchestrator Choreography');
 
-    expect(orchestrator).toMatch(/rundown claim rdt_… --agent-id/);
+    expect(orchestrator).toContain(`${CLAIM_TICKET_MARKER}=rdt_…`);
     expect(orchestrator).toContain('Skill(skill: "rundown:running-runbooks")');
-    expect(orchestrator).toMatch(/hooks are inert/);
+    expect(orchestrator).toMatch(/appends the claim\s+instructions/);
+    expect(skill).not.toMatch(/hooks are inert/);
   });
 
   it('has the sub-agent claim, drive with the child token, and stop on cancellation', () => {
@@ -152,18 +155,28 @@ describe('delegating-runbooks Delegation protocol', () => {
     const subAgent = section(skill, '## Sub-agent Choreography');
     const orchestrator = section(skill, '## Orchestrator Choreography');
 
-    expect(subAgent).toContain('rundown release <child run id> --agent-id <id>');
-    expect(orchestrator).toMatch(/rundown release rd_… --agent-id/);
+    expect(subAgent).toContain('rundown release <child run id>');
+    expect(orchestrator).toMatch(/release it if the\s+token is lost/);
   });
 
-  it('has every sub-agent pass its agent id on claim and on release, since nothing stamps it', () => {
+  it('has the plugin hook stamp the agent id: no sub-agent passes --agent-id by hand (#907)', () => {
     const subAgent = section(skill, '## Sub-agent Choreography');
 
-    expect(skill).not.toMatch(/`--agent-id` is optional/);
-    expect(skill).not.toMatch(/omit it if the claim did/);
-    expect(subAgent).toContain('rundown claim <ticket> --agent-id <id>');
-    expect(subAgent).toMatch(/same `--agent-id`/);
-    expect(skill).toMatch(/nothing stamps it/);
+    expect(skill).not.toContain('--agent-id <id>');
+    expect(skill).not.toMatch(/nothing stamps it/);
+    expect(subAgent).toMatch(/stamps your agent id/);
+    expect(subAgent).toMatch(/as plain commands/);
+    expect(subAgent).toContain('`AGENT_ID_REQUIRED`');
+    expect(subAgent).toMatch(/cannot stop while/);
+    expect(skill).not.toContain('RUNDOWN_AGENT_ID');
+    expect(section(skill, '## Refusals')).toContain('`CLAIM_OUTSIDE_SUBAGENT`');
+    expect(section(skill, '## Refusals')).toContain('`AGENT_ID_REQUIRED`');
+  });
+
+  it('teaches no nested-delegation pattern (ADR 0005: neither supported nor refused)', () => {
+    expect(skill).not.toMatch(/\*\*Nested:\*\*/);
+    expect(skill).not.toMatch(/delegation tree/);
+    expect(skill).toMatch(/nested delegation[^.]*not\s+supported/i);
   });
 
   it('teaches no retired or unbuilt delegation surface', () => {
@@ -191,22 +204,30 @@ describe('running-runbooks Delegation recovery (#905), in both plugin copies', (
     '%s: a claimed child that cannot finish is released, and a lost ticket is retried',
     (_copy, skill) => {
       const claimed = section(skill, '## Claimed Delegations');
-      expect(claimed).toContain('rundown release <child run id> --agent-id <id>');
+      expect(claimed).toContain('rundown release <child run id>');
       expect(skill).toContain('rundown retry --token <owner_token> --step <substep>');
       expect(skill).not.toMatch(/no agent\s+recovery/);
     },
   );
 
-  it.each(Object.entries(copies))(
-    '%s: a claimed child passes its agent id on claim and on release, since nothing stamps it',
-    (_copy, skill) => {
-      const claimed = section(skill, '## Claimed Delegations');
-      expect(claimed).not.toMatch(/--agent-id is optional|omit it if the claim did/);
-      expect(claimed).toContain('rundown claim <ticket> --agent-id <id>');
-      expect(claimed).toMatch(/same\s+`--agent-id`/);
-      expect(claimed).toMatch(/nothing\s+stamps\s+it/);
-    },
-  );
+  it('claude: the plugin hook stamps the agent id, so the claimed child never passes it (#907)', () => {
+    const claimed = section(copies.claude, '## Claimed Delegations');
+    expect(copies.claude).not.toContain('--agent-id');
+    expect(claimed).toMatch(/stamps\s+your\s+agent\s+id/);
+    expect(claimed).toMatch(/as plain commands/);
+    expect(claimed).toContain('`AGENT_ID_REQUIRED`');
+    expect(copies.claude).not.toContain('RUNDOWN_AGENT_ID');
+  });
+
+  it('codex: Codex runs no plugin hook, so the claimed child passes one stable id by hand (#907)', () => {
+    const claimed = section(copies.codex, '## Claimed Delegations');
+    expect(claimed).toContain('rundown claim <ticket> --agent-id <id>');
+    expect(claimed).toContain('rundown release <child run id> --agent-id <id>');
+    expect(claimed).toMatch(/same\s+`--agent-id`/);
+    expect(claimed).toMatch(/no\s+hook/);
+    expect(claimed).toMatch(/given twice is\s+refused `INVALID_SYNTAX`/);
+    expect(copies.codex).not.toContain('RUNDOWN_AGENT_ID');
+  });
 });
 
 describe('the human escape hatch is the user’s, never an agent’s (#906), in both plugin copies', () => {

@@ -123,6 +123,7 @@ export { ScenarioDetailSchema as ScenarioShowResponseSchema } from '@rundown-org
 
 import {
   StatusResponseSchema,
+  ClaimedDelegationsResponseSchema,
   PruneResponseSchema,
   ActionResponseSchema,
   WarningResponseSchema,
@@ -157,7 +158,8 @@ const ActionOrWarningResponseSchema = withWarningResponse(ActionResponseSchema);
  * Compound commands (like "scenario ls") use space-separated keys.
  */
 export const COMMAND_SCHEMAS: Record<string, z.ZodType> = {
-  status: StatusResponseSchema,
+  // `status --claimed-by` (#907) answers with the Delegations holding an agent.
+  status: z.union([StatusResponseSchema, ClaimedDelegationsResponseSchema]),
   pass: ActionOrWarningResponseSchema,
   fail: ActionOrWarningResponseSchema,
   goto: withWarningResponse(ExecutionSummarySchema),

@@ -94,7 +94,7 @@ are easy to break:
   and never document it as theoretical.
 - File locks are released with `await using`, never from a bare `finally` (the
   RD-102 masking defect). File locks protect file-backed artifacts only (the
-  artifact manifest, the sql.js driver, the plugin session lock).
+  artifact manifest and the sql.js driver).
 
 ### Actor dependencies
 
@@ -511,10 +511,14 @@ All package scripts live in `package.json` — run `pnpm run` to list them
   producer is in
   [docs/internal/mutation-testing-ci.md](docs/internal/mutation-testing-ci.md).
 
-- `pnpm run plugin:dev -- --no-build` (skip rebuild) /
-  `pnpm run plugin:dev -- -- --debug hooks,plugins` (forward flags to `claude`).
-- `pnpm run test:e2e:shell -- <path>` (mount a project) / `-- --bash` (debug
-  shell) / `-- --no-build` (cached image).
+- `pnpm run plugin:dev --no-build` (skip rebuild) /
+  `pnpm run plugin:dev -- --debug hooks,plugins` (forward flags to `claude`), or
+  both: `pnpm run plugin:dev --no-build -- --debug hooks,plugins`. pnpm passes a
+  `--` through to the script verbatim, so `-- --no-build` would forward
+  `--no-build` to `claude` and rebuild anyway.
+- `pnpm run test:e2e:shell <path>` (mount a project) / `--bash` (debug shell) /
+  `--no-build` (cached image); no `--`, which the script would take as the
+  project path.
 
 ## Testing Conventions
 

@@ -87,31 +87,3 @@ export function isZodError(
   if (!Array.isArray(issues) || issues.length === 0) return false;
   return issues.every(isZodIssueLike);
 }
-
-/**
- * Discriminated union for session load errors
- * Allows callers to handle each error type appropriately
- */
-export type SessionLoadError =
-  | { type: 'file_not_found'; path: string }
-  | { type: 'parse_error'; path: string; message: string }
-  | { type: 'validation_error'; path: string; message: string }
-  | { type: 'io_error'; path: string; message: string };
-
-/**
- * Result type for session load operations
- */
-export type SessionLoadResult<T> =
-  | { success: true; data: T }
-  | { success: false; error: SessionLoadError };
-
-/**
- * Check if error is file not found (expected on first run).
- * Type narrowing function for SessionLoadError discriminated union.
- *
- * @param error - The SessionLoadError to check
- * @returns True if error type is 'file_not_found'
- */
-export function isFileNotFoundError(error: SessionLoadError): boolean {
-  return error.type === 'file_not_found';
-}
