@@ -44,34 +44,49 @@ function section(markdown: string, heading: string): string {
   return lines.slice(start, end).join('\n');
 }
 
-describe('delegated runbook claim guidance', () => {
-  it('requires explicit claim-id targeting within the claim flow', () => {
-    // Scope the check to the claim-flow guidance only. Bare `rundown pass` / `rundown fail`
-    // are legitimate in the general command reference and inline-launch notes;
-    // it is the claim flow that must always target the claimed child by id.
-    const claimSections = [
-      section(readSkill('running-runbooks/SKILL.md'), '## Claiming Delegated Work'),
-      section(readSkill('delegating-runbooks/SKILL.md'), '### 3. Child claims and executes'),
-    ];
+describe('running-runbooks owner-token guidance', () => {
+  it('teaches every mutating command with the owner token', () => {
+    const skill = readSkill('running-runbooks/SKILL.md');
 
-    for (const claim of claimSections) {
-      expect(claim).not.toBe('');
-      expect(claim).toContain('rundown pass --claim-id <claim_id>');
-      expect(claim).toContain('rundown fail --claim-id <claim_id>');
-      expect(claim).not.toMatch(/rundown pass\s+(?:#|$)/m);
-      expect(claim).not.toMatch(/rundown fail\s+(?:#|$)/m);
+    expect(skill).toContain('rundown pass --token <owner_token> --step');
+    expect(skill).toContain('rundown fail --token <owner_token> --step');
+    for (const command of ['goto <step>', 'stop [message]', 'complete [message]']) {
+      expect(skill).toContain(`rundown ${command} --token <owner_token>`);
     }
+    // Never a bare transition: without --token every mutation is refused.
+    expect(skill).not.toMatch(/rundown (?:pass|fail)\s+(?:#|$)/m);
   });
 
-  it('documents every delegation-exposed bare mutating command as refused', () => {
-    const claim = section(readSkill('running-runbooks/SKILL.md'), '## Claiming Delegated Work');
+  it('teaches no retired authority', () => {
+    const skill = readSkill('running-runbooks/SKILL.md');
+
+    expect(skill).not.toContain('--claim-id');
+    expect(skill).not.toContain('ACTOR_CONTEXT_REQUIRED');
+    expect(skill).not.toMatch(/rundown (?:claim|collect|delegate|stash|pop)\b/);
+  });
+
+  it('says the token is printed once and cannot be recovered', () => {
+    const owner = section(readSkill('running-runbooks/SKILL.md'), '## The Owner Token');
+
+    expect(owner).toContain('`runbook_started`');
+    expect(owner).toContain('cannot\nbe recovered');
+    expect(owner).toContain('`rundown status --run <run_id>`');
+  });
+});
+
+// delegating-runbooks is parked unchanged until delegation returns (#904).
+describe('delegating-runbooks claim guidance (parked for #904)', () => {
+  it('requires explicit claim-id targeting within the claim flow', () => {
+    const claim = section(
+      readSkill('delegating-runbooks/SKILL.md'),
+      '### 3. Child claims and executes',
+    );
 
     expect(claim).not.toBe('');
-    for (const command of ['pass', 'fail', 'goto', 'collect', 'complete', 'stop', 'delegate']) {
-      expect(claim).toContain(`rundown ${command}`);
-    }
-    expect(claim).toContain('ACTOR_CONTEXT_REQUIRED');
-    expect(claim).toContain('--claim-id <claim_id>');
+    expect(claim).toContain('rundown pass --claim-id <claim_id>');
+    expect(claim).toContain('rundown fail --claim-id <claim_id>');
+    expect(claim).not.toMatch(/rundown pass\s+(?:#|$)/m);
+    expect(claim).not.toMatch(/rundown fail\s+(?:#|$)/m);
   });
 
   it('keeps delegation idempotency examples aligned with delegate output and retry forms', () => {

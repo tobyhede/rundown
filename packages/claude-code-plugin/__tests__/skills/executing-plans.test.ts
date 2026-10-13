@@ -45,7 +45,16 @@ describe('executing-plans skill', () => {
     const skill = readSkill();
     expect(skill).toMatch(/writing-plans/);
     expect(skill).toMatch(/running-runbooks/);
-    expect(skill).toMatch(/delegating-runbooks/);
+    // Delegation is unavailable until #904, so the skill sends no one there.
+    expect(skill).not.toMatch(/delegating-runbooks/);
+  });
+
+  it('names the composition refusal and the standalone leaf that still runs', () => {
+    const skill = readSkill();
+    expect(skill).toContain('`RUNBOOK_COMPOSITION_UNSUPPORTED`');
+    expect(skill).toMatch(
+      /rundown run rundown:implement-plan --artifacts PlanPath=<rd:\/\/[^>]*plan URI>/,
+    );
   });
 
   it('tells the implementer when to stop and escalate', () => {
