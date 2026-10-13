@@ -55,9 +55,13 @@ export const CLISymbolicErrorCodeValues = [
   // `UNKNOWN_TOKEN`; a token on a finished run is RD-303/RD-304.
   'TOKEN_REQUIRED',
   'UNKNOWN_TOKEN',
-  // `rundown run` refuses a runbook whose steps compose other runbooks until
-  // #903 (inline) and #904 (delegation) restore composition on the new model.
+  // `rundown run` refuses a runbook with a DELEGATE substep (until #904) or an
+  // inline substep listing more than one runbook; an inline child whose
+  // runbook does so is refused at launch.
   'RUNBOOK_COMPOSITION_UNSUPPORTED',
+  // An inline child could not be launched for a reason with no code of its
+  // own (#903); preparation failures report their own code.
+  'INLINE_CHILD_LAUNCH_FAILED',
   'CONCURRENT_MODIFICATION',
   // The execution lease (#902): a live attempt holds the run's step, or the
   // attempt that held it died and the decision would pass it.
@@ -118,7 +122,7 @@ export const CLIErrorCodes = {
   TOKEN_REQUIRED: 'TOKEN_REQUIRED',
   /** The presented Owner Token matches no run */
   UNKNOWN_TOKEN: 'UNKNOWN_TOKEN',
-  /** The runbook composes other runbooks (DELEGATE or runbook-list substeps), which T1 does not run */
+  /** The runbook composes other runbooks in a form this build does not run (DELEGATE, or a multi-runbook inline substep) */
   RUNBOOK_COMPOSITION_UNSUPPORTED: 'RUNBOOK_COMPOSITION_UNSUPPORTED',
   /** The explicit --run target names no run */
   RUN_TARGET_UNAVAILABLE: 'RUN_TARGET_UNAVAILABLE',
