@@ -18,3 +18,6 @@ export * from './errors.js';
 // Utilities
 export * from './utils.js';
 export * from './logger.js';
+
+// Claim Ticket marker (#907)
+export * from './claim-ticket-marker.js';
