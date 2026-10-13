@@ -144,7 +144,7 @@ describe('end-to-end-test review-and-collate on Delegation (#904)', () => {
     const ticket = ticketFor(events, 'review-file.runbook.md');
     expect(ticket).toMatch(/^rdt_/);
     const [reviewEntry] = entered(events, 'end-to-end-test/review-and-collate.runbook.md');
-    expect(reviewEntry?.position).toMatchObject({ current: '1', substep: '1' });
+    expect(reviewEntry.position).toMatchObject({ current: '1', substep: '1' });
 
     const status = runCli(['status'], tempDir);
     expect(status.exitCode).toBe(0);
@@ -167,9 +167,9 @@ describe('end-to-end-test review-and-collate on Delegation (#904)', () => {
 
     const step2 = pass(claim, childId);
     const [planEntry] = entered(step2, 'review-file.runbook.md');
-    expect(planEntry?.position).toMatchObject({ current: '2' });
-    const artifacts = (planEntry?.artifacts ?? {}) as Record<string, { path?: string }>;
-    expect(artifacts.PlanPath?.path).toMatch(/\.rundown\/work\/.*end-to-end-test-plan\.json$/);
+    expect(planEntry.position).toMatchObject({ current: '2' });
+    const artifacts = (planEntry.artifacts ?? {}) as Record<string, { path?: string }>;
+    expect(artifacts.PlanPath.path).toMatch(/\.rundown\/work\/.*end-to-end-test-plan\.json$/);
   });
 
   it('applies each delegated child only on collect, then completes review-and-collate into the root', () => {

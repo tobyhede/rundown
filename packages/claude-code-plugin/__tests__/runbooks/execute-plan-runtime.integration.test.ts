@@ -156,7 +156,8 @@ describe('execute-plan step 2 delegation and artifact handoff (#904)', () => {
     const childId = startedRun(claim, 'implement-plan.runbook.md');
 
     const step2 = pass(claim, childId);
-    const prompt = String(step2.find((event) => event.type === 'step_entered')?.prompt ?? '');
+    const entry = step2.find((event) => event.type === 'step_entered');
+    const prompt = typeof entry?.prompt === 'string' ? entry.prompt : '';
     expect(prompt).toMatch(/\.rundown\/work\/.*plan\.json/);
     expect(prompt).not.toContain('rd://artifacts/');
 
