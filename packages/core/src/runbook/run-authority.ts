@@ -14,7 +14,7 @@
  * @module runbook/run-authority
  */
 
-import { resolvedStepHasSubsteps, type ResolvedStep } from '@rundown-org/parser';
+import type { ResolvedStep, Step } from '@rundown-org/parser';
 import { hashRunSecret, type OwnerToken } from './run-secrets.js';
 import type { RunbookStateManager } from './state.js';
 import type { StateVersion } from './storage/mutation-result.js';
@@ -92,14 +92,20 @@ export async function resolveOwnedRun(
  * qualified (`step.substep`) and returned in document order so the refusal
  * can list them verbatim.
  *
- * @param steps - Parsed runbook steps
+ * Accepts parsed or resolved steps: `rundown check` warns from the parsed
+ * runbook, `rundown run` refuses from the resolved one, and both must name
+ * the same substeps.
+ *
+ * @param steps - Parsed or resolved runbook steps
  * @returns Qualified ids of the composing substeps; empty when the runbook
  *   composes nothing
  */
-export function findUnsupportedComposition(steps: readonly ResolvedStep[]): readonly string[] {
+export function findUnsupportedComposition(
+  steps: readonly (Step | ResolvedStep)[],
+): readonly string[] {
   const ids: string[] = [];
   for (const step of steps) {
-    if (!resolvedStepHasSubsteps(step)) continue;
+    if (!('substeps' in step)) continue;
     for (const substep of step.substeps) {
       const composes =
         substep.delegate === true ||

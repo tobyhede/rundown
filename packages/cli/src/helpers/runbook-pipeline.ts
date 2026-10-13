@@ -373,6 +373,20 @@ function runbookNotFound(file: string): LoadAndParseFailure {
   };
 }
 
+/** When the composition this build refuses comes back, for refusal and warning text. */
+export const COMPOSITION_RETURNS = 'Inline composition returns in #903 and delegation in #904.';
+
+/**
+ * Describe a runbook's composing substeps, shared by the `rundown run`
+ * refusal and the `rundown check` warning so the two never disagree.
+ *
+ * @param composing - Qualified substep ids from `findUnsupportedComposition`
+ * @returns A sentence fragment (no trailing period) naming those substeps
+ */
+export function describeUnsupportedComposition(composing: readonly string[]): string {
+  return `Runbook composes other runbooks at ${composing.join(', ')}; this build runs standalone runbooks only`;
+}
+
 /** Request for preparing an already-resolved runbook identity. */
 export interface ResolvedRunbookRequest {
   /** Filesystem resolution result. */
@@ -761,9 +775,7 @@ async function prepareLoadedRunbook(
   if (composing.length > 0) {
     return {
       ok: false,
-      error:
-        `Runbook composes other runbooks at ${composing.join(', ')}; this build runs ` +
-        'standalone runbooks only. Inline composition returns in #903 and delegation in #904.',
+      error: `${describeUnsupportedComposition(composing)}. ${COMPOSITION_RETURNS}`,
       code: 'RUNBOOK_COMPOSITION_UNSUPPORTED',
       details: { runbook: displayName, substeps: composing },
       variables: templateVars,

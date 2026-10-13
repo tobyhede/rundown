@@ -10,7 +10,12 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import type { ResolvedStep, Substep, Transitions } from '@rundown-org/parser';
+import {
+  parseRunbookDocument,
+  type ResolvedStep,
+  type Substep,
+  type Transitions,
+} from '@rundown-org/parser';
 import { findUnsupportedComposition, resolveOwnedRun } from '../../src/runbook/run-authority.js';
 import { RunbookStateManager } from '../../src/runbook/state.js';
 import { generateOwnerToken } from '../../src/runbook/run-secrets.js';
@@ -151,5 +156,32 @@ describe('findUnsupportedComposition', () => {
       },
     ];
     expect(findUnsupportedComposition(steps)).toEqual(['1.2', '3.3', '3.2']);
+  });
+
+  it('names the same substeps from a parsed runbook as from a resolved one', () => {
+    // `rundown check` warns from parsed steps, `rundown run` refuses from
+    // resolved ones; they must agree on which substeps compose.
+    const parsed = parseRunbookDocument(
+      [
+        '# Compose',
+        '## 1. Fan out',
+        '- PASS ALL COMPLETE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 Local',
+        '- PASS CONTINUE',
+        '',
+        'do work',
+        '',
+        '### 1.2 Delegated',
+        '- DELEGATE',
+        '- child.runbook.md',
+        '',
+        '### 1.3 Inline',
+        '- child.runbook.md',
+        '',
+      ].join('\n'),
+    );
+    expect(findUnsupportedComposition(parsed.runbook.steps)).toEqual(['1.2', '1.3']);
   });
 });

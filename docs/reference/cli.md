@@ -603,6 +603,12 @@ Line 15: Step 3 missing (expected sequential numbering)
 Line 22: Invalid transition: GOTO 10 (step does not exist)
 ```
 
+Warnings do not fail the check. A runbook whose substeps compose other runbooks
+(`- DELEGATE` or a runbook list) is valid but gets a warning naming those
+substeps, because `rundown run` refuses it with
+`RUNBOOK_COMPOSITION_UNSUPPORTED` until inline composition (#903) and delegation
+(#904) return.
+
 ### Maintenance
 
 #### `rundown prune` - Remove Runbook State
