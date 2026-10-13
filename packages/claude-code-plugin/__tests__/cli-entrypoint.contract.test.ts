@@ -44,11 +44,11 @@ describe('cli.ts hook entrypoint contract', () => {
     await rm(cwd, { recursive: true, force: true });
   });
 
-  it('SubagentStop is allowed end-to-end: exit 0 and no decision on stdout (inert until #907)', async () => {
+  it('SubagentStop holding nothing is allowed end-to-end: exit 0 and no decision on stdout', async () => {
     // Exercises the real spawned cli.js dispatch through the on-subagent-stop
-    // gate. Under T1 the SubagentStop handler is inert, so the entrypoint must
-    // write NO output (an allow is the absence of a decision) and exit 0 — exit
-    // 2 is the blocking channel and would mean the inert hook refused.
+    // gate. With no Rundown store in cwd nothing holds the agent, so the
+    // entrypoint must write NO output (an allow is the absence of a decision)
+    // and exit 0 — exit 2 is the blocking channel.
     const payload = JSON.stringify({
       hook_event_name: 'SubagentStop',
       cwd,
@@ -60,16 +60,34 @@ describe('cli.ts hook entrypoint contract', () => {
     expect(stderr).toBe('');
   });
 
-  it('PreToolUse(Agent) with a claim marker is allowed end-to-end (inert until #907)', async () => {
+  it('PreToolUse(Agent) with a Claim Ticket marker gets its prompt rewritten end-to-end (#907)', async () => {
+    const ticket = `rdt_${'D'.repeat(43)}`;
     const payload = JSON.stringify({
       hook_event_name: 'PreToolUse',
       cwd,
       tool_name: 'Agent',
-      tool_input: { prompt: `Do work. RD_CLAIM_TOKEN=rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567` },
+      tool_input: { prompt: `Do work.\nRD_CLAIM_TICKET=${ticket}` },
     });
     const { stdout, exitCode } = await runCLIWithStdin(payload);
     expect(exitCode).toBe(0);
-    expect(stdout.trim()).toBe('');
+    const output = JSON.parse(stdout) as {
+      hookSpecificOutput: { updatedInput: { prompt: string } };
+    };
+    expect(output.hookSpecificOutput.updatedInput.prompt).toContain(`rundown claim ${ticket}`);
+  });
+
+  it('PreToolUse(Bash) claim outside a sub-agent is denied end-to-end (#907)', async () => {
+    const payload = JSON.stringify({
+      hook_event_name: 'PreToolUse',
+      cwd,
+      tool_name: 'Bash',
+      tool_input: { command: `rundown claim rdt_${'D'.repeat(43)}` },
+    });
+    const { stdout, exitCode } = await runCLIWithStdin(payload);
+    expect(exitCode).toBe(0);
+    expect(JSON.parse(stdout)).toMatchObject({
+      hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'deny' },
+    });
   });
 
   it('still fails CLOSED on an unparseable payload (the refusal channel is unchanged)', async () => {

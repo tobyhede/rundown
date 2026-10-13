@@ -3,9 +3,8 @@ import type { HookInput } from '../../src/shared/index.js';
 import type { handleDelegationDispatch } from '../../src/workflow/hooks/delegation-dispatch.js';
 
 // The handler is mocked so this file pins the gate's PLUMBING (how a handler
-// result maps onto a GateResult). The real handler is inert today; its allow
-// behaviour is pinned end-to-end in workflow/hooks/inert-hooks.test.ts and the
-// dispatch contract tests.
+// result maps onto a GateResult). The real handler's marker detection is
+// pinned in workflow/hooks/delegation-dispatch.test.ts and the contract tests.
 const mockHandleDelegationDispatch = jest.fn() as jest.MockedFunction<
   typeof handleDelegationDispatch
 >;
@@ -21,7 +20,7 @@ describe('on-delegation-dispatch gate', () => {
     jest.clearAllMocks();
   });
 
-  it('returns the inert allow (strictly empty) when the handler returns empty', async () => {
+  it('returns a strictly empty allow when the handler returns empty', async () => {
     mockHandleDelegationDispatch.mockResolvedValue({});
 
     const input: HookInput = {
@@ -36,20 +35,25 @@ describe('on-delegation-dispatch gate', () => {
     expect(result).not.toHaveProperty('decision');
   });
 
-  it('returns additionalContext when handler returns context', async () => {
+  it('returns the rewritten prompt as updatedInput, keeping the other tool-input fields', async () => {
     mockHandleDelegationDispatch.mockResolvedValue({
-      context: '## Delegation Context\nrundown claim rdt_ABC123',
+      prompt: 'Work.\n\n## Rundown delegation\nrundown claim rdt_ABC123',
     });
 
     const input: HookInput = {
       hook_event_name: 'PreToolUse',
       cwd: '/test',
       tool_name: 'Task',
+      tool_input: { prompt: 'Work.', description: 'review', subagent_type: 'general-purpose' },
     };
 
     const result = await execute(input);
     expect(result).toEqual({
-      additionalContext: '## Delegation Context\nrundown claim rdt_ABC123',
+      updatedInput: {
+        prompt: 'Work.\n\n## Rundown delegation\nrundown claim rdt_ABC123',
+        description: 'review',
+        subagent_type: 'general-purpose',
+      },
     });
   });
 
@@ -85,7 +89,20 @@ describe('on-delegation-dispatch gate', () => {
     });
   });
 
-  it('propagates handler errors to the dispatcher fail-open backstop', async () => {
+  it('blocks a marked dispatch the handler failed on (fail closed)', async () => {
+    mockHandleDelegationDispatch.mockRejectedValue(new Error('unexpected'));
+
+    const result = await execute({
+      hook_event_name: 'PreToolUse',
+      cwd: '/test',
+      tool_name: 'Task',
+      tool_input: { prompt: 'RD_CLAIM_TICKET=rdt_x' },
+    });
+
+    expect(result).toMatchObject({ decision: 'block' });
+  });
+
+  it('propagates handler errors on an unmarked dispatch to the dispatcher fail-open backstop', async () => {
     mockHandleDelegationDispatch.mockRejectedValue(new Error('unexpected'));
 
     const input: HookInput = {
