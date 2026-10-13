@@ -37,12 +37,10 @@ export interface ErrorContext {
  *
  * A closed union rather than free text: it is the machine-readable half of a
  * refusal whose prose a consumer would otherwise have to pattern-match. Every
- * member names exactly one refusal site in `RunbookStateManager.load`,
- * `applyRunbookStateUpdate`, `readPersistedReEntryFrontier`, or
- * `validateReason` — and only sites whose refusal can actually escape to the
- * CLI wrapper. A throw that is caught and downgraded in the same call (the
- * not-in-recovery-state check inside `ExecutionRecoveryService.recover`) has no
- * member here, because a reason it could never surface would be dead data.
+ * member names exactly one refusal site in `RunbookStateManager.load` or
+ * `applyRunbookStateUpdate` — and only sites whose refusal can actually
+ * escape to the CLI wrapper, because a reason it could never surface would be
+ * dead data.
  */
 export type InvalidRunStateReason =
   /** `state_json` is not parseable JSON. */
@@ -57,10 +55,6 @@ export type InvalidRunStateReason =
   | 'schema_validation_failed'
   /** The deprecated dynamic-step snapshot shape (`GOTO_NEXT` or `instance`). */
   | 'legacy_dynamic_step_snapshot'
-  /** The persisted snapshot's `delegateFrontier` is not a valid entry array. */
-  | 'malformed_delegate_frontier'
-  /** A persisted `execution_attempts.reason` is not a recognized reason. */
-  | 'unrecognized_recovery_reason'
   /** The run carries no `ContextId` / `WorkPath` to render its frame against. */
   | 'missing_render_context'
   /** The persisted `snapshot.value` is not a shape this build can read. */
