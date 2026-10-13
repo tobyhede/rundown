@@ -100,7 +100,7 @@ const PARENT_TWO_DEEP = `# Parent deep
 - middle.runbook.md
 `;
 
-const SOURCES: Readonly<Record<string, string>> = {
+const SOURCES: Readonly<Partial<Record<string, string>>> = {
   'leaf-pass.runbook.md': LEAF_PASS,
   'leaf-manual.runbook.md': LEAF_MANUAL,
   'middle.runbook.md': MIDDLE,
