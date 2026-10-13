@@ -46,8 +46,9 @@ function requireString(
  * Mutating tools map `token` to `--token` (the Owner Token is the only
  * authority; `--claim-id` and `--run` are never emitted for a mutation),
  * `step` to `--step` and `index` to `--index`. `claim` maps `ticket` to its
- * positional Claim Ticket and `agentId` to `--agent-id`. `status` maps `runId`
- * to the read-only `--run` selector.
+ * positional Claim Ticket and `agentId` to `--agent-id`. `retry` maps like
+ * `pass`; `release` maps `runId` to its positional child id and `agentId` to
+ * `--agent-id` (#905). `status` maps `runId` to the read-only `--run` selector.
  *
  * @param tool - MCP tool name.
  * @param input - Tool input values.
@@ -112,5 +113,17 @@ export function buildRundownCommand(
     }
     case 'collect':
       return ['collect', '--token', requireString(tool, input, 'token')];
+    case 'retry': {
+      const token = requireString(tool, input, 'token');
+      const cmd = ['retry', '--token', token, '--step', requireString(tool, input, 'step')];
+      pushIndex(cmd, input);
+      return cmd;
+    }
+    case 'release': {
+      // A release's authority is the claim's agent id (#905), never a token.
+      const cmd = ['release', requireString(tool, input, 'runId')];
+      if (typeof input.agentId === 'string') cmd.push('--agent-id', input.agentId);
+      return cmd;
+    }
   }
 }
