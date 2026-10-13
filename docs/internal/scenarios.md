@@ -727,13 +727,45 @@ directory and temp workspace.
 For scenario suites, each case's `file` path is resolved relative to the suite
 file. The runner rejects absolute paths and `..` traversal, preserves the case
 file's subdirectory structure under `.rundown/runbooks/`, and also copies the
-main runbook flat by basename so bare-filename commands resolve. Referenced
-child runbooks are copied from the main runbook's directory first, then the
-suite directory, with path traversal rejected. Authored runbook references are
-staged recursively, searched where the runtime would find them: beside the
-composing runbook, under the suite directory, then under each runbooks root —
-the nearest `runbooks/` above the composing runbook and the suite directory's
-own `runbooks/` (a suite at a plugin's root sees it as
-`$CLAUDE_PLUGIN_ROOT/runbooks`). A root-relative reference such as
-`planning/write-plan.runbook.md` resolves from a root, and a bare filename also
-from the directory under a root that holds it.
+main runbook flat by basename so bare-filename commands resolve.
+
+Child runbooks — those a case's commands name, and those any staged runbook
+composes, transitively — are resolved with the runtime's own resolver
+(`locateRunbook` in `packages/cli/src/helpers/resolve-runbook.ts`, which
+`resolveRunbookFile` also runs), over the roots the case's workspace stands for,
+then copied to `.rundown/runbooks/<ref>`, where the runtime's project step finds
+that same file. `createSuiteRunbookResolver` in
+`packages/cli/src/helpers/scenario-workflow.ts` chooses the roots:
+
+- A suite file beside `.claude-plugin/plugin.json` is a plugin's. Its cases run
+  as that plugin: the suite directory is `$CLAUDE_PLUGIN_ROOT`, and there is no
+  project tree beyond the staged case files. A child resolves from
+  `<suiteDir>/runbooks` (so `planning/write-plan.runbook.md` from a harness
+  under `scenarios/` works) or the bundled runbooks, as it would for the
+  installed plugin; a runbook beside a harness outside `runbooks/` does not.
+- Any other suite directory is the project's runbooks directory, matching how
+  case `file:` paths are staged, followed by the plugin root the suite process
+  sees (`CLAUDE_PLUGIN_ROOT`, or the sibling plugin package) and the bundled
+  runbooks.
+
+Resolution is the runtime's, rule for rule: a path reference is tried under each
+root in priority order; a bare `*.runbook.md` filename found under none falls
+back to name discovery by stem, matching frontmatter `name` or filename stem in
+project, plugin, bundled order and each directory's recursive `readdir` order.
+So `collate.runbook.md` resolves to `review/collate-v2.runbook.md` when that
+file declares `name: collate`, and on a same-name collision the suite stages the
+file the runtime would pick — a plugin's `child.runbook.md` by path before a
+project `sub/child.runbook.md` by name. Nothing outside the roots is searched: a
+`runbooks/` directory above the suite is not a root. The runtime's cwd step is
+not modelled, because the workspace root holds only input files and artifacts.
+Directory scans run only when a path lookup misses, and are cached for the suite
+run. A copy whose real path escapes the root that held it is refused, and a
+child found under no root fails the case with `CHILD_RUNBOOK_NOT_FOUND` before
+any command runs.
+
+A staged runbook's static relative `ARTIFACTS` paths are copied from, in order,
+the runbook's own directory (a suite-only convenience for fixtures authored
+beside it), the suite directory, the plugin root, then the bundled runbooks. The
+last three mirror the runtime's file-artifact search roots — cwd,
+`$CLAUDE_PLUGIN_ROOT`, bundled runbooks (`actor-service-factory.ts`) — with the
+suite directory standing for the cwd, as it does for `--input-file` directories.

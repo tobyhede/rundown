@@ -46,39 +46,67 @@ interface SearchPath {
 }
 
 /**
+ * The directories runbook resolution searches, in priority order.
+ *
+ * The runtime builds these from the process ({@link runtimeSearchRoots}); a
+ * caller that must resolve a runbook the way a different workspace will — the
+ * scenario suite staging a child before its case runs — supplies its own, so
+ * both resolve through one implementation.
+ */
+export interface RunbookSearchRoots {
+  /** The project's runbooks directory (`<cwd>/.rundown/runbooks`), or null when there is none. */
+  readonly project: string | null;
+  /** The plugin root (`$CLAUDE_PLUGIN_ROOT`); its runbooks live under `<plugin>/runbooks`. */
+  readonly plugin: string | null;
+  /** The directory a relative runbook path is tried against after the plugin, or null to skip it. */
+  readonly cwd: string | null;
+  /** The bundled runbooks directory, searched last. */
+  readonly bundled: string;
+}
+
+/**
+ * The search roots the runtime resolves runbooks from in this process.
+ *
+ * @param cwd - Current working directory
+ * @returns Project runbooks under `cwd`, the plugin root, `cwd`, and the bundled runbooks
+ */
+export function runtimeSearchRoots(cwd: string): RunbookSearchRoots {
+  return {
+    project: runbooksDir(cwd),
+    plugin: getPluginRoot(),
+    cwd,
+    bundled: getBundledRunbooksPath(),
+  };
+}
+
+/**
+ * Scans one search directory for runbooks. {@link scanDirectory} is the
+ * runtime's; a caller resolving many names over the same roots may pass a
+ * memoised one.
+ */
+export type RunbookDirectoryScanner = (
+  dirPath: string,
+  source: 'project' | 'plugin' | 'bundled',
+) => Promise<DiscoveredRunbook[]>;
+
+function searchPathsFor(roots: RunbookSearchRoots): SearchPath[] {
+  const paths: SearchPath[] = [];
+  if (roots.project !== null) paths.push({ path: roots.project, source: 'project' });
+  if (roots.plugin !== null) {
+    paths.push({ path: path.join(roots.plugin, 'runbooks'), source: 'plugin' });
+  }
+  paths.push({ path: roots.bundled, source: 'bundled' });
+  return paths;
+}
+
+/**
  * Get search paths for runbooks.
  * Returns project directory first (takes precedence), then plugin directory, then bundled.
  * @param cwd - Current working directory
  * @returns Array of search paths with source information
  */
 export function getSearchPaths(cwd: string): SearchPath[] {
-  const paths: SearchPath[] = [];
-
-  // Project runbooks directory (highest priority)
-  const projectRunbooksDir = runbooksDir(cwd);
-  paths.push({
-    path: projectRunbooksDir,
-    source: 'project',
-  });
-
-  // Plugin runbooks directory (env var or sibling package discovery)
-  const pluginRoot = getPluginRoot();
-  if (pluginRoot) {
-    const pluginRunbooksDir = path.join(pluginRoot, 'runbooks');
-    paths.push({
-      path: pluginRunbooksDir,
-      source: 'plugin',
-    });
-  }
-
-  // Bundled runbooks (lowest priority - fallback)
-  const bundledRunbooksDir = getBundledRunbooksPath();
-  paths.push({
-    path: bundledRunbooksDir,
-    source: 'bundled',
-  });
-
-  return paths;
+  return searchPathsFor(runtimeSearchRoots(cwd));
 }
 
 /**
@@ -171,15 +199,38 @@ export async function findRunbookByName(
   cwd: string,
   name: string,
 ): Promise<DiscoveredRunbook | null> {
-  const searchPaths = getSearchPaths(cwd);
+  return (await findRunbookByNameIn(runtimeSearchRoots(cwd), name))?.runbook ?? null;
+}
 
-  for (const { path: dirPath, source } of searchPaths) {
-    const runbooks = await scanDirectory(dirPath, source);
+/** A runbook name discovery found, with the search directory that held it. */
+export interface DiscoveredInRoot {
+  /** The discovered runbook. */
+  readonly runbook: DiscoveredRunbook;
+  /** The search directory scanned to find it: project, `<plugin>/runbooks` or bundled. */
+  readonly searchRoot: string;
+}
 
-    const lookupSlug = toSlug(name);
+/**
+ * Find a runbook by name over explicit search roots: the first runbook, in
+ * project, plugin, bundled order and each directory's recursive `readdir`
+ * order, whose frontmatter `name` or filename stem matches `name` as a slug.
+ *
+ * @param roots - The directories to search
+ * @param name - Runbook name to search for
+ * @param scan - Directory scanner; defaults to {@link scanDirectory}
+ * @returns The discovered runbook and its search directory, or null if not found
+ */
+export async function findRunbookByNameIn(
+  roots: RunbookSearchRoots,
+  name: string,
+  scan: RunbookDirectoryScanner = scanDirectory,
+): Promise<DiscoveredInRoot | null> {
+  const lookupSlug = toSlug(name);
+  for (const { path: dirPath, source } of searchPathsFor(roots)) {
+    const runbooks = await scan(dirPath, source);
     for (const runbook of runbooks) {
       if (toSlug(runbook.name) === lookupSlug || toSlug(runbook.filenameStem) === lookupSlug) {
-        return runbook;
+        return { runbook, searchRoot: dirPath };
       }
     }
   }

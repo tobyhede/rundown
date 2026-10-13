@@ -1303,6 +1303,10 @@ name: ${name}
 rd echo --result pass
 \`\`\`
 `;
+      // The suite sits at a plugin's root (beside `.claude-plugin/plugin.json`),
+      // so its cases run with the suite directory as `$CLAUDE_PLUGIN_ROOT`.
+      await mkdir(join(workspace.cwd, '.claude-plugin'), { recursive: true });
+      await writeFile(join(workspace.cwd, '.claude-plugin', 'plugin.json'), '{"name":"roots"}\n');
       await mkdir(join(workspace.cwd, 'runbooks', 'parent'), { recursive: true });
       await mkdir(join(workspace.cwd, 'runbooks', 'sub'), { recursive: true });
       await mkdir(join(workspace.cwd, 'runbooks', 'deep', 'er'), { recursive: true });
@@ -1335,8 +1339,8 @@ name: parent
         join(workspace.cwd, 'runbooks', 'deep', 'er', 'bare-nested.runbook.md'),
         childBody('bare-nested'),
       );
-      // A harness outside `runbooks/` names the same root-relative child: the
-      // suite directory's own `runbooks/` is a root, as `$CLAUDE_PLUGIN_ROOT/runbooks` is.
+      // A harness outside `runbooks/` names the same root-relative child, which
+      // resolves from `$CLAUDE_PLUGIN_ROOT/runbooks` — here, the suite's own `runbooks/`.
       await mkdir(join(workspace.cwd, 'harnesses'), { recursive: true });
       await writeFile(
         join(workspace.cwd, 'harnesses', 'harness.runbook.md'),
@@ -1391,6 +1395,225 @@ cases:
       ]);
       expect(result.exitCode).toBe(0);
     }, 30000);
+
+    describe('child staging resolves each child with the runtime resolver', () => {
+      // A child that completes, or stops, so a case's result names the file
+      // the staging copied.
+      const terminalChild = (name: string, terminal: 'COMPLETE' | 'STOP'): string => `---
+name: ${name}
+---
+
+# ${name}
+
+## 1. Done
+- PASS ${terminal}
+- FAIL STOP
+
+\`\`\`bash
+rd echo --result ${terminal === 'COMPLETE' ? 'pass' : 'fail'}
+\`\`\`
+`;
+      const composer = (name: string, child: string): string => `---
+name: ${name}
+---
+
+# ${name}
+
+## 1. Compose
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+- ${child}
+`;
+      const write = async (path: string, content: string): Promise<void> => {
+        await mkdir(join(path, '..'), { recursive: true });
+        await writeFile(path, content);
+      };
+      // A suite directory beside `.claude-plugin/plugin.json` is a plugin's:
+      // its cases run with that directory as `$CLAUDE_PLUGIN_ROOT`.
+      const pluginSuiteDir = async (): Promise<string> => {
+        const dir = join(workspace.cwd, 'plug');
+        await write(join(dir, '.claude-plugin', 'plugin.json'), '{"name":"plug"}\n');
+        return dir;
+      };
+      const runSuite = async (
+        suitePath: string,
+      ): Promise<{ cases: { scenario: string; actual: string }[] }> => {
+        const result = await runCliInProcess(`scenario-suite run ${suitePath} --all`, workspace);
+        return JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
+      };
+
+      it('stages a bare child the runtime finds by its frontmatter name, not its filename', async () => {
+        const dir = await pluginSuiteDir();
+        await write(
+          join(dir, 'runbooks', 'parent.runbook.md'),
+          composer('parent', 'collate.runbook.md'),
+        );
+        await write(
+          join(dir, 'runbooks', 'review', 'collate-v2.runbook.md'),
+          terminalChild('collate', 'COMPLETE'),
+        );
+        await write(
+          join(dir, 'named.scenario-suite.yaml'),
+          `version: 1
+name: Named child
+cases:
+  by-name:
+    file: runbooks/parent.runbook.md
+    commands:
+      - rd run parent.runbook.md
+    result: COMPLETE
+`,
+        );
+
+        const parsed = await runSuite('plug/named.scenario-suite.yaml');
+
+        expect(parsed.cases).toEqual([
+          expect.objectContaining({ scenario: 'by-name', actual: 'COMPLETE' }),
+        ]);
+      }, 30000);
+
+      it('stages the plugin runbook the runtime prefers over a same-named file beside the composer', async () => {
+        // The runtime tries `<plugin>/runbooks/child.runbook.md` by path before
+        // it discovers `sub/child.runbook.md` by name, so the plugin's wins.
+        const dir = join(workspace.cwd, 'proj');
+        await write(
+          join(dir, 'sub', 'composer.runbook.md'),
+          composer('composer', 'child.runbook.md'),
+        );
+        await write(join(dir, 'sub', 'child.runbook.md'), terminalChild('sibling-child', 'STOP'));
+        await write(
+          join(workspace.pluginRunbooksDir(), 'child.runbook.md'),
+          terminalChild('plugin-child', 'COMPLETE'),
+        );
+        await write(
+          join(dir, 'collide.scenario-suite.yaml'),
+          `version: 1
+name: Collision
+cases:
+  plugin-wins:
+    file: sub/composer.runbook.md
+    commands:
+      - rd run composer.runbook.md
+    result: COMPLETE
+`,
+        );
+
+        const parsed = await runSuite('proj/collide.scenario-suite.yaml');
+
+        expect(parsed.cases).toEqual([
+          expect.objectContaining({ scenario: 'plugin-wins', actual: 'COMPLETE' }),
+        ]);
+      }, 30000);
+
+      it('does not stage a child from a runbooks directory above the suite that the runtime never searches', async () => {
+        // The checkout sits under `<workspace>/runbooks/`; a runbook elsewhere
+        // under that ancestor is neither in the suite's project nor its plugin.
+        const dir = join(workspace.rootRunbooksDir(), 'checkout');
+        await write(join(dir, 'parent.runbook.md'), composer('parent', 'stray.runbook.md'));
+        await write(
+          join(workspace.rootRunbooksDir(), 'elsewhere', 'stray.runbook.md'),
+          terminalChild('stray', 'COMPLETE'),
+        );
+        await write(
+          join(dir, 'stray.scenario-suite.yaml'),
+          `version: 1
+name: Stray
+cases:
+  stray:
+    file: parent.runbook.md
+    commands:
+      - rd run parent.runbook.md
+    result: COMPLETE
+`,
+        );
+
+        const parsed = await runSuite('runbooks/checkout/stray.scenario-suite.yaml');
+
+        expect(parsed.cases).toEqual([
+          expect.objectContaining({
+            scenario: 'stray',
+            actual: expect.stringContaining('CHILD_RUNBOOK_NOT_FOUND: stray.runbook.md'),
+          }),
+        ]);
+      }, 30000);
+
+      it('stages a root-relative child a case command names from a harness outside runbooks/', async () => {
+        const dir = await pluginSuiteDir();
+        await write(
+          join(dir, 'scenarios', 'harness.runbook.md'),
+          terminalChild('harness', 'COMPLETE'),
+        );
+        await write(
+          join(dir, 'runbooks', 'planning', 'child.runbook.md'),
+          terminalChild('planning-child', 'COMPLETE'),
+        );
+        await write(
+          join(dir, 'commands.scenario-suite.yaml'),
+          `version: 1
+name: Command child
+cases:
+  command-child:
+    file: scenarios/harness.runbook.md
+    commands:
+      - rd run planning/child.runbook.md
+    result: COMPLETE
+`,
+        );
+
+        const parsed = await runSuite('plug/commands.scenario-suite.yaml');
+
+        expect(parsed.cases).toEqual([
+          expect.objectContaining({ scenario: 'command-child', actual: 'COMPLETE' }),
+        ]);
+      }, 30000);
+
+      it("stages a plugin child's static ARTIFACTS from the plugin root, as the runtime reads them", async () => {
+        // The runtime reads a relative ARTIFACTS path from the cwd, then
+        // `$CLAUDE_PLUGIN_ROOT`, then the bundled runbooks — not from
+        // `$CLAUDE_PLUGIN_ROOT/runbooks`.
+        const dir = join(workspace.cwd, 'proj');
+        await write(join(dir, 'composer.runbook.md'), composer('composer', 'hosted.runbook.md'));
+        await write(
+          join(workspace.pluginRunbooksDir(), 'hosted.runbook.md'),
+          `---
+name: hosted
+---
+
+# Hosted
+
+## 1. Read the schema
+- ARTIFACTS
+  - Schema "schemas/hosted.schema.json"
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`bash
+rd echo --result pass
+\`\`\`
+`,
+        );
+        await write(join(workspace.cwd, 'plugin', 'schemas', 'hosted.schema.json'), '{}\n');
+        await write(
+          join(dir, 'artifacts.scenario-suite.yaml'),
+          `version: 1
+name: Plugin artifacts
+cases:
+  plugin-artifact:
+    file: composer.runbook.md
+    commands:
+      - rd run composer.runbook.md
+    result: COMPLETE
+`,
+        );
+
+        const parsed = await runSuite('proj/artifacts.scenario-suite.yaml');
+
+        expect(parsed.cases).toEqual([
+          expect.objectContaining({ scenario: 'plugin-artifact', actual: 'COMPLETE' }),
+        ]);
+      }, 30000);
+    });
 
     it('errors for invalid suite file', async () => {
       await writeFile(join(workspace.cwd, 'bad.scenario-suite.yaml'), 'not: valid\n');

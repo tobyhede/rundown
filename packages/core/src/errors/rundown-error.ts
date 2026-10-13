@@ -36,34 +36,77 @@ export interface ErrorContext {
  * Why one run's persisted state was refused (RD-309).
  *
  * A closed union rather than free text: it is the machine-readable half of a
- * refusal whose prose a consumer would otherwise have to pattern-match. Every
- * member names exactly one refusal site in `RunbookStateManager.load` or
- * `applyRunbookStateUpdate` — and only sites whose refusal can actually
- * escape to the CLI wrapper, because a reason it could never surface would be
- * dead data.
+ * refusal whose prose a consumer would otherwise have to pattern-match. Each
+ * member's comment names the function that raises it. Two members are raised
+ * at more than one site, and the sites span four stages of a run's life:
+ *
+ * - reading a row back: `RunbookStore`'s row assembly and the
+ *   `persisted-state-guards` gates it runs, reached by
+ *   `RunbookStateManager.load` and every other store read;
+ * - deriving an update: `applyRunbookStateUpdate`;
+ * - rebuilding the machine: `RunbookActorService`;
+ * - resolving and entering the current step: `findStepOrThrow`, called from
+ *   `run-progression.ts` and `execution-unit-entry.ts`, and the render-context
+ *   build in `execution-unit-entry.ts`.
+ *
+ * Only sites whose refusal can actually escape to the CLI wrapper have a
+ * member, because a reason it could never surface would be dead data.
  */
 export type InvalidRunStateReason =
-  /** `state_json` is not parseable JSON. */
+  /** `state_json` is not parseable JSON. Raised by `RunbookStore`'s `assembleRaw`. */
   | 'unparseable_json'
-  /** The row claims a `schemaVersion` other than the current one. */
+  /**
+   * The row claims a `schemaVersion` other than the current one. Raised by
+   * `assertCurrentSchemaVersion`, which both `assertLoadablePersistedRun` and
+   * `applyRunbookStateUpdate` call.
+   */
   | 'invalid_schema_version'
-  /** A current-schema row is missing the required `templateVars` field. */
+  /**
+   * A current-schema row is missing the required `templateVars` field. Raised by
+   * `assertLoadablePersistedRun`.
+   */
   | 'missing_template_vars'
-  /** A current-schema row is missing the required `prompted` field. */
+  /**
+   * A current-schema row is missing the required `prompted` field. Raised by
+   * `assertLoadablePersistedRun`.
+   */
   | 'missing_prompted'
-  /** The row parsed as JSON but failed the `RunbookState` schema. */
+  /**
+   * The row parsed as JSON but failed the `RunbookState` schema. Raised by
+   * `parsePersistedRunState`.
+   */
   | 'schema_validation_failed'
-  /** The deprecated dynamic-step snapshot shape (`GOTO_NEXT` or `instance`). */
+  /**
+   * The deprecated dynamic-step snapshot shape (`GOTO_NEXT` or `instance`).
+   * Raised at two sites in `assertLoadablePersistedRun`, one per shape.
+   */
   | 'legacy_dynamic_step_snapshot'
-  /** The run carries no `ContextId` / `WorkPath` to render its frame against. */
+  /**
+   * The run carries no `ContextId` / `WorkPath` to render its frame against.
+   * Raised by `buildRunnableRenderContext` in `execution-unit-entry.ts`.
+   */
   | 'missing_render_context'
-  /** The persisted `snapshot.value` is not a shape this build can read. */
+  /**
+   * The persisted `snapshot.value` is not a shape this build can read. Raised at
+   * three sites in `RunbookActorService.assertFreshSnapshotValue`: a pending
+   * machine-effect or non-string value, a transient parent-entry state, and a
+   * value that does not parse as a step state.
+   */
   | 'unsupported_snapshot_state_value'
-  /** The persisted `snapshot.value` names a step the parsed runbook does not declare. */
+  /**
+   * The persisted `snapshot.value` names a step the parsed runbook does not
+   * declare. Raised by `RunbookActorService.assertFreshSnapshotValue`.
+   */
   | 'snapshot_step_not_in_runbook'
-  /** The run's `step` cursor names a step the parsed runbook does not declare. */
+  /**
+   * The run's `step` cursor names a step the parsed runbook does not declare.
+   * Raised by `findStepOrThrow`.
+   */
   | 'cursor_step_not_in_runbook'
-  /** A current-schema row is missing the required `frontmatterOutputs` field. */
+  /**
+   * A current-schema row is missing the `frontmatterOutputs` field the machine
+   * compiler needs. Raised by `RunbookActorService.compileMachineFromState`.
+   */
   | 'missing_frontmatter_outputs';
 
 /**

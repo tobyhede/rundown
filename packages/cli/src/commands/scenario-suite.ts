@@ -63,8 +63,9 @@ import { getEffectiveResult } from '../schemas/scenarios.js';
 import { runCliInProcess } from '../services/in-process-cli-runner.js';
 import {
   collectAuthoredRunbookRefs,
-  composedRunbookSearchBases,
+  createSuiteRunbookResolver,
   shouldStageAuthoredRunbookRef,
+  type SuiteRunbookResolver,
 } from '../helpers/scenario-workflow.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -157,6 +158,7 @@ function copyContainedRunbook(
  * @param caseName - Name of the suite case being executed
  * @param suiteCase - Suite case definition with file, commands, and expectations
  * @param suiteDir - Directory containing the suite file (for resolving relative paths)
+ * @param resolver - The suite run's child resolver (see createSuiteRunbookResolver)
  * @param quiet - Whether to suppress child process output
  * @param output - Output emitter for rendering progress messages
  * @returns Result with pass/fail status, expected vs actual outcome, and optional step assertions
@@ -165,6 +167,7 @@ async function executeSuiteCase(
   caseName: string,
   suiteCase: ScenarioSuiteCase,
   suiteDir: string,
+  resolver: SuiteRunbookResolver,
   quiet: boolean,
   output: OutputEmitter,
 ): Promise<{
@@ -202,7 +205,7 @@ async function executeSuiteCase(
       const realRunbookPath = copyContainedRunbook(runbookPath, destPath, suiteDir, relPath);
       stagedRunbooks.push({
         sourcePath: realRunbookPath,
-        sourceRoots: [dirname(realRunbookPath), suiteDir],
+        sourceRoots: resolver.artifactRoots(realRunbookPath),
       });
     } catch (err: unknown) {
       if (isNodeError(err) && err.code === 'ENOENT') {
@@ -231,60 +234,42 @@ async function executeSuiteCase(
       }
     }
 
-    // Copy any referenced child runbooks into the isolated workspace
+    // Stage the child runbooks the case's commands name, then the children
+    // the staged runbooks compose (#903), transitively. Each is resolved with
+    // the runtime's resolver over the roots the case's workspace stands for
+    // (see createSuiteRunbookResolver) and copied to `.rundown/runbooks/<ref>`,
+    // where the runtime's project step finds that same file. A child found in
+    // none of them fails the case up front with CHILD_RUNBOOK_NOT_FOUND rather
+    // than as a later launch refusal.
     const mainBasename = basename(suiteCase.file);
-    const allRefs = extractRunbookReferences(suiteCase.commands);
-    const referenced = allRefs.filter((r) => r !== suiteCase.file && r !== mainBasename);
     const mainRunbookSourceDir = dirname(resolve(suiteDir, suiteCase.file));
-    // Stage one child runbook into the isolated workspace, trying each base in
-    // order. A child found in none of them fails the case up front with
-    // CHILD_RUNBOOK_NOT_FOUND rather than as a later launch refusal.
-    const stageChildRunbook = (ref: string, bases: readonly string[]): void => {
+    const stageChildRunbook = async (ref: string): Promise<void> => {
       validateRelativePath(ref);
       const dest = join(runbooksDirPath, ref);
-      mkdirSync(dirname(dest), { recursive: true });
       assertDestinationPathContained(dest, runbooksDirPath, ref);
-      for (const base of bases) {
-        try {
-          const realSourcePath = copyContainedRunbook(resolve(base, ref), dest, base, ref);
-          stagedRunbooks.push({
-            sourcePath: realSourcePath,
-            sourceRoots: [dirname(realSourcePath), suiteDir],
-          });
-          return;
-        } catch (e: unknown) {
-          if (isNodeError(e) && e.code === 'ENOENT') {
-            continue; // try next base
-          }
-          throw e; // permission/IO errors propagate immediately
-        }
+      // Already staged: the runtime's project step resolves to this copy.
+      if (existsSync(dest)) return;
+      const located = await resolver.locate(ref);
+      if (located === null) {
+        throw new Error(
+          `CHILD_RUNBOOK_NOT_FOUND: ${ref} (required by case "${caseName}", ` +
+            `searched in: ${resolver.describe()})`,
+        );
       }
-      throw new Error(
-        `CHILD_RUNBOOK_NOT_FOUND: ${ref} (required by case "${caseName}", ` +
-          `searched in: ${bases.join(', ')})`,
-      );
+      mkdirSync(dirname(dest), { recursive: true });
+      const realSourcePath = copyContainedRunbook(located.path, dest, located.root, ref);
+      stagedRunbooks.push({
+        sourcePath: realSourcePath,
+        sourceRoots: resolver.artifactRoots(realSourcePath),
+      });
     };
 
-    // Try main runbook's directory first (bare filenames), then suite directory (nested paths)
-    for (const ref of referenced) {
-      stageChildRunbook(ref, [mainRunbookSourceDir, suiteDir]);
+    for (const ref of extractRunbookReferences(suiteCase.commands)) {
+      if (ref !== suiteCase.file && ref !== mainBasename) await stageChildRunbook(ref);
     }
-
-    // Stage the children the staged runbooks compose (#903), transitively, so
-    // an inline child resolves in the isolated workspace exactly as a bare
-    // filename command does. Each is found where the runtime would find it:
-    // beside the runbook that names it, under the suite directory, or under
-    // the `runbooks/` root above it (see composedRunbookSearchBases).
-    const stagedRefs = new Set<string>([mainBasename, ...referenced]);
     for (let i = 0; i < stagedRunbooks.length; i++) {
-      const parent = stagedRunbooks[i];
-      for (const ref of collectAuthoredRunbookRefs(parent.sourcePath)) {
-        if (!shouldStageAuthoredRunbookRef(ref) || stagedRefs.has(ref)) continue;
-        stageChildRunbook(
-          ref,
-          composedRunbookSearchBases(ref, dirname(parent.sourcePath), suiteDir),
-        );
-        stagedRefs.add(ref);
+      for (const ref of collectAuthoredRunbookRefs(stagedRunbooks[i].sourcePath)) {
+        if (shouldStageAuthoredRunbookRef(ref)) await stageChildRunbook(ref);
       }
     }
 
@@ -573,6 +558,8 @@ export function registerScenarioSuiteCommand(program: Command): void {
           }
 
           const suiteDir = dirname(resolve(suiteFile));
+          // One resolver per suite run, so its directory scans are shared by every case.
+          const resolver = createSuiteRunbookResolver(suiteDir);
           const runQuiet = (options.quiet ?? false) || !options.text;
 
           if (options.all) {
@@ -584,7 +571,14 @@ export function registerScenarioSuiteCommand(program: Command): void {
             for (const [name, c] of Object.entries(result.suite.cases)) {
               const caseStart = performance.now();
               try {
-                const caseResult = await executeSuiteCase(name, c, suiteDir, runQuiet, output);
+                const caseResult = await executeSuiteCase(
+                  name,
+                  c,
+                  suiteDir,
+                  resolver,
+                  runQuiet,
+                  output,
+                );
                 caseResults.push(caseResult);
                 if (caseResult.passed) {
                   passedCount++;
@@ -683,7 +677,14 @@ export function registerScenarioSuiteCommand(program: Command): void {
             const c = result.suite.cases[caseName];
             let caseResult: Awaited<ReturnType<typeof executeSuiteCase>>;
             try {
-              caseResult = await executeSuiteCase(caseName, c, suiteDir, runQuiet, output);
+              caseResult = await executeSuiteCase(
+                caseName,
+                c,
+                suiteDir,
+                resolver,
+                runQuiet,
+                output,
+              );
             } catch (err: unknown) {
               caseResult = {
                 kind: 'scenario_run',
