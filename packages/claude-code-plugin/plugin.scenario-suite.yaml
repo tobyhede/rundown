@@ -397,3 +397,358 @@ cases:
       - rd pass --token ${TOKEN} --step 5   # 5. Write the collated review (revision) → CONTINUE
       - rd pass --token ${TOKEN} --step 6   # 6. Check Schema (retry) → COMPLETE
     result: COMPLETE
+
+  # --- The six plugin runbooks end to end (#908) ---
+  #
+  # Simulated sub-agents claim each Claim Ticket (naming themselves with
+  # --agent-id, as the plugin's Bash hook would), drive their child by its
+  # Owner Token, and the orchestrator collects. execute-plan and convert-skill
+  # need an artifact a top-level `rundown run` cannot supply from a plain
+  # path, so a harness under scenarios/ produces it and composes the runbook
+  # inline on the same token.
+
+  planning-end-to-end:
+    description: "Delegates write-plan, then runs review-plan and execute-plan inline; each inline child delegates in turn and the root token collects — completes"
+    file: runbooks/planning/planning.runbook.md
+    commands:
+      - rd run --prompted planning.runbook.md
+      # 1. Write the plan — DELEGATE: a planner sub-agent claims write-plan
+      - rd claim ${TICKET} --agent-id planner
+      - rd pass --token ${CHILD_TOKEN} --step 1
+      - rd pass --token ${CHILD_TOKEN} --step 2
+      - rd pass --token ${CHILD_TOKEN} --step 3
+      - rd pass --token ${CHILD_TOKEN} --step 4
+      - rd pass --token ${CHILD_TOKEN} --step 5
+      - rd pass --token ${CHILD_TOKEN} --step 6
+      - rd pass --token ${CHILD_TOKEN} --step 7
+      - rd pass --token ${CHILD_TOKEN} --step 8
+      - rd pass --token ${CHILD_TOKEN} --step 9
+      - rd pass --token ${CHILD_TOKEN} --step 10
+      - rd collect --token ${TOKEN}
+      # 2. Review the plan — inline review-plan on the root token; its step 3 fans out to four
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
+      - rd claim ${TICKET_2} --agent-id reviewer-1
+      - rd claim ${TICKET_3} --agent-id reviewer-2
+      - rd claim ${TICKET_4} --agent-id reviewer-3
+      - rd claim ${TICKET_5} --agent-id reviewer-4
+      - rd pass --token ${CHILD_TOKEN_2} --step 1
+      - rd pass --token ${CHILD_TOKEN_2} --step 2
+      - rd pass --token ${CHILD_TOKEN_2} --step 3
+      - rd pass --token ${CHILD_TOKEN_2} --step 4
+      - rd pass --token ${CHILD_TOKEN_2} --step 5
+      - rd pass --token ${CHILD_TOKEN_2} --step 6
+      - rd pass --token ${CHILD_TOKEN_3} --step 1
+      - rd pass --token ${CHILD_TOKEN_3} --step 2
+      - rd pass --token ${CHILD_TOKEN_3} --step 3
+      - rd pass --token ${CHILD_TOKEN_3} --step 4
+      - rd pass --token ${CHILD_TOKEN_3} --step 5
+      - rd pass --token ${CHILD_TOKEN_3} --step 6
+      - rd pass --token ${CHILD_TOKEN_4} --step 1
+      - rd pass --token ${CHILD_TOKEN_4} --step 2
+      - rd pass --token ${CHILD_TOKEN_4} --step 3
+      - rd pass --token ${CHILD_TOKEN_4} --step 4
+      - rd pass --token ${CHILD_TOKEN_4} --step 5
+      - rd pass --token ${CHILD_TOKEN_4} --step 6
+      - rd pass --token ${CHILD_TOKEN_5} --step 1
+      - rd pass --token ${CHILD_TOKEN_5} --step 2
+      - rd pass --token ${CHILD_TOKEN_5} --step 3
+      - rd pass --token ${CHILD_TOKEN_5} --step 4
+      - rd pass --token ${CHILD_TOKEN_5} --step 5
+      - rd pass --token ${CHILD_TOKEN_5} --step 6
+      - rd collect --token ${TOKEN}
+      - rd claim ${TICKET_6} --agent-id collator
+      - rd pass --token ${CHILD_TOKEN_6} --step 1
+      - rd pass --token ${CHILD_TOKEN_6} --step 2
+      - rd pass --token ${CHILD_TOKEN_6} --step 3
+      - rd pass --token ${CHILD_TOKEN_6} --step 4
+      - rd pass --token ${CHILD_TOKEN_6} --step 5
+      - rd pass --token ${CHILD_TOKEN_6} --step 6
+      - rd collect --token ${TOKEN}
+      # 3. Execute the plan — inline execute-plan; PlanPath came from the planner's Collect
+      - rd pass --token ${TOKEN} --step 1
+      - rd claim ${TICKET_7} --agent-id implementer
+      - rd pass --token ${CHILD_TOKEN_7} --step 1
+      - rd pass --token ${CHILD_TOKEN_7} --step 2
+      - rd pass --token ${CHILD_TOKEN_7} --step 3
+      - rd collect --token ${TOKEN}
+      - rd claim ${TICKET_8} --agent-id code-reviewer
+      - rd pass --token ${CHILD_TOKEN_8} --step 1
+      - rd pass --token ${CHILD_TOKEN_8} --step 2
+      - rd pass --token ${CHILD_TOKEN_8} --step 3
+      - rd pass --token ${CHILD_TOKEN_8} --step 4
+      - rd pass --token ${CHILD_TOKEN_8} --step 5
+      - rd pass --token ${CHILD_TOKEN_8} --step 6
+      - rd pass --token ${CHILD_TOKEN_8} --step 7
+      - rd collect --token ${TOKEN}
+      - rd pass --token ${TOKEN} --step 5
+    expect:
+      result: COMPLETE
+      collected:
+        - step: '1.1'
+          status: collected
+          result: pass
+        - step: '3.1'
+          status: collected
+        - step: '3.2'
+          status: collected
+        - step: '3.3'
+          status: collected
+        - step: '3.4'
+          status: collected
+        - step: '4.1'
+          status: collected
+          result: pass
+        - step: '2.1'
+          status: collected
+          result: pass
+        - step: '3.1'
+          status: collected
+          result: pass
+      steps:
+        - from: '3.4'
+          at: '4.1'
+          action: CONTINUE
+          aggregated: true
+          runbook: planning/review-plan.runbook.md
+        - from: '3.1'
+          at: '5'
+          action: GOTO
+          runbook: planning/execute-plan.runbook.md
+        - from: '3.1'
+          at: '3.1'
+          action: COMPLETE
+          aggregated: true
+          runbook: planning.runbook.md
+
+  execute-plan-review-loop:
+    description: "The 3 -> 4 -> 3 GOTO loop: a failed review is addressed, the re-entered review step reserves a fresh child, and verify completes"
+    file: scenarios/execute-plan-harness.runbook.md
+    commands:
+      - rd run --prompted execute-plan-harness.runbook.md
+      - rd pass --token ${TOKEN} --step 1   # harness: PlanPath produced; execute-plan launches inline
+      - rd pass --token ${TOKEN} --step 1   # 1. Invoke the Executing Plans skill
+      - rd claim ${TICKET} --agent-id implementer
+      - rd pass --token ${CHILD_TOKEN} --step 1
+      - rd pass --token ${CHILD_TOKEN} --step 2
+      - rd pass --token ${CHILD_TOKEN} --step 3
+      - rd collect --token ${TOKEN}
+      # 3. Code review, first visit: the review fails its gate, FAIL ANY CONTINUE
+      - rd claim ${TICKET_2} --agent-id reviewer-1
+      - rd pass --token ${CHILD_TOKEN_2} --step 1
+      - rd pass --token ${CHILD_TOKEN_2} --step 2
+      - rd pass --token ${CHILD_TOKEN_2} --step 3
+      - rd pass --token ${CHILD_TOKEN_2} --step 4
+      - rd pass --token ${CHILD_TOKEN_2} --step 5
+      - rd pass --token ${CHILD_TOKEN_2} --step 6
+      - "! rd fail --token ${CHILD_TOKEN_2} --step 7"
+      - rd collect --token ${TOKEN}
+      # 4. Address review findings: PASS ALL GOTO 3 reserves a fresh review child
+      - rd claim ${TICKET_3} --agent-id fixer
+      - rd pass --token ${CHILD_TOKEN_3} --step 1
+      - rd pass --token ${CHILD_TOKEN_3} --step 2
+      - rd pass --token ${CHILD_TOKEN_3} --step 3
+      - rd collect --token ${TOKEN}
+      # 3. Code review, second visit: the first visit's ticket no longer counts
+      - "! rd claim ${TICKET_2}"
+      - rd claim ${TICKET_4} --agent-id reviewer-2
+      - rd pass --token ${CHILD_TOKEN_4} --step 1
+      - rd pass --token ${CHILD_TOKEN_4} --step 2
+      - rd pass --token ${CHILD_TOKEN_4} --step 3
+      - rd pass --token ${CHILD_TOKEN_4} --step 4
+      - rd pass --token ${CHILD_TOKEN_4} --step 5
+      - rd pass --token ${CHILD_TOKEN_4} --step 6
+      - rd pass --token ${CHILD_TOKEN_4} --step 7
+      - rd collect --token ${TOKEN}
+      - rd pass --token ${TOKEN} --step 5   # 5. Verify
+    expect:
+      result: COMPLETE
+      collected:
+        - step: '2.1'
+          result: pass
+        - step: '3.1'
+          status: collected
+          result: fail
+        - step: '4.1'
+          status: collected
+          result: pass
+        - step: '3.1'
+          status: collected
+          result: pass
+      steps:
+        - from: '4.1'
+          at: '3.1'
+          action: GOTO
+          runbook: planning/execute-plan.runbook.md
+        - from: '3.1'
+          at: '5'
+          action: GOTO
+          runbook: planning/execute-plan.runbook.md
+        - from: '5'
+          action: COMPLETE
+          runbook: planning/execute-plan.runbook.md
+      errors:
+        - code: DELEGATION_CANCELLED
+          command: claim
+
+  review-plan-fan-out:
+    description: "Step 3 fans out to four reviewers, one collect aggregates all four, and the collator completes the run"
+    file: runbooks/planning/review-plan.runbook.md
+    commands:
+      - rd run --prompted --input PlanPath=plan.json review-plan.runbook.md
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
+      - rd claim ${TICKET} --agent-id reviewer-1
+      - rd claim ${TICKET_2} --agent-id reviewer-2
+      - rd claim ${TICKET_3} --agent-id reviewer-3
+      - rd claim ${TICKET_4} --agent-id reviewer-4
+      - rd pass --token ${CHILD_TOKEN} --step 1
+      - rd pass --token ${CHILD_TOKEN} --step 2
+      - rd pass --token ${CHILD_TOKEN} --step 3
+      - rd pass --token ${CHILD_TOKEN} --step 4
+      - rd pass --token ${CHILD_TOKEN} --step 5
+      - rd pass --token ${CHILD_TOKEN} --step 6
+      - rd pass --token ${CHILD_TOKEN_2} --step 1
+      - rd pass --token ${CHILD_TOKEN_2} --step 2
+      - rd pass --token ${CHILD_TOKEN_2} --step 3
+      - rd pass --token ${CHILD_TOKEN_2} --step 4
+      - rd pass --token ${CHILD_TOKEN_2} --step 5
+      - rd pass --token ${CHILD_TOKEN_2} --step 6
+      - rd pass --token ${CHILD_TOKEN_3} --step 1
+      - rd pass --token ${CHILD_TOKEN_3} --step 2
+      - rd pass --token ${CHILD_TOKEN_3} --step 3
+      - rd pass --token ${CHILD_TOKEN_3} --step 4
+      - rd pass --token ${CHILD_TOKEN_3} --step 5
+      - rd pass --token ${CHILD_TOKEN_3} --step 6
+      - rd pass --token ${CHILD_TOKEN_4} --step 1
+      - rd pass --token ${CHILD_TOKEN_4} --step 2
+      - rd pass --token ${CHILD_TOKEN_4} --step 3
+      - rd pass --token ${CHILD_TOKEN_4} --step 4
+      - rd pass --token ${CHILD_TOKEN_4} --step 5
+      - rd pass --token ${CHILD_TOKEN_4} --step 6
+      - rd collect --token ${TOKEN}
+      - rd claim ${TICKET_5} --agent-id collator
+      - rd pass --token ${CHILD_TOKEN_5} --step 1
+      - rd pass --token ${CHILD_TOKEN_5} --step 2
+      - rd pass --token ${CHILD_TOKEN_5} --step 3
+      - rd pass --token ${CHILD_TOKEN_5} --step 4
+      - rd pass --token ${CHILD_TOKEN_5} --step 5
+      - rd pass --token ${CHILD_TOKEN_5} --step 6
+      - rd collect --token ${TOKEN}
+    expect:
+      result: COMPLETE
+      collected:
+        - step: '3.1'
+          status: collected
+          result: pass
+        - step: '3.2'
+          status: collected
+          result: pass
+        - step: '3.3'
+          status: collected
+          result: pass
+        - step: '3.4'
+          status: collected
+          result: pass
+        - step: '4.1'
+          status: collected
+          result: pass
+      steps:
+        - from: '3.4'
+          at: '4.1'
+          action: CONTINUE
+          aggregated: true
+          runbook: review-plan.runbook.md
+        - from: '4.1'
+          action: COMPLETE
+          aggregated: true
+          runbook: review-plan.runbook.md
+
+  end-to-end-review-and-collate:
+    description: "end-to-end-test composes review-and-collate inline; its review and collate Delegations are claimed and collected by the root token — completes"
+    file: runbooks/end-to-end-test/end-to-end-test.runbook.md
+    commands:
+      - rd run --prompted end-to-end-test.runbook.md
+      - rd pass --token ${TOKEN} --step 1   # 1. Read the output schema; write-file launches inline
+      - rd pass --token ${TOKEN} --step 1   # write-file 1-3 on the root token
+      - rd pass --token ${TOKEN} --step 2
+      - rd pass --token ${TOKEN} --step 3   # write-file completes; review-and-collate launches inline
+      - rd claim ${TICKET} --agent-id reviewer
+      - rd pass --token ${CHILD_TOKEN} --step 1
+      - rd pass --token ${CHILD_TOKEN} --step 2
+      - rd pass --token ${CHILD_TOKEN} --step 3
+      - rd pass --token ${CHILD_TOKEN} --step 4
+      - rd collect --token ${TOKEN}
+      - rd claim ${TICKET_2} --agent-id collator
+      - rd pass --token ${CHILD_TOKEN_2} --step 1
+      - rd pass --token ${CHILD_TOKEN_2} --step 2
+      - rd pass --token ${CHILD_TOKEN_2} --step 3
+      - rd collect --token ${TOKEN}
+      - rd pass --token ${TOKEN} --step 4
+      - rd pass --token ${TOKEN} --step 5
+    expect:
+      result: COMPLETE
+      collected:
+        - step: '1.1'
+          status: collected
+          result: pass
+        - step: '2.1'
+          status: collected
+          result: pass
+      steps:
+        - from: '2.1'
+          action: COMPLETE
+          aggregated: true
+          runbook: end-to-end-test/review-and-collate.runbook.md
+        - from: '3.1'
+          at: '4'
+          action: CONTINUE
+          aggregated: true
+          runbook: end-to-end-test.runbook.md
+
+  iterate-and-delegate-for-each:
+    description: "FOR + DELEGATE reserves one child per item; each is claimed, passed and collected in turn — completes"
+    file: runbooks/patterns/iterate-and-delegate.runbook.md
+    commands:
+      - rd run --allow-all iterate-and-delegate.runbook.md
+      # 2. FOR item IN Items + DELEGATE: each iteration's entry issues a fresh ticket
+      - rd claim ${TICKET} --agent-id worker-left
+      - rd pass --token ${CHILD_TOKEN} --step 1
+      - rd collect --token ${TOKEN}
+      - rd claim ${TICKET_2} --agent-id worker-right
+      - rd pass --token ${CHILD_TOKEN_2} --step 1
+      - rd collect --token ${TOKEN}
+    expect:
+      result: COMPLETE
+      collected:
+        - index: 1
+          status: collected
+          result: pass
+        - index: 2
+          status: collected
+          result: pass
+
+  convert-skill-check-loop:
+    description: "The non-delegating control: check fails once, GOTO 4 rewrites, and the checklist completes"
+    file: scenarios/convert-skill-harness.runbook.md
+    commands:
+      - rd run --prompted convert-skill-harness.runbook.md
+      - rd pass --token ${TOKEN} --step 1   # harness: SkillPath named; convert-skill launches inline
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
+      - rd pass --token ${TOKEN} --step 3
+      - rd pass --token ${TOKEN} --step 4
+      - rd fail --token ${TOKEN} --step 5   # 5. Check the runbook fails → GOTO 4
+      - rd pass --token ${TOKEN} --step 4
+      - rd pass --token ${TOKEN} --step 5
+      - rd pass --token ${TOKEN} --step 6
+    expect:
+      result: COMPLETE
+      steps:
+        - from: '5'
+          at: '4'
+          action: GOTO
+          runbook: meta/convert-skill.runbook.md
+        - from: '6'
+          action: COMPLETE
+          runbook: meta/convert-skill.runbook.md
