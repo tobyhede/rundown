@@ -18,6 +18,8 @@ import { registerPromptCommand } from './commands/prompt.js';
 import { registerScenariosCommand } from './commands/scenarios.js';
 import { registerScenarioSuiteCommand } from './commands/scenario-suite.js';
 import { registerArtifactCommand } from './commands/artifact.js';
+import { registerClaimCommand } from './commands/claim.js';
+import { registerCollectCommand } from './commands/collect.js';
 import { PolicyConfigTrustRequiredError, isError, setColorEnabled } from '@rundown-org/core';
 import {
   initializePolicyContext,
@@ -184,6 +186,8 @@ export function createProgram(): Command {
   registerGotoCommand(program);
   registerStatusCommand(program);
   registerStopCommand(program);
+  registerClaimCommand(program);
+  registerCollectCommand(program);
   registerLsCommand(program);
   registerEchoCommand(program);
   registerCheckCommand(program);

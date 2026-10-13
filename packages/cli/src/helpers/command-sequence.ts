@@ -19,6 +19,7 @@ import {
 import { parse as shellParse } from 'shell-quote';
 import type {
   ArtifactAssertion,
+  CollectedAssertion,
   EnteredAssertion,
   ErrorAssertion,
   StepAssertion,
@@ -157,6 +158,30 @@ export interface EnteredAssertionResult {
   matchedEntry?: CapturedEnteredStep;
 }
 
+/** One child a `children_collected` event reported (#904). */
+export interface CapturedCollectedChild {
+  /** The parent unit (`step.substep`). */
+  readonly step: string;
+  /** The FOR iteration, inside a loop. */
+  readonly index?: number;
+  /** The child run. */
+  readonly runId: string;
+  /** How Collect found the child. */
+  readonly status: string;
+  /** The Child Result, once terminal. */
+  readonly result?: string;
+}
+
+/** Result of matching one collected-child assertion. */
+export interface CollectedAssertionResult {
+  /** The assertion. */
+  assertion: CollectedAssertion;
+  /** Whether a reported child matched it, in order. */
+  matched: boolean;
+  /** The child it matched. */
+  matchedChild?: CapturedCollectedChild;
+}
+
 /** Result of executing a command sequence. */
 export interface CommandSequenceResult {
   /** Terminal outcome determined from JSON output */
@@ -175,6 +200,8 @@ export interface CommandSequenceResult {
   artifactEntries: CapturedArtifactEntry[];
   /** Step-entered metadata captured from step_entered events */
   enteredSteps: CapturedEnteredStep[];
+  /** Children reported by `children_collected` events (#904), in order */
+  collectedChildren: CapturedCollectedChild[];
   /** Per-command timing records captured during execution */
   commandTimings: CommandTiming[];
 }
@@ -383,9 +410,8 @@ export function parseRdCommandWithEnv(cmd: string): ParsedRdCommand | null {
  * substituted from values captured in emission order from earlier command
  * output.
  *
- * Table-driven on purpose: #904 adds `${TICKET}` (from
- * `step_entered.children[].ticket`), `${CHILD_TOKEN}` and `${CHILD_RUN}`
- * (from `rundown claim` output) by adding rows, not code paths.
+ * Table-driven on purpose: Delegation (#904) added `${TICKET}`,
+ * `${CHILD_TOKEN}` and `${CHILD_RUN}` as rows, not code paths.
  */
 export interface CapturePlaceholder {
   /** Placeholder name as written in a scenario command (`TOKEN` for `${TOKEN}`). */
@@ -400,20 +426,40 @@ export interface CapturePlaceholder {
 }
 
 /**
+ * Whether a parsed `runbook_started` object announces a Delegation started by
+ * `rundown claim` (#904): it names its parent.
+ *
+ * @param value - One parsed JSON object of a command's stdout.
+ * @returns True for a claimed child's start.
+ */
+function isClaimedStart(value: Record<string, unknown>): boolean {
+  return value.type === 'runbook_started' && value.parent !== undefined;
+}
+
+/**
  * The placeholder table.
  *
  * - `${TOKEN[_n]}` — the n-th Owner Token printed on a `runbook_started`
- *   event (`owner_token`). A scenario's own `rundown run` supplies `${TOKEN}`;
- *   later starts in the same scenario supply the higher indexes.
+ *   event (`owner_token`) by `rundown run`. A scenario's own `rundown run`
+ *   supplies `${TOKEN}`; later starts in the same scenario supply the higher
+ *   indexes.
  * - `${RUN_ID[_n]}` — the n-th run id (`runbookId`) on a `runbook_started`
- *   event, for selector and status assertions (`status --run ${RUN_ID}`).
+ *   event that is not a claimed Delegation, for selector and status
+ *   assertions (`status --run ${RUN_ID}`).
+ * - `${TICKET[_n]}` — the n-th Claim Ticket listed in a `step_entered`
+ *   event's `children` (#904), in listing order.
+ * - `${CHILD_TOKEN[_n]}` / `${CHILD_RUN[_n]}` — the Owner Token and run id
+ *   of the n-th Delegation `rundown claim` started (its `runbook_started`
+ *   names its `parent`).
  */
 export const CAPTURE_PLACEHOLDERS: readonly CapturePlaceholder[] = [
   {
     name: 'TOKEN',
     describe: 'owner token from runbook_started.owner_token',
     capture: (value) =>
-      value.type === 'runbook_started' && typeof value.owner_token === 'string'
+      value.type === 'runbook_started' &&
+      !isClaimedStart(value) &&
+      typeof value.owner_token === 'string'
         ? [value.owner_token]
         : [],
   },
@@ -421,9 +467,37 @@ export const CAPTURE_PLACEHOLDERS: readonly CapturePlaceholder[] = [
     name: 'RUN_ID',
     describe: 'run id from runbook_started.runbookId',
     capture: (value) =>
-      value.type === 'runbook_started' && typeof value.runbookId === 'string'
+      value.type === 'runbook_started' &&
+      !isClaimedStart(value) &&
+      typeof value.runbookId === 'string'
         ? [value.runbookId]
         : [],
+  },
+  {
+    name: 'TICKET',
+    describe: 'claim ticket from step_entered.children[].ticket',
+    capture: (value) =>
+      value.type === 'step_entered' && Array.isArray(value.children)
+        ? value.children.flatMap((child: unknown) =>
+            typeof child === 'object' &&
+            child !== null &&
+            typeof (child as { ticket?: unknown }).ticket === 'string'
+              ? [(child as { ticket: string }).ticket]
+              : [],
+          )
+        : [],
+  },
+  {
+    name: 'CHILD_TOKEN',
+    describe: 'owner token from the runbook_started a rundown claim printed',
+    capture: (value) =>
+      isClaimedStart(value) && typeof value.owner_token === 'string' ? [value.owner_token] : [],
+  },
+  {
+    name: 'CHILD_RUN',
+    describe: 'run id from the runbook_started a rundown claim printed',
+    capture: (value) =>
+      isClaimedStart(value) && typeof value.runbookId === 'string' ? [value.runbookId] : [],
   },
 ];
 
@@ -481,6 +555,120 @@ export function substitutePlaceholders(cmd: string, captured: CapturedPlaceholde
     out = substitutePlaceholder(out, placeholder, captured.get(placeholder.name) ?? []);
   }
   return out;
+}
+
+/**
+ * Parse one command's stdout into its JSON objects, in emission order.
+ *
+ * Reads the stdout as one pretty-printed JSON object, or as NDJSON; any other
+ * line is skipped.
+ *
+ * @param stdout - Raw stdout of one command
+ * @returns The JSON objects
+ */
+function stdoutObjects(stdout: string): Record<string, unknown>[] {
+  const isObject = (value: unknown): value is Record<string, unknown> =>
+    typeof value === 'object' && value !== null && !Array.isArray(value);
+  const trimmed = stdout.trim();
+  try {
+    const whole: unknown = JSON.parse(trimmed);
+    return isObject(whole) ? [whole] : [];
+  } catch {
+    const objects: Record<string, unknown>[] = [];
+    for (const line of trimmed.split('\n')) {
+      try {
+        const parsed: unknown = JSON.parse(line);
+        if (isObject(parsed)) objects.push(parsed);
+      } catch {
+        // Non-JSON line — skip.
+      }
+    }
+    return objects;
+  }
+}
+
+/**
+ * Capture every placeholder row's values, and every collected child, from one
+ * command's stdout, in emission order.
+ *
+ * @param stdout - Raw stdout of one command
+ * @param captured - Placeholder accumulator the values are appended to
+ * @param collected - Collected-children accumulator (#904)
+ */
+export function captureFromStdout(
+  stdout: string,
+  captured: CapturedPlaceholders,
+  collected: CapturedCollectedChild[],
+): void {
+  for (const value of stdoutObjects(stdout)) {
+    for (const placeholder of CAPTURE_PLACEHOLDERS) {
+      captured.get(placeholder.name)?.push(...placeholder.capture(value));
+    }
+    if (value.type === 'children_collected' && Array.isArray(value.children)) {
+      for (const child of value.children as Record<string, unknown>[]) {
+        if (typeof child.step !== 'string' || typeof child.runId !== 'string') continue;
+        collected.push({
+          step: child.step,
+          ...(typeof child.index === 'number' ? { index: child.index } : {}),
+          runId: child.runId,
+          status: String(child.status),
+          ...(typeof child.result === 'string' ? { result: child.result } : {}),
+        });
+      }
+    }
+  }
+}
+
+/**
+ * Match collected-child assertions against the children `rundown collect`
+ * reported, using ordered skip-matching.
+ *
+ * @param assertions - Ordered list of collected-child assertions
+ * @param children - Captured children, in report order
+ * @returns One result per assertion, in order
+ */
+export function matchCollectedAssertions(
+  assertions: readonly CollectedAssertion[],
+  children: readonly CapturedCollectedChild[],
+): CollectedAssertionResult[] {
+  const results: CollectedAssertionResult[] = [];
+  let index = 0;
+  for (const assertion of assertions) {
+    let matchedChild: CapturedCollectedChild | undefined;
+    while (index < children.length && matchedChild === undefined) {
+      const child = children[index];
+      index++;
+      if (
+        (assertion.step === undefined || assertion.step === child.step) &&
+        (assertion.index === undefined || assertion.index === child.index) &&
+        (assertion.status === undefined || assertion.status === child.status) &&
+        (assertion.result === undefined || assertion.result === child.result)
+      ) {
+        matchedChild = child;
+      }
+    }
+    results.push(
+      matchedChild === undefined
+        ? { assertion, matched: false }
+        : { assertion, matched: true, matchedChild },
+    );
+  }
+  return results;
+}
+
+/**
+ * Format a collected-child assertion result for display.
+ *
+ * @param ca - The result
+ * @returns A description such as "collected step=1.1 status=pending"
+ */
+export function formatCollectedAssertionDescription(ca: CollectedAssertionResult): string {
+  const parts: string[] = [];
+  if (ca.assertion.step !== undefined) parts.push(`step=${ca.assertion.step}`);
+  if (ca.assertion.index !== undefined) parts.push(`index=${String(ca.assertion.index)}`);
+  if (ca.assertion.status !== undefined) parts.push(`status=${ca.assertion.status}`);
+  if (ca.assertion.result !== undefined) parts.push(`result=${ca.assertion.result}`);
+  return `collected ${parts.join(' ')}`;
 }
 
 /**
@@ -1669,9 +1857,9 @@ function aggregateJsonResult(
  *
  * Handles `rd` commands (JSON is the default output format) and generic
  * shell commands. Prefix a command with `! ` when a non-zero exit is the
- * expected outcome. Placeholders (`${TOKEN}`, `${RUN_ID}` and their `_n`
- * forms) are substituted with values captured from earlier `runbook_started`
- * events before each command runs.
+ * expected outcome. Placeholders (`${TOKEN}`, `${RUN_ID}`, `${TICKET}`,
+ * `${CHILD_TOKEN}`, `${CHILD_RUN}` and their `_n` forms) are substituted with
+ * values captured from earlier commands' output before each command runs.
  *
  * @param options - Execution options including commands, working directory, CLI path, and quiet flag
  * @returns Promise resolving to the terminal result, all transitions, and captured tokens
@@ -1683,6 +1871,10 @@ export async function executeCommandSequence(
 ): Promise<CommandSequenceResult> {
   const capturedTokens: string[] = [];
   const capturedRunIds: string[] = [];
+  // Every placeholder row (#904 adds TICKET, CHILD_TOKEN, CHILD_RUN), captured
+  // in emission order from every command's stdout.
+  const captured = createCapturedPlaceholders();
+  const collectedChildren: CapturedCollectedChild[] = [];
   const errors: CapturedError[] = [];
   const warnings: CapturedWarning[] = [];
   const transitions: CapturedTransition[] = [];
@@ -1715,12 +1907,10 @@ export async function executeCommandSequence(
     const trimmedRaw = rawCmd.trimStart();
     const expectsFailure = trimmedRaw.startsWith('! ');
     const commandText = expectsFailure ? trimmedRaw.slice(2).trimStart() : rawCmd;
-    // Placeholder substitution — replace ${TOKEN} and ${RUN_ID} (and their _N
-    // indexed forms) with values captured from earlier runbook_started events.
-    const tokenSubstituted = substituteRunIds(
-      substituteTokens(commandText, capturedTokens),
-      capturedRunIds,
-    );
+    // Placeholder substitution — replace every placeholder row (${TOKEN},
+    // ${RUN_ID}, ${TICKET}, ${CHILD_TOKEN}, ${CHILD_RUN} and their _N indexed
+    // forms) with values captured from earlier commands' output.
+    const tokenSubstituted = substitutePlaceholders(commandText, captured);
     // The `${ARTIFACT:<name>}` grammar and its `seed:` directive were retired in
     // #498. No substituter remains, so fail here and name the replacement rather
     // than letting the raw placeholder leak into the executed command.
@@ -1772,6 +1962,7 @@ export async function executeCommandSequence(
       );
       recordTiming(shownCmd, 'rd', commandStart, result.exitCode, expectsFailure);
       stdout = result.stdout;
+      captureFromStdout(stdout, captured, collectedChildren);
 
       // Parse JSON output to extract transitions, terminal state, and tokens
       // capturedRunIds[0] is the first `runbook_started` of the sequence — the
@@ -1809,6 +2000,7 @@ export async function executeCommandSequence(
       );
       recordTiming(shownCmd, 'shell', commandStart, result.exitCode, expectsFailure);
       stdout = result.stdout;
+      captureFromStdout(stdout, captured, collectedChildren);
 
       // Parse JSON output from shell commands as well (e.g., shell scripts that wrap rd commands)
       // capturedRunIds[0] is the first `runbook_started` of the sequence — the
@@ -1850,6 +2042,7 @@ export async function executeCommandSequence(
     warnings,
     artifactEntries,
     enteredSteps,
+    collectedChildren,
     commandTimings,
   };
 }
