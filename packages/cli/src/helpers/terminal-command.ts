@@ -96,7 +96,7 @@ export interface SeamTerminalOptions {
  * @param message - Optional operator-supplied terminal message for the applied
  *   complete/stopped summary; falls back to the default summary when absent.
  * @param inlineChild - Whether the command's target is an Inline Child (#903).
- *   Its terminal streams under the child's run id and is not summarised as
+ *   Its terminal streams under the child's run id and is not summarized as
  *   the command's outcome: the parent Collects it and progression decides
  *   where the run rests.
  * @returns `true` when the outcome requests a non-zero exit code.
