@@ -42,6 +42,14 @@ import { findStepOrThrow } from './execution-units.js';
 import type { ExecutionUnitEntry } from './execution-unit-entry.js';
 import { InvalidRunbookStateError } from './persisted-state-guards.js';
 import type { OwnedRun } from './run-authority.js';
+import {
+  classifyExecutionLease,
+  currentLeaseHolder,
+  EXECUTION_IN_PROGRESS_CODE,
+  EXECUTION_INTERRUPTED_CODE,
+  executionLeaseRefusal,
+} from './execution-lease.js';
+import type { ProcessIdentity } from './process-identity.js';
 import type { RunId } from './run-id.js';
 import {
   mintRunProgressionAuthority,
@@ -89,14 +97,25 @@ export type RunProgressionWaitReason = 'awaiting_input';
  * Why an activation refused without applying a terminal.
  *
  * - `run_missing` — the run no longer exists (a concurrent prune).
- * - `command_not_committed` — the command ran, but the save of its result was
- *   refused because another writer moved the row. Nothing was written.
+ * - `command_not_started` — the execution lease could not be set because
+ *   another of the owner's commands moved the row since this activation read
+ *   it. The command did not run and nothing was written.
+ * - `command_not_committed` — the command ran, but its attempt no longer held
+ *   the execution lease when its finish was saved (another writer moved the
+ *   row). The result was not recorded.
+ * - `execution_in_progress` — a live attempt already holds the lease; the
+ *   command was not started a second time.
+ * - `execution_interrupted` — the attempt holding the lease died; Rundown
+ *   never repeats its command, and the owner decides explicitly.
  * - `entry_render_failed` — rendering the selected unit's entry threw; nothing
  *   was committed and re-activation re-renders.
  */
 export type RunProgressionRefusalReason =
   | 'run_missing'
+  | 'command_not_started'
   | 'command_not_committed'
+  | 'execution_in_progress'
+  | 'execution_interrupted'
   | 'entry_render_failed';
 
 /**
@@ -183,6 +202,11 @@ export interface RunProgressionDeps {
   ) => readonly ResolvedStep[] | Promise<readonly ResolvedStep[]>;
   /** Synchronous observation sink; events are delivered after each commit. */
   readonly sink: Pick<ExecutionEventEmitter, 'emit'>;
+  /**
+   * Start-identity source for the execution lease's `(pid, start id)`.
+   * Defaults to the process-wide identity; tests inject a deterministic one.
+   */
+  readonly processIdentity?: ProcessIdentity;
 }
 
 /**
@@ -625,6 +649,82 @@ function isSameProgressionSelectionState(selected: RunbookState, durable: Runboo
 }
 
 /**
+ * Set the execution lease for one command turn, or refuse the turn.
+ *
+ * @param runId - The run whose command is about to start.
+ * @param current - The run as this activation read it.
+ * @param deps - Activation dependencies (manager, process identity).
+ * @param sink - Gated observation sink for the refusal diagnostic.
+ * @returns The run at the version the lease produced, or the closed refusal.
+ */
+async function acquireTurnLease(
+  runId: RunId,
+  current: VersionedRunState,
+  deps: RunProgressionDeps,
+  sink: Pick<ExecutionEventEmitter, 'emit'>,
+): Promise<
+  | { readonly kind: 'acquired'; readonly run: VersionedRunState }
+  | { readonly kind: 'refused'; readonly outcome: RunProgressionOutcome }
+> {
+  const leased = await deps.manager.acquireExecutionLease(
+    runId,
+    current.stateVersion,
+    currentLeaseHolder(deps.processIdentity),
+  );
+  switch (leased.kind) {
+    case 'acquired':
+      return {
+        kind: 'acquired',
+        run: { state: current.state, stateVersion: leased.stateVersion, lease: leased.lease },
+      };
+    case 'missing':
+      return { kind: 'refused', outcome: runMissingRefusal(runId, sink) };
+    case 'concurrent_modification': {
+      const message = `Run ${runId} was modified by another writer before its command started; the command did not run and nothing was written — inspect the run and re-activate`;
+      sink.emit({
+        type: 'ERROR_OCCURRED',
+        payload: { message, code: CONCURRENT_MODIFICATION_CODE },
+      });
+      return {
+        kind: 'refused',
+        outcome: {
+          kind: 'refused',
+          runId,
+          reason: 'command_not_started',
+          code: CONCURRENT_MODIFICATION_CODE,
+          message,
+          recovery: 'retryable',
+        },
+      };
+    }
+    case 'held': {
+      const condition = classifyExecutionLease(leased.lease, deps.processIdentity);
+      const refusal = executionLeaseRefusal(runId, current.state, condition);
+      const inProgress = refusal.kind === 'execution_in_progress';
+      const code = inProgress ? EXECUTION_IN_PROGRESS_CODE : EXECUTION_INTERRUPTED_CODE;
+      sink.emit({ type: 'ERROR_OCCURRED', payload: { message: refusal.message, code } });
+      return {
+        kind: 'refused',
+        outcome: {
+          kind: 'refused',
+          runId,
+          reason: refusal.kind,
+          code,
+          message: refusal.message,
+          // In Progress clears when the live attempt finishes; Interrupted
+          // needs a different, explicit decision from the owner.
+          recovery: inProgress ? 'retryable' : 'permanent',
+        },
+      };
+    }
+    default: {
+      const _exhaustive: never = leased;
+      return _exhaustive;
+    }
+  }
+}
+
+/**
  * Activate Run Progression for one run under one verified authority.
  *
  * Drives machine-selected turns — execution-unit entry and command execution
@@ -810,10 +910,15 @@ async function driveProgression(
       continue;
     }
 
-    // Turn: one command execution, committed under the version this
-    // activation read. The command runs first and the save is conditional:
-    // a version that moved means the result is NOT recorded, and the refusal
-    // says so rather than retrying over whoever wrote.
+    // Turn: set the execution lease, run one command, and commit its finish
+    // at the version the lease produced. The lease is one conditional update
+    // and is never retried: a held lease or a moved version refuses the turn
+    // before any effect starts. A finish whose attempt lost the lease is NOT
+    // recorded, and the refusal says so rather than retrying over whoever
+    // wrote.
+    const leased = await acquireTurnLease(runId, current, deps, sink);
+    if (leased.kind === 'refused') return leased.outcome;
+    current = leased.run;
     const { code: expandedCommandCode, displayCommand, rdInjected } = entered.command;
     const committed = await commitRunProgressionEvent({
       authority,
@@ -831,7 +936,7 @@ async function driveProgression(
     });
     if (committed.kind === 'missing') return runMissingRefusal(runId, sink);
     if (committed.kind === 'concurrent_modification') {
-      const message = `Run ${runId} was modified by another writer while its command ran; the result was not recorded — inspect the run and re-activate`;
+      const message = `Run ${runId} was modified by another writer while its command ran, so its attempt no longer holds the execution lease; the result was not recorded — inspect the run and re-activate`;
       sink.emit({
         type: 'ERROR_OCCURRED',
         payload: { message, code: CONCURRENT_MODIFICATION_CODE },

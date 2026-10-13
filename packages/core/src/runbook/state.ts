@@ -35,7 +35,13 @@ import { isArtifactRecord } from './artifact-schema.js';
 import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
 import { runsDir as _runsDir, assertSafeId } from '../paths.js';
 import { getRunbookStore } from './storage/store-registry.js';
-import type { RunbookStore, SaveRunResult, VersionedRunState } from './storage/runbook-store.js';
+import type {
+  AcquireExecutionLeaseResult,
+  RunbookStore,
+  SaveRunResult,
+  VersionedRunState,
+} from './storage/runbook-store.js';
+import type { ExecutionLease, ExecutionLeaseHolder } from './execution-lease.js';
 import type { StateVersion } from './storage/mutation-result.js';
 import type { OpenRunbookDriverOptions } from './storage/driver-factory.js';
 import {
@@ -525,11 +531,44 @@ export class RunbookStateManager {
   }
 
   /**
+   * Set a run's execution lease immediately before an external effect (#902).
+   *
+   * One conditional update; see `RunbookStore.acquireExecutionLease`. The
+   * effect must not start unless this returns `acquired`, and its finish must
+   * be saved at the returned `stateVersion`.
+   *
+   * @param runId - Run whose effect is about to start
+   * @param expectedVersion - The version the caller read the run at
+   * @param holder - The process starting the effect
+   * @returns The acquired lease and its version, or why it was not set
+   */
+  async acquireExecutionLease(
+    runId: RunId,
+    expectedVersion: StateVersion,
+    holder: ExecutionLeaseHolder,
+  ): Promise<AcquireExecutionLeaseResult> {
+    const store = await this.store();
+    return store.acquireExecutionLease(runId, expectedVersion, holder);
+  }
+
+  /**
+   * List the execution lease of every run that holds one, for status.
+   *
+   * @returns Each leased run's lease, keyed by run id
+   */
+  async listExecutionLeases(): Promise<ReadonlyMap<RunId, ExecutionLease>> {
+    const store = await this.store();
+    return store.listExecutionLeases();
+  }
+
+  /**
    * Persist a complete runbook state if and only if its row is still at
    * `expectedVersion`.
    *
    * Stamps the current schema version and a fresh `updatedAt`. One conditional
    * write, one outcome: the caller narrows the result and renders the refusal.
+   * The write clears the execution lease `expectedVersion` carries, so a seam
+   * that saves has already applied the lease rule to what it read.
    * For the throwing form see {@link update} and {@link mutate}.
    *
    * @param state - The complete state to persist

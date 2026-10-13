@@ -15,6 +15,11 @@ import { createRunbook } from './fixtures.js';
 import { mintRunProgressionAuthority } from '../../src/runbook/run-progression-authority.js';
 import { generateOwnerToken, hashRunSecret } from '../../src/runbook/run-secrets.js';
 import { InvalidRunbookStateError } from '../../src/runbook/persisted-state-guards.js';
+import { createProcessIdentity } from '../../src/runbook/process-identity.js';
+import {
+  EXECUTION_IN_PROGRESS_CODE,
+  EXECUTION_INTERRUPTED_CODE,
+} from '../../src/runbook/execution-lease.js';
 import {
   activateRunProgression,
   commitRunProgressionEvent,
@@ -955,5 +960,145 @@ Do it by hand.
       reason: 'awaiting_input',
     });
     expect(enteredSteps(events)).toEqual(['1', '2']);
+  });
+});
+
+describe('execution lease (#902)', () => {
+  // This process, as the injected identity reports it. A lease recorded with
+  // this pid and start id is In Progress; with this pid and any other start id
+  // it is a recycled pid, so its holder is dead and the step Interrupted.
+  const SELF_START = 'self-start';
+  const identity = createProcessIdentity(() => SELF_START);
+
+  it('holds the lease while the command runs and clears it when the finish commits', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const seen: unknown[] = [];
+    const actorService = actorServiceWith({
+      runExternalCommand: async () => {
+        const during = await new RunbookStateManager(dir).loadWithVersion(state.id);
+        seen.push(during?.lease);
+        return { success: true, exitCode: 0 };
+      },
+    });
+    const state = await seedRun(steps, actorService, 'leased.runbook.md');
+    const { emitter } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(outcome).toEqual({ kind: 'completed', runId: state.id });
+    expect(seen).toEqual([
+      {
+        attempt: expect.any(Number),
+        pid: process.pid,
+        startId: SELF_START,
+        startedAt: expect.any(String),
+      },
+    ]);
+    expect((await manager.loadWithVersion(state.id))?.lease).toBeNull();
+  });
+
+  it('refuses EXECUTION_IN_PROGRESS without running the command while a live attempt holds the lease', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const runner = jest.fn(async () => ({ success: true, exitCode: 0 }));
+    const actorService = actorServiceWith({ runExternalCommand: runner });
+    const state = await seedRun(steps, actorService, 'in-progress.runbook.md');
+    const read = await manager.loadWithVersion(state.id);
+    await manager.acquireExecutionLease(state.id, read!.stateVersion, {
+      pid: process.pid,
+      startId: SELF_START,
+    });
+    const { emitter, events } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'execution_in_progress',
+      code: EXECUTION_IN_PROGRESS_CODE,
+      recovery: 'retryable',
+    });
+    expect(runner).not.toHaveBeenCalled();
+    expect(events.find((event) => event.type === 'ERROR_OCCURRED')).toMatchObject({
+      payload: { code: EXECUTION_IN_PROGRESS_CODE },
+    });
+    expect((await manager.loadWithVersion(state.id))?.lease).not.toBeNull();
+  });
+
+  it('refuses EXECUTION_INTERRUPTED and never repeats the command once its holder died', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const runner = jest.fn(async () => ({ success: true, exitCode: 0 }));
+    const actorService = actorServiceWith({ runExternalCommand: runner });
+    const state = await seedRun(steps, actorService, 'interrupted.runbook.md');
+    const read = await manager.loadWithVersion(state.id);
+    await manager.acquireExecutionLease(state.id, read!.stateVersion, {
+      pid: process.pid,
+      startId: 'a process that has since exited',
+    });
+    const { emitter } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'execution_interrupted',
+      code: EXECUTION_INTERRUPTED_CODE,
+      recovery: 'permanent',
+    });
+    expect(runner).not.toHaveBeenCalled();
+    const after = await manager.loadWithVersion(state.id);
+    expect(after?.state.lifecycle).toBe('running');
+    expect(after?.lease).not.toBeNull();
+  });
+
+  it('does not commit the finish of an attempt that lost its lease', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    let decidedVersion: number | undefined;
+    const actorService = actorServiceWith({
+      runExternalCommand: async () => {
+        // While the command runs, the owner decides about the attempt (its
+        // state write clears the lease) and a new attempt takes the lease.
+        const other = new RunbookStateManager(dir);
+        const during = await other.loadWithVersion(state.id);
+        const decided = await other.save(
+          { ...during!.state, variables: { ...during!.state.variables, decided: 'yes' } },
+          during!.stateVersion,
+        );
+        if (decided.kind !== 'committed') throw new Error('decision did not commit');
+        const after = await other.loadWithVersion(state.id);
+        decidedVersion = after!.stateVersion;
+        await other.acquireExecutionLease(state.id, after!.stateVersion, {
+          pid: process.pid,
+          startId: SELF_START,
+        });
+        return { success: true, exitCode: 0 };
+      },
+    });
+    const state = await seedRun(steps, actorService, 'lost-lease.runbook.md');
+    const { emitter } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'command_not_committed',
+      code: CONCURRENT_MODIFICATION_CODE,
+    });
+    const after = await manager.loadWithVersion(state.id);
+    expect(after?.state.lifecycle).toBe('running');
+    expect(after?.state.variables).toMatchObject({ decided: 'yes' });
+    // The newer attempt's lease survives the late finish.
+    expect(after?.lease?.attempt).toBe((decidedVersion ?? 0) + 1);
   });
 });

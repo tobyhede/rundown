@@ -31,7 +31,11 @@ import { driveRunProgression, progressionFailedClosed } from './run-progression-
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { transitionSinkFromEmitter, type TransitionEventSink } from './transition-orchestrator.js';
-import { renderOwnedRunRefusal, renderRunFinished } from './token-option.js';
+import {
+  renderExecutionLeaseRefusal,
+  renderOwnedRunRefusal,
+  renderRunFinished,
+} from './token-option.js';
 export type { ActionType } from '@rundown-org/core';
 
 /**
@@ -215,6 +219,9 @@ export function renderRefusal(
     case 'concurrent_modification':
       output.error(outcome.message, CONCURRENT_MODIFICATION_CODE, { runId: outcome.runId });
       return true;
+    case 'execution_in_progress':
+    case 'execution_interrupted':
+      return renderExecutionLeaseRefusal(output, outcome);
     case 'unknown_token':
       // The run was pruned between token resolution and the save: the token no
       // longer resolves, exactly as if it had been unknown from the start.

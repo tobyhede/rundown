@@ -59,6 +59,10 @@ export const CLISymbolicErrorCodeValues = [
   // #903 (inline) and #904 (delegation) restore composition on the new model.
   'RUNBOOK_COMPOSITION_UNSUPPORTED',
   'CONCURRENT_MODIFICATION',
+  // The execution lease (#902): a live attempt holds the run's step, or the
+  // attempt that held it died and the decision would pass it.
+  'EXECUTION_IN_PROGRESS',
+  'EXECUTION_INTERRUPTED',
   'RUN_TARGET_UNAVAILABLE',
   'INVALID_STEP',
   'INVALID_INDEX',
@@ -397,6 +401,26 @@ export const ActionResponseSchema = z
 /**
  * Status response schema.
  */
+/**
+ * A run's execution condition while its step holds the execution lease (#902).
+ *
+ * Present only while a lease is held. `in_progress`: the process that started
+ * the step's command is alive. `interrupted`: that process is gone, so the
+ * command's outcome is unknown; Rundown never repeats it and the owner decides
+ * with `fail`, `goto` or `stop`. Never carries a token.
+ */
+export const ExecutionStatusSchema = z
+  .object({
+    condition: z
+      .enum(['in_progress', 'interrupted'])
+      .describe('In Progress (holder alive) or Interrupted (holder gone)'),
+    step: z.string().describe('Step (`step` or `step.substep`) whose command holds the lease'),
+    attempt: z.number().int().describe('The attempt holding the lease'),
+    pid: z.number().int().describe('Process that started the command'),
+    startedAt: z.string().describe('ISO-8601 time the command started'),
+  })
+  .describe('Execution lease condition of the run');
+
 export const StatusResponseSchema = z
   .object({
     /** Response kind discriminant */
@@ -451,6 +475,9 @@ export const StatusResponseSchema = z
       .optional()
       .describe('Every persisted run, when status was asked for no run in particular'),
     prompted: z.boolean().optional().describe('Whether awaiting user input'),
+    execution: ExecutionStatusSchema.optional().describe(
+      'Present while the run holds the execution lease (In Progress or Interrupted)',
+    ),
     vars: z
       .record(z.string(), z.string())
       .optional()
@@ -563,6 +590,10 @@ export const ActiveRunbookEntrySchema = z
     total: z.number().optional().describe('Total number of steps'),
     /** Runbook title from metadata */
     title: z.string().optional().describe('Runbook title from metadata'),
+    /** Execution lease condition, present while the run holds the lease (#902) */
+    execution: ExecutionStatusSchema.optional().describe(
+      'Present while the run holds the execution lease (In Progress or Interrupted)',
+    ),
   })
   .describe('Active runbook state entry');
 
@@ -1216,6 +1247,8 @@ export type ActionResponse = z.infer<typeof ActionResponseSchema>;
 
 /** Status response */
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;
+/** Execution lease condition rendered by `status` (#902). */
+export type ExecutionStatus = z.infer<typeof ExecutionStatusSchema>;
 
 /** Artifact alias entry response item */
 export type ArtifactAliasEntry = z.infer<typeof ArtifactAliasEntrySchema>;

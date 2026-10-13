@@ -16,6 +16,7 @@ import { merge } from '../../src/runbook/state-update-ops.js';
 import type { OwnerToken } from '../../src/runbook/run-secrets.js';
 import { seedRun } from '../../src/testing/run-fixtures.js';
 import { createRunbook } from './fixtures.js';
+import { createProcessIdentity } from '../../src/runbook/process-identity.js';
 
 // Lifecycle command seam contract under one writer per run (#901, ADR 0005).
 //
@@ -79,6 +80,18 @@ const FOR_LOOP = `## 1. Loop
 - FAIL STOP
 `;
 
+const FAIL_RETRIES = `## 1. Flaky
+- PASS COMPLETE
+- FAIL RETRY 1 STOP
+
+## 2. Unreached
+- PASS COMPLETE
+- FAIL STOP
+`;
+
+/** This process's start id as the seam's injected identity reports it. */
+const SELF_START = 'self-start';
+
 describe('RunbookLifecycleCommandService', () => {
   let tmp: string;
   let manager: RunbookStateManager;
@@ -95,6 +108,7 @@ describe('RunbookLifecycleCommandService', () => {
       manager,
       actorService,
       loadSteps: () => steps,
+      processIdentity: createProcessIdentity(() => SELF_START),
     });
   });
 
@@ -329,7 +343,7 @@ describe('RunbookLifecycleCommandService', () => {
 
         const outcome = await seam.runTransition({
           command: 'pass',
-          run: { state: finished.state, stateVersion: finished.stateVersion },
+          run: finished,
           target: { stepId: '1' },
         });
 
@@ -424,7 +438,7 @@ describe('RunbookLifecycleCommandService', () => {
 
       const outcome = await seam.runTerminal({
         command: 'complete',
-        run: { state: finished.state, stateVersion: finished.stateVersion },
+        run: finished,
       });
 
       expect(outcome).toEqual({ kind: 'run_finished', runId, lifecycle: 'stopped' });
@@ -493,7 +507,7 @@ describe('RunbookLifecycleCommandService', () => {
       if (!finished) throw new Error('run missing');
 
       const outcome = await seam.resolveRunNavigation({
-        run: { state: finished.state, stateVersion: finished.stateVersion },
+        run: finished,
       });
 
       expect(outcome).toEqual({ kind: 'run_finished', runId, lifecycle: 'completed' });
@@ -531,6 +545,157 @@ describe('RunbookLifecycleCommandService', () => {
 
       expect(outcome).toEqual({ kind: 'unknown_token' });
       expect(await manager.load(runId)).toBeNull();
+    });
+  });
+
+  describe('execution lease (#902)', () => {
+    /**
+     * Leave the run's current step holding an execution lease, as a `rundown
+     * run` whose command is still running (live) or was SIGKILLed (dead).
+     *
+     * @param runId - The run.
+     * @param holder - `live` records this process; `dead` records this pid
+     *   under a start id that no longer matches, i.e. a recycled pid.
+     */
+    async function leaseStep(runId: string, holder: 'live' | 'dead'): Promise<void> {
+      const read = await manager.loadWithVersion(runId);
+      if (!read) throw new Error('run missing');
+      const acquired = await manager.acquireExecutionLease(read.state.id, read.stateVersion, {
+        pid: process.pid,
+        startId: holder === 'live' ? SELF_START : 'a process that has since exited',
+      });
+      if (acquired.kind !== 'acquired') throw new Error(`lease not set: ${acquired.kind}`);
+    }
+
+    async function leaseOf(runId: string) {
+      return (await manager.loadWithVersion(runId))?.lease ?? null;
+    }
+
+    describe('while In Progress every decision is refused and nothing is written', () => {
+      it.each(['pass', 'fail'] as const)('refuses %s', async (command) => {
+        const { runId, token } = await start(TWO_STEP);
+        await leaseStep(runId, 'live');
+        const before = await version(runId);
+
+        const outcome = await seam.runTransition({
+          command,
+          run: await owned(token),
+          target: { stepId: '1' },
+        });
+
+        expect(outcome).toMatchObject({
+          kind: 'execution_in_progress',
+          runId,
+          step: '1',
+          lease: { pid: process.pid, startId: SELF_START },
+        });
+        expect(await version(runId)).toBe(before);
+      });
+
+      it.each(['complete', 'stop'] as const)('refuses %s', async (command) => {
+        const { runId, token } = await start(TWO_STEP);
+        await leaseStep(runId, 'live');
+        const before = await version(runId);
+
+        const outcome = await seam.runTerminal({ command, run: await owned(token) });
+
+        expect(outcome).toMatchObject({ kind: 'execution_in_progress', runId });
+        expect(await version(runId)).toBe(before);
+      });
+
+      it('refuses goto', async () => {
+        const { runId, token } = await start(TWO_STEP);
+        await leaseStep(runId, 'live');
+
+        const outcome = await seam.resolveRunNavigation({ run: await owned(token) });
+
+        expect(outcome).toMatchObject({ kind: 'execution_in_progress', runId });
+      });
+    });
+
+    describe('while Interrupted', () => {
+      it('refuses pass with the Interrupted reason and writes nothing', async () => {
+        const { runId, token } = await start(TWO_STEP);
+        await leaseStep(runId, 'dead');
+        const before = await version(runId);
+
+        const outcome = await seam.runTransition({
+          command: 'pass',
+          run: await owned(token),
+          target: { stepId: '1' },
+        });
+
+        expect(outcome).toMatchObject({ kind: 'execution_interrupted', runId, step: '1' });
+        expect(await version(runId)).toBe(before);
+        expect(await leaseOf(runId)).not.toBeNull();
+      });
+
+      it('refuses complete with the Interrupted reason', async () => {
+        const { runId, token } = await start(TWO_STEP);
+        await leaseStep(runId, 'dead');
+
+        const outcome = await seam.runTerminal({ command: 'complete', run: await owned(token) });
+
+        expect(outcome).toMatchObject({ kind: 'execution_interrupted', runId });
+      });
+
+      it('lets fail decide the step and clears the lease', async () => {
+        const { runId, token } = await start(TWO_STEP);
+        await leaseStep(runId, 'dead');
+
+        const outcome = await seam.runTransition({
+          command: 'fail',
+          run: await owned(token),
+          target: { stepId: '1' },
+        });
+
+        expect(outcome).toMatchObject({ kind: 'applied', status: 'stopped' });
+        expect(await leaseOf(runId)).toBeNull();
+      });
+
+      it('lets fail take an authored RETRY, re-entering the step with the lease cleared', async () => {
+        const { runId, token } = await start(FAIL_RETRIES);
+        await leaseStep(runId, 'dead');
+
+        const outcome = await seam.runTransition({
+          command: 'fail',
+          run: await owned(token),
+          target: { stepId: '1' },
+        });
+
+        expect(outcome).toMatchObject({ kind: 'applied', status: 'continue' });
+        const after = await manager.loadWithVersion(runId);
+        expect(after?.state.step).toBe('1');
+        expect(after?.state.retryCount).toBe(1);
+        expect(after?.lease).toBeNull();
+      });
+
+      it('lets stop decide the run and clears the lease', async () => {
+        const { runId, token } = await start(TWO_STEP);
+        await leaseStep(runId, 'dead');
+
+        const outcome = await seam.runTerminal({ command: 'stop', run: await owned(token) });
+
+        expect(outcome).toMatchObject({ kind: 'applied', lifecycle: 'stopped' });
+        expect(await leaseOf(runId)).toBeNull();
+      });
+
+      it('lets goto move the cursor and clears the lease', async () => {
+        const { runId, token } = await start(TWO_STEP);
+        await leaseStep(runId, 'dead');
+
+        const allowed = await seam.resolveRunNavigation({ run: await owned(token) });
+        if (allowed.kind !== 'allowed') throw new Error(`expected allowed, got ${allowed.kind}`);
+        const applied = await seam.runNavigationMutation({
+          navigation: allowed.navigation,
+          target: { step: '2' },
+        });
+
+        expect(applied.kind).toBe('applied');
+        const after = await manager.loadWithVersion(runId);
+        expect(after?.state.step).toBe('2');
+        expect(after?.lease).toBeNull();
+      });
     });
   });
 });

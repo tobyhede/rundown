@@ -19,6 +19,7 @@ import type { ResolvedStep, Step } from '@rundown-org/parser';
 import { hashRunSecret, type OwnerToken } from './run-secrets.js';
 import type { RunbookStateManager } from './state.js';
 import type { StateVersion } from './storage/mutation-result.js';
+import type { ExecutionLease } from './execution-lease.js';
 import type { Lifecycle, RunbookState } from './types.js';
 
 /**
@@ -33,6 +34,11 @@ export interface OwnedRun {
   readonly state: RunbookState;
   /** The row's version at read time; the expectation a later save names. */
   readonly stateVersion: StateVersion;
+  /**
+   * The execution lease the row carried at that version, or null. A save at
+   * `stateVersion` clears it, so the seam applies the lease rule first (#902).
+   */
+  readonly lease: ExecutionLease | null;
 }
 
 /** A lifecycle a finished run can carry. */
@@ -81,7 +87,10 @@ export async function resolveOwnedRun(
   if (lifecycle !== 'running') {
     return { kind: 'finished', state: owned.state, lifecycle };
   }
-  return { kind: 'running', run: { state: owned.state, stateVersion: owned.stateVersion } };
+  return {
+    kind: 'running',
+    run: { state: owned.state, stateVersion: owned.stateVersion, lease: owned.lease },
+  };
 }
 
 /**
