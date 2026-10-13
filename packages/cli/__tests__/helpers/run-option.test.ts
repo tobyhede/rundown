@@ -58,7 +58,6 @@ describe('--run registration drift guard', () => {
     { name: 'pass', register: registerPassCommand },
     { name: 'fail', register: registerFailCommand },
     { name: 'complete', register: registerCompleteCommand },
-    { name: 'stop', register: registerStopCommand },
     { name: 'goto', register: registerGotoCommand },
   ];
 
@@ -70,6 +69,17 @@ describe('--run registration drift guard', () => {
     const runOption = command!.options.find((o) => o.long === '--run');
     expect(runOption).toBeDefined();
     expect(runOption!.hidden).toBe(true);
+  });
+
+  // `stop` is the one exception (#906): `--run` without `--token` is the human
+  // escape hatch, so it is advertised — as human-only — rather than hidden.
+  it('advertises --run on stop as the human escape hatch', () => {
+    const program = new Command();
+    registerStopCommand(program);
+    const command = program.commands.find((c) => c.name() === 'stop');
+    const runOption = command?.options.find((o) => o.long === '--run');
+    expect(runOption?.hidden).toBe(false);
+    expect(runOption?.description).toContain('never for agents');
   });
 
   it('advertises --run on status and never --token', () => {
