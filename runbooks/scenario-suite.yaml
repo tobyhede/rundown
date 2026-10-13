@@ -306,3 +306,33 @@ cases:
     commands:
       - rd run named-step-for-loop.runbook.md
     result: COMPLETE
+
+  # composition/ — Inline Children on the parent's Owner Token (#903)
+  inline-composition-completed:
+    description: An auto-passing inline child is Collected in rundown run; the waiting second child is passed by the parent's token
+    file: composition/inline-composition.runbook.md
+    commands:
+      - rd run inline-composition.runbook.md
+      - rd pass --token ${TOKEN} --step Check
+      - rd pass --token ${TOKEN} --step 2
+    result: COMPLETE
+
+  inline-chain-two-deep-completed:
+    description: The root token targets the grandchild of a two-deep inline chain; its pass is Collected level by level
+    file: composition/inline-chain.runbook.md
+    commands:
+      - rd run inline-chain.runbook.md
+      - "! rd pass --token ${TOKEN} --step 1.1"
+      - rd pass --token ${TOKEN} --step Check
+    result: COMPLETE
+
+  inline-goto-reentry-completed:
+    description: FAIL GOTO back onto the inline step launches a fresh child; the finished one is never collected again
+    file: composition/inline-goto-reentry.runbook.md
+    commands:
+      - rd run inline-goto-reentry.runbook.md
+      - rd pass --token ${TOKEN} --step Check
+      - rd fail --token ${TOKEN} --step 2
+      - rd pass --token ${TOKEN} --step Check
+      - rd pass --token ${TOKEN} --step 2
+    result: COMPLETE

@@ -328,10 +328,36 @@ Hello.
     expect(json.valid).toBe(true);
     expect(json.warnings).toContainEqual({
       message:
-        'Runbook composes other runbooks at 1.2; this build runs standalone runbooks only, ' +
+        'Runbook composes other runbooks at 1.2 in a form this build does not run ' +
+        '(a DELEGATE substep, or an inline substep listing more than one runbook), ' +
         'so `rundown run` refuses it (RUNBOOK_COMPOSITION_UNSUPPORTED). ' +
-        'Inline composition returns in #903 and delegation in #904.',
+        'Delegation returns in #904.',
     });
+  });
+
+  it('does not warn about an inline runbook-list substep, which runs (#903)', async () => {
+    const runbookPath = path.join(workspace.cwd, 'check-inline.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      [
+        '# Check Inline',
+        '## 1. Compose',
+        '- PASS ALL COMPLETE',
+        '- FAIL ANY STOP',
+        '',
+        '- child.runbook.md',
+        '',
+      ].join('\n'),
+    );
+
+    const res = await runCliInProcess(['check', runbookPath], workspace);
+    const json = JSON.parse(res.stdout);
+    expect(res.exitCode).toBe(0);
+    expect(json.warnings ?? []).not.toContainEqual(
+      expect.objectContaining({
+        message: expect.stringContaining('RUNBOOK_COMPOSITION_UNSUPPORTED'),
+      }),
+    );
   });
 
   it('does not warn about composition for a standalone runbook', async () => {

@@ -14,10 +14,9 @@ import {
   parseStepIdFromString,
   stepIdToString,
   deriveGotoActionBlock,
-  resolveOwnedRun,
   type RunbookStateManager,
   type LifecycleNavigationOutcome,
-  type OwnedRunResolution,
+  type CommandTargetResolution,
   type OwnerToken,
   type ResolvedStep,
   type StepId,
@@ -31,6 +30,7 @@ import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
 import { resolveIndexOption, IndexOptionError } from './index-option.js';
 import { buildLifecycleSeam } from './lifecycle-seam-factory.js';
+import { resolveCommandTarget } from './command-target.js';
 import { driveRunProgression, progressionFailedClosed } from './run-progression-adapters.js';
 import {
   UNKNOWN_TOKEN_MESSAGE,
@@ -106,7 +106,7 @@ export function gotoResultRequiresFailureExit(
  */
 export type BuildGotoContextResult =
   | { readonly kind: 'ready'; readonly ctx: GotoContext }
-  | Exclude<OwnedRunResolution, { kind: 'running' }>
+  | Exclude<CommandTargetResolution, { kind: 'running' }>
   | Exclude<LifecycleNavigationOutcome, { kind: 'allowed' }>;
 
 /** A {@link BuildGotoContextResult} narrowed to its non-`ready` variants. */
@@ -145,6 +145,7 @@ export function renderNavigationRefusal(
   switch (refusal.kind) {
     case 'unknown_token':
     case 'finished':
+    case 'settle_refused':
       return renderOwnedRunRefusal(output, commandName, refusal);
     case 'run_finished':
       renderRunFinished(output, commandName, refusal.runId, refusal.lifecycle);
@@ -167,7 +168,8 @@ export function renderNavigationRefusal(
 /**
  * Build context for goto command execution.
  *
- * Resolves the Owner Token through core (`resolveOwnedRun`), then dispatches
+ * Resolves the Owner Token through core to its target (the deepest running
+ * Inline Child, #903; `resolveCommandTarget`), then dispatches
  * the owned run into the core navigation seam (`resolveRunNavigation`) —
  * exactly as pass/fail dispatch into `runTransition` — and keeps only
  * Category-A work here: assembling the execution context from the seam's
@@ -192,7 +194,18 @@ export async function buildGotoContext(
 ): Promise<BuildGotoContextResult> {
   const { manager, seam } = buildLifecycleSeam(cwd);
 
-  const resolution = await resolveOwnedRun(manager, options.token);
+  const resolution = await resolveCommandTarget(
+    {
+      seam,
+      manager,
+      cwd,
+      output,
+      ...(options.commandStreamOptions !== undefined
+        ? { commandStreamOptions: options.commandStreamOptions }
+        : {}),
+    },
+    options.token,
+  );
   if (resolution.kind !== 'running') return resolution;
 
   const outcome = await seam.resolveRunNavigation({ run: resolution.run });

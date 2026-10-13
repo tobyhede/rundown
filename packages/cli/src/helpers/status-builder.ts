@@ -20,6 +20,9 @@ import {
   type ActionBlockData,
   type ActiveRunbookEntry,
   type ArtifactPathOptions,
+  type ChildLinkage,
+  type CurrentChildStatus,
+  type ParentLinkStatus,
   type ExecutionCondition,
   type ExecutionStatus,
   type PublicArtifactVarValue,
@@ -84,6 +87,22 @@ export interface StatusOutputData {
   runs?: ActiveRunbookEntry[];
   /** Execution lease condition, present while the run holds the lease (#902). */
   execution?: ExecutionStatus;
+  /** The run's parent, when it is a Child Run (#903). */
+  parent?: ParentLinkStatus;
+  /** The Current Child of the run's step, when it composes one (#903). */
+  child?: CurrentChildStatus;
+}
+
+/**
+ * Project a child row's linkage onto its public status form: run id, parent
+ * unit and kind. Nothing in it authorizes anything.
+ *
+ * @param linkage - The row's linkage, or null for a top-level run.
+ * @returns The status form, or undefined for a top-level run.
+ */
+export function buildParentStatus(linkage: ChildLinkage | null): ParentLinkStatus | undefined {
+  if (linkage === null) return undefined;
+  return { runId: linkage.parentRunId, step: linkage.parentStep, kind: linkage.kind };
 }
 
 /**
@@ -204,17 +223,21 @@ function countPersistedSteps(state: RunbookState): number | undefined {
  *
  * @param states - Every persisted run, as the manager lists them
  * @param conditions - Core's execution condition for each run holding a lease
+ * @param parents - Each Child Run's parent coordinate, so the list shows the
+ *   chain from root to child (#903)
  * @returns StatusOutputData whose `runs` carries the list
  */
 export function buildRunListStatus(
   states: readonly RunbookState[],
   conditions: ReadonlyMap<string, ExecutionCondition> = new Map(),
+  parents: ReadonlyMap<string, ParentLinkStatus> = new Map(),
 ): StatusOutputData {
   const runs: ActiveRunbookEntry[] = states.map((state) => {
     const total = countPersistedSteps(state);
     // Core's one step label, the same one a lease refusal names.
     const step = deriveExecutionAt(state.step, state.substep);
     const execution = buildExecutionStatus(state, conditions.get(state.id));
+    const parent = parents.get(state.id);
     return {
       id: state.id,
       runbook: state.runbook.path,
@@ -223,6 +246,7 @@ export function buildRunListStatus(
       ...(total !== undefined ? { total } : {}),
       ...(state.title !== undefined ? { title: state.title } : {}),
       ...(execution !== undefined ? { execution } : {}),
+      ...(parent !== undefined ? { parent } : {}),
     };
   });
   return { active: false, runs };
@@ -238,12 +262,16 @@ export function buildRunListStatus(
  * @param runState - The run state
  * @param cwd - Current working directory (for step resolution)
  * @param condition - Core's execution condition when the run holds a lease
+ * @param composition - The run's parent and its step's Current Child (#903)
+ * @param composition.parent - The parent coordinate, for a Child Run
+ * @param composition.child - The Current Child, when the step composes one
  * @returns StatusOutputData with full run details
  */
 export function buildRunStatus(
   runState: RunbookState,
   cwd: string,
   condition?: ExecutionCondition,
+  composition: { readonly parent?: ParentLinkStatus; readonly child?: CurrentChildStatus } = {},
 ): StatusOutputData {
   const steps = getRunbookFromState(runState, cwd);
   const currentStepIndex = steps.findIndex((s) => s.name === runState.step);
@@ -292,6 +320,8 @@ export function buildRunStatus(
     ...(metadata.runId != null && { runId: metadata.runId }),
     ...(metadata.prompted != null && { prompted: metadata.prompted }),
     ...(execution !== undefined ? { execution } : {}),
+    ...(composition.parent !== undefined ? { parent: composition.parent } : {}),
+    ...(composition.child !== undefined ? { child: composition.child } : {}),
     position: {
       ...basePosition,
       ...(activeFrameKey ? { frameKey: activeFrameKey } : {}),

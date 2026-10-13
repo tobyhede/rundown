@@ -59,6 +59,10 @@ import { assertSafeRelativeArtifactPath } from '../helpers/artifact-path.js';
 import { assertContainedPath } from '../helpers/path-containment.js';
 import { getEffectiveResult } from '../schemas/scenarios.js';
 import { runCliInProcess } from '../services/in-process-cli-runner.js';
+import {
+  collectAuthoredRunbookRefs,
+  shouldStageAuthoredRunbookRef,
+} from '../helpers/scenario-workflow.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -257,6 +261,36 @@ async function executeSuiteCase(
           `CHILD_RUNBOOK_NOT_FOUND: ${ref} (required by case "${caseName}", ` +
             `searched in: ${[mainRunbookSourceDir, suiteDir].join(', ')})`,
         );
+      }
+    }
+
+    // Stage the children the staged runbooks compose (#903), transitively, so
+    // an inline child resolves in the isolated workspace exactly as a bare
+    // filename command does. Each is found beside the runbook that names it,
+    // then under the suite directory.
+    const stagedRefs = new Set<string>([mainBasename, ...referenced]);
+    for (let i = 0; i < stagedRunbooks.length; i++) {
+      const parent = stagedRunbooks[i];
+      for (const ref of collectAuthoredRunbookRefs(parent.sourcePath)) {
+        if (!shouldStageAuthoredRunbookRef(ref) || stagedRefs.has(ref)) continue;
+        validateRelativePath(ref);
+        const dest = join(runbooksDirPath, ref);
+        mkdirSync(dirname(dest), { recursive: true });
+        assertDestinationPathContained(dest, runbooksDirPath, ref);
+        for (const base of [dirname(parent.sourcePath), suiteDir]) {
+          try {
+            const realSourcePath = copyContainedRunbook(resolve(base, ref), dest, base, ref);
+            stagedRunbooks.push({
+              sourcePath: realSourcePath,
+              sourceRoots: [dirname(realSourcePath), suiteDir],
+            });
+            stagedRefs.add(ref);
+            break;
+          } catch (e: unknown) {
+            if (isNodeError(e) && e.code === 'ENOENT') continue;
+            throw e;
+          }
+        }
       }
     }
 

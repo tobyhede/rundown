@@ -10,7 +10,13 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { OwnerTokenSchema, RunbookStateManager } from '@rundown-org/core';
+import {
+  OwnerTokenSchema,
+  RunbookActorService,
+  RunbookLifecycleCommandService,
+  RunbookStateManager,
+} from '@rundown-org/core';
+import { parseRunbookDocument } from '@rundown-org/parser';
 import {
   createTestWorkspace,
   parseConcatenatedJson,
@@ -73,10 +79,29 @@ const INLINE_RUNBOOK = [
   '',
   '## 1. Parent',
   '',
-  '- PASS COMPLETE',
+  '- PASS ALL CONTINUE',
+  '- FAIL ANY STOP',
   '',
-  '- 1.1 Child runbooks',
-  '  - child.runbook.md',
+  '- child.runbook.md',
+  '',
+  '## 2. After',
+  '',
+  '- PASS COMPLETE',
+  '- FAIL STOP',
+  '',
+  'Finish.',
+  '',
+].join('\n');
+
+const CHILD_RUNBOOK = [
+  '# Child',
+  '',
+  '## Check',
+  '',
+  '- PASS COMPLETE',
+  '- FAIL STOP',
+  '',
+  'Check by hand.',
   '',
 ].join('\n');
 
@@ -114,6 +139,7 @@ describe('owner token command seam (#901)', () => {
     await writeFile(join(workspace.cwd, 'manual.runbook.md'), MANUAL_RUNBOOK);
     await writeFile(join(workspace.cwd, 'manual-substeps.runbook.md'), SUBSTEP_RUNBOOK);
     await writeFile(join(workspace.cwd, 'inline.runbook.md'), INLINE_RUNBOOK);
+    await writeFile(join(workspace.cwd, 'child.runbook.md'), CHILD_RUNBOOK);
     await writeFile(join(workspace.cwd, 'delegate.runbook.md'), DELEGATE_RUNBOOK);
   });
 
@@ -154,26 +180,110 @@ describe('owner token command seam (#901)', () => {
       );
     });
 
-    it('refuses a runbook with a runbook-list substep as RUNBOOK_COMPOSITION_UNSUPPORTED', async () => {
-      const result = await runCliInProcess('run inline.runbook.md', workspace);
-      expect(result.exitCode).toBe(1);
-      const error = errorEnvelope(result.stdout);
-      expect(error?.code).toBe('RUNBOOK_COMPOSITION_UNSUPPORTED');
-      expect(error?.details).toEqual({ runbook: 'inline.runbook.md', substeps: ['1.1'] });
-      expect(String(error?.error)).toContain('1.1');
-      expect(String(error?.error)).toContain('#903');
-      expect(String(error?.error)).toContain('#904');
-      // Refused by core before any row is written, and no token is printed.
-      expect(result.stdout).not.toMatch(/rdo_/);
-      expect(await new RunbookStateManager(workspace.cwd).listRunIds()).toEqual([]);
-    });
-
     it('refuses a DELEGATE runbook as RUNBOOK_COMPOSITION_UNSUPPORTED', async () => {
       const result = await runCliInProcess('run delegate.runbook.md', workspace);
       expect(result.exitCode).toBe(1);
       const error = errorEnvelope(result.stdout);
       expect(error?.code).toBe('RUNBOOK_COMPOSITION_UNSUPPORTED');
-      expect(error?.details).toMatchObject({ runbook: 'delegate.runbook.md' });
+      expect(error?.details).toEqual({ runbook: 'delegate.runbook.md', substeps: ['1.1'] });
+      expect(String(error?.error)).toContain('#904');
+      // Refused by core before any row is written, and no token is printed.
+      expect(result.stdout).not.toMatch(/rdo_/);
+      expect(await new RunbookStateManager(workspace.cwd).listRunIds()).toEqual([]);
+    });
+  });
+
+  describe('inline children on the parent token (#903)', () => {
+    async function startInline(): Promise<{ token: string; root: string; child: string }> {
+      const start = await runCliInProcess('run inline.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      const started = envelopes(start.stdout).filter((event) => event.type === 'runbook_started');
+      expect(started).toHaveLength(2);
+      // The child's start carries no token: its parent's Owner Token authorizes it.
+      expect(started[1]).not.toHaveProperty('owner_token');
+      return {
+        token: requireOwnerToken(start.stdout),
+        root: String(started[0]?.runbookId),
+        child: String(started[1]?.runbookId),
+      };
+    }
+
+    it('launches the inline child at run and shows the chain root → child in status, with no secret', async () => {
+      const { root, child } = await startInline();
+
+      const list = await runCliInProcess('status', workspace);
+      const runs = (envelopes(list.stdout)[0]?.runs ?? []) as Record<string, unknown>[];
+      expect(runs.find((run) => run.id === child)).toMatchObject({
+        status: 'running',
+        parent: { runId: root, step: '1.1', kind: 'inline' },
+      });
+      expect(runs.find((run) => run.id === root)).not.toHaveProperty('parent');
+
+      const rootDetail = await runCliInProcess(`status --run ${root}`, workspace);
+      expect(envelopes(rootDetail.stdout)[0]?.child).toEqual({
+        runId: child,
+        kind: 'inline',
+        status: 'running',
+      });
+      const childDetail = await runCliInProcess(`status --run ${child}`, workspace);
+      expect(envelopes(childDetail.stdout)[0]?.parent).toEqual({
+        runId: root,
+        step: '1.1',
+        kind: 'inline',
+      });
+      for (const output of [list.stdout, rootDetail.stdout, childDetail.stdout]) {
+        expect(output).not.toMatch(/rdo_|rdt_/);
+      }
+    });
+
+    it("refuses pass --step naming the parent's step while the inline child runs, naming the child", async () => {
+      const { token, child } = await startInline();
+
+      const result = await runCliInProcess(`pass --token ${token} --step 1.1`, workspace);
+
+      expect(result.exitCode).toBe(1);
+      const error = errorEnvelope(result.stdout);
+      expect(error?.code).toBe('INVALID_STEP');
+      expect(String(error?.error)).toContain(`inline child ${child}`);
+    });
+
+    it('drives the child by the root token and Collects it into the parent in the same command', async () => {
+      const { token, root, child } = await startInline();
+
+      const result = await runCliInProcess(`pass --token ${token} --step Check`, workspace);
+
+      expect(result.exitCode).toBe(0);
+      const manager = new RunbookStateManager(workspace.cwd);
+      expect((await manager.load(child))?.lifecycle).toBe('completed');
+      expect((await manager.load(root))?.step).toBe('2');
+    });
+
+    it("Collects a terminal child its parent's crashed command left uncollected, before applying the next command", async () => {
+      const { token, root, child } = await startInline();
+      // The child reaches its terminal in a command whose process dies before
+      // the implicit Collect: commit the child's pass through core directly
+      // and never activate progression.
+      const manager = new RunbookStateManager(workspace.cwd);
+      const seam = new RunbookLifecycleCommandService({
+        manager,
+        actorService: new RunbookActorService(manager),
+        loadSteps: (state) => parseRunbookDocument(state.runbookSrc ?? '').runbook.steps as never,
+      });
+      const owned = await manager.loadWithVersion(child);
+      if (owned === null) throw new Error('child missing');
+      const applied = await seam.runTransition({
+        command: 'pass',
+        run: owned,
+        target: { stepId: 'Check' },
+      });
+      expect(applied.kind).toBe('applied');
+      expect((await manager.load(root))?.step).toBe('1');
+
+      // The parent's next command Collects first, then applies to step 2.
+      const result = await runCliInProcess(`pass --token ${token} --step 2`, workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect((await manager.load(root))?.lifecycle).toBe('completed');
     });
   });
 

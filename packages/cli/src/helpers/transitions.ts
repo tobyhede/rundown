@@ -12,7 +12,6 @@ import {
   CONCURRENT_MODIFICATION_CODE,
   formatTransitionAction,
   parseStepIdFromString,
-  resolveOwnedRun,
   type ActionType,
   type ExecutionEventEmitter,
   type ExplicitTransitionTarget,
@@ -26,6 +25,7 @@ import {
   type TransitionObservationEvent,
 } from '@rundown-org/core';
 import { buildLifecycleSeam } from './lifecycle-seam-factory.js';
+import { resolveCommandTarget } from './command-target.js';
 import { IndexOptionError, resolveIndexOption, type IndexOptionErrorCode } from './index-option.js';
 import { driveRunProgression, progressionFailedClosed } from './run-progression-adapters.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
@@ -240,8 +240,10 @@ export function renderRefusal(
  * A transition at a substep streams its events through the run's event
  * emitter (a mid substep emits a plain `step_transitioned`, the last one an
  * aggregated transition); a top-level transition renders as the single
- * buffered action object agents read back. The choice keys off the cursor
- * the command resolved — rendering, not a lifecycle decision.
+ * buffered action object agents read back. A transition on an Inline Child
+ * (#903) streams too, so its events carry the child's run id rather than
+ * reading as the outcome of the run the agent started. The choice keys off
+ * the cursor the command resolved — rendering, not a lifecycle decision.
  *
  * @param output - Output emitter for CLI output.
  * @param cwd - Current working directory.
@@ -249,6 +251,7 @@ export function renderRefusal(
  * @param previous - The run state the transition was applied to.
  * @param outcome - The seam's `applied` outcome.
  * @param commandStreamOptions - Runtime-only routing for command subprocess streams.
+ * @param inlineChild - Whether the transition's run is an Inline Child.
  * @returns The semantic status, run id, progression outcome and exit request.
  */
 export async function renderApplied(
@@ -258,6 +261,7 @@ export async function renderApplied(
   previous: RunbookState,
   outcome: Extract<LifecycleTransitionOutcome, { kind: 'applied' }>,
   commandStreamOptions?: CommandExecutionStreamOptions,
+  inlineChild = false,
 ): Promise<{
   readonly status: 'continue' | 'done' | 'stopped';
   readonly runId: RunId;
@@ -272,7 +276,7 @@ export async function renderApplied(
   };
 
   if (outcome.events.length > 0) {
-    if (previous.substep !== undefined) {
+    if (previous.substep !== undefined || inlineChild) {
       const state = (await loadLive()) ?? previous;
       emitter = createBridgedEmitter(state, output);
       renderTransitionEvents(outcome.events, transitionSinkFromEmitter(emitter));
@@ -341,8 +345,9 @@ function parseTransitionTarget(
  * strings (numeric `--index` validation and the AT-conflict check), resolves
  * the Owner Token through core, renders the seam's typed outcome, and
  * activates Run Progression. Every state-dependent decision — which run the
- * token owns, whether `--step` names the current position, the machine
- * dispatch, the conditional save — lives in core.
+ * token targets (the deepest running Inline Child, #903), whether `--step`
+ * names that run's current position, the machine dispatch, the conditional
+ * save — lives in core.
  *
  * Malformed `--index` input (`INVALID_SYNTAX`, or `CONFLICTING_INDEX` when it
  * disagrees with the AT in `--step`) is refused before the token is resolved,
@@ -370,7 +375,18 @@ export async function runSeamTransition(
 
   const { manager, seam } = buildLifecycleSeam(cwd);
 
-  const resolution = await resolveOwnedRun(manager, options.token);
+  const resolution = await resolveCommandTarget(
+    {
+      seam,
+      manager,
+      cwd,
+      output,
+      ...(options.commandStreamOptions !== undefined
+        ? { commandStreamOptions: options.commandStreamOptions }
+        : {}),
+    },
+    options.token,
+  );
   if (resolution.kind !== 'running') {
     const exitError = renderOwnedRunRefusal(output, config.commandName, resolution);
     output.flush();
@@ -397,6 +413,7 @@ export async function runSeamTransition(
     resolution.run.state,
     outcome,
     options.commandStreamOptions,
+    resolution.run.linkage !== null,
   );
   output.flush();
   const { exitError, ...applied } = rendered;
