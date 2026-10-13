@@ -3,7 +3,8 @@
  *
  * Core reserves, creates, drives and Collects Child Runs; preparing a child's
  * runbook is the frontend's service (Category C): resolving the reference
- * through runbook discovery, reading and parsing the file, and resolving its
+ * through runbook discovery (and, when every search root misses, beside the
+ * parent's runbook file), reading and parsing the file, and resolving its
  * variables — under this process's policy — from the context snapshot core
  * hands over. This is the same preparation `rundown run` applies to a root
  * runbook, so a child resolves its inputs exactly as it would run standalone,
@@ -21,6 +22,7 @@ import {
   type PrepareChildRun,
 } from '@rundown-org/core';
 import type { OutputEmitter } from '../services/output-emitter.js';
+import { resolveRunbookRef } from './resolve-runbook.js';
 import { prepareRunnableRunbook } from './runbook-pipeline.js';
 
 /**
@@ -35,9 +37,12 @@ import { prepareRunnableRunbook } from './runbook-pipeline.js';
  * @returns The preparer.
  */
 export function createChildRunPreparer(cwd: string, output: OutputEmitter): PrepareChildRun {
-  return async ({ reservation, contextSnapshot: snapshot }) => {
+  return async ({ parent, reservation, contextSnapshot: snapshot }) => {
+    // A child the search roots miss is looked for beside its parent's file.
+    const parentFile = await resolveRunbookRef(cwd, parent.runbook);
     const prepared = await prepareRunnableRunbook(reservation.runbook, {}, cwd, {
       runId: reservation.runId,
+      ...(parentFile.ok ? { composedFrom: parentFile.resolved.path } : {}),
       inheritedContextVars: reconstituteContextVars(snapshot),
       inheritedUserVars: extractInheritedUserVars(snapshot),
       ...(snapshot.iterationBinding !== undefined
