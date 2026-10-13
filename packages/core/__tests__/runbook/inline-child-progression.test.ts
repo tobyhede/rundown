@@ -18,12 +18,16 @@ import {
 import {
   activateRunProgression,
   progressionDirectiveForStartedRun,
+  progressionDirectiveForTerminalRun,
   type RunProgressionDeps,
   type RunProgressionDirective,
   type RunProgressionOutcome,
 } from '../../src/runbook/run-progression.js';
 import { RunbookLifecycleCommandService } from '../../src/runbook/lifecycle-command-service.js';
-import type { PrepareInlineChild } from '../../src/runbook/inline-progression.js';
+import {
+  MAX_INLINE_CHILD_DEPTH,
+  type PrepareInlineChild,
+} from '../../src/runbook/inline-progression.js';
 import { currentInlineReservation } from '../../src/runbook/inline-child.js';
 
 // Inline Children on the parent's Owner Token (#903, ADR 0005), driven through
@@ -100,11 +104,52 @@ const PARENT_TWO_DEEP = `# Parent deep
 - middle.runbook.md
 `;
 
+const LEAF_OUTPUTS = `---
+name: leaf-outputs
+outputs:
+  - Verdict "approved"
+---
+# Leaf outputs
+
+## 1. Work
+- PASS COMPLETE
+- FAIL STOP
+
+\`\`\`bash
+echo leaf
+\`\`\`
+`;
+
+const DELEGATING = `# Delegating
+
+## 1. Fan out
+- DELEGATE
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+- leaf-pass.runbook.md
+`;
+
+const SELF = `# Self
+
+## 1. Again
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+- self.runbook.md
+`;
+
 const SOURCES: Readonly<Partial<Record<string, string>>> = {
   'leaf-pass.runbook.md': LEAF_PASS,
   'leaf-manual.runbook.md': LEAF_MANUAL,
+  'leaf-outputs.runbook.md': LEAF_OUTPUTS,
   'middle.runbook.md': MIDDLE,
+  'delegating.runbook.md': DELEGATING,
+  'self.runbook.md': SELF,
 };
+
+/** The preparer the next activation uses; `undefined` stands for a frontend with none. */
+let preparer: PrepareInlineChild | undefined;
 
 let dir: string;
 let manager: RunbookStateManager;
@@ -114,6 +159,7 @@ beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-inline-'));
   manager = new RunbookStateManager(dir);
   actorService = new RunbookActorService(manager, { commandServices: succeeding() });
+  preparer = prepare;
 });
 
 afterEach(async () => {
@@ -157,7 +203,7 @@ const prepare: PrepareInlineChild = async ({ reservation }) => {
     runbookSrc: source,
     templateVars: builtins(reservation.runId, reservation.runbook),
     initialVariables: {},
-    frontmatterOutputs: [],
+    frontmatterOutputs: parseRunbookDocument(source).frontmatter?.outputs ?? [],
   };
 };
 
@@ -183,7 +229,7 @@ function deps(root: RunbookState): RunProgressionDeps {
     loadSteps,
     sink: sinkFor(root),
     sinkFor,
-    prepareInlineChild: prepare,
+    ...(preparer === undefined ? {} : { prepareInlineChild: preparer }),
   };
 }
 
@@ -371,8 +417,102 @@ describe('Inline Child launch and implicit Collect (#903)', () => {
       runId: root.id,
       reason: 'inline_child_launch_failed',
       code: 'RUNBOOK_NOT_FOUND',
+      message:
+        'Inline child missing.runbook.md at 1.1 could not be launched: no missing.runbook.md',
       recovery: 'permanent',
     });
     expect((await manager.listWithVersion()).filter((run) => run.linkage !== null)).toEqual([]);
+  });
+
+  it("flows the child's final variables into the parent with its result", async () => {
+    const { root } = await start(PARENT_PASS.replace('leaf-pass', 'leaf-outputs'));
+
+    const parent = await manager.load(root.id);
+    expect(parent?.step).toBe('2');
+    expect(parent?.variables).toMatchObject({ Verdict: 'approved' });
+  });
+
+  it('refuses the launch when the frontend prepares no inline children', async () => {
+    preparer = undefined;
+    const { root, outcome } = await start(PARENT_PASS);
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      runId: root.id,
+      reason: 'inline_child_launch_failed',
+      code: 'INLINE_CHILD_LAUNCH_FAILED',
+      message: `Run ${root.id} cannot launch the inline child at 1.1: this frontend does not launch inline children`,
+      recovery: 'permanent',
+    });
+    expect((await manager.listWithVersion()).filter((run) => run.linkage !== null)).toEqual([]);
+  });
+
+  it('refuses an inline child whose runbook delegates, writing no child', async () => {
+    const { root, outcome } = await start(PARENT_PASS.replace('leaf-pass', 'delegating'));
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      runId: root.id,
+      reason: 'inline_child_launch_failed',
+      code: 'RUNBOOK_COMPOSITION_UNSUPPORTED',
+      message: expect.stringMatching(
+        /^Inline child delegating\.runbook\.md at 1\.1 could not be launched: .* at 1\.1\. Delegation returns in #904\.$/,
+      ),
+      recovery: 'permanent',
+    });
+    expect((await manager.listWithVersion()).filter((run) => run.linkage !== null)).toEqual([]);
+    // The parent rests on the substep, announced once, for the owner to decide.
+    expect((await manager.load(root.id))?.substep).toBe('1');
+  });
+
+  it('refuses a runbook that composes itself once the chain is too deep', async () => {
+    const { outcome } = await start(SELF);
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'inline_child_launch_failed',
+      code: 'INLINE_CHILD_LAUNCH_FAILED',
+    });
+    const children = (await manager.listWithVersion()).filter((run) => run.linkage !== null);
+    expect(children).toHaveLength(MAX_INLINE_CHILD_DEPTH);
+  }, 60_000);
+
+  it('never Collects a stale child: activating it does not reach the parent that re-entered', async () => {
+    const { root, token } = await start(PARENT_MANUAL);
+    const stale = await childOf(root);
+    const first = await target(token, root);
+    if (first.kind !== 'running') throw new Error('expected a running target');
+    const passed = await seam().runTransition({
+      command: 'pass',
+      run: first.run,
+      target: { stepId: 'Check' },
+    });
+    if (passed.kind !== 'applied') throw new Error(`refused: ${passed.kind}`);
+    await activate(passed.progression, root);
+    // The parent moved on to step 2; a GOTO re-enters step 1 and launches a
+    // fresh child that waits.
+    const atTwo = await target(token, root);
+    if (atTwo.kind !== 'running') throw new Error('expected a running target');
+    const navigation = await seam().resolveRunNavigation({ run: atTwo.run });
+    if (navigation.kind !== 'allowed') throw new Error(`refused: ${navigation.kind}`);
+    const moved = await seam().runNavigationMutation({
+      navigation: navigation.navigation,
+      target: { step: '1' },
+    });
+    if (moved.kind !== 'applied') throw new Error(`refused: ${moved.kind}`);
+    await activate(moved.progression, root);
+    const fresh = await childOf(root);
+    expect(fresh.id).not.toBe(stale.id);
+
+    const staleRow = await manager.loadWithVersion(stale.id);
+    if (staleRow === null) throw new Error('stale child missing');
+    const outcome = await activate(
+      progressionDirectiveForTerminalRun(staleRow, loadSteps(staleRow.state)),
+      root,
+    );
+
+    expect(outcome).toEqual({ kind: 'completed', runId: stale.id });
+    expect((await manager.load(root.id))?.step).toBe('1');
+    expect((await manager.load(fresh.id))?.lifecycle).toBe('running');
   });
 });
