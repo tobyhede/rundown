@@ -143,7 +143,7 @@ async function claimAsSubAgent(ticket: string, agentId: string) {
 }
 
 describe('the delegation hooks over the real CLI (#907)', () => {
-  it('refuses claim outside a sub-agent and creates nothing', async () => {
+  it('confusion mode: claim outside a sub-agent — the Bash hook refuses it and nothing is created', async () => {
     const { parentId, ticket } = start();
 
     const claim = await bashAs(undefined, rundownCommand(`claim ${ticket}`));
@@ -154,7 +154,7 @@ describe('the delegation hooks over the real CLI (#907)', () => {
     expect(status.children).toEqual([expect.objectContaining({ status: 'reserved' })]);
   });
 
-  it('blocks the claiming sub-agent while its child runs, and allows it once the child finished', async () => {
+  it('confusion mode: SubagentStop gate — blocks the claiming sub-agent while its child runs, and allows it once the child finished', async () => {
     const { ticket } = start();
     const { childId, childToken } = await claimAsSubAgent(ticket, 'sub-1');
 

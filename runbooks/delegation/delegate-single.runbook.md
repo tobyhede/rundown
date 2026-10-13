@@ -71,7 +71,7 @@ scenarios:
         - status: unclaimed
         - status: collected
 
-  double-claim-refused:
+  confusion-double-claim:
     description: A second claim of the same ticket is refused ALREADY_CLAIMED; the first child is unaffected
     commands:
       - rd run delegate-single.runbook.md
@@ -111,13 +111,14 @@ scenarios:
         - code: PARENT_RUN_FINISHED
           command: pass
 
-  stale-child-refused:
-    description: The owner decides the substep and re-enters the step; the stale child's command is DELEGATION_CANCELLED, and the fresh ticket is claimed and Collected
+  confusion-stale-claim-after-re-entry:
+    description: The owner decides the substep and FAIL GOTO 1 re-enters the step; the first entry's ticket and its child's commands are DELEGATION_CANCELLED, and the fresh ticket is claimed and Collected
     commands:
       - rd run delegate-single.runbook.md
       - rd claim ${TICKET}
       - rd pass --token ${TOKEN} --step 1.1
       - rd fail --token ${TOKEN} --step 2
+      - "! rd claim ${TICKET}"
       - "! rd pass --token ${CHILD_TOKEN} --step Check"
       - rd claim ${TICKET_2}
       - rd pass --token ${CHILD_TOKEN_2} --step Check
@@ -127,9 +128,24 @@ scenarios:
     expect:
       errors:
         - code: DELEGATION_CANCELLED
+          command: claim
+        - code: DELEGATION_CANCELLED
           command: pass
 
-  lost-ticket-retried:
+  confusion-claim-after-cancellation:
+    description: The owner decides the delegated substep by hand, which cancels its unclaimed child; a sub-agent's late claim of that ticket is DELEGATION_CANCELLED and creates nothing
+    commands:
+      - rd run delegate-single.runbook.md
+      - rd pass --token ${TOKEN} --step 1.1
+      - "! rd claim ${TICKET}"
+      - rd pass --token ${TOKEN} --step 2
+    result: COMPLETE
+    expect:
+      errors:
+        - code: DELEGATION_CANCELLED
+          command: claim
+
+  confusion-lost-ticket:
     description: The owner lost the ticket; retry cancels the unclaimed child and prints a new ticket, and the old one is refused DELEGATION_CANCELLED
     commands:
       - rd run delegate-single.runbook.md
@@ -149,7 +165,7 @@ scenarios:
           status: collected
           result: pass
 
-  lost-child-token-retried:
+  confusion-lost-child-token:
     description: The sub-agent lost its child's token; retry cancels the claimed child, whose commands are refused, and a fresh child is claimed and Collected
     commands:
       - rd run delegate-single.runbook.md
@@ -170,7 +186,7 @@ scenarios:
           status: collected
           result: pass
 
-  release-collected-as-fail:
+  confusion-release:
     description: The sub-agent releases the child it claimed; the child is abandoned and collect applies it as a fail
     commands:
       - rd run delegate-single.runbook.md
@@ -237,13 +253,14 @@ scenarios:
           status: collected
           result: pass
 
-  wrong-run-step-refused:
-    description: The child's token naming the parent's step is INVALID_STEP; nothing is written
+  confusion-wrong-run:
+    description: An agent aims at the wrong run — the child's token naming the parent's step, or the parent's naming the child's, is INVALID_STEP, and a run id copied from status authorizes nothing (INVALID_SYNTAX); nothing is written
     commands:
       - rd run delegate-single.runbook.md
       - rd claim ${TICKET}
       - "! rd pass --token ${CHILD_TOKEN} --step 1.1"
       - "! rd pass --token ${TOKEN} --step Check"
+      - "! rd pass --run ${RUN_ID} --step 1.1"
       - rd pass --token ${CHILD_TOKEN} --step Check
       - rd collect --token ${TOKEN}
       - rd pass --token ${TOKEN} --step 2
@@ -254,6 +271,33 @@ scenarios:
           command: pass
         - code: INVALID_STEP
           command: pass
+        - code: INVALID_SYNTAX
+          command: pass
+          error: read-only selector
+
+  confusion-missing-step:
+    description: A pass without --step is INVALID_STEP for the owner and for the sub-agent alike, naming the current position; nothing is written
+    commands:
+      - rd run delegate-single.runbook.md
+      - "! rd pass --token ${TOKEN}"
+      - rd claim ${TICKET}
+      - "! rd pass --token ${CHILD_TOKEN}"
+      - rd pass --token ${CHILD_TOKEN} --step Check
+      - rd collect --token ${TOKEN}
+      - "! rd pass --token ${TOKEN}"
+      - rd pass --token ${TOKEN} --step 2
+    result: COMPLETE
+    expect:
+      errors:
+        - code: INVALID_STEP
+          command: pass
+          error: --step is required
+        - code: INVALID_STEP
+          command: pass
+          error: --step is required
+        - code: INVALID_STEP
+          command: pass
+          error: --step is required
 ---
 
 # Delegate (Single)
