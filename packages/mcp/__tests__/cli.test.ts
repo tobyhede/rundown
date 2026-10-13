@@ -21,33 +21,51 @@ describe('runCli', () => {
     });
   });
 
-  it('returns the last action object from mixed JSONL event output', async () => {
+  it('returns every event of a JSONL stream, so runbook_started keeps its owner_token', async () => {
+    const stream = [
+      { type: 'runbook_started', runbookId: 'rd_1', owner_token: 'rdo_x' },
+      { type: 'command_started', command: 'echo hi' },
+      { type: 'step_transitioned', action: 'CONTINUE', from: '1', to: '2' },
+      { type: 'step_entered', position: { current: '2' } },
+    ];
     execFileAsync.mockResolvedValue({
-      stdout: [
-        JSON.stringify({ type: 'step_entered', position: { current: '1' } }),
-        JSON.stringify({ action: 'PASS', to: '2' }),
-      ].join('\n'),
+      stdout: stream.map((event) => JSON.stringify(event)).join('\n'),
       stderr: '',
     });
 
-    await expect(runCli(['pass'])).resolves.toEqual({
+    await expect(runCli(['run', 'x.runbook.md'])).resolves.toEqual({
       success: true,
-      data: { action: 'PASS', to: '2' },
+      data: stream,
     });
   });
 
-  it('returns the last command-keyed object from mixed JSONL event output', async () => {
+  it('keeps the step_entered that names the next position alongside the action', async () => {
+    const stream = [
+      { type: 'step_entered', position: { current: '2' } },
+      { action: 'CONTINUE', stepResult: 'PASS', from: '1', at: '2', kind: 'action' },
+    ];
     execFileAsync.mockResolvedValue({
-      stdout: [
-        JSON.stringify({ type: 'step_entered', position: { current: '1' } }),
-        JSON.stringify({ command: 'pass', to: '2' }),
-      ].join('\n'),
+      stdout: stream.map((event) => JSON.stringify(event)).join('\n'),
       stderr: '',
     });
 
-    await expect(runCli(['pass'])).resolves.toEqual({
-      success: true,
-      data: { command: 'pass', to: '2' },
+    await expect(runCli(['pass'])).resolves.toEqual({ success: true, data: stream });
+  });
+
+  it('takes the error message from the error object in a failing JSONL stream', async () => {
+    const stream = [
+      { type: 'step_entered', position: { current: '1' } },
+      { kind: 'error', error: 'Policy denied', code: 'POLICY_DENIED' },
+    ];
+    const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
+    error.stdout = stream.map((event) => JSON.stringify(event)).join('\n');
+    error.stderr = '';
+    execFileAsync.mockRejectedValue(error);
+
+    await expect(runCli(['run', 'x.runbook.md'])).resolves.toEqual({
+      success: false,
+      error: 'Policy denied',
+      data: stream,
     });
   });
 
