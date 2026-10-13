@@ -746,6 +746,21 @@ export class RunbookStateManager {
   }
 
   /**
+   * The running Delegations an agent claimed, by the agent id the claim
+   * recorded (#907).
+   *
+   * @param agentId - The agent id `rundown claim --agent-id` recorded
+   * @returns Every running Delegation claimed under that id, validated
+   * @throws {InvalidRunbookStateError} If a matching record fails the
+   *   persisted-state gates or the structural parse
+   * @throws {LegacySnapshotError} If a matching record uses deprecated snapshots
+   */
+  async findRunningDelegationsClaimedBy(agentId: string): Promise<readonly VersionedRunState[]> {
+    const store = await this.store();
+    return store.findRunningDelegationsClaimedBy(agentId);
+  }
+
+  /**
    * Set a run's execution lease immediately before an external effect (#902).
    *
    * One conditional update; see `RunbookStore.acquireExecutionLease`. The

@@ -17,6 +17,10 @@
  *   recorded (both absent match), never an Owner Token, and it grants nothing
  *   else: it never touches the parent, whose Collect reads an abandoned child
  *   as a fail while it still counts it.
+ * - {@link delegationsHeldBy} — the plugin's SubagentStop gate (#907) asks
+ *   which children still hold a stopping sub-agent: the running Delegations
+ *   its claim recorded whose parent still counts them. The gate blocks while
+ *   any is held, with the finish-or-release instruction, and keeps no record.
  *
  * @module runbook/delegation-recovery
  */
@@ -360,4 +364,49 @@ async function abandonedParent(
   return standing.kind === 'parent_pruned'
     ? { standing: 'parent_pruned', step: linkage.parentStep }
     : { standing: standing.kind, runId: linkage.parentRunId, step: linkage.parentStep };
+}
+
+/** A running Delegation that still holds the agent that claimed it (#907). */
+export interface HeldDelegation {
+  /** The child run. */
+  readonly runId: RunId;
+  /** The child's runbook, as its run records it. */
+  readonly runbook: string;
+  /** The parent run that still counts it. */
+  readonly parentRunId: RunId;
+  /** The parent unit (`step.substep`) the child runs for. */
+  readonly step: string;
+}
+
+/**
+ * The Delegations an agent must finish or release before it stops: every
+ * running Delegation whose claim recorded `agentId` and whose parent still
+ * counts it (standing `current`). A finished, abandoned or cancelled child,
+ * one whose parent finished or was pruned, and another agent's child hold
+ * nothing.
+ *
+ * Read-only; it writes nothing and records nothing about the asking agent.
+ *
+ * @param deps - Store and graph loader.
+ * @param agentId - The agent id the claims recorded.
+ * @returns The held Delegations, in run id order.
+ * @throws {Error} Whatever reading the runs' persisted state throws.
+ */
+export async function delegationsHeldBy(
+  deps: Pick<DelegationDeps, 'manager' | 'loadSteps'>,
+  agentId: string,
+): Promise<readonly HeldDelegation[]> {
+  const held: HeldDelegation[] = [];
+  for (const child of await deps.manager.findRunningDelegationsClaimedBy(agentId)) {
+    const { linkage } = child;
+    if (linkage?.kind !== 'delegation') continue;
+    if ((await delegationStandingOf(deps, child)).kind !== 'current') continue;
+    held.push({
+      runId: child.state.id,
+      runbook: child.state.runbook.path,
+      parentRunId: linkage.parentRunId,
+      step: linkage.parentStep,
+    });
+  }
+  return held;
 }

@@ -228,9 +228,13 @@ export {
   type DelegationRefusal,
 } from './delegation-progression.js';
 // Delegation recovery (#905): `rundown retry` by the parent's owner and
-// `rundown release` by the claiming agent.
+// `rundown release` by the claiming agent; and the Delegations that still
+// hold an agent, read by `rundown status --claimed-by` for the plugin's
+// SubagentStop gate (#907).
 export {
   AGENT_MISMATCH_CODE,
+  delegationsHeldBy,
+  type HeldDelegation,
   NOT_A_DELEGATION_CODE,
   NOTHING_TO_RETRY_CODE,
   RUN_TARGET_UNAVAILABLE_CODE,
