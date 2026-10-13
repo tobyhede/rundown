@@ -45,8 +45,9 @@ function requireString(
  *
  * Mutating tools map `token` to `--token` (the Owner Token is the only
  * authority; `--claim-id` and `--run` are never emitted for a mutation),
- * `step` to `--step` and `index` to `--index`. `status` maps `runId` to the
- * read-only `--run` selector.
+ * `step` to `--step` and `index` to `--index`. `claim` maps `ticket` to its
+ * positional Claim Ticket and `agentId` to `--agent-id`. `status` maps `runId`
+ * to the read-only `--run` selector.
  *
  * @param tool - MCP tool name.
  * @param input - Tool input values.
@@ -102,5 +103,14 @@ export function buildRundownCommand(
       cmd.push('--token', token);
       return cmd;
     }
+    case 'claim': {
+      // The Claim Ticket is the claim's only authority (#904); the child's own
+      // Owner Token comes back on its `runbook_started`.
+      const cmd = ['claim', requireString(tool, input, 'ticket')];
+      if (typeof input.agentId === 'string') cmd.push('--agent-id', input.agentId);
+      return cmd;
+    }
+    case 'collect':
+      return ['collect', '--token', requireString(tool, input, 'token')];
   }
 }
