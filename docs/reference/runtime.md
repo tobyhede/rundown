@@ -275,7 +275,7 @@ and MUST NOT be conflated:
 
 | Check                        | Governs                                                                                     | Requirement                                                                                                               |
 | ---------------------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `RunbookState.schemaVersion` | Runbook state **only** — the structured fields and the opaque `snapshot` blob of a run row. | MUST equal `CURRENT_SCHEMA_VERSION` (currently `3`). Any other value makes that run's state invalid (`RD-309`).           |
+| `RunbookState.schemaVersion` | Runbook state **only** — the structured fields and the opaque `snapshot` blob of a run row. | MUST equal `CURRENT_SCHEMA_VERSION` (currently `4`). Any other value makes that run's state invalid (`RD-309`).           |
 | SQLite schema version        | The whole state database, including every column of the `runs` table.                       | Stored in `PRAGMA user_version` and MUST equal the version this build installs. Any other version is rejected (`RD-305`). |
 
 Run-row columns carry no `schemaVersion` of their own; they are governed solely
