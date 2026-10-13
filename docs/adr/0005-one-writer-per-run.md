@@ -1,6 +1,6 @@
 # ADR 0005: One writer per run
 
-- **Status:** Accepted (not yet built)
+- **Status:** Accepted (built)
 - **Date:** 2026-09-29
 - **Supersedes:** [ADR 0001](0001-fold-run-release-into-owning-transaction.md),
   [ADR 0002](0002-fence-inline-launch-under-parent-claim-generation.md)

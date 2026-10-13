@@ -730,4 +730,10 @@ file's subdirectory structure under `.rundown/runbooks/`, and also copies the
 main runbook flat by basename so bare-filename commands resolve. Referenced
 child runbooks are copied from the main runbook's directory first, then the
 suite directory, with path traversal rejected. Authored runbook references are
-staged recursively using the same rules.
+staged recursively, searched where the runtime would find them: beside the
+composing runbook, under the suite directory, then under each runbooks root —
+the nearest `runbooks/` above the composing runbook and the suite directory's
+own `runbooks/` (a suite at a plugin's root sees it as
+`$CLAUDE_PLUGIN_ROOT/runbooks`). A root-relative reference such as
+`planning/write-plan.runbook.md` resolves from a root, and a bare filename also
+from the directory under a root that holds it.

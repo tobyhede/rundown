@@ -357,7 +357,7 @@ Each SQLite run state row stores enough information to resume deterministically.
   "lifecycle": "running",
   "runbookSrc": "---\nname: my-runbook\n---\n# My Runbook\n...",
   "snapshot": {},
-  "schemaVersion": 3
+  "schemaVersion": 4
 }
 ```
 
