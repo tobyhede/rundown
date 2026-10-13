@@ -122,7 +122,7 @@ describe('RunbookStore round-trip', () => {
     const state = await newState();
     await store.createRun(state, freshHash());
     const versioned = await store.loadRunWithVersion(state.id);
-    expect(versioned).toEqual({ state, stateVersion: 0 });
+    expect(versioned).toEqual({ state, stateVersion: 0, lease: null });
     expect(await store.loadRunWithVersion(assertRunId(`rd_${'e'.repeat(32)}`))).toBeNull();
   });
 
@@ -267,7 +267,7 @@ describe('findRunByOwnerTokenHash', () => {
     await store.createRun(await newState(), freshHash());
 
     const found = await store.findRunByOwnerTokenHash(hashRunSecret(token));
-    expect(found).toEqual({ state, stateVersion: 0 });
+    expect(found).toEqual({ state, stateVersion: 0, lease: null });
   });
 
   it('returns null for a hash no run carries', async () => {

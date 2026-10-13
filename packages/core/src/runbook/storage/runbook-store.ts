@@ -13,6 +13,12 @@
  * racing is a usage error the caller is told about, not a race the store
  * serialises on its behalf.
  *
+ * The execution lease (#902) rides the same version. Setting it is one
+ * conditional `UPDATE` that moves `state_version`; every state write clears it.
+ * A writer at version `v` therefore clears exactly the lease `v` carries — the
+ * one its seam read and decided about — and the finish of a leased attempt
+ * commits only at the version its lease produced.
+ *
  * @module runbook/storage/runbook-store
  */
 
@@ -25,6 +31,7 @@ import type { SecretHash } from '../run-secrets.js';
 import { assertLoadablePersistedRun, parsePersistedRunState } from '../persisted-state-guards.js';
 import type { SqlDriver, SqlTransaction, SqlReadTransaction, SyncWork } from './sql-driver.js';
 import { type StateVersion, assertStateVersion } from './mutation-result.js';
+import type { ExecutionLease, ExecutionLeaseHolder } from '../execution-lease.js';
 
 /** Machine lifecycle values persisted in the `runs.lifecycle` column. */
 const LIFECYCLES: readonly Lifecycle[] = ['running', 'completed', 'stopped', 'abandoned'];
@@ -68,7 +75,32 @@ export interface VersionedRunState {
   readonly state: RunbookState;
   /** The row's `state_version` at read time; the expectation a later save names. */
   readonly stateVersion: StateVersion;
+  /**
+   * The execution lease the row carried at that version, or null. A save at
+   * `stateVersion` clears it, so a seam that writes must have decided about it.
+   */
+  readonly lease: ExecutionLease | null;
 }
+
+/**
+ * Outcome of {@link RunbookStore.acquireExecutionLease}.
+ *
+ * - `acquired` — the lease is set; `stateVersion` (equal to `lease.attempt`) is
+ *   the only version the attempt's finish may commit at.
+ * - `held` — a lease is already set at the expected version. Nothing written.
+ * - `concurrent_modification` — the version moved since the caller read the
+ *   run. Nothing written. Refused, never retried.
+ * - `missing` — no row carries the id. Nothing written.
+ */
+export type AcquireExecutionLeaseResult =
+  | {
+      readonly kind: 'acquired';
+      readonly lease: ExecutionLease;
+      readonly stateVersion: StateVersion;
+    }
+  | { readonly kind: 'held'; readonly lease: ExecutionLease }
+  | { readonly kind: 'concurrent_modification' }
+  | { readonly kind: 'missing' };
 
 /**
  * Outcome of {@link RunbookStore.saveRun}.
@@ -299,6 +331,48 @@ export class RunbookStore {
   }
 
   /**
+   * Set the run's execution lease immediately before an external effect.
+   *
+   * One conditional `UPDATE`: it lands only when the row is still at
+   * `expectedVersion` and carries no lease. It moves `state_version` to
+   * `expectedVersion + 1`, which becomes the lease's `attempt`. The effect must
+   * not start unless this returns `acquired`.
+   *
+   * @param runId - Run whose effect is about to start.
+   * @param expectedVersion - The version the caller read the run at.
+   * @param holder - The process starting the effect.
+   * @returns The acquired lease and its version, or why it was not set.
+   */
+  acquireExecutionLease(
+    runId: RunId,
+    expectedVersion: StateVersion,
+    holder: ExecutionLeaseHolder,
+  ): Promise<AcquireExecutionLeaseResult> {
+    return this.transaction((txn) =>
+      acquireLease(txn.tx, runId, expectedVersion, holder, new Date().toISOString()),
+    );
+  }
+
+  /**
+   * List the execution lease of every run that holds one.
+   *
+   * @returns Each leased run's lease, keyed by run id.
+   */
+  listExecutionLeases(): Promise<ReadonlyMap<RunId, ExecutionLease>> {
+    return this.driver.read((tx) => {
+      const rows = tx
+        .prepare(`SELECT id, ${LEASE_COLUMNS} FROM runs WHERE lease_attempt IS NOT NULL`)
+        .all<LeaseRow & { readonly id: string }>();
+      const leases = new Map<RunId, ExecutionLease>();
+      for (const row of rows) {
+        const lease = leaseFromRow(row);
+        if (lease !== null) leases.set(assertRunId(row.id), lease);
+      }
+      return leases;
+    });
+  }
+
+  /**
    * Delete a run row. Idempotent: a missing row is not an error.
    *
    * Child rows that named this run as their parent have their linkage cleared
@@ -435,6 +509,7 @@ export class RunbookStore {
     return {
       state: this.validateRaw(assembleRaw(row), runId),
       stateVersion: assertStateVersion(row.state_version),
+      lease: leaseFromRow(row),
     };
   }
 
@@ -477,14 +552,98 @@ export class RunbookStore {
   }
 }
 
+/** The lease column group. */
+const LEASE_COLUMNS = 'lease_attempt, lease_pid, lease_start_id, lease_started_at';
+
 /** Columns a versioned read selects: everything a validated, versioned state needs. */
-const VERSIONED_ROW_COLUMNS = 'id, state_version, lifecycle, state_json';
+const VERSIONED_ROW_COLUMNS = `id, state_version, lifecycle, state_json, ${LEASE_COLUMNS}`;
+
+/** The lease column group as read. All-or-none under the table's `CHECK`. */
+type LeaseRow = {
+  readonly lease_attempt: number | null;
+  readonly lease_pid: number | null;
+  readonly lease_start_id: string | null;
+  readonly lease_started_at: string | null;
+};
 
 /** One `runs` row as a versioned read selects it. */
-type VersionedRunRow = PersistedRunRow & {
-  readonly id: string;
-  readonly state_version: number;
-};
+type VersionedRunRow = PersistedRunRow &
+  LeaseRow & {
+    readonly id: string;
+    readonly state_version: number;
+  };
+
+/**
+ * Read the lease column group, or null when no lease is set.
+ *
+ * @param row - The lease columns as read.
+ * @returns The lease, or null.
+ */
+function leaseFromRow(row: LeaseRow): ExecutionLease | null {
+  if (row.lease_attempt === null || row.lease_pid === null || row.lease_started_at === null) {
+    return null;
+  }
+  return {
+    attempt: row.lease_attempt,
+    pid: row.lease_pid,
+    startId: row.lease_start_id,
+    startedAt: row.lease_started_at,
+  };
+}
+
+/**
+ * Set a run's execution lease under one conditional `UPDATE`.
+ *
+ * @param tx - Open writing transaction.
+ * @param runId - Run to lease.
+ * @param expectedVersion - Version the caller read the run at.
+ * @param holder - Process starting the effect.
+ * @param startedAt - ISO-8601 time the lease is set.
+ * @returns The acquired lease, or why it was not set.
+ */
+function acquireLease(
+  tx: SqlTransaction,
+  runId: RunId,
+  expectedVersion: StateVersion,
+  holder: ExecutionLeaseHolder,
+  startedAt: string,
+): AcquireExecutionLeaseResult {
+  const attempt = expectedVersion + 1;
+  const changes = tx
+    .prepare(
+      `UPDATE runs
+          SET lease_attempt = :attempt, lease_pid = :pid,
+              lease_start_id = :startId, lease_started_at = :startedAt
+        WHERE id = :id
+          AND state_version = :expectedVersion
+          AND lease_attempt IS NULL`,
+    )
+    .run({
+      id: runId,
+      attempt,
+      pid: holder.pid,
+      startId: holder.startId,
+      startedAt,
+      expectedVersion,
+    }).changes;
+  const row = tx
+    .prepare(`SELECT state_version, ${LEASE_COLUMNS} FROM runs WHERE id = :id`)
+    .get<LeaseRow & { readonly state_version: number }>({ id: runId });
+  if (row === undefined) return { kind: 'missing' };
+  const lease = leaseFromRow(row);
+  if (changes === 1) {
+    // The trigger moved the version to exactly the attempt; anything else is a
+    // tampered schema, not a race.
+    if (row.state_version !== attempt || lease === null) {
+      throw new StoreInvariantError(
+        `Lease for run ${runId} set attempt ${String(attempt)} but the row reads version ${String(row.state_version)}.`,
+      );
+    }
+    return { kind: 'acquired', lease, stateVersion: assertStateVersion(attempt) };
+  }
+  if (lease !== null && row.state_version === expectedVersion) return { kind: 'held', lease };
+  return { kind: 'concurrent_modification' };
+}
 
 /** The columns a run state is reassembled from. */
 type PersistedRunRow = {
@@ -527,7 +686,8 @@ function insertRun(tx: SqlTransaction, state: RunbookState, ownerTokenHash: Secr
 }
 
 /**
- * Write run state under the one conditional `UPDATE`.
+ * Write run state under the one conditional `UPDATE`, clearing the execution
+ * lease the expected version carries.
  *
  * @param tx - Open writing transaction.
  * @param runId - Run to write.
@@ -546,7 +706,9 @@ function writeStateAtVersion(
       `UPDATE runs
           SET state_json = :stateJson,
               lifecycle  = :lifecycle,
-              updated_at = :updatedAt
+              updated_at = :updatedAt,
+              lease_attempt = NULL, lease_pid = NULL,
+              lease_start_id = NULL, lease_started_at = NULL
         WHERE id = :id
           AND state_version = :expectedVersion`,
     )
