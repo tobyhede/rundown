@@ -128,8 +128,7 @@ export const ErrorCodes = {
     code: 'RD-304',
     category: ErrorCategory.STATE,
     title: 'Runbook stopped',
-    description:
-      'This runbook was stopped. Start a new run or use "rundown pop" to resume if stashed.',
+    description: 'This runbook was stopped. Start a new run.',
     docSlug: 'runbook-stopped',
   },
   INCOMPATIBLE_STATE_SCHEMA: {
@@ -168,7 +167,7 @@ export const ErrorCodes = {
     category: ErrorCategory.STATE,
     title: 'Runbook state lost to a concurrent writer',
     description:
-      'A run-state read-modify-write spent its optimistic compare-and-swap budget because another process committed to the same run first. Nothing was written and the persisted state is intact and consistent. Unlike the other 3xx state errors this is transient, not a refusal: re-run the command.',
+      'A run-state conditional save found the run changed since it was read: another of the owner\'s commands committed to the same run first. Nothing was written and the persisted state is intact and consistent. It is never retried on your behalf: re-read the run ("rundown status --run <id>") and re-issue the command.',
     docSlug: 'concurrent-state-modification',
   },
   // The ONE persisted-state refusal CLAUDE.md writes a required behaviour for:
@@ -190,7 +189,7 @@ export const ErrorCodes = {
     category: ErrorCategory.STATE,
     title: 'Invalid persisted run state',
     description:
-      'A run in the runbook database does not match the state contract this build reads: unparseable persisted state, a schema version this build does not read, a missing required field such as templateVars, or a deprecated dynamic-step snapshot. Rundown never migrates persisted state, so the run cannot be resumed and is never silently repaired. Only that run is affected — the database and every other run in it are intact. Recover by finishing the run ("rundown complete"), stopping it ("rundown stop"), or discarding it ("rundown prune --inactive", which a bare "rundown prune" cannot do because its default completed/stopped selection never sees an invalid row), then re-run the runbook from source.',
+      'A run in the runbook database does not match the state contract this build reads: unparseable persisted state, a schema version this build does not read, a missing required field such as templateVars, or a deprecated dynamic-step snapshot. Rundown never migrates persisted state, so the run cannot be resumed, completed or stopped, and is never silently repaired. Only that run is affected — the database and every other run in it are intact. Recover by discarding it with "rundown prune --inactive" (a bare "rundown prune" cannot, because its default completed/stopped selection never sees an invalid row), then re-run the runbook from source.',
     docSlug: 'invalid-persisted-run-state',
   },
 

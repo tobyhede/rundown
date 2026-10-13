@@ -250,7 +250,7 @@ describe('withErrorHandling', () => {
       expect(ErrorResponseSchema.safeParse(parsed).success).toBe(true);
     });
 
-    it('names the finish / stop / prune recovery in the JSON envelope itself', async () => {
+    it('names the prune recovery in the JSON envelope itself', async () => {
       await withErrorHandling(async () => {
         throw new InvalidRunbookStateError(
           'Invalid runbook state for "rd_f6dbc58e5e08706a2aa8c7bec5ffd176": missing templateVars.',
@@ -259,12 +259,10 @@ describe('withErrorHandling', () => {
 
       const parsed = parseStdoutJson();
       const message = String(parsed.error);
-      // `details.category`/`description` reach an operator only under
-      // `--text --verbose`; the agent-facing default is this JSON `error`
-      // string, so the recovery has to be *in it*.
-      expect(message).toMatch(/rundown complete/);
-      expect(message).toMatch(/rundown stop/);
-      expect(message).toMatch(/rundown prune/);
+      // `details.category`/`description` never reach an operator by default;
+      // the agent-facing default is this JSON `error` string, so the recovery
+      // has to be *in it*.
+      expect(message).toMatch(/rundown prune --inactive/);
       // The cause the store diagnosed must survive alongside the recovery.
       expect(message).toMatch(/missing templateVars/);
     });

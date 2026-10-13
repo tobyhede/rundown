@@ -152,9 +152,8 @@ export const Errors = {
           }),
       message:
         `${terminated} Rundown never migrates persisted state, so this run ` +
-        `cannot be resumed: finish it with "rundown complete", stop it with ` +
-        `"rundown stop", or discard it with "rundown prune --inactive", then ` +
-        `re-run the runbook from source.`,
+        `cannot be resumed, completed or stopped: discard it with ` +
+        `"rundown prune --inactive", then re-run the runbook from source.`,
     });
   },
 

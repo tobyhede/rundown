@@ -7,6 +7,7 @@ import { describe, it, expect } from '@jest/globals';
 // are actually exercised. RundownError is imported from its own module for the
 // same reason.
 import { Errors } from '../../src/errors/factory.js';
+import { ErrorCodes } from '../../src/errors/codes.js';
 import { RundownError } from '../../src/errors/rundown-error.js';
 
 /**
@@ -155,7 +156,7 @@ describe('Errors factory - exhaustive coverage', () => {
     // the code's `description` reaches an operator only under `--text
     // --verbose`, and never appears in the JSON envelope agents read.
     describe('invalidPersistedRunState → RD-309', () => {
-      it('appends the finish / stop / prune recovery to the store diagnosis', () => {
+      it('appends the prune recovery to the store diagnosis', () => {
         const error = Errors.invalidPersistedRunState(
           'Invalid runbook state for "rd_abc": invalid schemaVersion; expected schema version 1.',
         );
@@ -163,8 +164,6 @@ describe('Errors factory - exhaustive coverage', () => {
         expect(error).toBeInstanceOf(RundownError);
         expect(error.code).toBe('RD-309');
         expect(error.message).toContain('invalid schemaVersion');
-        expect(error.message).toContain('rundown complete');
-        expect(error.message).toContain('rundown stop');
         expect(error.message).toContain('rundown prune');
       });
 
@@ -184,6 +183,20 @@ describe('Errors factory - exhaustive coverage', () => {
         const error = Errors.invalidPersistedRunState('Invalid runbook state for "rd_abc".');
 
         expect(error.message).toContain('rundown prune --inactive');
+      });
+
+      // `complete` and `stop` resolve the run by parsing its persisted state,
+      // which is exactly what this error says cannot be done — both refuse with
+      // RD-309 again. Naming them sends the operator round a loop.
+      it('names no remedy that has to read the invalid run', () => {
+        const error = Errors.invalidPersistedRunState('Invalid runbook state for "rd_abc".');
+
+        expect(error.message).not.toContain('rundown complete');
+        expect(error.message).not.toContain('rundown stop');
+        expect(ErrorCodes.INVALID_PERSISTED_RUN_STATE.description).not.toContain(
+          'rundown complete',
+        );
+        expect(ErrorCodes.INVALID_PERSISTED_RUN_STATE.description).not.toContain('rundown stop');
       });
 
       it('does not double-punctuate a diagnosis that already ends in a period', () => {
