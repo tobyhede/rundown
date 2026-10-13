@@ -421,6 +421,36 @@ export const ExecutionStatusSchema = z
   })
   .describe('Execution lease condition of the run');
 
+/**
+ * A Child Run's parent coordinate as status shows it (#903). Run ids and step
+ * labels only: status never shows a token or ticket.
+ */
+export const ParentLinkStatusSchema = z
+  .object({
+    runId: z.string().regex(RUN_ID_PATTERN).describe('The parent run'),
+    step: z.string().describe('Parent unit (`step.substep`) the child runs for'),
+    kind: z
+      .enum(['inline', 'delegation'])
+      .describe('How the child is owned relative to its parent'),
+  })
+  .describe("The run's parent, when it is a Child Run");
+
+/**
+ * The Current Child a run's step counts, as status shows it (#903).
+ *
+ * `reserved` means the parent reserved the child but no child row exists yet
+ * (its launch has not happened, or was refused).
+ */
+export const CurrentChildStatusSchema = z
+  .object({
+    runId: z.string().regex(RUN_ID_PATTERN).describe('The reserved child run id'),
+    kind: z.literal('inline').describe('How the child is owned relative to this run'),
+    status: z
+      .enum(['reserved', 'running', 'completed', 'stopped', 'abandoned'])
+      .describe('The child lifecycle, or reserved before its row exists'),
+  })
+  .describe("The Current Child of the run's step");
+
 export const StatusResponseSchema = z
   .object({
     /** Response kind discriminant */
@@ -478,6 +508,8 @@ export const StatusResponseSchema = z
     execution: ExecutionStatusSchema.optional().describe(
       'Present while the run holds the execution lease (In Progress or Interrupted)',
     ),
+    parent: ParentLinkStatusSchema.optional(),
+    child: CurrentChildStatusSchema.optional(),
     vars: z
       .record(z.string(), z.string())
       .optional()
@@ -594,6 +626,8 @@ export const ActiveRunbookEntrySchema = z
     execution: ExecutionStatusSchema.optional().describe(
       'Present while the run holds the execution lease (In Progress or Interrupted)',
     ),
+    /** The parent coordinate, present for a Child Run (#903) */
+    parent: ParentLinkStatusSchema.optional(),
   })
   .describe('Active runbook state entry');
 
@@ -1249,6 +1283,10 @@ export type ActionResponse = z.infer<typeof ActionResponseSchema>;
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;
 /** Execution lease condition rendered by `status` (#902). */
 export type ExecutionStatus = z.infer<typeof ExecutionStatusSchema>;
+/** A Child Run's parent coordinate in status output (#903). */
+export type ParentLinkStatus = z.infer<typeof ParentLinkStatusSchema>;
+/** The Current Child of a run's step in status output (#903). */
+export type CurrentChildStatus = z.infer<typeof CurrentChildStatusSchema>;
 
 /** Artifact alias entry response item */
 export type ArtifactAliasEntry = z.infer<typeof ArtifactAliasEntrySchema>;

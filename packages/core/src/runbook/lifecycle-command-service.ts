@@ -361,6 +361,28 @@ function finishedRefusal(run: OwnedRun): RunFinishedRefusal | undefined {
 }
 
 /**
+ * Name the Inline Child in a `--step` refusal against it (#903).
+ *
+ * While an inline child runs, the root's Owner Token targets the child, so
+ * `--step` names a step of the child. A refusal that only spoke of "the
+ * current step" would read as if it described the run the agent started.
+ *
+ * @param refusal - The cursor's refusal.
+ * @param run - The command's target.
+ * @returns The refusal, naming the child and its parent when the target is one.
+ */
+function inlineTargetRefusal(
+  refusal: InvalidStepTargetRefusal,
+  run: OwnedRun,
+): InvalidStepTargetRefusal {
+  if (run.linkage?.kind !== 'inline') return refusal;
+  return {
+    kind: 'invalid_step_target',
+    message: `${refusal.message}. The Owner Token is driving inline child ${run.state.id} (${run.state.runbook.path}) of run ${run.linkage.parentRunId} at ${run.linkage.parentStep}; while it runs, --step names a step of the child`,
+  };
+}
+
+/**
  * The `concurrent_modification` refusal for one run.
  *
  * @param runId - The run whose save was refused.
@@ -499,7 +521,7 @@ export class RunbookLifecycleCommandService {
     const steps = await this.#deps.loadSteps(previousState);
 
     const cursor = resolveTransitionCursor(steps, previousState, input.target);
-    if (cursor.kind === 'invalid_step_target') return cursor;
+    if (cursor.kind === 'invalid_step_target') return inlineTargetRefusal(cursor, input.run);
 
     const prepared = await this.#deps.actorService.prepareActorMutation(
       previousState.id,
