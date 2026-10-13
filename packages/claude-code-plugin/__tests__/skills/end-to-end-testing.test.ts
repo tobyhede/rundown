@@ -30,11 +30,13 @@ describe('end-to-end-testing skill', () => {
     expect(skill).not.toMatch(/npm install|npm run build|installation|Local Setup/i);
   });
 
-  it('reports the composition refusal instead of improvising', () => {
+  it('runs the inline steps and reports the delegation refusal instead of improvising', () => {
     const skill = readSkill();
 
+    // Inline children run on the Owner Token (#903); step 3's child delegates,
+    // so its launch is refused until #904.
+    expect(skill).toMatch(/compose their runbooks inline/);
     expect(skill).toContain('`RUNBOOK_COMPOSITION_UNSUPPORTED`');
-    expect(skill).toContain('#903');
     expect(skill).toContain('#904');
     expect(skill).toMatch(/Report the refusal to the user as the result and stop/);
   });
