@@ -1,8 +1,6 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import {
-  brandDelegationTokenHashForTest,
-  brandFrameKeyForTest,
   brandInitialTemplateVarsForTest,
   brandRunIdForTest,
   brandStoredOutputsForTest,
@@ -15,8 +13,6 @@ import type * as CoreModule from '@rundown-org/core';
 import type { BaseStep, ResolvedStep } from '@rundown-org/parser';
 import type * as ExecutionModule from '../../src/services/execution.js';
 
-const PARENT_RUN_ID = brandRunIdForTest(`rd_${'9'.repeat(32)}`);
-const SECOND_PARENT_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
 const DEFAULT_RUN_ID = brandRunIdForTest(`rd_${'b'.repeat(32)}`);
 const ARTIFACT_RUN_ID = brandRunIdForTest(`rd_${'c'.repeat(32)}`);
 
@@ -106,7 +102,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
   };
 });
 
-import type { RunbookState } from '@rundown-org/core';
+import type { FrameKey, RunbookState } from '@rundown-org/core';
 
 // Mock runbook-loader
 jest.unstable_mockModule('../../src/helpers/runbook-loader', () => ({
@@ -143,7 +139,7 @@ const { getRunbookFromState } = await import('../../src/helpers/runbook-loader.j
 const { getStepRetryMax, buildMetadata, formatActionForDisplay } = await import(
   '../../src/services/execution.js'
 );
-const { buildInactiveStatus, buildStashedStatus, buildActiveStatus } = await import(
+const { buildInactiveStatus, buildRunListStatus, buildRunStatus } = await import(
   '../../src/helpers/status-builder.js'
 );
 
@@ -183,73 +179,74 @@ beforeEach(() => {
 });
 
 describe('buildInactiveStatus', () => {
-  it('returns inactive with no stash', () => {
+  it('returns an empty run list', () => {
     const result = buildInactiveStatus();
-    expect(result).toEqual({ active: false, stashed: false });
+    expect(result).toEqual({ active: false, runs: [] });
   });
 });
 
-describe('buildStashedStatus', () => {
-  it('returns stashed status with position', () => {
-    const state = makeState({ step: '2', substep: undefined });
-    const steps = [makeStep({ name: '1' }), makeStep({ name: '2' })];
-
-    jest.mocked(getRunbookFromState).mockReturnValue(steps);
-    jest.mocked(buildMetadata).mockReturnValue({
-      file: 'test.runbook.md',
-      state: '.rundown/rundown.db',
-      runId: DEFAULT_RUN_ID,
-    });
+describe('buildRunListStatus', () => {
+  beforeEach(() => {
+    jest
+      .mocked(getRunbookFromState)
+      .mockReturnValue([makeStep({ name: '1' }), makeStep({ name: '2' })]);
     jest.mocked(core.countNumberedSteps).mockReturnValue(2);
+  });
 
-    const result = buildStashedStatus(state, '/test');
+  it('lists every run with id, runbook, lifecycle and position', () => {
+    const running = makeState({ id: DEFAULT_RUN_ID, step: '2', title: 'Running one' });
+    const completed = makeState({
+      id: ARTIFACT_RUN_ID,
+      step: '2',
+      lifecycle: 'completed',
+      runbook: { source: 'project', path: 'done.runbook.md' },
+    });
+
+    const result = buildRunListStatus([running, completed], '/test');
 
     expect(result.active).toBe(false);
-    expect(result.stashed).toBe(true);
-    expect(result.file).toBe('test.runbook.md');
-    // `state` is the same database for every run, so `runId` carries identity.
-    expect(result.runId).toBe(DEFAULT_RUN_ID);
-    expect(result.position).toEqual({ current: '2', total: 2 });
+    expect(result.runs).toEqual([
+      {
+        id: DEFAULT_RUN_ID,
+        runbook: 'test.runbook.md',
+        status: 'running',
+        step: '2',
+        total: 2,
+        title: 'Running one',
+      },
+      { id: ARTIFACT_RUN_ID, runbook: 'done.runbook.md', status: 'complete', step: '2', total: 2 },
+    ]);
   });
 
-  it('includes substep in position when present', () => {
+  it('renders a substep position as step.substep', () => {
     const state = makeState({ step: '2', substep: '1' });
-    const steps = [makeStep({ name: '1' }), makeStep({ name: '2' })];
 
-    jest.mocked(getRunbookFromState).mockReturnValue(steps);
-    jest.mocked(buildMetadata).mockReturnValue({
-      file: 'test.runbook.md',
-      state: '.rundown/rundown.db',
-      runId: DEFAULT_RUN_ID,
-    });
-    jest.mocked(core.countNumberedSteps).mockReturnValue(2);
+    const result = buildRunListStatus([state], '/test');
 
-    const result = buildStashedStatus(state, '/test');
-
-    expect(result.position).toEqual({ current: '2', total: 2, substep: '1' });
+    expect(result.runs?.[0]?.step).toBe('2.1');
   });
 
-  it('includes prompted when true', () => {
-    const state = makeState({ prompted: true });
-    const steps = [makeStep()];
+  it('reports stopped and abandoned lifecycles', () => {
+    const stopped = makeState({ id: DEFAULT_RUN_ID, lifecycle: 'stopped' });
+    const abandoned = makeState({ id: ARTIFACT_RUN_ID, lifecycle: 'abandoned' });
 
-    jest.mocked(getRunbookFromState).mockReturnValue(steps);
-    jest.mocked(buildMetadata).mockReturnValue({
-      file: 'test.runbook.md',
-      state: '.rundown/rundown.db',
-      runId: DEFAULT_RUN_ID,
-      prompted: true,
-    });
-    jest.mocked(core.countNumberedSteps).mockReturnValue(1);
+    const result = buildRunListStatus([stopped, abandoned], '/test');
 
-    const result = buildStashedStatus(state, '/test');
+    expect(result.runs?.map((run) => run.status)).toEqual(['stopped', 'abandoned']);
+  });
 
-    expect(result.prompted).toBe(true);
+  it('returns an empty list for no runs', () => {
+    expect(buildRunListStatus([], '/test')).toEqual({ active: false, runs: [] });
+  });
+
+  it('never carries a token', () => {
+    const result = buildRunListStatus([makeState()], '/test');
+    expect(JSON.stringify(result)).not.toMatch(/rdo_|token/i);
   });
 });
 
-describe('buildActiveStatus', () => {
-  it('returns active status with step details', () => {
+describe('buildRunStatus', () => {
+  it('returns active status with step details for a running run', () => {
     const state = makeState({ step: '1' });
     const steps = [makeStep({ name: '1', description: 'First Step' })];
 
@@ -261,19 +258,47 @@ describe('buildActiveStatus', () => {
     });
     jest.mocked(core.countNumberedSteps).mockReturnValue(1);
 
-    const result = buildActiveStatus(state, '/test');
+    const result = buildRunStatus(state, '/test');
 
     expect(result.active).toBe(true);
-    expect(result.stashed).toBe(false);
+    expect(result.status).toBeUndefined();
     // `state` is the same database for every run, so `runId` carries identity.
     expect(result.runId).toBe(DEFAULT_RUN_ID);
+    expect(result.file).toBe('test.runbook.md');
     expect(result.step).toEqual({ name: '1', description: 'First Step' });
     expect(result.position).toEqual({ current: '1', total: 1 });
+    expect(result).not.toHaveProperty('stashed');
+    expect(result).not.toHaveProperty('delegations');
+    expect(result).not.toHaveProperty('parentLinkage');
   });
 
-  it('sets stashed flag when stashedId provided', () => {
-    const state = makeState();
-    const steps = [makeStep()];
+  it.each(['completed', 'stopped', 'abandoned'] as const)(
+    'reports a %s run as inactive with its lifecycle',
+    (lifecycle) => {
+      const state = makeState({ step: '1', lifecycle });
+      jest.mocked(getRunbookFromState).mockReturnValue([makeStep({ name: '1' })]);
+      jest.mocked(buildMetadata).mockReturnValue({
+        file: 'test.runbook.md',
+        state: '.rundown/rundown.db',
+        runId: DEFAULT_RUN_ID,
+      });
+      jest.mocked(core.countNumberedSteps).mockReturnValue(1);
+
+      const result = buildRunStatus(state, '/test');
+
+      expect(result.active).toBe(false);
+      expect(result.status).toBe(lifecycle);
+    },
+  );
+
+  it('includes substep, frame key and entry in position when present', () => {
+    const state = makeState({
+      step: '2',
+      substep: '1',
+      activeFrameKey: '2|' as FrameKey,
+      activeEntry: 3,
+    });
+    const steps = [makeStep({ name: '1' }), makeStep({ name: '2' })];
 
     jest.mocked(getRunbookFromState).mockReturnValue(steps);
     jest.mocked(buildMetadata).mockReturnValue({
@@ -281,11 +306,34 @@ describe('buildActiveStatus', () => {
       state: '.rundown/rundown.db',
       runId: DEFAULT_RUN_ID,
     });
+    jest.mocked(core.countNumberedSteps).mockReturnValue(2);
+
+    const result = buildRunStatus(state, '/test');
+
+    expect(result.position).toEqual({
+      current: '2',
+      total: 2,
+      substep: '1',
+      frameKey: state.activeFrameKey,
+      entry: 3,
+    });
+  });
+
+  it('includes prompted when true', () => {
+    const state = makeState({ prompted: true });
+
+    jest.mocked(getRunbookFromState).mockReturnValue([makeStep()]);
+    jest.mocked(buildMetadata).mockReturnValue({
+      file: 'test.runbook.md',
+      state: '.rundown/rundown.db',
+      runId: DEFAULT_RUN_ID,
+      prompted: true,
+    });
     jest.mocked(core.countNumberedSteps).mockReturnValue(1);
 
-    const result = buildActiveStatus(state, '/test', 'stashed-id');
+    const result = buildRunStatus(state, '/test');
 
-    expect(result.stashed).toBe(true);
+    expect(result.prompted).toBe(true);
   });
 
   it('includes lastAction when present', () => {
@@ -306,13 +354,13 @@ describe('buildActiveStatus', () => {
     jest.mocked(getStepRetryMax).mockReturnValue(3);
     jest.mocked(formatActionForDisplay).mockReturnValue('RETRY (1/3)');
 
-    const result = buildActiveStatus(state, '/test');
+    const result = buildRunStatus(state, '/test');
 
     expect(result.lastAction).toEqual({ action: 'RETRY (1/3)', result: 'FAIL' });
     expect(formatActionForDisplay).toHaveBeenCalledWith({ type: 'RETRY', origin: 'direct' }, 1, 3);
   });
 
-  it('maps lastResult pass to result true', () => {
+  it('maps lastResult pass to result PASS', () => {
     const state = makeState({
       lastAction: { type: 'CONTINUE', origin: 'direct' },
       retryCount: 0,
@@ -330,7 +378,7 @@ describe('buildActiveStatus', () => {
     jest.mocked(getStepRetryMax).mockReturnValue(0);
     jest.mocked(formatActionForDisplay).mockReturnValue('CONTINUE');
 
-    const result = buildActiveStatus(state, '/test');
+    const result = buildRunStatus(state, '/test');
 
     expect(result.lastAction).toEqual({ action: 'CONTINUE', result: 'PASS' });
   });
@@ -347,323 +395,9 @@ describe('buildActiveStatus', () => {
     });
     jest.mocked(core.countNumberedSteps).mockReturnValue(1);
 
-    const result = buildActiveStatus(state, '/test');
+    const result = buildRunStatus(state, '/test');
 
     expect(result.step).toBeUndefined();
-  });
-});
-
-describe('claimKey join (#531)', () => {
-  const CHILD_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
-  const CLAIM_ID = 'rdclm_AAAAAAAAAAAAAAAAAAAAAA';
-
-  beforeEach(() => {
-    jest.mocked(getRunbookFromState).mockReturnValue([makeStep({ name: '1' })]);
-    jest.mocked(buildMetadata).mockReturnValue({
-      file: 'test.runbook.md',
-      state: '.rundown/rundown.db',
-      runId: DEFAULT_RUN_ID,
-    });
-    jest.mocked(core.countNumberedSteps).mockReturnValue(1);
-  });
-
-  function makeStateWithClaimedDelegation(
-    overrides: {
-      childRunId?: string | null;
-      cancelledAt?: string | null;
-      token?: string | null;
-    } = {},
-  ): RunbookState {
-    // contextSnapshot.vars is branded (EffectiveVars) — hand-rolled fixture
-    // records need the cast; the builder never reads contextSnapshot.
-    const delegation = {
-      token: overrides.token === null ? undefined : (overrides.token ?? `rdtk_${'A'.repeat(32)}`),
-      tokenHash: brandDelegationTokenHashForTest(`sha256:${'a'.repeat(64)}`),
-      childRunbookPath: 'child.md',
-      childRunbookRef: { source: 'project', path: 'child.md' },
-      childRunId: overrides.childRunId != null ? brandRunIdForTest(overrides.childRunId) : null,
-      cancelledAt: overrides.cancelledAt ?? null,
-      contextSnapshot: { vars: {}, ancestors: [] },
-      createdAt: '2026-07-03T00:00:00.000Z',
-    } as unknown as CoreModule.StepDelegation;
-    const substepStates: CoreModule.SubstepState[] = [
-      {
-        id: '1',
-        frameKey: brandFrameKeyForTest('1|'),
-        status: 'running',
-        delegation,
-      },
-      // Non-delegation substep: must never surface as a delegations entry.
-      {
-        id: '2',
-        frameKey: brandFrameKeyForTest('1|'),
-        status: 'pending',
-      },
-    ];
-    return makeState({ substepStates });
-  }
-
-  it('joins claimKey onto claimed delegations from the session claim map', () => {
-    const state = makeStateWithClaimedDelegation({ childRunId: CHILD_RUN_ID });
-
-    const result = buildActiveStatus(state, '/test', undefined, undefined, {
-      claimKeyByChildRunId: new Map([[CHILD_RUN_ID, CLAIM_ID]]),
-    });
-
-    // Exactly one entry: the non-delegation substep never surfaces.
-    expect(result.delegations).toHaveLength(1);
-    expect(result.delegations?.[0]).toMatchObject({
-      state: 'claimed',
-      childRunId: CHILD_RUN_ID,
-      claimKey: CLAIM_ID,
-    });
-    // A claimed delegation never exposes its raw token.
-    expect(result.delegations?.[0]).not.toHaveProperty('token');
-  });
-
-  it('never attaches claimKey to a pending delegation even with stray map entries', () => {
-    const state = makeStateWithClaimedDelegation({ childRunId: null });
-
-    const result = buildActiveStatus(state, '/test', undefined, undefined, {
-      claimKeyByChildRunId: new Map([
-        [CHILD_RUN_ID, CLAIM_ID],
-        [`rd_${'b'.repeat(32)}`, 'rdclm_strayAAAAAAAAAAAAAAAA'],
-      ]),
-    });
-
-    const entry = result.delegations?.[0];
-    // Status is a read model, not a credential-delivery surface. Even a
-    // legacy-shaped state carrying a raw token must not expose it.
-    expect(entry).toMatchObject({
-      state: 'pending',
-      tokenHash: `sha256:${'a'.repeat(64)}`,
-      substep: '1',
-      runbook: 'child.md',
-    });
-    expect(entry).not.toHaveProperty('token');
-    expect(entry).not.toHaveProperty('childRunId');
-    expect(entry).not.toHaveProperty('claimKey');
-  });
-
-  it('excludes delegations from other frames when an active frame is set', () => {
-    const state = makeStateWithClaimedDelegation({ childRunId: CHILD_RUN_ID });
-    const scoped = { ...state, activeFrameKey: brandFrameKeyForTest('9|'), activeEntry: 1 };
-
-    const result = buildActiveStatus(scoped, '/test', undefined, undefined, {
-      claimKeyByChildRunId: new Map([[CHILD_RUN_ID, CLAIM_ID]]),
-    });
-
-    // The fixture's delegation is scoped to frame '1|'; the active frame '9|'
-    // filters it out.
-    expect(result.delegations).toBeUndefined();
-  });
-
-  it('includes delegations whose frame matches the active frame', () => {
-    const state = makeStateWithClaimedDelegation({ childRunId: CHILD_RUN_ID });
-    const scoped = { ...state, activeFrameKey: brandFrameKeyForTest('1|'), activeEntry: 1 };
-
-    const result = buildActiveStatus(scoped, '/test', undefined, undefined, {
-      claimKeyByChildRunId: new Map([[CHILD_RUN_ID, CLAIM_ID]]),
-    });
-
-    expect(result.delegations).toHaveLength(1);
-    expect(result.delegations?.[0]).toMatchObject({ state: 'claimed', claimKey: CLAIM_ID });
-  });
-
-  it('never resurfaces the token on a cancelled-before-claim delegation', () => {
-    const state = makeStateWithClaimedDelegation({
-      childRunId: null,
-      cancelledAt: '2026-07-03T00:00:00.000Z',
-    });
-
-    const result = buildActiveStatus(state, '/test');
-
-    const entry = result.delegations?.[0];
-    expect(entry).toMatchObject({ state: 'cancelled' });
-    expect(entry).not.toHaveProperty('token');
-  });
-
-  it('keeps pending delegation status token-free when persisted state has no token', () => {
-    const state = makeStateWithClaimedDelegation({ childRunId: null, token: null });
-
-    const result = buildActiveStatus(state, '/test');
-
-    const entry = result.delegations?.[0];
-    expect(entry).toMatchObject({ state: 'pending' });
-    expect(entry).not.toHaveProperty('token');
-  });
-
-  it('omits claimKey when the map has no matching entry', () => {
-    const state = makeStateWithClaimedDelegation({ childRunId: CHILD_RUN_ID });
-
-    const result = buildActiveStatus(state, '/test', undefined, undefined, {
-      claimKeyByChildRunId: new Map(),
-    });
-
-    const entry = result.delegations?.[0];
-    expect(entry).toMatchObject({ state: 'claimed', childRunId: CHILD_RUN_ID });
-    expect(entry).not.toHaveProperty('claimKey');
-  });
-
-  it('keeps the current shape when the options argument is omitted', () => {
-    const state = makeStateWithClaimedDelegation({ childRunId: CHILD_RUN_ID });
-
-    const result = buildActiveStatus(state, '/test');
-
-    const entry = result.delegations?.[0];
-    expect(entry).toMatchObject({ state: 'claimed', childRunId: CHILD_RUN_ID });
-    expect(entry).not.toHaveProperty('claimKey');
-  });
-
-  it('never attaches claimKey to a cancelled-after-claim delegation', () => {
-    // Cancelled-after-claim: childRunId stays set while cancelledAt is stamped
-    // (abortDelegation --force), so the computed entry state is 'cancelled'
-    // even though the claim map has a matching entry (e.g. a window before
-    // child teardown releases the claim record).
-    const state = makeStateWithClaimedDelegation({
-      childRunId: CHILD_RUN_ID,
-      cancelledAt: '2026-07-03T00:00:00.000Z',
-    });
-
-    const result = buildActiveStatus(state, '/test', undefined, undefined, {
-      claimKeyByChildRunId: new Map([[CHILD_RUN_ID, CLAIM_ID]]),
-    });
-
-    const entry = result.delegations?.[0];
-    expect(entry).toMatchObject({ state: 'cancelled', childRunId: CHILD_RUN_ID });
-    expect(entry).not.toHaveProperty('claimKey');
-    // A cancelled delegation never resurfaces its raw token.
-    expect(entry).not.toHaveProperty('token');
-  });
-});
-
-describe('parentLinkage projection', () => {
-  beforeEach(() => {
-    const steps = [makeStep({ name: '1', description: 'First Step' })];
-    jest.mocked(getRunbookFromState).mockReturnValue(steps);
-    jest.mocked(buildMetadata).mockReturnValue({
-      file: 'test.runbook.md',
-      state: '.rundown/rundown.db',
-      runId: DEFAULT_RUN_ID,
-    });
-    jest.mocked(core.countNumberedSteps).mockReturnValue(1);
-  });
-
-  it('surfaces delegation linkage with tokenHash in active status', () => {
-    const state = makeState({
-      parentLinkage: {
-        kind: 'delegation',
-        tokenHash: brandDelegationTokenHashForTest(
-          'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-        ),
-        parentRunId: PARENT_RUN_ID,
-        parentStepId: '1.1',
-        parentStep: '1',
-        parentFrameKey: brandFrameKeyForTest('1'),
-        parentEntry: 1,
-      },
-    });
-
-    const result = buildActiveStatus(state, '/test');
-
-    expect(result.parentLinkage).toEqual({
-      kind: 'delegation',
-      tokenHash: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
-      parentRunId: PARENT_RUN_ID,
-      parentStepId: '1.1',
-      parentStep: '1',
-      parentFrameKey: brandFrameKeyForTest('1'),
-      parentEntry: 1,
-    });
-  });
-
-  it('surfaces inline linkage without tokenHash in active status', () => {
-    const state = makeState({
-      parentLinkage: {
-        kind: 'inline',
-        parentRunId: PARENT_RUN_ID,
-        parentStepId: '1.1',
-        parentStep: '1',
-        parentFrameKey: brandFrameKeyForTest('1'),
-        parentEntry: 1,
-      },
-    });
-
-    const result = buildActiveStatus(state, '/test');
-
-    expect(result.parentLinkage).toEqual({
-      kind: 'inline',
-      parentRunId: PARENT_RUN_ID,
-      parentStepId: '1.1',
-      parentStep: '1',
-      parentFrameKey: brandFrameKeyForTest('1'),
-      parentEntry: 1,
-    });
-    expect(result.parentLinkage).not.toHaveProperty('tokenHash');
-  });
-
-  it('omits parentLinkage when state has none', () => {
-    const state = makeState();
-
-    const result = buildActiveStatus(state, '/test');
-
-    expect(result.parentLinkage).toBeUndefined();
-  });
-
-  it('surfaces parentLinkage in stashed status and redacts vars for caller-scoped child', () => {
-    const state = makeState({
-      parentLinkage: {
-        kind: 'delegation',
-        tokenHash: brandDelegationTokenHashForTest(
-          'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
-        ),
-        parentRunId: SECOND_PARENT_RUN_ID,
-        parentStepId: '2.1',
-        parentStep: '2',
-        parentFrameKey: brandFrameKeyForTest('2'),
-        parentEntry: 1,
-      },
-      templateVars: brandInitialTemplateVarsForTest({ secret: 'inherited-from-parent' }),
-      variables: brandStoredOutputsForTest({
-        output_value: 'child-output',
-        PlanPath: brandTrustedArtifactRecordForTest({
-          kind: 'artifact-record',
-          uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
-          runId: ARTIFACT_RUN_ID,
-          contextId: 'ctx-a',
-          runbook: { source: 'project', path: 'producer.runbook.md' },
-          key: 'plan.json',
-          timestamp: '2026-05-25T00:00:00.000Z',
-        }),
-      }),
-    });
-
-    const result = buildStashedStatus(state, '/test');
-
-    expect(result.parentLinkage).toEqual({
-      kind: 'delegation',
-      tokenHash: 'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
-      parentRunId: SECOND_PARENT_RUN_ID,
-      parentStepId: '2.1',
-      parentStep: '2',
-      parentFrameKey: brandFrameKeyForTest('2'),
-      parentEntry: 1,
-    });
-    // Caller-scoped (parentLinkage set) → vars and artifacts must be redacted from stashed status.
-    expect(result.vars).toBeUndefined();
-    expect(result.artifacts).toBeUndefined();
-  });
-
-  it('surfaces vars in stashed status when no parentLinkage is set', () => {
-    const state = makeState({
-      templateVars: brandInitialTemplateVarsForTest({ visible: 'value' }),
-      variables: brandStoredOutputsForTest(),
-    });
-
-    const result = buildStashedStatus(state, '/test');
-
-    expect(result.parentLinkage).toBeUndefined();
-    expect(result.vars).toEqual(expect.objectContaining({ visible: 'value' }));
   });
 });
 
@@ -688,7 +422,7 @@ describe('vars field', () => {
         PlanPath: '/work/plan.json',
       }),
     });
-    const result = buildActiveStatus(state, '/project');
+    const result = buildRunStatus(state, '/project');
     expect(result.vars).toEqual({
       environment: 'production',
       port: '3000',
@@ -706,7 +440,7 @@ describe('vars field', () => {
       }),
       variables: brandStoredOutputsForTest(),
     });
-    const result = buildActiveStatus(state, '/project');
+    const result = buildRunStatus(state, '/project');
     expect(result.vars).toEqual({ name: 'test' });
     expect(result.vars?.items).toBeUndefined();
   });
@@ -725,7 +459,7 @@ describe('vars field', () => {
       variables: brandStoredOutputsForTest({ PlanPath: artifact }),
     });
 
-    const result = buildActiveStatus(state, '/project');
+    const result = buildRunStatus(state, '/project');
 
     expect(result.vars).toEqual({
       PlanPath: `/project/.rundown/work/.rd-ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
@@ -754,7 +488,7 @@ describe('vars field', () => {
       variables: brandStoredOutputsForTest({ OutputPath: artifact }),
     });
 
-    const result = buildActiveStatus(state, '/project');
+    const result = buildRunStatus(state, '/project');
 
     expect(result.vars?.OutputPath).toBe(
       `/project/.rundown/work/.rd-ctx-b/${otherRunId}/output.json`,
@@ -788,7 +522,7 @@ describe('vars field', () => {
       variables: brandStoredOutputsForTest({ ArtA: artifactA, ArtB: artifactB }),
     });
 
-    const result = buildActiveStatus(state, '/project');
+    const result = buildRunStatus(state, '/project');
 
     expect(result.vars?.ArtA).toContain('ctx-x');
     expect(result.vars?.ArtA).toContain(runIdA);
@@ -824,7 +558,7 @@ describe('vars field', () => {
       }),
     });
 
-    const result = buildActiveStatus(state, '/project');
+    const result = buildRunStatus(state, '/project');
 
     expect(result.vars).toEqual({
       Plans: JSON.stringify([
@@ -866,7 +600,7 @@ describe('vars field', () => {
       runId: DEFAULT_RUN_ID,
     });
 
-    const result = buildActiveStatus(state, '/project');
+    const result = buildRunStatus(state, '/project');
 
     expect(result.vars?.PlanPath).toBe(
       `/project/.custom/work/.rd-ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
@@ -874,63 +608,6 @@ describe('vars field', () => {
     expect(result.artifacts?.PlanPath).toEqual(
       expect.objectContaining({
         path: `/project/.custom/work/.rd-ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
-      }),
-    );
-  });
-
-  it('redacts artifacts in stashed status for a caller-scoped child', () => {
-    const artifact = brandTrustedArtifactRecordForTest({
-      kind: 'artifact-record',
-      uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
-      runId: ARTIFACT_RUN_ID,
-      contextId: 'ctx-a',
-      runbook: { source: 'project', path: 'producer.runbook.md' },
-      key: 'plan.json',
-      timestamp: '2026-05-25T00:00:00.000Z',
-    });
-    const state = makeState({
-      parentLinkage: {
-        kind: 'delegation',
-        tokenHash: brandDelegationTokenHashForTest(
-          'sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210',
-        ),
-        parentRunId: SECOND_PARENT_RUN_ID,
-        parentStepId: '2.1',
-        parentStep: '2',
-        parentFrameKey: brandFrameKeyForTest('2'),
-        parentEntry: 1,
-      },
-      variables: brandStoredOutputsForTest({ PlanPath: artifact }),
-    });
-
-    const result = buildStashedStatus(state, '/project');
-
-    // Caller-scoped (parentLinkage set) → artifacts redacted alongside vars.
-    expect(result.artifacts).toBeUndefined();
-    expect(result.vars).toBeUndefined();
-  });
-
-  it('surfaces artifacts in stashed status when no parentLinkage is set', () => {
-    const artifact = brandTrustedArtifactRecordForTest({
-      kind: 'artifact-record',
-      uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
-      runId: ARTIFACT_RUN_ID,
-      contextId: 'ctx-a',
-      runbook: { source: 'project', path: 'producer.runbook.md' },
-      key: 'plan.json',
-      timestamp: '2026-05-25T00:00:00.000Z',
-    });
-    const state = makeState({
-      variables: brandStoredOutputsForTest({ PlanPath: artifact }),
-    });
-
-    const result = buildStashedStatus(state, '/project');
-
-    expect(result.parentLinkage).toBeUndefined();
-    expect(result.artifacts?.PlanPath).toEqual(
-      expect.objectContaining({
-        kind: 'artifact-record',
-        path: `/project/.rundown/work/.rd-ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
       }),
     );
   });
@@ -949,7 +626,7 @@ describe('vars field', () => {
       variables: brandStoredOutputsForTest({ SchemaPath: artifact }),
     });
 
-    const result = buildActiveStatus(state, '/project');
+    const result = buildRunStatus(state, '/project');
 
     expect(result.artifacts?.SchemaPath).toEqual(
       expect.objectContaining({
@@ -964,20 +641,34 @@ describe('vars field', () => {
       templateVars: brandInitialTemplateVarsForTest(),
       variables: brandStoredOutputsForTest(),
     });
-    const result = buildActiveStatus(state, '/project');
+    const result = buildRunStatus(state, '/project');
     expect(result.vars).toBeUndefined();
   });
 
-  it('buildStashedStatus also includes vars field', () => {
-    const state = makeState({
-      templateVars: brandInitialTemplateVarsForTest({ environment: 'staging' }),
-      variables: brandStoredOutputsForTest({ PlanPath: '/work/plan.json' }),
+  it('surfaces vars and artifacts on a finished run', () => {
+    const artifact = brandTrustedArtifactRecordForTest({
+      kind: 'artifact-record',
+      uri: `rd://artifacts/ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
+      runId: ARTIFACT_RUN_ID,
+      contextId: 'ctx-a',
+      runbook: { source: 'project', path: 'producer.runbook.md' },
+      key: 'plan.json',
+      timestamp: '2026-05-25T00:00:00.000Z',
     });
-    const result = buildStashedStatus(state, '/project');
+    const state = makeState({
+      lifecycle: 'completed',
+      templateVars: brandInitialTemplateVarsForTest({ environment: 'staging' }),
+      variables: brandStoredOutputsForTest({ PlanPath: artifact }),
+    });
+    const result = buildRunStatus(state, '/project');
+    expect(result.active).toBe(false);
     expect(result.vars).toEqual({
       environment: 'staging',
-      PlanPath: '/work/plan.json',
+      PlanPath: `/project/.rundown/work/.rd-ctx-a/${ARTIFACT_RUN_ID}/plan.json`,
     });
+    expect(result.artifacts?.PlanPath).toEqual(
+      expect.objectContaining({ kind: 'artifact-record' }),
+    );
   });
 });
 

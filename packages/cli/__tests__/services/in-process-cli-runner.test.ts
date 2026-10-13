@@ -1,10 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { describe, expect, it } from '@jest/globals';
-import {
-  listPersistedRunIds,
-  readPersistedRunState,
-} from '@rundown-org/core/testing/run-fixtures';
+import { listPersistedRunIds, readPersistedRunState } from '@rundown-org/core/testing/run-fixtures';
 import { runCliInProcess } from '../../src/services/in-process-cli-runner.js';
 import { createTestWorkspace } from '../helpers/test-utils.js';
 

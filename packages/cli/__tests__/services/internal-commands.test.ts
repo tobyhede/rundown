@@ -8,9 +8,11 @@ import {
 } from '../../src/services/internal-commands.js';
 import {
   RunbookStateManager,
-  SessionService,
+  generateOwnerToken,
+  hashRunSecret,
   parseRunbook,
   type Runbook,
+  type RunId,
   runbooksDir,
   runsDir,
 } from '@rundown-org/core';
@@ -55,6 +57,7 @@ describe('internal-commands', () => {
   describe('executeRdCommandInternal()', () => {
     let tempDir: string;
     let manager: RunbookStateManager;
+    let runId: RunId;
     let consoleSpy: jest.SpiedFunction<typeof console.log>;
     let consoleErrorSpy: jest.SpiedFunction<typeof console.error>;
 
@@ -71,10 +74,13 @@ rd echo test
 `;
 
     /**
-     * Helper to set up an active runbook for testing.
-     * Creates runbook state file and adds it to the session.
+     * Helper to seed a running run for testing.
+     *
+     * `rd echo` runs inside a step command and learns its run from the
+     * injected `RD_RUN_ID`, so the seeded run id is returned as the env the
+     * command execution would inject.
      */
-    async function setupActiveRunbook(): Promise<void> {
+    async function setupRun(): Promise<Record<string, string>> {
       const runbooksDirPath = runbooksDir(tempDir);
       await writeFile(join(runbooksDirPath, 'test.runbook.md'), runbookContent);
 
@@ -85,15 +91,14 @@ rd echo test
         steps,
       };
 
-      // Create runbook state
+      // Create the run row owned by a fresh token
       const state = await manager.create({ source: 'project', path: 'test.runbook.md' }, runbook, {
         runbookPath: 'test.runbook.md',
         prompted: true,
+        ownerTokenHash: hashRunSecret(generateOwnerToken()),
       });
-
-      // Push to make it active
-      const sessionService = new SessionService(manager);
-      await sessionService.pushRunbook(state.id);
+      runId = state.id;
+      return { RD_RUN_ID: state.id };
     }
 
     beforeEach(async () => {
@@ -146,19 +151,38 @@ rd echo test
     });
 
     describe('echo command', () => {
-      it('returns error result when no active runbook', async () => {
-        const result = await executeRdCommandInternal('rd echo test', tempDir);
+      it('returns error result when no run context is injected', async () => {
+        const previous = process.env.RD_RUN_ID;
+        delete process.env.RD_RUN_ID;
+        try {
+          const result = await executeRdCommandInternal('rd echo test', tempDir);
 
-        expect(result).not.toBeNull();
-        expect(result?.success).toBe(false);
-        expect(result?.exitCode).toBe(1);
-        expect(consoleErrorSpy).toHaveBeenCalledWith('Error: No active runbook.');
+          expect(result).not.toBeNull();
+          expect(result?.success).toBe(false);
+          expect(result?.exitCode).toBe(1);
+          expect(consoleErrorSpy).toHaveBeenCalledWith(expect.stringContaining('No run context'));
+        } finally {
+          if (previous !== undefined) process.env.RD_RUN_ID = previous;
+        }
       });
 
-      it('returns pass by default when active runbook exists', async () => {
-        await setupActiveRunbook();
+      it('returns error result when the injected run does not exist', async () => {
+        const result = await executeRdCommandInternal('rd echo test', tempDir, {
+          RD_RUN_ID: 'rd_00000000000000000000000000000000',
+        });
 
-        const result = await executeRdCommandInternal('rd echo test', tempDir);
+        expect(result?.success).toBe(false);
+        expect(result?.exitCode).toBe(1);
+        expect(consoleErrorSpy).toHaveBeenCalledWith(
+          'Error: Run rd_00000000000000000000000000000000 not found.',
+        );
+      });
+
+      it('returns pass by default when the injected run exists', async () => {
+        const env = await setupRun();
+
+        const result = await executeRdCommandInternal('rd echo test', tempDir, env);
+        expect(runId).toMatch(/^rd_/);
 
         expect(result).not.toBeNull();
         expect(result?.success).toBe(true);
@@ -167,9 +191,9 @@ rd echo test
       });
 
       it('returns pass with explicit --result pass', async () => {
-        await setupActiveRunbook();
+        const env = await setupRun();
 
-        const result = await executeRdCommandInternal('rd echo --result pass test', tempDir);
+        const result = await executeRdCommandInternal('rd echo --result pass test', tempDir, env);
 
         expect(result).not.toBeNull();
         expect(result?.success).toBe(true);
@@ -177,9 +201,9 @@ rd echo test
       });
 
       it('returns fail with --result fail', async () => {
-        await setupActiveRunbook();
+        const env = await setupRun();
 
-        const result = await executeRdCommandInternal('rd echo --result fail test', tempDir);
+        const result = await executeRdCommandInternal('rd echo --result fail test', tempDir, env);
 
         expect(result).not.toBeNull();
         expect(result?.success).toBe(false);
@@ -188,9 +212,13 @@ rd echo test
       });
 
       it('returns error for invalid result value', async () => {
-        await setupActiveRunbook();
+        const env = await setupRun();
 
-        const result = await executeRdCommandInternal('rd echo --result invalid test', tempDir);
+        const result = await executeRdCommandInternal(
+          'rd echo --result invalid test',
+          tempDir,
+          env,
+        );
 
         expect(result).not.toBeNull();
         expect(result?.success).toBe(false);
@@ -199,9 +227,9 @@ rd echo test
       });
 
       it('supports short -r flag', async () => {
-        await setupActiveRunbook();
+        const env = await setupRun();
 
-        const result = await executeRdCommandInternal('rd echo -r fail test', tempDir);
+        const result = await executeRdCommandInternal('rd echo -r fail test', tempDir, env);
 
         expect(result).not.toBeNull();
         expect(result?.success).toBe(false);
@@ -209,9 +237,9 @@ rd echo test
       });
 
       it('echoes command arguments in output', async () => {
-        await setupActiveRunbook();
+        const env = await setupRun();
 
-        await executeRdCommandInternal('rd echo npm install --save lodash', tempDir);
+        await executeRdCommandInternal('rd echo npm install --save lodash', tempDir, env);
 
         expect(consoleSpy).toHaveBeenCalledWith(
           expect.stringContaining('npm install --save lodash'),
@@ -219,9 +247,9 @@ rd echo test
       });
 
       it('works with rundown prefix', async () => {
-        await setupActiveRunbook();
+        const env = await setupRun();
 
-        const result = await executeRdCommandInternal('rundown echo test', tempDir);
+        const result = await executeRdCommandInternal('rundown echo test', tempDir, env);
 
         expect(result).not.toBeNull();
         expect(result?.success).toBe(true);
@@ -229,9 +257,9 @@ rd echo test
       });
 
       it('strips --text flag from echo output instead of including it literally', async () => {
-        await setupActiveRunbook();
+        const env = await setupRun();
 
-        await executeRdCommandInternal('rd echo --text hello', tempDir);
+        await executeRdCommandInternal('rd echo --text hello', tempDir, env);
 
         // '--text' must not appear in the echoed output
         expect(consoleSpy).not.toHaveBeenCalledWith(expect.stringContaining('--text'));
@@ -239,12 +267,13 @@ rd echo test
       });
 
       it('supports multiple --result options', async () => {
-        await setupActiveRunbook();
+        const env = await setupRun();
 
         // First call with retry count 0 should use first result (fail)
         const result = await executeRdCommandInternal(
           'rd echo --result fail --result pass test',
           tempDir,
+          env,
         );
 
         expect(result).not.toBeNull();

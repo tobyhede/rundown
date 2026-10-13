@@ -776,7 +776,7 @@ describe('RunbookStateManager', () => {
       const rejected = outcomes.filter((o) => o.status === 'rejected');
       expect(fulfilled).toHaveLength(1);
       expect(rejected).toHaveLength(1);
-      expectRefusedConcurrent((rejected[0] as PromiseRejectedResult).reason, state.id);
+      expectRefusedConcurrent(rejected[0].reason, state.id);
 
       // Exactly one write landed, and the refused patch is nowhere in it.
       const updated = await manager.load(state.id);

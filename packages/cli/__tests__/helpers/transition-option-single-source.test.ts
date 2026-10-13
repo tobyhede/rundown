@@ -10,7 +10,7 @@ import { registerStatusCommand } from '../../src/commands/status.js';
 function registeredValueTakingOptionLongs(register: (program: Command) => void): string[] {
   const program = new Command();
   register(program);
-  const command = program.commands[0];
+  const command = program.commands.at(0);
   if (!command) throw new Error('expected a subcommand to be registered');
   return command.options
     .filter((option: Option) => option.required || option.optional)
@@ -22,7 +22,7 @@ function registeredValueTakingOptionLongs(register: (program: Command) => void):
 function hiddenOptionLongs(register: (program: Command) => void): string[] {
   const program = new Command();
   register(program);
-  const command = program.commands[0];
+  const command = program.commands.at(0);
   if (!command) throw new Error('expected a subcommand to be registered');
   return command.options
     .filter((option: Option) => option.hidden)

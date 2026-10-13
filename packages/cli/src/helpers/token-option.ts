@@ -86,6 +86,8 @@ export function withTokenOption(command: Command): Command {
  * @param command - The mutating command, named in the refusal.
  * @param output - Output emitter used to render a refusal.
  * @returns The parsed Owner Token, or `undefined` when a refusal was rendered.
+ * @throws {Error} Any failure from parsing the token other than
+ *   `InvalidRunSecretError`, which is rendered as a refusal instead.
  */
 export function parseTokenOption(
   raw: { readonly token?: string; readonly run?: string },

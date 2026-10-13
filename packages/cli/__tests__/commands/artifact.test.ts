@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import {
   RunbookStateManager,
-  SessionService,
   appendArtifactManifestRecord,
   assertRunId,
+  generateOwnerToken,
+  hashRunSecret,
   merge,
 } from '@rundown-org/core';
 import { parseRunbookDocument } from '@rundown-org/parser';
@@ -69,12 +70,12 @@ describe('artifact command', () => {
     ].join('\n');
     const { runbook } = parseRunbookDocument(markdown, 'workflow.runbook.md');
     const manager = new RunbookStateManager(workspace.cwd);
-    const session = new SessionService(manager);
     const state = await manager.create(
       { source: 'project', path: 'workflow.runbook.md' },
       runbook,
       {
         runbookPath: 'workflow.runbook.md',
+        ownerTokenHash: hashRunSecret(generateOwnerToken()),
         runId: RUN_ID,
         templateVars: {
           WorkPath: '.rundown/work',
@@ -84,7 +85,6 @@ describe('artifact command', () => {
         frontmatterOutputs: [],
       },
     );
-    await session.pushRunbook(state.id);
     const uri = `rd://artifacts/${CONTEXT_ID}/${RUN_ID}/plan.json`;
     await appendArtifactManifestRecord(
       { cwd: workspace.cwd, workPath: '.rundown/work' },
@@ -120,18 +120,17 @@ describe('artifact command', () => {
     );
     const { runbook } = parseRunbookDocument(markdown, 'workflow.runbook.md');
     const manager = new RunbookStateManager(workspace.cwd);
-    const session = new SessionService(manager);
     const state = await manager.create(
       { source: 'project', path: 'workflow.runbook.md' },
       runbook,
       {
         runbookPath: 'workflow.runbook.md',
+        ownerTokenHash: hashRunSecret(generateOwnerToken()),
         runId: RUN_ID,
         templateVars: { WorkPath: '.rundown/work', ContextId: CONTEXT_ID, RunId: RUN_ID },
         frontmatterOutputs: [],
       },
     );
-    await session.pushRunbook(state.id);
     const uris = [
       `rd://artifacts/${CONTEXT_ID}/${RUN_ID}/review-1.json`,
       `rd://artifacts/${CONTEXT_ID}/${RUN_ID}/review-2.json`,
@@ -154,11 +153,9 @@ describe('artifact command', () => {
     return uris;
   }
 
-  // stale_claim is intentionally not covered here: `resolveCommandTarget` only
-  // returns it when a claimId is supplied, and the artifact command never passes
-  // one (it calls `resolveCommandTarget(session, { allowStashed: true })`), so the
-  // stale_claim branch is unreachable through the CLI.
-  describe.each(['ls', 'path', 'uri', 'inspect'])('with no active runbook (%s)', (sub) => {
+  // Bare `rd artifact …` resolves the single running run; with none it emits
+  // the no-run warning, with several it asks for `--run`.
+  describe.each(['ls', 'path', 'uri', 'inspect'])('with no running run (%s)', (sub) => {
     it('emits the no-active-runbook warning and exits 0', async () => {
       const args = sub === 'ls' ? ['artifact', 'ls'] : ['artifact', sub, 'PlanPath'];
       const result = await runCliInProcess(args, workspace);
@@ -177,6 +174,40 @@ describe('artifact command', () => {
         errors: [],
       });
     });
+  });
+
+  it('selects the run named by --run', async () => {
+    const uri = await seedActiveArtifact();
+    const result = await runCliInProcess(['artifact', 'ls', '--run', RUN_ID], workspace);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(uri);
+  });
+
+  it('refuses an unknown --run with RUN_TARGET_UNAVAILABLE', async () => {
+    await seedActiveArtifact();
+    const result = await runCliInProcess(
+      ['artifact', 'ls', '--run', 'rd_00000000000000000000000000000000'],
+      workspace,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({ kind: 'error', code: 'RUN_TARGET_UNAVAILABLE' }),
+    );
+  });
+
+  it('asks for --run when several runs are running', async () => {
+    await seedActiveArtifact();
+    const other = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    expect(other.exitCode).toBe(0);
+
+    const result = await runCliInProcess(['artifact', 'ls'], workspace);
+
+    expect(result.exitCode).toBe(1);
+    const output = JSON.parse(result.stdout);
+    expect(output).toEqual(expect.objectContaining({ kind: 'error', code: 'INVALID_SYNTAX' }));
+    expect(String(output.error)).toContain('--run');
   });
 
   it('lists active artifact aliases', async () => {

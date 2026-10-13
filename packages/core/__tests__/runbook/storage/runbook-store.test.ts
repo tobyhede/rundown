@@ -409,9 +409,15 @@ describe('saveRun — one conditional write, no retry', () => {
 describe('assertExactlyOneRow', () => {
   it('accepts exactly one change and refuses anything else as an invariant', () => {
     const runId = assertRunId(`rd_${'0'.repeat(32)}`);
-    expect(() => assertExactlyOneRow(1, runId)).not.toThrow();
-    expect(() => assertExactlyOneRow(0, runId)).toThrow(StoreInvariantError);
-    expect(() => assertExactlyOneRow(2, runId)).toThrow(StoreInvariantError);
+    expect(() => {
+      assertExactlyOneRow(1, runId);
+    }).not.toThrow();
+    expect(() => {
+      assertExactlyOneRow(0, runId);
+    }).toThrow(StoreInvariantError);
+    expect(() => {
+      assertExactlyOneRow(2, runId);
+    }).toThrow(StoreInvariantError);
   });
 });
 

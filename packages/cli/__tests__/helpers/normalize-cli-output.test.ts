@@ -31,23 +31,27 @@ describe('normalizeCliOutput', () => {
     expect(normalizeCliOutput(input, workspace)).toBe('at <workdir>/runs/state.json');
   });
 
-  it('replaces delegation tokens with <token>', () => {
+  it('replaces owner tokens with <ownerToken>', () => {
     // cspell:disable-next-line
-    const input = '"token": "rdtk_UTDQH4LPV3I364XFXLBSGKNPLNQGRAZO"';
-    expect(normalizeCliOutput(input, workspace)).toBe('"token": "<token>"');
+    const input = '"owner_token": "rdo_sycJMIVtAJT1gGNlbCH32VqLpDbLXW6vDia7OyocI-o"';
+    expect(normalizeCliOutput(input, workspace)).toBe('"owner_token": "<ownerToken>"');
   });
 
-  it('replaces claim ids with <claimId>', () => {
+  it('replaces the text-mode owner token line value with <ownerToken>', () => {
     // cspell:disable-next-line
-    const input = '"claim_id": "rdclm_65vgjvar2liaL8dja5vpDA"';
-    expect(normalizeCliOutput(input, workspace)).toBe('"claim_id": "<claimId>"');
+    const input = 'Owner token: rdo_FVTq4ee_kX5kPUMWWHdB5gZsw6eVJLsyOLbVfRmfTYw\nAction:   START';
+    expect(normalizeCliOutput(input, workspace)).toBe('Owner token: <ownerToken>\nAction:   START');
   });
 
-  it('replaces canonical bearer claim ids with <claimId>', () => {
+  it('replaces claim tickets with <claimTicket>', () => {
     // cspell:disable-next-line
-    const input =
-      '"claim_id": "rdclm_0123456789abcdef0123456789abcdef_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_"';
-    expect(normalizeCliOutput(input, workspace)).toBe('"claim_id": "<claimId>"');
+    const input = '"ticket": "rdt_sycJMIVtAJT1gGNlbCH32VqLpDbLXW6vDia7OyocI-o"';
+    expect(normalizeCliOutput(input, workspace)).toBe('"ticket": "<claimTicket>"');
+  });
+
+  it('leaves a malformed rdo_ value untouched (not a token)', () => {
+    const input = '"owner_token": "rdo_short"';
+    expect(normalizeCliOutput(input, workspace)).toBe('"owner_token": "rdo_short"');
   });
 
   it('replaces sha256 hex digests with <tokenHash>', () => {

@@ -1,42 +1,26 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import {
-  assertClaimId,
-  assertDelegationTokenHash,
-  buildFrameKey,
-  claimKeyFromBearer,
-  createDelegatedChildGrants,
-  Errors,
-  hashClaimSecret,
-  parseClaimBearer,
-  RunbookStateManager,
-  SessionService,
-  type ClaimId,
-  type Runbook,
-  type RunId,
-} from '@rundown-org/core';
+import { Errors, RunbookStateManager, type RunId } from '@rundown-org/core';
 import {
   createTestWorkspace,
   runCliInProcess,
-  readSession,
-  writeSession,
   listRunbookStates,
   readRunbookState,
-  findActionOutput,
-  parseConcatenatedJson,
-  requireFrontierToken,
-  seedExecutionOwnership,
+  requireOwnerToken,
+  requireRunId,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
-import { patchPersistedRunState } from '@rundown-org/core/testing/run-fixtures';
+import { patchPersistedRunState, seedRun } from '@rundown-org/core/testing/run-fixtures';
+import { validateCommandOutput } from '../helpers/schema-validator.js';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests src/commands/prune.ts`
 // credits the behavioural tests below (which reach the command only via the
-// dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
+// dynamic `import('../cli.js')` seam in runCliInProcess).
 import { registerPruneCommand } from '../../src/commands/prune.js';
-import { parseRunbookDocument } from '@rundown-org/parser';
+
+const UNKNOWN_TOKEN = 'rdo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
 describe('prune command wiring', () => {
   it('registers the prune command with its documented flags and descriptions', () => {
@@ -45,32 +29,32 @@ describe('prune command wiring', () => {
 
     const prune = program.commands.find((c) => c.name() === 'prune');
     expect(prune).toBeDefined();
-    expect(prune?.description()).toBe('Remove runbook state (does not delete runbook files)');
+    expect(prune?.description()).toBe('Remove run state (does not delete runbook files)');
 
     const byLong = new Map(prune!.options.map((o) => [o.long, o]));
-    expect([...byLong.keys()]).toEqual(
-      expect.arrayContaining([
+    expect([...byLong.keys()].sort()).toEqual(
+      [
         '--dry-run',
         '--completed',
         '--stopped',
         '--active',
         '--inactive',
         '--all',
+        '--token',
         '--text',
-      ]),
+      ].sort(),
     );
     expect(byLong.get('--dry-run')?.description).toBe(
       'Show what would be removed without deleting',
     );
-    expect(byLong.get('--completed')?.description).toBe(
-      'Prune successfully completed runbook state',
+    expect(byLong.get('--completed')?.description).toBe('Prune successfully completed run state');
+    expect(byLong.get('--stopped')?.description).toBe('Prune stopped (aborted/failed) run state');
+    expect(byLong.get('--active')?.description).toBe(
+      'Prune running run state (each running run needs its --token)',
     );
-    expect(byLong.get('--stopped')?.description).toBe(
-      'Prune stopped (aborted/failed) runbook state',
-    );
-    expect(byLong.get('--active')?.description).toBe('Prune active runbook state');
-    expect(byLong.get('--inactive')?.description).toBe('Prune inactive (orphaned) runbook state');
-    expect(byLong.get('--all')?.description).toBe('Prune all runbook state');
+    expect(byLong.get('--inactive')?.description).toBe('Prune invalid or abandoned run state');
+    expect(byLong.get('--all')?.description).toBe('Prune all run state');
+    expect(byLong.get('--token')?.description).toContain('deletes that one running run');
     expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
   });
 });
@@ -86,12 +70,34 @@ describe('prune command', () => {
     await workspace.cleanup();
   });
 
+  /** Start a prompted run that stays running; returns its id and Owner Token. */
+  async function startRunning(): Promise<{ runId: string; token: string }> {
+    const start = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+    return { runId: requireRunId(start.stdout), token: requireOwnerToken(start.stdout) };
+  }
+
+  /** Auto-run completes simple.runbook.md (both steps pass). */
+  async function startCompleted(): Promise<string> {
+    const start = await runCliInProcess('run runbooks/simple.runbook.md', workspace);
+    expect(start.exitCode).toBe(0);
+    return requireRunId(start.stdout);
+  }
+
+  /** Start a prompted run and stop it under its own token. */
+  async function startStopped(): Promise<string> {
+    const { runId, token } = await startRunning();
+    const stopped = await runCliInProcess(`stop --token ${token}`, workspace);
+    expect(stopped.exitCode).toBe(1);
+    return runId;
+  }
+
   describe('empty workspace', () => {
     it('outputs empty message when no state exists', async () => {
       const result = await runCliInProcess('prune --text', workspace);
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('No runbook state to prune.');
+      expect(result.stdout).toContain('No run state to prune.');
     });
 
     it('outputs empty array in JSON mode when no state exists', async () => {
@@ -102,7 +108,7 @@ describe('prune command', () => {
       expect(output).toEqual([]);
     });
 
-    it('leaves unreleased JSON state byte-identical', async () => {
+    it('leaves unrelated JSON files byte-identical', async () => {
       const inertFiles = [
         join(workspace.cwd, '.rundown', 'session.json'),
         join(workspace.cwd, '.rundown', 'runs', 'rd_legacy.json'),
@@ -124,9 +130,8 @@ describe('prune command', () => {
   });
 
   describe('default behavior (--completed + --stopped)', () => {
-    it('prunes completed runbook state by default', async () => {
-      // Auto-run completes the runbook (both steps pass), leaving state with completed=true
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
+    it('prunes completed run state by default', async () => {
+      await startCompleted();
 
       const statesBefore = await listRunbookStates(workspace);
       expect(statesBefore.length).toBe(1);
@@ -138,17 +143,16 @@ describe('prune command', () => {
       expect(statesAfter.length).toBe(0);
     });
 
-    it('emits only the documented ActiveRunbookEntry fields in JSON, not raw RunbookState', async () => {
-      // prune JSON uses PruneResponseSchema (= ActiveRunbookListSchema), so
-      // entries must not leak internal RunbookState fields.
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
+    it('emits only the documented entry fields in JSON, not raw RunbookState', async () => {
+      await startCompleted();
 
       const result = await runCliInProcess('prune', workspace);
 
       expect(result.exitCode).toBe(0);
       const output = JSON.parse(result.stdout);
+      expect(validateCommandOutput('prune', output)).toEqual({ valid: true, errors: [] });
       expect(output.length).toBeGreaterThan(0);
-      const allowed = ['id', 'runbook', 'step', 'status', 'total', 'title'];
+      const allowed = ['id', 'runbook', 'step', 'status', 'total', 'title', 'retained'];
       const leakedKeys = Object.keys(output[0]).filter((k) => !allowed.includes(k));
       expect(leakedKeys).toEqual([]);
       expect(output[0]).not.toHaveProperty('snapshot');
@@ -156,12 +160,7 @@ describe('prune command', () => {
     });
 
     it('removes artifact-bearing variables when pruning a completed run', async () => {
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
-      const statesBefore = await listRunbookStates(workspace);
-      expect(statesBefore).toHaveLength(1);
-
-      const stateFile = statesBefore[0];
-      const stateId = stateFile.replace('.json', '');
+      const stateId = await startCompleted();
       const state = await readRunbookState(workspace, stateId);
       expect(state).not.toBeNull();
       const artifact = {
@@ -174,7 +173,7 @@ describe('prune command', () => {
         timestamp: '2026-05-07T00:00:00.000Z',
       };
       // Persist an ArtifactRecord inside the unified `variables` bucket
-      // alongside a string OUTPUTS value, mirroring the post-Phase-1 shape.
+      // alongside a string OUTPUTS value.
       await patchPersistedRunState(workspace.cwd, stateId, (current) => ({
         ...current,
         variables: {
@@ -196,16 +195,12 @@ describe('prune command', () => {
 
       const loaded = await readRunbookState(workspace, stateId);
       expect(loaded).toBeNull();
-      // Pruning the run removes the entire state file, including any
-      // artifact-shaped entries inside `variables`.
       const statesAfter = await listRunbookStates(workspace);
       expect(statesAfter).toHaveLength(0);
     });
 
-    it('prunes stopped runbook state by default', async () => {
-      // Start runbook then stop it — leaves state with lifecycle=stopped
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-      await runCliInProcess('stop --text', workspace);
+    it('prunes stopped run state by default', async () => {
+      await startStopped();
 
       const statesBefore = await listRunbookStates(workspace);
       expect(statesBefore.length).toBe(1);
@@ -217,12 +212,9 @@ describe('prune command', () => {
       expect(statesAfter.length).toBe(0);
     });
 
-    it('prunes both completed and stopped runbook state by default', async () => {
-      // Create completed state
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
-      // Create stopped state
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-      await runCliInProcess('stop --text', workspace);
+    it('prunes both completed and stopped run state by default', async () => {
+      await startCompleted();
+      await startStopped();
 
       const statesBefore = await listRunbookStates(workspace);
       expect(statesBefore.length).toBe(2);
@@ -234,21 +226,23 @@ describe('prune command', () => {
       expect(statesAfter.length).toBe(0);
     });
 
-    it('does not prune active runbook state by default', async () => {
-      // Start prompted — runbook stays active
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    it('does not prune a running run by default', async () => {
+      await startRunning();
 
       const statesBefore = await listRunbookStates(workspace);
       expect(statesBefore.length).toBe(1);
 
-      await runCliInProcess('prune --text', workspace);
+      const result = await runCliInProcess('prune', workspace);
+      expect(result.exitCode).toBe(0);
+      // Not selected at all: a bare prune does not even report it retained.
+      expect(JSON.parse(result.stdout)).toEqual([]);
 
       const statesAfter = await listRunbookStates(workspace);
       expect(statesAfter.length).toBe(1);
     });
 
     it('shows pruned runbook info in output', async () => {
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
+      await startCompleted();
 
       const result = await runCliInProcess('prune --text', workspace);
 
@@ -258,11 +252,9 @@ describe('prune command', () => {
   });
 
   describe('--completed flag', () => {
-    it('prunes only completed runbook state', async () => {
-      // Create completed state
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
-      // Create active state
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    it('prunes only completed run state', async () => {
+      await startCompleted();
+      const running = await startRunning();
 
       const statesBefore = await listRunbookStates(workspace);
       expect(statesBefore.length).toBe(2);
@@ -270,19 +262,13 @@ describe('prune command', () => {
       await runCliInProcess('prune --completed --text', workspace);
 
       const statesAfter = await listRunbookStates(workspace);
-      expect(statesAfter.length).toBe(1);
-
-      // Remaining state should be the active one
-      const session = await readSession(workspace);
-      expect(session.active).not.toBeNull();
+      expect(statesAfter).toEqual([`${running.runId}.json`]);
     });
   });
 
   describe('--stopped flag', () => {
-    it('prunes only stopped runbook state', async () => {
-      // Create stopped state
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-      await runCliInProcess('stop --text', workspace);
+    it('prunes only stopped run state', async () => {
+      await startStopped();
 
       const statesBefore = await listRunbookStates(workspace);
       expect(statesBefore.length).toBe(1);
@@ -295,11 +281,8 @@ describe('prune command', () => {
     });
 
     it('does not prune completed state when only --stopped specified', async () => {
-      // Create completed state
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
-      // Create stopped state
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-      await runCliInProcess('stop --text', workspace);
+      await startCompleted();
+      await startStopped();
 
       const statesBefore = await listRunbookStates(workspace);
       expect(statesBefore.length).toBe(2);
@@ -314,71 +297,165 @@ describe('prune command', () => {
     });
   });
 
-  describe('--active flag', () => {
-    it('prunes active runbook state', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+  describe('--active flag (one writer per run)', () => {
+    it('retains a running run without its token and reports why', async () => {
+      const { runId } = await startRunning();
 
-      const session = await readSession(workspace);
-      expect(session.active).not.toBeNull();
+      const result = await runCliInProcess('prune --active', workspace);
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout);
+      expect(validateCommandOutput('prune', output)).toEqual({ valid: true, errors: [] });
+      expect(output).toEqual([
+        expect.objectContaining({ id: runId, status: 'running', retained: 'token required' }),
+      ]);
+      const statesAfter = await listRunbookStates(workspace);
+      expect(statesAfter).toEqual([`${runId}.json`]);
+    });
+
+    it('shows the retained reason in text output', async () => {
+      const { runId } = await startRunning();
 
       const result = await runCliInProcess('prune --active --text', workspace);
 
       expect(result.exitCode).toBe(0);
-      const statesAfter = await listRunbookStates(workspace);
-      expect(statesAfter.length).toBe(0);
+      expect(result.stdout).toContain('RETAINED');
+      expect(result.stdout).toContain('token required');
+      expect(result.stdout).toContain(runId);
     });
 
     it('does not prune completed state when only --active specified', async () => {
-      // Create completed state
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
-      // Create active state
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const completedId = await startCompleted();
+      await startRunning();
 
       await runCliInProcess('prune --active --text', workspace);
 
-      // Only completed state should remain
       const statesAfter = await listRunbookStates(workspace);
-      expect(statesAfter.length).toBe(1);
+      expect(statesAfter.length).toBe(2);
+      expect(statesAfter).toContain(`${completedId}.json`);
+    });
+  });
+
+  describe('--token (the only way to prune a running run)', () => {
+    it('deletes exactly the running run the token names', async () => {
+      const first = await startRunning();
+      const second = await startRunning();
+
+      const result = await runCliInProcess(`prune --token ${first.token}`, workspace);
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout);
+      expect(validateCommandOutput('prune', output)).toEqual({ valid: true, errors: [] });
+      expect(output).toEqual([expect.objectContaining({ id: first.runId, status: 'running' })]);
+      expect(output[0]).not.toHaveProperty('retained');
+
+      const statesAfter = await listRunbookStates(workspace);
+      expect(statesAfter).toEqual([`${second.runId}.json`]);
+    });
+
+    it('selects only the token’s run when no lifecycle filter is given', async () => {
+      const completedId = await startCompleted();
+      const { runId, token } = await startRunning();
+
+      const result = await runCliInProcess(`prune --token ${token}`, workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([expect.objectContaining({ id: runId })]);
+      const statesAfter = await listRunbookStates(workspace);
+      expect(statesAfter).toEqual([`${completedId}.json`]);
+    });
+
+    it('combines with --active: the token’s run is deleted, other running runs are retained', async () => {
+      const first = await startRunning();
+      const second = await startRunning();
+
+      const result = await runCliInProcess(`prune --active --token ${first.token}`, workspace);
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout) as Record<string, unknown>[];
+      expect(output).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: first.runId, status: 'running' }),
+          expect.objectContaining({ id: second.runId, retained: 'token required' }),
+        ]),
+      );
+      expect(output.find((row) => row.id === first.runId)).not.toHaveProperty('retained');
+      const statesAfter = await listRunbookStates(workspace);
+      expect(statesAfter).toEqual([`${second.runId}.json`]);
+    });
+
+    it('also deletes the token’s run once it has finished', async () => {
+      const { runId, token } = await startRunning();
+      const complete = await runCliInProcess(`complete --token ${token}`, workspace);
+      expect(complete.exitCode).toBe(0);
+
+      const result = await runCliInProcess(`prune --token ${token}`, workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([
+        expect.objectContaining({ id: runId, status: 'complete' }),
+      ]);
+      expect(await listRunbookStates(workspace)).toEqual([]);
+    });
+
+    it('refuses an unknown token with UNKNOWN_TOKEN and prunes nothing', async () => {
+      const { runId } = await startRunning();
+
+      const result = await runCliInProcess(`prune --token ${UNKNOWN_TOKEN}`, workspace);
+
+      expect(result.exitCode).toBe(1);
+      const output = JSON.parse(result.stdout);
+      expect(output.kind).toBe('error');
+      expect(output.code).toBe('UNKNOWN_TOKEN');
+      expect(await listRunbookStates(workspace)).toEqual([`${runId}.json`]);
+    });
+
+    it('refuses a malformed token with INVALID_SYNTAX without echoing it', async () => {
+      await startRunning();
+
+      const result = await runCliInProcess('prune --token not-a-token', workspace);
+
+      expect(result.exitCode).toBe(1);
+      const output = JSON.parse(result.stdout);
+      expect(output.code).toBe('INVALID_SYNTAX');
+      expect(String(output.error)).not.toContain('not-a-token');
+    });
+
+    it('honours --dry-run for the token’s run', async () => {
+      const { runId, token } = await startRunning();
+
+      const result = await runCliInProcess(`prune --token ${token} --dry-run`, workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([expect.objectContaining({ id: runId })]);
+      expect(await listRunbookStates(workspace)).toEqual([`${runId}.json`]);
     });
   });
 
   describe('--inactive flag', () => {
-    it('prunes inactive runbook state', async () => {
-      // Start runbook A (will become inactive when B starts)
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-      const sessionA = await readSession(workspace);
-      const runbookAId = sessionA.active;
-      expect(runbookAId).not.toBeNull();
+    it('prunes abandoned run state', async () => {
+      const abandoned = await seedRun(workspace.cwd);
+      await patchPersistedRunState(workspace.cwd, abandoned.runId, { lifecycle: 'abandoned' });
+      const { runId: runningId } = await startRunning();
 
-      // Start runbook B (makes A inactive — pushed down in stack, B on top)
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-      const sessionB = await readSession(workspace);
-      const runbookBId = sessionB.active;
-      expect(runbookBId).not.toBeNull();
-      expect(runbookBId).not.toBe(runbookAId);
+      const result = await runCliInProcess('prune --inactive', workspace);
 
-      const statesBefore = await listRunbookStates(workspace);
-      expect(statesBefore.length).toBe(2);
-
-      await runCliInProcess('prune --inactive --text', workspace);
-
-      // Only the active runbook (B) should remain
-      const statesAfter = await listRunbookStates(workspace);
-      expect(statesAfter.length).toBe(1);
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([
+        expect.objectContaining({ id: abandoned.runId, status: 'abandoned' }),
+      ]);
+      expect(await listRunbookStates(workspace)).toEqual([`${runningId}.json`]);
     });
 
-    it('does not prune active or completed state when only --inactive specified', async () => {
-      // Create completed state
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
-      // Create active state
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    it('does not prune running or completed state when only --inactive specified', async () => {
+      await startCompleted();
+      await startRunning();
 
       const statesBefore = await listRunbookStates(workspace);
       expect(statesBefore.length).toBe(2);
 
       const result = await runCliInProcess('prune --inactive --text', workspace);
 
-      // Both completed and active should remain (neither is inactive)
       expect(result.exitCode).toBe(0);
       const statesAfter = await listRunbookStates(workspace);
       expect(statesAfter.length).toBe(2);
@@ -386,37 +463,41 @@ describe('prune command', () => {
   });
 
   describe('--all flag', () => {
-    it('prunes all runbook state regardless of status', async () => {
-      // Create completed state
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
-      // Create active state
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    it('prunes every finished run and retains running runs for want of a token', async () => {
+      await startCompleted();
+      await startStopped();
+      const { runId: runningId } = await startRunning();
 
       const statesBefore = await listRunbookStates(workspace);
-      expect(statesBefore.length).toBe(2);
+      expect(statesBefore.length).toBe(3);
 
-      await runCliInProcess('prune --all --text', workspace);
+      const result = await runCliInProcess('prune --all', workspace);
 
-      const statesAfter = await listRunbookStates(workspace);
-      expect(statesAfter.length).toBe(0);
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout) as Record<string, unknown>[];
+      expect(output).toHaveLength(3);
+      expect(output).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ id: runningId, retained: 'token required' }),
+        ]),
+      );
+      expect(await listRunbookStates(workspace)).toEqual([`${runningId}.json`]);
     });
 
-    it('prunes inactive state when --all is specified', async () => {
-      // Start runbook A (becomes inactive)
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-      // Start runbook B (active, makes A inactive)
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+    it('prunes everything when the running run’s token accompanies --all', async () => {
+      await startCompleted();
+      const { token } = await startRunning();
 
-      await runCliInProcess('prune --all --text', workspace);
+      const result = await runCliInProcess(`prune --all --token ${token}`, workspace);
 
-      const statesAfter = await listRunbookStates(workspace);
-      expect(statesAfter.length).toBe(0);
+      expect(result.exitCode).toBe(0);
+      expect(await listRunbookStates(workspace)).toEqual([]);
     });
   });
 
   describe('--dry-run flag', () => {
     it('shows what would be removed without deleting', async () => {
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
+      await startCompleted();
 
       const statesBefore = await listRunbookStates(workspace);
       expect(statesBefore.length).toBe(1);
@@ -435,13 +516,13 @@ describe('prune command', () => {
       const result = await runCliInProcess('prune --dry-run --text', workspace);
 
       expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('No runbook state to prune.');
+      expect(result.stdout).toContain('No run state to prune.');
     });
   });
 
   describe('output', () => {
     it('outputs pruned items as JSON array', async () => {
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
+      await startCompleted();
 
       const result = await runCliInProcess('prune', workspace);
 
@@ -454,7 +535,7 @@ describe('prune command', () => {
     });
 
     it('includes id, runbook, and status fields in JSON output', async () => {
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
+      await startCompleted();
 
       const result = await runCliInProcess('prune', workspace);
 
@@ -464,19 +545,20 @@ describe('prune command', () => {
       expect(output[0]).toHaveProperty('status');
     });
 
-    it('does not include internal _status field in JSON output', async () => {
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
+    it('does not include internal _status or _retained fields in JSON output', async () => {
+      await startCompleted();
 
       const result = await runCliInProcess('prune', workspace);
 
       const output = JSON.parse(result.stdout) as Record<string, unknown>[];
       expect(output[0]).not.toHaveProperty('_status');
+      expect(output[0]).not.toHaveProperty('_retained');
     });
   });
 
   describe('--dry-run combined', () => {
     it('outputs items as JSON without deleting state', async () => {
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
+      await startCompleted();
 
       const result = await runCliInProcess('prune --dry-run', workspace);
 
@@ -501,7 +583,7 @@ describe('prune command', () => {
 
   describe('text output format', () => {
     it('displays column headers in text output', async () => {
-      await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
+      await startCompleted();
 
       const result = await runCliInProcess('prune --text', workspace);
 
@@ -529,376 +611,64 @@ rd echo --result pass
     });
   });
 
-  describe('tombstone claim GC', () => {
+  describe('invalid persisted rows', () => {
     /**
-     * Drive a delegated child to completion, leaving a retained terminal claim
-     * tombstone and a completed child run on disk.
-     *
-     * @returns The claim id of the completed child.
+     * The prune invocation quoted in the RD-309 message (e.g. `prune --inactive`),
+     * with the binary name stripped so it can be handed to the in-process CLI.
      */
-    async function completeDelegatedChild(): Promise<ClaimId> {
-      const childRunbook = [
-        '# Child',
-        '',
-        '## 1. Work',
-        '',
-        '- PASS COMPLETE',
-        '- FAIL STOP',
-        '',
-        'Do child work.',
-        '',
-      ].join('\n');
-      const parentRunbook = [
-        '# Parent',
-        '',
-        '## 1. Fan out',
-        '',
-        '- DELEGATE',
-        '- PASS ALL CONTINUE',
-        '- FAIL ANY STOP',
-        '',
-        '### 1.1 First child',
-        '',
-        '- child.runbook.md',
-        '',
-        '## 2. Done',
-        '',
-        '- PASS COMPLETE',
-        '',
-        'Finished.',
-        '',
-      ].join('\n');
-
-      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
-      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childRunbook);
-      await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentRunbook);
-      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
-
-      const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
-      expect(start.exitCode).toBe(0);
-      const token = requireFrontierToken(start.stdout, '1.1');
-
-      const claimResult = await runCliInProcess(`claim ${token}`, workspace);
-      expect(claimResult.exitCode).toBe(0);
-      const claimOutput = findActionOutput(claimResult.stdout);
-      const claimId = claimOutput?.claim_id;
-      if (typeof claimId !== 'string') throw new Error('expected claim_id from claim output');
-      const typedClaimId = assertClaimId(claimId);
-
-      const finish = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
-      expect(finish.exitCode).toBe(0);
-      const runId = claimOutput?.run_id;
-      if (typeof runId !== 'string') throw new Error('expected run_id from claim output');
-      const child = await readRunbookState(workspace, runId);
-      expect(child?.lifecycle).toBe('completed');
-
-      return typedClaimId;
+    function pruneCommandFromRd309Message(): string {
+      const { message } = Errors.invalidPersistedRunState('Invalid runbook state for "rd_x".');
+      const quoted = /discard it with "rundown ([^"]+)"/.exec(message)?.[1];
+      if (quoted === undefined) {
+        // Not an assertion: the extraction failing means the message stopped
+        // naming a prune command at all, which is a different regression from
+        // naming the wrong one, and the message itself is the evidence.
+        throw new Error(`RD-309 message names no prune command: ${message}`);
+      }
+      return quoted;
     }
 
-    it('rd prune --completed removes tombstone claims for pruned children', async () => {
-      const claimId = await completeDelegatedChild();
-
-      // Sanity: the terminal tombstone claim is retained before prune.
-      const before = await readSession(workspace);
-      expect(before.claims[claimKeyFromBearer(claimId)]).toBeDefined();
-
-      const result = await runCliInProcess(['prune', '--completed'], workspace);
-      expect(result.exitCode).toBe(0);
-
-      // The tombstone claim is dropped alongside its pruned child run.
-      const after = await readSession(workspace);
-      expect(after.claims[claimKeyFromBearer(claimId)]).toBeUndefined();
-
-      // A follow-up claim-targeted command no longer finds the tombstone.
-      const status = await runCliInProcess(['status', '--claim-id', claimId], workspace);
-      expect(status.exitCode).toBe(1);
-      const json = parseConcatenatedJson(status.stdout).at(-1) as Record<string, unknown>;
-      expect(json).toMatchObject({ kind: 'error', code: 'CLAIMED_RUNBOOK_UNAVAILABLE' });
-    }, 30_000);
-  });
-
-  describe('defaultStack hygiene (#534)', () => {
-    // Parsed from real source so the fixture satisfies Runbook without casts.
-    const HYGIENE_RUNBOOK: Runbook = parseRunbookDocument(`# Hygiene Test Runbook
-
-A test
-
-## 1. Initial step
-- PASS CONTINUE
-- FAIL STOP
-
-Do the thing.
-`).runbook;
-
-    /**
-     * Persist a state file with the given lifecycle WITHOUT driving terminal
-     * flows. RunbookStateManager.create always persists lifecycle 'running'
-     * and takes no lifecycle option, so the helper is create-then-update, not
-     * a one-liner over create() (both calls append attribution records, which
-     * these tests tolerate). The id is deliberately NOT released from the
-     * session — this constructs the #534 leak precondition directly (the
-     * #536-style writer persists lifecycle with no session release; driving
-     * runs to completion via the CLI would release the stack en route and the
-     * tests would pass vacuously).
-     */
-    async function createStateFile(
-      manager: RunbookStateManager,
-      { lifecycle }: { lifecycle: 'running' | 'completed' | 'stopped' },
-    ): Promise<RunId> {
-      const state = await manager.create(
-        { source: 'project', path: 'hygiene-test.runbook.md' },
-        HYGIENE_RUNBOOK,
-        { runbookPath: 'hygiene-test.runbook.md' },
-      );
-      if (lifecycle !== 'running') {
-        await manager.update(state.id, { lifecycle });
-      }
-      return state.id;
+    /** A run whose persisted state this build refuses — the RD-309 subject. */
+    async function seedInvalidRun(): Promise<RunId> {
+      const { runId } = await seedRun(workspace.cwd);
+      await patchPersistedRunState(workspace.cwd, runId, { schemaVersion: 99 });
+      return runId;
     }
 
-    it('pops pruned terminal ids from the defaultStack so the running run resolves', async () => {
-      // The exact 3-entry stack from issue #534's repro: running bottom,
-      // completed + stopped above, all still stacked.
-      const manager = new RunbookStateManager(workspace.cwd);
-      const sessionService = new SessionService(manager);
-      const runningId = await createStateFile(manager, { lifecycle: 'running' });
-      const completedId = await createStateFile(manager, { lifecycle: 'completed' });
-      const stoppedId = await createStateFile(manager, { lifecycle: 'stopped' });
-      await sessionService.pushRunbook(runningId);
-      await sessionService.pushRunbook(completedId);
-      await sessionService.pushRunbook(stoppedId);
+    it('leaves the invalid run in place under a bare prune', async () => {
+      const invalidId = await seedInvalidRun();
 
       const result = await runCliInProcess('prune', workspace);
-      expect(result.exitCode).toBe(0);
 
-      const session = await readSession(workspace);
-      expect(session.defaultStack).toEqual([runningId]);
-      expect(await readRunbookState(workspace, completedId)).toBeNull();
-      expect(await readRunbookState(workspace, stoppedId)).toBeNull();
-      const active = await new SessionService(new RunbookStateManager(workspace.cwd)).getActive();
-      expect(active?.id).toBe(runningId);
+      // Exits 0 having deleted nothing: `list()` skips the invalid row, so the
+      // default completed + stopped selection can never reach it. That is why
+      // the RD-309 message must name a mode.
+      expect(result.exitCode).toBe(0);
+      expect(await new RunbookStateManager(workspace.cwd).listRunIds()).toContain(invalidId);
     });
 
-    it('prune --all empties the defaultStack and clears a pruned stash reference', async () => {
-      const manager = new RunbookStateManager(workspace.cwd);
-      const sessionService = new SessionService(manager);
-      const stackedId = await createStateFile(manager, { lifecycle: 'completed' });
-      const stashedId = await createStateFile(manager, { lifecycle: 'stopped' });
-      await sessionService.pushRunbook(stackedId);
-      await sessionService.pushRunbook(stashedId);
-      await expect(sessionService.stash()).resolves.toEqual({
-        kind: 'committed',
-        value: { status: 'stashed', state: expect.objectContaining({ id: stashedId }) },
-      });
+    it('clears the invalid run under the mode the RD-309 message names', async () => {
+      const invalidId = await seedInvalidRun();
+
+      const result = await runCliInProcess(pruneCommandFromRd309Message(), workspace);
+
+      expect(result.exitCode).toBe(0);
+      expect(JSON.parse(result.stdout)).toEqual([
+        expect.objectContaining({ id: invalidId, status: 'invalid', runbook: '(invalid)' }),
+      ]);
+      expect(await new RunbookStateManager(workspace.cwd).listRunIds()).not.toContain(invalidId);
+    });
+
+    it('clears the invalid run under --all while retaining a running run', async () => {
+      const invalidId = await seedInvalidRun();
+      const { runId: runningId } = await startRunning();
 
       const result = await runCliInProcess('prune --all', workspace);
-      expect(result.exitCode).toBe(0);
-
-      const session = await readSession(workspace);
-      expect(session.defaultStack).toEqual([]);
-      expect(session.stashed).toBeNull();
-    });
-
-    it('removes claim records whose childRunId was pruned', async () => {
-      const manager = new RunbookStateManager(workspace.cwd);
-      const sessionService = new SessionService(manager);
-      const parentId = await createStateFile(manager, { lifecycle: 'running' });
-      const childId = await createStateFile(manager, { lifecycle: 'completed' });
-      await sessionService.pushRunbook(parentId);
-      await sessionService.pushRunbook(childId);
-
-      // Write the claim record directly — the leak precondition is a claim
-      // whose child went terminal without the terminal flow's release.
-      const claimId = assertClaimId(
-        'rdclm_22222222222222222222222222222222_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
-      );
-      const parsedClaim = parseClaimBearer(claimId);
-      const linkage = {
-        childRunId: childId,
-        tokenHash: assertDelegationTokenHash(`sha256:${'a'.repeat(64)}`),
-        parentRunId: parentId,
-        parentStepId: '1.1',
-        parentStep: 'Child',
-        parentFrameKey: buildFrameKey('1'),
-        parentEntry: 1,
-      };
-      await writeSession(workspace, {
-        claims: {
-          [parsedClaim.claimKey]: {
-            claimKey: parsedClaim.claimKey,
-            secretHash: hashClaimSecret(parsedClaim.secret),
-            controlledRunId: childId,
-            delegation: linkage,
-            grants: createDelegatedChildGrants({ linkage }),
-            issuedAt: '2026-07-03T00:00:00.000Z',
-            updatedAt: '2026-07-03T00:00:00.000Z',
-            lastSeenAt: '2026-07-03T00:00:00.000Z',
-          },
-        },
-      });
-
-      const result = await runCliInProcess('prune', workspace);
-      expect(result.exitCode).toBe(0);
-
-      const session = await readSession(workspace);
-      expect(session.claims[parsedClaim.claimKey]).toBeUndefined();
-      expect(session.defaultStack).toEqual([parentId]);
-    });
-
-    it('releases a stacked invalid state file id when pruned via --inactive', async () => {
-      // The `--all` twin below takes a different branch: `--all` replaces the
-      // whole session with a canonical empty one and never reaches the selective
-      // release. Only this path exercises `releaseRuns` against an id whose
-      // persisted state is invalid, and nothing covered it before.
-      //
-      // Note what "invalid persisted run" means here: the STATE is unreadable,
-      // while the id itself is a canonical run id — it came out of the runs
-      // table, and `listRunIds` asserts every row. That is why the release is
-      // reached with the id intact rather than filtered away.
-      const manager = new RunbookStateManager(workspace.cwd);
-      const sessionService = new SessionService(manager);
-      const invalidId = await createStateFile(manager, { lifecycle: 'running' });
-      await sessionService.pushRunbook(invalidId);
-      await patchPersistedRunState(workspace.cwd, invalidId, { schemaVersion: 99 });
-
-      const result = await runCliInProcess('prune --inactive', workspace);
 
       expect(result.exitCode).toBe(0);
-      const session = await readSession(workspace);
-      expect(session.defaultStack).not.toContain(invalidId);
-      expect(await readRunbookState(workspace, invalidId)).toBeNull();
-    });
-
-    it('releases a stacked invalid state file id when pruned via --all', async () => {
-      const manager = new RunbookStateManager(workspace.cwd);
-      const sessionService = new SessionService(manager);
-      const invalidId = await createStateFile(manager, { lifecycle: 'running' });
-      await sessionService.pushRunbook(invalidId);
-      // Corrupt to an invalid-but-parseable state file: wrong schemaVersion,
-      // so list() skips it and it flows through the invalid-file prune path.
-      await patchPersistedRunState(workspace.cwd, invalidId, { schemaVersion: 99 });
-
-      const result = await runCliInProcess('prune --all', workspace);
-      expect(result.exitCode).toBe(0);
-
-      const session = await readSession(workspace);
-      expect(session.defaultStack).not.toContain(invalidId);
-      expect(await readRunbookState(workspace, invalidId)).toBeNull();
-    });
-
-    // The RD-309 message is executable documentation — it names the command an
-    // operator or agent runs next — so these tests execute the command it names
-    // against a real invalid row rather than trusting the prose.
-    //
-    // Presence is asserted through `listRunIds()`, not `readRunbookState`: the
-    // latter returns null for a row that fails `isRunbookState`, which is every
-    // invalid row, so it cannot tell "still persisted" from "deleted". Raw ids
-    // are also what `prune.ts` itself reads for exactly this reason.
-    describe('RD-309 recovery: the prune mode the error message names', () => {
-      /**
-       * The prune invocation quoted in the RD-309 message (e.g. `prune --inactive`),
-       * with the binary name stripped so it can be handed to the in-process CLI.
-       */
-      function pruneCommandFromRd309Message(): string {
-        const { message } = Errors.invalidPersistedRunState('Invalid runbook state for "rd_x".');
-        const quoted = /discard it with "rundown ([^"]+)"/.exec(message)?.[1];
-        if (quoted === undefined) {
-          // Not an assertion: the extraction failing means the message stopped
-          // naming a prune command at all, which is a different regression from
-          // naming the wrong one, and the message itself is the evidence.
-          throw new Error(`RD-309 message names no prune command: ${message}`);
-        }
-        return quoted;
-      }
-
-      /** A stacked run whose persisted state this build refuses — the RD-309 subject. */
-      async function seedStackedInvalidRun(): Promise<RunId> {
-        const manager = new RunbookStateManager(workspace.cwd);
-        const sessionService = new SessionService(manager);
-        const invalidId = await createStateFile(manager, { lifecycle: 'running' });
-        await sessionService.pushRunbook(invalidId);
-        await patchPersistedRunState(workspace.cwd, invalidId, { schemaVersion: 99 });
-        return invalidId;
-      }
-
-      it('leaves the invalid run in place under a bare prune', async () => {
-        const invalidId = await seedStackedInvalidRun();
-
-        const result = await runCliInProcess('prune', workspace);
-
-        // Exits 0 having deleted nothing. That silent no-op is what makes a
-        // bare `rundown prune` unusable as RD-309 recovery, and why the message
-        // must name a mode: `list()` skips the invalid row, so the default
-        // completed + stopped selection can never reach it.
-        expect(result.exitCode).toBe(0);
-        expect(await new RunbookStateManager(workspace.cwd).listRunIds()).toContain(invalidId);
-        expect((await readSession(workspace)).defaultStack).toContain(invalidId);
-      });
-
-      it('clears the invalid run and its stack entry under the mode the message names', async () => {
-        const invalidId = await seedStackedInvalidRun();
-
-        const result = await runCliInProcess(pruneCommandFromRd309Message(), workspace);
-
-        expect(result.exitCode).toBe(0);
-        expect(await new RunbookStateManager(workspace.cwd).listRunIds()).not.toContain(invalidId);
-        // Releasing the stack entry is what makes this a complete recovery when
-        // the invalid run is the active one — the common RD-309 case, since the
-        // error surfaces on resuming it.
-        expect((await readSession(workspace)).defaultStack).not.toContain(invalidId);
-      });
-    });
-
-    it('refuses EXECUTION_IN_PROGRESS and prunes nothing while a run is owned (#608)', async () => {
-      // The end-to-end path for the typed session refusal: core's guarded session
-      // mutation refuses, the CLI renders the registered symbolic code, and the
-      // command exits non-zero having deleted nothing.
-      const manager = new RunbookStateManager(workspace.cwd);
-      const sessionService = new SessionService(manager);
-      const ownedId = await createStateFile(manager, { lifecycle: 'completed' });
-      await sessionService.pushRunbook(ownedId);
-      seedExecutionOwnership(workspace, ownedId);
-
-      const result = await runCliInProcess('prune', workspace);
-
-      expect(result.exitCode).toBe(1);
-      // Exactly one document: `parseConcatenatedJson` plus a destructure would
-      // pass while the refusal path also printed a stray success envelope.
-      const envelope = JSON.parse(result.stdout) as {
-        kind?: string;
-        code?: string;
-        error?: string;
-      };
-      expect(envelope).toMatchObject({
-        kind: 'error',
-        code: 'EXECUTION_IN_PROGRESS',
-        error: `Run ${ownedId} has an execution in progress.`,
-      });
-      // Nothing was pruned: the run is still targeted and its state survives.
-      const session = await readSession(workspace);
-      expect(session.defaultStack).toContain(ownedId);
-      expect(await readRunbookState(workspace, ownedId)).not.toBeNull();
-    });
-
-    describe('interrupted prune convergence (#534 review)', () => {
-      it('converges when a prior prune released ids but crashed before deleting state files', async () => {
-        // Simulate: release succeeded, delete failed. Terminal state files
-        // exist but their ids are already off the stack (as after a crash
-        // mid-prune).
-        const manager = new RunbookStateManager(workspace.cwd);
-        const sessionService = new SessionService(manager);
-        const runningId = await createStateFile(manager, { lifecycle: 'running' });
-        const completedId = await createStateFile(manager, { lifecycle: 'completed' });
-        await sessionService.pushRunbook(runningId); // only the live run is stacked
-
-        const rerun = await runCliInProcess('prune', workspace);
-        expect(rerun.exitCode).toBe(0);
-
-        // The re-run finishes the job: terminal state file deleted, session intact.
-        const session = await readSession(workspace);
-        expect(session.defaultStack).toEqual([runningId]);
-        expect(await readRunbookState(workspace, completedId)).toBeNull();
-      });
+      const ids = await new RunbookStateManager(workspace.cwd).listRunIds();
+      expect(ids).not.toContain(invalidId);
+      expect(ids).toContain(runningId);
     });
   });
 });

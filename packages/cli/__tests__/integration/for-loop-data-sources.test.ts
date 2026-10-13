@@ -7,6 +7,7 @@ import {
   getAllRunbookStates,
   type TestWorkspace,
   type StepConfig,
+  requireOwnerToken,
 } from '../helpers/test-utils.js';
 import { writeFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -921,10 +922,11 @@ rd echo item={{ item }}
     // First invocation: --prompted halts after the first iteration's command is shown.
     // The first iteration's snapshot is persisted to .rundown/runs/ before exit.
     const start = runCli(
-      'run --input items=file:items.jsonl jsonl-drift-load.runbook.md --prompted --allow-all --text',
+      'run --input items=file:items.jsonl jsonl-drift-load.runbook.md --prompted --allow-all',
       workspace,
     );
     expect(start.exitCode).toBe(0);
+    const token = requireOwnerToken(start.stdout);
 
     // Mutate the file on disk between invocations. The persisted snapshot now
     // disagrees with disk size + fingerprint.
@@ -933,7 +935,7 @@ rd echo item={{ item }}
     // Second invocation: pass advances iteration 1 -> iteration 2, which calls
     // resolveForValue() with the rehydrated snapshot. validateFileSnapshot() must
     // detect the drift and surface FOR_RESOLUTION_FAILED with code drift-detected.
-    const next = runCli('pass --text', workspace);
+    const next = runCli(`pass --token ${token} --step 1.1 --index 1 --text`, workspace);
     expect(next.exitCode).not.toBe(0);
 
     const states = await getAllRunbookStates(workspace);

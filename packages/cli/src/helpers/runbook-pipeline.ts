@@ -754,8 +754,10 @@ async function prepareLoadedRunbook(
   const templateVars = parsedPreparation.templateVars;
   const unresolvedNames = parsedPreparation.unresolved;
 
-  // Core decides what composes; the CLI only renders the ids it names.
-  const composing = findUnsupportedComposition(runbook.steps);
+  // Core decides what composes; the CLI only renders the ids it names. Only a
+  // RUNNABLE preparation (`rundown run`) is refused: `rundown resolve` is a
+  // read-only inspection of the runbook and still resolves a composing one.
+  const composing = identity.kind === 'runnable' ? findUnsupportedComposition(runbook.steps) : [];
   if (composing.length > 0) {
     return {
       ok: false,

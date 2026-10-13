@@ -70,7 +70,6 @@ describe('TextRenderer', () => {
       format: 'status',
       data: {
         active: false,
-        stashed: false,
         status,
         file: 'runbooks/child.runbook.md',
         state: 'rd_0123456789abcdef0123456789abcdef',
@@ -96,7 +95,7 @@ describe('TextRenderer', () => {
       expect(output).toContain('STOP');
     });
 
-    it('still reports no active runbook when nothing is active, stashed, or terminal', () => {
+    it('still reports no active runbook for a bare inactive detail', () => {
       const writer = createMockWriter();
       new TextRenderer({ writer }).render({
         type: 'detail',
@@ -660,50 +659,36 @@ describe('TextRenderer', () => {
   });
 
   describe('renderStatus', () => {
-    it('renders stash action with position', () => {
+    it('renders a status message with success styling', () => {
       const writer = createMockWriter();
       const renderer = new TextRenderer({ writer });
 
-      renderer.render({
-        type: 'status',
-        action: 'stash',
-        data: { position: pos('2', 5) },
-      });
+      renderer.render({ type: 'status', action: 'noted', message: 'Recorded' });
 
-      const output = writer.lines.join('\n');
-      // printRunbookStashed renders something about stash
-      expect(output.length).toBeGreaterThan(0);
+      expect(writer.lines.join('\n')).toContain('Recorded');
     });
 
-    it('renders pop success with step data', () => {
+    it('renders nothing for a status event without a message', () => {
       const writer = createMockWriter();
       const renderer = new TextRenderer({ writer });
 
-      renderer.render({
-        type: 'status',
-        action: 'pop',
-        data: {
-          position: pos('1', 3),
-          step: { name: 'Build project', description: 'Run build', prompted: false },
-        },
-      });
+      renderer.render({ type: 'status', action: 'noted', data: { position: pos('1', 3) } });
 
-      const output = writer.lines.join('\n');
-      expect(output).toContain('Build project');
+      expect(writer.lines).toHaveLength(0);
     });
 
-    it('renders pop failure as error', () => {
+    it('renders an error envelope as an error', () => {
       const writer = createMockWriter();
       const renderer = new TextRenderer({ writer });
 
       renderer.render({
         type: 'error',
-        message: 'No stashed runbook found',
-        code: 'NO_STASHED_RUNBOOK',
+        message: 'No run matches this token.',
+        code: 'UNKNOWN_TOKEN',
       });
 
       const output = writer.lines.join('\n');
-      expect(output).toContain('No stashed runbook found');
+      expect(output).toContain('No run matches this token.');
     });
   });
 
@@ -726,6 +711,24 @@ describe('TextRenderer', () => {
       expect(output).toContain('test');
       expect(output).toContain('.rundown/rundown.db');
       expect(output).toContain('START');
+      expect(output).not.toContain('Owner token:');
+    });
+
+    it('prints the Owner token line exactly once on RUNBOOK_STARTED', () => {
+      const writer = createMockWriter();
+      const renderer = new TextRenderer({ writer });
+      const token = `rdo_${'a'.repeat(43)}`;
+
+      const event: RunbookEventV1 = {
+        ...envelope(),
+        type: 'RUNBOOK_STARTED',
+        payload: { prompted: false, ownerToken: token as never },
+      };
+
+      renderer.render({ type: 'execution_event', event });
+
+      const tokenLines = writer.lines.filter((line) => line.startsWith('Owner token: '));
+      expect(tokenLines).toEqual([`Owner token: ${token}`]);
     });
 
     it('renders STEP_ENTERED', () => {
@@ -836,111 +839,57 @@ describe('TextRenderer', () => {
     });
   });
 
-  describe('delegation display in status detail', () => {
-    it('renders delegations section when present', () => {
+  describe('run list in status detail', () => {
+    it('renders every run as a table row and never a token', () => {
       const writer = createMockWriter();
       const renderer = new TextRenderer({ writer });
-      const rawToken = 'rdtk_TEST_TOKEN_MUST_NOT_RENDER';
 
-      const event = {
+      renderer.render({
         type: 'detail',
+        format: 'status',
         data: {
-          active: true,
-          stashed: false,
-          file: 'parent.md',
-          state: 'running',
-          position: { current: '1', total: 2 },
-          step: { name: '1', description: 'Review' },
-          delegations: [
+          active: false,
+          runs: [
             {
-              substep: '1.1',
-              runbook: 'review-code.md',
-              state: 'pending',
-              tokenHash: `sha256:${'a'.repeat(64)}`,
-              // A legacy or unvalidated caller may still pass a raw token.
-              // Text status must remain a token-free read surface.
-              token: rawToken,
+              id: 'rd_0123456789abcdef0123456789abcdef',
+              runbook: 'deploy.runbook.md',
+              status: 'running',
+              step: '2.1',
+              total: 3,
+              title: 'Deploy',
             },
             {
-              substep: '1.2',
-              runbook: 'review-tests.md',
-              state: 'claimed',
-              childRunId: 'run_abc',
-              tokenHash: `sha256:${'b'.repeat(64)}`,
-            },
-            {
-              substep: '1.3',
-              runbook: 'review-security.md',
-              state: 'cancelled',
-              tokenHash: `sha256:${'c'.repeat(64)}`,
+              id: 'rd_fedcba9876543210fedcba9876543210',
+              runbook: 'cleanup.runbook.md',
+              status: 'complete',
+              step: '1',
+              total: 1,
             },
           ],
         },
-        format: 'status',
-      } as unknown as DetailOutput;
+      });
 
-      renderer.render(event);
       const output = writer.lines.join('\n');
-
-      expect(output).toContain('Delegations:');
-      expect(output).toContain('1.1');
-      expect(output).toContain('review-code.md');
-      expect(output).toContain('(pending claim)');
-      expect(output).not.toContain(rawToken);
-      expect(output).toContain('1.2');
-      expect(output).toContain('(claimed: run_abc)');
-      expect(output).toContain('1.3');
-      expect(output).toContain('(cancelled)');
+      expect(output).toContain('ID');
+      expect(output).toContain('rd_0123456789abcdef0123456789abcdef');
+      expect(output).toContain('running');
+      expect(output).toContain('2.1/3');
+      expect(output).toContain('deploy.runbook.md');
+      expect(output).toContain('Deploy');
+      expect(output).toContain('complete');
+      expect(output).not.toContain('rdo_');
+      expect(output).not.toContain('No active runbook');
     });
 
-    it('does not render delegations section when absent', () => {
+    it('prints "No runs." for an empty run list', () => {
       const writer = createMockWriter();
       const renderer = new TextRenderer({ writer });
 
-      const event: DetailOutput = {
-        type: 'detail',
-        data: {
-          active: true,
-          stashed: false,
-          file: 'parent.md',
-          state: 'running',
-          position: { current: '1', total: 2 },
-          step: { name: '1', description: 'Review' },
-        },
-        format: 'status',
-      };
+      renderer.render({ type: 'detail', format: 'status', data: { active: false, runs: [] } });
 
-      renderer.render(event);
-      const output = writer.lines.join('\n');
-
-      expect(output).not.toContain('Delegations:');
-    });
-
-    it('does not render delegations section when empty', () => {
-      const writer = createMockWriter();
-      const renderer = new TextRenderer({ writer });
-
-      const event: DetailOutput = {
-        type: 'detail',
-        data: {
-          active: true,
-          stashed: false,
-          file: 'parent.md',
-          state: 'running',
-          position: { current: '1', total: 2 },
-          step: { name: '1', description: 'Review' },
-          delegations: [],
-        },
-        format: 'status',
-      };
-
-      renderer.render(event);
-      const output = writer.lines.join('\n');
-
-      expect(output).not.toContain('Delegations:');
+      expect(writer.lines.join('\n')).toContain('No runs.');
     });
   });
-
   describe('flush', () => {
     it('is a no-op', () => {
       const writer = createMockWriter();

@@ -4,17 +4,13 @@ import { join } from 'node:path';
 import {
   createTestWorkspace,
   findActionOutput,
-  injectDelegationOutcomeForActiveRun,
-  issueRunControlClaim,
   runCliInProcess,
-  getActiveState,
   readRunbookState,
-  readSession,
   getAllStates,
   parseConcatenatedJson,
-  requireFrontierToken,
+  requireOwnerToken,
+  requireRunId,
   type TestWorkspace,
-  withRunTarget,
 } from '../helpers/test-utils.js';
 import {
   ActionResponseSchema,
@@ -30,7 +26,7 @@ import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests src/commands/pass.ts`
 // credits the behavioural tests below (which reach the command only via the
-// dynamic `import('../cli.js')` seam in runCliInProcess). See collect.test.ts.
+// dynamic `import('../cli.js')` seam in runCliInProcess).
 import { registerPassCommand } from '../../src/commands/pass.js';
 
 describe('pass command wiring', () => {
@@ -45,19 +41,47 @@ describe('pass command wiring', () => {
 
     const byLong = new Map(pass!.options.map((o) => [o.long, o]));
     expect([...byLong.keys()]).toEqual(
-      expect.arrayContaining(['--step', '--index', '--claim-id', '--text']),
+      expect.arrayContaining(['--token', '--step', '--index', '--text']),
     );
-    expect(byLong.get('--step')?.description).toBe('Target specific substep');
-    expect(byLong.get('--index')?.description).toBe(
-      'FOR loop iteration to target (requires --step)',
+    expect(byLong.get('--token')?.description).toBe(
+      'Owner token of the run to mutate (owner_token from runbook_started)',
     );
-    expect(byLong.get('--claim-id')?.description).toBe('Target a claimed delegated child runbook');
+    expect(byLong.get('--step')?.description).toBe(
+      'Current step or substep position (required, e.g. 2 or 2.1)',
+    );
+    expect(byLong.get('--index')?.description).toBe('Current FOR loop iteration (requires --step)');
     expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
+    // `--run` is accepted only so the combination can be refused INVALID_SYNTAX.
+    expect(byLong.get('--run')?.hidden).toBe(true);
   });
 });
 
+function errorEnvelope(stdout: string): Record<string, unknown> | undefined {
+  return parseConcatenatedJson(stdout).find(
+    (document): document is Record<string, unknown> =>
+      typeof document === 'object' &&
+      document !== null &&
+      (document as Record<string, unknown>).kind === 'error',
+  );
+}
+
 describe('pass command', () => {
   let workspace: TestWorkspace;
+  let token: string;
+  let runId: string;
+
+  /** Start a prompted run in JSON mode and capture its Owner Token and id. */
+  async function start(runbook: string): Promise<void> {
+    const result = await runCliInProcess(`run --prompted ${runbook}`, workspace);
+    expect(result.exitCode).toBe(0);
+    token = requireOwnerToken(result.stdout);
+    runId = requireRunId(result.stdout);
+  }
+
+  /** `rundown pass --token <token> --step <step>` plus any extra args. */
+  function pass(step: string, ...extra: string[]) {
+    return runCliInProcess(['pass', '--token', token, '--step', step, ...extra], workspace);
+  }
 
   beforeEach(async () => {
     workspace = await createTestWorkspace();
@@ -67,144 +91,131 @@ describe('pass command', () => {
     await workspace.cleanup();
   });
 
-  describe('collection-pending guard', () => {
-    it('refuses bare pass while a delegated outcome is waiting for collection', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-      const completionKey = await injectDelegationOutcomeForActiveRun(workspace);
-
-      // Post-R1 the guard needs named authority: a run-targeted bare-shaped
-      // advance still refuses with the collection-pending guard (naming
-      // authority does not skip collection discipline).
-      const result = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
-
-      expect(result.exitCode).toBe(1);
-      const payload = JSON.parse(result.stdout) as {
-        code?: string;
-        details?: { outcomeCompletionKeys?: string[] };
-      };
-      expect(payload.code).toBe('DELEGATION_COLLECTION_PENDING');
-      expect(payload.details?.outcomeCompletionKeys).toEqual([completionKey]);
+  describe('--token authority', () => {
+    beforeEach(async () => {
+      await start('runbooks/simple.runbook.md');
     });
 
-    it('exempts a targeted pass --step from the collection-pending guard', async () => {
-      // A `--step` target is a deliberate transition, not a bare parent advance,
-      // so the same pending outcome that blocks bare `pass` must not block it
-      // (mirrors the core policy exemption for `targeted` intents).
-      await runCliInProcess('run --prompted runbooks/substeps.runbook.md --text', workspace);
-      await injectDelegationOutcomeForActiveRun(workspace);
+    it('refuses a bare pass with TOKEN_REQUIRED and writes nothing', async () => {
+      const result = await runCliInProcess('pass --step 1', workspace);
 
-      // Post-R1 a step name is a completion target, not authority: the
-      // sanctioned targeted recovery is run+step (keeps the guard exemption).
+      expect(result.exitCode).toBe(1);
+      const envelope = errorEnvelope(result.stdout);
+      expect(envelope?.code).toBe('TOKEN_REQUIRED');
+      expect(validateSchema(ErrorResponseSchema, envelope)).toEqual({ valid: true, errors: [] });
+      expect((await readRunbookState(workspace, runId))?.step).toBe('1');
+    });
+
+    it('refuses a well-formed but unknown token with a schema-valid UNKNOWN_TOKEN envelope', async () => {
+      const bogus = `rdo_${'A'.repeat(43)}`;
+
+      const result = await runCliInProcess(['pass', '--token', bogus, '--step', '1'], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const envelope = errorEnvelope(result.stdout);
+      expect(envelope?.code).toBe('UNKNOWN_TOKEN');
+      expect(validateSchema(ErrorResponseSchema, envelope)).toEqual({ valid: true, errors: [] });
+      expect((await readRunbookState(workspace, runId))?.step).toBe('1');
+    });
+
+    it('rejects a malformed token with INVALID_SYNTAX', async () => {
       const result = await runCliInProcess(
-        await withRunTarget(['pass', '--step', '1.1'], workspace),
+        ['pass', '--token', 'not-a-token', '--step', '1'],
         workspace,
       );
 
-      // The targeted transition runs to completion: exit 0, a real transition is
-      // emitted, and the bare-only collection-pending guard never fires.
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('step_transitioned');
-      expect(result.stdout).not.toContain('DELEGATION_COLLECTION_PENDING');
+      expect(result.exitCode).toBe(1);
+      expect(errorEnvelope(result.stdout)?.code).toBe('INVALID_SYNTAX');
+    });
+
+    it('rejects combining --token with --run instead of treating the run id as authority', async () => {
+      const result = await runCliInProcess(
+        ['pass', '--token', token, '--run', runId, '--step', '1'],
+        workspace,
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(errorEnvelope(result.stdout)?.code).toBe('INVALID_SYNTAX');
+      expect((await readRunbookState(workspace, runId))?.step).toBe('1');
+    });
+
+    it('refuses the token of a completed run with RD-303', async () => {
+      expect((await pass('1')).exitCode).toBe(0);
+      expect((await pass('2')).exitCode).toBe(0);
+
+      const late = await pass('2');
+
+      expect(late.exitCode).toBe(1);
+      const envelope = errorEnvelope(late.stdout);
+      expect(envelope?.code).toBe('RD-303');
+      expect(envelope?.details).toMatchObject({ runId, lifecycle: 'completed' });
     });
   });
 
-  describe('--run explicit targeting', () => {
-    it('applies pass --claim-id <id> to the claimed running run', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-      const active = await getActiveState(workspace);
-      expect(active).toBeDefined();
-      const claimId = await issueRunControlClaim(workspace, active!.id);
-
-      const result = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
-
-      expect(result.exitCode).toBe(0);
-      const state = await getActiveState(workspace);
-      expect(state?.step).toBe('2');
+  describe('--step contract', () => {
+    beforeEach(async () => {
+      await start('runbooks/simple.runbook.md');
     });
 
-    it('refuses a well-formed but unknown --run id with a schema-valid RUN_TARGET_UNAVAILABLE envelope', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-      const bogus = `rd_${'f'.repeat(32)}`;
-
-      const result = await runCliInProcess(`pass --run ${bogus}`, workspace);
+    it('requires --step, naming the current position', async () => {
+      const result = await runCliInProcess(['pass', '--token', token], workspace);
 
       expect(result.exitCode).toBe(1);
-      const payload = JSON.parse(result.stdout) as { code?: string };
-      expect(payload.code).toBe('RUN_TARGET_UNAVAILABLE');
-      // Envelope-validation gate for the new code: the refusal must satisfy the
-      // closed ErrorResponseSchema (RUN_TARGET_UNAVAILABLE is enum-registered).
-      const validation = validateSchema(ErrorResponseSchema, payload);
-      expect(validation.valid).toBe(true);
-      // The run was not mutated by the refusal.
-      const state = await getActiveState(workspace);
+      const envelope = errorEnvelope(result.stdout);
+      expect(envelope?.code).toBe('INVALID_STEP');
+      expect(String(envelope?.error)).toContain('the current position is 1');
+      expect((await readRunbookState(workspace, runId))?.step).toBe('1');
+    });
+
+    it('refuses --step naming a later step with INVALID_STEP', async () => {
+      const result = await pass('2');
+
+      expect(result.exitCode).toBe(1);
+      expect(errorEnvelope(result.stdout)?.code).toBe('INVALID_STEP');
+      expect((await readRunbookState(workspace, runId))?.step).toBe('1');
+    });
+
+    it('drives a substep via pass --step <step.substep>', async () => {
+      await start('runbooks/substeps.runbook.md');
+
+      // The cursor rests at substep 1.1; a bare `--step 1` is refused.
+      const bare = await pass('1');
+      expect(bare.exitCode).toBe(1);
+      expect(errorEnvelope(bare.stdout)?.code).toBe('INVALID_STEP');
+      expect(String(errorEnvelope(bare.stdout)?.error)).toContain('1.1');
+
+      const result = await pass('1.1');
+
+      expect(result.exitCode).toBe(0);
+      const state = await readRunbookState(workspace, runId);
       expect(state?.step).toBe('1');
-    });
-
-    it('rejects a malformed --run id with INVALID_RUN_ID', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-
-      const result = await runCliInProcess('pass --run not-a-run-id', workspace);
-
-      expect(result.exitCode).toBe(1);
-      const payload = JSON.parse(result.stdout) as { code?: string };
-      expect(payload.code).toBe('INVALID_RUN_ID');
-    });
-
-    it('rejects combining --claim-id with --run instead of ignoring the run selector', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-      const active = await getActiveState(workspace);
-
-      const result = await runCliInProcess(
-        `pass --run ${active!.id} --claim-id rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA`,
-        workspace,
-      );
-
-      expect(result.exitCode).toBe(1);
-      const payload = JSON.parse(result.stdout) as { code?: string };
-      expect(payload.code).toBe('INVALID_SYNTAX');
-    });
-
-    it('drives the claimed run substep via pass --claim-id <id> --step <n>', async () => {
-      await runCliInProcess('run --prompted runbooks/substeps.runbook.md --text', workspace);
-      const active = await getActiveState(workspace);
-      expect(active).toBeDefined();
-      const claimId = await issueRunControlClaim(workspace, active!.id);
-
-      const result = await runCliInProcess(
-        ['pass', '--claim-id', claimId, '--step', '1.1'],
-        workspace,
-      );
-
-      expect(result.exitCode).toBe(0);
-      expect(result.stdout).toContain('step_transitioned');
+      expect(state?.substep).toBe('2');
     });
   });
 
   describe('PASS: CONTINUE', () => {
     beforeEach(async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      await start('runbooks/simple.runbook.md');
     });
 
     it('advances to next step', async () => {
-      const result = await runCliInProcess('pass --text', workspace);
+      const result = await pass('1', '--text');
 
       expect(result.exitCode).toBe(0);
-      const state = await getActiveState(workspace);
+      const state = await readRunbookState(workspace, runId);
       expect(state?.step).toBe('2');
     });
 
     it('fails closed on a foreign schemaVersion instead of migrating it', async () => {
-      const state = await getActiveState(workspace);
-      expect(state).toBeDefined();
-      await patchPersistedRunState(workspace.cwd, state!.id, {
+      await patchPersistedRunState(workspace.cwd, runId, {
         schemaVersion: FOREIGN_SCHEMA_VERSION,
       });
 
-      const result = await runCliInProcess('pass --text', workspace);
+      const result = await pass('1', '--text');
 
       expect(result.exitCode).not.toBe(0);
       expect(`${result.stdout}\n${result.stderr}`).toMatch(/invalid|schema|prune/i);
-      const reloaded = (await readPersistedRunState(workspace.cwd, state!.id)) as {
+      const reloaded = (await readPersistedRunState(workspace.cwd, runId)) as {
         schemaVersion?: unknown;
       } | null;
       expect(reloaded?.schemaVersion).toBe(FOREIGN_SCHEMA_VERSION);
@@ -213,86 +224,86 @@ describe('pass command', () => {
 
   describe('PASS: COMPLETE', () => {
     beforeEach(async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-      await runCliInProcess('pass --text', workspace); // Advance to step 2 which has PASS: COMPLETE
+      await start('runbooks/simple.runbook.md');
+      await pass('1', '--text'); // Advance to step 2 which has PASS: COMPLETE
     });
 
     it('marks runbook complete', async () => {
-      const result = await runCliInProcess('pass --text', workspace);
+      const result = await pass('2', '--text');
 
       expect(result.stdout).toContain('COMPLETE');
     });
 
-    it('clears active runbook', async () => {
-      await runCliInProcess('pass --text', workspace);
-
-      const session = await readSession(workspace);
-      expect(session.active).toBeNull();
-    });
-
     it('should set lifecycle to completed when runbook completes', async () => {
-      await runCliInProcess('pass --text', workspace);
+      await pass('2', '--text');
 
       const states = await getAllStates(workspace);
       const state = states.find((s) => s.runbook.path === 'runbooks/simple.runbook.md');
       expect(state?.lifecycle).toBe('completed');
     });
+
+    it('lists the completed run as complete in status', async () => {
+      await pass('2', '--text');
+
+      const status = await runCliInProcess('status', workspace);
+      const detail = parseConcatenatedJson(status.stdout).at(-1) as Record<string, unknown>;
+      expect(detail.runs).toEqual([expect.objectContaining({ id: runId, status: 'complete' })]);
+    });
   });
 
   describe('PASS: GOTO N', () => {
     beforeEach(async () => {
-      await runCliInProcess('run --prompted runbooks/goto.runbook.md --text', workspace);
+      await start('runbooks/goto.runbook.md');
     });
 
     it('jumps to specified step', async () => {
-      const result = await runCliInProcess('pass --text', workspace);
+      const result = await pass('1', '--text');
 
       expect(result.exitCode).toBe(0);
-      const state = await getActiveState(workspace);
+      const state = await readRunbookState(workspace, runId);
       expect(state?.step).toBe('3'); // GOTO 3
     });
 
     it('skips intermediate steps', async () => {
-      await runCliInProcess('pass --text', workspace);
+      await pass('1', '--text');
 
-      const state = await getActiveState(workspace);
+      const state = await readRunbookState(workspace, runId);
       expect(state?.stepName).toContain('Jump target');
     });
   });
 
   describe('PASS: RETRY N', () => {
     beforeEach(async () => {
-      await runCliInProcess('run --prompted runbooks/pass-retry.runbook.md --text', workspace);
+      await start('runbooks/pass-retry.runbook.md');
     });
 
     it('increments retryCount if under max', async () => {
-      await runCliInProcess('pass --text', workspace);
+      await pass('1', '--text');
 
-      const state = await getActiveState(workspace);
+      const state = await readRunbookState(workspace, runId);
       expect(state?.retryCount).toBe(1);
       expect(state?.step).toBe('1'); // Same step
     });
 
     it('outputs retry info', async () => {
-      const result = await runCliInProcess('pass --text', workspace);
+      const result = await pass('1', '--text');
 
       expect(result.stdout).toContain('Retry');
     });
 
     it('advances after max retries', async () => {
-      await runCliInProcess('pass --text', workspace); // Retry 1 (count 0→1)
-      await runCliInProcess('pass --text', workspace); // Retry 2 (count 1→2)
-      await runCliInProcess('pass --text', workspace); // Retry 3 (count 2→3)
-      await runCliInProcess('pass --text', workspace); // Count 3 >= 3, CONTINUE to step 2
+      await pass('1', '--text'); // Retry 1 (count 0→1)
+      await pass('1', '--text'); // Retry 2 (count 1→2)
+      await pass('1', '--text'); // Retry 3 (count 2→3)
+      await pass('1', '--text'); // Count 3 >= 3, CONTINUE to step 2
 
-      const state = await getActiveState(workspace);
+      const state = await readRunbookState(workspace, runId);
       expect(state?.step).toBe('2'); // Advanced to step 2
     });
   });
 
   describe('PASS: STOP', () => {
     beforeEach(async () => {
-      // stop-on-pass.md created inline in the lastResult test
       const stopOnPassRunbook = `## 1. Stop on pass
 - PASS STOP
 - FAIL CONTINUE
@@ -301,295 +312,38 @@ This step stops on pass.
 `;
       await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
       await writeFile(join(workspace.cwd, 'runbooks', 'stop-on-pass.md'), stopOnPassRunbook);
-      await runCliInProcess('run --prompted runbooks/stop-on-pass.md --text', workspace);
+      await start('runbooks/stop-on-pass.md');
     });
 
     it('blocks runbook', async () => {
-      const result = await runCliInProcess('pass --text', workspace);
+      const result = await pass('1', '--text');
 
       expect(result.exitCode).toBe(1);
     });
 
     it('outputs stop message', async () => {
-      const result = await runCliInProcess('pass --text', workspace);
+      const result = await pass('1', '--text');
 
       expect(result.stdout).toContain('STOP');
     });
 
     it('should set lifecycle to stopped when STOP action triggered', async () => {
-      await runCliInProcess('pass --text', workspace);
+      await pass('1', '--text');
 
       const states = await getAllStates(workspace);
       const state = states.find((s) => s.runbook.path === 'runbooks/stop-on-pass.md');
       expect(state?.lifecycle).toBe('stopped');
     });
-  });
 
-  describe('nested runbook completion restores parent', () => {
-    it('should restore parent runbook as active when nested child completes', async () => {
-      // Create parent/child runbooks for nesting test
-      const parentRunbook = `## 1. Parent step
-- PASS COMPLETE
+    it('refuses a later pass on the stopped run with RD-304', async () => {
+      await pass('1', '--text');
 
-Do parent work.
-`;
-      const childRunbook = `## 1. Child step
-- PASS COMPLETE
+      const late = await pass('1');
 
-Do child work.
-`;
-      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
-      await writeFile(join(workspace.cwd, 'runbooks', 'parent-nest.md'), parentRunbook);
-      await writeFile(join(workspace.cwd, 'runbooks', 'child-nest.md'), childRunbook);
-
-      // Start parent runbook (prompted mode to keep it active)
-      await runCliInProcess('run --prompted runbooks/parent-nest.md --text', workspace);
-      const session1 = await readSession(workspace);
-      const parentId = session1.active;
-
-      // Start child runbook in same stack (nested)
-      await runCliInProcess('run --prompted runbooks/child-nest.md --text', workspace);
-      const session2 = await readSession(workspace);
-      expect(session2.active).not.toBe(parentId); // Child is now active
-      expect(session2.defaultStack).toContain(parentId); // Parent still in stack
-
-      // Complete child runbook
-      await runCliInProcess('pass --text', workspace); // Child step 1: DONE -> complete
-
-      // Parent should now be active (child popped from stack)
-      const session3 = await readSession(workspace);
-      expect(session3.active).toBe(parentId);
-    });
-  });
-
-  describe('sibling fan-out isolation', () => {
-    interface FrontierEntry {
-      id: string;
-      runbook: string;
-      token: string;
-    }
-
-    function findFrontierInEvents(events: unknown[]): FrontierEntry[] | undefined {
-      for (const ev of events) {
-        if (Array.isArray(ev)) {
-          const nested = findFrontierInEvents(ev);
-          if (nested) return nested;
-        } else if (ev && typeof ev === 'object') {
-          const e = ev as { type?: string; delegateFrontier?: FrontierEntry[] };
-          if (e.type === 'step_entered' && e.delegateFrontier) {
-            return e.delegateFrontier;
-          }
-        }
-      }
-      return undefined;
-    }
-
-    it('does not let the later claimed sibling steal the first child pass', async () => {
-      const childRunbook = [
-        '# Child',
-        '',
-        '## 1. Work',
-        '',
-        '- PASS COMPLETE',
-        '- FAIL STOP',
-        '',
-        'Do child work.',
-        '',
-      ].join('\n');
-      const parentRunbook = [
-        '# Parent',
-        '',
-        '## 1. Fan out',
-        '',
-        '- DELEGATE',
-        '- PASS ALL CONTINUE',
-        '- FAIL ANY STOP',
-        '',
-        '### 1.1 First child',
-        '',
-        '- child.runbook.md',
-        '',
-        '### 1.2 Second child',
-        '',
-        '- child.runbook.md',
-        '',
-        '## 2. Done',
-        '',
-        '- PASS COMPLETE',
-        '',
-        'Finished.',
-        '',
-      ].join('\n');
-
-      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
-      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childRunbook);
-      await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentRunbook);
-      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
-
-      const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
-      expect(start.exitCode).toBe(0);
-      const frontier = findFrontierInEvents(parseConcatenatedJson(start.stdout)) ?? [];
-      expect(frontier).toHaveLength(2);
-      const token1 = frontier.find((entry) => entry.id === '1.1')?.token;
-      const token2 = frontier.find((entry) => entry.id === '1.2')?.token;
-      expect(token1).toBeDefined();
-      expect(token2).toBeDefined();
-
-      let result = await runCliInProcess(`claim ${token1!}`, workspace);
-      expect(result.exitCode).toBe(0);
-      const child1Output = findActionOutput(result.stdout);
-      expect(child1Output).toBeDefined();
-      if (
-        !child1Output ||
-        typeof child1Output.run_id !== 'string' ||
-        typeof child1Output.claim_id !== 'string'
-      ) {
-        throw new Error('Expected claim output to include run_id and claim_id strings');
-      }
-      const child1Id = child1Output.run_id;
-      const claimId1 = child1Output.claim_id;
-
-      result = await runCliInProcess(`claim ${token2!}`, workspace);
-      expect(result.exitCode).toBe(0);
-      const child2Output = findActionOutput(result.stdout);
-      expect(child2Output).toBeDefined();
-      if (
-        !child2Output ||
-        typeof child2Output.run_id !== 'string' ||
-        typeof child2Output.claim_id !== 'string'
-      ) {
-        throw new Error('Expected claim output to include run_id and claim_id strings');
-      }
-      const child2Id = child2Output.run_id;
-      const claimId2 = child2Output.claim_id;
-
-      const anonymousActive = await getActiveState(workspace);
-      expect(anonymousActive?.runbook).toEqual({
-        source: 'project',
-        path: 'runbooks/parent.runbook.md',
-      });
-
-      let status = await runCliInProcess(['status', '--claim-id', claimId1], workspace);
-      expect(JSON.parse(status.stdout).runId).toBe(child1Id);
-
-      status = await runCliInProcess(['status', '--claim-id', claimId2], workspace);
-      expect(JSON.parse(status.stdout).runId).toBe(child2Id);
-
-      result = await runCliInProcess(['pass', '--claim-id', claimId1, '--text'], workspace);
-      expect(result.exitCode).toBe(0);
-
-      const child1 = await readRunbookState(workspace, child1Id);
-      const child2 = await readRunbookState(workspace, child2Id);
-
-      expect(child1?.lifecycle).toBe('completed');
-      expect(child2?.lifecycle).toBe('running');
-    }, 30_000);
-
-    it('plain pass does not mutate a claimed child runbook', async () => {
-      // Regression: plain callers must target only the default-stack runbook
-      // (the parent), never a claimed delegated child.
-      const childRunbook = [
-        '# Child',
-        '',
-        '## 1. Work',
-        '',
-        '- PASS COMPLETE',
-        '- FAIL STOP',
-        '',
-        'Do child work.',
-        '',
-      ].join('\n');
-      const parentRunbook = [
-        '# Parent',
-        '',
-        '## 1. Fan out',
-        '',
-        '- DELEGATE',
-        '- PASS ALL CONTINUE',
-        '- FAIL ANY STOP',
-        '',
-        '### 1.1 Only child',
-        '',
-        '- child.runbook.md',
-        '',
-        '## 2. Done',
-        '',
-        '- PASS COMPLETE',
-        '',
-        'Finished.',
-        '',
-      ].join('\n');
-
-      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
-      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childRunbook);
-      await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentRunbook);
-      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
-
-      const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
-      expect(start.exitCode).toBe(0);
-      const parentId = (await getActiveState(workspace))?.id;
-      expect(parentId).toBeDefined();
-      const frontier = findFrontierInEvents(parseConcatenatedJson(start.stdout)) ?? [];
-      const token = frontier.find((entry) => entry.id === '1.1')?.token;
-      expect(token).toBeDefined();
-
-      const claim = await runCliInProcess(`claim ${token!}`, workspace);
-      expect(claim.exitCode).toBe(0);
-      const childId = String(findActionOutput(claim.stdout)?.run_id);
-
-      // Anonymous pass is refused outright post-R1 (no ambient trust on a
-      // delegating parent), and even the run-targeted bare-shaped advance is
-      // held by the open-delegated-children guard: neither may advance the
-      // parent past the DELEGATE step or touch the agent-owned child (callers
-      // resolve the child via `--claim-id`).
-      const barePass = await runCliInProcess('pass', workspace);
-      expect(barePass.exitCode).toBe(1);
-      expect((JSON.parse(barePass.stdout) as { code?: string }).code).toBe(
-        'ACTOR_CONTEXT_REQUIRED',
-      );
-      const passResult = await runCliInProcess(await withRunTarget(['pass'], workspace), workspace);
-      expect(passResult.exitCode).toBe(1);
-      const passPayload = JSON.parse(passResult.stdout) as { code?: string };
-      expect(passPayload.code).toBe('OPEN_DELEGATED_CHILDREN');
-
-      const parent = await readRunbookState(workspace, parentId!);
-      const child = await readRunbookState(workspace, childId);
-      expect(parent?.step).toBe('1');
-      expect(parent?.lifecycle).toBe('running');
-      expect(child?.lifecycle).toBe('running');
-    }, 30_000);
-  });
-
-  describe('runbook completion with stack', () => {
-    it('pops to parent runbook on completion', async () => {
-      // Create parent/child runbooks
-      const parentRunbook = `## 1. Step one
-- PASS COMPLETE
-
-Do something.
-`;
-      const childRunbook = `## 1. Step one
-- PASS COMPLETE
-
-Do work.
-`;
-      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
-      await writeFile(join(workspace.cwd, 'runbooks', 'parent.md'), parentRunbook);
-      await writeFile(join(workspace.cwd, 'runbooks', 'child.md'), childRunbook);
-
-      // Start parent (prompted to prevent auto-completion)
-      await runCliInProcess('run --prompted runbooks/parent.md --text', workspace);
-
-      // Start child in same stack (prompted to prevent auto-completion)
-      await runCliInProcess('run --prompted runbooks/child.md --text', workspace);
-
-      // Complete child
-      let result = await runCliInProcess('pass --text', workspace);
-      expect(result.stdout).toContain('COMPLETE');
-
-      // Should now be on parent
-      result = await runCliInProcess('status --text', workspace);
-      expect(result.stdout).toContain('parent.md');
+      expect(late.exitCode).toBe(1);
+      const envelope = errorEnvelope(late.stdout);
+      expect(envelope?.code).toBe('RD-304');
+      expect(envelope?.details).toMatchObject({ runId, lifecycle: 'stopped' });
     });
   });
 
@@ -605,8 +359,8 @@ This step stops on pass.
       await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
       await writeFile(join(workspace.cwd, 'runbooks', 'stop-on-pass.md'), stopOnPassRunbook);
 
-      await runCliInProcess('run --prompted runbooks/stop-on-pass.md --text', workspace);
-      await runCliInProcess('pass --text', workspace);
+      await start('runbooks/stop-on-pass.md');
+      await pass('1', '--text');
 
       const states = await getAllStates(workspace);
       const state = states.find((s) => s.runbook.path === 'runbooks/stop-on-pass.md');
@@ -618,11 +372,10 @@ This step stops on pass.
 
   describe('JSON action result semantics', () => {
     it('reports action CONTINUE for CONTINUE transitions', async () => {
-      // Start runbook in prompted mode
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      await start('runbooks/simple.runbook.md');
 
       // Pass should trigger CONTINUE to next step
-      const result = await runCliInProcess('pass', workspace);
+      const result = await pass('1');
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
@@ -679,13 +432,12 @@ rd echo --result fail
     });
 
     it('reports action complete for COMPLETE transitions', async () => {
-      // Start runbook in prompted mode
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-      await runCliInProcess('pass --text', workspace); // Advance to step 2
+      await start('runbooks/simple.runbook.md');
+      await pass('1', '--text'); // Advance to step 2
 
       // Pass on step 2 should trigger COMPLETE
       // The action is 'complete' (lowercase) for completion events
-      const result = await runCliInProcess('pass', workspace);
+      const result = await pass('2');
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
@@ -693,11 +445,10 @@ rd echo --result fail
     });
 
     it('reports action GOTO for GOTO transitions', async () => {
-      // Start goto runbook in prompted mode
-      await runCliInProcess('run --prompted runbooks/goto.runbook.md --text', workspace);
+      await start('runbooks/goto.runbook.md');
 
       // Pass should trigger GOTO 3
-      const result = await runCliInProcess('pass', workspace);
+      const result = await pass('1');
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
@@ -705,12 +456,11 @@ rd echo --result fail
     });
 
     it('reports stepResult FAIL for RETRY transitions', async () => {
-      // Start pass-retry runbook in prompted mode
-      await runCliInProcess('run --prompted runbooks/pass-retry.runbook.md --text', workspace);
+      await start('runbooks/pass-retry.runbook.md');
 
       // Pass should trigger RETRY (since PASS: RETRY 3)
       // stepResult is FAIL (RETRY = not yet passing)
-      const result = await runCliInProcess('pass', workspace);
+      const result = await pass('1');
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
@@ -733,11 +483,10 @@ This step stops on pass.
       await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
       await writeFile(join(workspace.cwd, 'runbooks', 'stop-on-pass-json.md'), stopOnPassRunbook);
 
-      // Start runbook in prompted mode
-      await runCliInProcess('run --prompted runbooks/stop-on-pass-json.md --text', workspace);
+      await start('runbooks/stop-on-pass-json.md');
 
       // Pass should trigger STOP
-      const result = await runCliInProcess('pass', workspace);
+      const result = await pass('1');
       const output = findActionOutput(result.stdout);
 
       expect(output).not.toBeNull();
@@ -747,6 +496,14 @@ This step stops on pass.
       const parseResult = ActionResponseSchema.safeParse(output);
       expect(parseResult.success).toBe(true);
     });
+
+    it('never echoes the owner token', async () => {
+      await start('runbooks/simple.runbook.md');
+
+      const result = await pass('1');
+
+      expect(result.stdout).not.toContain('rdo_');
+    });
   });
 
   describe('option validation', () => {
@@ -754,121 +511,6 @@ This step stops on pass.
       const result = await runCliInProcess('pass --index 1 --text', workspace);
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('--index requires --step');
-    });
-  });
-
-  describe('idempotent --claim-id on terminal child', () => {
-    /**
-     * Drive a delegated child to its natural completion (lifecycle 'completed'),
-     * leaving its claim record as a terminal tombstone.
-     *
-     * @returns The claim id of the completed child.
-     */
-    async function completeDelegatedChild(): Promise<string> {
-      const childRunbook = [
-        '# Child',
-        '',
-        '## 1. Work',
-        '',
-        '- PASS COMPLETE',
-        '- FAIL STOP',
-        '',
-        'Do child work.',
-        '',
-      ].join('\n');
-      const parentRunbook = [
-        '# Parent',
-        '',
-        '## 1. Fan out',
-        '',
-        '- DELEGATE',
-        '- PASS ALL CONTINUE',
-        '- FAIL ANY STOP',
-        '',
-        '### 1.1 First child',
-        '',
-        '- child.runbook.md',
-        '',
-        '## 2. Done',
-        '',
-        '- PASS COMPLETE',
-        '',
-        'Finished.',
-        '',
-      ].join('\n');
-
-      await mkdir(join(workspace.cwd, 'runbooks'), { recursive: true });
-      await writeFile(join(workspace.cwd, 'runbooks', 'child.runbook.md'), childRunbook);
-      await writeFile(join(workspace.cwd, 'runbooks', 'parent.runbook.md'), parentRunbook);
-      await writeFile(join(workspace.runbooksDir(), 'child.runbook.md'), childRunbook);
-
-      const start = await runCliInProcess('run --prompted runbooks/parent.runbook.md', workspace);
-      expect(start.exitCode).toBe(0);
-      const token = requireFrontierToken(start.stdout, '1.1');
-
-      const claimResult = await runCliInProcess(`claim ${token}`, workspace);
-      expect(claimResult.exitCode).toBe(0);
-      const claimOutput = findActionOutput(claimResult.stdout);
-      const claimId = claimOutput?.claim_id;
-      if (typeof claimId !== 'string') throw new Error('expected claim_id from claim output');
-
-      // Drive the child's single PASS COMPLETE step to terminal completion.
-      const finish = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
-      expect(finish.exitCode).toBe(0);
-      const runId = claimOutput?.run_id;
-      if (typeof runId !== 'string') throw new Error('expected run_id from claim output');
-      const child = await readRunbookState(workspace, runId);
-      expect(child?.lifecycle).toBe('completed');
-
-      return claimId;
-    }
-
-    it('rd pass --claim-id is an idempotent no-op after the child completed', async () => {
-      const claimId = await completeDelegatedChild();
-
-      const result = await runCliInProcess(['pass', '--claim-id', claimId], workspace);
-
-      expect(result.exitCode).toBe(0);
-      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
-      expect(json).toMatchObject({
-        kind: 'action',
-        action: 'pass',
-        status: 'already-resolved',
-      });
-      // The idempotent already-resolved payload must satisfy ActionResponseSchema,
-      // whose `kind` discriminant is the literal 'action' (not the command name).
-      expect(ActionResponseSchema.safeParse(json).success).toBe(true);
-    }, 30_000);
-
-    it('rd fail --claim-id on a passed child conflicts (DELEGATION_RESULT_CONFLICT)', async () => {
-      const claimId = await completeDelegatedChild();
-
-      const result = await runCliInProcess(['fail', '--claim-id', claimId], workspace);
-
-      expect(result.exitCode).toBe(1);
-      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
-      expect(json).toMatchObject({
-        kind: 'error',
-        code: 'DELEGATION_RESULT_CONFLICT',
-      });
-    }, 30_000);
-
-    it('rd pass --claim-id on an unknown claim still errors CLAIMED_RUNBOOK_UNAVAILABLE', async () => {
-      const result = await runCliInProcess(
-        [
-          'pass',
-          '--claim-id',
-          'rdclm_00000000000000000000000000000000_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
-        ],
-        workspace,
-      );
-
-      expect(result.exitCode).toBe(1);
-      const json = parseConcatenatedJson(result.stdout).at(-1) as Record<string, unknown>;
-      expect(json).toMatchObject({
-        kind: 'error',
-        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
-      });
     });
   });
 });

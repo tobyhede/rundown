@@ -10,7 +10,6 @@ import {
   parseRdCommandWithEnv,
   extractRunbookReferences,
   extractInputFileReferences,
-  substituteClaimIds,
   substituteCapturedArtifacts,
   matchErrorAssertions,
   formatErrorAssertionDescription,
@@ -21,10 +20,12 @@ import {
   executeCommandSequence,
   createInProcessCommandExecutor,
   substituteRunIds,
-  substituteRunClaimIds,
-  captureClaimIdFromJsonObject,
-  captureRunClaimIdFromJsonObject,
+  captureOwnerTokenFromJsonObject,
   captureRunIdFromJsonObject,
+  CAPTURE_PLACEHOLDERS,
+  createCapturedPlaceholders,
+  substitutePlaceholder,
+  substitutePlaceholders,
 } from '../../src/helpers/command-sequence.js';
 import type { InProcessCliRunner } from '../../src/helpers/command-sequence.js';
 import type { ArtifactAssertion, StepAssertion } from '../../src/schemas/scenarios.js';
@@ -123,8 +124,8 @@ describe('parseJsonLines', () => {
   // back to the positional rule these tests exist to replace.
   it('adopts the payload first runbook_started as root when the caller has none', () => {
     const stdout = [
-      '{"type":"runbook_started","runbookId":"rd_root","claim_id":"rc_root"}',
-      '{"type":"runbook_started","runbookId":"rd_child","claim_id":"rc_child"}',
+      '{"type":"runbook_started","runbookId":"rd_root","owner_token":"rdo_root"}',
+      '{"type":"runbook_started","runbookId":"rd_child","owner_token":"rdo_child"}',
       '{"type":"runbook_stopped","message":"Child failed","reason":"fail_transition","runbookId":"rd_root"}',
       '{"action":"complete","stepResult":"PASS","from":"1","at":"1","kind":"action","complete":true}',
     ].join('\n');
@@ -135,8 +136,8 @@ describe('parseJsonLines', () => {
 
   it('adopts the payload first runbook_started for a root completion too', () => {
     const stdout = [
-      '{"type":"runbook_started","runbookId":"rd_root","claim_id":"rc_root"}',
-      '{"type":"runbook_started","runbookId":"rd_child","claim_id":"rc_child"}',
+      '{"type":"runbook_started","runbookId":"rd_root","owner_token":"rdo_root"}',
+      '{"type":"runbook_started","runbookId":"rd_child","owner_token":"rdo_child"}',
       '{"type":"runbook_completed","runbookId":"rd_root"}',
       '{"action":"stop","stepResult":"FAIL","from":"1","at":"1","kind":"action","stopped":true}',
     ].join('\n');
@@ -147,8 +148,8 @@ describe('parseJsonLines', () => {
   // win just because it arrived later in the same payload.
   it('ignores a child lifecycle terminal under the adopted root', () => {
     const stdout = [
-      '{"type":"runbook_started","runbookId":"rd_root","claim_id":"rc_root"}',
-      '{"type":"runbook_started","runbookId":"rd_child","claim_id":"rc_child"}',
+      '{"type":"runbook_started","runbookId":"rd_root","owner_token":"rdo_root"}',
+      '{"type":"runbook_started","runbookId":"rd_child","owner_token":"rdo_child"}',
       '{"type":"runbook_completed","runbookId":"rd_root"}',
       '{"type":"runbook_stopped","runbookId":"rd_child"}',
     ].join('\n');
@@ -159,7 +160,7 @@ describe('parseJsonLines', () => {
   // a later command in the sequence can start a fresh child run of its own.
   it('prefers the caller root id over the payload first runbook_started', () => {
     const stdout = [
-      '{"type":"runbook_started","runbookId":"rd_child","claim_id":"rc_child"}',
+      '{"type":"runbook_started","runbookId":"rd_child","owner_token":"rdo_child"}',
       '{"type":"runbook_stopped","runbookId":"rd_child"}',
       '{"action":"complete","kind":"action","complete":true}',
     ].join('\n');
@@ -203,22 +204,22 @@ describe('parseJsonLines', () => {
     expect(result.terminal).toBe('STOP');
   });
 
-  it('extracts token from delegate response', () => {
+  it('extracts the owner token from runbook_started', () => {
     const stdout =
-      '{"action":"delegated","step":"1.1","runbook":"child.runbook.md","token":"rdtk_abc123","token_hash":"sha256:xyz","parent_run_id":"run-1"}\n';
+      '{"type":"runbook_started","prompted":false,"owner_token":"rdo_abc123","runbookId":"rd_1"}\n';
     const result = parseJsonLines(stdout);
-    expect(result.tokens).toHaveLength(1);
-    expect(result.tokens[0]).toBe('rdtk_abc123');
+    expect(result.tokens).toEqual(['rdo_abc123']);
+    expect(result.runIds).toEqual(['rd_1']);
   });
 
   it('captures JSON error responses', () => {
     const stdout =
-      '{"kind":"error","error":"Claim id rdclm_missing does not exist.","code":"CLAIMED_RUNBOOK_UNAVAILABLE","command":"pass"}\n';
+      '{"kind":"error","error":"Run rd_missing has finished (completed); rundown pass cannot be applied.","code":"RD-303","command":"pass"}\n';
     const result = parseJsonLines(stdout);
     expect(result.errors).toEqual([
       {
-        code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
-        error: 'Claim id rdclm_missing does not exist.',
+        code: 'RD-303',
+        error: 'Run rd_missing has finished (completed); rundown pass cannot be applied.',
         command: 'pass',
       },
     ]);
@@ -260,32 +261,26 @@ describe('parseJsonLines', () => {
     expect(result.warnings[0].code).toBe('NO_ACTIVE_RUNBOOK');
   });
 
-  it('extracts multiple tokens from NDJSON', () => {
+  it('extracts multiple owner tokens from NDJSON in emission order', () => {
     const stdout = [
-      '{"action":"delegated","step":"1.1","runbook":"child-a.runbook.md","token":"rdtk_first","token_hash":"sha256:a","parent_run_id":"run-1"}',
-      '{"action":"delegated","step":"1.2","runbook":"child-b.runbook.md","token":"rdtk_second","token_hash":"sha256:b","parent_run_id":"run-1"}',
+      '{"type":"runbook_started","owner_token":"rdo_first","runbookId":"rd_a"}',
+      '{"type":"step_entered","position":{"current":"1","total":1}}',
+      '{"type":"runbook_started","owner_token":"rdo_second","runbookId":"rd_b"}',
     ].join('\n');
     const result = parseJsonLines(stdout);
-    expect(result.tokens).toHaveLength(2);
-    expect(result.tokens[0]).toBe('rdtk_first');
-    expect(result.tokens[1]).toBe('rdtk_second');
+    expect(result.tokens).toEqual(['rdo_first', 'rdo_second']);
+    expect(result.runIds).toEqual(['rd_a', 'rd_b']);
   });
 
-  it('extracts auto-issued tokens from step_entered delegateFrontier', () => {
-    const stdout = JSON.stringify({
-      type: 'step_entered',
-      position: { current: '1.1', total: 2 },
-      stepName: '1.1',
-      hasCommand: false,
-      isSubstep: true,
-      prompted: false,
-      delegateFrontier: [
-        { id: '1.1', runbook: 'child-a.runbook.md', token: 'rdtk_auto1' },
-        { id: '1.2', runbook: 'child-b.runbook.md', token: 'rdtk_auto2' },
-      ],
-    });
+  it('ignores a non-string owner_token and owner_token on other events', () => {
+    const stdout = [
+      JSON.stringify({ type: 'runbook_started', owner_token: 42, runbookId: 'rd_a' }),
+      JSON.stringify({ type: 'step_entered', owner_token: 'rdo_ignored' }),
+      JSON.stringify({ type: 'runbook_started', runbookId: 'rd_b' }),
+    ].join('\n');
     const result = parseJsonLines(stdout);
-    expect(result.tokens).toEqual(['rdtk_auto1', 'rdtk_auto2']);
+    expect(result.tokens).toHaveLength(0);
+    expect(result.runIds).toEqual(['rd_a', 'rd_b']);
   });
 
   it('captures artifacts from step_entered events', () => {
@@ -360,83 +355,7 @@ describe('parseJsonLines', () => {
     expect(result.artifactEntries[0]?.at).toBe('1.3.1');
   });
 
-  it('ignores non-string delegateFrontier tokens', () => {
-    const stdout = JSON.stringify({
-      type: 'step_entered',
-      delegateFrontier: [
-        { id: '1.1', runbook: 'child.runbook.md', token: 'rdtk_ok' },
-        { id: '1.2', runbook: 'child.runbook.md' }, // token missing
-        { id: '1.3', runbook: 'child.runbook.md', token: 42 }, // token not a string
-      ],
-    });
-    const result = parseJsonLines(stdout);
-    expect(result.tokens).toEqual(['rdtk_ok']);
-  });
-
-  it('safely skips null / primitive entries in delegateFrontier', () => {
-    const stdout = JSON.stringify({
-      type: 'step_entered',
-      delegateFrontier: [null, 'string-entry', 5, { token: 'rdtk_ok' }],
-    });
-    const result = parseJsonLines(stdout);
-    expect(result.tokens).toEqual(['rdtk_ok']);
-  });
-
-  it('ignores delegateFrontier on non step_entered events', () => {
-    const stdout = JSON.stringify({
-      type: 'step_transitioned',
-      action: 'CONTINUE',
-      from: '1',
-      at: '2',
-      result: 'PASS',
-      delegateFrontier: [{ id: '1.1', runbook: 'x.runbook.md', token: 'rdtk_ignored' }],
-    });
-    const result = parseJsonLines(stdout);
-    expect(result.tokens).toHaveLength(0);
-  });
-
-  it('ignores non-array delegateFrontier field', () => {
-    const stdout = JSON.stringify({
-      type: 'step_entered',
-      delegateFrontier: 'not an array',
-    });
-    const result = parseJsonLines(stdout);
-    expect(result.tokens).toHaveLength(0);
-  });
-
-  it('extracts auto-issued tokens from NDJSON step_entered line', () => {
-    const stdout = [
-      JSON.stringify({
-        type: 'step_entered',
-        stepName: '1.1',
-        isSubstep: true,
-        hasCommand: false,
-        prompted: false,
-        delegateFrontier: [
-          { id: '1.1', runbook: 'a.runbook.md', token: 'rdtk_first' },
-          { id: '1.2', runbook: 'b.runbook.md', token: 'rdtk_second' },
-        ],
-      }),
-      JSON.stringify({ type: 'runbook_completed' }),
-    ].join('\n');
-    const result = parseJsonLines(stdout);
-    expect(result.tokens).toEqual(['rdtk_first', 'rdtk_second']);
-    expect(result.terminal).toBe('COMPLETE');
-  });
-
-  it('extracts claim ids from claim responses', () => {
-    const stdout = [
-      '{"action":"claimed","token":"rdtk_first","claim_id":"rdclm_abcdefghijklmnopQRSTUV","run_id":"wf-child-1"}',
-      '{"action":"claimed","token":"rdtk_second","claim_id":"rdclm_1234567890abcdefghijkl","run_id":"wf-child-2"}',
-    ].join('\n');
-    const result = parseJsonLines(stdout);
-    expect(result.claimIds).toEqual([
-      'rdclm_abcdefghijklmnopQRSTUV',
-      'rdclm_1234567890abcdefghijkl',
-    ]);
-  });
-
-  it('ignores objects without action=delegated', () => {
+  it('captures no token from objects that are not runbook_started', () => {
     const stdout = [
       '{"type":"step_transitioned","action":"CONTINUE","from":"1","at":"2","result":"PASS"}',
       '{"type":"runbook_completed"}',
@@ -499,12 +418,12 @@ describe('parseJsonLines', () => {
 describe('matchErrorAssertions', () => {
   it('matches errors by code, command, and error substring', () => {
     const result = matchErrorAssertions(
-      [{ code: 'CLAIMED_RUNBOOK_UNAVAILABLE', command: 'pass', error: 'does not exist' }],
+      [{ code: 'RD-303', command: 'pass', error: 'has finished' }],
       [
         {
-          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          code: 'RD-303',
           command: 'pass',
-          error: 'Claim id rdclm_missing does not exist.',
+          error: 'Run rd_missing has finished (completed); rundown pass cannot be applied.',
         },
       ],
     );
@@ -512,15 +431,15 @@ describe('matchErrorAssertions', () => {
     expect(result).toEqual([
       {
         assertion: {
-          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          code: 'RD-303',
           command: 'pass',
-          error: 'does not exist',
+          error: 'has finished',
         },
         matched: true,
         matchedError: {
-          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          code: 'RD-303',
           command: 'pass',
-          error: 'Claim id rdclm_missing does not exist.',
+          error: 'Run rd_missing has finished (completed); rundown pass cannot be applied.',
         },
       },
     ]);
@@ -933,11 +852,13 @@ describe('formatStepAssertionDescription', () => {
 
 describe('substituteTokens', () => {
   it('${TOKEN} maps to first captured token', () => {
-    expect(substituteTokens('rd claim ${TOKEN}', ['abc123'])).toBe('rd claim abc123');
+    expect(substituteTokens('rd pass --token ${TOKEN}', ['rdo_a'])).toBe('rd pass --token rdo_a');
   });
 
   it('${TOKEN_2} maps to second captured token', () => {
-    expect(substituteTokens('rd claim ${TOKEN_2}', ['first', 'second'])).toBe('rd claim second');
+    expect(substituteTokens('rd stop --token ${TOKEN_2}', ['first', 'second'])).toBe(
+      'rd stop --token second',
+    );
   });
 
   it('handles multiple placeholders in one command', () => {
@@ -945,14 +866,14 @@ describe('substituteTokens', () => {
   });
 
   it('throws for uncaptured token reference', () => {
-    expect(() => substituteTokens('rd claim ${TOKEN_3}', ['only-one'])).toThrow(
-      /references uncaptured token/,
+    expect(() => substituteTokens('rd pass --token ${TOKEN_3}', ['only-one'])).toThrow(
+      /\$\{TOKEN_3\} references an uncaptured owner token/,
     );
   });
 
   it('${TOKEN_0} throws (token numbering is 1-based)', () => {
-    expect(() => substituteTokens('rd claim ${TOKEN_0}', ['abc'])).toThrow(
-      /references uncaptured token/,
+    expect(() => substituteTokens('rd pass --token ${TOKEN_0}', ['abc'])).toThrow(
+      /references an uncaptured owner token/,
     );
   });
 
@@ -1170,26 +1091,6 @@ describe('substituteCapturedArtifacts', () => {
   });
 });
 
-describe('substituteClaimIds', () => {
-  it('${CLAIM_ID} maps to first captured claim id', () => {
-    expect(substituteClaimIds('rd pass --claim-id ${CLAIM_ID}', ['rdclm_first'])).toBe(
-      'rd pass --claim-id rdclm_first',
-    );
-  });
-
-  it('${CLAIM_ID_2} maps to second captured claim id', () => {
-    expect(
-      substituteClaimIds('rd fail --claim-id ${CLAIM_ID_2}', ['rdclm_first', 'rdclm_second']),
-    ).toBe('rd fail --claim-id rdclm_second');
-  });
-
-  it('throws for uncaptured claim id references', () => {
-    expect(() => substituteClaimIds('rd pass --claim-id ${CLAIM_ID_2}', ['rdclm_first'])).toThrow(
-      /Missing captured claim id/,
-    );
-  });
-});
-
 describe('substituteRunIds', () => {
   const runA = `rd_${'a'.repeat(32)}`;
   const runB = `rd_${'b'.repeat(32)}`;
@@ -1206,73 +1107,61 @@ describe('substituteRunIds', () => {
 
   it('throws for uncaptured run id references (fail closed)', () => {
     expect(() => substituteRunIds('rd status --run ${RUN_ID}', [])).toThrow(
-      /Missing captured run id/,
+      /references an uncaptured run id/,
     );
     expect(() => substituteRunIds('rd status --run ${RUN_ID_2}', [runA])).toThrow(
-      /Missing captured run id/,
+      /references an uncaptured run id/,
     );
   });
 
   it('leaves commands without placeholders untouched', () => {
-    expect(substituteRunIds('rd pass --claim-id ${CLAIM_ID}', [])).toBe(
-      'rd pass --claim-id ${CLAIM_ID}',
-    );
+    expect(substituteRunIds('rd pass --token ${TOKEN}', [])).toBe('rd pass --token ${TOKEN}');
   });
 });
 
-describe('substituteRunClaimIds', () => {
-  it('${RUN_CLAIM_ID} maps to first captured run-control claim id', () => {
-    expect(substituteRunClaimIds('rd collect --claim-id ${RUN_CLAIM_ID}', ['rdclm_run'])).toBe(
-      'rd collect --claim-id rdclm_run',
-    );
-  });
-
-  it('${RUN_CLAIM_ID_2} maps to second captured run-control claim id', () => {
+describe('CAPTURE_PLACEHOLDERS', () => {
+  it('names TOKEN and RUN_ID, both captured from runbook_started', () => {
+    expect(CAPTURE_PLACEHOLDERS.map((row) => row.name)).toEqual(['TOKEN', 'RUN_ID']);
+    const started = { type: 'runbook_started', owner_token: 'rdo_x', runbookId: 'rd_x' };
+    expect(CAPTURE_PLACEHOLDERS.map((row) => row.capture(started))).toEqual([['rdo_x'], ['rd_x']]);
     expect(
-      substituteRunClaimIds('rd pass --claim-id ${RUN_CLAIM_ID_2}', [
-        'rdclm_parent',
-        'rdclm_child_run',
-      ]),
-    ).toBe('rd pass --claim-id rdclm_child_run');
+      CAPTURE_PLACEHOLDERS.map((row) =>
+        row.capture({ type: 'step_entered', owner_token: 'rdo_x' }),
+      ),
+    ).toEqual([[], []]);
   });
 
-  it('throws for uncaptured run-control claim id references', () => {
-    expect(() => substituteRunClaimIds('rd collect --claim-id ${RUN_CLAIM_ID}', [])).toThrow(
-      /Missing captured run-control claim id/,
+  it('createCapturedPlaceholders has one empty entry per row', () => {
+    const captured = createCapturedPlaceholders();
+    expect([...captured.keys()]).toEqual(['TOKEN', 'RUN_ID']);
+    expect([...captured.values()]).toEqual([[], []]);
+  });
+
+  it('substitutePlaceholders substitutes every row from the accumulator', () => {
+    const captured = createCapturedPlaceholders();
+    captured.get('TOKEN')?.push('rdo_a');
+    captured.get('RUN_ID')?.push('rd_a', 'rd_b');
+    expect(
+      substitutePlaceholders('rd pass --token ${TOKEN} && rd status --run ${RUN_ID_2}', captured),
+    ).toBe('rd pass --token rdo_a && rd status --run rd_b');
+  });
+
+  it('substitutePlaceholder names the placeholder and its meaning when uncaptured', () => {
+    expect(() => substitutePlaceholder('${TOKEN_2}', CAPTURE_PLACEHOLDERS[0], ['one'])).toThrow(
+      /\$\{TOKEN_2\} references an uncaptured owner token from runbook_started\.owner_token \(have 1\)/,
     );
-  });
-
-  it('fails closed for ${RUN_CLAIM_ID_2} when only one run-control claim id was captured', () => {
-    expect(() =>
-      substituteRunClaimIds('rd pass --claim-id ${RUN_CLAIM_ID_2}', ['rdclm_parent']),
-    ).toThrow(/Missing captured run-control claim id/);
   });
 });
 
-describe('captureClaimIdFromJsonObject', () => {
-  it('captures delegated child claim ids only', () => {
+describe('captureOwnerTokenFromJsonObject', () => {
+  it('captures owner_token from runbook_started events in emission order', () => {
     const captured: string[] = [];
-    captureClaimIdFromJsonObject({ type: 'runbook_started', claim_id: 'rdclm_ignored' }, captured);
-    captureClaimIdFromJsonObject({ type: 'step_entered', claim_id: 'rdclm_ignored' }, captured);
-    captureClaimIdFromJsonObject({ action: 'claimed', claim_id: 'rdclm_child' }, captured);
-    captureClaimIdFromJsonObject({ action: 'delegated', claim_id: 'rdclm_ignored' }, captured);
-    expect(captured).toEqual(['rdclm_child']);
-  });
-});
-
-describe('captureRunClaimIdFromJsonObject', () => {
-  it('captures run-control claim ids from runbook_started events in emission order', () => {
-    const captured: string[] = [];
-    captureRunClaimIdFromJsonObject(
-      { type: 'runbook_started', claim_id: 'rdclm_parent' },
-      captured,
-    );
-    captureRunClaimIdFromJsonObject({ action: 'claimed', claim_id: 'rdclm_ignored' }, captured);
-    captureRunClaimIdFromJsonObject(
-      { type: 'runbook_started', claim_id: 'rdclm_child_run' },
-      captured,
-    );
-    expect(captured).toEqual(['rdclm_parent', 'rdclm_child_run']);
+    captureOwnerTokenFromJsonObject({ type: 'runbook_started', owner_token: 'rdo_1' }, captured);
+    captureOwnerTokenFromJsonObject({ type: 'step_entered', owner_token: 'rdo_x' }, captured);
+    captureOwnerTokenFromJsonObject({ type: 'runbook_started', owner_token: 'rdo_2' }, captured);
+    captureOwnerTokenFromJsonObject({ type: 'runbook_started' }, captured);
+    captureOwnerTokenFromJsonObject(null, captured);
+    expect(captured).toEqual(['rdo_1', 'rdo_2']);
   });
 });
 

@@ -249,9 +249,14 @@ test('Rundown MCP tool surface includes Stage 1 execution tools', async () => {
     assert.match(definitions, new RegExp(`${tool}: \\{`));
   }
 
-  assert.match(definitions, /description: 'Start or enter a runbook'/);
-  assert.match(definitions, /description: 'Mark a step passed'/);
-  assert.match(definitions, /description: 'Mark a step failed'/);
+  assert.match(definitions, /description: 'Start a runbook\. The response carries the owner token/);
+  assert.match(definitions, /'Mark the current step passed\. Requires the owner token/);
+  assert.match(definitions, /'Mark the current step failed\. Requires the owner token/);
+
+  // Delegation tools return with the delegation rebuild (#904), not before.
+  for (const tool of ['delegate', 'claim', 'collect']) {
+    assert.doesNotMatch(definitions, new RegExp(`^  ${tool}: \\{`, 'm'));
+  }
 });
 
 test('E2E image copies the Rundown Codex plugin root', async () => {

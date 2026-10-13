@@ -9,9 +9,9 @@
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import {
-  createRunbook,
   createTestWorkspace,
-  getActiveState,
+  requireOwnerToken,
+  requireRunId,
   runCliInProcess,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -20,20 +20,16 @@ import {
   validateStatusOutput,
   validateLsOutput,
   validateCheckOutput,
-  validateCollectOutput,
   validateScenarioLsOutput,
   validateScenarioShowOutput,
   validateScenarioRunOutput,
   validatePruneOutput,
-  validateStashOutput,
-  validatePopOutput,
   validateEchoOutput,
   validatePromptOutput,
   validateErrorOutput,
   validateWarningOutput,
 } from '../helpers/schema-validator.js';
 import { RUN_ID_PATTERN } from '@rundown-org/core';
-import { seedSession } from '@rundown-org/core/testing/run-fixtures';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
@@ -109,26 +105,33 @@ describe('CLI JSON Output Schema Validation', () => {
   }
 
   /**
-   * Drive a single-step runbook to a terminal lifecycle while leaving it as the
-   * active session entry, so the next `stop`/`complete` hits the
-   * already-terminal short-circuit that emits a `RUNBOOK_NOT_RUNNING` warning.
-   *
-   * Mirrors the resurrection setup in complete.test.ts / stop.test.ts.
+   * Drive a single-step runbook to a terminal lifecycle and return its Owner
+   * Token, so the next `stop`/`complete` under that token hits the
+   * run-finished refusal (RD-303).
    *
    * @param name - Runbook file basename (without extension).
-   * @returns The completed runbook state id.
+   * @returns The finished run's Owner Token.
    */
-  async function driveToTerminalActive(name: string): Promise<string> {
+  async function driveToTerminal(name: string): Promise<string> {
     const runbook = `# Terminal ${name}\n\n## 1. Work\n- PASS COMPLETE\n- FAIL STOP\n`;
     fs.writeFileSync(path.join(workspace.cwd, `${name}.runbook.md`), runbook);
-    await runCliInProcess(`run --prompted ${name}.runbook.md --text`, workspace);
-    const state = await getActiveState(workspace);
-    if (!state) throw new Error('expected active runbook');
-    await runCliInProcess('pass --text', workspace);
+    const start = await runCliInProcess(`run --prompted ${name}.runbook.md`, workspace);
+    const token = requireOwnerToken(start.stdout);
+    const passed = await runCliInProcess(`pass --token ${token} --step 1`, workspace);
+    if (passed.exitCode !== 0)
+      throw new Error(`expected pass to complete the run: ${passed.stdout}`);
+    return token;
+  }
 
-    // Resurrect the session entry so the terminal state is still active.
-    await seedSession(workspace.cwd, { defaultStack: [state.id] });
-    return state.id;
+  /**
+   * Start a prompted run of a runbook file and return its Owner Token and id.
+   *
+   * @param file - Runbook file to start.
+   * @returns Owner Token and run id from `runbook_started`.
+   */
+  async function startPrompted(file: string): Promise<{ token: string; runId: string }> {
+    const start = await runCliInProcess(`run --prompted ${file}`, workspace);
+    return { token: requireOwnerToken(start.stdout), runId: requireRunId(start.stdout) };
   }
 
   /**
@@ -145,59 +148,27 @@ describe('CLI JSON Output Schema Validation', () => {
   // Status Command
   // ==========================================================================
 
-  describe('collect', () => {
-    it('validates collect response variants', () => {
-      const alreadyAggregated = {
-        kind: 'collect',
-        action: 'collect',
-        status: 'already-aggregated',
-        step: '1',
-        parentRunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      };
-      const alreadyAggregatedWithCode = {
-        kind: 'collect',
-        action: 'collect',
-        status: 'already-aggregated',
-        step: '1',
-        parentRunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        code: 'COLLECT_ALREADY_APPLIED',
-      };
-      const notActive = {
-        kind: 'collect',
-        action: 'collect',
-        status: 'not-active',
-        step: '1',
-        parentRunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        frameKey: '1|99',
-        activeFrameKey: '1|',
-        unresolved: 1,
-      };
-      const applied = {
-        kind: 'collect',
-        action: 'collect',
-        status: 'applied',
-        parentRunId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        applied: 2,
-        unresolved: 0,
-        lifecycle: 'running',
-        reportedTerminalOutcome: false,
-      };
-
-      expect(validateCollectOutput(alreadyAggregated)).toEqual({ valid: true, errors: [] });
-      expect(validateCollectOutput(alreadyAggregatedWithCode)).toEqual({ valid: true, errors: [] });
-      expect(validateCollectOutput(notActive)).toEqual({ valid: true, errors: [] });
-      expect(validateCollectOutput(applied)).toEqual({ valid: true, errors: [] });
-    });
-  });
-
   describe('status', () => {
-    it('validates inactive status output', async () => {
+    it('validates the bare run-list status output', async () => {
+      await startPrompted('runbooks/simple.runbook.md');
       const result = await runCliInProcess('status', workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateStatusOutput(output);
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
+      expect(output).toHaveProperty('runs');
+      expect(result.stdout).not.toContain('rdo_');
+    });
+
+    it('validates the empty run-list status output', async () => {
+      const result = await runCliInProcess('status', workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      const validation = validateStatusOutput(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
+      expect(output).toEqual({ kind: 'status', active: false, runs: [] });
     });
 
     it('validates active status output', async () => {
@@ -211,9 +182,9 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
+      const { runId } = await startPrompted('test.runbook.md');
 
-      const result = await runCliInProcess('status', workspace);
+      const result = await runCliInProcess(`status --run ${runId}`, workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateStatusOutput(output);
@@ -222,7 +193,8 @@ prompt: Wait
 
       // Verify required fields
       expect(output).toHaveProperty('active', true);
-      expect(output).toHaveProperty('stashed', false);
+      expect(output).toHaveProperty('runId', runId);
+      expect(output).not.toHaveProperty('stashed');
     });
   });
 
@@ -252,7 +224,7 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
+      await startPrompted('test.runbook.md');
 
       const result = await runCliInProcess('ls', workspace);
       const output = parseJsonOutput(result.stdout);
@@ -382,9 +354,9 @@ prompt: First step
 echo done
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
+      const { token } = await startPrompted('test.runbook.md');
 
-      const result = await runCliInProcess('pass', workspace);
+      const result = await runCliInProcess(`pass --token ${token} --step 1`, workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateActionOutput(output);
@@ -395,59 +367,31 @@ echo done
       expect(output).toHaveProperty('action');
     });
 
-    it('validates pass warning when no active runbook', async () => {
-      const result = await runCliInProcess('pass', workspace);
+    it('validates the TOKEN_REQUIRED error envelope for a bare pass', async () => {
+      await startPrompted('runbooks/simple.runbook.md');
+      const result = await runCliInProcess('pass --step 1', workspace);
       const output = parseJsonOutput(result.stdout);
 
-      // Should still be valid JSON
-      expect(typeof output).toBe('object');
-      // No-active-runbook is a warning (not an error) — exit 0, message field
-      expect(output).toHaveProperty('kind', 'warning');
-      expect(output).toHaveProperty('message', 'No active runbook');
-      expect(output).toHaveProperty('code', 'NO_ACTIVE_RUNBOOK');
-
-      const validation = validateWarningOutput(output);
-      expect(validation.valid).toBe(true);
-    });
-
-    it('validates already-resolved substep output', async () => {
-      const runbookPath = path.join(workspace.cwd, 'substeps.runbook.md');
-      fs.writeFileSync(
-        runbookPath,
-        createRunbook({
-          name: 'substeps',
-          steps: [
-            {
-              title: 'Parent Step',
-              pass: 'CONTINUE',
-              substeps: [
-                { title: 'First', content: 'Resolve once.' },
-                { title: 'Second', content: 'Keep parent unresolved.' },
-              ],
-            },
-            { title: 'Done', pass: 'COMPLETE', content: 'Finished.' },
-          ],
-        }),
-      );
-      await runCliInProcess('run --prompted substeps.runbook.md --text', workspace);
-      await runCliInProcess('pass --step 1.1', workspace);
-
-      const result = await runCliInProcess('pass --step 1.1', workspace);
-      expect(result).toMatchObject({ exitCode: 0 });
-      const output = parseJsonOutput(result.stdout);
-
-      expect(output).toMatchObject({
-        kind: 'action',
-        action: 'pass',
-        status: 'already-resolved',
-      });
-      const validation = validateActionOutput(output);
+      expect(result.exitCode).toBe(1);
+      expect(output).toHaveProperty('kind', 'error');
+      expect(output).toHaveProperty('code', 'TOKEN_REQUIRED');
+      const validation = validateErrorOutput(output);
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
     });
-  });
 
-  describe('fail', () => {
+    it('validates the INVALID_STEP error envelope for a missing --step', async () => {
+      const { token } = await startPrompted('runbooks/simple.runbook.md');
+      const result = await runCliInProcess(`pass --token ${token}`, workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      expect(result.exitCode).toBe(1);
+      expect(output).toHaveProperty('code', 'INVALID_STEP');
+      const validation = validateErrorOutput(output);
+      expect(validation.valid).toBe(true);
+      expect(validation.errors).toEqual([]);
+    });
+
     it('validates fail command output', async () => {
       const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
       fs.writeFileSync(
@@ -462,9 +406,9 @@ prompt: First step
 echo done
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
+      const { token } = await startPrompted('test.runbook.md');
 
-      const result = await runCliInProcess('fail', workspace);
+      const result = await runCliInProcess(`fail --token ${token} --step 1`, workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateActionOutput(output);
@@ -492,9 +436,9 @@ prompt: Second step
 echo done
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
+      const { token } = await startPrompted('test.runbook.md');
 
-      const result = await runCliInProcess('goto 2', workspace);
+      const result = await runCliInProcess(`goto 2 --token ${token}`, workspace);
       const events = parseJsonlOutput(result.stdout);
 
       // Goto command now streams JSONL events plus a final JSON object
@@ -527,83 +471,6 @@ echo done
 
   // ==========================================================================
   // Stash/Pop Commands
-  // ==========================================================================
-
-  describe('stash', () => {
-    it('validates stash command output', async () => {
-      const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
-      fs.writeFileSync(
-        runbookPath,
-        `---
-name: test-runbook
----
-## Step 1
-prompt: Wait
-`,
-      );
-      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
-
-      const result = await runCliInProcess('stash', workspace);
-      const output = parseJsonOutput(result.stdout);
-
-      const validation = validateStashOutput(output);
-      expect(validation.valid).toBe(true);
-      expect(validation.errors).toEqual([]);
-
-      expect(output).toHaveProperty('action', 'stash');
-    });
-
-    it('validates stash warning when no active runbook', async () => {
-      const result = await runCliInProcess('stash', workspace);
-      const output = parseJsonOutput(result.stdout);
-
-      // No-active-runbook is a warning (not an error) — exit 0, message field
-      expect(output).toHaveProperty('kind', 'warning');
-      expect(output).toHaveProperty('message', 'No active runbook');
-      expect(output).toHaveProperty('code', 'NO_ACTIVE_RUNBOOK');
-
-      const validation = validateWarningOutput(output);
-      expect(validation.valid).toBe(true);
-    });
-  });
-
-  describe('pop', () => {
-    it('validates pop command output', async () => {
-      const runbookPath = path.join(workspace.cwd, 'test.runbook.md');
-      fs.writeFileSync(
-        runbookPath,
-        `---
-name: test-runbook
----
-## Step 1
-prompt: Wait
-`,
-      );
-      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
-      await runCliInProcess('stash --text', workspace);
-
-      const result = await runCliInProcess('pop', workspace);
-      const output = parseJsonOutput(result.stdout);
-
-      const validation = validatePopOutput(output);
-      expect(validation.valid).toBe(true);
-      expect(validation.errors).toEqual([]);
-
-      expect(output).toHaveProperty('action', 'pop');
-    });
-
-    it('validates pop error when no stashed runbook', async () => {
-      const result = await runCliInProcess('pop', workspace);
-      const output = parseJsonOutput(result.stdout);
-
-      // Should indicate error via error field
-      expect(output).toHaveProperty('error');
-      expect(output).toHaveProperty('code', 'NO_STASHED_RUNBOOK');
-    });
-  });
-
-  // ==========================================================================
-  // Prune Command
   // ==========================================================================
 
   describe('prune', () => {
@@ -737,9 +604,12 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
+      // `rd echo` runs inside a step command, where RD_RUN_ID names its run.
+      const { runId } = await startPrompted('test.runbook.md');
 
-      const result = await runCliInProcess('echo hello world', workspace);
+      const result = await runCliInProcess('echo hello world', workspace, {
+        env: { RD_RUN_ID: runId },
+      });
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateEchoOutput(output);
@@ -766,9 +636,11 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
+      const { runId } = await startPrompted('test.runbook.md');
 
-      const result = await runCliInProcess('echo --result PASS test', workspace);
+      const result = await runCliInProcess('echo --result PASS test', workspace, {
+        env: { RD_RUN_ID: runId },
+      });
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateEchoOutput(output);
@@ -944,9 +816,9 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
+      const { token } = await startPrompted('test.runbook.md');
 
-      const result = await runCliInProcess('stop', workspace);
+      const result = await runCliInProcess(`stop --token ${token}`, workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateActionOutput(output);
@@ -957,16 +829,17 @@ prompt: Wait
       expect(output).toHaveProperty('action', 'stop');
     });
 
-    it('validates already-terminal warning (RUNBOOK_NOT_RUNNING)', async () => {
-      await driveToTerminalActive('terminal-stop');
+    it('validates the run-finished error (RD-303) for a completed run', async () => {
+      const token = await driveToTerminal('terminal-stop');
 
-      const result = await runCliInProcess('stop', workspace);
+      const result = await runCliInProcess(`stop --token ${token}`, workspace);
       const output = parseJsonOutput(result.stdout);
 
-      expect(output).toHaveProperty('kind', 'warning');
-      expect(output).toHaveProperty('code', 'RUNBOOK_NOT_RUNNING');
+      expect(result.exitCode).toBe(1);
+      expect(output).toHaveProperty('kind', 'error');
+      expect(output).toHaveProperty('code', 'RD-303');
 
-      const validation = validateWarningOutput(output);
+      const validation = validateErrorOutput(output);
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
     });
@@ -984,9 +857,9 @@ name: test-runbook
 prompt: Wait
 `,
       );
-      await runCliInProcess('run --prompted test.runbook.md --text', workspace);
+      const { token } = await startPrompted('test.runbook.md');
 
-      const result = await runCliInProcess('complete', workspace);
+      const result = await runCliInProcess(`complete --token ${token}`, workspace);
       const output = parseJsonOutput(result.stdout);
 
       const validation = validateActionOutput(output);
@@ -997,16 +870,17 @@ prompt: Wait
       expect(output).toHaveProperty('action', 'complete');
     });
 
-    it('validates already-terminal warning (RUNBOOK_NOT_RUNNING)', async () => {
-      await driveToTerminalActive('terminal-complete');
+    it('validates the run-finished error (RD-303) for a completed run', async () => {
+      const token = await driveToTerminal('terminal-complete');
 
-      const result = await runCliInProcess('complete', workspace);
+      const result = await runCliInProcess(`complete --token ${token}`, workspace);
       const output = parseJsonOutput(result.stdout);
 
-      expect(output).toHaveProperty('kind', 'warning');
-      expect(output).toHaveProperty('code', 'RUNBOOK_NOT_RUNNING');
+      expect(result.exitCode).toBe(1);
+      expect(output).toHaveProperty('kind', 'error');
+      expect(output).toHaveProperty('code', 'RD-303');
 
-      const validation = validateWarningOutput(output);
+      const validation = validateErrorOutput(output);
       expect(validation.valid).toBe(true);
       expect(validation.errors).toEqual([]);
     });
@@ -1017,13 +891,27 @@ prompt: Wait
   // ==========================================================================
 
   describe('error responses', () => {
-    it('validates no active runbook warning format', async () => {
-      const result = await runCliInProcess('pass', workspace);
+    it('validates the UNKNOWN_TOKEN error format', async () => {
+      const result = await runCliInProcess(
+        'pass --token rdo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA --step 1',
+        workspace,
+      );
       const output = parseJsonOutput(result.stdout);
 
-      // No-active-runbook emits a warning (not an error): exit 0, kind: 'warning', message field
+      expect(result.exitCode).toBe(1);
+      expect(output).toHaveProperty('kind', 'error');
+      expect(output).toHaveProperty('code', 'UNKNOWN_TOKEN');
+
+      const validation = validateErrorOutput(output);
+      expect(validation.valid).toBe(true);
+    });
+
+    it('validates the no-run warning format for a read-only command', async () => {
+      const result = await runCliInProcess(['artifact', 'ls'], workspace);
+      const output = parseJsonOutput(result.stdout);
+
+      expect(result.exitCode).toBe(0);
       expect(output).toHaveProperty('kind', 'warning');
-      expect(output).toHaveProperty('message', 'No active runbook');
       expect(output).toHaveProperty('code', 'NO_ACTIVE_RUNBOOK');
 
       const validation = validateWarningOutput(output);

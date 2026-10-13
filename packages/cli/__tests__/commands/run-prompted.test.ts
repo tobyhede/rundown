@@ -2,17 +2,14 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import { writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { TestWorkspace } from '../helpers/test-utils.js';
-import type { BuildGotoContextResult } from '../../src/helpers/goto-workflow.js';
 import type { RunProgressionOutcome } from '@rundown-org/core';
 
 // The launch-local `--prompted --step` jump resolves through the same core
-// navigation seam as standalone GOTO, and `renderNavigationRefusal` reports
-// `false` for `none` — an empty-stack no-op rather than a failure. `run` always
-// names its fresh run with a `runId` (or its `claimId`), so the seam's selector
-// is never `{kind:'default'}` and `none` cannot arise from a real launch. That
-// is why the arm needs a seam to be observed at, the same reasoning that put
-// `renderNavigationRefusal`'s own unreachable arms (`claim_bearer_mismatch`,
-// #613) under a named dispatcher.
+// navigation seam as standalone GOTO, under the Owner Token the launch just
+// minted. `run` always names its own fresh run, so the token-resolution
+// refusals (`unknown_token`, `finished`) cannot arise from a real launch; the
+// arms need a seam to be observed at, which is why `renderNavigationRefusal`
+// is a named dispatcher.
 //
 // The real module is imported first and re-exported wholesale, and the double
 // defaults to the real implementation, so every other test in this file runs
@@ -41,14 +38,27 @@ const {
   createTestWorkspace,
   parseConcatenatedJson,
   runCliInProcess,
-  getActiveState,
-  findActionOutput,
+  getAllRunbookStates,
   readRunbookState,
-  requireFrontierToken,
+  requireOwnerToken,
+  requireRunId,
 } = await import('../helpers/test-utils.js');
 
 describe('start --prompted', () => {
   let workspace: TestWorkspace;
+
+  /** The most recently started run in the workspace (there is no "active" run). */
+  async function latestRun() {
+    const states = await getAllRunbookStates(workspace);
+    return states.sort((a, b) => b.startedAt.localeCompare(a.startedAt))[0] ?? null;
+  }
+
+  /** Start a prompted run in JSON mode and capture its Owner Token and id. */
+  async function startPrompted(runbook: string): Promise<{ token: string; runId: string }> {
+    const result = await runCliInProcess(`run --prompted ${runbook}`, workspace);
+    expect(result.exitCode).toBe(0);
+    return { token: requireOwnerToken(result.stdout), runId: requireRunId(result.stdout) };
+  }
 
   beforeEach(async () => {
     workspace = await createTestWorkspace();
@@ -77,8 +87,8 @@ describe('start --prompted', () => {
     it('sets prompted flag in state', async () => {
       await runCliInProcess('run --prompted runbooks/with-commands.runbook.md --text', workspace);
 
-      const state = await getActiveState(workspace);
-      expect(state?.prompted).toBe(true);
+      const state = await latestRun();
+      expect(state.prompted).toBe(true);
     });
 
     it('does not auto-execute bash commands in prompted mode', async () => {
@@ -97,16 +107,16 @@ describe('start --prompted', () => {
     });
 
     it('waits for manual pass/fail in prompted mode', async () => {
-      await runCliInProcess('run --prompted runbooks/with-commands.runbook.md --text', workspace);
+      const { token, runId } = await startPrompted('runbooks/with-commands.runbook.md');
 
       // After starting in prompted mode, should be at step 1
-      let state = await getActiveState(workspace);
+      let state = await readRunbookState(workspace, runId);
       expect(state?.step).toBe('1');
 
       // Manual pass should advance to next step
-      await runCliInProcess('pass --text', workspace);
+      await runCliInProcess(['pass', '--token', token, '--step', '1', '--text'], workspace);
 
-      state = await getActiveState(workspace);
+      state = await readRunbookState(workspace, runId);
       expect(state?.step).toBe('2');
     });
 
@@ -130,9 +140,9 @@ Second step.
       );
 
       expect(result.exitCode).toBe(0);
-      const state = await getActiveState(workspace);
-      expect(state?.runbook).toEqual({ source: 'project', path: 'goto-start.runbook.md' });
-      expect(state?.step).toBe('2');
+      const state = await latestRun();
+      expect(state.runbook).toEqual({ source: 'project', path: 'goto-start.runbook.md' });
+      expect(state.step).toBe('2');
     });
 
     it('persists first substep launch state through core initialization', async () => {
@@ -160,14 +170,14 @@ Second step.
       );
 
       expect(result.exitCode).toBe(0);
-      const state = await getActiveState(workspace);
-      expect(state?.step).toBe('1');
-      expect(state?.substep).toBe('1');
-      expect(state?.lastAction).toEqual({ type: 'START', origin: 'direct' });
-      expect(state?.activeFrameKey).toBe('1|');
-      expect(state?.activeEntry).toBe(1);
-      expect(state?.frameEntryCounts).toEqual({ '1|': 1 });
-      expect(state?.substepStates).toEqual([
+      const state = await latestRun();
+      expect(state.step).toBe('1');
+      expect(state.substep).toBe('1');
+      expect(state.lastAction).toEqual({ type: 'START', origin: 'direct' });
+      expect(state.activeFrameKey).toBe('1|');
+      expect(state.activeEntry).toBe(1);
+      expect(state.frameEntryCounts).toEqual({ '1|': 1 });
+      expect(state.substepStates).toEqual([
         { id: '1', frameKey: '1|', status: 'pending' },
         { id: '2', frameKey: '1|', status: 'pending' },
       ]);
@@ -183,41 +193,6 @@ Second step.
       expect(result.stdout).toContain('Execute command');
       // But not executed (no command execution line)
       expect(result.stdout).not.toContain('$ rd echo');
-    });
-
-    it('inherits prompted flag in child runbooks via delegation', async () => {
-      await writeFile(
-        join(workspace.cwd, 'runbooks', 'prompted-parent.runbook.md'),
-        [
-          '## 1. Parent',
-          '- PASS ALL COMPLETE',
-          '- FAIL ANY STOP',
-          '',
-          '### 1.1 Child',
-          '- DELEGATE',
-          '',
-          'Run child.',
-          '',
-          '- with-commands.runbook.md',
-        ].join('\n'),
-      );
-
-      const started = await runCliInProcess(
-        'run --prompted runbooks/prompted-parent.runbook.md',
-        workspace,
-      );
-      const token = requireFrontierToken(started.stdout, '1.1');
-
-      // Claim the delegation token — launches child runbook
-      const claimResult = await runCliInProcess(`claim ${token}`, workspace);
-      expect(claimResult.exitCode).toBe(0);
-      const childRunId = findActionOutput(claimResult.stdout)?.run_id;
-      expect(typeof childRunId).toBe('string');
-
-      // Child should inherit prompted flag from parent
-      const state = await readRunbookState(workspace, String(childRunId));
-      expect(state?.prompted).toBe(true);
-      expect(state?.runbook.path).toContain('with-commands');
     });
   });
 
@@ -305,23 +280,22 @@ Second step.
 
     it('respects max retries on repeated failures', async () => {
       // Manually step through retries to test tracking
-      await runCliInProcess(
-        'run --prompted runbooks/with-failing-command.runbook.md --text',
-        workspace,
-      );
+      const { token, runId } = await startPrompted('runbooks/with-failing-command.runbook.md');
+      const fail = () =>
+        runCliInProcess(['fail', '--token', token, '--step', '1', '--text'], workspace);
 
       // Step 1 with retry in prompted mode
-      let result = await runCliInProcess('fail --text', workspace);
-      let state = await getActiveState(workspace);
+      let result = await fail();
+      let state = await readRunbookState(workspace, runId);
       expect(state?.retryCount).toBe(1);
 
       // Step 2 with retry
-      result = await runCliInProcess('fail --text', workspace);
-      state = await getActiveState(workspace);
+      result = await fail();
+      state = await readRunbookState(workspace, runId);
       expect(state?.retryCount).toBe(2);
 
       // Third fail should block (max retries exceeded)
-      result = await runCliInProcess('fail --text', workspace);
+      result = await fail();
       expect(result.exitCode).not.toBe(0);
     });
 
@@ -361,13 +335,12 @@ npm run dangerous-command
   describe('mode consistency', () => {
     it('can start same runbook in auto mode after prompted mode', async () => {
       // First: prompted mode
-      await runCliInProcess('stop --text', workspace);
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-      const state = await getActiveState(workspace);
+      const { token, runId } = await startPrompted('runbooks/simple.runbook.md');
+      const state = await readRunbookState(workspace, runId);
       expect(state?.prompted).toBe(true);
 
       // Clean up
-      await runCliInProcess('stop --text', workspace);
+      await runCliInProcess(['stop', '--token', token, '--text'], workspace);
 
       // Second: auto mode - runbook completes immediately
       const result = await runCliInProcess('run runbooks/simple.runbook.md --text', workspace);
@@ -376,16 +349,16 @@ npm run dangerous-command
     });
 
     it('enforces prompted mode across manual steps', async () => {
-      await runCliInProcess('run --prompted runbooks/with-commands.runbook.md --text', workspace);
+      const { token, runId } = await startPrompted('runbooks/with-commands.runbook.md');
 
       // In prompted mode, no auto-execution should happen
-      const state1 = await getActiveState(workspace);
+      const state1 = await readRunbookState(workspace, runId);
       expect(state1?.step).toBe('1');
 
       // Manually pass
-      await runCliInProcess('pass --text', workspace);
+      await runCliInProcess(['pass', '--token', token, '--step', '1', '--text'], workspace);
 
-      const state2 = await getActiveState(workspace);
+      const state2 = await readRunbookState(workspace, runId);
       expect(state2?.step).toBe('2');
     });
 
@@ -476,15 +449,6 @@ Second step.
       await writeFile(join(workspace.cwd, 'jump.runbook.md'), JUMP_RUNBOOK);
     });
 
-    it('exits 0 on an empty-stack no-op rather than reporting a failure', async () => {
-      buildGotoContext.mockResolvedValueOnce({ kind: 'none' });
-
-      const result = await runCliInProcess('run --prompted jump.runbook.md --step 2', workspace);
-
-      expect(buildGotoContext).toHaveBeenCalledTimes(1);
-      expect(result.exitCode).toBe(0);
-    });
-
     it('reports that a completed run cannot be navigated instead of dropping the jump', async () => {
       // The jump ran only for a `waiting` launch. Every other closed outcome
       // exits earlier through `progressionFailedClosed` — except `completed`,
@@ -505,7 +469,7 @@ Second step.
       expect(parseConcatenatedJson(result.stdout)).toContainEqual(
         expect.objectContaining({
           kind: 'error',
-          code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
+          code: 'RD-303',
           error: expect.stringContaining('--step 2'),
         }),
       );
@@ -518,18 +482,15 @@ Second step.
       const result = await runCliInProcess('run --prompted jump.runbook.md --step 2', workspace);
 
       expect(result.exitCode).toBe(0);
-      const state = await getActiveState(workspace);
-      expect(state?.step).toBe('2');
+      const state = await latestRun();
+      expect(state.step).toBe('2');
     });
 
     it('still exits 1 on a refusal that is a real failure', async () => {
-      // Anti-vacuity: honouring the return value must not flatten every refusal
-      // to success. `unknown_run` reports `true` and keeps the non-zero exit.
-      buildGotoContext.mockResolvedValueOnce({
-        kind: 'unknown_run',
-        runId: 'rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-        message: 'Run rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa not found',
-      } as BuildGotoContextResult);
+      // Anti-vacuity: every navigation refusal reports `true` and keeps the
+      // non-zero exit. `unknown_token` cannot arise from a real launch (the run
+      // was created under this very token), so it is staged at the seam.
+      buildGotoContext.mockResolvedValueOnce({ kind: 'unknown_token' });
 
       const result = await runCliInProcess('run --prompted jump.runbook.md --step 2', workspace);
 
@@ -544,8 +505,8 @@ Second step.
       expect(parseConcatenatedJson(result.stdout)).toContainEqual(
         expect.objectContaining({
           kind: 'error',
-          code: 'RUN_TARGET_UNAVAILABLE',
-          error: 'Run rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa not found',
+          code: 'UNKNOWN_TOKEN',
+          command: 'run',
         }),
       );
     });

@@ -9,6 +9,7 @@ import {
   getAllRunbookStates,
   parseJsonOutput,
   type TestWorkspace,
+  requireOwnerToken,
 } from '../helpers/test-utils.js';
 
 const CONTEXT_PASSING_RUNBOOK = `---
@@ -62,7 +63,7 @@ describe('OUTPUTS→INPUTS round-trip', () => {
     expect(step2Entered?.prompt).not.toContain('{{Message}}');
 
     // Pass step 2 — should COMPLETE
-    const pass2 = runCli('pass', workspace);
+    const pass2 = runCli(`pass --token ${requireOwnerToken(start.stdout)} --step 2`, workspace);
     expect(pass2.exitCode).toBe(0);
 
     const events2 = parseJsonOutput(pass2.stdout);

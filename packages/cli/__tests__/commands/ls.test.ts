@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Command } from 'commander';
-import { createTestWorkspace, runCliInProcess } from '../helpers/test-utils.js';
+import { createTestWorkspace, requireOwnerToken, runCliInProcess } from '../helpers/test-utils.js';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests src/commands/ls.ts`
 // credits the behavioural tests below (which reach the command only via the
@@ -18,7 +18,7 @@ describe('ls command wiring', () => {
 
     const ls = program.commands.find((c) => c.name() === 'ls');
     expect(ls).toBeDefined();
-    expect(ls?.description()).toBe('List runbooks (active by default, --all for available)');
+    expect(ls?.description()).toBe('List runbooks (runs by default, --all for available)');
 
     const byLong = new Map(ls!.options.map((o) => [o.long, o]));
     expect([...byLong.keys()]).toEqual(expect.arrayContaining(['--all', '--text', '--tags']));
@@ -44,9 +44,10 @@ describe('rd ls', () => {
 
   it('shows correct step count for naturally completed runbook', async () => {
     // Run in prompted mode to manually step through
-    await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
-    await runCliInProcess('pass --text', workspace); // Step 1 -> 2
-    await runCliInProcess('pass --text', workspace); // Step 2 -> DONE
+    const start = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    const token = requireOwnerToken(start.stdout);
+    await runCliInProcess(`pass --token ${token} --step 1 --text`, workspace); // Step 1 -> 2
+    await runCliInProcess(`pass --token ${token} --step 2 --text`, workspace); // Step 2 -> DONE
 
     // Now, run `ls --text` for human-readable output
     const result = await runCliInProcess('ls --text', workspace);
@@ -63,7 +64,38 @@ describe('rd ls', () => {
     expect(result.stdout).toContain('simple');
   });
 
-  it('uses persisted source identity when counting active runbook steps', async () => {
+  it('marks a running run and lists its position', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+
+    const result = await runCliInProcess('ls --text', workspace);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('running');
+    expect(result.stdout).toContain('1/2');
+  });
+
+  it('prints "No runs." when nothing has run', async () => {
+    const result = await runCliInProcess('ls --text', workspace);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain('No runs.');
+  });
+
+  it('emits only the documented entry fields in JSON', async () => {
+    await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+
+    const result = await runCliInProcess('ls', workspace);
+
+    expect(result.exitCode).toBe(0);
+    const output = JSON.parse(result.stdout) as Record<string, unknown>[];
+    expect(output).toHaveLength(1);
+    // simple.runbook.md has no title, so `title` is absent rather than null.
+    expect(Object.keys(output[0]).sort()).toEqual(['id', 'runbook', 'status', 'step', 'total']);
+    expect(output[0].status).toBe('running');
+    expect(JSON.stringify(output)).not.toContain('rdo_');
+  });
+
+  it('uses persisted source identity when counting running runbook steps', async () => {
     await writeFile(
       join(workspace.runbooksDir(), 'shadow.runbook.md'),
       '# Project Shadow\n\n## 1. Project Only\n\nProject step.\n',

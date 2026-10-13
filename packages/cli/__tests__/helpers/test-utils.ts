@@ -4,7 +4,15 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { RUNBOOK_SOURCES, isRunId, runsDir, runbooksDir, locksDir } from '@rundown-org/core';
+import {
+  CLAIM_TICKET_PREFIX,
+  OWNER_TOKEN_PREFIX,
+  RUNBOOK_SOURCES,
+  isRunId,
+  runsDir,
+  runbooksDir,
+  locksDir,
+} from '@rundown-org/core';
 import type { RunbookState } from '@rundown-org/core';
 import { listPersistedRunIds, readPersistedRunState } from '@rundown-org/core/testing/run-fixtures';
 import { NAMED_IDENTIFIER_PATTERN, isReservedWord } from '@rundown-org/parser';
@@ -910,8 +918,11 @@ export function normalizeCliOutput(output: string, workspace: TestWorkspace): st
 
   // 3. Owner Tokens (`rdo_` + 43 base64url, packages/core/src/runbook/run-secrets.ts)
   //    and claim tickets (`rdt_`). Printed once on runbook_started; never stable.
-  text = text.replace(/\brdo_[A-Za-z0-9_-]{43}/g, '<ownerToken>');
-  text = text.replace(/\brdt_[A-Za-z0-9_-]{43}/g, '<claimTicket>');
+  text = text.replace(new RegExp(`\\b${OWNER_TOKEN_PREFIX}[A-Za-z0-9_-]{43}`, 'g'), '<ownerToken>');
+  text = text.replace(
+    new RegExp(`\\b${CLAIM_TICKET_PREFIX}[A-Za-z0-9_-]{43}`, 'g'),
+    '<claimTicket>',
+  );
 
   // 4. SHA-256 hex digests (e.g. delegation token_hash field)
   text = text.replace(/sha256:[0-9a-f]{64}/g, '<tokenHash>');

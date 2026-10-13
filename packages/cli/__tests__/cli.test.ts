@@ -71,16 +71,6 @@ describe('CLI program', () => {
       expect(result.exitCode).toBe(0);
     });
 
-    it('registers stash command', () => {
-      const result = runCli('stash --help --text', workspace);
-      expect(result.exitCode).toBe(0);
-    });
-
-    it('registers pop command', () => {
-      const result = runCli('pop --help --text', workspace);
-      expect(result.exitCode).toBe(0);
-    });
-
     it('registers echo command', () => {
       const result = runCli('echo --help --text', workspace);
       expect(result.exitCode).toBe(0);
@@ -103,21 +93,6 @@ describe('CLI program', () => {
 
     it('registers scenarios command', () => {
       const result = runCli('scenarios --help --text', workspace);
-      expect(result.exitCode).toBe(0);
-    });
-
-    it('registers delegate command', () => {
-      const result = runCli('delegate --help', workspace);
-      expect(result.exitCode).toBe(0);
-    });
-
-    it('registers claim command', () => {
-      const result = runCli('claim --help', workspace);
-      expect(result.exitCode).toBe(0);
-    });
-
-    it('registers abort command', () => {
-      const result = runCli('abort --help', workspace);
       expect(result.exitCode).toBe(0);
     });
   });
@@ -321,13 +296,22 @@ describe('CLI program', () => {
       expect(output).toBeDefined();
     });
 
-    it('outputs JSON for pass with no active runbook', () => {
-      const result = runCli('pass', workspace);
-      expect(result.exitCode).toBe(0);
+    it('outputs the TOKEN_REQUIRED error envelope for a bare pass', () => {
+      const result = runCli('pass --step 1', workspace);
+      expect(result.exitCode).toBe(1);
       const output = JSON.parse(result.stdout);
-      expect(output).toHaveProperty('kind', 'warning');
-      expect(output).toHaveProperty('message', 'No active runbook');
-      expect(output).toHaveProperty('code', 'NO_ACTIVE_RUNBOOK');
+      expect(output).toHaveProperty('kind', 'error');
+      expect(output).toHaveProperty('code', 'TOKEN_REQUIRED');
+      expect(output).toHaveProperty('command', 'pass');
     });
+
+    it.each(['stash', 'pop', 'delegate', 'claim', 'abort', 'collect'])(
+      'no longer registers the %s command',
+      (command) => {
+        const result = runCli(command, workspace);
+        expect(result.exitCode).toBe(1);
+        expect(result.stderr).toContain('unknown command');
+      },
+    );
   });
 });
