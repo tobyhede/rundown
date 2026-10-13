@@ -1,5 +1,4 @@
 // src/runbook/state.ts
-import { randomBytes } from 'node:crypto';
 import * as fsSync from 'node:fs';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
@@ -32,7 +31,7 @@ import {
   type VariableValue,
 } from './effective-vars.js';
 import { isArtifactRecord } from './artifact-schema.js';
-import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
+import { assertRunId, generateRunId, type RunId } from './run-id.js';
 import { runsDir as _runsDir, assertSafeId } from '../paths.js';
 import { getRunbookStore } from './storage/store-registry.js';
 import type {
@@ -191,14 +190,8 @@ export function isConcurrentStateModificationError(
   return error instanceof ConcurrentStateModificationError;
 }
 
-/**
- * Generate a concrete Rundown run identifier.
- *
- * @returns Run ID in canonical `rd_<32 lowercase hex>` form
- */
-export function generateRunId(): RunId {
-  return assertRunId(`${RUN_ID_PREFIX}${randomBytes(16).toString('hex')}`);
-}
+// Re-exported from its leaf module, the import site every consumer names.
+export { generateRunId };
 
 /**
  * Typed patch accepted by {@link RunbookStateManager.update}.

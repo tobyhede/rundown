@@ -77,12 +77,14 @@ import type { MachineExecutionObserver } from '../events/execution-observation.j
 import {
   buildFrameKey,
   deriveExecutionAt,
+  findSubstepState,
   frameKeyForCursor,
   getActiveForContext,
 } from './targeting.js';
 import { resetReopenedSubsteps } from './substep-reset.js';
 import { getErrorMessage } from '../errors.js';
-import { assertRunId } from './run-id.js';
+import { assertRunId, generateRunId, type RunId } from './run-id.js';
+import { inlineRunbookOf, reserveInlineChild } from './inline-child.js';
 import { advanceFrameEntry, type FrameEntryCoordinates } from './frame-entry.js';
 import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
 import { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
@@ -713,6 +715,7 @@ export const LEAF_SUBSTATES = [
   '__resolve-iteration',
   '__progression-waiting-input',
   '__progression-enter-unit',
+  '__reserve-child',
 ] as const;
 
 /** Child state names owned by a compiled execution-unit leaf. */
@@ -858,9 +861,11 @@ export interface RunbookContext {
  *   resolves with an empty `variables` record and still fires the result-driven
  *   `PASS` or `FAIL` event.
  *
- * A substep's PASS/FAIL — including a DELEGATE or runbook-list substep's — is
- * sent directly by the lifecycle seam after `--step` validation; there is no
- * mailbox and no completion-application event (ADR 0005).
+ * - CHILD_RESULT: The implicit Collect of an inline substep's Current Child
+ *   (#903). Merges the child's final variables and raises PASS or FAIL.
+ *
+ * A DELEGATE substep's PASS/FAIL is sent directly by the lifecycle seam after
+ * `--step` validation; there is no mailbox (ADR 0005).
  */
 export type RunbookEvent =
   | { type: 'PASS' }
@@ -887,6 +892,18 @@ export type RunbookEvent =
       type: 'COMMAND_RESULT';
       result: 'pass' | 'fail';
       channels: readonly PreparedChannel[];
+    }
+  | {
+      /**
+       * The implicit Collect of an Inline Child (#903): the child's terminal
+       * read as its Child Result, with its final variables. Handled only by
+       * the inline substep whose Current Child is `childRunId`; the result
+       * raises that substep's PASS or FAIL.
+       */
+      type: 'CHILD_RESULT';
+      childRunId: RunId;
+      result: 'pass' | 'fail';
+      vars: Readonly<Record<string, VariableValue>>;
     };
 
 /**
@@ -3675,6 +3692,9 @@ const SIDE_EFFECT_LEAF_SUBSTATE_POLICIES = {
   '__resolve-artifacts': { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'terminal' },
   '__resolve-iteration': { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'terminal' },
   '__progression-enter-unit': { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'refusal' },
+  // Transient: its entry action reserves the Inline Child, then it leaves for
+  // `idle` in the same macrostep (#903).
+  '__reserve-child': null,
 } as const satisfies Readonly<Record<LeafSubstate, SideEffectLeafSubstatePolicy | null>>;
 
 /**
@@ -3801,6 +3821,8 @@ function checkedStateInsert(
  * @param options.commandServices - Runtime callables for machine-owned command execution.
  * @param options.executionObserver - Non-persisted observer for command actor output and failures.
  * @param options.runProgression - Runtime-only authority and callables for progression selection.
+ * @param options.generateChildRunId - Mints the run id an inline substep's entry reserves for its
+ *   child (#903). Defaults to a fresh random run id; tests inject a deterministic one.
  * @returns An XState state machine definition
  * @throws {Error} When a GOTO target references a non-existent step or when graph invariants are violated (e.g., duplicate state IDs)
  */
@@ -3821,6 +3843,7 @@ export function compileRunbookToMachine(
     commandServices?: CommandExecutionServices;
     executionObserver?: MachineExecutionObserver;
     runProgression?: RunProgressionMachineRuntime;
+    generateChildRunId?: () => RunId;
   },
 ) {
   const evaluationOptions = options?.evaluationOptions
@@ -3956,6 +3979,105 @@ export function compileRunbookToMachine(
         ),
       frameReentry: undefined,
     });
+
+  const mintChildRunId = options?.generateChildRunId ?? generateRunId;
+
+  /**
+   * Build the transient `__reserve-child` substate of an inline substep leaf.
+   *
+   * Its entry action records a fresh Current Child reservation for the frame
+   * entry the leaf's `syncFrameEntry` just made current, replacing any earlier
+   * one, so a re-entry by loop, GOTO or RETRY never counts an old child.
+   *
+   * @param stepName - The step owning the inline substep.
+   * @param substepId - The inline substep.
+   * @param runbook - The runbook the child runs.
+   * @returns The substate configuration, keyed by its name.
+   */
+  const buildInlineChildStates = (
+    stepName: string,
+    substepId: string,
+    runbook: string,
+  ): Record<'__reserve-child', RunbookStateConfig> => ({
+    '__reserve-child': {
+      entry: runbookSetup.assign({
+        substepStates: ({ context }: { context: RunbookContext }): readonly SubstepState[] => {
+          const entry = context.frameEntry?.activeEntry;
+          if (entry === undefined) {
+            throw new Error(`Inline substep ${stepName}.${substepId} entered with no frame entry`);
+          }
+          return reserveInlineChild({
+            substepStates: context.substepStates ?? [],
+            stepName,
+            substepId,
+            runbook,
+            frameKey: frameKeyForCursor(stepName, context.forStack),
+            entry,
+            templateVars: sourceTemplateVars,
+            variables: context.variables,
+            forStack: context.forStack,
+            runId: mintChildRunId(),
+          });
+        },
+      }),
+      always: { target: 'idle' },
+    },
+  });
+
+  /**
+   * Build an inline substep's `CHILD_RESULT` handling: the implicit Collect.
+   *
+   * Accepted only for the substep's Current Child — the reservation of the
+   * frame's active entry — so a stale child's result is dropped by the guard
+   * rather than applied. The child's final variables merge first; then the
+   * Child Result raises the substep's own PASS or FAIL, whose authored handler
+   * decides the action.
+   *
+   * @param stepName - The step owning the inline substep.
+   * @param substepId - The inline substep.
+   * @returns The guarded transitions for `idle.on.CHILD_RESULT`.
+   */
+  // The return type stays inferred: the event-specific transition type the
+  // `idle.on.CHILD_RESULT` key demands is not nameable from here, and annotating
+  // with the any-event alias is rejected by XState's per-event checking.
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  const buildChildResultTransitions = (stepName: string, substepId: string) => {
+    const isCurrentChild = ({
+      context,
+      event,
+    }: {
+      context: RunbookContext;
+      event: RunbookEvent;
+    }): boolean => {
+      assertEvent(event, 'CHILD_RESULT');
+      const child = findSubstepState(
+        context.substepStates ?? [],
+        substepId,
+        frameKeyForCursor(stepName, context.forStack),
+      )?.child;
+      return child?.runId === event.childRunId && child.entry === context.frameEntry?.activeEntry;
+    };
+    const storeChildVariables = {
+      type: 'storeCapturedVariables' as const,
+      params: ({ event }: { event: RunbookEvent }) => {
+        assertEvent(event, 'CHILD_RESULT');
+        return { variables: event.vars };
+      },
+    };
+    return [
+      {
+        guard: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) =>
+          isCurrentChild({ context, event }) &&
+          event.type === 'CHILD_RESULT' &&
+          event.result === 'pass',
+        actions: [storeChildVariables, { type: 'raisePass' as const }],
+      },
+      {
+        guard: isCurrentChild,
+        actions: [storeChildVariables, { type: 'raiseFail' as const }],
+      },
+    ];
+  };
 
   // Build a flat list of all states to generate GOTO transitions
   const allStates: StateConfig[] = [];
@@ -4115,22 +4237,33 @@ export function compileRunbookToMachine(
     const { naked: unitNakedOutputs } = partitionOutputDeclarations(
       owningStep === undefined ? [] : extractUnitOutputs(owningStep, config.substepId),
     );
-    // A DELEGATE or runbook-list substep compiles to the same leaf as any other
-    // (ADR 0005 / #901): after iteration and ARTIFACTS resolution it rests in
-    // `idle` and its PASS/FAIL arrives directly. Child reservation on entry is
-    // #903/#904's substate, not a shadow of the deleted issuance states.
+    // An inline runbook-list substep (#903) reserves its Inline Child on every
+    // entry, AFTER iteration and ARTIFACTS resolution so the child inherits the
+    // resolved iteration binding: its entry path passes through the transient
+    // `__reserve-child` on the way to `idle`. Nothing else targets that
+    // substate, so the progression round-trips through `idle` never reserve
+    // again. A DELEGATE substep compiles to the ordinary leaf until #904.
+    const inlineRunbook =
+      owningStep !== undefined && config.substepId !== undefined
+        ? inlineRunbookOf(owningStep, config.substepId)
+        : undefined;
+    const restingEntry = inlineRunbook === undefined ? 'idle' : '__reserve-child';
     const artifactResolveInvokeBlock = buildArtifactResolveInvokeBlock(
       artifactDeclarations,
       config.stepName,
       config.substepId,
-      'idle',
+      restingEntry,
     );
     const initialSubstate = needsIteration
       ? '__resolve-iteration'
       : hasArtifactDeclarations
         ? '__resolve-artifacts'
-        : 'idle';
-    const iterationReadyTarget = hasArtifactDeclarations ? '__resolve-artifacts' : 'idle';
+        : restingEntry;
+    const iterationReadyTarget = hasArtifactDeclarations ? '__resolve-artifacts' : restingEntry;
+    const inlineChildStates =
+      inlineRunbook === undefined || config.substepId === undefined
+        ? {}
+        : buildInlineChildStates(config.stepName, config.substepId, inlineRunbook);
 
     // RETRY re-enters this very leaf whenever the step declares no parent
     // ARTIFACTS to route through, so it needs the same external-transition
@@ -4349,8 +4482,12 @@ export function compileRunbookToMachine(
             EXECUTE_COMMAND: {
               target: `#${config.id}.__execute-command`,
             },
+            ...(inlineRunbook === undefined || config.substepId === undefined
+              ? {}
+              : { CHILD_RESULT: buildChildResultTransitions(config.stepName, config.substepId) }),
           },
         },
+        ...inlineChildStates,
         '__progression-waiting-input': {
           entry: runbookSetup.emit(() => ({
             type: 'RUN_PROGRESSION_INTENT' as const,

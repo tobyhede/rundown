@@ -285,6 +285,7 @@ function lastResultSyncForEvent(
     case 'FAIL':
       return { kind: 'set', result: 'fail' };
     case 'COMMAND_RESULT':
+    case 'CHILD_RESULT':
       return { kind: 'set', result: event.result };
     case 'EXECUTE_COMMAND':
       if (observation.commandOutput?.kind === 'completed') {

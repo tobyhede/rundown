@@ -22,6 +22,7 @@ import type { RunbookStateManager } from './state.js';
 import type { StateVersion } from './storage/mutation-result.js';
 import type { ExecutionLease } from './execution-lease.js';
 import type { Lifecycle, RunbookState } from './types.js';
+import type { ChildLinkage } from './child-linkage.js';
 
 /**
  * A running run resolved by its Owner Token.
@@ -40,6 +41,11 @@ export interface OwnedRun {
    * `stateVersion` clears it, so the seam applies the lease rule first (#902).
    */
   readonly lease: ExecutionLease | null;
+  /**
+   * The parent coordinate the run's row records, or null for a top-level run.
+   * An Inline Child target carries its linkage (#903).
+   */
+  readonly linkage: ChildLinkage | null;
 }
 
 /** A lifecycle a finished run can carry. */
@@ -88,27 +94,26 @@ export async function resolveOwnedRun(
   if (lifecycle !== 'running') {
     return { kind: 'finished', state: owned.state, lifecycle };
   }
-  return {
-    kind: 'running',
-    run: { state: owned.state, stateVersion: owned.stateVersion, lease: owned.lease },
-  };
+  return { kind: 'running', run: owned };
 }
 
 /**
  * Name every substep whose composition this build does not run.
  *
- * Only a `DELEGATE` substep qualifies: an inline runbook-list substep launches
- * an Inline Child (#903), and delegation returns in #904. Ids are qualified
- * (`step.substep`) and returned in document order so the refusal can list
- * them verbatim.
+ * An inline runbook-list substep naming exactly one runbook launches an Inline
+ * Child (#903). Two forms do not run: a `DELEGATE` substep (delegation returns
+ * in #904), and an inline substep listing more than one runbook, which would
+ * have to launch several children for one unit — the machine reserves one
+ * Inline Child per substep. Ids are qualified (`step.substep`) and returned in
+ * document order so the refusal can list them verbatim.
  *
  * Accepts parsed or resolved steps: `rundown check` warns from the parsed
  * runbook, `rundown run` refuses from the resolved one, and both must name
  * the same substeps.
  *
  * @param steps - Parsed or resolved runbook steps
- * @returns Qualified ids of the delegating substeps; empty when the runbook
- *   delegates nothing
+ * @returns Qualified ids of the substeps this build does not run; empty when
+ *   every composing substep is a single-runbook inline one
  */
 export function findUnsupportedComposition(
   steps: readonly (Step | ResolvedStep)[],
@@ -117,16 +122,17 @@ export function findUnsupportedComposition(
   for (const step of steps) {
     if (!('substeps' in step)) continue;
     for (const substep of step.substeps) {
-      if (substep.delegate === true) ids.push(`${step.name}.${substep.id}`);
+      const runbookCount = substep.runbooks?.length ?? 0;
+      if (substep.delegate === true || runbookCount > 1) ids.push(`${step.name}.${substep.id}`);
     }
   }
   return ids;
 }
 
 /**
- * Raised when a run would be created for a runbook that delegates to other
- * runbooks, which this build does not run (delegation returns in #904). An
- * inline child whose runbook delegates is refused the same way.
+ * Raised when a run would be created for a runbook whose composition this
+ * build does not run (see {@link findUnsupportedComposition}). An inline child
+ * whose runbook delegates is refused the same way.
  *
  * Thrown by {@link RunbookStateManager.create} before any store access, so a
  * refused runbook leaves no run row behind. Frontends render it; they do not
@@ -139,11 +145,13 @@ export class RunbookCompositionUnsupportedError extends Error {
   /**
    * Construct a composition refusal.
    *
-   * @param substeps - Qualified delegating substep ids from
+   * @param substeps - Qualified unsupported substep ids from
    *   {@link findUnsupportedComposition}; never empty
    */
   constructor(substeps: readonly string[]) {
-    super(`Runbook delegates to other runbooks at ${substeps.join(', ')}`);
+    super(
+      `Runbook composes other runbooks in a form this build does not run at ${substeps.join(', ')}`,
+    );
     this.name = 'RunbookCompositionUnsupportedError';
     this.substeps = substeps;
   }

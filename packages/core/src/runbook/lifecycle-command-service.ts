@@ -25,12 +25,24 @@
 
 import type { StepId } from '@rundown-org/parser';
 import type { RunbookActorService } from './actor-service.js';
-import type { RunProgressionDirective } from './run-progression.js';
+import {
+  progressionDirectiveForTerminalRun,
+  type RunProgressionDirective,
+  type RunProgressionOutcome,
+} from './run-progression.js';
 import {
   mintRunProgressionAuthority,
   type RunProgressionAuthority,
 } from './run-progression-authority.js';
-import type { FinishedLifecycle, OwnedRun, OwnedRunResolution } from './run-authority.js';
+import {
+  resolveOwnedRun,
+  type FinishedLifecycle,
+  type OwnedRun,
+  type OwnedRunResolution,
+} from './run-authority.js';
+import type { OwnerToken } from './run-secrets.js';
+import { currentInlineReservation } from './inline-child.js';
+import { MAX_INLINE_CHILD_DEPTH } from './inline-progression.js';
 import type { RunId } from './run-id.js';
 import type { RunbookStateManager } from './state.js';
 import {
@@ -196,7 +208,10 @@ export type LifecycleTerminalOutcome =
       readonly lifecycle: 'completed' | 'stopped';
       /** Terminal observation events for the frontend to render. */
       readonly events: readonly TransitionObservationEvent[];
-      /** Whether composition owes a further turn (always `none` until #903). */
+      /**
+       * Whether composition owes a further turn: `activate` when the run is an
+       * Inline Child, so its parent Collects it (#903); otherwise `none`.
+       */
       readonly progression: RunProgressionDirective;
     };
 
@@ -255,6 +270,38 @@ export type LifecycleNavigationMutationOutcome =
       readonly snapshot: unknown;
       /** Opaque core-minted continuation consumed verbatim by the frontend. */
       readonly progression: Extract<RunProgressionDirective, { readonly kind: 'activate' }>;
+    };
+
+/**
+ * Activate Run Progression for a run whose Current Inline Child is terminal
+ * but not yet Collected, so it Collects first. Supplied by the frontend with
+ * its standard activation wiring; core decides when to call it.
+ */
+export type SettleInlineChild = (
+  directive: Extract<RunProgressionDirective, { readonly kind: 'activate' }>,
+) => Promise<RunProgressionOutcome>;
+
+/**
+ * Outcome of {@link RunbookLifecycleCommandService.resolveCommandTarget}.
+ *
+ * Every arm of {@link OwnedRunResolution}, where the `running` arm's run is the
+ * command's target — the deepest running Inline Child below the token's run —
+ * plus `settle_refused` when Collecting a terminal Inline Child first did not
+ * reach a resting run.
+ */
+export type CommandTargetResolution =
+  | Exclude<OwnedRunResolution, { readonly kind: 'running' }>
+  | {
+      readonly kind: 'running';
+      /** The command's target: the deepest running run on the inline chain. */
+      readonly run: OwnedRun;
+      /** The run the Owner Token is bound to: the chain's root. */
+      readonly root: RunbookState;
+    }
+  | {
+      /** The implicit Collect of a terminal Inline Child was refused or failed. */
+      readonly kind: 'settle_refused';
+      readonly outcome: Extract<RunProgressionOutcome, { readonly kind: 'refused' | 'failed' }>;
     };
 
 /**
@@ -347,6 +394,85 @@ export class RunbookLifecycleCommandService {
    */
   constructor(deps: RunbookLifecycleCommandServiceDependencies) {
     this.#deps = deps;
+  }
+
+  /**
+   * Resolve an Owner Token to the run a mutating command targets (#903).
+   *
+   * The token resolves to the root run it owns. From there the target is the
+   * deepest running Inline Child, reached by following each run's Current
+   * Child — so `--step` then names a step of that child, and a step that
+   * belongs to a parent while its inline child runs is not the current
+   * position. Before anything else, a Current Inline Child that is terminal but
+   * not yet Collected (its parent's command died before the implicit Collect)
+   * is Collected through `settle`, which continues the parent's progression;
+   * then the descent starts again from the root.
+   *
+   * @param token - The presented Owner Token.
+   * @param settle - Activates Run Progression on the run owing a Collect.
+   * @returns The target with its root, the root's own refusal, or the settle's.
+   * @throws {Error} When settling does not converge within the chain's depth —
+   *   each settle Collects one child, so this is a defect, not a race.
+   */
+  async resolveCommandTarget(
+    token: OwnerToken,
+    settle: SettleInlineChild,
+  ): Promise<CommandTargetResolution> {
+    let refused: Extract<CommandTargetResolution, { kind: 'settle_refused' }> | undefined;
+    for (let pass = 0; pass <= MAX_INLINE_CHILD_DEPTH; pass++) {
+      const resolution = await resolveOwnedRun(this.#deps.manager, token);
+      if (resolution.kind !== 'running') return resolution;
+      const descent = await this.#descend(resolution.run);
+      // A settle that refused after its Collect landed (say, the parent's next
+      // inline child could not launch) still leaves a target to act on; only a
+      // Collect that did not land refuses the command.
+      if (descent.kind === 'target') {
+        return { kind: 'running', run: descent.run, root: resolution.run.state };
+      }
+      if (refused !== undefined) return refused;
+      const steps = await this.#deps.loadSteps(descent.run.state);
+      const outcome = await settle({
+        kind: 'activate',
+        authority: mintRunProgressionAuthority({ runId: descent.run.state.id }),
+        runbook: descent.run.state.runbook,
+        steps,
+        entryBoundary: { kind: 'resume' },
+      });
+      if (outcome.kind === 'refused' || outcome.kind === 'failed') {
+        refused = { kind: 'settle_refused', outcome };
+      }
+    }
+    throw new Error(
+      `Collecting inline children did not settle within ${String(MAX_INLINE_CHILD_DEPTH)} passes`,
+    );
+  }
+
+  /**
+   * Follow Current Inline Children down from `run`.
+   *
+   * @param run - The run to start from.
+   * @returns The deepest running run, or the run whose Current Child is
+   *   terminal and owes a Collect.
+   * @throws {Error} When the chain is deeper than any run can drive.
+   */
+  async #descend(
+    run: OwnedRun,
+  ): Promise<{ readonly kind: 'target' | 'settle'; readonly run: OwnedRun }> {
+    let current = run;
+    for (let level = 0; level <= MAX_INLINE_CHILD_DEPTH; level++) {
+      const reservation = currentInlineReservation(current.state);
+      if (reservation === undefined) return { kind: 'target', run: current };
+      const child = await this.#deps.manager.loadWithVersion(reservation.runId);
+      // Reserved but not launched: the parent itself is the target.
+      if (child === null) return { kind: 'target', run: current };
+      if ((child.state.lifecycle ?? 'running') !== 'running') {
+        return { kind: 'settle', run: current };
+      }
+      current = child;
+    }
+    throw new Error(
+      `Inline chain below run ${run.state.id} is deeper than ${String(MAX_INLINE_CHILD_DEPTH)}`,
+    );
   }
 
   /**
@@ -449,7 +575,7 @@ export class RunbookLifecycleCommandService {
    * @param input - Command, owned run, optional message and display policy.
    * @returns A typed refusal or the applied terminal with its observation
    *   events. The progression directive is core's answer to whether
-   *   composition owes a further turn (`none` until #903).
+   *   composition owes a further turn: an Inline Child's parent Collects it.
    * @throws {Error} When the machine did not reach a terminal lifecycle for a
    *   FORCE event — a programming invariant, not an operator condition.
    */
@@ -495,7 +621,10 @@ export class RunbookLifecycleCommandService {
       runId: previousState.id,
       lifecycle,
       events: observation.events,
-      progression: { kind: 'none' },
+      progression: progressionDirectiveForTerminalRun(
+        { state: updatedState, linkage: input.run.linkage },
+        steps,
+      ),
     };
   }
 

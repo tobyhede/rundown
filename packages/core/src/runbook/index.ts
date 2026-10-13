@@ -163,6 +163,17 @@ export {
   type RunProgressionWaitReason,
 } from './run-progression.js';
 export type { RunProgressionAuthority } from './run-progression-authority.js';
+// Inline Children (#903): the frontend prepares a child runbook for launch;
+// core reserves, creates, drives and Collects it.
+export {
+  INLINE_CHILD_LAUNCH_FAILED_CODE,
+  MAX_INLINE_CHILD_DEPTH,
+  type InlineChildLaunchRequest,
+  type PrepareInlineChild,
+  type PreparedInlineChild,
+} from './inline-progression.js';
+export { childResultOf, currentInlineReservation, type ChildResult } from './inline-child.js';
+export type { ChildKind, ChildLinkage } from './child-linkage.js';
 // The DI seam of the two above. Type-only, and exported so their signatures are
 // nameable by the CLI that calls them; the liveness readers behind it stay
 // internal to core.
@@ -196,6 +207,8 @@ export {
   type LifecycleTransitionInput,
   type LifecycleTransitionOutcome,
   type RunbookLifecycleCommandServiceDependencies,
+  type CommandTargetResolution,
+  type SettleInlineChild,
   type RunFinishedRefusal,
   type TerminalCommandName,
   type TransitionCommandName,

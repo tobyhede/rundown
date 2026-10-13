@@ -142,8 +142,13 @@ describe('findUnsupportedComposition', () => {
     expect(findUnsupportedComposition([substepStep('1', [plain, delegated])])).toEqual(['1.2']);
   });
 
-  it('names no runbook-list substep: inline composition runs (#903)', () => {
+  it('names no single-runbook inline substep: inline composition runs (#903)', () => {
     expect(findUnsupportedComposition([substepStep('1', [inline])])).toEqual([]);
+  });
+
+  it('names an inline substep listing more than one runbook: one unit launches one child', () => {
+    const pair: Substep = { ...inline, id: '5', runbooks: ['a.runbook.md', 'b.runbook.md'] };
+    expect(findUnsupportedComposition([substepStep('1', [inline, pair])])).toEqual(['1.5']);
   });
 
   it('lists every composing substep across steps, in document order', () => {

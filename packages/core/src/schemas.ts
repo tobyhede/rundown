@@ -451,20 +451,40 @@ export const ContextSnapshotSchema = z
   });
 
 /**
- * Zod schema for SubstepState
- * Tracks runtime state of a substep within a step
+ * Zod schema for SubstepState, which tracks the runtime state of a substep
+ * within a step and the Current Child reserved for it.
+ *
+ * @param contextSnapshotSchema - The schema a reservation's context snapshot
+ *   is parsed with: the static one, or the path-validated one on load
+ * @returns The strict SubstepState schema
  */
-const SubstepStateSchema = z
-  .object({
-    id: z.string(),
-    frameKey: FrameKeySchema,
-    status: z.enum(['pending', 'running', 'done']),
-    result: z.enum(['pass', 'fail']).optional(),
-  })
-  // Strict, so a record this version does not carry — the v2 `delegation` and
-  // `inline` child records, or any later drift — is refused by the structural
-  // parse rather than silently stripped on read (the no-migration rule).
-  .strict();
+function makeSubstepStateSchema(contextSnapshotSchema: z.ZodType): z.ZodType {
+  return (
+    z
+      .object({
+        id: z.string(),
+        frameKey: FrameKeySchema,
+        status: z.enum(['pending', 'running', 'done']),
+        result: z.enum(['pass', 'fail']).optional(),
+        // The Current Child reservation (#903). Only `inline` exists until #904.
+        child: z
+          .object({
+            kind: z.literal('inline'),
+            runId: RunIdSchema,
+            entry: z.number().int().positive(),
+            runbook: z.string(),
+            contextSnapshot: contextSnapshotSchema,
+          })
+          .strict()
+          .optional(),
+      })
+      // Strict, so a record this version does not carry — the v2 `delegation`
+      // and `inline` child records, or any later drift — is refused by the
+      // structural parse rather than silently stripped on read (the
+      // no-migration rule).
+      .strict()
+  );
+}
 
 /**
  * Zod schema for {@link ForSource} — source descriptor for the unified variable model.
@@ -586,7 +606,7 @@ const RunbookStateObjectSchema = z
     frameEntryCounts: z.record(z.string(), z.number().int().positive()).optional(),
     activeFrameKey: FrameKeySchema.optional(),
     activeEntry: z.number().int().positive().optional(),
-    substepStates: z.array(SubstepStateSchema).optional(),
+    substepStates: z.array(makeSubstepStateSchema(ContextSnapshotSchema)).optional(),
     // FOR loop tracking: stack of loop contexts for nested loops
     forStack: z.array(ForStackEntrySchema).optional(),
     iterationResults: z.array(z.enum(['pass', 'fail'])).optional(),
@@ -823,6 +843,11 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodType {
     templateVars: VarsSchema.transform((v) => brandInitialTemplateVars(v)),
     variables: VariablesSchema.transform((v) => brandStoredOutputs(v)),
     finalVars: VariablesSchema.optional(),
+    // A reservation's context snapshot is path-validated like every other
+    // persisted variable space (#903).
+    substepStates: z
+      .array(makeSubstepStateSchema(makeContextSnapshotSchema(projectRoot)))
+      .optional(),
   }).superRefine((value, ctx) => {
     rejectRemovedRunbookRefField(value, ctx);
     rejectRemovedArtifactVarsField(value, ctx);

@@ -526,6 +526,33 @@ export type LastAction =
   | InternalFailureLastAction;
 
 /**
+ * The Current Child a parent reserves for one inline runbook-list substep
+ * (#903, ADR 0005).
+ *
+ * Recorded in the parent's own record by the machine when the cursor enters
+ * the substep, before any child row exists. It is keyed by the substep's frame
+ * (the {@link SubstepState} it rides on) and by `entry`: a loop iteration, a
+ * GOTO or a RETRY enters the frame afresh and reserves a new child, so a
+ * reservation whose `entry` is not the frame's active entry is stale and its
+ * child is never collected (#749).
+ */
+export interface InlineChildReservation {
+  /** Discriminant; `delegation` joins in #904. */
+  readonly kind: 'inline';
+  /** The child run id, preallocated so the child row is created under it. */
+  readonly runId: RunId;
+  /** The parent frame entry the reservation was made at. */
+  readonly entry: number;
+  /** The authored (resolved) runbook reference the child runs. */
+  readonly runbook: string;
+  /** The parent's context at reservation, inherited by the child at launch. */
+  readonly contextSnapshot: ContextSnapshot;
+}
+
+/** A Current Child reservation recorded on a substep state. */
+export type ChildReservation = InlineChildReservation;
+
+/**
  * Runtime state of a substep within a step
  */
 export interface SubstepState {
@@ -533,6 +560,8 @@ export interface SubstepState {
   readonly frameKey: FrameKey; // From buildFrameKey(step, iteration?) — scopes identity in FOR loops
   readonly status: 'pending' | 'running' | 'done';
   readonly result?: 'pass' | 'fail'; // Result when done
+  /** The Current Child reserved for this substep's latest entry, if it composes one. */
+  readonly child?: ChildReservation;
 }
 
 /**
