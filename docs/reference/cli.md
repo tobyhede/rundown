@@ -190,7 +190,7 @@ output). No other command, status response, or listing ever shows it again, so
 capture it when the run starts.
 
 - **Mutating commands** — `pass`, `fail`, `goto`, `stop`, `complete`, `collect`,
-  `retry`, and `prune --token` — name the run they change with
+  `retry`, and `prune` of a running run — name the run they change with
   `--token <owner_token>`. The token both selects the run and proves the caller
   owns it. A command without `--token` is refused `TOKEN_REQUIRED`; a token no
   run carries is refused `UNKNOWN_TOKEN`; a token whose run has already finished
@@ -199,6 +199,9 @@ capture it when the run starts.
   `--run <rd_…>` (the run id, carried as `runbookId` on every event) selects a
   run for `status` and `artifact`. `--run` is never mutation authority:
   combining it with `--token` on a mutating command is refused `INVALID_SYNTAX`.
+  The one exception is the [human escape hatch](#escape-hatch),
+  `rundown stop --run <run-id>`, which a person at an interactive terminal
+  confirms, and which is audited on the run; agents never use it.
 - **One conditional save** — a mutating command reads the run, derives its
   change, and commits it with a single conditional write. If another write
   landed on the run in between, the command is refused `CONCURRENT_MODIFICATION`
@@ -557,15 +560,49 @@ Immediately terminate a running runbook.
 ```bash
 rundown stop --token <owner_token>
 rundown stop "Abandon release" --token <owner_token>
+rundown stop "Lost the token" --run <run-id>   # Human escape hatch, at a terminal only
 ```
 
 **Flags:**
 
-- `--token <token>` — Owner Token of the run to stop (required).
+- `--token <token>` — Owner Token of the run to stop (required, except for the
+  escape hatch below).
+- `--run <run-id>` — the human escape hatch: stop a top-level run whose Owner
+  Token was lost. Never combined with `--token`.
 
 Marks the run as stopped and preserves its row in `.rundown/rundown.db` for
 inspection. `rundown stop` is a failure terminal: it exits non-zero after
 successfully stopping the run.
+
+<a id="escape-hatch"></a>
+
+**The human escape hatch: `rundown stop --run <run-id>`.** A lost top-level
+Owner Token is recovered only by a person, never by an agent. `stop --run` is
+the one mutation a run id may drive, and it is interactive and audited:
+
+- It requires a human at an interactive terminal (stdin and stderr are both a
+  TTY). Without one — a pipe, an agent's shell, CI, the scenario harness, or
+  `--non-interactive` — it is refused `INTERACTIVE_REQUIRED` with nothing
+  written. `--yes` does not answer it. MCP has no tool for it.
+- It refuses before asking: an id that names no run is `RUN_TARGET_UNAVAILABLE`,
+  a malformed one `INVALID_RUN_ID`, a finished run `RD-303` / `RD-304`, and a
+  child run `NOT_A_TOP_LEVEL_RUN` — an inline child runs on its root's token
+  (use the root's id), and a delegation is ended by `rundown release` or the
+  parent's `rundown retry`.
+- It then asks on stderr, naming the run, its runbook, its step, and the user
+  and host it will record. Anything but `y` / `yes` is refused `NOT_CONFIRMED`
+  with nothing written.
+- On yes it stops exactly the run named — it does not descend to a running
+  inline child as `stop --token` does — and the same conditional save records
+  the audit on the run: `humanStop: { at, user, host, message? }`, where `user`
+  is the login name, `host` the host name, and `message` the stop message.
+  `rundown status --run <run-id>` shows it. An attempt In Progress refuses it
+  `EXECUTION_IN_PROGRESS`; an Interrupted one is cleared, as any `stop` clears
+  it. A write to the run while the human decided refuses it
+  `CONCURRENT_MODIFICATION`, never retried.
+
+Agents must never run it: an agent that has lost a top-level token asks the user
+to run `rundown stop --run <run-id>` themselves.
 
 While an inline child runs, `stop` and `complete` act on the deepest running
 child: the parent Collects it (stopped as FAIL, completed as PASS) in the same
@@ -908,28 +945,49 @@ rundown prune --dry-run              # Preview what would be removed
 rundown prune --completed            # Only completed
 rundown prune --stopped              # Only stopped (aborted/failed)
 rundown prune --inactive             # Only invalid or abandoned runs
-rundown prune --all                  # Every finished and invalid run
-rundown prune --token <owner_token>  # Delete that one running run
+rundown prune --active               # Running runs: each needs its token, or your confirmation
+rundown prune --all                  # Every finished and invalid run, and running runs as --active
+rundown prune --token <owner_token>  # Delete that one run
 ```
 
-The lifecycle filters select finished and invalid runs freely. A **running** run
-is deleted only when `--token <owner_token>` names it, one run per invocation;
-`--active` or `--all` without a token keeps each running run and reports it with
-`retained: "token required"`. Runs whose persisted state this build cannot read
-are reached only by `--inactive` or `--all` (they are listed with
-`status: "invalid"`); a bare `rundown prune` never sees them. `prune` takes no
-`--run`: naming a run id is refused `INVALID_SYNTAX`, since a run id is never
-authority to delete.
+The lifecycle filters select finished and invalid runs. A **running** run is
+deleted when `--token <owner_token>` names it, one run per invocation, or —
+selected by `--active` or `--all` — when a human at an interactive terminal
+confirms it: prune asks on stderr, once per running run, and only about a run it
+would otherwise delete. Without a terminal (a pipe, an agent's shell, CI,
+`--non-interactive`) and under `--dry-run`, prune never asks, and keeps each
+running run with `retained: "token required"`; one the human declines is kept
+with `retained: "not confirmed"`. A running inline child is never offered: it
+has no token of its own and goes only with its root. Runs whose persisted state
+this build cannot read are reached only by `--inactive` or `--all` (they are
+listed with `status: "invalid"`); a bare `rundown prune` never sees them.
+`prune` takes no `--run`: naming a run id is refused `INVALID_SYNTAX`, since a
+run id is never authority to delete.
+
+<a id="prune-retention"></a>
+
+**Child Result retention.** A current child — a delegation or inline child its
+running parent still counts — is never pruned on its own, whatever the filter,
+`--all` included. A finished one holds a result its parent has not collected and
+is kept with `retained: "uncollected"`; a running one is kept with
+`retained: "current child"`. `prune --token` naming such a child (a delegation's
+own token) is refused `CURRENT_CHILD_PROTECTED` with nothing deleted. Protection
+ends when the parent collects the child (`rundown collect`, or the implicit
+collect of an inline child), when cancellation makes its result unnecessary
+(`rundown retry`, the owner's own `pass` / `fail` on the substep, or a re-entry
+of the step), when the parent finishes, or when the parent is pruned. Ending
+protection deletes nothing: the child becomes eligible for an ordinary prune.
+Retention is what keeps a delegated child's reserved id taken, so its claim
+ticket can never claim a second child.
 
 Deleting a run deletes its inline children with it, transitively, and lists each
-of them. The execution-lease rule covers that whole chain: an attempt In
-Progress on the token's run or any of its inline children refuses the invocation
-`EXECUTION_IN_PROGRESS` with nothing deleted, and a run selected by a filter is
-kept with `retained: "execution in progress"`. A finished inline child whose
-parent is still running is never deleted on its own — its parent has not
-collected it — and is kept with `retained: "parent running"`; it goes with its
-parent. If any run in a chain changes between prune's read and its delete, the
-delete is refused `CONCURRENT_MODIFICATION`, never retried.
+of them; protection ends with the parent, so a current inline child of the
+deleted run is listed as deleted. The execution-lease rule covers that whole
+chain: an attempt In Progress on the token's run or any of its inline children
+refuses the invocation `EXECUTION_IN_PROGRESS` with nothing deleted, and a run
+selected by a filter is kept with `retained: "execution in progress"`. If any
+run in a chain changes between prune's read and its delete, the delete is
+refused `CONCURRENT_MODIFICATION`, never retried.
 
 ### Testing and Utilities
 
@@ -1137,7 +1195,8 @@ rundown prune --completed
 # Remove only stopped (aborted/failed) runbook state
 rundown prune --stopped
 
-# Remove every finished and invalid run (running runs are retained)
+# Remove every finished and invalid run (running runs are retained without a
+# terminal to confirm them; uncollected current children always are)
 rundown prune --all
 
 # Remove one running run you own
@@ -1300,7 +1359,7 @@ and `details` where known. Their exact shapes are in
 | "FOR loop references undefined data source" | Sourced FOR clause without matching source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Define source via --input-json, config.yaml, or --input-file                                                                                                                                                                                                                                                                                                                |
 | "File drift detected"                       | Data file changed during iteration                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         | Ensure file stability or restart runbook                                                                                                                                                                                                                                                                                                                                    |
 | `TOKEN_REQUIRED`                            | A mutating command (`pass`, `fail`, `goto`, `stop`, `complete`, `collect`, `retry`) was issued without `--token`                                                                                                                                                                                                                                                                                                                                                                                                                           | Pass `--token <owner_token>`, copied from the `runbook_started` event printed by `rundown run` (or, for a delegated child, by `rundown claim`)                                                                                                                                                                                                                              |
-| `INVALID_SYNTAX`                            | `--run` combined with `--token` on a mutating command (`--run` is a read-only selector, never authority); a malformed `--token` (not `rdo_<43 base64url characters>` — the value is never echoed); `run --step` without `--prompted`; a malformed `--index`; or a runbook syntax error                                                                                                                                                                                                                                                     | Pass `--token <owner_token>` alone on mutating commands; copy the token exactly; add `--prompted` to `run --step`                                                                                                                                                                                                                                                           |
+| `INVALID_SYNTAX`                            | `--run` combined with `--token` on a mutating command, or `--run` on any mutating command but `stop` (`--run` is a read-only selector, never authority, except in the human escape hatch); a malformed `--token` (not `rdo_<43 base64url characters>` — the value is never echoed); `run --step` without `--prompted`; a malformed `--index`; or a runbook syntax error                                                                                                                                                                    | Pass `--token <owner_token>` alone on mutating commands; copy the token exactly; add `--prompted` to `run --step`                                                                                                                                                                                                                                                           |
 | `UNKNOWN_TOKEN`                             | A well-formed token that no run carries — mistyped, or the token of a run that has been pruned                                                                                                                                                                                                                                                                                                                                                                                                                                             | Copy `owner_token` from the `runbook_started` event of the run you mean to drive. A lost token cannot be recovered from `status` or `ls`; stop driving that run and start a new one                                                                                                                                                                                         |
 | `RD-303` (`RUNBOOK_COMPLETED`)              | The token's run has already completed, so the mutation cannot be applied. `details` names the run and its lifecycle. Also emitted by `run --prompted --step` when the run completes during launch                                                                                                                                                                                                                                                                                                                                          | Nothing to do on that run; start a new one with `rundown run`                                                                                                                                                                                                                                                                                                               |
 | `RD-304` (`RUNBOOK_STOPPED`)                | The token's run has already ended without completing (`stopped` or `abandoned`)                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Start a new run with `rundown run`                                                                                                                                                                                                                                                                                                                                          |
@@ -1316,10 +1375,14 @@ and `details` where known. Their exact shapes are in
 | `NOTHING_TO_RETRY`                          | `rundown retry` named a substep that delegates nothing, or whose child was already collected or decided by hand. Nothing is written                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `AGENT_MISMATCH`                            | `rundown release` named another agent id than the claim recorded (or one where the claim recorded none, or none where it did). Nothing is written                                                                                                                                                                                                                                                                                                                                                                                          |
 | `NOT_A_DELEGATION`                          | `rundown release` named a run that is not a delegated child. Nothing is written                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `CURRENT_CHILD_PROTECTED`                   | `rundown prune --token` named a current child its running parent still counts: a delegation that is running, or finished with a result the parent has not collected. Nothing is deleted; `details` names the run, its parent and the parent step                                                                                                                                                                                                                                                                                           | Let the parent collect it (or `rundown retry` it), or finish or prune the parent; the child is prunable once [protection ends](#prune-retention)                                                                                                                                                                                                                            |
+| `INTERACTIVE_REQUIRED`                      | `rundown stop --run` (the [human escape hatch](#escape-hatch)) without a human at an interactive terminal, or under `--non-interactive`. Nothing is written                                                                                                                                                                                                                                                                                                                                                                                | An agent stops its run with `--token`; for a lost top-level token, ask the user to run `rundown stop --run <run-id>` at a terminal                                                                                                                                                                                                                                          |
+| `NOT_CONFIRMED`                             | The human answered anything but yes to `rundown stop --run`. Nothing is written                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Re-run it and answer `y` if the stop is intended                                                                                                                                                                                                                                                                                                                            |
+| `NOT_A_TOP_LEVEL_RUN`                       | `rundown stop --run` named a child run. Nothing is asked or written                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | An inline child: use its root's id. A delegation: its claiming agent runs `rundown release`, or the parent's owner `rundown retry`                                                                                                                                                                                                                                          |
 | `EXECUTION_IN_PROGRESS`                     | The run's current step holds the execution lease and the process running its command is alive. Every mutating command is refused so the command never runs twice; nothing was written. `details` names `runId`, `step`, `attempt`, `pid`, `startedAt`                                                                                                                                                                                                                                                                                      | Wait for the command to finish, then re-read the run (`rundown status --run <run_id>`)                                                                                                                                                                                                                                                                                      |
 | `EXECUTION_INTERRUPTED`                     | The run's current step holds the execution lease but the process that started its command is gone, so its outcome is unknown. `pass` and `complete` are refused; Rundown never repeats the command. `details` as for `EXECUTION_IN_PROGRESS`                                                                                                                                                                                                                                                                                               | Decide explicitly: `rundown fail --token <owner_token> --step <step>` (the FAIL handler, including an authored `RETRY`), `rundown goto <step> --token <owner_token>`, `rundown stop --token <owner_token>`, or discard the run with `rundown prune --token <owner_token>`                                                                                                   |
 | `EXECUTION_PENDING`                         | `pass` named a step whose command has not run: the command that entered the step ended before running it, so no lease is held. Nothing is written. `details`: `runId`, `step`                                                                                                                                                                                                                                                                                                                                                              | Run it with `rundown goto <step> --token <owner_token>`, or decide explicitly with `rundown fail --token <owner_token> --step <step>` or `rundown stop --token <owner_token>`                                                                                                                                                                                               |
-| `RUN_TARGET_UNAVAILABLE`                    | A read-only command (`status`, `artifact`) was given a well-formed `--run` id that names no run, or `release` a child id that names none. Also streamed as an `error_occurred` event when a run is deleted (for example by a concurrent `rundown prune`) while a command is advancing it                                                                                                                                                                                                                                                   | Use a run id from `rundown status`; a deleted run cannot be resumed — restart it from source                                                                                                                                                                                                                                                                                |
+| `RUN_TARGET_UNAVAILABLE`                    | A read-only command (`status`, `artifact`) was given a well-formed `--run` id that names no run, `release` a child id that names none, or `stop --run` a run id that names none. Also streamed as an `error_occurred` event when a run is deleted (for example by a concurrent `rundown prune`) while a command is advancing it                                                                                                                                                                                                            | Use a run id from `rundown status`; a deleted run cannot be resumed — restart it from source                                                                                                                                                                                                                                                                                |
 | `INVALID_RUN_ID`                            | Malformed `--run` value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | Supply a valid run id — `rd_<32 hex characters>`                                                                                                                                                                                                                                                                                                                            |
 | `RD-305` (`INCOMPATIBLE_STATE_SCHEMA`)      | `.rundown/rundown.db` carries a schema version this build cannot read, and Rundown never migrates persisted state. Affects the whole database, so every in-flight run is unrecoverable                                                                                                                                                                                                                                                                                                                                                     | Delete `.rundown/rundown.db` and restart your runbooks from source                                                                                                                                                                                                                                                                                                          |
 | `RD-306` (`WAL_JOURNAL_MODE_UNAVAILABLE`)   | The database did not enter WAL mode. SQLite still serializes cross-process writers through file locking in rollback-journal mode, but that mode does not provide WAL's reader/writer concurrency and is not a validated Rundown deployment mode. SQLite returned a non-WAL mode or no readable mode, which narrows the cause to a VFS with no shared memory (a network mount such as NFS or SMB), a temporary database opened with no filename, or a connection already in a write transaction                                             | Establish which of the three applies before moving anything. A read-only file or directory is **not** among them — that fails the pragma outright and surfaces as `RD-307`. A network mount is the common case; move the project to local disk                                                                                                                              |

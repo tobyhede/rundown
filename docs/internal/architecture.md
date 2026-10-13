@@ -532,8 +532,9 @@ looks the hash up with `findByOwnerTokenHash`, and returns one of three answers:
 at**; `finished` with the lifecycle the run reached (`completed`, `stopped`,
 `abandoned`), which the CLI renders as RD-303 / RD-304; or `unknown_token`. A
 run id is never authority; `--run` is a read-only selector on `status` and
-nothing else. The plaintext token appears in exactly one place, the
-`runbook_started` event, and never in a message, a row, or a refusal.
+nothing else — except the human escape hatch below. The plaintext token appears
+in exactly one place, the `runbook_started` event, and never in a message, a
+row, or a refusal.
 
 The same module holds `findUnsupportedComposition(steps)`, the decision behind
 `RUNBOOK_COMPOSITION_UNSUPPORTED`. `RunbookStateManager.create`,
@@ -739,6 +740,49 @@ belongs to whichever agent claims it.
   the event says truthfully whether the parent's Collect will read `abandoned`
   as FAIL. The CLI renders the committed state the outcome carries and never
   re-reads the child.
+
+### Prune: one rule for every pruning caller
+
+Which runs a prune deletes is decided in core by `planPrune` (`run-pruning.ts`,
+#906) over one listing (`listWithVersion`); `rundown prune` lists the store,
+renders the plan and makes its deletes. In order:
+
+- **Current Child protection.** `protectingParentOf` names the running parent
+  that still counts a child: an Inline Child while its parent's
+  `currentInlineReservation` names it (the predicate the parent's progression
+  launches and Collects by), a Delegation while `delegationStanding` reads it
+  `current`. Such a child is never deleted on its own, whatever its lifecycle —
+  `retained: "uncollected"` once terminal, `"current child"` while running — and
+  `--token` naming one is refused `CURRENT_CHILD_PROTECTED`. Collect,
+  Cancellation, the parent's terminal and the parent's prune each end it; ending
+  it deletes nothing. Protection is read from one listing and only ever ends (a
+  replaced reservation is never counted again, a finished parent never runs), so
+  a planned delete cannot become wrong before it lands.
+- **Running runs.** A running run no token names is deleted only when the
+  frontend's `confirmRunning` callable — a human at an interactive terminal,
+  Category A — says yes, asked only after the lease rule passes its chain. A
+  running Inline Child is never offered; it goes with its root.
+- **Deletes.** `planRunDeletions` folds each selected run's Inline Children into
+  its root's delete (`run-deletion.ts`), and `refuseDeletionUnderLease` applies
+  the lease rule to the whole chain: a refusal of the owned run refuses the
+  prune; any other is retained. A run a delete removes with its root is reported
+  deleted, never retained. Each delete is one `deleteAtVersion` naming every row
+  at the version it was read at.
+
+### The human escape hatch
+
+`rundown stop --run <run-id>` (#906) is the one mutation a run id drives. The
+CLI decides that a human is at an interactive terminal and asks them
+(`helpers/escape-hatch.ts`, through the injected `HumanConfirmation`); core
+decides the rest (`human-stop.ts`). `resolveHumanStopTarget` refuses, before
+anyone is asked, an id that names no run, a finished run, and a Child Run
+(`NOT_A_TOP_LEVEL_RUN`), and otherwise returns the run with the version it was
+read at. After a yes, `stopByHuman` calls the seam's own `runTerminal` with
+`command: 'stop'` and the `HumanStopAudit` (`at`, `user`, `host`, `message`);
+`runTerminal` writes it as `RunbookState.humanStop` in the same conditional save
+as the stop. It stops exactly the named run: it never descends to a running
+Inline Child, which is left unreachable and goes with the root's prune. MCP has
+no tool for it.
 
 ### Guards do no cross-run IO or policy
 
