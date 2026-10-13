@@ -3,11 +3,6 @@
 
 import { createRequire } from 'node:module';
 import { execFileSync as nodeExecFileSync, type ExecFileSyncOptions } from 'node:child_process';
-import {
-  bareRoleSpecificMutation,
-  delegateClaimIdValidationError,
-  subprocessMutationWithheldMessage,
-} from '@rundown-org/core';
 
 const require = createRequire(import.meta.url);
 
@@ -43,38 +38,18 @@ export interface RundownExecOptions {
  * Execute a rundown CLI command.
  *
  * Uses execFileSync to avoid shell interpretation and prevent command injection.
+ * This helper is a plain spawn seam: it applies no authority gate of its own.
+ * The Owner Token passed as `--token` is the mutation authority, and the CLI
+ * refuses a bare or unknown-token mutation itself (`TOKEN_REQUIRED`,
+ * `UNKNOWN_TOKEN`), so a refusal is rendered in one place.
  *
- * @param args - Command arguments as array (e.g., ['pass', '--claim-id', 'abc123'])
+ * @param args - Command arguments as array (e.g., ['pass', '--token', 'rdo_…', '--step', '2'])
  * @param cwd - Working directory for the command
  * @param execOptions - Optional execution settings such as environment overrides
  * @returns Command output as string
- * @throws {Error} If `args` is a claim-less
- *   role-specific mutation — the subprocess trust boundary withholds it rather
- *   than let it silently inherit direct-CLI trust. The guarded set is the full
- *   withhold set defined by `subprocess-mutation-boundary.ts` (after alias
- *   canonicalization): `pass`, `fail`, `delegate`, `goto`, `complete`,
- *   `stop`, `collect`. Bearer targeting through `--claim-id` exempts the call;
- *   `--run` is target selection only and is not subprocess authority by itself.
+ * @throws {Error} When the CLI cannot be resolved or the spawned process exits non-zero
  */
 export function rundown(args: string[], cwd: string, execOptions: RundownExecOptions = {}): string {
-  const delegateValidation = delegateClaimIdValidationError(args);
-  if (delegateValidation !== undefined) {
-    throw new Error(delegateValidation.message);
-  }
-
-  // Subprocess trust boundary (defense-in-depth): this helper is the single
-  // choke point for every plugin->CLI spawn. Core itself is the primary gate —
-  // it refuses ambient direct-CLI trust on every delegation-exposed run — so
-  // this withhold only stops a bare mutation from silently consuming the
-  // standalone-run convenience lane, and keeps the refusal front-end-rendered.
-  // Claim-evidenced mutations (`--claim-id`) and read-only commands pass
-  // through. `--run` is target selection only, so run-id-only mutations remain
-  // withheld. See
-  // subprocess-mutation-boundary.ts.
-  const withheld = bareRoleSpecificMutation(args);
-  if (withheld !== undefined) {
-    throw new Error(subprocessMutationWithheldMessage(withheld));
-  }
   const cliPath = getRundownCliPath();
   const options: ExecFileSyncOptions = {
     cwd,

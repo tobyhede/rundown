@@ -7,17 +7,17 @@ scenarios:
     description: Test successful execution through all steps
     commands:
       - rd run --prompted mixed-substeps.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.Cleanup
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 
   cleanup-failure-stops:
     description: Test error in cleanup substep stops runbook
     commands:
       - rd run --prompted mixed-substeps.runbook.md
-      - rd pass
-      - rd fail
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd fail --token ${TOKEN} --step 1.Cleanup
     result: STOP
 tags:
   - substeps

@@ -4,7 +4,10 @@ import { join } from 'node:path';
 import { appendArtifactManifestRecordSync, assertRunId } from '@rundown-org/core';
 import {
   createTestWorkspace,
-  getActiveState,
+  getAllRunbookStates,
+  readRunbookState,
+  requireOwnerToken,
+  requireRunId,
   runCliInProcess,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -61,7 +64,7 @@ ${body}
     );
     expect(result.exitCode).toBe(0);
 
-    const state = await getActiveState(workspace);
+    const state = await readRunbookState(workspace, requireRunId(result.stdout));
     expect(state).not.toBeNull();
     expect(state!.templateVars).not.toHaveProperty('Plan');
     expect(state!.variables.Plan).toMatchObject({ kind: 'artifact-record', uri: row.uri });
@@ -93,7 +96,7 @@ ${body}
     );
     expect(result.exitCode).toBe(0);
 
-    const state = await getActiveState(workspace);
+    const state = await readRunbookState(workspace, requireRunId(result.stdout));
     expect(state).not.toBeNull();
     expect(state!.templateVars).not.toHaveProperty('Plan');
     expect(state!.variables.Plan).toMatchObject({
@@ -134,8 +137,9 @@ ${body}
     expect(JSON.parse(result.stdout)).toMatchObject({
       error: expect.stringContaining('Artifact input "Plan"'),
     });
-    const state = await getActiveState(workspace);
-    expect(state?.variables ?? {}).not.toHaveProperty('Plan');
+    for (const state of await getAllRunbookStates(workspace)) {
+      expect(state.variables).not.toHaveProperty('Plan');
+    }
   });
 
   it('rejects forged file artifact records from --input-file without persisting them', async () => {
@@ -165,8 +169,9 @@ ${body}
     expect(JSON.parse(result.stdout)).toMatchObject({
       error: expect.stringContaining('Artifact record input for "Plan"'),
     });
-    const state = await getActiveState(workspace);
-    expect(state?.variables ?? {}).not.toHaveProperty('Plan');
+    for (const state of await getAllRunbookStates(workspace)) {
+      expect(state.variables).not.toHaveProperty('Plan');
+    }
   });
 
   it('supports cross-context exact URI input', async () => {
@@ -179,7 +184,7 @@ ${body}
     );
     expect(result.exitCode).toBe(0);
 
-    const state = await getActiveState(workspace);
+    const state = await readRunbookState(workspace, requireRunId(result.stdout));
     expect(state).not.toBeNull();
     expect(state!.variables.Plan).toMatchObject({ contextId: 'producer-context' });
     expect(state!.templateVars.ContextId).not.toBe('producer-context');
@@ -197,7 +202,7 @@ ${body}
     );
     expect(result.exitCode).toBe(0);
 
-    const state = await getActiveState(workspace);
+    const state = await readRunbookState(workspace, requireRunId(result.stdout));
     expect(state).not.toBeNull();
     expect(state!.templateVars.Plan).toBe(uri);
     expect(state!.variables).not.toHaveProperty('Plan');
@@ -212,7 +217,7 @@ ${body}
     );
     expect(result.exitCode).toBe(0);
 
-    const state = await getActiveState(workspace);
+    const state = await readRunbookState(workspace, requireRunId(result.stdout));
     expect(state).not.toBeNull();
     expect(state!.templateVars.Plan).toBe('plan.json');
     expect(state!.variables).not.toHaveProperty('Plan');
@@ -235,7 +240,7 @@ ${body}
     );
     expect(result.exitCode).toBe(0);
 
-    const state = await getActiveState(workspace);
+    const state = await readRunbookState(workspace, requireRunId(result.stdout));
     expect(state).not.toBeNull();
     expect(state!.templateVars).not.toHaveProperty('Plans');
     expect(state!.variables.Plans).toEqual([
@@ -273,7 +278,9 @@ Second {{ Plan }}
     );
     expect(run.exitCode).toBe(0);
 
-    const status = await runCliInProcess(['status'], workspace);
+    const runId = requireRunId(run.stdout);
+    const token = requireOwnerToken(run.stdout);
+    const status = await runCliInProcess(['status', '--run', runId], workspace);
     expect(status.exitCode).toBe(0);
     expect(JSON.parse(status.stdout)).toMatchObject({
       active: true,
@@ -281,12 +288,15 @@ Second {{ Plan }}
       vars: expect.objectContaining({ Plan: expect.stringContaining(expectedPathSuffix) }),
     });
 
-    const textStatus = await runCliInProcess(['status', '--text'], workspace);
+    const textStatus = await runCliInProcess(['status', '--run', runId, '--text'], workspace);
     expect(textStatus.exitCode).toBe(0);
     expect(textStatus.stdout).toContain('Plan');
     expect(textStatus.stdout).toContain(expectedPathSuffix);
 
-    const pass = await runCliInProcess(['pass', '--text'], workspace);
+    const pass = await runCliInProcess(
+      ['pass', '--token', token, '--step', '1', '--text'],
+      workspace,
+    );
     expect(pass.exitCode).toBe(0);
     expect(pass.stdout).toContain(expectedPathSuffix);
     expect(pass.stdout).toContain('Second');
@@ -328,7 +338,7 @@ printf '{"plan":"ok"}' > "{{ path PlanPath }}"
     const run = await runCliInProcess(['run', 'produce.runbook.md', '--allow-all'], workspace);
     expect(run.exitCode).toBe(0);
 
-    const status = await runCliInProcess(['status'], workspace);
+    const status = await runCliInProcess(['status', '--run', requireRunId(run.stdout)], workspace);
     expect(status.exitCode).toBe(0);
     const vars = (JSON.parse(status.stdout) as { vars?: Record<string, string> }).vars;
     const planPath = vars?.PlanPath;

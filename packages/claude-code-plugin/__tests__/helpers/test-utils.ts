@@ -8,14 +8,17 @@ import * as os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import { assertRunId, RunbookStateManager, SessionService } from '@rundown-org/core';
-import type { RunId } from '@rundown-org/core';
-import { unwrapSessionMutation } from '@rundown-org/core/testing/session-fixtures';
 import type { HookInput, SessionState } from '../../src/shared/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const emittedRunClaims = new Map<string, Map<string, string>>();
+
+/**
+ * Owner Tokens captured from `runbook_started` events, keyed by workspace and
+ * then by run id. The token is printed exactly once, on start, so the helper
+ * that spawned `rundown run` is the only place it can be learned.
+ */
+const emittedOwnerTokens = new Map<string, Map<string, string>>();
 
 /**
  * Result from running CLI command.
@@ -48,6 +51,10 @@ export function getCliPath(): string {
  * Run rundown CLI via subprocess.
  * Pattern: simplified from packages/cli/__tests__/helpers/test-utils.ts
  *
+ * Every `runbook_started` event in stdout has its `owner_token` recorded for
+ * {@link withOwnerToken}, so a test can start a run and drive it without
+ * parsing the event itself.
+ *
  * @param args - Command arguments as string or array. Use array for paths with spaces.
  * @param cwd - Working directory for the command
  * @returns CLI execution result with stdout, stderr, and exit code
@@ -75,27 +82,63 @@ export function runCli(args: string | string[], cwd: string): CliResult {
     stderr: result.stderr || '',
     exitCode: result.status ?? 1,
   };
-  const claims = emittedRunClaims.get(cwd) ?? new Map<string, string>();
+  const tokens = emittedOwnerTokens.get(cwd) ?? new Map<string, string>();
   for (const line of cliResult.stdout.split(/\r?\n/)) {
     try {
       const event = JSON.parse(line) as {
         readonly type?: unknown;
         readonly runbookId?: unknown;
-        readonly claim_id?: unknown;
+        readonly owner_token?: unknown;
       };
       if (
         event.type === 'runbook_started' &&
         typeof event.runbookId === 'string' &&
-        typeof event.claim_id === 'string'
+        typeof event.owner_token === 'string'
       ) {
-        claims.set(event.runbookId, event.claim_id);
+        tokens.set(event.runbookId, event.owner_token);
       }
     } catch {
       // Ignore non-JSON diagnostic lines mixed into command output.
     }
   }
-  emittedRunClaims.set(cwd, claims);
+  emittedOwnerTokens.set(cwd, tokens);
   return cliResult;
+}
+
+/**
+ * Append the Owner Token of the run started in `cwd` to a mutating command.
+ *
+ * Under one writer per run there is no active run and no selector: every
+ * mutation names its authority with `--token <owner_token>`, captured from the
+ * `runbook_started` event by {@link runCli}. The caller supplies `--step` (and
+ * `--index`) itself, since only it knows the position it is passing.
+ *
+ * @param args - CLI argv to extend
+ * @param cwd - Workspace whose started run should receive the token
+ * @param runId - Which run's token to use when `cwd` has started more than one
+ * @returns The argv with `--token <owner_token>` appended
+ * @throws {Error} When no `runbook_started` was captured for `cwd`, when
+ *   several were and `runId` does not pick one, or when `runId` is unknown
+ */
+export function withOwnerToken(args: readonly string[], cwd: string, runId?: string): string[] {
+  const tokens = emittedOwnerTokens.get(cwd);
+  if (!tokens || tokens.size === 0) {
+    throw new Error(`withOwnerToken: no runbook_started captured for ${cwd}`);
+  }
+  if (runId !== undefined) {
+    const token = tokens.get(runId);
+    if (token === undefined) {
+      throw new Error(`withOwnerToken: no owner token captured for run ${runId}`);
+    }
+    return [...args, '--token', token];
+  }
+  if (tokens.size > 1) {
+    throw new Error(
+      `withOwnerToken: ${String(tokens.size)} runs started in ${cwd}; pass the runId to choose one`,
+    );
+  }
+  const [token] = tokens.values();
+  return [...args, '--token', token];
 }
 
 /**
@@ -295,48 +338,4 @@ export function assertDefined<T>(
   if (value === null || value === undefined) {
     throw new Error(message);
   }
-}
-
-/**
- * Extract the active run id from a `rundown status` invocation result.
- *
- * Extract the active run id from status output for tests that need target
- * selection. Mutating commands use bearer `claim_id` authority instead.
- *
- * @param result - Exit code and stdout of a `rundown status` invocation
- * @returns The active run id (`rd_` + 32 hex)
- * @throws {Error} When the status payload carries no run id
- */
-export function activeRunIdFromStatus(result: { exitCode: number | null; stdout: string }): RunId {
-  if (result.exitCode !== 0) {
-    throw new Error(`status exited ${String(result.exitCode)}: ${result.stdout}`);
-  }
-  const parsed = JSON.parse(result.stdout) as { state?: string };
-  const match = /rd_[a-f0-9]{32}/.exec(parsed.state ?? '');
-  if (!match) {
-    throw new Error(`No active run id in status: ${result.stdout}`);
-  }
-  return assertRunId(match[0]);
-}
-
-/**
- * Issue bearer authority for the active run and append it to a mutating command.
- *
- * Run ids are selector-only under unified claim grants. Prompted integration
- * tests that advance the active run need the same run-control bearer that
- * `rundown run` emits for agents.
- *
- * @param args - CLI argv to extend
- * @param cwd - Workspace whose active run should receive a bearer claim
- * @returns The argv with `--claim-id <claimId>` appended
- */
-export async function withActiveRunClaim(args: readonly string[], cwd: string): Promise<string[]> {
-  const manager = new RunbookStateManager(cwd);
-  const sessionService = new SessionService(manager);
-  const state = await sessionService.getActive();
-  if (!state) throw new Error('withActiveRunClaim: no active run to target');
-  const emittedClaimId = emittedRunClaims.get(cwd)?.get(state.id);
-  if (emittedClaimId) return [...args, '--claim-id', emittedClaimId];
-  const { claimId } = unwrapSessionMutation(await sessionService.issueRunControlClaim(state.id));
-  return [...args, '--claim-id', claimId];
 }

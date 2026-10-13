@@ -8,10 +8,10 @@ scenarios:
     description: GOTO AT re-enters the FOR step at the current iteration index
     commands:
       - rd run --prompted goto-at-template-variable.runbook.md
-      - rd fail
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd pass --token ${TOKEN} --step 1.1 --index 1
+      - rd pass --token ${TOKEN} --step 1.1 --index 2
+      - rd pass --token ${TOKEN} --step 1.1 --index 3
     result: COMPLETE
 ---
 

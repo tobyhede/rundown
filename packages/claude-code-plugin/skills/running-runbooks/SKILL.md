@@ -1,227 +1,201 @@
 ---
 name: running-runbooks
-description: Use when stepping through a Rundown runbook that is already active or has just been started, when receiving delegation instructions with a claim token, or when rundown CLI commands appear in step output. For cold-start "run the X runbook" requests with nothing active, the rundown launcher skill starts the runbook first.
+description: Use when stepping through a Rundown runbook that is already active or has just been started, or when rundown CLI commands appear in step output. For cold-start "run the X runbook" requests with nothing active, the rundown launcher skill starts the runbook first.
 ---
 
 # Running Runbooks
 
-Rundown executes markdown runbooks step-by-step. The CLI controls progress — you follow the output and respond.
-
-Capture the run claim when you start the runbook: `rundown run` emits it as `runbook_started.claim_id`. You need it for every mutating command you issue as the orchestrator of a delegation-exposed run (`--claim-id <claim_id>`). A claimed child uses the `claim_id` returned by `rundown claim`.
+Rundown executes markdown runbooks step by step. The CLI owns progress: you act
+on each step's output, report the result, and the CLI decides what comes next.
 
 ## When to Use
 
-- A Rundown runbook is already active and needs step-by-step execution
-- CLI output from `rundown` asks for a pass/fail response, claim, status check, or continuation
-- A delegated task arrives with a claim token and must be accepted, executed, and reported back
-- A prompt or command output references Rundown step IDs, substeps, FOR loop indexes, or claim IDs
+- A Rundown runbook has just been started or is active and needs step-by-step
+  execution
+- CLI output from `rundown` asks for a pass/fail response or names a step
+  position
+- A prompt or command output references Rundown step IDs, substeps, or FOR loop
+  indexes
 
 ## When NOT to Use
 
 - Writing or editing runbook files — use the writing-runbooks skill instead
-- Orchestrating parent-side delegation to other agents — use the delegating-runbooks skill instead
-- Planning work before authoring a runbook — use the writing-plans skill when applicable
-- Running unrelated shell commands that are not part of a Rundown-controlled workflow
+- Planning work before authoring a runbook — use the writing-plans skill when
+  applicable
+- Running unrelated shell commands that are not part of a Rundown-controlled
+  workflow
 
-## Quick Reference
+## The Owner Token
 
-```bash
-rundown run <file>                      # Start a runbook
-rundown run <file> --input k=v          # Start with input
-rundown run <file> --input-json k=json  # Start with JSON input
-rundown run <file> --input-file <path>  # Load inputs from YAML
+`rundown run` prints the run's **owner token** (`rdo_…`) exactly once, as
+`owner_token` on the first event, `runbook_started`. Keep it verbatim for the
+whole run: every mutating command (`pass`, `fail`, `goto`, `stop`, `complete`)
+takes `--token <owner_token>`, and the token is your only authority to change
+the run.
 
-rundown pass                    # Mark step passed (aliases: yes, ok) — standalone run only
-rundown fail                    # Mark step failed (alias: no) — standalone run only
+No other command, status response, or listing ever shows it again, and it cannot
+be recovered. If you lose it, you can still read the run but no longer drive it:
+tell the user.
 
-rundown status                  # Show current state (JSON by default)
-rundown stop                    # Stop the active workflow; inside inline composition, targets the outermost contiguous-inline ancestor
-rundown complete                # Complete the active workflow; inside inline composition, targets the outermost contiguous-inline ancestor
-```
+The same event carries the **run id** (`runbookId`, `rd_…`). The run id is for
+reading only — `rundown status --run <run_id>`. Mutating commands take `--token`
+alone; adding `--run` to them is refused `INVALID_SYNTAX`.
 
-The bare `rundown pass` / `rundown fail` / `rundown stop` / `rundown complete`
-forms above apply to a **standalone run** (one with no delegation activity). On a
-**delegation-exposed run** the bare form is refused with `ACTOR_CONTEXT_REQUIRED`;
-present bearer authority instead — orchestrators and delegated children both pass
-their claim bearer with
-`--claim-id <claim_id>`:
+## The Loop
 
-```bash
-rundown pass --claim-id <claim_id>   # Orchestrator advances the run it controls
-rundown fail --claim-id <claim_id>   # Delegated child reports a failing result
-```
+1. **Start** the runbook and capture `owner_token` and `runbookId` from
+   `runbook_started`:
 
-Inside inline-composed runbooks, use `rundown pass` or `rundown fail` to finish the
-current inline unit and let the parent continue (on a delegation-exposed
-composition, use the current run's `claim_id`).
-Use `rundown complete` or `rundown stop` only when the intended outcome is to
-force the composed workflow terminal. Delegated children still use `--claim-id`
-and report to the parent; the parent advances on `rundown collect --claim-id <claim_id>`.
+   ```bash
+   rundown run <runbook>
+   ```
 
-## How Steps Work
+   Command steps run automatically. The output stops at the first step that
+   needs you — its last event is `step_entered` with a `prompt` — or at the end
+   of the run.
 
-Each step is one of two types:
+2. **Read the position** from the latest `step_entered` event's `position` and
+   turn it into flags:
 
-| Type | What happens | What you do |
-|------|-------------|-------------|
-| **Command** | Executes automatically (bash) | Wait. Exit code determines result. |
-| **Prompt** | Outputs instructions | Follow the instructions, then `rundown pass` or `rundown fail`. |
+   | `position`                                                | Flags                  |
+   | --------------------------------------------------------- | ---------------------- |
+   | `{"current":"2"}`                                         | `--step 2`             |
+   | `{"current":"2","substep":"1"}`                           | `--step 2.1`           |
+   | `{"current":"2","substep":"1","for":{"index":3,"end":5}}` | `--step 2.1 --index 3` |
 
-Default transitions:
-- **PASS** → advance to next step
-- **FAIL** → stop execution
+   `--step` and `--index` confirm the position you are reporting on; they never
+   select a different step.
 
-The runbook may override these (e.g., FAIL retries, GOTO a recovery step). **Trust Rundown for execution state and transitions** — it tells you what happened and what's next. Do not second-guess or work around the runbook's transition logic, even if the result seems unexpected. Still apply normal safety, permission, and policy checks before running commands or taking external actions.
+3. **Do the step.** Follow the `prompt` exactly.
 
-## Substeps
+4. **Report the result:**
 
-Some steps contain substeps (e.g., step 2 has substeps 2.1, 2.2). When responding to substeps:
+   ```bash
+   rundown pass --token <owner_token> --step 2.1 --index 3   # step done as written
+   rundown fail --token <owner_token> --step 2.1 --index 3   # step cannot be done as written
+   ```
 
-```bash
-rundown pass --step 2.1         # Pass a specific substep
-rundown fail --step 2.2         # Fail a specific substep
-```
+   The output is the next set of events. Return to step 2 with the newest
+   `step_entered`.
 
-## FOR Loops
+5. **Finish** when the output reports the run's end: a `runbook_completed` or
+   `runbook_stopped` event, or an action with `"complete": true` or
+   `"stopped": true`. Every step is done when the run says so, not before.
 
-Steps with FOR loops repeat across iterations. Target a specific iteration with `--index` (requires `--step`):
+If you lose track of the position, `rundown status --run <run_id>` shows it in
+the same `position` shape.
 
-```bash
-rundown pass --step 2.1 --index 3    # Pass substep 2.1 at iteration 3
-rundown fail --step 2.1 --index 3    # Fail substep 2.1 at iteration 3
-```
+## Transitions
 
-## Nested Runbooks
+Default transitions: **PASS** advances to the next step; **FAIL** stops the run.
+The runbook may override these (retry, `GOTO` another step, continue past a
+failure). **Trust Rundown for execution state and transitions** — what it
+reports is correct, even when the result seems unexpected. Still apply normal
+safety, permission, and policy checks before running commands or taking external
+actions.
 
-**Inline linkage** is the default for runbook-list entries: no `- DELEGATE`, no token, the parent auto-launches the child in-session and records the parent linkage. Follow the output you receive — inline child runbooks launch automatically when the parent advances into a substep that references a nested runbook, with no manual `rundown run` command and no `rundown delegate` for these entries:
+Exit codes answer one question: has the run halted? Non-zero means the run
+stopped or the command was refused. Zero means the run is still progressing or
+completed — including after a `rundown fail` whose handler absorbed the failure.
+Read the JSON for what happened.
 
-```bash
-rundown pass    # advancing into the step that holds the inline substep auto-launches the child
-```
-
-The child:
-- Auto-starts and executes command steps
-- Presents prompted steps for you to follow
-- Automatically propagates its result to the parent substep on completion
-- Parent advances to the next step without manual `rundown pass`
-
-If the output provides a delegation token or tells you to delegate work, follow the token flow below or the [delegating-runbooks](../delegating-runbooks/SKILL.md) skill as directed.
-
-## Context Passing (OUTPUTS)
-
-Outputs declared by steps or child runbooks become available automatically to later steps. When a later step references a value such as `{{ PlanPath }}`, trust that Rundown has carried the declared output forward.
-
-Do not manually copy, forward, or re-enter output values unless the runbook output explicitly asks you to do so. Your job as a runner is to follow the CLI output and step instructions, not to manage variable plumbing.
-
-If `rundown run` or `rundown claim` reports missing required inputs, supply them operationally:
+## Other Commands
 
 ```bash
-rundown run <file> --input key=value
-rundown run <file> --input-json key=json
-rundown run <file> --input-file <path>
+rundown goto <step> --token <owner_token>            # Jump to a step (e.g. 3 or 3.1; --index for a FOR iteration)
+rundown stop [message] --token <owner_token>         # Abort the run
+rundown complete [message] --token <owner_token>     # Force early completion
 
-rundown claim <token> --input key=value
-rundown claim <token> --input-json key=json
-rundown claim <token> --input-file <path>
+rundown status                    # List every run (read-only)
+rundown status --run <run_id>     # One run in detail, including its position
+rundown ls --all                  # List available runbooks
 ```
 
-## Claiming Delegated Work
+Use `goto`, `stop`, and `complete` only when a step's instructions or the user
+call for them.
 
-When another agent delegates work to you, the plugin injects claim instructions automatically. The flow:
+## Inputs
 
-1. You receive instructions containing a claim token
-2. Run `rundown claim <token>` to accept the work
-3. Follow the runbook steps (same as above — follow output, pass/fail), passing `--claim-id <claim_id>` on **every** command
-4. Use `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>` to report your result back to the parent
-5. **Stop.** Once you have reported your claim's final result, your job is done — end your turn and return control to the orchestrator that delegated you.
-
-If `rundown claim <token>` fails with `DELEGATION_SUPERSEDED` (RD-825), the parent already moved past this delegation before you claimed it. **Do not retry the token** — report the superseded delegation to the orchestrator and let the parent decide what happens next.
-
-The same applies when you are *reporting a result*: `rundown pass --claim-id` / `rundown fail --claim-id` (and `goto`, `stop`, `complete`, `pop`) also fail with `DELEGATION_SUPERSEDED` if the parent moved on while you were working. Your result has nowhere to land — do not re-claim, do not retry the command. Say so to the orchestrator and stop.
-
-Variables can be passed during claiming:
+If `rundown run` reports missing required inputs (`MISSING_REQUIRED_VARS`),
+supply them and start again:
 
 ```bash
-rundown claim <token> --input key=value
-rundown claim <token> --input-json key=json
-rundown claim <token> --input-file <path>
+rundown run <runbook> --input key=value
+rundown run <runbook> --input-json key=json
+rundown run <runbook> --input-file <path>
 ```
 
-On a delegation-exposed run, every bare mutating command (`rundown pass`, `rundown fail`, `rundown goto`, `rundown collect`, `rundown complete`, `rundown stop`, `rundown delegate`) is refused with `ACTOR_CONTEXT_REQUIRED` — it does not silently target anything. Orchestrators and children present bearer authority with `--claim-id <claim_id>`. Only a standalone run (no delegation activity) accepts the bare form.
+Outputs declared by steps become available to later steps automatically. When a
+later step references `{{ PlanPath }}`, trust that Rundown carried the value
+forward; copy values by hand only when a step tells you to.
 
-<important>
-**A claimed child stays inside its claim and stops when the claim ends.** You were dispatched to execute exactly one delegated runbook. When it completes (or fails), the parent pipeline may auto-advance into *its* next step — but those steps belong to the **orchestrator**, not to you. Do not keep going.
+## Composed Runbooks
 
-- Pass `--claim-id <claim_id>` on **every** mutating `rundown` command for your claimed work. **Never** issue a bare `rundown pass` / `rundown fail` / `rundown goto` / `rundown collect` / `rundown complete` / `rundown stop` / `rundown delegate` as a claimed child — on a delegation-exposed run the bare form is refused with `ACTOR_CONTEXT_REQUIRED` (it does not silently drive the parent), and the remediation names both lanes without ever echoing the run id. Read-only commands like `rundown status` stay bare.
-- The "Complete ALL steps — do not abandon a runbook" rule applies to **your claimed runbook only**, not to the parent that auto-advanced behind it.
-- After `rundown pass --claim-id` / `rundown fail --claim-id`, **end your turn.** Report your result in prose to whoever dispatched you; do not run further `rundown` commands.
-</important>
+A runbook whose steps compose other runbooks (a runbook-list substep or
+`- DELEGATE`) is refused at `rundown run` with
+`RUNBOOK_COMPOSITION_UNSUPPORTED`; no run is created. Inline composition returns
+in #903 and delegation in #904. Report the refusal to the user and stop — the
+composing runbook cannot run in this build.
 
-For orchestrating delegation from the parent side, see [delegating-runbooks](../delegating-runbooks/SKILL.md).
+## Refusals
 
-## State Management
+A refused command writes nothing. Fix the cause and re-issue it.
 
-```bash
-rundown ls                # List active runbooks
-rundown stash             # Pause current runbook (stash)
-rundown pop               # Resume stashed runbook
-rundown prune             # Remove completed runbook state
-rundown prune --all       # Remove all runbook state
-```
+| Code                              | Cause                                                       | Fix                                                                        |
+| --------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `TOKEN_REQUIRED`                  | Mutating command without `--token`                          | Add `--token <owner_token>`                                                |
+| `UNKNOWN_TOKEN`                   | No run carries that token (mistyped, or the run was pruned) | Copy `owner_token` verbatim from `runbook_started`; if lost, tell the user |
+| `INVALID_STEP`                    | `--step` / `--index` missing or not the current position    | The message names the current position; re-issue with it                   |
+| `INVALID_SYNTAX`                  | `--run` combined with `--token`, among other syntax errors  | Drop `--run` from mutating commands                                        |
+| `RD-303` / `RD-304`               | The run already completed / stopped                         | Nothing to drive; report the outcome                                       |
+| `CONCURRENT_MODIFICATION`         | Another write landed on the run first                       | Re-read with `rundown status --run <run_id>`, then re-issue                |
+| `RUNBOOK_COMPOSITION_UNSUPPORTED` | The runbook composes other runbooks                         | See [Composed Runbooks](#composed-runbooks)                                |
+
+A `policy_denied` event means the security policy refused a command step and the
+run stopped. Report it to the user; permission is theirs to grant (see the
+[security reference](../../../../docs/reference/security.md)).
 
 ## Structured Output
 
-JSON is the agent-facing output format — every command emits machine-readable JSON by default:
-
-```bash
-rundown status           # Current state as JSON (default)
-rundown run <file>       # Execution events as JSON (default)
-```
-
-The `--text` flag exists only for humans reading output in a terminal; it is
-not part of the agent protocol. **Do not add `--text`** to any command — parse
-the JSON instead.
+JSON is the agent-facing output format — every command emits machine-readable
+JSON by default. The `--text` flag exists only for humans reading output in a
+terminal; it is not part of the agent protocol. **Do not add `--text`** to any
+command — parse the JSON instead.
 
 ## Rules
 
-- **Follow all step instructions exactly** — do not skip, improvise, or reinterpret
-- **Never work around transitions** — if a FAIL handler retries or GOTOs, that is correct behavior; do not override it
-- **Complete ALL steps** — do not abandon a runbook mid-execution
-- **Use the CLI** — always use `rundown pass`/`rundown fail` to respond, not just verbal acknowledgment
+- **Follow all step instructions exactly** — do not skip, improvise, or
+  reinterpret
+- **Never work around transitions** — if a FAIL handler retries or GOTOs, that
+  is correct behavior
+- **Complete ALL steps** — drive the run until it reports completed or stopped
+- **Use the CLI** — every step ends with `rundown pass` or `rundown fail`, not a
+  verbal acknowledgment
 
 ## Common Mistakes
 
-| Mistake | Fix |
-|---------|-----|
-| Verbal "done" instead of CLI | Always `rundown pass` or `rundown fail` |
-| Skipping steps | Follow every step — runbook controls flow |
-| Bare `rundown pass` with substeps active | Use `rundown pass --step 2.1` |
-| Bare `rundown pass`/`rundown fail` in a claimed child | Use `rundown pass --claim-id <claim_id>` to report to the parent |
-| Bare mutating command on a delegation-exposed run | Refused with `ACTOR_CONTEXT_REQUIRED`; present bearer authority with `--claim-id <claim_id>` |
-| Claimed child keeps going after reporting | Stop after `rundown pass --claim-id`; the parent's next steps belong to the orchestrator, not you |
-| Abandoning without `rundown stop` | Complete all steps or explicitly stop |
-
-## Reference
-
-- [Runbook patterns and examples](../../../../runbooks/README.md)
-- [Rundown specification](../../../../docs/spec/language.md)
-- [CLI reference](../../../../docs/reference/cli.md)
-- [Project overview and command list](../../../../CLAUDE.md)
+| Mistake                                     | Fix                                                                      |
+| ------------------------------------------- | ------------------------------------------------------------------------ |
+| Verbal "done" instead of CLI                | `rundown pass --token <owner_token> --step <position>`                   |
+| Not saving `owner_token` from `rundown run` | Capture it from `runbook_started` before doing anything else             |
+| `--step 2` while substep 2.1 is current     | Report the substep: `--step 2.1`                                         |
+| Missing `--index` inside a FOR iteration    | Add `--index <position.for.index>`                                       |
+| Abandoning a run mid-way                    | Complete all steps, or `rundown stop --token <owner_token>` deliberately |
 
 ## Prompted Mode
 
-> Included for completeness. **Automatic execution is the default and the typical usage** — reach for `--prompted` only when you explicitly need to step through manually. Nothing above requires it.
+> Included for completeness. **Automatic execution is the default and the
+> typical usage** — reach for `--prompted` only when you explicitly need to step
+> through manually.
 
-`--prompted` suppresses auto-execution: command steps do NOT run automatically — you see the command and advance manually with `rundown pass` / `rundown fail`. Use `--step <n>` to jump (requires `--prompted`).
+`rundown run <runbook> --prompted` shows command steps without executing them:
+run the command yourself, then report with `rundown pass` / `rundown fail` (with
+`--token` and `--step`). `rundown run <runbook> --prompted --step <n>` jumps to
+a step after starting; `--step` on `run` requires `--prompted`.
 
-**Nested runbooks under `--prompted`.** Because auto-launch is suppressed, launch an inline child explicitly with `--step` pointing at the parent substep:
+## Reference
 
-```bash
-rundown run <child-runbook> --step 1.1
-```
-
-For a FOR loop iteration, add `--index`:
-
-```bash
-rundown run <child-runbook> --step 1.1 --index 3
-```
+- [CLI reference](../../../../docs/reference/cli.md)
+- [CLI JSON output spec](../../../../docs/spec/cli-output.md)
+- [Rundown specification](../../../../docs/spec/language.md)
+- [Runbook patterns and examples](../../../../runbooks/README.md)

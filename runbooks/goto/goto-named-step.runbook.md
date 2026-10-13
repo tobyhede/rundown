@@ -9,27 +9,27 @@ scenarios:
     description: Jump from Initialize to Cleanup (Name -> Name)
     commands:
       - rd run --prompted goto-named-step.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step Initialize
+      - rd pass --token ${TOKEN} --step Cleanup
     result: COMPLETE
 
   named-to-static:
     description: Jump from Process to Step 1 (Name -> Static)
     commands:
       - rd run --prompted goto-named-step.runbook.md
-      - rd goto Process
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd goto --token ${TOKEN} Process
+      - rd pass --token ${TOKEN} --step Process
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step Cleanup
     result: COMPLETE
 
   static-to-named:
     description: Jump from Step 1 to Cleanup (Static -> Name)
     commands:
       - rd run --prompted goto-named-step.runbook.md
-      - rd goto 1
-      - rd pass
-      - rd pass
+      - rd goto --token ${TOKEN} 1
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step Cleanup
     result: COMPLETE
 ---
 

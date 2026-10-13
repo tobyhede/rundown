@@ -2,17 +2,17 @@
 
 This document is the user reference for the Rundown CLI (`rundown` / `rd`):
 installation, quick start, command reference, and common tasks. For execution
-model and runtime semantics, see [docs/reference/runtime.md](runtime.md). For
-subagent delegation workflows, see
-[docs/guides/agent-orchestration.md](../guides/agent-orchestration.md).
+model and runtime semantics, see [docs/reference/runtime.md](runtime.md).
 
-**For syntax and format details, see:**
+**See also:**
 
+- [docs/reference/cli-help.md](cli-help.md) — generated `--help` output for
+  every command; the authoritative flag list
+- [docs/spec/cli-output.md](../spec/cli-output.md) — JSON and text output shapes
+  for every command, including error envelopes
 - [docs/spec/language.md](../spec/language.md) — Rundown specification
 - [docs/spec/grammar.md](../spec/grammar.md) — Format grammar and expansion
   rules
-- [docs/guides/agent-orchestration.md](../guides/agent-orchestration.md) —
-  Subagent delegation, context discovery, and delegation completion
 
 ---
 
@@ -24,19 +24,15 @@ subagent delegation workflows, see
 - [Security Policy](#security-policy)
   - [Quick Reference](#security-quick-reference)
 - [CLI Commands](#cli-commands)
+  - [Run Ownership](#run-ownership)
   - [Runbook Lifecycle](#runbook-lifecycle)
   - [State Transitions](#state-transitions)
   - [Status Commands](#status-commands)
   - [Artifact Commands](#artifact-commands)
-  - [Enforcement Control](#enforcement-control)
   - [Validation](#validation)
   - [Maintenance](#maintenance)
   - [Testing and Utilities](#testing-and-utilities)
-  - [Delegation Commands](#delegation-commands)
 - [Common Tasks](#common-tasks)
-- [Delegation Patterns](#delegation-patterns)
-  - [Pattern 1: Orchestrator Control](#pattern-1-orchestrator-control)
-  - [Pattern 2: Agent-Controlled Branching](#pattern-2-agent-controlled-branching)
 - [Output Format](#output-format)
   - [Standard Output Structure](#standard-output-structure)
   - [Table Output](#table-output)
@@ -92,6 +88,10 @@ The CLI resolves runbook paths in this order:
    `dist/runbooks/`) — see [Runbook Discovery](#runbook-discovery) below for the
    full priority table
 
+`rundown run` prints the run's **Owner Token** once, as `owner_token` on the
+first (`runbook_started`) event. Keep it: every command that changes the run
+needs it (see [Run Ownership](#run-ownership)).
+
 ### Runbook Discovery
 
 When a runbook is referenced by name (rather than an explicit path), the CLI
@@ -118,20 +118,21 @@ where each was found (`project`, `plugin`, or `bundled`).
 **Check status:**
 
 ```bash
-rundown status
+rundown status                # List every run
+rundown status --run <run_id> # Show one run in detail
 ```
 
 **Progress through steps:**
 
 ```bash
-rundown pass    # Step succeeded, apply PASS transition
-rundown fail    # Step failed, apply FAIL transition
+rundown pass --token <owner_token> --step 1   # Step 1 succeeded, apply PASS transition
+rundown fail --token <owner_token> --step 1   # Step 1 failed, apply FAIL transition
 ```
 
 **Stop a runbook:**
 
 ```bash
-rundown stop [message]
+rundown stop [message] --token <owner_token>
 ```
 
 ---
@@ -180,6 +181,34 @@ rundown run test.runbook.md --non-interactive
 
 ## CLI Commands
 
+### Run Ownership
+
+Every run has exactly one owner, proven by its **Owner Token**
+(`rdo_<43 base64url characters>`). `rundown run` prints the token once, as
+`owner_token` on the `runbook_started` event (`Owner token:` in `--text`
+output). No other command, status response, or listing ever shows it again, so
+capture it when the run starts.
+
+- **Mutating commands** — `pass`, `fail`, `goto`, `stop`, `complete`, and
+  `prune --token` — name the run they change with `--token <owner_token>`. The
+  token both selects the run and proves the caller owns it. A command without
+  `--token` is refused `TOKEN_REQUIRED`; a token no run carries is refused
+  `UNKNOWN_TOKEN`; a token whose run has already finished is refused `RD-303`
+  (completed) or `RD-304` (stopped or abandoned).
+- **Read-only commands** — `status`, `ls`, and `artifact` — take no token.
+  `--run <rd_…>` (the run id, carried as `runbookId` on every event) selects a
+  run for `status` and `artifact`. `--run` is never mutation authority:
+  combining it with `--token` on a mutating command is refused `INVALID_SYNTAX`.
+- **One conditional save** — a mutating command reads the run, derives its
+  change, and commits it with a single conditional write. If another write
+  landed on the run in between, the command is refused `CONCURRENT_MODIFICATION`
+  and nothing is written. It is never retried on your behalf: re-read the run
+  and re-issue the command.
+
+Mutating commands check their arguments in a fixed order, and the first refusal
+wins; nothing is written on any of them. See
+[docs/spec/cli-output.md § Error Output](../spec/cli-output.md#error-output-all-commands).
+
 ### Runbook Lifecycle
 
 #### `rundown run <file>` - Start Runbook
@@ -195,9 +224,8 @@ rundown run my-runbook.runbook.md --input-json 'items=["a","b"]'  # Set variable
 rundown run my-runbook.runbook.md --input-file vars.yaml  # Load variables from YAML file (repeatable)
 rundown run execute-plan.runbook.md --artifacts PlanPath=rd://artifacts/ctx/run/PlanPath  # Supply an input artifact (repeatable)
 rundown run fanout.runbook.md --artifacts-json 'Plans=["rd://artifacts/ctx/run/p0","rd://artifacts/ctx/run/p1"]'  # JSON array of artifact URIs
-rundown run my-runbook.runbook.md --step 2.1  # Link this run as a child of parent substep 2.1
-rundown run my-runbook.runbook.md --step 2.1 --prompted  # Jump to step 2.1 after starting (goto)
-rundown run my-runbook.runbook.md --step 2.1 --index 3  # Target FOR iteration 3 of step 2.1
+rundown run my-runbook.runbook.md --prompted --step 2.1  # Jump to step 2.1 after starting
+rundown run my-runbook.runbook.md --prompted --step 2 --index 3  # Jump into FOR iteration 3 of step 2
 ```
 
 **Flags:**
@@ -206,7 +234,8 @@ rundown run my-runbook.runbook.md --step 2.1 --index 3  # Target FOR iteration 3
 - `--text` — Output execution events as human-readable text (JSON is the
   default).
 - `--input <key=value>` / `--input-json <key=json>` / `--input-file <path>` —
-  Set template variables (all repeatable). `--input-json` carries JSON
+  Set template variables (all repeatable). `--input KEY` without `=value`
+  inherits the environment variable `KEY`. `--input-json` carries JSON
   array/object values. `--input-file` paths must be project-relative and must
   remain inside the project directory after symlink resolution; absolute paths
   and `..` traversal are rejected.
@@ -216,22 +245,20 @@ rundown run my-runbook.runbook.md --step 2.1 --index 3  # Target FOR iteration 3
   array of such URIs) naming **existing** manifest rows — the channel is
   read-only and never mints rows; a non-`rd://` value is a hard error. This is a
   distinct boundary channel from `--input*`: `--input X=rd://...` is a plain
-  string and no longer rehydrates, and supplying the same name via both channels
-  is an error. There is intentionally **no `--artifacts-file`** and no
-  `KEY`-only env-inherit form (both deferred).
-- `--step <stepId>` — Link this run to a parent substep for inline nested
-  execution; with `--prompted`, jumps to the step after starting. The attachment
-  commits under the parent's controlling claim generation captured at linkage
-  time; a parent re-claimed before the mark commits refuses
-  `INLINE_PARENT_CLAIM_SUPERSEDED` (RD-834) and rolls the child back (see
-  [security.md](security.md) § Inline composition trust boundary).
+  string and does not rehydrate, and supplying the same name via both channels
+  is an error. There is no `--artifacts-file` and no `KEY`-only env-inherit
+  form.
+- `--step <stepId>` — Jump to a step after starting, under the run's freshly
+  minted Owner Token (the same navigation as `rundown goto`). Requires
+  `--prompted`; without it the command is refused `INVALID_SYNTAX`. If the run
+  completes during launch, the jump cannot be applied and is refused `RD-303`.
 - `--index <number>` — FOR loop iteration to target (requires `--step`).
 
 **Behavior:**
 
 1. Parse runbook file
-2. Create runbook state with unique ID
-3. Push runbook to session stack
+2. Create a run with a unique run id (`rd_…`) and Owner Token
+3. Emit `runbook_started` carrying `owner_token`
 4. Enter execution loop
 
 **Execution Loop:**
@@ -239,68 +266,53 @@ rundown run my-runbook.runbook.md --step 2.1 --index 3  # Target FOR iteration 3
 - Auto-execute bash code blocks (unless `--prompted`)
 - A code block's own exit code decides the step result: 0 = PASS, non-zero =
   FAIL. This is the **block's** exit code, not `rundown run`'s
-- Stop at prompt-only steps (no code block)
+- Stop at prompt-only steps (no code block); the stream ends with that step's
+  `step_entered` event
 - Continue until COMPLETE or STOP
 
 `rundown run`'s **own** exit code follows the shared halt rule — see
 [Exit codes for `run`, `goto`, `pass` and `fail`](#exit-codes-for-run-goto-pass-and-fail).
-With `--step`, an inline child that stops exits 0 when the composing parent
-absorbs it and keeps going.
 
 **With `--prompted`:**
 
 - Commands displayed but not executed
 - Agent must run command manually
-- Use `rundown pass` or `rundown fail` after command
+- Use `rundown pass` or `rundown fail` (with `--token` and `--step`) after the
+  command
+
+**Composition:** a runbook whose steps compose other runbooks (runbook-list or
+`DELEGATE` substeps) is currently refused before any run is created, with
+`RUNBOOK_COMPOSITION_UNSUPPORTED`.
 
 #### `rundown stop` - Abort Runbook
 
-Immediately terminate the active runbook.
+Immediately terminate a running runbook.
 
 ```bash
-rundown stop [message]
+rundown stop --token <owner_token>
+rundown stop "Abandon release" --token <owner_token>
 ```
-
-Marks the runbook as stopped, preserves the stopped SQLite row for inspection,
-and removes it from the active session stack. Bare `rundown stop` is a failure
-terminal and exits non-zero.
 
 **Flags:**
 
-- `--run <runId>` — Target a runbook by run id.
-- `--claim-id <claimId>` — Target a claimed delegated child runbook.
+- `--token <token>` — Owner Token of the run to stop (required).
 
-On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` — the bearer claim is the
-only mutation authority. `--run <rd_…>` selects a target but never satisfies the
-`ACTOR_CONTEXT_REQUIRED` refusal, and must not be combined with `--claim-id`.
-Standalone runs (no delegation activity) still accept the bare form.
+Marks the run as stopped and preserves its row in `.rundown/rundown.db` for
+inspection. `rundown stop` is a failure terminal: it exits non-zero after
+successfully stopping the run.
 
 <a id="force-terminal-targeting"></a>
 
-When the active runbook is an inline-composed child, bare `rundown complete` and
-bare `rundown stop` target the outermost contiguous-inline ancestor. The inline
-child runs in that active chain are forced to the same terminal lifecycle so no
-running inline descendants remain under a terminal parent.
+`rundown complete` and `rundown stop` are workflow-level overrides that force
+the run to a terminal from whatever step it is on. They are not the same as
+handler-derived `COMPLETE` / `STOP` actions authored in a runbook's transitions;
+the latter are results of normal step execution.
 
-This targeting rule stops at delegation boundaries. If the inline root is a
-delegated child, it reports its terminal outcome to the delegating parent, and
-the delegating parent advances only after
-`rundown collect --claim-id <claim_id>`.
-
-`--claim-id` keeps delegated-child scope: `rundown complete --claim-id <id>` and
-`rundown stop --claim-id <id>` target that claimed child directly.
-
-These bare force-terminal overrides are not the same as handler-derived
-`COMPLETE` / `STOP` actions authored in a runbook's transitions; the latter are
-results of normal step execution, not workflow-level CLI overrides.
-
-Bare `rundown complete` and `rundown stop` stream terminal observation events
-(`step_transitioned`, then `runbook_completed` / `runbook_stopped`) before the
-final action object, so their JSON output is newline-delimited — parse the last
-line for the action object. See
-[docs/spec/cli-output.md](../spec/cli-output.md#complete) for the full output
-shape.
+Both commands stream terminal observation events (`step_transitioned`, then
+`runbook_completed` / `runbook_stopped`) before the final action object, so
+their JSON output is newline-delimited — parse the last line for the action
+object. See [docs/spec/cli-output.md](../spec/cli-output.md#complete) for the
+full output shape.
 
 #### `rundown complete [message]` - Force Early Completion
 
@@ -311,21 +323,13 @@ and there are no more steps. This command is only needed for early exit
 scenarios.
 
 ```bash
-rundown complete                            # Force completion from current step
-rundown complete "Skipping remaining steps" # Complete with message
-rundown complete --claim-id <claim_id>      # Bearer-authorized completion
+rundown complete --token <owner_token>                            # Force completion from current step
+rundown complete "Skipping remaining steps" --token <owner_token> # Complete with message
 ```
 
 **Flags:**
 
-- `--run <runId>` — Target a runbook by run id.
-- `--claim-id <claimId>` — Target a claimed delegated child runbook.
-
-On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` — the bearer claim is the
-only mutation authority. `--run <rd_…>` selects a target but never satisfies the
-`ACTOR_CONTEXT_REQUIRED` refusal, and must not be combined with `--claim-id`.
-Standalone runs still accept the bare form.
+- `--token <token>` — Owner Token of the run to complete (required).
 
 **When to use:**
 
@@ -335,9 +339,10 @@ Standalone runs still accept the bare form.
 
 **Comparison with `stop`:**
 
-- `complete` - Marks runbook as **successful**, preserves state
-- `stop` - Marks runbook as **aborted/failed**, preserves stopped state, and
-  removes it from the active stack
+- `complete` - Marks the run as **successful** and exits 0
+- `stop` - Marks the run as **aborted/failed** and exits non-zero
+
+Both preserve the run's state for inspection; `rundown prune` removes it.
 
 ### State Transitions
 
@@ -346,24 +351,26 @@ Standalone runs still accept the bare form.
 Signal successful step completion.
 
 ```bash
-rundown pass
-rundown pass --step 2.1              # Target a specific substep
-rundown pass --step 2.1 --index 3    # Target substep at FOR iteration 3
-rundown pass --claim-id <claim_id>   # Bearer-authorized advance / delegated child reports PASS
+rundown pass --token <owner_token> --step 2              # At top-level step 2
+rundown pass --token <owner_token> --step 2.1            # At substep 2.1
+rundown pass --token <owner_token> --step 2.1 --index 3  # At substep 2.1 in FOR iteration 3
 ```
 
 **Aliases:** `rundown yes`, `rundown ok`
 
 **Flags:**
 
-- `--step <stepId>` — Target a specific substep (not the currently active one).
-- `--index <number>` — FOR loop iteration to target (requires `--step`).
-- `--claim-id <claimId>` — Target a claimed delegated child runbook.
+- `--token <token>` — Owner Token of the run (required).
+- `--step <stepId>` — The run's current step or substep position (required).
+- `--index <number>` — The current FOR loop iteration (requires `--step`;
+  required inside a FOR iteration).
 
-On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` — the bearer claim is the
-only mutation authority. `pass` has no `--run` selector. Standalone runs still
-accept the bare form.
+`--step` (and `--index`) confirm the position you are reporting on; they do not
+select a different step. A missing `--step`, a step or substep other than the
+current one, a bare step id while a substep is active, or a missing or wrong
+`--index` inside a FOR iteration (or an `--index` outside one) is refused
+`INVALID_STEP` before anything is written, and the message names the current
+position.
 
 **Behavior:**
 
@@ -377,24 +384,21 @@ accept the bare form.
 Signal step failure.
 
 ```bash
-rundown fail
-rundown fail --step 2.1              # Target a specific substep
-rundown fail --step 2.1 --index 3    # Target substep at FOR iteration 3
-rundown fail --claim-id <claim_id>   # Bearer-authorized failing advance / delegated child reports FAIL
+rundown fail --token <owner_token> --step 2              # At top-level step 2
+rundown fail --token <owner_token> --step 2.1            # At substep 2.1
+rundown fail --token <owner_token> --step 2.1 --index 3  # At substep 2.1 in FOR iteration 3
 ```
 
 **Alias:** `rundown no`
 
 **Flags:**
 
-- `--step <stepId>` — Target a specific substep (not the currently active one).
-- `--index <number>` — FOR loop iteration to target (requires `--step`).
-- `--claim-id <claimId>` — Target a claimed delegated child runbook.
+- `--token <token>` — Owner Token of the run (required).
+- `--step <stepId>` — The run's current step or substep position (required).
+- `--index <number>` — The current FOR loop iteration (requires `--step`;
+  required inside a FOR iteration).
 
-On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` — the bearer claim is the
-only mutation authority. `fail` has no `--run` selector. Standalone runs still
-accept the bare form.
+The `--step` / `--index` rule is the same as for `pass`.
 
 **Behavior:**
 
@@ -405,51 +409,33 @@ accept the bare form.
 
 For RETRY transitions:
 
-- If `retryCount < max`: increment count, stay in step
+- If `retryCount < max`: increment count, stay in step (`action` reports
+  `RETRY (n/max)`)
 - If exhausted: execute fallback action (default: STOP)
 
 ##### Exit codes for `run`, `goto`, `pass` and `fail`
 
 The exit code of any of these commands reports **the action the runbook program
 actually took**, not the verb you typed. It answers one question for a scripted
-orchestrator: _has the workflow this process is driving halted?_
+driver: _has the run this process is driving halted?_
 
 The rule is the same for all four. It is stated here once because it drifted
 apart when it was documented for `pass` / `fail` alone (ADR 0004).
 
-- **Exit non-zero** — the workflow this process drives has **halted**: the run
-  where progression came to rest reached `stopped`, RETRY was exhausted, or the
-  turn refused / failed to deliver its observations. For an inline child, the
-  run where progression rests is the composing parent, so this fires when
-  advancing that parent itself reached a STOP terminal. For a run with no
-  parent, it is that run itself.
-- **Exit 0** — the workflow is **still progressing**, even when the result was a
-  failure. A `rundown fail` whose failure the parent handles non-terminally
-  (e.g. a `FAIL ANY` / `FAIL DEFER` parent that defers to the next sibling)
-  exits 0: the failure is real and recorded in state and the JSON output, but
-  the orchestrated workflow has not halted, so a `set -e`-style driver should
-  keep going.
+- **Exit non-zero** — the run has **halted**: it reached `stopped` (including a
+  STOP after RETRY was exhausted), or the command was refused or failed to
+  deliver its observations.
+- **Exit 0** — the run is **still progressing** or has completed, even when the
+  result was a failure. A `rundown fail` whose handler is non-terminal (for
+  example `FAIL CONTINUE`, `FAIL GOTO 1`, or a RETRY with attempts left) exits
+  0: the failure is real and recorded in state and the JSON output, but the run
+  has not halted, so a `set -e`-style driver should keep going.
 
 The result of the step (`pass` / `fail`) is a separate channel — it is always
-recorded and emitted in the JSON output regardless of exit code. Exit 0 from
-`rundown fail` never means the failure was swallowed; it means the runbook's
-configured handler absorbed it without halting the workflow.
-
-<important>
-**Exit 0 does not mean no run stopped.** A `rundown run child.md --step 1.1`
-whose child reaches a STOP terminal exits 0 whenever the composing parent
-absorbs it and keeps going. The child's `runbook_stopped` event is still on the
-JSON stream. An agent that branches only on the exit code will miss it — read
-the event stream, which is the channel that carries what happened. The exit code
-only tells you whether to keep driving.
-</important>
-
-This contract is scoped to the **process** driving the workflow, which is why
-inline and delegation children differ. An inline child shares one process with
-its parent, so the exit code reflects the whole inline chain. A delegated child
-runs in its own worker process, so closing it halts _that_ process's workflow
-(exit non-zero on its own STOP) while the delegating parent advances later, in a
-different process, via `rundown collect --claim-id <claim_id>`.
+recorded and emitted in the JSON output (`stepResult`) regardless of exit code.
+Exit 0 from `rundown fail` never means the failure was swallowed; it means the
+runbook's configured handler absorbed it without halting the run. Read the event
+stream for what happened; the exit code only tells you whether to keep driving.
 
 #### `rundown goto <step>` - Jump to Step
 
@@ -458,29 +444,26 @@ code follows the shared halt rule — see
 [Exit codes for `run`, `goto`, `pass` and `fail`](#exit-codes-for-run-goto-pass-and-fail).
 
 ```bash
-rundown goto 3                # Jump to step 3
-rundown goto 3.1              # Jump to substep 3.1
-rundown goto 3 --index 2      # Jump to step 3 and enter FOR iteration 2
-rundown goto 3 --claim-id <claim_id> # Bearer-authorized jump
+rundown goto 3 --token <owner_token>            # Jump to step 3
+rundown goto 3.1 --token <owner_token>          # Jump to substep 3.1
+rundown goto 3 --index 2 --token <owner_token>  # Jump to step 3 and enter FOR iteration 2
 ```
 
 **Flags:**
 
+- `--token <token>` — Owner Token of the run (required).
 - `--index <number>` — For FOR-annotated targets, enter the loop at the
   specified iteration.
-- `--run <runId>` — Target a runbook by run id.
-- `--claim-id <claimId>` — Target a claimed delegated child runbook.
 
-On a delegation-exposed run the bare form is refused with
-`ACTOR_CONTEXT_REQUIRED`; pass `--claim-id <claim_id>` — the bearer claim is the
-only mutation authority. `--run <rd_…>` selects a target but never satisfies the
-`ACTOR_CONTEXT_REQUIRED` refusal, and must not be combined with `--claim-id`.
-`goto` is additionally gated behind the `run-navigation` policy intent — the
-run's policy must grant navigation for the jump to be allowed.
+`goto` takes no `--step`: the positional argument is the target, not a
+confirmation of the current position.
 
 **Restrictions:**
 
-- Target must exist
+- Target must exist (`STEP_NOT_FOUND` otherwise; the error lists the available
+  steps)
+- `--index` / `AT` is only valid when the target is a FOR step
+  (`INVALID_AT_TARGET` otherwise)
 - Resets retryCount to 0
 - Clears lastResult (prevents the previous result from leaking)
 
@@ -499,56 +482,75 @@ run's policy must grant navigation for the jump to be allowed.
 The `AT` qualifier is only valid when the target is a step with a FOR
 annotation. See
 [docs/spec/language.md §6](../spec/language.md#6-transitions-and-actions) for
-the authoritative AT default rule. See
-[docs/spec/language.md Actions](../spec/language.md#6-transitions-and-actions)
-for full details.
+the authoritative AT default rule and full action details.
 
 ### Status Commands
 
-#### `rundown status` - Show Current State
+#### `rundown status` - Show Run State
 
-Display active runbook information.
+Show every run, or one run in detail. `status` is read-only and takes no
+`--token`; no status response carries an Owner Token.
 
 ```bash
-rundown status          # JSON output by default
-rundown status --text   # Human-readable text output
+rundown status                       # List every run (JSON output by default)
+rundown status --run <run_id>        # Show one run in detail
+rundown status --run <run_id> --text # Human-readable detail
 ```
 
-`status` emits JSON by default. Pass `--text` for the human-readable layout
-shown below.
+**Flags:**
 
-**Output (`--text`):**
+- `--run <runId>` — Show one run in detail. A malformed id is refused
+  `INVALID_RUN_ID`; a well-formed id that names no run is refused
+  `RUN_TARGET_UNAVAILABLE`.
+
+**Output (bare, `--text`):**
 
 ```text
-File:     my-runbook.runbook.md
+ID                                   STATUS   STEP  RUNBOOK                              TITLE
+rd_0123456789abcdef0123456789abcdef  running  2/3   .rundown/runbooks/deploy.runbook.md  Deploy
+```
+
+**Output (`--run`, `--text`, abbreviated):**
+
+```text
+File:     .rundown/runbooks/deploy.runbook.md
 State:    .rundown/rundown.db
 Run:      rd_0123456789abcdef0123456789abcdef
 Action:   CONTINUE
 Result:   PASS
 
-For:      2/5
-At:       3.2.1
+## 2. Verify
 
-Execute batch...
+Entry: 2
+
+Vars:
+  Date: 2026-05-07
+  ...
 ```
+
+A run whose persisted state this build cannot read is left out of the list, and
+a `[rundown] Warning: Invalid runbook state for …` line is written to stderr;
+see `RD-309` in [Common Errors](#common-errors-and-resolutions).
 
 #### `rundown ls` - List Runbooks
 
-List active or available runbooks.
+List persisted runs, or available runbook files.
 
 ```bash
-rundown ls           # List active runbooks (JSON output by default)
-rundown ls --all     # List available runbook files
+rundown ls                      # List persisted runs (JSON output by default)
+rundown ls --all                # List available runbook files
 rundown ls --all --tags review  # Filter by tag
 ```
 
-**Active runbook status values:**
+**Run status values:**
 
-- `active` - Currently executing
-- `stashed` - Paused via `rundown stash`
+- `running` - In progress
 - `complete` - Successfully finished
 - `stopped` - Terminated with failure
-- `inactive` - In session but not active
+- `abandoned` - Ended without completing
+
+In `--text` mode the run id column is truncated to its first 8 characters; JSON
+carries it in full. The Owner Token is never listed.
 
 **Columns (for `--all`):** `NAME`, `SOURCE`, `DESCRIPTION`, `TAGS`. The `SOURCE`
 column indicates where each runbook was discovered (`project`, `plugin`, or
@@ -557,57 +559,20 @@ column indicates where each runbook was discovered (`project`, `plugin`, or
 ### Artifact Commands
 
 ```bash
-rundown artifact ls                         # List artifact aliases visible in the active run context
+rundown artifact ls                         # List artifact aliases visible in the run
 rundown artifact inspect <Alias-or-uri>      # Return the full artifact record for an alias or manifest-backed exact URI
 rundown artifact path <Alias-or-uri>         # JSON: full artifact record; --text: local path only
 rundown artifact uri <Alias>                 # JSON: full artifact record; --text: canonical artifact URI only
+rundown artifact ls --run <run_id>          # Inspect a specific run
 ```
 
-Artifact commands are inspection/projection tools. They do not read or write
-artifact file contents. JSON output is optimized for agents and includes both
-`uri` and `path`; use `--text` on `path` or `uri` only when a shell-friendly
-single projection is needed.
-
-### Enforcement Control
-
-#### `rundown stash` - Pause Enforcement
-
-Temporarily pause runbook tracking.
-
-```bash
-rundown stash                        # Stash the active runbook (stack top)
-rundown stash --claim-id <claim_id>  # Stash the runbook that bearer controls
-```
-
-Removes active runbook from stack, preserves state.
-
-`--claim-id` accepts **either kind of bearer**: a delegated child's claim (the
-`claim_id` returned by `rundown claim`) or an orchestrator's run-control claim
-(the `claim_id` on the `runbook_started` event). In both cases the runbook that
-gets parked is the one that bearer controls — a run-control bearer parks its own
-run and takes it off the stack; a child's bearer parks that child.
-
-The bearer is mutation authority, not a target selector: it is verified inside
-the same transaction that writes the stash slot, so a bearer that was rotated,
-released, or superseded refuses rather than parking a runbook under authority
-that has ended. A superseded delegation reports `DELEGATION_SUPERSEDED` with the
-RD-825 no-retry instruction; a rotated or released claim reports
-`CLAIMED_RUNBOOK_UNAVAILABLE`. The claim record itself is preserved across a
-stash.
-
-Refusals that end the caller's work outrank ones that invite a retry: if the
-bearer's run is already terminal, or its delegation has closed, that is what is
-reported even when the stash slot also happens to be occupied by another run.
-
-#### `rundown pop` - Resume Enforcement
-
-Resume from stashed runbook.
-
-```bash
-rundown pop
-```
-
-Restores stashed runbook to active stack.
+Artifact commands are read-only inspection/projection tools. They do not read or
+write artifact file contents. `--run <rd_…>` selects the run; without it they
+use the single running run. Several running runs are refused `INVALID_SYNTAX`
+(name one with `--run`); no running run is the `NO_ACTIVE_RUNBOOK` warning (exit
+0). JSON output is optimized for agents and includes both `uri` and `path`; use
+`--text` on `path` or `uri` only when a shell-friendly single projection is
+needed.
 
 ### Validation
 
@@ -626,7 +591,7 @@ below.
 **Output (`--text`):**
 
 ```text
-PASS: 5 steps, 3 substeps
+PASS: 3 steps
 ```
 
 or
@@ -638,21 +603,36 @@ Line 15: Step 3 missing (expected sequential numbering)
 Line 22: Invalid transition: GOTO 10 (step does not exist)
 ```
 
+Warnings do not fail the check. A runbook whose substeps compose other runbooks
+(`- DELEGATE` or a runbook list) is valid but gets a warning naming those
+substeps, because `rundown run` refuses it with
+`RUNBOOK_COMPOSITION_UNSUPPORTED` until inline composition (#903) and delegation
+(#904) return.
+
 ### Maintenance
 
 #### `rundown prune` - Remove Runbook State
 
-Clean up runbook state records (not runbook source files).
+Clean up run state records (not runbook source files).
 
 ```bash
-rundown prune               # Remove completed + stopped runbooks (default)
-rundown prune --all         # Remove all runbook state
-rundown prune --dry-run     # Preview what would be removed
-rundown prune --completed   # Only completed
-rundown prune --stopped     # Only stopped (aborted/failed)
-rundown prune --inactive    # Only inactive
-rundown prune --active      # Only active (careful!)
+rundown prune                        # Remove completed + stopped runs (default)
+rundown prune --dry-run              # Preview what would be removed
+rundown prune --completed            # Only completed
+rundown prune --stopped              # Only stopped (aborted/failed)
+rundown prune --inactive             # Only invalid or abandoned runs
+rundown prune --all                  # Every finished and invalid run
+rundown prune --token <owner_token>  # Delete that one running run
 ```
+
+The lifecycle filters select finished and invalid runs freely. A **running** run
+is deleted only when `--token <owner_token>` names it, one run per invocation;
+`--active` or `--all` without a token keeps each running run and reports it with
+`retained: "token required"`. Runs whose persisted state this build cannot read
+are reached only by `--inactive` or `--all` (they are listed with
+`status: "invalid"`); a bare `rundown prune` never sees them. `prune` takes no
+`--run`: naming a run id is refused `INVALID_SYNTAX`, since a run id is never
+authority to delete.
 
 ### Testing and Utilities
 
@@ -711,15 +691,15 @@ rundown scenario run <file> <name> --quiet  # Suppress command output
 Implementation notes:
 
 - `scenario run` creates an isolated temp workspace, copies the scenario runbook
-  into `.rundown/runbooks/`, copies referenced `*.runbook.md` children found in
+  into `.rundown/runbooks/`, copies referenced `*.runbook.md` files found in
   commands, and executes commands through `executeCommandSequence`.
 - `rd`/`rundown` commands are spawned directly as `node <cliPath> ...` so JSON
   output can be captured; non-`rd` commands run through the shell.
 - Scenario `commands:` should express the visible CLI workflow directly. Do not
   wrap `rd`/`rundown` calls in `node -e`, `bash -c`, npm scripts, helper
   scripts, or shell pipelines; hidden CLI calls are not visible to the scenario
-  runner's state, token, claim-id, and transition capture. Put detailed payload
-  assertions in Jest integration or unit tests instead.
+  runner's state, token, and transition capture. Put detailed payload assertions
+  in Jest integration or unit tests instead.
 - Leading command-scoped env assignments are supported for `rd` commands when a
   scenario needs them for unrelated command behavior. Shell operators in an `rd`
   command are rejected; split those commands into separate scenario entries.
@@ -729,20 +709,16 @@ Implementation notes:
 - During scenario execution, JSON warnings emitted by commands must be declared
   in `expect.warnings`; any unasserted warning fails the scenario even when the
   underlying command exits 0.
-- Delegation tokens are captured from `rundown delegate` JSON responses and from
-  `step_entered.delegateFrontier` auto-issued tokens. `${TOKEN}` expands to the
-  first captured token, `${TOKEN_2}` to the second, and so on.
-- Claim ids are captured from `rundown claim` JSON responses. `${CLAIM_ID}`
-  expands to the first captured claim id, `${CLAIM_ID_2}` to the second, and so
-  on.
+- Owner Tokens and run ids are captured from `runbook_started` events.
+  `${TOKEN}` expands to the first captured `owner_token`, `${TOKEN_2}` to the
+  second, and so on; `${RUN_ID}` / `${RUN_ID_2}` expand to the captured
+  `runbookId` values, for `status --run` assertions. Mutating commands use
+  `--token ${TOKEN}`.
 - `--input-file` dependencies are copied by directory. Scenario execution copies
   the entire containing directory for each relative `--input-file` path so YAML
   files that contain sibling `file:` references keep working. Absolute paths and
   `..` traversal are rejected.
-
-- Scenario `expect.entered` assertions match captured `step_entered` events. Use
-  them to pin inline child entry points such as generated runbook-list substeps
-  with descriptions like `Runbook: child.runbook.md`.
+- Scenario `expect.entered` assertions match captured `step_entered` events.
 
 #### `rundown scenario-suite` - Scenario Suites
 
@@ -759,15 +735,10 @@ rundown scenario-suite run <suite-file> --quiet    # Suppress output
 Implementation notes:
 
 - `scenario-suite run` executes each case through the same command sequence
-  runner as `scenario run`, so JSON warnings emitted by commands must be
-  declared in `expect.warnings`; any unasserted warning fails the case even when
-  the underlying command exits 0.
-- Delegation tokens are captured from `rundown delegate` JSON responses and from
-  `step_entered.delegateFrontier` auto-issued tokens. `${TOKEN}` expands to the
-  first captured token, `${TOKEN_2}` to the second, and so on.
-- Claim ids are captured from `rundown claim` JSON responses. `${CLAIM_ID}`
-  expands to the first captured claim id, `${CLAIM_ID_2}` to the second, and so
-  on.
+  runner as `scenario run`, so the same `${TOKEN}` / `${RUN_ID}` placeholders
+  apply, and JSON warnings emitted by commands must be declared in
+  `expect.warnings`; any unasserted warning fails the case even when the
+  underlying command exits 0.
 
 #### Sibling CLIs: `rdpath` and `rdx`
 
@@ -778,279 +749,65 @@ Two companion CLIs ship alongside `rundown`:
 - **`rdx`** — JSON-to-Markdown renderer with optional schema validation. See
   [docs/reference/rdx.md](rdx.md).
 
-### Delegation Commands
-
-| Command                                                    | Description                                                                       |
-| ---------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `rundown delegate`                                         | Infer both child runbook and substep from runbook state                           |
-| `rundown delegate --step <id>`                             | Infer child runbook from the DELEGATE substep's `runbooks:` field                 |
-| `rundown delegate <runbook> --step <id>`                   | Delegate substep to an explicit child runbook                                     |
-| `rundown delegate <runbook> --step <id> --input key=value` | Delegate with variables (`--input`/`--input-json`/`--input-file`, all repeatable) |
-| `rundown delegate --retry <token>`                         | Retry a delegation: supersede and re-issue with a fresh token                     |
-| `rundown delegate --retry --step <id>`                     | Retry the delegation on a substep                                                 |
-| `rundown delegate --retry --step <id> --index <n>`         | Retry a delegation within the **active** FOR iteration                            |
-| `rundown delegate --retry`                                 | Retry the delegation inferred from the active substep                             |
-| `rundown delegate --retry --step <id> --input key=value`   | Retry with variable overrides                                                     |
-| `rundown claim <token>`                                    | Claim a delegation token, launch child, and return `claim_id`                     |
-| `rundown claim <token> --input key=value`                  | Claim with variables (`--input`/`--input-json`/`--input-file`, all repeatable)    |
-| `rundown pass --claim-id <claim_id>`                       | Bearer-authorized PASS: advance a run or report a claimed child's result          |
-| `rundown fail --claim-id <claim_id>`                       | Bearer-authorized FAIL: advance a run or report a claimed child's result          |
-| `rundown status --claim-id <claim_id>`                     | Inspect a claimed child runbook                                                   |
-| `rundown collect --claim-id <claim_id>`                    | Bearer-authorized aggregation of delegated results                                |
-| `rundown goto <step> --claim-id <claim_id>`                | Bearer-authorized jump within a claimed run (run-navigation policy gate)          |
-| `rundown stash --claim-id <claim_id>`                      | Bearer-authorized stash of a claimed runbook, preserving the claim record         |
-| `rundown pop --claim-id <claim_id>`                        | Restore a stashed claimed child runbook                                           |
-| `rundown stop --claim-id <claim_id>`                       | Bearer-authorized stop of a claimed run                                           |
-| `rundown complete --claim-id <claim_id>`                   | Bearer-authorized completion of a claimed run                                     |
-| `rundown delegate --step <id> --claim-id <claim_id>`       | Bearer-authorized delegation on a delegation-exposed run                          |
-| `rundown abort <token> --claim-id <claim_id>`              | Cancel a delegation token                                                         |
-| `rundown abort <token> --claim-id <claim_id> --force`      | Cancel or clean up a claimed delegation                                           |
-
-`rundown collect` may continue execution into the next command step after
-aggregation. In default JSON mode, bytes written by that command step are
-reported on stderr; stdout remains parseable JSON/JSONL for agents.
-
-Delegation semantics:
-
-- Manual delegation requires an authored delegation target: the target substep
-  must carry `- DELEGATE` directly or inherit it from step-level `- DELEGATE`,
-  and it must have an authored runbook reference. Plain runbook-list substeps
-  without `- DELEGATE` are inline launch targets, not manual delegation targets.
-- `delegate` infers the child runbook and target substep from runbook state only
-  when the active frontier is an authored DELEGATE target. The `[runbook]`
-  positional and `--step` are both optional and inferred when omitted: with
-  neither, both are inferred via the active delegated substep; with `--step`
-  only, the runbook is read from the delegated substep's `runbooks:` field; with
-  the runbook only, the substep is inferred.
-- `delegate <runbook> --step <id>` does not override the authored target. The
-  requested runbook must match one of the substep's authored runbook references;
-  otherwise the command fails without minting or exposing a token.
-- `delegate` is **idempotent** over a pending (unclaimed) delegation in every
-  form — bare, `--step`, and positional `<runbook>` alike echo the in-flight
-  token as `action: "already-delegated"` (the raw token IS re-printed, so a lost
-  token is recoverable while the delegation is pending). Naming a **different**
-  runbook than the in-flight one fails with RD-804 (`DELEGATION_ALREADY_EXISTS`)
-  without minting or exposing a token.
-- **The echo is same-issuer only.** Delegation tokens are not stored: persisted
-  state keeps a non-secret credential descriptor and a token hash, and the echo
-  re-derives the bearer from the `--claim-id` you present. Only the claim that
-  issued the delegation can reproduce it. Present a different claim — including
-  after the issuing run-control claim has been rotated — and the command refuses
-  with RD-821 (`DELEGATION_INVARIANT_VIOLATED`) and returns no token; the same
-  refusal covers a derived bearer that does not match its persisted hash. A
-  refused echo is a data-free refusal, never a degraded token.
-- Targeting a substep whose delegation is **claimed** by a live child fails with
-  RD-811 (`DELEGATION_ALREADY_CLAIMED`) — a fresh mint would orphan the running
-  child. Recover explicitly with
-  `rundown abort <token> --claim-id <claim_id> --force` then re-delegate, or
-  `rundown delegate --retry <token> --claim-id <claim_id>`.
-- `rundown delegate --retry <token>` refuses a live claimed child, but can
-  supersede a terminal linked child and mint a fresh token. The target is
-  resolved from a token positional, from `--step` (optionally with `--index` for
-  a FOR iteration — see the active-iteration rule below), or inferred from the
-  active substep. `--input`/`--input-json`/`--input-file` supply variable
-  overrides on the re-issued delegation.
-- **`--index` must name the iteration the parent is executing**, on both the
-  fresh and the `--retry` paths. Naming any other iteration is refused with
-  RD-832 (`DELEGATION_INDEX_NOT_ACTIVE`), and the message reports both the
-  requested and the active iteration. The FOR model is strictly
-  single-iteration: one iteration is live at a time, and the frame entry ordinal
-  a delegation is minted against is unknowable until the parent enters that
-  frame. A bearer minted against any other iteration cannot be claimed —
-  `classifyDelegationLiveness` closes it `cursor-advanced` on presentation — and
-  before this refusal existed such a mint wedged the run, because the
-  pending-collection guard named a completion key the drain could never match.
-  Fan-out width therefore comes from the number of `DELEGATE` substeps in one
-  frame, which are issued together and claimed in parallel; a `FOR` loop repeats
-  that width serially, one iteration at a time.
-- **This rule is specific to `delegate`.**
-  `rundown pass --step <id> --index <n>` and
-  `rundown fail --step <id> --index <n>` still accept a non-active iteration,
-  recording a pre-resolved completion against that frame. Recording a completion
-  mints no authority, so it carries none of the risk that a delegation bearer
-  does.
-- **`--retry` is idempotent over an unobserved replacement.** A retry that has
-  already been applied — the replacement exists and shows no committed evidence
-  its bearer was used (never claimed, never aborted, and its frame entry still
-  current) — **echoes** that bearer as `action: "retry-already-applied"` and
-  writes nothing. A replayed command after a dropped response therefore cannot
-  orphan a bearer that was already handed out. To rotate deliberately, name the
-  current token: `rundown delegate --retry <token> --claim-id <claim_id>`, which
-  the echo response carries.
-- **Machine-driven RETRY counts as a retry.** A step-level `rundown retry` also
-  stamps the replacement, so the first manual
-  `rundown delegate --retry --step X` after one echoes rather than rotating.
-  This is deliberate: the contract is refusal-biased and never double-mints, and
-  the remedy — the current bearer — is in the response.
-- Committed evidence that the replacement's bearer was used refuses with RD-826
-  (`DELEGATION_REPLACEMENT_CONSUMED`) rather than minting a third bearer over
-  work in progress.
-- `rundown abort <token> --claim-id <claim_id> --force` cancels an active
-  claimed child as fail. When the linked child is already terminal or already
-  reported, it performs cleanup without recording a duplicate fail.
-- A successful `abort` reports what core actually did, not what was requested.
-  `cleanup` names the branch that ran — `none` (no child was ever linked),
-  `active_child_failed` (a running child was stopped and reported failed),
-  `terminal_child_cleaned` (the linked child had already reported),
-  `missing_child_cleaned` (the linked child's run has vanished; its stale
-  delegated outcome was superseded). `force` is present only when a linked-child
-  teardown actually ran, so `--force` on a pending delegation reports
-  `cleanup: "none"` and no `force` field.
-- `claim` uses the delegation token (printed by `delegate`) to launch the child
-  runbook and returns a one-time `claim_id`; replaying the same token is
-  refused.
-- `claim` creates the initial claim and parent link atomically, guarding both
-  the child and parent. Parent execution ownership refuses with
-  `EXECUTION_IN_PROGRESS`; parent recovery state refuses with
-  `RECOVERY_REQUIRED`. Neither refusal writes the claim or parent link.
-- `claim` refuses with RD-825 (`DELEGATION_SUPERSEDED`) when the parent has
-  moved past the delegation — it advanced its cursor beyond the step, ended,
-  reset the substep, or reissued the token — before the claim committed. A
-  durable two-sided latch enforces this: the parent commit tombstones any
-  already-committed claim, and the claim transaction refuses once the parent has
-  advanced. **Do not retry the token; report the superseded delegation to the
-  orchestrator.** The envelope carries `parentRunId` and `stepId` (and
-  `childRunId` when an existing/orphaned child was identified).
-- The code does not depend on where in that window the call lands. `claim`
-  re-reads the parent before it prepares the child, and an ended parent or a
-  delegation that has left the parent's step is seen by that read as often as by
-  the claim transaction. Both sides report RD-825, and the pre-read envelope
-  simply names the more specific fact first — `lifecycle` in `details` when the
-  parent ended, `stepId` when the delegation is gone. A parent run that no
-  longer exists at all is the one arm that is NOT a supersession: it reports
-  `PARENT_RUN_MISSING`, matching the `parent-unreadable` corruption signal
-  core's own classifier produces for it, and its recovery is `rundown prune`
-  plus a restart from source rather than a report to the orchestrator.
-- Claim-targeted commands refuse with RD-825 the same way, not just `claim`.
-  Once the delegation a bearer names has closed, `pass`, `fail`, `goto`, `stop`,
-  `complete`, `pop`, `stash`, `status`, `collect`, and `delegate` all report
-  `DELEGATION_SUPERSEDED` naming the cause rather than reporting the bearer as
-  unknown — a superseded claim is a real claim whose authority ended, so **do
-  not retry it; report to the orchestrator.** Four causes are the parent
-  outrunning the token (`parent-ended`, `cursor-advanced`, `resolved`,
-  `token-reissued`); `cancelled` is not — the parent may still be sitting on the
-  delegation, and it was `rundown abort` that closed it — but the no-retry
-  instruction is equally true of an aborted token, so it carries the same code
-  and says which of the two happened. A claim that was merely released, rotated,
-  or pruned, and one whose parent run no longer exists, report
-  `CLAIMED_RUNBOOK_UNAVAILABLE` instead: neither ends the bearer's authority
-  from the delegation's side, so neither carries the no-retry instruction.
-  `abort` is the exception: its `--claim-id` is bearer authority over the
-  _parent_ run rather than a claimed-child target, so it refuses with
-  `ACTOR_CONTEXT_REQUIRED` / `CLAIM_GRANT_REQUIRED` and never emits RD-825.
-- `claim` is the exception in the other direction: it has a code for a cancelled
-  delegation and uses it. `rundown claim` on a delegation closed by
-  `rundown abort` refuses with RD-809 (`DELEGATION_CANCELLED`), never RD-825,
-  whether the cancellation was already committed when the claim began or landed
-  while the claim was in flight — the claim transaction classifies a cancelled
-  delegation as cancelled, so the timing of the abort does not change the code
-  the claimer is given. The envelope carries `parentRunId`, `stepId`, and
-  `cancelledAt`.
-- **Transactional refusals under `rundown collect`.** The whole collection
-  commits as one fenced aggregate transaction — the drain's applies, any
-  terminal session release, and a delegating grandparent's outcome row land
-  together or not at all. Frontier projection and entry are a separate Run
-  Progression turn after that commit. Collect's own refusal envelope therefore
-  reports both the policy and collection outcomes (`ACTOR_CONTEXT_REQUIRED`,
-  `CLAIM_GRANT_REQUIRED`, `DELEGATION_SUPERSEDED` /
-  `CLAIMED_RUNBOOK_UNAVAILABLE`, `SUBSTEPS_NOT_RESOLVED`, `NOT_DELEGATE_STEP` /
-  `STEP_NOT_FOUND` / `COLLECT_OPERATION_FAILED`) and the transactional ones
-  (`STALE_CLAIM`, `CONCURRENT_MODIFICATION`, `EXECUTION_IN_PROGRESS`,
-  `RECOVERY_REQUIRED`, `AGGREGATE_RECOVERY_REQUIRED`, `RUN_TARGET_UNAVAILABLE`).
-  Because the seam captures the collector's authority and re-checks it at commit
-  time, a bearer released or replaced after authorization refuses `STALE_CLAIM`
-  rather than committing under stale authority. RD-821 and RD-829 can follow a
-  successful collect only as typed Run Progression refusals: the collection has
-  landed, while the separate frontier turn leaves its frontier untouched.
-  `RUN_TARGET_UNAVAILABLE` has two origins here that share a remedy: `--run`
-  naming a run that is not on the active stack (nothing captured), and a
-  captured run disappearing mid-transaction. Separately, when a collect's
-  aggregation advances the delegating run into Run Progression work, a later
-  command fence can lose its compare-and-swap; that refusal is observed as a
-  streamed `error_occurred` event carrying the same code vocabulary. It is not
-  followed by `runbook_stopped`: the refused follow-on transition committed no
-  terminal state. This observation belongs to follow-on work rather than
-  collect's own envelope. See
-  [docs/spec/cli-output.md](../spec/cli-output.md#transactional-refusals-under-rundown-collect).
-- Child runbook uses `rundown pass --claim-id <claim_id>` /
-  `rundown fail --claim-id <claim_id>` to report its outcome. Other
-  claim-targeted lifecycle commands use the same explicit child routing.
-- Run-control lane: on a delegation-exposed run every mutating command
-  (`delegate`, `collect`, `pass`, `fail`, `goto`, `complete`, `stop`) must carry
-  bearer authority with `--claim-id <claim_id>`; the bare form is refused with
-  `ACTOR_CONTEXT_REQUIRED`. `--run <rd_…>` is a selector, not bearer authority,
-  and must not be combined with `--claim-id`. The refusal remediation never
-  echoes the target run id.
-- Completion routing is frame + entry aware (`frame + entry + substep`) to
-  prevent stale re-entry completions from being applied.
-- Claimed children are routed by claim id, not by the shared stack.
-  `rundown claim <token>` records the claimed child run id under a generated
-  `rdclm_...` handle; later commands use `--claim-id <claim_id>` to resolve that
-  exact child.
-- Re-claiming the same delegated child refreshes and returns the existing claim
-  id.
-- Claimed children are never pushed to `defaultStack`, so parallel delegated
-  siblings cannot be accidentally targeted by plain stack commands.
-- If a claim record points at missing, terminal, stale, or unlinked state,
-  commands fail closed instead of falling back to the shared stack in the same
-  invocation.
-
 ---
 
 ## Common Tasks
 
-These examples assume a **standalone run** (no delegation activity), so the bare
-transition forms apply. On a delegation-exposed run the bare form is refused
-with `ACTOR_CONTEXT_REQUIRED`; see [Delegation Patterns](#delegation-patterns)
-for bearer-authorized `--claim-id <claim_id>` forms.
-
 ### Task: Run a Simple Sequential Runbook
 
 ```bash
-# Start the runbook
+# Start the runbook; copy owner_token from the runbook_started event
 rundown run myrunbook.runbook.md
 
-# After completing each step, signal the outcome
-rundown pass    # or rundown yes, rundown ok
-rundown fail    # Step failed, apply FAIL transition
+# After completing each step, signal the outcome for the current step
+rundown pass --token <owner_token> --step 1    # or rundown yes, rundown ok
+rundown fail --token <owner_token> --step 2    # Step failed, apply FAIL transition
 ```
 
 ### Task: Check Runbook Status
 
 ```bash
-rundown status
+rundown status                 # Every run, with status and step
+rundown status --run <run_id>  # One run in detail
 ```
 
-Output shows:
+The detail view shows:
 
 - Current runbook file
 - SQLite state database location
-- Current action location (`At`) and optional loop scope (`For`)
-- Last action taken
+- Run id
+- Last action taken and its result
+- Current step, its entry, and the run's variables
 
 ### Task: Jump to a Specific Step
 
 ```bash
-rundown goto 3       # Jump to step 3
-rundown goto 2.1     # Jump to substep 1 of step 2
+rundown goto 3 --token <owner_token>    # Jump to step 3
+rundown goto 2.1 --token <owner_token>  # Jump to substep 1 of step 2
 ```
 
-### Task: Pause and Resume a Runbook
+### Task: Agent-Controlled Branching
 
-```bash
-# Pause (state preserved, enforcement paused)
-rundown stash
+A prompt-only step can leave the next action to the agent:
 
-# Do untracked work...
+```markdown
+## 5. Check remaining
+- PASS CONTINUE
+- FAIL STOP
 
-# Resume
-rundown pop
+Check TodoWrite for remaining items.
+
+If more remain: `rundown goto 3 --token <owner_token>`
+If complete: `rundown pass --token <owner_token> --step 5`
 ```
+
+The agent reads the step, evaluates the condition, and runs the appropriate CLI
+command.
 
 ### Task: List Runbooks
 
 ```bash
-# List active/running runbooks
+# List persisted runs
 rundown ls
 
 # List all available runbook files
@@ -1083,100 +840,12 @@ rundown prune --completed
 # Remove only stopped (aborted/failed) runbook state
 rundown prune --stopped
 
-# Remove all state
+# Remove every finished and invalid run (running runs are retained)
 rundown prune --all
+
+# Remove one running run you own
+rundown prune --token <owner_token>
 ```
-
----
-
-## Delegation Patterns
-
-> **See also:**
-> [docs/guides/agent-orchestration.md](../guides/agent-orchestration.md) for
-> subagent delegation workflow, context file discovery, and delegation
-> completion.
-
-### Pattern 1: Orchestrator Control
-
-Main agent runs runbook, dispatches subagents for substeps.
-
-**Runbook structure:**
-
-```markdown
-## 2. Execute batch
-- PASS ALL CONTINUE
-- FAIL ANY GOTO 4
-
-### 2.1 Process item
-- DELEGATE
-- task.runbook.md
-```
-
-**Command sequence:**
-
-```bash
-# 1. Main agent starts parent runbook, capturing the claim_id and run id it prints
-#    (the run id is also carried as runbookId on every subsequent event)
-rundown run runbook.runbook.md
-
-# 2. At substep, main agent delegates to child runbook using its run-control claim
-rundown delegate task.runbook.md --step 2.1 --claim-id <root_claim_id>
-
-# 3. Subagent claims the delegation token
-rundown claim <token>
-
-# 4. Subagent works through child runbook...
-
-# 5. Subagent reports result using the claim_id returned by rundown claim
-rundown pass --claim-id <claim_id>    # or: rundown fail --claim-id <claim_id>
-
-# 6. Main agent advances its own run once the child has reported
-rundown collect --claim-id <root_claim_id>
-```
-
-**Key points:**
-
-- Manual `delegate` targets must be authored with `- DELEGATE`; a plain
-  runbook-list substep launches inline instead
-- `delegate` infers the child runbook and target substep from delegated runbook
-  state; the runbook positional and `--step` are optional and inferred when
-  omitted
-- The delegation token printed by `delegate` is passed to `claim` by the
-  subagent
-- The `claim_id` printed by `claim` is passed to every child-targeting command
-- Orchestrator lane: capture the root `claim_id` from `rundown run` and pass
-  `--claim-id <claim_id>` on every orchestrator mutation (`delegate`, `collect`,
-  `pass`, `fail`, `goto`) — the bearer claim is the only mutation authority.
-  `--run <rd_…>` selects a target but never satisfies the
-  `ACTOR_CONTEXT_REQUIRED` refusal, and must not be combined with `--claim-id`.
-  The bare form is refused with `ACTOR_CONTEXT_REQUIRED` on a delegation-exposed
-  run
-- Child uses `rundown pass --claim-id <claim_id>` /
-  `rundown fail --claim-id <claim_id>`
-- Completions are validated against frame + entry identity; stale completions
-  from prior re-entry are rejected
-- Valid completions are recorded and drained in deterministic substep order
-  before step-level transition
-
-### Pattern 2: Agent-Controlled Branching
-
-Agent decides next action based on context.
-
-```markdown
-## 5. Check remaining
-- PASS CONTINUE
-- FAIL STOP
-
-Check TodoWrite for remaining items.
-
-If more remain: `rundown goto 3`
-If complete: `rundown pass`
-```
-
-Agent reads step, evaluates condition, runs appropriate CLI command. On a
-delegation-exposed run these become `rundown goto 3 --claim-id <claim_id>` and
-`rundown pass --claim-id <claim_id>`; the bare forms shown apply to a standalone
-run.
 
 ---
 
@@ -1184,37 +853,44 @@ run.
 
 Output formatting is implemented in
 `packages/cli/src/services/output-emitter.ts` and
-`packages/cli/src/helpers/table-formatter.ts`.
+`packages/cli/src/helpers/table-formatter.ts`. JSON is the default on every
+command; `--text` is the human-readable alternative. The full per-command shapes
+are in [docs/spec/cli-output.md](../spec/cli-output.md).
 
 ### Standard Output Structure
 
+`rundown run --text` on a runbook that rests at a prompt-only step:
+
 ```text
-File:     runbook.runbook.md
+File:     .rundown/runbooks/deploy.runbook.md
 State:    .rundown/rundown.db
 Run:      rd_0123456789abcdef0123456789abcdef
+Owner token: rdo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 Action:   START
-At:       1
 
-Step description here...
+## 1. Build
 
-$ npm test
+Build the release.
+```
 
------
-Action:   CONTINUE
-From:     1.1.1
-Result:   PASS
-For:      2/5
-At:       1.2.1
+A transition (`rundown goto 3 --token <owner_token> --text`):
 
-Next step description...
+```text
 
-Runbook:  COMPLETE
+─── 3 ────────────────────────────────────────────
+Action:   GOTO 3
+From:     1
+At:       3
+
+## 3. Announce
+
+Tell the team.
 ```
 
 ### Table Output
 
-List commands (`rundown ls`, `rundown scenario ls`) use aligned tables following
-Linux CLI conventions:
+List commands (`rundown ls`, `rundown status`, `rundown prune`,
+`rundown scenario ls`) use aligned tables following Linux CLI conventions:
 
 | Convention         | Standard                                  |
 | ------------------ | ----------------------------------------- |
@@ -1225,20 +901,20 @@ Linux CLI conventions:
 | **Empty values**   | Empty string                              |
 | **Machine output** | JSON output by default                    |
 
-Example (`rundown ls --all`):
+Example (`rundown ls --text`):
 
 ```text
-NAME           SOURCE   DESCRIPTION                    TAGS
-retry-success  bundled  Tests RETRY before exhaustion  retry, auto-exec
-simple         project  Basic two-step runbook
+ID        STATUS   STEP  RUNBOOK                              TITLE
+rd_01234  running  2/3   .rundown/runbooks/deploy.runbook.md  Deploy
 ```
 
 Example (`rundown scenario ls`):
 
 ```text
-NAME              EXPECTED  DESCRIPTION                   TAGS
-completed         COMPLETE  Step passes on first attempt
-retry-exhaustion  STOP      Retries exhausted, stops
+NAME            EXPECTED  DESCRIPTION                                                 TAGS
+immediate       COMPLETE  Step passes on first attempt
+after-retry     COMPLETE  Fails first, succeeds on retry
+auto-execution  COMPLETE  Code block auto-executes - fails once then passes on retry
 ```
 
 ### Detail Views
@@ -1255,50 +931,57 @@ format:
 Example (`rundown scenario show`):
 
 ```text
-Name:        completed
-Description: Step passes on first attempt
+Name:        after-retry
+Description: Fails first, succeeds on retry
 Expected:    COMPLETE
 Commands:
-  $ rundown run --prompted retry-success.runbook.md
-  $ rundown pass
+  $ rd run --prompted retry-success.runbook.md
+  $ rd fail --token ${TOKEN} --step 1
+  $ rd pass --token ${TOKEN} --step 1
 ```
 
 ### Command Execution Output
 
-Commands that execute operations (`rundown scenario run`) use a
-Scenario/Execution/Result structure:
+`rundown scenario run --text` prints a `Scenario:` header, then each command
+(after placeholder substitution) under a separator line followed by that
+command's output, and ends with the scenario's terminal state:
 
 ```text
-Scenario: scenario-name
+Scenario:  after-retry
+──────────────────────────────────────────────────
 
----
-$ rundown run --prompted file.runbook.md
-$ rundown pass
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+$ rd run --prompted retry-success.runbook.md
+
+...
 
 Scenario: COMPLETE
 ```
 
+With `--quiet`, only the final `Scenario: COMPLETE` line is printed.
+
 ### Key Elements
 
-| Element    | Description                                                 |
-| ---------- | ----------------------------------------------------------- |
-| `File:`    | Runbook file path                                           |
-| `State:`   | State database path (`.rundown/rundown.db`)                 |
-| `Run:`     | Run id this output describes (`rd_…`)                       |
-| `Action:`  | Last action (START, CONTINUE, GOTO, RETRY, COMPLETE, STOP)  |
-| `From:`    | Previous step position                                      |
-| `Result:`  | PASS or FAIL                                                |
-| `For:`     | Loop scope (`index/end` or `index/?`) when in FOR execution |
-| `At:`      | Current execution path (display path, e.g. `1.2.1`)         |
-| `$`        | Command being executed                                      |
-| `---`      | Separator between scenario commands                         |
-| `Runbook:` | Runbook terminal state (COMPLETE, STOPPED, STASHED)         |
+| Element        | Description                                                 |
+| -------------- | ----------------------------------------------------------- |
+| `File:`        | Runbook file path                                           |
+| `State:`       | State database path (`.rundown/rundown.db`)                 |
+| `Run:`         | Run id this output describes (`rd_…`)                       |
+| `Owner token:` | The run's Owner Token — printed by `rundown run` only       |
+| `Action:`      | Last action (START, CONTINUE, GOTO, RETRY, COMPLETE, STOP)  |
+| `From:`        | Previous step position                                      |
+| `Result:`      | PASS or FAIL                                                |
+| `For:`         | Loop scope (`index/end` or `index/?`) when in FOR execution |
+| `At:`          | Current execution path (display path, e.g. `1.2.1`)         |
+| `$`            | Command being executed                                      |
+| `Runbook:`     | Runbook terminal state (COMPLETE, STOP)                     |
 
 JSON output compatibility:
 
-- Existing position fields (`current`, `substep`, `total`) are preserved.
-- Loop/location-aware fields are additive and optional: `position.at`,
-  `position.for.index`, `position.for.end`.
+- Position fields (`current`, `substep`, `total`) carry the step position.
+- Loop/location-aware fields are optional: `position.at`, `position.for.index`,
+  `position.for.end`.
 - `targetAt` is derived at output boundaries from canonical target identity
   fields.
 
@@ -1308,78 +991,70 @@ JSON output compatibility:
 
 ### Common Errors and Resolutions
 
-| Error                                            | Cause                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Resolution                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| ------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| "No active runbook"                              | No runbook in stack                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Run `rundown run <file>`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| "Runbook file not found"                         | Missing runbook                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Check file path                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| "Step N does not exist"                          | Invalid GOTO target                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Check step numbers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| "Invalid step target"                            | Bad goto format                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Use "N" or "N.M"                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| "FOR loop references undefined data source"      | Sourced FOR clause without matching source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Define source via --input-json, config.yaml, or --input-file                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| "File drift detected"                            | Data file changed during iteration                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Ensure file stability or restart runbook                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `ACTOR_CONTEXT_REQUIRED`                         | Bare mutating command, or a `--run`-only mutation, on a delegation-exposed run                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Name your bearer lane with `--claim-id <claim_id>` (the only mutation authority); `--run` never satisfies the refusal, and must not be combined with `--claim-id`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `RUN_TARGET_UNAVAILABLE`                         | `--run` target is not a running member of this session's stack                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Use a run id from the active session stack (claimed children are never stack members — target them with `--claim-id`)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `RUN_TARGET_MISMATCH`                            | `delegate --retry <token> --run <rd_…>` where the named run is a valid target but does not own the token                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | Drop `--run` to let the token resolve its own owner, or name the run that actually owns the token — the refusal does not disclose it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `INVALID_RUN_ID`                                 | Malformed `--run` value                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Supply a valid run id — `rd_<32 hex characters>`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `CLAIM_GRANT_REQUIRED`                           | The verified bearer lacks the exact grant for the command/target (e.g. `rundown collect` from a claim without `collect-for-run` on the delegating run)                                                                                                                                                                                                                                                                                                                                                                                                                         | Present a `--claim-id <claim_id>` whose grant controls the target run                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `CLAIM_BEARER_MISMATCH`                          | The presented bearer is not the claim the command targeted. **Unreachable from the CLI** — `--claim-id` supplies both the evidence and the target, so they cannot disagree; only a programmatic frontend that populates them independently can provoke it                                                                                                                                                                                                                                                                                                                      | Present the bearer for the claim you are targeting. Distinct from `ACTOR_CONTEXT_REQUIRED` on purpose: authority _was_ named, so "pass `--claim-id`" would misdiagnose it                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `INVALID_SYNTAX`                                 | `--claim-id` and `--run` supplied together on the same command                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Pass either `--claim-id` or `--run`, not both — they are mutually exclusive                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `INVALID_STEP`                                   | `pass --step` / `fail --step` names no substep of the active step (a bare step id such as `--step 1`, another step, a missing substep, or an `--index` the step cannot take). Refused before any run state or execution lease is written (a `--claim-id` caller's claim-session sighting may still be recorded); the run is unchanged                                                                                                                                                                                                                                          | Pass a substep of the active step (`--step 1.1`), or omit `--step` to advance the active step                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `EXECUTION_IN_PROGRESS`                          | The command had to change session targeting (stack, stash slot, or a claim) for a run another process is currently executing; ownership is exclusive, so nothing was written                                                                                                                                                                                                                                                                                                                                                                                                   | Wait for the owning process to finish and retry — the command is safe to repeat. An owner that was hard-killed rather than finishing does not strand the run: every execution-owning command probes for a dead owner before refusing, and clears or recovers the lease when it finds one                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `RECOVERY_REQUIRED`                              | The named run's last execution attempt ended without recording an outcome, so whether its effect ran is unknown. Unlike `EXECUTION_IN_PROGRESS`, no live process is advancing it, so waiting will not clear it — but a session-targeting refusal leaves the run execution-owned, so a later execution-owning command still refuses `EXECUTION_IN_PROGRESS` while the interrupted owner is alive, and recovers the epoch inline once it is gone                                                                                                                                 | There is no `rundown recover` command. What happens next depends on which origin emitted it, and the message tells you which: from the **execution fence** (`Run … needs recovery: …`) the runner already recovered that epoch inline, so the run itself is unblocked — but the refusal says your mutation did not commit, NOT that nothing happened: the attempt had crossed the effect boundary, so its external effect may already have run. Confirm whether it did before repeating the command; from a **session-targeting write** (`Run … ended execution with an unknown outcome at epoch N; …`) nothing was written and no recovery was started, so retrying cannot help — see [docs/spec/cli-output.md § Recovery required](../spec/cli-output.md#recovery-required)                                                                                    |
-| `AGGREGATE_RECOVERY_REQUIRED`                    | The multi-run form: an atomic multi-run mutation (forced inline terminal cascade, aggregate delegation abort) crossed its effect boundary leaving more than one run without a recorded outcome. Only this envelope carries `details.runs`                                                                                                                                                                                                                                                                                                                                      | Recovery of every `(runId, epoch)` named in `details.runs` is driven inline and per member, best-effort — there is no `rundown recover` command to run. Nothing was written; retry once each named attempt has been recovered                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `STALE_CLAIM`                                    | The presented bearer stopped controlling the target run between the moment the mutation captured its authority and the moment it tried to commit — the claim was released, rotated or re-issued, its generation advanced, or the delegated parent went terminal or was relinked. The transaction refused atomically; nothing was written. Carries no `details`                                                                                                                                                                                                                 | Do not retry with the same claim — it is no longer authority. Re-resolve your bearer against the parent's current delegation, or report the lost claim to the orchestrator. Distinct from the resolution-time `DELEGATION_SUPERSEDED` / `CLAIMED_RUNBOOK_UNAVAILABLE`, which refuse before any mutation is attempted                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `CONCURRENT_MODIFICATION`                        | The parent run changed after a delegated child link was derived but before its atomic claim/link commit                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Retry the claim; no claim or parent link was written                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `RD-821` (`DELEGATION_INVARIANT_VIOLATED`)       | A delegation bearer could not be handed back: the claim you presented is not the claim that issued it, or the re-derived bearer does not match its persisted hash. Emitted by `delegate`'s echo and by Run Progression when it projects a persisted delegation frontier; the run remains running and the frontier remains pending                                                                                                                                                                                                                                              | Present the claim that _issued_ the delegation — retrying with the same non-issuing claim refuses identically, and a rotated or released claim is not authority at all. If the issuing claim is gone and you still hold the delegation token from an earlier disclosure, tear the delegation down and re-issue: `rundown abort <token> --claim-id <claim_id> --force`, then re-delegate — where `<claim_id>` is the delegating run's **current** run-control claim, never the gone-or-rotated issuing one (`abort` authorizes on the `abort-delegation` grant over the parent run, so any live run-control claim for it suffices). If you hold no live run-control claim for that run — none can be re-minted once it has issued a delegation — or you no longer hold the token, the delegation cannot be re-disclosed and the run must be stopped and restarted |
-| `RD-826` (`DELEGATION_REPLACEMENT_CONSUMED`)     | `delegate --retry` named a bearer that was already replaced, and the replacement shows committed evidence of use — claimed by a child, aborted, or its frame entry advanced                                                                                                                                                                                                                                                                                                                                                                                                    | Target the current delegation instead of the superseded bearer, or `rundown abort <token> --claim-id <claim_id> --force` and re-delegate. Retrying the same bearer refuses identically                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| `RD-827` (`DELEGATION_RETRY_IDENTITY_UNMATCHED`) | `delegate --retry <token>` named a bearer that identifies neither the delegation currently recorded at the target nor one it superseded                                                                                                                                                                                                                                                                                                                                                                                                                                        | Re-read the current delegation with `rundown status` and retry the bearer it names                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `RD-828` (`DELEGATION_SUPERSESSION_AMBIGUOUS`)   | More than one delegation attempt records the named bearer as superseded, so there is no single replacement to echo or judge. Unreachable by construction — it is refused, never resolved                                                                                                                                                                                                                                                                                                                                                                                       | Invalid state: finish or `rundown prune` the run and restart from the source runbook                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `RD-829` (`DELEGATION_FRONTIER_CONSUME_FAILED`)  | Run Progression projected a persisted delegation frontier, but its separate SQLite-fenced consume did not commit, so the frontier is still pending and no bearer was disclosed. The run remains running. A successful collection may therefore be followed by this refusal: collection committed its completion domain, while the frontier turn did not                                                                                                                                                                                                                        | Transient — repeat the operation. The next attempt re-projects and re-consumes the same frontier                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `RD-830` (`INLINE_CHILD_FRAME_SUPERSEDED`)       | The inline child recorded at this frame was launched at an earlier entry and the parent has since re-entered the frame. Reachable from an ordinary gesture — a self-targeting `GOTO`/`RETRY` advances the frame's entry counter — rather than from corrupt state. The same judgement delegation makes when it closes a child `cursor-advanced`                                                                                                                                                                                                                                 | Finish, stop, or prune the superseded child run, then re-enter; the same re-entry then launches a fresh child under the current entry                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `RD-831` (`INLINE_CHILD_LINKAGE_MISMATCH`)       | The persisted inline child names a different parent run, step, substep, or frame than the launch intent describes. Distinct from `RD-830`: inconsistent state rather than a superseded generation of the same linkage                                                                                                                                                                                                                                                                                                                                                          | `rundown prune` the child run and restart the parent from source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `RD-305` (`INCOMPATIBLE_STATE_SCHEMA`)           | `.rundown/rundown.db` carries a schema version this build cannot read, and Rundown never migrates persisted state. Affects the whole database, so every in-flight run is unrecoverable                                                                                                                                                                                                                                                                                                                                                                                         | Delete `.rundown/rundown.db` and restart your runbooks from source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `RD-306` (`WAL_JOURNAL_MODE_UNAVAILABLE`)        | The database did not enter WAL mode. SQLite still serializes cross-process writers through file locking in rollback-journal mode, but that mode does not provide WAL's reader/writer concurrency and is not a validated Rundown deployment mode. SQLite returned a non-WAL mode or no readable mode, which narrows the cause to a VFS with no shared memory (a network mount such as NFS or SMB), a temporary database opened with no filename, or a connection already in a write transaction                                                                                 | Establish which of the three applies before moving anything. A read-only file or directory is **not** among them — that fails the pragma outright and surfaces as `RD-307`. A network mount is the common case; move the project to local disk                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
-| `RD-307` (`STATE_STORE_UNAVAILABLE`)             | `.rundown/rundown.db` could not be opened, so commands that access persisted run state cannot continue. Store-independent commands such as `rundown check` remain available. The driver's verbatim cause distinguishes a read-only file or directory, a file that is not a database, lock contention that outlasted the bounded timeout and retries, and a host whose SQLite adapter cannot initialize                                                                                                                                                                         | Retry after transient lock contention; repair the host or file for persistent failures. Rundown never downgrades to the single-writer sql.js adapter outside WebContainer                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| `RD-308` (`CONCURRENT_STATE_MODIFICATION`)       | A run-state read-modify-write spent its optimistic compare-and-swap budget because another process committed to the same run first. Nothing was written and the persisted state is intact. This is the thrown face of the same condition `CONCURRENT_MODIFICATION` renders as a command outcome                                                                                                                                                                                                                                                                                | Re-run the command — alone among the `3xx` state errors this one is transient, not a refusal                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `RD-309` (`INVALID_PERSISTED_RUN_STATE`)         | One run's persisted state does not match the contract this build reads: unparseable state, a `schemaVersion` other than `2`, a missing required field such as `templateVars`, `prompted`, or `frontmatterOutputs`, a `snapshot.value` this build cannot read or that names a step the runbook no longer declares, a `step` cursor naming a step the runbook no longer declares, effective variables carrying no `ContextId`/`WorkPath` to render against, or a deprecated dynamic-step snapshot. Only that run is affected — the database and every other run in it are intact | Finish it (`rundown complete`), stop it (`rundown stop`), or discard it with `rundown prune --inactive`, then re-run the runbook from source. The prune mode is load-bearing: a bare `rundown prune` selects completed and stopped runs out of `manager.list()`, which skips every invalid row, so it exits `0` having pruned nothing. `--inactive` reaches the run through prune's invalid-id path, discarding any other orphaned run alongside it; `--all` reaches it too, but discards every run in the project. Rundown never migrates persisted state                                                                                                                                                                                                                                                                                                       |
-| `RD-310` (`INVALID_PERSISTED_SESSION_STATE`)     | A claim row in the runbook database, or the session reconstructed from those rows, does not match the contract this build reads: an unparseable or schema-invalid `grants_json`, a malformed `delegation_json`, a malformed claim key, secret hash or controlled run id, mirrored run-id columns that disagree with the delegation descriptor beside them, or session data that fails `SessionDataSchema`. The runs themselves are unaffected                                                                                                                                  | Finish the affected run (`rundown complete`), stop it (`rundown stop`), or discard it (`rundown prune --inactive`), then re-run the runbook from source. Distinct from `RD-309` because the scope differs: a claim-row refusal names a claim key rather than a run id, a session-wide refusal (`session_schema_validation_failed`) names no individual row at all, and neither can have any of RD-309’s four causes. Rundown never migrates persisted state                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `COLLECT_OPERATION_FAILED`                       | `rundown collect` could not finish: a delegated outcome did not apply to the target cursor                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Check the message, which names the cursor mismatch; the frontier failures have their own codes above                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| `PARENT_RUN_MISSING`                             | `rundown claim <token>` found the token, and the parent run it names no longer exists. Not `TOKEN_NOT_FOUND`: the token was valid, so the token is not what is wrong. The sibling of `CHILD_RUN_MISSING` at the other end of the same linkage, and the code core's own liveness classifier implies for `parent-unreadable` — a corruption signal, never a supersession                                                                                                                                                                                                         | `rundown prune` and restart the parent from source; do not retry the token                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| `COMPLETION_TARGET_MISMATCH`                     | A persisted completion is not for the run's active cursor, so the drain refused to apply it. Permanent — re-running cannot make a stale completion match a cursor that has moved. Reported identically by the execution loop and by the inline parent-advance seam; `rundown collect` reports the same underlying fact as `COLLECT_OPERATION_FAILED`, which names the collection rather than the cursor. The message names the current cursor; `details.runId` names the run that refused, which in an inline chain is an ancestor rather than the run you invoked             | Do not retry. The execution loop releases the refused run from the session before reporting, so it is no longer the active runbook and bare `rundown stop` / `rundown complete` cannot reach it — recover with `rundown prune` on the run `details.runId` names, then restart it from source                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+Error envelopes are `{ "kind": "error", "error": …, "code": … }`, with `command`
+and `details` where known. Their exact shapes are in
+[docs/spec/cli-output.md § Error Output](../spec/cli-output.md#error-output-all-commands).
 
-`RD-833` (`DELEGATION_FRONTIER_DISCLOSURE_FAILED`) means Run Progression
-committed the persisted frontier consume, then could not render the
-`STEP_ENTERED` entry carrying the freshly derived bearers. The frontier is gone
-and the transient bearers were not disclosed. This can follow any core-minted
-activation directive, including a successful collection whose completion-domain
-commit already landed. Unlike retryable RD-829, this condition is permanent for
-that activation: fix the helper or entry-render failure, then explicitly
-re-delegate the step.
+| Error                                       | Cause                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Resolution                                                                                                                                                                                                                                                                                                                                                                  |
+| ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RUNBOOK_NOT_FOUND`                         | Runbook path or name did not resolve                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Check the file path, or run `rundown ls --all` to list available runbooks                                                                                                                                                                                                                                                                                                   |
+| `STEP_NOT_FOUND`                            | `goto` (or `run --prompted --step`) named a step or substep that does not exist                                                                                                                                                                                                                                                                                                                                                                                                                | Use one of the step ids listed in `details.available`                                                                                                                                                                                                                                                                                                                       |
+| `INVALID_AT_TARGET`                         | `--index` or `AT` aimed at a step with no FOR clause                                                                                                                                                                                                                                                                                                                                                                                                                                           | Drop `--index`, or target the FOR step                                                                                                                                                                                                                                                                                                                                      |
+| "FOR loop references undefined data source" | Sourced FOR clause without matching source                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Define source via --input-json, config.yaml, or --input-file                                                                                                                                                                                                                                                                                                                |
+| "File drift detected"                       | Data file changed during iteration                                                                                                                                                                                                                                                                                                                                                                                                                                                             | Ensure file stability or restart runbook                                                                                                                                                                                                                                                                                                                                    |
+| `TOKEN_REQUIRED`                            | A mutating command (`pass`, `fail`, `goto`, `stop`, `complete`) was issued without `--token`                                                                                                                                                                                                                                                                                                                                                                                                   | Pass `--token <owner_token>`, copied from the `runbook_started` event printed by `rundown run`                                                                                                                                                                                                                                                                              |
+| `INVALID_SYNTAX`                            | `--run` combined with `--token` on a mutating command (`--run` is a read-only selector, never authority); a malformed `--token` (not `rdo_<43 base64url characters>` — the value is never echoed); `run --step` without `--prompted`; a malformed `--index`; or a runbook syntax error                                                                                                                                                                                                         | Pass `--token <owner_token>` alone on mutating commands; copy the token exactly; add `--prompted` to `run --step`                                                                                                                                                                                                                                                           |
+| `UNKNOWN_TOKEN`                             | A well-formed token that no run carries — mistyped, or the token of a run that has been pruned                                                                                                                                                                                                                                                                                                                                                                                                 | Copy `owner_token` from the `runbook_started` event of the run you mean to drive. A lost token cannot be recovered from `status` or `ls`; stop driving that run and start a new one                                                                                                                                                                                         |
+| `RD-303` (`RUNBOOK_COMPLETED`)              | The token's run has already completed, so the mutation cannot be applied. `details` names the run and its lifecycle. Also emitted by `run --prompted --step` when the run completes during launch                                                                                                                                                                                                                                                                                              | Nothing to do on that run; start a new one with `rundown run`                                                                                                                                                                                                                                                                                                               |
+| `RD-304` (`RUNBOOK_STOPPED`)                | The token's run has already ended without completing (`stopped` or `abandoned`)                                                                                                                                                                                                                                                                                                                                                                                                                | Start a new run with `rundown run`                                                                                                                                                                                                                                                                                                                                          |
+| `INVALID_STEP`                              | `pass` / `fail` was issued without `--step`, or `--step` / `--index` does not confirm the run's current position: another step, a bare step id while a substep is active, a substep other than the current one, a missing or wrong `--index` inside a FOR iteration, or an `--index` outside one. Refused before anything is written; the message names the current position                                                                                                                   | Pass the current position: `--step 2` at a top-level step, `--step 2.1` at a substep, `--step 1.1 --index 3` inside FOR iteration 3                                                                                                                                                                                                                                         |
+| `RUNBOOK_COMPOSITION_UNSUPPORTED`           | `rundown run` was given a runbook whose steps compose other runbooks (runbook-list or `DELEGATE` substeps). No run is created; `details.substeps` names every composing substep                                                                                                                                                                                                                                                                                                                | Run a standalone runbook; composition is not currently supported                                                                                                                                                                                                                                                                                                            |
+| `CONCURRENT_MODIFICATION`                   | A mutating command's single conditional save found that another write landed on the run since it was read — two of the owner's own commands raced. Nothing was written; the persisted state is intact. `details.runId` names the run                                                                                                                                                                                                                                                           | Re-read the run (`rundown status --run <run_id>`) and re-issue the command if it still applies; it is never retried on your behalf                                                                                                                                                                                                                                          |
+| `RUN_TARGET_UNAVAILABLE`                    | A read-only command (`status`, `artifact`) was given a well-formed `--run` id that names no run. Also streamed as an `error_occurred` event when a run is deleted (for example by a concurrent `rundown prune`) while a command is advancing it                                                                                                                                                                                                                                                | Use a run id from `rundown status`; a deleted run cannot be resumed — restart it from source                                                                                                                                                                                                                                                                                |
+| `INVALID_RUN_ID`                            | Malformed `--run` value                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Supply a valid run id — `rd_<32 hex characters>`                                                                                                                                                                                                                                                                                                                            |
+| `RD-305` (`INCOMPATIBLE_STATE_SCHEMA`)      | `.rundown/rundown.db` carries a schema version this build cannot read, and Rundown never migrates persisted state. Affects the whole database, so every in-flight run is unrecoverable                                                                                                                                                                                                                                                                                                         | Delete `.rundown/rundown.db` and restart your runbooks from source                                                                                                                                                                                                                                                                                                          |
+| `RD-306` (`WAL_JOURNAL_MODE_UNAVAILABLE`)   | The database did not enter WAL mode. SQLite still serializes cross-process writers through file locking in rollback-journal mode, but that mode does not provide WAL's reader/writer concurrency and is not a validated Rundown deployment mode. SQLite returned a non-WAL mode or no readable mode, which narrows the cause to a VFS with no shared memory (a network mount such as NFS or SMB), a temporary database opened with no filename, or a connection already in a write transaction | Establish which of the three applies before moving anything. A read-only file or directory is **not** among them — that fails the pragma outright and surfaces as `RD-307`. A network mount is the common case; move the project to local disk                                                                                                                              |
+| `RD-307` (`STATE_STORE_UNAVAILABLE`)        | `.rundown/rundown.db` could not be opened, so commands that access persisted run state cannot continue. Store-independent commands such as `rundown check` remain available. The driver's verbatim cause distinguishes a read-only file or directory, a file that is not a database, lock contention that outlasted the bounded timeout and retries, and a host whose SQLite adapter cannot initialize                                                                                         | Retry after transient lock contention; repair the host or file for persistent failures. Rundown never downgrades to the single-writer sql.js adapter outside WebContainer                                                                                                                                                                                                   |
+| `RD-308` (`CONCURRENT_STATE_MODIFICATION`)  | A run-state conditional save found the run changed since it was read: another of the owner's commands committed to the same run first. Nothing was written and the persisted state is intact. This is the thrown face of the same condition `CONCURRENT_MODIFICATION` renders as a command outcome                                                                                                                                                                                             | Re-read the run (`rundown status --run <run_id>`) and re-issue the command. It is never retried on your behalf                                                                                                                                                                                                                                                              |
+| `RD-309` (`INVALID_PERSISTED_RUN_STATE`)    | One run's persisted state does not match the contract this build reads: unparseable state, a `schemaVersion` other than the build's own, a missing required field such as `templateVars` or `prompted`, a snapshot or cursor naming a step the runbook no longer declares, or a deprecated dynamic-step snapshot. Only that run is affected — the database and every other run in it are intact. Any command that loads the run refuses, including `complete` and `stop`                       | Discard it with `rundown prune --inactive`, then re-run the runbook from source. Pruning is the only recovery: the run cannot be resumed, completed, or stopped, and a bare `rundown prune` selects completed and stopped runs only, so it never sees the invalid row (`--all` reaches it too, along with every other finished run). Rundown never migrates persisted state |
 
-`RD-504` (`RUN_PROGRESSION_ENTRY_FAILED`) is that same entry-render failure on a
-turn with no frontier to consume — the ordinary execution-unit entry. Nothing
-was consumed and nothing terminal was applied, so unlike RD-833 it is retryable:
-fix the helper or entry-render failure and re-run the command, which re-renders
-the same entry.
+See
+[docs/spec/cli-output.md § Runbook database and persisted state](../spec/cli-output.md#runbook-database-and-persisted-state-rd-306rd-309)
+for the thrown `RD-306`…`RD-309` envelope shape, and
+[§ `RD-309`](../spec/cli-output.md#rd-309--invalid-persisted-run-state) for the
+closed set of `reason` values.
+
+`RD-504` (`RUN_PROGRESSION_ENTRY_FAILED`) means Run Progression selected an
+execution unit and then could not render its `STEP_ENTERED` entry — usually a
+`--helpers` helper raising while expanding the unit's description, prompt, or
+command. Nothing was consumed and nothing terminal was applied, so it is
+retryable: fix the helper or entry-render failure and re-run the command, which
+re-renders the same entry.
 
 ### State Recovery
 
 If state becomes corrupted:
 
-1. `rundown ls` - Check active runbooks
-2. `rundown stop [message]` - Clear active runbook
-3. `rundown prune --all` - Remove all state
-4. `rundown run <file>` - Restart fresh
+1. `rundown status` - List runs and spot the affected one (unreadable runs are
+   reported on stderr)
+2. `rundown stop [message] --token <owner_token>` - Stop a running run you own
+3. `rundown prune --inactive` - Remove invalid or abandoned runs
+4. `rundown prune --all` - Remove every finished and invalid run
+5. `rundown run <file>` - Restart fresh
 
 ---
 
 ## Integration with Claude Code
 
-See [docs/guides/agent-orchestration.md](../guides/agent-orchestration.md) for
-context file discovery and subagent delegation.
+The Claude Code plugin (`@rundown-org/claude-code-plugin`) ships the
+`running-runbooks` skill, which describes the execution protocol an agent
+follows: start with `rundown run`, keep the `owner_token`, and report each step
+with `rundown pass` / `rundown fail` using `--token` and `--step`.
 
-Active runbook prompt auto-injects into Claude conversations via hooks. Both
-runbook state and session tracking survive context clears, session restarts, and
-agent handoffs.
+Run state lives in `.rundown/rundown.db` and survives context clears and session
+restarts. The Owner Token does not: it is printed only once, so an agent that
+loses it can still inspect the run (`rundown status --run <run_id>`) but can no
+longer change it.
 
 ---
 
@@ -1387,33 +1062,29 @@ agent handoffs.
 
 ```bash
 # Lifecycle
-rundown run <file>           # Start runbook
-rundown stop [message]       # Abort runbook with optional message
-rundown complete [message]   # Force early completion (auto-complete on final step)
+rundown run <file>                              # Start runbook; prints owner_token once
+rundown stop [message] --token <owner_token>    # Abort runbook with optional message
+rundown complete [message] --token <owner_token> # Force early completion (auto-complete on final step)
 
-# Transitions (bare forms below are standalone-run only; a delegation-exposed
-# run refuses them with ACTOR_CONTEXT_REQUIRED — provide a claim_id instead)
-rundown pass                 # Step succeeded (aliases: yes, ok)
-rundown fail                 # Step failed (alias: no)
-rundown goto <N>             # Jump to step N
-rundown goto <N.M>           # Jump to substep N.M
-rundown pass --claim-id <claim_id>    # Bearer-authorized advance
-rundown collect --claim-id <claim_id> # Bearer-authorized aggregation
-rundown goto <N> --claim-id <claim_id># Bearer-authorized jump (run-navigation policy gate)
+# Transitions
+rundown pass --token <owner_token> --step <N>   # Step succeeded (aliases: yes, ok)
+rundown fail --token <owner_token> --step <N>   # Step failed (alias: no)
+rundown pass --token <owner_token> --step <N.M> --index <I> # Substep inside FOR iteration I
+rundown goto <N> --token <owner_token>          # Jump to step N
+rundown goto <N.M> --token <owner_token>        # Jump to substep N.M
 
-# Status
-rundown status               # Show current state
-rundown ls                   # List active runbooks
-rundown ls --all             # List available runbooks
-
-# Enforcement
-rundown stash                # Pause enforcement
-rundown pop                  # Resume enforcement
+# Status (read-only, no token)
+rundown status                  # List every run
+rundown status --run <run_id>   # Show one run in detail
+rundown ls                      # List persisted runs
+rundown ls --all                # List available runbooks
 
 # Maintenance
-rundown check <file>         # Validate runbook
-rundown resolve <file>       # Resolve and validate variables/data sources
-rundown prune                # Clean up state
+rundown check <file>            # Validate runbook
+rundown resolve <file>          # Resolve and validate variables/data sources
+rundown prune                   # Clean up completed and stopped runs
+rundown prune --inactive        # Clean up invalid or abandoned runs
+rundown prune --token <owner_token> # Delete one running run you own
 
 # Testing and utilities
 rundown echo [command...]              # Test helper (configurable pass/fail)
@@ -1424,24 +1095,11 @@ rundown scenario run <file> <name>     # Execute a scenario
 rundown scenario-suite ls <suite>      # List scenario-suite cases
 rundown scenario-suite run <suite>     # Execute suite case(s)
 
+# Artifacts (read-only)
+rundown artifact ls [--run <run_id>]   # List artifact aliases
+rundown artifact inspect <alias-or-uri> # Full artifact record
+
 # Sibling CLIs
 rdpath --dir <path>          # Path assembly tool (see docs/reference/rdpath.md)
 rdx <file>                   # Render JSON to Markdown (see docs/reference/rdx.md)
-
-# Delegation (orchestrator commands on a delegation-exposed run carry
-# --claim-id bearer authority; do not combine it with --run)
-rundown delegate --step <id> --claim-id <claim_id>          # Delegate on the run you control
-rundown delegate <runbook> --step <id> --claim-id <claim_id> # Explicit child runbook
-rundown delegate --retry <token> --claim-id <claim_id>      # Retry: cancel and re-issue
-rundown collect --claim-id <claim_id>       # Aggregate delegated results
-rundown claim <token>                   # Claim delegation token and return claim_id
-rundown status --claim-id <claim_id>    # Inspect claimed child
-rundown pass --claim-id <claim_id>      # Complete claimed child with PASS
-rundown fail --claim-id <claim_id>      # Complete claimed child with FAIL
-rundown goto <step> --claim-id <claim_id> # Jump within claimed child
-rundown stash --claim-id <claim_id>     # Stash the claimed runbook the bearer controls
-rundown pop --claim-id <claim_id>       # Restore stashed claimed child
-rundown stop --claim-id <claim_id>      # Stop claimed child
-rundown complete --claim-id <claim_id>  # Complete claimed child
-rundown abort <token> --claim-id <claim_id> # Cancel delegation token
 ```

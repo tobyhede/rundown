@@ -16,7 +16,6 @@
 
 import { z } from 'zod';
 import { TemplateVarValueSchema } from '../schemas.js';
-import { CLAIM_ID_PATTERN, CLAIM_LOOKUP_KEY_PATTERN } from '../runbook/claim-id.js';
 import { RUN_ID_PATTERN } from '../runbook/run-id.js';
 import { PublicArtifactRecordSchema } from '../runbook/artifact-schema.js';
 import { RunbookRefSchema } from '../runbook/runbook-ref.js';
@@ -50,53 +49,31 @@ export const CLISymbolicErrorCodeValues = [
   'STEP_NOT_FOUND',
   'INVALID_SYNTAX',
   'VALIDATION_ERROR',
-  'ALREADY_STASHED',
-  'NO_STASHED_RUNBOOK',
-  'INVALID_CLAIM_ID',
   'INVALID_RUN_ID',
-  'INVALID_DELEGATE_CLAIM_ID',
-  'CLAIMED_RUNBOOK_UNAVAILABLE',
-  'DELEGATION_RESULT_CONFLICT',
-  'OPEN_DELEGATED_CHILDREN',
-  'DELEGATION_COLLECTION_PENDING',
-  'ACTOR_CONTEXT_REQUIRED',
-  'CLAIM_GRANT_REQUIRED',
-  'CLAIM_BEARER_MISMATCH',
-  'EXECUTION_IN_PROGRESS',
-  'RECOVERY_REQUIRED',
-  'AGGREGATE_RECOVERY_REQUIRED',
-  'STALE_CLAIM',
+  // One writer per run (ADR 0005): every mutating command names its Owner Token.
+  // A bare mutation is refused `TOKEN_REQUIRED`; a token no run carries is
+  // `UNKNOWN_TOKEN`; a token on a finished run is RD-303/RD-304.
+  'TOKEN_REQUIRED',
+  'UNKNOWN_TOKEN',
+  // `rundown run` refuses a runbook whose steps compose other runbooks until
+  // #903 (inline) and #904 (delegation) restore composition on the new model.
+  'RUNBOOK_COMPOSITION_UNSUPPORTED',
   'CONCURRENT_MODIFICATION',
   'RUN_TARGET_UNAVAILABLE',
-  'RUN_TARGET_MISMATCH',
-  'COLLECT_ALREADY_APPLIED',
-  'COLLECT_OPERATION_FAILED',
-  'CHILD_RUN_MISSING',
-  'CHILD_LINKAGE_MISMATCH',
-  'PARENT_RUN_MISSING',
-  'DELEGATION_SUPERSEDED',
-  'COMPLETION_TARGET_MISMATCH',
-  'INVALID_TOKEN',
-  'TOKEN_NOT_FOUND',
-  'DELEGATION_CANCELLED',
   'INVALID_STEP',
   'INVALID_INDEX',
   'UNSUPPORTED_OPTION',
   'ARTIFACT_CHANNEL_COLLISION',
   'INVALID_ARTIFACT_INPUT',
-  'NOT_DELEGATE_STEP',
-  'SUBSTEPS_NOT_RESOLVED',
-  'DELEGATION_ALREADY_RESOLVED',
-  'DELEGATION_ALREADY_EXISTS',
   'CONFLICTING_INDEX',
   'ENGINE_INIT_FAILED',
   'INVALID_AT_TARGET',
   'SCENARIO_NOT_FOUND',
   'OBSERVATION_DELIVERY_FAILED',
   // Every remaining `PrepareFailure['code']` arm. These reach an envelope
-  // verbatim from `prepareRunbook`, through `rundown claim`'s `prepare-failed`
-  // arm, `rundown run` (`run.ts` emits `prepResult.code` directly) and
-  // `rundown resolve` — so this is not one command's gap. `RUNBOOK_NOT_FOUND`,
+  // verbatim from `prepareRunbook`, through `rundown run` (`run.ts` emits
+  // `prepResult.code` directly) and `rundown resolve` — so this is not one
+  // command's gap. `RUNBOOK_NOT_FOUND`,
   // `VALIDATION_ERROR`, `ARTIFACT_CHANNEL_COLLISION` and `INVALID_ARTIFACT_INPUT`
   // are the four arms that were already registered above (#834).
   'PARSE_ERROR',
@@ -104,10 +81,6 @@ export const CLISymbolicErrorCodeValues = [
   'VARIABLE_RESOLUTION_ERROR',
   'POLICY_DENIED',
   'MISSING_REQUIRED_VARS',
-  // The symbolic SPELLING of RD-811. `CLIErrorCodes.DELEGATION_ALREADY_CLAIMED`
-  // registers the RD-811 value; `rundown claim` emits this string, and its
-  // sibling `DELEGATION_ALREADY_RESOLVED` was registered while it was not.
-  'DELEGATION_ALREADY_CLAIMED',
   'UNKNOWN_ERROR',
 ] as const;
 
@@ -130,100 +103,23 @@ export const CLIErrorCodes = {
   /** Specified runbook file doesn't exist */
   RUNBOOK_NOT_FOUND: ErrorCodes.FILE_NOT_FOUND.code,
   /** Target step doesn't exist */
-  STEP_NOT_FOUND: ErrorCodes.DELEGATION_STEP_NOT_FOUND.code,
+  STEP_NOT_FOUND: 'STEP_NOT_FOUND',
   /** Runbook has syntax errors */
   INVALID_SYNTAX: ErrorCodes.SYNTAX_ERROR.code,
   /** Input validation failed */
   VALIDATION_ERROR: 'VALIDATION_ERROR',
-  /** A runbook is already stashed */
-  ALREADY_STASHED: 'ALREADY_STASHED',
-  /** No stashed runbook to restore */
-  NO_STASHED_RUNBOOK: 'NO_STASHED_RUNBOOK',
-  /** Claim id format is invalid */
-  INVALID_CLAIM_ID: 'INVALID_CLAIM_ID',
   /** Run id format is invalid */
   INVALID_RUN_ID: 'INVALID_RUN_ID',
-  /** Delegate does not accept claim-id targeting */
-  INVALID_DELEGATE_CLAIM_ID: 'INVALID_DELEGATE_CLAIM_ID',
-  /** Claimed runbook is missing, terminal, or otherwise unavailable */
-  CLAIMED_RUNBOOK_UNAVAILABLE: 'CLAIMED_RUNBOOK_UNAVAILABLE',
-  /** A pass/fail contradicts the terminal outcome of a resolved delegated child */
-  DELEGATION_RESULT_CONFLICT: 'DELEGATION_RESULT_CONFLICT',
-  /** A bare pass/fail was refused because the active parent has open claimed delegated children */
-  OPEN_DELEGATED_CHILDREN: 'OPEN_DELEGATED_CHILDREN',
-  /** A delegated outcome has been reported and must be collected before bare parent advancement */
-  DELEGATION_COLLECTION_PENDING: 'DELEGATION_COLLECTION_PENDING',
-  /** Actor context is required for the requested role-specific command */
-  ACTOR_CONTEXT_REQUIRED: 'ACTOR_CONTEXT_REQUIRED',
-  /** A verified bearer claim lacks the grant required for the requested command */
-  CLAIM_GRANT_REQUIRED: 'CLAIM_GRANT_REQUIRED',
-  /** The presented bearer claim is not the claim the command targeted (#613) */
-  CLAIM_BEARER_MISMATCH: 'CLAIM_BEARER_MISMATCH',
-  /** A session mutation was refused: another process is executing the named run (#608) */
-  EXECUTION_IN_PROGRESS: 'EXECUTION_IN_PROGRESS',
-  /** A session mutation was refused: the named run's execution outcome is unknown (#608) */
-  RECOVERY_REQUIRED: 'RECOVERY_REQUIRED',
-  /**
-   * A multi-run mutation was refused: several runs' execution outcomes are
-   * unknown (#608). Distinct from the single-run `RECOVERY_REQUIRED` because
-   * only this envelope carries `details.runs` — the exact `(runId, epoch)` set
-   * that must be recovered before the workflow resumes.
-   */
-  AGGREGATE_RECOVERY_REQUIRED: 'AGGREGATE_RECOVERY_REQUIRED',
-  /** The explicit --run target is not a running member of this session's stack */
+  /** A mutating command was issued without `--token` (ADR 0005) */
+  TOKEN_REQUIRED: 'TOKEN_REQUIRED',
+  /** The presented Owner Token matches no run */
+  UNKNOWN_TOKEN: 'UNKNOWN_TOKEN',
+  /** The runbook composes other runbooks (DELEGATE or runbook-list substeps), which T1 does not run */
+  RUNBOOK_COMPOSITION_UNSUPPORTED: 'RUNBOOK_COMPOSITION_UNSUPPORTED',
+  /** The explicit --run target names no run */
   RUN_TARGET_UNAVAILABLE: 'RUN_TARGET_UNAVAILABLE',
-  /** The explicit --run target does not own the delegation retry token (delegate --retry) */
-  RUN_TARGET_MISMATCH: 'RUN_TARGET_MISMATCH',
-  /** Collection found no unapplied delegation outcomes and is an idempotent no-op. */
-  COLLECT_ALREADY_APPLIED: 'COLLECT_ALREADY_APPLIED',
-  /** Core collection failed while applying delegation outcomes. */
-  COLLECT_OPERATION_FAILED: 'COLLECT_OPERATION_FAILED',
-  /** Child run state row is missing (transient — pruning may help). */
-  CHILD_RUN_MISSING: 'CHILD_RUN_MISSING',
-  /** Child runbook's persisted parentLinkage diverges from the freshly token-validated linkage (state corruption — operator intervention required) */
-  CHILD_LINKAGE_MISMATCH: 'CHILD_LINKAGE_MISMATCH',
-  /**
-   * The parent run named by a delegation no longer exists (#807).
-   *
-   * The sibling of `CHILD_RUN_MISSING` on the other end of the same linkage,
-   * and deliberately not `TOKEN_NOT_FOUND`: the token was found and was valid,
-   * so a code naming the token sends the holder to check the one thing that is
-   * not wrong.
-   */
-  PARENT_RUN_MISSING: 'PARENT_RUN_MISSING',
-  /**
-   * Core refused a persisted completion that is not for the active cursor (#802).
-   *
-   * Names the CONDITION rather than the command, so the inline parent-advance
-   * seam and the execution loop report it identically. Permanent: re-running
-   * cannot make a stale completion match the cursor.
-   */
-  COMPLETION_TARGET_MISMATCH: 'COMPLETION_TARGET_MISMATCH',
-  /** Delegation token format is invalid */
-  INVALID_TOKEN: ErrorCodes.INVALID_TOKEN.code,
-  /** Delegation token was not found */
-  TOKEN_NOT_FOUND: ErrorCodes.TOKEN_NOT_FOUND.code,
-  /** Delegation token was cancelled */
-  DELEGATION_CANCELLED: ErrorCodes.TOKEN_CANCELLED.code,
-  /** Nested delegation forbidden (claimed child cannot delegate further) */
-  DELEGATION_NESTED_FORBIDDEN: ErrorCodes.DELEGATION_NESTED_FORBIDDEN.code,
-  /** Targeted step has no substep marked DELEGATE */
-  DELEGATION_NO_DELEGATABLE_SUBSTEP: ErrorCodes.DELEGATION_NO_DELEGATABLE_SUBSTEP.code,
-  /** Runbook launch failed */
-  LAUNCH_FAILED: ErrorCodes.LAUNCH_FAILED.code,
-  // The run-start compare-and-swap spending its budget is transient, not a
-  // launch fault, so it reaches the claim/run envelope as its own RD-308 rather
-  // than under `LAUNCH_FAILED` (#777). Registered here because
-  // `ClaimFailureEnvelope.code` is narrowed to `CLIErrorCode` (#834), which is
-  // what proves every emit site on that union is a registered code.
-  /** Run-state compare-and-swap lost to a concurrent writer */
+  /** Run-state conditional write lost to a concurrent writer; refused, never retried */
   CONCURRENT_STATE_MODIFICATION: ErrorCodes.CONCURRENT_STATE_MODIFICATION.code,
-  /** Fresh claim launch violated write-side invariants */
-  CLAIM_INVARIANT_VIOLATED: ErrorCodes.CLAIM_INVARIANT_VIOLATED.code,
-  /** Requested child runbook does not match the authored DELEGATE target */
-  DELEGATION_RUNBOOK_MISMATCH: ErrorCodes.DELEGATION_RUNBOOK_MISMATCH.code,
-  /** Retry refused because a child run is still linked */
-  DELEGATION_IN_FLIGHT: ErrorCodes.DELEGATION_IN_FLIGHT.code,
   /** Scenario not found */
   SCENARIO_NOT_FOUND: ErrorCodes.SCENARIO_NOT_FOUND.code,
   /**
@@ -495,49 +391,6 @@ export const ActionResponseSchema = z
   .loose();
 
 // ============================================================================
-// Delegation Status Schema
-// ============================================================================
-
-/**
- * Delegation status entry for status display.
- */
-export const DelegationStatusEntrySchema = z
-  .object({
-    /** Substep ID that owns the delegation (e.g., "1.1") */
-    substep: z.string().describe('Substep ID owning the delegation'),
-    /** Path to the child runbook */
-    runbook: z.string().describe('Child runbook path'),
-    /** Current delegation state */
-    state: z
-      .enum(['pending', 'claimed', 'cancelled'])
-      .describe('Delegation state: pending, claimed, or cancelled'),
-    /** Child run ID (when claimed) */
-    childRunId: z.string().optional().describe('Child run ID when delegation is claimed'),
-    /** Stable non-secret claim lookup key for claimed delegation correlation */
-    claimKey: z
-      .string()
-      .regex(CLAIM_LOOKUP_KEY_PATTERN)
-      .optional()
-      .describe('Non-secret claim lookup key for a claimed delegation'),
-    /** SHA-256 hash of the delegation token for correlation */
-    tokenHash: z.string().describe('SHA-256 hash of the delegation token'),
-  })
-  .strict()
-  .refine((entry) => entry.state !== 'claimed' || !!entry.childRunId, {
-    message: 'childRunId is required when state is claimed',
-    path: ['childRunId'],
-  })
-  .refine((entry) => entry.state === 'claimed' || entry.claimKey === undefined, {
-    message: 'claimKey is only available when state is claimed',
-    path: ['claimKey'],
-  })
-  .refine((entry) => entry.state !== 'claimed' || entry.claimKey !== undefined, {
-    message: 'claimKey is required when state is claimed',
-    path: ['claimKey'],
-  })
-  .describe('Delegation status entry');
-
-// ============================================================================
 // Status Command Schema
 // ============================================================================
 
@@ -548,10 +401,8 @@ export const StatusResponseSchema = z
   .object({
     /** Response kind discriminant */
     kind: z.literal('status').describe('Response type discriminant'),
-    /** Whether a runbook is currently active */
-    active: z.boolean().describe('Whether a runbook is currently active'),
-    /** Whether a runbook is stashed */
-    stashed: z.boolean().describe('Whether a runbook is stashed'),
+    /** Whether the described run is running (detail form) */
+    active: z.boolean().describe('Whether the described run is running'),
     /** Runbook context (when active) - for backwards compatibility */
     runbook: RunbookContextSchema.optional().describe('Runbook context'),
     /** Current position in the runbook (when active) */
@@ -590,54 +441,15 @@ export const StatusResponseSchema = z
       })
       .optional()
       .describe('Last action information'),
-    /** Active delegations on the current step */
-    delegations: z
-      .array(DelegationStatusEntrySchema)
-      .optional()
-      .describe('Active delegations on the current step'),
-    /**
-     * Parent linkage when the runbook was launched as a child.
-     *
-     * Discriminated on `kind` so narrowing enforces the contract:
-     * - `delegation` variant carries a required `tokenHash`.
-     * - `inline` variant omits `tokenHash` entirely.
-     *
-     * The two variants also differ in WHEN the frame coordinates were captured,
-     * so their descriptions differ rather than being copied: see
-     * `DelegationLinkage` / `InlineLinkage` in `runbook/types.ts`.
-     */
-    parentLinkage: z
-      .discriminatedUnion('kind', [
-        z.object({
-          kind: z.literal('delegation'),
-          tokenHash: z.string().describe('SHA-256 hash of the delegation token'),
-          parentRunId: z.string().describe('RunId of the parent runbook execution'),
-          parentStepId: z.string().describe('Parent substep ID at link time'),
-          parentStep: z.string().describe('Parent step name at link time'),
-          parentFrameKey: z
-            .string()
-            .describe('Parent frame key stamped when the delegation was issued'),
-          parentEntry: z
-            .number()
-            .int()
-            .positive()
-            .describe('Parent frame entry stamped when the delegation was issued'),
-        }),
-        z.object({
-          kind: z.literal('inline'),
-          parentRunId: z.string().describe('RunId of the parent runbook execution'),
-          parentStepId: z.string().describe('Parent substep ID at link time'),
-          parentStep: z.string().describe('Parent step name at link time'),
-          parentFrameKey: z.string().describe('Parent frame key at link time'),
-          parentEntry: z.number().int().positive().describe('Parent frame entry at link time'),
-        }),
-      ])
-      .optional()
-      .describe('Parent linkage projection when this runbook is a child'),
     // Flat structure fields
     file: z.string().optional().describe('Path to the active runbook file'),
-    state: z.string().optional().describe('Path to the SQLite run/session authority'),
+    state: z.string().optional().describe('Path to the SQLite run authority'),
     runId: z.string().regex(RUN_ID_PATTERN).optional().describe('Run id this status describes'),
+    /** Every persisted run (bare `rundown status` list form) */
+    runs: z
+      .array(z.lazy(() => ActiveRunbookEntrySchema))
+      .optional()
+      .describe('Every persisted run, when status was asked for no run in particular'),
     prompted: z.boolean().optional().describe('Whether awaiting user input'),
     vars: z
       .record(z.string(), z.string())
@@ -746,7 +558,7 @@ export const ActiveRunbookEntrySchema = z
     status: z
       .string()
       .optional()
-      .describe('Runbook status (active, stashed, completed, stale, or orphaned)'),
+      .describe('Run lifecycle (running, complete, stopped, abandoned, or invalid)'),
     /** Total number of steps */
     total: z.number().optional().describe('Total number of steps'),
     /** Runbook title from metadata */
@@ -1229,70 +1041,24 @@ export const EchoResponseSchema = z
 /**
  * Prune response schema.
  *
- * Uses the same format as `ls` command - an array of ActiveRunbookEntry objects
- * representing the runbook states that were (or would be) pruned.
+ * Uses the `ls` entry shape plus an optional `retained` reason, one row per
+ * run that was (or would be) pruned or was selected but kept.
  */
-export const PruneResponseSchema = ActiveRunbookListSchema.describe(
-  'List of runbook states that were/would be pruned',
-);
-
-// ============================================================================
-// Stash/Pop Command Schemas
-// ============================================================================
-
-/**
- * Stash response schema.
- *
- * REQUIRED: stashedId - always present on successful stash.
- */
-export const StashResponseSchema = z
-  .object({
-    /** Response kind discriminant */
-    kind: z.literal('stash').describe('Response type discriminant'),
-    action: z.literal('stash').describe('Action type'),
-    /** ID of the stashed runbook - REQUIRED */
-    stashedId: z.string().describe('ID of the stashed runbook'),
-    /** Runbook context */
-    runbook: RunbookContextSchema.optional().describe('Runbook context'),
-    file: z.string().optional().describe('Path to the runbook file'),
-    state: z.string().optional().describe('Path to the SQLite run/session authority'),
-    runId: z.string().regex(RUN_ID_PATTERN).optional().describe('Run id that was stashed'),
-    message: z.string().optional().describe('Status message'),
-    position: PositionSchema.optional().describe('Position when stashed'),
-  })
-  .describe('Response from the stash command')
-  .loose();
-
-/**
- * Pop response schema.
- *
- * REQUIRED: restoredId - always present on successful pop.
- */
-export const PopResponseSchema = z
-  .object({
-    /** Response kind discriminant */
-    kind: z.literal('pop').describe('Response type discriminant'),
-    action: z.literal('pop').describe('Action type'),
-    /** ID of the restored runbook - REQUIRED */
-    restoredId: z.string().describe('ID of the restored runbook'),
-    /** Runbook context */
-    runbook: RunbookContextSchema.optional().describe('Runbook context'),
-    file: z.string().optional().describe('Path to the runbook file'),
-    state: z.string().optional().describe('Path to the SQLite run/session authority'),
-    runId: z.string().regex(RUN_ID_PATTERN).optional().describe('Run id that was restored'),
-    message: z.string().optional().describe('Status message'),
-    position: PositionSchema.optional().describe('Position when restored'),
-    step: z
-      .object({
-        name: z.string().optional().describe('Step name'),
-        description: z.string().optional().describe('Step description'),
-        prompted: z.boolean().optional().describe('Whether waiting for input'),
-      })
-      .optional()
-      .describe('Current step details'),
-  })
-  .describe('Response from the pop command')
-  .loose();
+export const PruneResponseSchema = z
+  .array(
+    ActiveRunbookEntrySchema.extend({
+      /**
+       * Present on a run that was selected but kept: a running run is deleted
+       * only under its own Owner Token (`--token`), so `--active` / `--all`
+       * without one report it `retained: "token required"`.
+       */
+      retained: z
+        .string()
+        .optional()
+        .describe('Why a selected run was kept rather than deleted (e.g. "token required")'),
+    }),
+  )
+  .describe('Runs that were/would be pruned, plus running runs retained for want of a token');
 
 // ============================================================================
 // Execution Summary Schema
@@ -1328,64 +1094,6 @@ export const RunCommandResponseSchema = ExecutionSummarySchema.extend({
   /** Response kind discriminant (overrides base execution_summary) */
   kind: z.literal('run').describe('Response type discriminant'),
 }).describe('Response from the run command');
-
-// ============================================================================
-// Abort Command Schema
-// ============================================================================
-
-/**
- * Abort response schema.
- *
- * Output from `rd abort <token>` command.
- */
-export const AbortResponseSchema = z
-  .object({
-    /** Response kind discriminant */
-    kind: z.literal('abort').describe('Response type discriminant'),
-    /** Action performed */
-    action: z.literal('abort').describe('Action type'),
-    /** Abort result status */
-    status: z.enum(['cancelled', 'already_cancelled']).describe('Abort result status'),
-    /** Truncated token hint */
-    token: z.string().describe('Truncated delegation token hint'),
-    /** Substep ID owning the delegation */
-    substep: z.string().describe('Substep ID'),
-    /** Child runbook path */
-    runbook: z.string().describe('Child runbook path'),
-    /** Parent run ID */
-    parentRunId: z.string().describe('Parent run ID'),
-    /**
-     * Which linked-child cleanup branch core actually ran.
-     *
-     * Present on `cancelled` only. `none` means no child was ever linked; it is
-     * deliberately distinct from `missing_child_cleaned`, which superseded a
-     * stale delegated outcome left by a child run that has since vanished.
-     */
-    cleanup: z
-      .enum(['none', 'active_child_failed', 'terminal_child_cleaned', 'missing_child_cleaned'])
-      .optional()
-      .describe('Linked-child cleanup branch that ran'),
-    /** Whether a linked child was actually torn down (derived from `cleanup`, not from the flag) */
-    force: z.boolean().optional().describe('Whether a forced linked-child teardown ran'),
-    /** Child run ID (when force-cancelling claimed delegation) */
-    childRunId: z.string().optional().describe('Child run ID when force-cancelling'),
-  })
-  // The TSDoc above declares two cross-field rules that the field types alone
-  // cannot express. Stating them as refinements is what stops the schema
-  // accepting an envelope the renderer never produces.
-  .refine((response) => response.status === 'cancelled' || response.cleanup === undefined, {
-    message: 'cleanup is present on a cancelled abort only',
-    path: ['cleanup'],
-  })
-  .refine((response) => response.force === undefined || response.cleanup !== undefined, {
-    message: 'force requires a cleanup branch',
-    path: ['force'],
-  })
-  .refine((response) => response.force === undefined || response.cleanup !== 'none', {
-    message: 'force is emitted only when a linked-child teardown ran, never for cleanup "none"',
-    path: ['force'],
-  })
-  .describe('Response from the abort command');
 
 // ============================================================================
 // Scenario Suite Schemas
@@ -1479,109 +1187,6 @@ export const ScenarioSuiteRunResponseSchema = z
   .describe('Aggregate response from running a scenario suite');
 
 // ============================================================================
-// Delegate Command Schema
-// ============================================================================
-
-/** Fields shared by every delegate response variant. */
-const DelegateResponseBase = {
-  /** Response kind discriminant */
-  kind: z.literal('delegate').describe('Response type discriminant'),
-  /** Step or substep ID that was delegated */
-  step: z.string().describe('Step or substep ID delegated'),
-  /** Child runbook name or path */
-  runbook: z.string().describe('Child runbook name or path'),
-  /** Full delegation token */
-  token: z.string().describe('Delegation token'),
-  /** Parent run ID */
-  parent_run_id: z.string().describe('Parent run ID'),
-} as const;
-
-/**
- * Delegate response schema.
- *
- * Output from `rd delegate <runbook> --step <id>` and its idempotent/retry
- * variants. Discriminated on `action`:
- * - `delegated` — a fresh delegation was issued; carries `token_hash`.
- * - `retried` — an existing delegation was cancelled and re-minted; carries
- *   `token_hash`.
- * - `already-delegated` — an auto-issued delegation already exists and its
- *   plaintext token is echoed; no `token_hash` is recomputed for this path.
- */
-export const DelegateResponseSchema = z
-  .discriminatedUnion('action', [
-    z
-      .object({
-        action: z.literal('delegated').describe('Action type'),
-        ...DelegateResponseBase,
-        /** Hash of the delegation token */
-        token_hash: z.string().describe('Token hash'),
-      })
-      .describe('Fresh delegation issued'),
-    z
-      .object({
-        action: z.literal('retried').describe('Action type'),
-        ...DelegateResponseBase,
-        /** Hash of the re-minted delegation token */
-        token_hash: z.string().describe('Token hash'),
-      })
-      .describe('Existing delegation cancelled and re-minted'),
-    z
-      .object({
-        action: z.literal('retry-already-applied').describe('Action type'),
-        ...DelegateResponseBase,
-        /** Hash of the bearer being echoed */
-        token_hash: z.string().describe('Token hash'),
-      })
-      .describe('Retry already applied; the current bearer is echoed and nothing was written'),
-    z
-      .object({
-        action: z.literal('already-delegated').describe('Action type'),
-        ...DelegateResponseBase,
-      })
-      // Strict: this arm carries no `token_hash`, so a drifting emitter that
-      // leaks one is rejected rather than silently stripped, enforcing at
-      // runtime the TypeScript guarantee that `token_hash` is absent here.
-      .strict()
-      .describe('Existing auto-issued delegation echoed'),
-  ])
-  .describe('Response from the delegate command');
-
-// ============================================================================
-// Claim Command Schema
-// ============================================================================
-
-/**
- * Claim response schema.
- *
- * Output from `rd claim <token>` command. Claim launches a child runbook and
- * returns the `claim_id` used for subsequent child-targeting commands; the
- * child does not (in general) run to completion at claim time, so this is its
- * own response type rather than an execution summary. `kind: "claim"` is the
- * primary discriminant — consistent with `stash` / `pop` which also carry
- * distinct lifecycle payloads.
- */
-export const ClaimResponseSchema = z
-  .object({
-    /** Response kind discriminant */
-    kind: z.literal('claim').describe('Response type discriminant'),
-    /** Action performed */
-    action: z.literal('claimed').describe('Action type'),
-    /** Truncated delegation token */
-    token: z.string().describe('Truncated delegation token'),
-    /** Claim ID for explicit child targeting */
-    claim_id: z.string().regex(CLAIM_ID_PATTERN).describe('Claim ID for explicit child targeting'),
-    /** Child run ID */
-    run_id: z.string().describe('Child run ID'),
-    /** Child runbook path */
-    runbook: z.string().describe('Child runbook path'),
-    /** Parent run ID */
-    parent_run_id: z.string().describe('Parent run ID'),
-    /** Parent step identifier; omitted for bare-step delegations without an at-qualifier */
-    parent_step: z.string().optional().describe('Parent step identifier (optional)'),
-  })
-  .describe('Response from the claim command');
-
-// ============================================================================
 // Derived TypeScript Types
 // ============================================================================
 
@@ -1608,9 +1213,6 @@ export type WarningResponse = z.infer<typeof WarningResponseSchema>;
 
 /** Action response (pass, fail, goto, stop, complete) */
 export type ActionResponse = z.infer<typeof ActionResponseSchema>;
-
-/** Delegation status entry */
-export type DelegationStatusEntry = z.infer<typeof DelegationStatusEntrySchema>;
 
 /** Status response */
 export type StatusResponse = z.infer<typeof StatusResponseSchema>;
@@ -1702,26 +1304,11 @@ export type EchoResponse = z.infer<typeof EchoResponseSchema>;
 /** Prune response (same as active runbook list) */
 export type PruneResponse = z.infer<typeof PruneResponseSchema>;
 
-/** Stash response */
-export type StashResponse = z.infer<typeof StashResponseSchema>;
-
-/** Pop response */
-export type PopResponse = z.infer<typeof PopResponseSchema>;
-
 /** Execution summary */
 export type ExecutionSummary = z.infer<typeof ExecutionSummarySchema>;
 
 /** Run command response */
 export type RunCommandResponse = z.infer<typeof RunCommandResponseSchema>;
-
-/** Abort response */
-export type AbortResponse = z.infer<typeof AbortResponseSchema>;
-
-/** Delegate response */
-export type DelegateResponse = z.infer<typeof DelegateResponseSchema>;
-
-/** Claim response */
-export type ClaimResponse = z.infer<typeof ClaimResponseSchema>;
 
 /** Union of all CLI responses */
 export type CLIResponse =
@@ -1733,12 +1320,7 @@ export type CLIResponse =
   | ResolveResponse
   | ScenarioRunResponse
   | ScenarioSuiteRunResponse
-  | StashResponse
-  | PopResponse
-  | EchoResponse
-  | AbortResponse
-  | DelegateResponse
-  | ClaimResponse;
+  | EchoResponse;
 
 /** Union of list outputs */
 export type CLIListResponse =

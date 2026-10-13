@@ -43,7 +43,6 @@ export {
   ArtifactPathResponseSchema,
   ArtifactUriResponseSchema,
   ArtifactInspectResponseSchema,
-  DelegationStatusEntrySchema,
   // List schemas
   ActiveRunbookEntrySchema,
   AvailableRunbookEntrySchema,
@@ -78,17 +77,9 @@ export {
   EchoResponseSchema,
   // Prune schema (same format as ls output)
   PruneResponseSchema,
-  // Stash/Pop schemas
-  StashResponseSchema,
-  PopResponseSchema,
   // Execution schemas
   ExecutionSummarySchema,
   RunCommandResponseSchema,
-  // Abort schema
-  AbortResponseSchema,
-  // Delegate/Claim schemas
-  DelegateResponseSchema,
-  ClaimResponseSchema,
   // Derived TypeScript types
   type Position,
   type RunbookContext,
@@ -105,7 +96,6 @@ export {
   type ArtifactPathResponse,
   type ArtifactUriResponse,
   type ArtifactInspectResponse,
-  type DelegationStatusEntry,
   type ActiveRunbookEntry,
   type AvailableRunbookEntry,
   type ListResponse,
@@ -129,13 +119,8 @@ export {
   type ScenarioSuiteRunResponse,
   type EchoResponse,
   type PruneResponse,
-  type StashResponse,
-  type PopResponse,
   type ExecutionSummary,
   type RunCommandResponse,
-  type AbortResponse,
-  type DelegateResponse,
-  type ClaimResponse,
   type CLIResponse,
   type CLIListResponse,
 } from './zod-schemas.js';
@@ -149,7 +134,6 @@ import type {
   ErrorResponse,
   WarningResponse,
   ActionResponse,
-  ClaimResponse,
   StatusResponse,
   CheckResponse,
   ResolveResponse,
@@ -183,20 +167,6 @@ export function isWarningResponse(response: CLIResponse): response is WarningRes
  */
 export function isActionResponse(response: CLIResponse): response is ActionResponse {
   return 'kind' in response && response.kind === 'action';
-}
-
-/**
- * Type guard to check if a response is a claim response.
- *
- * `rd claim` carries a distinct lifecycle payload (claim_id, run_id, parent
- * linkage) and gets its own `kind: "claim"` discriminant, alongside `stash`
- * and `pop`. A ClaimResponse never satisfies `isActionResponse`.
- *
- * @param response - The response to check
- * @returns True if the response is a ClaimResponse
- */
-export function isClaimResponse(response: CLIResponse): response is ClaimResponse {
-  return 'kind' in response && response.kind === 'claim';
 }
 
 /**

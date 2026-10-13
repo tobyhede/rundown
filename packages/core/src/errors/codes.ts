@@ -128,8 +128,7 @@ export const ErrorCodes = {
     code: 'RD-304',
     category: ErrorCategory.STATE,
     title: 'Runbook stopped',
-    description:
-      'This runbook was stopped. Start a new run or use "rundown pop" to resume if stashed.',
+    description: 'This runbook was stopped. Start a new run.',
     docSlug: 'runbook-stopped',
   },
   INCOMPATIBLE_STATE_SCHEMA: {
@@ -168,7 +167,7 @@ export const ErrorCodes = {
     category: ErrorCategory.STATE,
     title: 'Runbook state lost to a concurrent writer',
     description:
-      'A run-state read-modify-write spent its optimistic compare-and-swap budget because another process committed to the same run first. Nothing was written and the persisted state is intact and consistent. Unlike the other 3xx state errors this is transient, not a refusal: re-run the command.',
+      'A run-state conditional save found the run changed since it was read: another of the owner\'s commands committed to the same run first. Nothing was written and the persisted state is intact and consistent. It is never retried on your behalf: re-read the run ("rundown status --run <id>") and re-issue the command.',
     docSlug: 'concurrent-state-modification',
   },
   // The ONE persisted-state refusal CLAUDE.md writes a required behaviour for:
@@ -190,29 +189,8 @@ export const ErrorCodes = {
     category: ErrorCategory.STATE,
     title: 'Invalid persisted run state',
     description:
-      'A run in the runbook database does not match the state contract this build reads: unparseable persisted state, a schema version this build does not read, a missing required field such as templateVars, or a deprecated dynamic-step snapshot. Rundown never migrates persisted state, so the run cannot be resumed and is never silently repaired. Only that run is affected — the database and every other run in it are intact. Recover by finishing the run ("rundown complete"), stopping it ("rundown stop"), or discarding it ("rundown prune --inactive", which a bare "rundown prune" cannot do because its default completed/stopped selection never sees an invalid row), then re-run the runbook from source.',
+      'A run in the runbook database does not match the state contract this build reads: unparseable persisted state, a schema version this build does not read, a missing required field such as templateVars, or a deprecated dynamic-step snapshot. Rundown never migrates persisted state, so the run cannot be resumed, completed or stopped, and is never silently repaired. Only that run is affected — the database and every other run in it are intact. Recover by discarding it with "rundown prune --inactive" (a bare "rundown prune" cannot, because its default completed/stopped selection never sees an invalid row), then re-run the runbook from source.',
     docSlug: 'invalid-persisted-run-state',
-  },
-
-  // The claims table's half of RD-309's condition, and a separate code for the
-  // same reason RD-309 is not RD-305: the scope differs. RD-309 is one RUN row
-  // and its recovery names that run; this is one CLAIM row, or the session
-  // reconstruction built out of several, inside a database whose runs may all
-  // be readable. Reusing RD-309 would hand an operator a run id for a refusal
-  // that has none, and its description — schema versions, `templateVars`, the
-  // dynamic-step snapshot — names four causes a claim row cannot have.
-  //
-  // Before this code, all four escapes off a claim row reached the operator as
-  // RD-999 "Unknown error", and none was clearable: `complete` / `stop` /
-  // `prune` branch on refusal class, so a corrupt claim row could not be
-  // cleared through the CLI at all (#831).
-  INVALID_PERSISTED_SESSION_STATE: {
-    code: 'RD-310',
-    category: ErrorCategory.STATE,
-    title: 'Invalid persisted session state',
-    description:
-      'A claim row in the runbook database, or the session reconstructed from those rows, does not match the contract this build reads: an unparseable or schema-invalid grants blob, a malformed delegation linkage, a malformed claim key, secret hash or run id, mirrored run-id columns that disagree with the delegation descriptor beside them, or session data that fails its schema. Rundown never migrates persisted state, so the session cannot be adapted and is never silently repaired. The runs themselves are unaffected. Recover by finishing the affected run ("rundown complete"), stopping it ("rundown stop"), or discarding it ("rundown prune --inactive"), then re-run the runbook from source.',
-    docSlug: 'invalid-persisted-session-state',
   },
 
   // Validation Errors (4xx)
@@ -254,13 +232,6 @@ export const ErrorCodes = {
     description: 'The runbook file does not contain any executable steps.',
     docSlug: 'runbook-has-no-steps',
   },
-  CHILD_RUNBOOK_ACTIVE: {
-    code: 'RD-503',
-    category: ErrorCategory.EXECUTION,
-    title: 'Child runbook still active',
-    description: 'A child runbook is still running. Complete or stop it first.',
-    docSlug: 'child-runbook-active',
-  },
   RUN_PROGRESSION_ENTRY_FAILED: {
     code: 'RD-504',
     category: ErrorCategory.EXECUTION,
@@ -271,9 +242,7 @@ export const ErrorCodes = {
       `applied: the run keeps the lifecycle and cursor it had, so re-running ` +
       `the command re-renders the same entry once the cause is fixed. The ` +
       `usual cause is a \`--helpers\` helper raising while expanding the ` +
-      `unit's description, prompt, or command. Distinct from RD-833, which is ` +
-      `the same render failure AFTER a re-entry frontier consume committed — ` +
-      `there the transient bearers are unrecoverable and a retry cannot help.`,
+      `unit's description, prompt, or command.`,
     docSlug: 'run-progression-entry-failed',
   },
 
@@ -298,374 +267,6 @@ export const ErrorCodes = {
     title: 'Scenario not found',
     description: 'The specified scenario does not exist in the runbook.',
     docSlug: 'scenario-not-found',
-  },
-
-  // Substep Targeting Errors (8xx) — shared by delegation and inline linkage
-  DELEGATION_STEP_NOT_FOUND: {
-    code: 'RD-801',
-    category: ErrorCategory.DELEGATION,
-    title: 'Step not found',
-    description: 'The specified step does not exist in the active runbook.',
-    docSlug: 'delegation-step-not-found',
-  },
-  DELEGATION_STEP_NOT_CURRENT: {
-    code: 'RD-802',
-    category: ErrorCategory.DELEGATION,
-    title: 'Step not at execution frontier',
-    description: 'The target step must be the current step.',
-    docSlug: 'delegation-step-not-current',
-  },
-  DELEGATION_SUBSTEP_REQUIRED: {
-    code: 'RD-803',
-    category: ErrorCategory.DELEGATION,
-    title: 'Substep ID required',
-    description: 'This step has substeps. Specify a substep ID (e.g., --step 2.1).',
-    docSlug: 'delegation-substep-required',
-  },
-  DELEGATION_ALREADY_EXISTS: {
-    code: 'RD-804',
-    category: ErrorCategory.DELEGATION,
-    title: 'Active delegation exists',
-    description: 'This substep already has an active (non-cancelled) delegation.',
-    docSlug: 'delegation-already-exists',
-  },
-  DELEGATION_RUNBOOK_NOT_FOUND: {
-    code: 'RD-805',
-    category: ErrorCategory.DELEGATION,
-    title: 'Child runbook not found',
-    description: 'The specified child runbook cannot be resolved.',
-    docSlug: 'delegation-runbook-not-found',
-  },
-  DELEGATION_SUBSTEP_NOT_FOUND: {
-    code: 'RD-806',
-    category: ErrorCategory.DELEGATION,
-    title: 'Substep not found',
-    description: 'The specified substep ID does not exist in the target step.',
-    docSlug: 'delegation-substep-not-found',
-  },
-  INVALID_TOKEN: {
-    code: 'RD-807',
-    category: ErrorCategory.DELEGATION,
-    title: 'Invalid delegation token',
-    description: 'Token format is invalid. Tokens must start with "rdtk_".',
-    docSlug: 'invalid-token',
-  },
-  TOKEN_NOT_FOUND: {
-    code: 'RD-808',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation token not found',
-    description: 'No active run contains a delegation with this token.',
-    docSlug: 'token-not-found',
-  },
-  TOKEN_CANCELLED: {
-    code: 'RD-809',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation token cancelled',
-    description: 'This delegation has been cancelled and cannot be claimed.',
-    docSlug: 'token-cancelled',
-  },
-  DELEGATION_ALREADY_CLAIMED: {
-    code: 'RD-811',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation already claimed',
-    description:
-      'This delegation has been claimed by a child run. Use --force to cancel in-flight.',
-    docSlug: 'delegation-already-claimed',
-  },
-  DELEGATION_ALREADY_RESOLVED: {
-    code: 'RD-812',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation already resolved',
-    description: 'This delegation has already been resolved. Propagation already completed.',
-    docSlug: 'delegation-already-resolved',
-  },
-  DELEGATION_NO_DELEGATABLE_SUBSTEP: {
-    code: 'RD-813',
-    category: ErrorCategory.DELEGATION,
-    title: 'No delegatable substep',
-    description: 'No pending substep with a runbook reference found on the current step.',
-    docSlug: 'delegation-no-delegatable-substep',
-  },
-  DELEGATION_SUBSTEP_NO_RUNBOOK: {
-    code: 'RD-814',
-    category: ErrorCategory.DELEGATION,
-    title: 'Substep has no runbook reference',
-    description:
-      'The specified substep does not have a runbook reference (e.g., "- child.runbook.md").',
-    docSlug: 'delegation-substep-no-runbook',
-  },
-  DELEGATION_STEP_NO_SUBSTEPS: {
-    code: 'RD-815',
-    category: ErrorCategory.DELEGATION,
-    title: 'Step has no substeps',
-    description:
-      'Inline linkage requires targeting a substep. The specified step has no substeps to target.',
-    docSlug: 'delegation-step-no-substeps',
-  },
-  LAUNCH_FAILED: {
-    code: 'RD-816',
-    category: ErrorCategory.DELEGATION,
-    title: 'Runbook launch failed',
-    description:
-      'Failed to initialize runbook state, actor, session, or post-init hook before execution started.',
-    docSlug: 'launch-failed',
-  },
-  DELEGATION_SNAPSHOT_STALE: {
-    code: 'RD-817',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation snapshot missing owner step',
-    description:
-      `Cannot retry: the persisted delegation snapshot does not record an owner step. ` +
-      `This indicates the delegation was created by an older schema and cannot be safely re-issued.`,
-    docSlug: 'delegation-snapshot-stale',
-  },
-  DELEGATION_OWNER_LOST_SUBSTEPS: {
-    code: 'RD-818',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation owner step lost substeps',
-    description:
-      `A persisted delegation references a substep, but the resolved runbook no longer ` +
-      `declares substeps on the owner step. Silently retargeting the replacement token ` +
-      `onto the bare step would corrupt the persisted entry. Resolve by completing or ` +
-      `stopping the running runbook and starting a fresh run.`,
-    docSlug: 'delegation-owner-lost-substeps',
-  },
-  DELEGATION_NESTED_FORBIDDEN: {
-    code: 'RD-819',
-    category: ErrorCategory.DELEGATION,
-    title: 'Nested delegation forbidden',
-    description:
-      'A claimed (delegated) child runbook may not issue further delegations. ' +
-      'Delegation is single-level: subagents cannot spawn subagents. Use `rundown run` ' +
-      'for runbook composition inside a claimed child.',
-    docSlug: 'delegation-nested-forbidden',
-  },
-  CLAIM_INVARIANT_VIOLATED: {
-    code: 'RD-820',
-    category: ErrorCategory.DELEGATION,
-    title: 'Claim invariant violated during fresh launch',
-    description:
-      `A freshly launched delegated child failed write-side claim validation. ` +
-      `The child was just created with the same delegation linkage now being ` +
-      `rejected — indicates internal inconsistency between manager.create() ` +
-      `and SessionService.claimRunbook(). State may be corrupted; inspect the ` +
-      `child run by ID and the parent's substep delegation.`,
-    docSlug: 'claim-invariant-violated',
-  },
-  DELEGATION_INVARIANT_VIOLATED: {
-    code: 'RD-821',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation invariant violated',
-    description:
-      `A delegation credential failed verification, or a delegation operation ` +
-      `reached an unreachable result branch. The operator-reachable cause is ` +
-      `presenting a claim that cannot reconstruct an in-flight delegation ` +
-      `credential — typically a rotated or foreign issuing claim — in which case ` +
-      `no bearer is disclosed. Otherwise it indicates an internal inconsistency ` +
-      `in delegation state handling rather than stale runbook source. Inspect the ` +
-      `reported reason and the persisted run state.`,
-    docSlug: 'delegation-invariant-violated',
-  },
-  DELEGATION_RUNBOOK_MISMATCH: {
-    code: 'RD-822',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation runbook mismatch',
-    description:
-      'The requested child runbook does not match the runbook authored on the DELEGATE substep.',
-    docSlug: 'delegation-runbook-mismatch',
-  },
-  DELEGATION_IN_FLIGHT: {
-    code: 'RD-823',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation child run in flight',
-    description:
-      'Cannot retry a delegation while its child run is still linked. Use `rundown abort <token> --claim-id <claim_id> --force` first to stop and record the child failure before retrying.',
-    docSlug: 'delegation-in-flight',
-  },
-  CLAIM_SEEN_UNREADABLE: {
-    code: 'RD-824',
-    category: ErrorCategory.DELEGATION,
-    title: 'Claim seen timestamp unreadable',
-    description:
-      'A claim record has a lastSeenAt that is not a parseable ISO timestamp. The claim activity signal cannot be derived, so it is reported as unreadable rather than guessed. Finish or prune active runbooks and restart.',
-    docSlug: 'claim-seen-unreadable',
-  },
-  DELEGATION_SUPERSEDED: {
-    code: 'RD-825',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation superseded',
-    description:
-      'The parent has moved past this delegation. Do not retry this token; report the superseded delegation to the orchestrator. The durable claim latch refuses a claim once the parent advances, ends, resets, or reissues the token.',
-    docSlug: 'delegation-superseded',
-  },
-  DELEGATION_REPLACEMENT_CONSUMED: {
-    code: 'RD-826',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation replacement consumed',
-    description:
-      'The named bearer was already replaced, and the replacement shows committed evidence of use — it was claimed, cancelled, or its frame entry advanced. Retrying it would mint a third bearer over work already in progress. Target the current delegation instead, or abort it and re-delegate.',
-    docSlug: 'delegation-replacement-consumed',
-  },
-  DELEGATION_RETRY_IDENTITY_UNMATCHED: {
-    code: 'RD-827',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation retry identity unmatched',
-    description:
-      'The named bearer identifies neither the delegation currently recorded at the target nor one that it superseded. The retry is refused rather than re-minted against an identity the parent does not recognise.',
-    docSlug: 'delegation-retry-identity-unmatched',
-  },
-  DELEGATION_SUPERSESSION_AMBIGUOUS: {
-    code: 'RD-828',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation supersession ambiguous',
-    description:
-      'More than one delegation attempt records this bearer as superseded, so there is no single replacement to echo or judge. Unreachable by construction; it is refused, never resolved. Prune invalid runbook state and restart execution.',
-    docSlug: 'delegation-supersession-ambiguous',
-  },
-  DELEGATION_FRONTIER_CONSUME_FAILED: {
-    code: 'RD-829',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation frontier consume failed',
-    description:
-      `A persisted delegation re-entry frontier projected successfully, but the ` +
-      `machine did not accept the DELEGATE_FRONTIER_CONSUMED synchronization, so ` +
-      `the frontier is still pending and its freshly derived bearers were not ` +
-      `surfaced. This is transient, not a refusal: no authority was rejected and ` +
-      `no credential failed verification. Retry the operation — the next attempt ` +
-      `re-projects and re-consumes the same frontier.`,
-    docSlug: 'delegation-frontier-consume-failed',
-  },
-  INLINE_CHILD_FRAME_SUPERSEDED: {
-    code: 'RD-830',
-    category: ErrorCategory.DELEGATION,
-    title: 'Inline child superseded by frame re-entry',
-    description:
-      `The inline child recorded at this frame was launched at an earlier entry, ` +
-      `and the parent has since re-entered the frame. A re-entered frame never ` +
-      `adopts the previous entry's child — the same judgement delegation makes ` +
-      `when it closes a child cursor-advanced (RD-826). Reachable from an ` +
-      `ordinary gesture rather than corrupt state: a self-targeting GOTO or RETRY ` +
-      `advances the frame's entry counter. Finish, stop, or prune the superseded ` +
-      `child run, after which the same re-entry launches a fresh child under the ` +
-      `current entry.`,
-    docSlug: 'inline-child-frame-superseded',
-  },
-  INLINE_CHILD_LINKAGE_MISMATCH: {
-    code: 'RD-831',
-    category: ErrorCategory.DELEGATION,
-    title: 'Inline child linkage mismatch',
-    description:
-      `The persisted inline child names a different parent run, step, substep, or ` +
-      `frame than the launch intent describes. Distinct from RD-830: that is a ` +
-      `superseded generation of the same linkage, reachable by an ordinary ` +
-      `re-entry, whereas this is inconsistent state. Prune the child run and ` +
-      `restart execution rather than adopting a child the parent does not claim.`,
-    docSlug: 'inline-child-linkage-mismatch',
-  },
-  DELEGATION_INDEX_NOT_ACTIVE: {
-    code: 'RD-832',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation index names a non-active iteration',
-    description:
-      `\`--index\` named a FOR iteration other than the one the parent is ` +
-      `executing. The FOR model is strictly single-iteration — one iteration ` +
-      `frame per loop is ever open — so a not-yet-entered iteration has no ` +
-      `entry ordinal to stamp on a credential, and a bearer minted against it ` +
-      `can never be live. Issuing one wedges the loop: the early substep row ` +
-      `suppresses issuance when that iteration actually opens, so it never ` +
-      `receives a token, while the child's claim closes cursor-advanced. ` +
-      `Distinct from RD-825: nothing has been superseded, the named frame has ` +
-      `simply not been reached. Delegate the active iteration, or wait for the ` +
-      `loop to advance and delegate then.`,
-    docSlug: 'delegation-index-not-active',
-  },
-  DELEGATION_FRONTIER_DISCLOSURE_FAILED: {
-    code: 'RD-833',
-    category: ErrorCategory.DELEGATION,
-    title: 'Delegation frontier disclosure could not be rendered',
-    description:
-      `Run Progression consumed a persisted re-entry frontier, then could not ` +
-      `render the STEP_ENTERED entry the freshly derived bearers ride on. The ` +
-      `consume LANDED and the frontier is gone, so retrying cannot re-derive ` +
-      `the bearers. Distinct from RD-829, where the consume never committed and ` +
-      `a retry does recover. The usual cause is a \`--helpers\` helper raising ` +
-      `while expanding the unit's description, prompt, or command. Fix the ` +
-      `helper, then re-delegate the step: the delegations the lost bearers ` +
-      `addressed must be re-issued.`,
-    docSlug: 'delegation-frontier-disclosure-failed',
-  },
-  INLINE_PARENT_CLAIM_SUPERSEDED: {
-    code: 'RD-834',
-    category: ErrorCategory.DELEGATION,
-    title: "Inline parent's controlling authority lapsed before the launch attached",
-    description:
-      `The inline launch fences its substep mark under the composing parent's ` +
-      `controlling run-control claim, captured when the linkage is resolved ` +
-      `(ADR 0002). This refusal fires when that authority cannot be established ` +
-      `or does not hold: at determination, when no live claim controls the ` +
-      `parent (or the parent run itself is gone) — refused before any child run ` +
-      `is created; or at commit, when the captured claim was rotated in the ` +
-      `window — the parent now belongs to a different orchestrator, nothing was ` +
-      `attached, and the child run was rolled back. Do not retry blindly: the ` +
-      `orchestrator that now holds the parent owns its progression. If this ` +
-      `process should own the parent, re-acquire control (claim or restart the ` +
-      `parent) and launch again.`,
-    docSlug: 'inline-parent-claim-superseded',
-  },
-  // Retry hook (9xx) — sub-range of ErrorCategory.EXECUTION reserved for
-  // retry-hook lifecycle failures (delegation re-issuance, frame-key invariants,
-  // canonical-at requirements). Kept as EXECUTION rather than a dedicated
-  // category because consumers route on the structured RETRY_ERROR LastAction
-  // variant, not on category. New 9xx codes must stay scoped to retry-hook
-  // semantics — file unrelated runtime failures under 5xx EXECUTION.
-  RETRY_HOOK_NO_FRAME: {
-    code: 'RD-902',
-    category: ErrorCategory.EXECUTION,
-    title: 'Retry hook invoked without an active frame key',
-    description:
-      `The retry hook fired while context.activeFrameKey was undefined and ` +
-      `live delegations were present — an invariant violation. Retry transitions ` +
-      `only fire from a resolved-completion apply, which requires an active frame. ` +
-      `This indicates upstream state corruption (actor hydration bug, state-file ` +
-      `tampering, or missing frame setup in a new feature path).`,
-    docSlug: 'retry-hook-no-frame',
-  },
-  RETRY_HOOK_MISSING_RUN_ID: {
-    code: 'RD-903',
-    category: ErrorCategory.EXECUTION,
-    title: 'Retry hook has no current run id',
-    description:
-      `The retry hook must re-issue delegation credentials against the run that ` +
-      `is executing the retry, and reads that run's id from the machine's ` +
-      `\`RunId\` template variable. The variable is absent or is not a canonical ` +
-      `\`rd_<32 hex>\` id, so no credential coordinate can be derived. The run id ` +
-      `is HMAC derivation input, so the hook refuses rather than deriving against ` +
-      `a guessed or inherited identity.`,
-    docSlug: 'retry-hook-missing-run-id',
-  },
-  RETRY_HOOK_MISSING_CANONICAL_AT: {
-    code: 'RD-904',
-    category: ErrorCategory.EXECUTION,
-    title: 'Retry delegation produced no canonical execution location',
-    description:
-      `The fresh delegation snapshot returned by retryDelegation has no ` +
-      `contextSnapshot.at value. The retry frontier id would lose FOR-iteration ` +
-      `context (e.g. "1.1" instead of "1.2.1"), causing the re-entry frontier ` +
-      `to point at the wrong execution location. Rollback is the safe action ` +
-      `rather than silently emitting a degraded id.`,
-    docSlug: 'retry-hook-missing-canonical-at',
-  },
-  RETRY_HOOK_STALE_SUBSTEP: {
-    code: 'RD-905',
-    category: ErrorCategory.EXECUTION,
-    title: 'Retry hook references undeclared substep',
-    description:
-      `An active-frame delegation in persisted state targets a substep that the ` +
-      `resolved runbook no longer declares on the parent step. The per-substep ` +
-      `loop walks parentStep.substeps only, so silently skipping the orphan would ` +
-      `consume the retry transition without re-issuing any token. Resolve by ` +
-      `completing or stopping the running runbook and starting a fresh run.`,
-    docSlug: 'retry-hook-stale-substep',
   },
 
   // Generic

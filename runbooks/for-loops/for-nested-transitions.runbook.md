@@ -25,8 +25,8 @@ scenarios:
     description: Second iteration fails, DEFER accumulates fail, FAIL ANY fires → STOP
     commands:
       - rd run --prompted for-nested-transitions.runbook.md
-      - rd pass
-      - rd fail
+      - rd pass --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.1 --index 2
     result: STOP
 ---
 

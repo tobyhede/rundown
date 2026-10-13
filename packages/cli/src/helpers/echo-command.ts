@@ -1,65 +1,62 @@
 // packages/cli/src/helpers/echo-command.ts
+//
+// Shared logic for the `rd echo` test command, used both by the registered
+// CLI command and by the in-process internal dispatcher (WebContainer).
 
-/**
- * Shared logic for the echo command used by both CLI and internal execution.
- *
- * The echo command is a test helper that returns configurable pass/fail results
- * based on a sequence and the current retry count. This module extracts the
- * shared logic to avoid duplication between the CLI command and internal
- * command dispatcher.
- */
-
-import { RunbookStateManager, SessionService, type ExecutionResult } from '@rundown-org/core';
+import { RunbookStateManager, type ExecutionResult } from '@rundown-org/core';
 import { isValidResult } from '../services/execution.js';
 
-/**
- * Default result sequence when no --result options are provided.
- * A single 'pass' means the command succeeds on the first attempt.
- */
+/** Result sequence used when the caller supplies none. */
 export const DEFAULT_RESULT_SEQUENCE: string[] = ['pass'];
 
-/**
- * Result of executing the echo command logic.
- */
+/** Environment variable through which a step's command learns its run. */
+export const RUN_ID_ENV = 'RD_RUN_ID';
+
+/** Outcome of {@link executeEchoLogic}. */
 export interface EchoCommandResult {
-  /** Whether the command succeeded */
   success: boolean;
-  /** Exit code (0 for success, 1 for failure) */
   exitCode: number;
-  /** Error message if command failed before execution */
   error?: string;
-  /** Output message to display */
   output?: string;
 }
 
 /**
- * Execute the echo command logic.
+ * Run the echo test command against the run whose step command invoked it.
  *
- * This shared function handles the core echo command behavior:
- * 1. Validates there is an active runbook
- * 2. Validates all results in the sequence are 'pass' or 'fail'
- * 3. Selects the result based on retry count (clamped to sequence length)
- * 4. Outputs the result with attempt information
+ * `rd echo` runs INSIDE a step's command, so the run it belongs to is the one
+ * whose execution injected `RD_RUN_ID` into the command environment. There is
+ * no other "current run": under one writer per run no run is implicitly
+ * active. The result picked from `sequence` is indexed by the run's retry
+ * count, so `rd echo --result fail --result pass` fails once and then passes.
  *
- * @param sequence - Array of result values ('pass' or 'fail') to cycle through on retries
- * @param commandArgs - The command arguments to echo back in output
- * @param cwd - Current working directory for state management
- * @returns EchoCommandResult with success status, exit code, and output/error messages
+ * @param sequence - Result sequence (`pass` / `fail`), indexed by retry count
+ * @param commandArgs - Text echoed on success
+ * @param cwd - Project root whose store holds the run
+ * @param runId - The invoking run's id; defaults to `RD_RUN_ID` from the environment
+ * @returns The echo result with its exit code
  */
 export async function executeEchoLogic(
   sequence: string[],
   commandArgs: string[],
   cwd: string,
+  runId: string | undefined = process.env[RUN_ID_ENV],
 ): Promise<EchoCommandResult> {
+  if (runId === undefined || runId.length === 0) {
+    return {
+      success: false,
+      exitCode: 1,
+      error:
+        'Error: No run context. rundown echo runs inside a step command, where RD_RUN_ID is set.',
+    };
+  }
   const manager = new RunbookStateManager(cwd);
-  const sessionService = new SessionService(manager);
-  const state = await sessionService.getActive();
+  const state = await manager.load(runId);
 
   if (!state) {
     return {
       success: false,
       exitCode: 1,
-      error: 'Error: No active runbook.',
+      error: `Error: Run ${runId} not found.`,
     };
   }
 
@@ -93,10 +90,10 @@ export async function executeEchoLogic(
 }
 
 /**
- * Convert EchoCommandResult to ExecutionResult for internal command execution.
+ * Project an echo result onto the core execution-result shape.
  *
- * @param result - The echo command result
- * @returns ExecutionResult compatible with the internal command dispatcher
+ * @param result - The echo result
+ * @returns The equivalent execution result
  */
 export function toExecutionResult(result: EchoCommandResult): ExecutionResult {
   return {

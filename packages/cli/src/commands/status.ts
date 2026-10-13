@@ -1,125 +1,58 @@
 // packages/cli/src/commands/status.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService, resolveCommandTarget } from '@rundown-org/core';
+import { RunbookStateManager } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import {
-  buildInactiveStatus,
-  buildStashedStatus,
-  buildActiveStatus,
-} from '../helpers/status-builder.js';
-import { parseClaimIdOption } from '../helpers/claim-id-option.js';
+import { buildRunListStatus, buildRunStatus } from '../helpers/status-builder.js';
+import { parseRunOption } from '../helpers/run-option.js';
 
 /**
- * Registers the 'status' command for displaying runbook state.
+ * Registers the 'status' command for displaying run state.
+ *
+ * Bare `rundown status` lists every persisted run (id, runbook, lifecycle,
+ * position); `--run <id>` shows one run in detail. Status is read-only and
+ * never renders an Owner Token.
+ *
  * @param program - Commander program instance to register the command on
  */
 export function registerStatusCommand(program: Command): void {
   program
     .command('status')
-    .description('Show current runbook state')
-    .option('--claim-id <claimId>', 'Target a claimed delegated child runbook')
+    .description('Show run state (all runs, or one run with --run)')
+    .option('--run <runId>', 'Show one run in detail')
     .option('--text', 'Output as human-readable text')
-    .action(async (options: { claimId?: string; text?: boolean }) => {
+    .action(async (options: { run?: string; text?: boolean }) => {
       await withErrorHandling(
         async () => {
           const cwd = getCwd();
           const output = new OutputEmitter({ text: options.text, command: 'status' });
+          const run = parseRunOption(options.run, output);
+          if (!run.ok) return;
 
           const manager = new RunbookStateManager(cwd);
-          const sessionService = new SessionService(manager);
-          const claimTarget = parseClaimIdOption(options.claimId, output);
-          if (!claimTarget.ok) return;
-          const active = await resolveCommandTarget(sessionService, {
-            claimId: claimTarget.claimId,
-            // Status is a read-only inspection path — surface the stashed child
-            // rather than gating it behind `rd pop`.
-            allowStashed: true,
-          });
-          const stashedId = await sessionService.getStashedRunbookId();
 
-          // #531: join session claim records onto claimed delegations so
-          // orphaned claims are recoverable from status output. Later
-          // `updatedAt` wins on a controlledRunId collision.
-          const session = await manager.loadSession();
-          const claimKeyByChildRunId = new Map<string, string>();
-          for (const claim of Object.values(session.claims).sort((a, b) =>
-            a.updatedAt.localeCompare(b.updatedAt),
-          )) {
-            claimKeyByChildRunId.set(claim.controlledRunId, claim.claimKey);
-          }
-          const statusOptions = { claimKeyByChildRunId };
-
-          switch (active.kind) {
-            case 'claim':
-            case 'default':
-            // `run` carries state like `default`; status never passes a runId,
-            // so this arm is unreachable today (compile-level exhaustiveness).
-            case 'run':
-              output.detail(
-                buildActiveStatus(
-                  active.state,
-                  cwd,
-                  stashedId ?? undefined,
-                  undefined,
-                  statusOptions,
-                ) as unknown as Record<string, unknown>,
-                'status',
-              );
-              output.flush();
-              return;
-            case 'terminal_claim':
-              output.detail(
-                buildActiveStatus(
-                  active.state,
-                  cwd,
-                  stashedId ?? undefined,
-                  active.lifecycle,
-                  statusOptions,
-                ) as unknown as Record<string, unknown>,
-                'status',
-              );
-              output.flush();
-              return;
-            case 'none':
-              break;
-            case 'stale_claim':
-              output.error(active.message, active.code);
+          if (run.runId !== undefined) {
+            const state = await manager.load(run.runId);
+            if (!state) {
+              output.error(`Run ${run.runId} not found.`, 'RUN_TARGET_UNAVAILABLE', {
+                runId: run.runId,
+              });
               output.flush();
               process.exitCode = 1;
               return;
-            case 'unknown_run':
-              output.error(active.message, 'RUN_TARGET_UNAVAILABLE');
-              output.flush();
-              process.exitCode = 1;
-              return;
-            default: {
-              const _exhaustive: never = active;
-              return _exhaustive;
             }
-          }
-
-          // Case 1: No active runbook and nothing stashed
-          if (!stashedId) {
-            output.detail(buildInactiveStatus() as unknown as Record<string, unknown>, 'status');
-            output.flush();
-            return;
-          }
-
-          // Case 2: Something stashed but nothing active
-          const stashed = await manager.load(stashedId);
-          if (stashed) {
             output.detail(
-              buildStashedStatus(stashed, cwd) as unknown as Record<string, unknown>,
+              buildRunStatus(state, cwd) as unknown as Record<string, unknown>,
               'status',
             );
             output.flush();
             return;
           }
-          // Stale stash reference — treat as inactive
-          output.detail(buildInactiveStatus() as unknown as Record<string, unknown>, 'status');
+
+          const states = await manager.list();
+          output.detail(buildRunListStatus(states) as unknown as Record<string, unknown>, 'status');
           output.flush();
         },
         { text: options.text },

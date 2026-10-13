@@ -1,33 +1,8 @@
 import * as path from 'node:path';
 import { z } from 'zod';
-import {
-  DELEGATION_ISSUANCE_NONCE_PATTERN,
-  DELEGATION_TOKEN_HASH_PATTERN,
-  type delegationIssuanceNonceBrand,
-  type delegationTokenHashBrand,
-  type DelegationCredentialDescriptor,
-  type DelegationIssuanceNonce,
-  type DelegationTokenHash,
-} from './runbook/delegation-token.js';
-import {
-  CLAIM_ID_PATTERN,
-  CLAIM_LOOKUP_KEY_PATTERN,
-  CLAIM_SECRET_HASH_PATTERN,
-  type ClaimGrant,
-  type ClaimId,
-  type ClaimLookupKey,
-  type ClaimRecord,
-  type ClaimSecretHash,
-  type DelegationClaimLinkage,
-} from './runbook/claim-id.js';
 import { isFrameKey } from './runbook/targeting.js';
 import { createJsonArrayStream } from './runbook/types.js';
-import type {
-  JsonArrayStream,
-  JsonValue,
-  PersistedDelegateFrontierEntry,
-  TemplateVarValue,
-} from './runbook/types.js';
+import type { JsonArrayStream, JsonValue, TemplateVarValue } from './runbook/types.js';
 import { RUN_ID_PATTERN, type RunId, type runIdBrand } from './runbook/run-id.js';
 import {
   brandEffectiveVars,
@@ -62,50 +37,6 @@ export const RunIdSchema = z
 // Keeps the unique-symbol run-id brand nameable in declaration emit for
 // exported schemas inferred from RunIdSchema. This is type-only.
 type _RunIdBrandForDeclarationEmit = typeof runIdBrand;
-
-/** Zod schema that parses strings and brands them as {@link DelegationTokenHash}. */
-export const DelegationTokenHashSchema: z.ZodType<DelegationTokenHash, string> = z
-  .string()
-  .regex(DELEGATION_TOKEN_HASH_PATTERN)
-  .transform((value) => value as DelegationTokenHash);
-
-// Keeps the unique-symbol token-hash brand nameable in declaration emit for
-// exported schemas inferred from DelegationTokenHashSchema. This is type-only.
-type _DelegationTokenHashBrandForDeclarationEmit = typeof delegationTokenHashBrand;
-
-/** Zod schema that parses strings and brands them as delegation issuance nonces. */
-export const DelegationIssuanceNonceSchema: z.ZodType<DelegationIssuanceNonce, string> = z
-  .string()
-  .regex(DELEGATION_ISSUANCE_NONCE_PATTERN)
-  .transform((value) => value as DelegationIssuanceNonce);
-
-// Keeps the unique-symbol nonce brand nameable in declaration emit for
-// exported schemas inferred from DelegationIssuanceNonceSchema. This is type-only.
-type _DelegationIssuanceNonceBrandForDeclarationEmit = typeof delegationIssuanceNonceBrand;
-
-/** Zod schema for the non-secret persisted description of a delegation credential. */
-export const DelegationCredentialDescriptorSchema: z.ZodType<DelegationCredentialDescriptor> = z
-  .object({
-    version: z.literal(1),
-    issuerClaimKey: z.lazy(() => ClaimLookupKeySchema),
-    issuanceNonce: DelegationIssuanceNonceSchema,
-    parentRunId: RunIdSchema,
-    parentStepId: z.string().min(1),
-    parentFrameKey: FrameKeySchema,
-    parentEntry: z.number().int().positive(),
-    supersedesTokenHash: DelegationTokenHashSchema.optional(),
-  })
-  .strict();
-
-/** Zod schema for a non-secret delegation frontier intent persisted in machine context. */
-export const PersistedDelegateFrontierEntrySchema: z.ZodType<PersistedDelegateFrontierEntry> = z
-  .object({
-    id: z.string().min(1),
-    runbook: z.string().min(1),
-    credential: DelegationCredentialDescriptorSchema,
-    tokenHash: DelegationTokenHashSchema,
-  })
-  .strict();
 
 /**
  * Zod schema for tool_input in Step tool calls
@@ -520,281 +451,20 @@ export const ContextSnapshotSchema = z
   });
 
 /**
- * Zod schema for delegation metadata attached to a substep.
- */
-export const StepDelegationSchema = z
-  .object({
-    credential: DelegationCredentialDescriptorSchema,
-    tokenHash: DelegationTokenHashSchema,
-    childRunbookPath: z.string(),
-    childRunbookRef: RunbookRefSchema,
-    contextSnapshot: ContextSnapshotSchema,
-    childRunId: RunIdSchema.nullable(),
-    createdAt: z.string(),
-    cancelledAt: z.string().nullable(),
-    extraVars: z.record(z.string(), TemplateVarValueSchema).optional(),
-  })
-  .strict();
-
-/**
- * Zod schema for the inline-launch latch record.
- *
- * `.strict()` because this is the value a liveness decision is made against: an
- * unrecognised key here is a record written by something other than the latch,
- * and reclaiming — or refusing to reclaim — on it would be a decision made about
- * a shape this version does not understand.
- */
-export const InlineLaunchStartSchema = z
-  .object({
-    at: z.string(),
-    ownerPid: z.number().int().positive(),
-    ownerStartId: z.string().nullable(),
-  })
-  .strict();
-
-/** Zod schema for durable inline child launch metadata attached to a substep. */
-export const StepInlineChildSchema = z.object({
-  childRunbookPath: z.string(),
-  childRunbookRef: RunbookRefSchema,
-  contextSnapshot: ContextSnapshotSchema,
-  childRunId: RunIdSchema,
-  createdAt: z.string(),
-  started: InlineLaunchStartSchema.nullable(),
-});
-
-/**
  * Zod schema for SubstepState
  * Tracks runtime state of a substep within a step
  */
-const SubstepStateSchema = z.object({
-  id: z.string(),
-  frameKey: FrameKeySchema,
-  status: z.enum(['pending', 'running', 'done']),
-  result: z.enum(['pass', 'fail']).optional(),
-  delegation: StepDelegationSchema.optional(),
-  inline: StepInlineChildSchema.optional(),
-});
-
-const ResolvedCompletionSchema = z
+const SubstepStateSchema = z
   .object({
-    agentId: z.string(),
-    result: z.enum(['pass', 'fail']),
-    targetStep: z.string(),
-    targetSubstep: z.string().optional(),
-    // `targetIteration` IS a FOR iteration index, so it keeps the FOR ceiling.
-    targetIteration: z.number().int().positive().max(MAX_FOR_BOUND).optional(),
-    targetFrameKey: FrameKeySchema,
-    // `targetEntry` is the frame entry ordinal under another name — the same
-    // run-global counter `activeEntry` carries (see the note on
-    // `RunbookStateObjectSchema.frameEntryCounts`), so it takes the same
-    // treatment: validated as a safe integer, not capped at a FOR bound.
-    targetEntry: z.number().int().nonnegative(),
-    finalVars: z.record(z.string(), VariableValueSchema).optional(),
-    completedAt: z.string(),
+    id: z.string(),
+    frameKey: FrameKeySchema,
+    status: z.enum(['pending', 'running', 'done']),
+    result: z.enum(['pass', 'fail']).optional(),
   })
+  // Strict, so a record this version does not carry — the v2 `delegation` and
+  // `inline` child records, or any later drift — is refused by the structural
+  // parse rather than silently stripped on read (the no-migration rule).
   .strict();
-
-/** Zod schema that parses strings and brands them as {@link ClaimId}. */
-export const ClaimIdSchema = z
-  .string()
-  .regex(CLAIM_ID_PATTERN)
-  .transform((value) => value as ClaimId);
-
-/** Zod schema that parses strings and brands them as {@link ClaimLookupKey}. */
-export const ClaimLookupKeySchema = z
-  .string()
-  .regex(CLAIM_LOOKUP_KEY_PATTERN)
-  .transform((value) => value as ClaimLookupKey);
-
-/** Zod schema that parses strings and brands them as {@link ClaimSecretHash}. */
-export const ClaimSecretHashSchema = z
-  .string()
-  .regex(CLAIM_SECRET_HASH_PATTERN)
-  .transform((value) => value as ClaimSecretHash);
-
-const ReportDelegationResultGrantSchema = z
-  .object({
-    action: z.literal('report-delegation-result'),
-    childRunId: RunIdSchema,
-    tokenHash: DelegationTokenHashSchema,
-    parentRunId: RunIdSchema,
-    parentStepId: z.string().min(1),
-    parentStep: z.string().min(1),
-    parentFrameKey: FrameKeySchema,
-    // Positive to match the canonical RunbookState.parentLinkage.parentEntry; a
-    // real child linkage never carries entry 0.
-    parentEntry: z.number().int().positive(),
-  })
-  .strict();
-
-const ClaimGrantSchema: z.ZodType<ClaimGrant> = z.discriminatedUnion('action', [
-  z.object({ action: z.literal('mutate-run'), runId: RunIdSchema }).strict(),
-  z.object({ action: z.literal('delegate-from-run'), runId: RunIdSchema }).strict(),
-  z.object({ action: z.literal('collect-for-run'), runId: RunIdSchema }).strict(),
-  z
-    .object({
-      action: z.literal('abort-delegation'),
-      runId: RunIdSchema,
-      stepId: z.string().min(1).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      action: z.literal('retry-delegation'),
-      runId: RunIdSchema,
-      stepId: z.string().min(1).optional(),
-    })
-    .strict(),
-  ReportDelegationResultGrantSchema,
-]);
-
-/** Canonical schema shared by in-memory claims and persisted linkage rows. */
-export const DelegationClaimLinkageSchema: z.ZodType<DelegationClaimLinkage> = z
-  .object({
-    childRunId: RunIdSchema,
-    tokenHash: DelegationTokenHashSchema,
-    parentRunId: RunIdSchema,
-    parentStepId: z.string().min(1),
-    parentStep: z.string().min(1),
-    parentFrameKey: FrameKeySchema,
-    // Positive to match the canonical RunbookState.parentLinkage.parentEntry.
-    parentEntry: z.number().int().positive(),
-  })
-  .strict();
-
-function grantMatchesDelegation(grant: ClaimGrant, delegation: DelegationClaimLinkage): boolean {
-  return (
-    grant.action === 'report-delegation-result' &&
-    grant.childRunId === delegation.childRunId &&
-    grant.parentRunId === delegation.parentRunId &&
-    grant.parentStepId === delegation.parentStepId &&
-    grant.parentStep === delegation.parentStep &&
-    grant.parentFrameKey === delegation.parentFrameKey &&
-    grant.parentEntry === delegation.parentEntry &&
-    grant.tokenHash === delegation.tokenHash
-  );
-}
-
-function grantTargetsRun(grant: ClaimGrant): RunId | undefined {
-  switch (grant.action) {
-    case 'mutate-run':
-    case 'delegate-from-run':
-    case 'collect-for-run':
-    case 'abort-delegation':
-    case 'retry-delegation':
-      return grant.runId;
-    case 'report-delegation-result':
-      return undefined;
-    default: {
-      const _exhaustive: never = grant;
-      return _exhaustive;
-    }
-  }
-}
-
-/** Zod schema for a persisted proof-backed claim record. */
-export const ClaimRecordSchema: z.ZodType<ClaimRecord> = z
-  .object({
-    claimKey: ClaimLookupKeySchema,
-    secretHash: ClaimSecretHashSchema,
-    controlledRunId: RunIdSchema,
-    delegation: DelegationClaimLinkageSchema.optional(),
-    grants: z.array(ClaimGrantSchema).min(1),
-    issuedAt: z.string().min(1),
-    updatedAt: z.string().min(1),
-    lastSeenAt: z.string().min(1),
-  })
-  .strict()
-  .superRefine((claim, ctx) => {
-    for (const [index, grant] of claim.grants.entries()) {
-      const runId = grantTargetsRun(grant);
-      if (runId !== undefined && runId !== claim.controlledRunId) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['grants', index, 'runId'],
-          message: 'run-scoped claim grants must target controlledRunId',
-        });
-      }
-    }
-
-    const reportGrants = claim.grants.filter(
-      (grant): grant is Extract<ClaimGrant, { readonly action: 'report-delegation-result' }> =>
-        grant.action === 'report-delegation-result',
-    );
-
-    if (claim.delegation === undefined) {
-      if (reportGrants.length > 0) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['grants'],
-          message: 'non-delegated claims must not carry delegation report grants',
-        });
-      }
-      return;
-    }
-
-    const delegation = claim.delegation;
-    if (delegation.childRunId !== claim.controlledRunId) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['delegation', 'childRunId'],
-        message: 'delegated claim childRunId must match controlledRunId',
-      });
-    }
-    if (!reportGrants.some((grant) => grantMatchesDelegation(grant, delegation))) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['grants'],
-        message: 'delegated claims must carry a matching report-delegation-result grant',
-      });
-    }
-  });
-
-/** Zod schema for session data reconstructed from SQLite rows. */
-export const SessionDataSchema = z
-  .object({
-    defaultStack: z.array(RunIdSchema).default([]),
-    stashedRunbookId: RunIdSchema.optional(),
-    claims: z.record(z.string(), ClaimRecordSchema).default({}),
-  })
-  .superRefine((session, ctx) => {
-    // Tracks the first claim key seen controlling each run so a second record
-    // sharing that controlledRunId can be reported against the duplicate.
-    const controllersByRun = new Map<string, string>();
-    for (const [claimKey, claim] of Object.entries(session.claims)) {
-      if (!CLAIM_LOOKUP_KEY_PATTERN.test(claimKey)) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['claims', claimKey],
-          message:
-            'claims key must be a canonical claim lookup key (rdclk_<32 lowercase hex characters>)',
-        });
-        continue;
-      }
-
-      if (claimKey !== claim.claimKey) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['claims', claimKey, 'claimKey'],
-          message: 'claims key must match claim.claimKey',
-        });
-      }
-
-      // Minting guarantees at most one claim record per run; two distinct bearer
-      // secrets controlling the same run can only arise from tampered persisted
-      // state, and the schema is the boundary that rejects it.
-      const existing = controllersByRun.get(claim.controlledRunId);
-      if (existing !== undefined) {
-        ctx.addIssue({
-          code: 'custom',
-          path: ['claims', claimKey, 'controlledRunId'],
-          message: `controlledRunId must be unique across claim records; duplicate at claims.${existing}.controlledRunId`,
-        });
-      } else {
-        controllersByRun.set(claim.controlledRunId, claimKey);
-      }
-    }
-  });
 
 /**
  * Zod schema for {@link ForSource} — source descriptor for the unified variable model.
@@ -894,7 +564,6 @@ const RunbookStateObjectSchema = z
         completedAt: z.string().optional(),
       }),
     ),
-    resolvedCompletions: z.record(z.string(), ResolvedCompletionSchema).optional(),
     // ENTRY ORDINALS ARE NOT FOR BOUNDS. `frameEntryCounts` and `activeEntry`
     // count frame *entries* — a run-global monotonic ordinal that starts at 1
     // and advances once per re-entry (RETRY, GOTO, a bounded self-GOTO pass).
@@ -918,33 +587,6 @@ const RunbookStateObjectSchema = z
     activeFrameKey: FrameKeySchema.optional(),
     activeEntry: z.number().int().positive().optional(),
     substepStates: z.array(SubstepStateSchema).optional(),
-    parentLinkage: z
-      .discriminatedUnion('kind', [
-        z.object({
-          kind: z.literal('delegation'),
-          parentRunId: RunIdSchema,
-          parentStepId: z.string(),
-          tokenHash: DelegationTokenHashSchema,
-          parentStep: z.string(),
-          parentFrameKey: FrameKeySchema,
-          parentEntry: z.number().int().positive(),
-        }),
-        z.object({
-          kind: z.literal('inline'),
-          parentRunId: RunIdSchema,
-          parentStepId: z.string(),
-          parentStep: z.string(),
-          parentFrameKey: FrameKeySchema,
-          parentEntry: z.number().int().positive(),
-        }),
-      ])
-      .optional(),
-    nested: z
-      .object({
-        runbook: z.string(),
-        instanceId: z.string(),
-      })
-      .optional(),
     // FOR loop tracking: stack of loop contexts for nested loops
     forStack: z.array(ForStackEntrySchema).optional(),
     iterationResults: z.array(z.enum(['pass', 'fail'])).optional(),
@@ -983,7 +625,7 @@ const RunbookStateObjectSchema = z
     // state.load() must parse invalid files (which lack them) far enough to
     // reach the schemaVersion check and throw InvalidRunbookStateError.
     // Making them required would bypass invalid-state detection. Do not tighten.
-    lifecycle: z.enum(['running', 'completed', 'stopped']).optional(),
+    lifecycle: z.enum(['running', 'completed', 'stopped', 'abandoned']).optional(),
     schemaVersion: z.number().int().nonnegative().optional(),
   })
   // Persisted state has no compatibility contract. `state.load()` checks
@@ -1121,13 +763,15 @@ function makeAncestorSnapshotSchema(projectRoot: string): z.ZodType {
  *
  * Replaces the static `TemplateVarValueSchema` used in `vars` and
  * `ancestors[].vars` with path-validated variants so that all
- * JsonArrayStream paths in the delegation context snapshot are
- * boundary-checked against `projectRoot` on state load.
+ * JsonArrayStream paths in a context snapshot are boundary-checked against
+ * `projectRoot` on state load. Nothing in the persisted run state carries a
+ * snapshot today; the Current Child reservation records (#903/#904) will, and
+ * they must parse their snapshots through this rather than the static schema.
  *
  * @param projectRoot - Absolute project root for path boundary enforcement
  * @returns Zod schema for ContextSnapshot with path-validated vars and ancestors
  */
-function makeContextSnapshotSchema(projectRoot: string): z.ZodType {
+export function makeContextSnapshotSchema(projectRoot: string): z.ZodType {
   const ContextVarsSchema = makeContextVarValueSchema(projectRoot);
   return z
     .object({
@@ -1156,97 +800,21 @@ function makeContextSnapshotSchema(projectRoot: string): z.ZodType {
 }
 
 /**
- * Build a path-validated variant of {@link StepDelegationSchema}.
- *
- * Replaces the static `ContextSnapshotSchema` with a path-validated variant
- * so that all JsonArrayStream paths in delegation metadata are boundary-checked
- * against `projectRoot` on state load.
- *
- * @param projectRoot - Absolute project root for path boundary enforcement
- * @returns Zod schema for StepDelegation with path-validated contextSnapshot
- */
-function makeStepDelegationSchema(projectRoot: string): z.ZodType {
-  return z
-    .object({
-      credential: DelegationCredentialDescriptorSchema,
-      tokenHash: DelegationTokenHashSchema,
-      childRunbookPath: z.string(),
-      childRunbookRef: RunbookRefSchema,
-      contextSnapshot: makeContextSnapshotSchema(projectRoot),
-      childRunId: RunIdSchema.nullable(),
-      createdAt: z.string(),
-      cancelledAt: z.string().nullable(),
-      extraVars: z.record(z.string(), makeTemplateVarValueSchema(projectRoot)).optional(),
-    })
-    .strict();
-}
-
-/**
- * Build a path-validated variant of {@link StepInlineChildSchema}.
- *
- * Replaces the static `ContextSnapshotSchema` with a path-validated variant
- * so that all JsonArrayStream paths in inline child metadata are
- * boundary-checked against `projectRoot` on state load.
- *
- * @param projectRoot - Absolute project root for path boundary enforcement
- * @returns Zod schema for StepInlineChild with path-validated contextSnapshot
- */
-function makeStepInlineChildSchema(projectRoot: string): z.ZodType {
-  return z.object({
-    childRunbookPath: z.string(),
-    childRunbookRef: RunbookRefSchema,
-    contextSnapshot: makeContextSnapshotSchema(projectRoot),
-    childRunId: RunIdSchema,
-    createdAt: z.string(),
-    started: InlineLaunchStartSchema.nullable(),
-  });
-}
-
-/**
- * Build a path-validated variant of {@link SubstepStateSchema}.
- *
- * Replaces the static child metadata schemas with path-validated variants
- * so that all JsonArrayStream paths in substep child metadata are
- * boundary-checked against `projectRoot` on state load.
- *
- * @param projectRoot - Absolute project root for path boundary enforcement
- * @returns Zod schema for SubstepState with path-validated child metadata
- */
-function makeSubstepStateSchema(projectRoot: string): z.ZodType {
-  return z.object({
-    id: z.string(),
-    frameKey: FrameKeySchema,
-    status: z.enum(['pending', 'running', 'done']),
-    result: z.enum(['pass', 'fail']).optional(),
-    delegation: makeStepDelegationSchema(projectRoot).optional(),
-    inline: makeStepInlineChildSchema(projectRoot).optional(),
-  });
-}
-
-/**
  * Build a path-validated variant of {@link RunbookStateSchema}.
  *
- * Replaces the `templateVars` field and `substepStates` field with
+ * Replaces the `templateVars`, `variables` and `finalVars` fields with
  * path-validated schemas so that JsonArrayStream values loaded from disk are
  * checked against `projectRoot` before being re-branded. This closes the disk
  * round-trip attack vector where a crafted `--var-json` object survives as a
  * JsonObject on disk and is re-hydrated as a usable file stream on state reload.
  *
- * SEC1: Also validates JsonArrayStream paths in `contextSnapshot.vars` and
- * `ancestors[].vars` within delegation metadata, which previously used the
- * static `TemplateVarValueSchema` and bypassed projectRoot boundary checks.
- *
  * @param projectRoot - Absolute project root; JsonArrayStream paths in
- *   templateVars and substepStates delegation metadata must be within this directory
- * @returns Zod schema for RunbookState with path-validated templateVars and substepStates
+ *   templateVars must be within this directory
+ * @returns Zod schema for RunbookState with path-validated variable fields
  */
 export function makeRunbookStateSchema(projectRoot: string): z.ZodType {
   const VarsSchema = z.record(z.string(), makeTemplateVarValueSchema(projectRoot));
   const VariablesSchema = z.record(z.string(), makeVariableValueSchema(projectRoot));
-  const ResolvedCompletionSchemaValidated = ResolvedCompletionSchema.extend({
-    finalVars: VariablesSchema.optional(),
-  });
-  const SubstepStateSchemaValidated = makeSubstepStateSchema(projectRoot);
   return RunbookStateObjectSchema.extend({
     // Brand at the parse seam: every persisted state that re-enters the
     // process via `state.load` flows through this schema, so applying
@@ -1255,8 +823,6 @@ export function makeRunbookStateSchema(projectRoot: string): z.ZodType {
     templateVars: VarsSchema.transform((v) => brandInitialTemplateVars(v)),
     variables: VariablesSchema.transform((v) => brandStoredOutputs(v)),
     finalVars: VariablesSchema.optional(),
-    resolvedCompletions: z.record(z.string(), ResolvedCompletionSchemaValidated).optional(),
-    substepStates: z.array(SubstepStateSchemaValidated).optional(),
   }).superRefine((value, ctx) => {
     rejectRemovedRunbookRefField(value, ctx);
     rejectRemovedArtifactVarsField(value, ctx);

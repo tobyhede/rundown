@@ -33,6 +33,8 @@ transform: the "no placeholders" scan becomes a "no duplication" scan.
       write step).
 - [ ] Fan-out, if any, uses `- DELEGATE` + delegate-then-collate (never collate
       from the parent).
+- [ ] If the runbook composes others (runbook-list or `- DELEGATE`), the user is
+      told `rundown run` refuses it until #903 / #904.
 - [ ] Review-type steps use `FAIL CONTINUE` (record-don't-gate).
 - [ ] One runbook, one artifact (or a parent composing leaves).
 

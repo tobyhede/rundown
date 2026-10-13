@@ -7,27 +7,23 @@ use_when: Driving a body of work from a spec through to merged implementation.
 # Planning
 
 <important>
-## Runbook-Orchestrated Skill
-Load the execution protocol *before* starting, so you can handle step 1 (a
-delegation) the moment it appears:
+## Runbook-Orchestrated Skill — pipeline not available in this build
+The `planning` runbook composes the `write-plan`, `review-plan`, and
+`execute-plan` runbooks, and this build runs standalone runbooks only:
+`rundown run rundown:planning` is refused with
+`RUNBOOK_COMPOSITION_UNSUPPORTED` and creates no run. `review-plan` and
+`execute-plan` compose other runbooks too and are refused the same way. Inline
+composition returns in #903 and delegation in #904.
 
-Load and follow the bundled `running-runbooks` skill before starting the
-runbook.
+What runs today is stage 1 on its own, `write-plan`, a standalone runbook:
 
-Stage 1 does not provide Codex hook parity for delegated child dispatch. If this
-workflow reaches a delegated step that requires automatic child-agent
-orchestration, stop and report that Stage 2 delegation hook support is required.
+1. Load and follow the bundled `running-runbooks` skill.
+2. `rundown run rundown:write-plan`, then follow the running-runbooks protocol
+   (capture `owner_token` from `runbook_started`; report each step with
+   `--token` and `--step`).
 
-Then start the runbook with exactly this command, no added flags:
-`rundown run rundown:planning`
-
-Capture the run id from that command: `rundown run` prints it at start and every
-event carries it as `runbookId`. This pipeline delegates (step 1), so every
-orchestrator command you issue — `collect`, `pass`, `goto` — must carry
-`--run <rd_…>`.
-
-JSON is the agent-facing default; `--text` is for humans/debugging only — do not
-add it here. </important>
+Tell the user the review and execute stages cannot run as runbooks yet before
+starting, so they can choose stage 1 alone. </important>
 
 ## Overview
 
@@ -43,9 +39,9 @@ pipeline and points at the stages — it does not duplicate them.
 
 ## The Three Stages
 
-1. **Write the plan** — produce a clean, complete implementation plan
-   (delegated). Craft lives in [writing-plans](../writing-plans/SKILL.md); the
-   leaf is the `write-plan` runbook. The stage stops the pipeline on failure.
+1. **Write the plan** — produce a clean, complete implementation plan. Craft
+   lives in [writing-plans](../writing-plans/SKILL.md); the leaf is the
+   `write-plan` runbook. The stage stops the pipeline on failure.
 2. **Review the plan** — run the plan through structural, technical,
    build/runtime, and risk/safety reviewers, then collate. This stage composes
    the `review-plan` runbook inline. It stops the pipeline on failure.
@@ -78,5 +74,3 @@ completes it (`PASS ALL COMPLETE`).
   the plan
 - [running-runbooks](../running-runbooks/SKILL.md) — executing the driving
   runbook
-- Stage 1 delegated child dispatch note: automatic Codex child-agent
-  orchestration requires Stage 2 hook support

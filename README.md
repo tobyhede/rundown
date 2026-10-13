@@ -129,32 +129,36 @@ shadows it (shell aliases beat `PATH`), so **`rd` is unreliable** — prefer
 `rundown`. On oh-my-zsh, restore the short name by adding `alias rd=rundown` to
 `~/.zshrc` **after** oh-my-zsh loads.
 
-| Command                                  | Description                                            |
-| ---------------------------------------- | ------------------------------------------------------ |
-| `rundown run [file]`                     | Start a runbook                                        |
-| `rundown run [file] --input key=value`   | Set template variable (repeatable)                     |
-| `rundown run [file] --input-file path`   | Load variables from YAML file                          |
-| `rundown run [file] --prompted`          | Show commands without auto-executing                   |
-| `rundown pass`                           | Mark current step as passed (evaluates PASS condition) |
-| `rundown fail`                           | Mark current step as failed (evaluates FAIL condition) |
-| `rundown goto <n>`                       | Jump to step number                                    |
-| `rundown status`                         | Show current state                                     |
-| `rundown stop [message]`                 | Abort runbook with optional message                    |
-| `rundown complete [message]`             | Mark runbook as complete with optional message         |
-| `rundown stash`                          | Pause enforcement (stash active runbook)               |
-| `rundown pop`                            | Resume enforcement (restore stashed runbook)           |
-| `rundown ls`                             | List active runbooks (JSON output by default)          |
-| `rundown ls --all`                       | List available runbook files                           |
-| `rundown ls --tags <tags>`               | Filter runbooks by comma-separated tags                |
-| `rundown check <file>`                   | Validate runbook file                                  |
-| `rundown echo`                           | Test helper: echo with configurable result             |
-| `rundown prune`                          | Remove stale runbook state files                       |
-| `rundown scenario <cmd>`                 | List, show, or run scenarios                           |
-| `rundown scenario-suite <cmd>`           | List, show, or run scenario suite cases                |
-| `rundown prompt <content>`               | Output content in markdown fences                      |
-| `rundown delegate <runbook> --step <id>` | Delegate substep to child runbook                      |
-| `rundown claim <token>`                  | Claim a delegation token and launch child              |
-| `rundown abort <token>`                  | Cancel a delegation token                              |
+`rundown run` prints the run's **Owner Token** once, as `owner_token` on the
+`runbook_started` event. Every command that changes a run takes it as `--token`;
+read-only commands take no token.
+
+| Command                                                  | Description                                                  |
+| -------------------------------------------------------- | ------------------------------------------------------------ |
+| `rundown run [file]`                                     | Start a runbook (prints `owner_token`)                       |
+| `rundown run [file] --input key=value`                   | Set template variable (repeatable)                           |
+| `rundown run [file] --input-file path`                   | Load variables from YAML file                                |
+| `rundown run [file] --prompted`                          | Show commands without auto-executing                         |
+| `rundown pass --token <token> --step <id> [--index <n>]` | Mark the current step as passed (evaluates the PASS handler) |
+| `rundown fail --token <token> --step <id> [--index <n>]` | Mark the current step as failed (evaluates the FAIL handler) |
+| `rundown goto <step> --token <token>`                    | Jump to a step                                               |
+| `rundown status`                                         | List every run                                               |
+| `rundown status --run <run_id>`                          | Show one run in detail                                       |
+| `rundown stop [message] --token <token>`                 | Stop the run with an optional message                        |
+| `rundown complete [message] --token <token>`             | Mark the run as complete with an optional message            |
+| `rundown ls`                                             | List persisted runs (JSON output by default)                 |
+| `rundown ls --all`                                       | List available runbook files                                 |
+| `rundown ls --all --tags <tags>`                         | Filter runbook files by comma-separated tags                 |
+| `rundown check <file>`                                   | Validate runbook file                                        |
+| `rundown echo`                                           | Test helper: echo with configurable result                   |
+| `rundown prune`                                          | Remove finished run state                                    |
+| `rundown scenario <cmd>`                                 | List, show, or run scenarios                                 |
+| `rundown scenario-suite <cmd>`                           | List, show, or run scenario suite cases                      |
+| `rundown prompt <content>`                               | Output content in markdown fences                            |
+
+`--step` (and `--index` inside a FOR iteration) on `pass` / `fail` confirm the
+run's current position. See [docs/reference/cli.md](docs/reference/cli.md) for
+every command and flag.
 
 ## Packages
 

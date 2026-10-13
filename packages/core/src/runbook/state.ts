@@ -7,27 +7,23 @@ import type { OutputDeclaration } from '@rundown-org/parser';
 import type { FrameKey } from './targeting.js';
 import type {
   RunbookState,
-  ForContext,
   Substep,
   SubstepState,
   Runbook,
   ResolvedRunbook,
-  ParentLinkage,
   TemplateVarValue,
-  ResolvedCompletion,
 } from './types.js';
 import {
   applyOp,
   type FrameEntryCountsOp,
-  type ResolvedCompletionsOp,
   type TemplateVarsOp,
   type VariablesOp,
 } from './state-update-ops.js';
-import type { ClaimLookupKey, ClaimRecord } from './claim-id.js';
-import type { CapturedAuthority, GuardedMutationResult } from './storage/mutation-result.js';
 import type { RunbookRef } from './runbook-ref.js';
-import { makeRunbookStateSchema, SessionDataSchema } from '../schemas.js';
-import { getErrorMessage, isError, isNodeError } from '../errors.js';
+import type { SecretHash } from './run-secrets.js';
+import { findUnsupportedComposition, RunbookCompositionUnsupportedError } from './run-authority.js';
+import { makeRunbookStateSchema } from '../schemas.js';
+import { isError, isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
 import {
   brandInitialTemplateVars,
@@ -39,20 +35,9 @@ import { isArtifactRecord } from './artifact-schema.js';
 import { assertRunId, RUN_ID_PREFIX, type RunId } from './run-id.js';
 import { runsDir as _runsDir, assertSafeId } from '../paths.js';
 import { getRunbookStore } from './storage/store-registry.js';
-import {
-  guardOptions,
-  type ParentAdvanceGuard,
-  type CapturedRunStateResult,
-  type PresentedClaim,
-  type MutateStateOptions,
-  type RunbookStore,
-  type SessionMutationResult,
-  type SessionMutationTxn,
-  type StateMutationResult,
-  InvalidPersistedSessionError,
-} from './storage/runbook-store.js';
+import type { RunbookStore, SaveRunResult, VersionedRunState } from './storage/runbook-store.js';
+import type { StateVersion } from './storage/mutation-result.js';
 import type { OpenRunbookDriverOptions } from './storage/driver-factory.js';
-import type { SyncWork } from './storage/sql-driver.js';
 import {
   assertCurrentSchemaVersion,
   assertLoadablePersistedRun,
@@ -107,51 +92,28 @@ function assertTrustedArtifactValues(
   return vars;
 }
 
-function assertTrustedResolvedCompletions(
-  completions: Readonly<Record<string, ResolvedCompletion>> | undefined,
-): Readonly<Record<string, ResolvedCompletion>> | undefined {
-  if (completions === undefined) {
-    return undefined;
-  }
-  for (const [key, completion] of Object.entries(completions)) {
-    if (completion.finalVars !== undefined) {
-      try {
-        assertTrustedArtifactValues(completion.finalVars);
-      } catch (err: unknown) {
-        throw new Error(
-          `Resolved completion "${key}" carries invalid finalVars: ${getErrorMessage(err)}`,
-        );
-      }
-    }
-  }
-  return completions;
-}
-
 /**
- * Thrown when a guarded run-state read-modify-write spent its optimistic
- * compare-and-swap budget without landing.
+ * Thrown when a run-state write found the row's `state_version` moved since
+ * the caller read it.
  *
- * This is the throwing face of {@link StateMutationResult}'s
- * `concurrent_modification` arm. The CAS that replaced the per-run file lock
- * replays at most 8 times, pausing between attempts for a jittered interval
- * that keeps co-contending writers from replaying in lockstep. That widens the
- * contention it absorbs but does not make it a lock: sustained contention still
- * exhausts the budget where the lock would have waited and won — CLAUDE.md
- * therefore requires callers to handle or retry it, which is only implementable
- * against a type. A bare `Error` forced message matching and reached the CLI as
- * RD-999 "Unknown error".
+ * This is the throwing face of {@link SaveRunResult}'s `concurrent_modification`
+ * arm. Under one writer per run (ADR 0005) it means two of the owner's own
+ * commands raced on the same run. The write is refused once — nothing was
+ * written, the persisted state is intact — and it is never retried on the
+ * caller's behalf: a second command landing silently behind the first is the
+ * confusion the refusal exists to make visible. The CLI reports it as RD-308 /
+ * `CONCURRENT_MODIFICATION`.
  *
- * Distinct from every other 3xx state condition in that it is **transient**:
- * nothing was written, the persisted state is intact, and the same command
- * retried unchanged is expected to succeed. {@link retryable} states that at the
- * type level so a consumer branches on a property rather than on the class name.
+ * {@link retryable} is `true` as a literal type because the persisted state is
+ * consistent and the same command, re-issued by the operator after reading the
+ * refusal, is expected to succeed. That is a statement about the state, not an
+ * instruction to any caller to loop.
  */
 export class ConcurrentStateModificationError extends Error {
   /**
-   * The run whose state write was lost.
+   * The run whose state write was refused.
    *
-   * A caller retrying a batch needs to know which run to replay, and the run id
-   * is not recoverable from the message without parsing it.
+   * The run id is not recoverable from the message without parsing it.
    */
   readonly runId: string;
 
@@ -159,17 +121,15 @@ export class ConcurrentStateModificationError extends Error {
    * Always `true`, as a literal type.
    *
    * The discriminant that separates this from the refusals that share its
-   * throwing seam (`missing`, `execution_in_progress`), where retrying is
-   * pointless. A caller narrows on this rather than re-deriving "is this the
-   * retryable one?" from the class.
+   * throwing seam (a missing run), where re-issuing the command is pointless.
    */
   readonly retryable = true as const;
 
   /**
    * Create a new ConcurrentStateModificationError.
    *
-   * @param runId - The run whose state write was lost.
-   * @param message - The store's description of the lost cycle.
+   * @param runId - The run whose state write was refused.
+   * @param message - Description of the refused write.
    */
   constructor(runId: string, message: string) {
     super(message);
@@ -182,7 +142,7 @@ export class ConcurrentStateModificationError extends Error {
  * Narrow an unknown thrown value to {@link ConcurrentStateModificationError}.
  *
  * Provided so a consumer that catches from a different realm — or that only has
- * the value typed as `unknown` — can classify the retryable outcome without an
+ * the value typed as `unknown` — can classify the refusal without an
  * `instanceof` against an import it would otherwise not need.
  *
  * @param error - The caught value.
@@ -204,20 +164,6 @@ export function generateRunId(): RunId {
 }
 
 /**
- * Persisted session state tracking the active runbook stack.
- *
- * A single shared stash slot allows temporarily parking a runbook.
- */
-export interface SessionData {
-  /** Active runbook stack for default targeting. */
-  defaultStack: RunId[];
-  /** ID of a temporarily stashed runbook, if any. */
-  stashedRunbookId?: RunId;
-  /** Explicit claim-id records for delegated child runbook targeting. */
-  claims: Record<string, ClaimRecord>;
-}
-
-/**
  * Typed patch accepted by {@link RunbookStateManager.update}.
  *
  * Record-shaped fields use tagged operations so callers must choose merge or
@@ -232,7 +178,6 @@ export type RunbookStateUpdate = Partial<
     | 'schemaVersion'
     | 'variables'
     | 'templateVars'
-    | 'resolvedCompletions'
     | 'frameEntryCounts'
   >
 > & {
@@ -240,8 +185,6 @@ export type RunbookStateUpdate = Partial<
   readonly variables?: VariablesOp;
   /** Replace initial template variables. */
   readonly templateVars?: TemplateVarsOp;
-  /** Merge or replace resolved completion records. */
-  readonly resolvedCompletions?: ResolvedCompletionsOp;
   /** Replace per-frame entry counters. */
   readonly frameEntryCounts?: FrameEntryCountsOp;
 };
@@ -249,20 +192,12 @@ export type RunbookStateUpdate = Partial<
 /**
  * Apply a {@link RunbookStateUpdate} patch to a state value, purely.
  *
- * The single application of tagged merge/replace ops, artifact/completion trust
+ * The single application of tagged merge/replace ops, artifact trust
  * re-assertion, and the {@link CURRENT_SCHEMA_VERSION} stamp. Shared by
- * {@link RunbookStateManager}'s guarded write path and by the actor
- * compute/commit seam, which derives the next state without persisting, so both
- * apply identical patch semantics.
- *
- * Two things are deliberately NOT identical between the two paths:
- * - `updatedAt` is stamped independently by each persistence layer, so the value
- *   returned by `update` and the value the fenced seam commits differ. Compare
- *   states modulo `updatedAt`.
- * - The resolved-completion consumption patch is read from the store on the
- *   manager path and from the captured state on the fenced path — under a fence
- *   the captured state is the authority, so a concurrent write must not change
- *   what the fenced mutation consumes.
+ * {@link RunbookStateManager.update} and by the actor compute/commit seam, which
+ * derives the next state without persisting, so both apply identical patch
+ * semantics. `updatedAt` is stamped by each caller, so compare states modulo
+ * `updatedAt`.
  *
  * @param existing - The state to patch.
  * @param updates - The typed patch with tagged ops on record-shaped fields.
@@ -283,17 +218,13 @@ export function applyRunbookStateUpdate(
   // recovery is explicit user action. An ABSENT version is refused for the same
   // reason and on the same terms as a wrong one: `load` rejects both, so
   // exempting absent would make this derivation more permissive than the loader
-  // and launder a state `load` refuses into one it accepts. Absent is also the
-  // only shape the store can hand over unvalidated — its schema leaves the field
-  // optional so `load` can parse far enough to reach its own check — which makes
-  // it the shape most in need of refusing, not least.
+  // and launder a state `load` refuses into one it accepts.
   assertCurrentSchemaVersion(existing.schemaVersion, existing.id);
   // Pull tagged-op fields out of updates so the subsequent `...updates` spread
   // does not leak the wrapper shapes into the strictly-typed RunbookState literal.
   const {
     variables: variablesOp,
     templateVars: templateVarsOp,
-    resolvedCompletions: resolvedCompletionsOp,
     frameEntryCounts: frameEntryCountsOp,
     ...restUpdates
   } = updates;
@@ -319,32 +250,32 @@ export function applyRunbookStateUpdate(
     ...(templateVarsOp !== undefined
       ? { templateVars: brandInitialTemplateVars(templateVarsOp.value) }
       : {}),
-    ...(resolvedCompletionsOp !== undefined
-      ? {
-          resolvedCompletions: assertTrustedResolvedCompletions(
-            applyOp(existing.resolvedCompletions, resolvedCompletionsOp),
-          ),
-        }
-      : {}),
     ...(frameEntryCountsOp !== undefined ? { frameEntryCounts: frameEntryCountsOp.value } : {}),
     // Stamp the current model version on the newly derived state. Not a
     // migration: the derived state IS the current model, and `existing` has
-    // already been validated (`load` rejects any other version). Without this
-    // the fenced compute half inherits `existing.schemaVersion` verbatim —
-    // including `undefined` from a store-loaded state, where the field is
-    // optional — and the fenced committer persists `nextState` as-is, leaving a
-    // run that `load` refuses with no recovery short of prune/restart.
+    // already been validated (`load` rejects any other version).
     schemaVersion: CURRENT_SCHEMA_VERSION,
     updatedAt: now,
   };
 }
 
-interface CreateOptions {
+/** Options accepted by {@link RunbookStateManager.create}. */
+export interface CreateOptions {
+  /** Repo-relative resolved runbook file path recorded on the state. */
   readonly runbookPath: string;
+  /**
+   * Hash of the Owner Token minted for this run.
+   *
+   * The caller mints the token (`generateOwnerToken`), prints it once on
+   * `runbook_started`, and hands only its hash here. The store never sees the
+   * plaintext.
+   */
+  readonly ownerTokenHash: SecretHash;
+  /** Explicit run id; defaults to a freshly generated one. */
   readonly runId?: RunId;
+  /** Whether the run announces its commands rather than executing them. */
   readonly prompted?: boolean;
-  /** Parent linkage when this run is a child (delegation or inline). */
-  readonly parentLinkage?: ParentLinkage;
+  /** Runbook source content, frozen at run time. */
   readonly runbookSrc?: string;
   /** Optional record of template variable replacements to populate placeholders at run time. */
   readonly templateVars?: Record<string, TemplateVarValue>;
@@ -368,9 +299,10 @@ export interface RunbookStateManagerOptions {
 /**
  * Manager for runbook state persistence and lifecycle.
  *
- * Handles creating, loading, saving, and updating runbook state.
- * State is persisted in the project's shared SQLite store.
- * Supports runbook stacks for nested runbooks.
+ * A thin async facade over {@link RunbookStore}: creating, loading, saving and
+ * patching run state in the project's shared SQLite store. Every write is one
+ * conditional save against the `state_version` the caller read; a mismatch is
+ * refused as {@link ConcurrentStateModificationError} and never retried.
  */
 export class RunbookStateManager {
   private readonly _cwd: string;
@@ -418,9 +350,9 @@ export class RunbookStateManager {
   /**
    * Narrow a caller-supplied id to a {@link RunId}.
    *
-   * Rejects traversal-unsafe ids exactly as the old path builder did. A safe but
-   * non-canonical id cannot name a run, so it resolves to `null` — the caller
-   * treats that as "genuinely missing", matching the old file-not-found path.
+   * Rejects traversal-unsafe ids. A safe but non-canonical id cannot name a
+   * run, so it resolves to `null` — the caller treats that as "genuinely
+   * missing".
    *
    * @param id - Caller-supplied runbook id.
    * @returns The branded run id, or null when the id cannot name a run.
@@ -436,43 +368,7 @@ export class RunbookStateManager {
   }
 
   /**
-   * Unwrap a committed mutation, mapping refusals to the manager's error contract.
-   *
-   * The `concurrent_modification` arm is separated from the rest because it is
-   * the only transient one: nothing was written, and retrying is the correct
-   * response. It gets a dedicated type so callers can act on that (and so the
-   * CLI reports RD-308 rather than collapsing it into RD-999) instead of
-   * matching the store's message text.
-   *
-   * @param result - The store mutation outcome.
-   * @param id - Runbook id, for the error message.
-   * @returns The committed (or unchanged) state.
-   * @throws {ConcurrentStateModificationError} When the optimistic CAS budget was
-   *   spent because another writer committed first. Transient and retryable.
-   * @throws {Error} When the run is missing or owned by a live execution. Neither
-   *   is retryable.
-   */
-  private requireCommitted(result: StateMutationResult, id: string): RunbookState {
-    switch (result.kind) {
-      case 'committed':
-      case 'unchanged':
-        return result.value;
-      case 'missing':
-        throw new Error(`Runbook ${id} not found`);
-      case 'concurrent_modification':
-        throw new ConcurrentStateModificationError(result.runId, result.message);
-      default:
-        throw new Error(result.message);
-    }
-  }
-
-  /**
    * Create a new runbook state and insert it as a row in the project's store.
-   *
-   * The state is committed through {@link save}, which inserts the run row into
-   * the shared SQLite database. No per-run directory is created here: the
-   * filesystem-backed `.rundown/runs/<id>/outputs/` tree holds captured command
-   * output only, and is created on demand by the capture path.
    *
    * `templateVars` is always written — `{}` when the caller supplies none — and
    * so is `prompted` (`false` when the caller names no mode), because {@link load}
@@ -480,14 +376,27 @@ export class RunbookStateManager {
    *
    * @param runbookRef - Canonical runbook identity
    * @param runbook - The parsed runbook definition
-   * @param options - Configuration including agentId, parent runbook info, prompted flag, and templateVars for template variable replacements
+   * @param options - Owner token hash, run identity, prompted flag, variables
    * @returns The newly created RunbookState
+   * @throws {RunbookCompositionUnsupportedError} When the runbook composes
+   *   other runbooks (a `DELEGATE` or runbook-list substep). Raised before any
+   *   store access, so no run row is written.
+   * @throws {StoreInvariantError} When a run already carries the id or the
+   *   owner token hash.
    */
   async create(
     runbookRef: RunbookRef,
     runbook: Runbook | ResolvedRunbook,
     options: CreateOptions,
   ): Promise<RunbookState> {
+    // The compiled machine has no state for a composing substep, so no run of
+    // one may exist. Refused here, the seam every run is created through,
+    // rather than by each frontend.
+    const composing = findUnsupportedComposition(runbook.steps);
+    if (composing.length > 0) {
+      throw new RunbookCompositionUnsupportedError(composing);
+    }
+
     const id = options.runId ?? generateRunId();
     const now = new Date().toISOString();
 
@@ -504,39 +413,35 @@ export class RunbookStateManager {
       retryCount: 0,
       variables: brandStoredOutputs(assertTrustedArtifactValues(options.initialVariables ?? {})),
       steps: [],
-      resolvedCompletions: {},
       frameEntryCounts: {},
-      parentLinkage: options.parentLinkage,
       startedAt: now,
       updatedAt: now,
       // Always written, `false` when the caller names no mode: `load` refuses a
-      // persisted row without `prompted` rather than defaulting one, so a run
-      // created without it would be unreadable the moment it is saved.
+      // persisted row without `prompted` rather than defaulting one.
       prompted: options.prompted ?? false,
       runbookSrc: options.runbookSrc,
       // Always written, `{}` when the caller supplies none: `load` refuses a
-      // persisted row without templateVars rather than reconstructing it, so a
-      // run created without one would be unreadable the moment it is saved.
+      // persisted row without templateVars rather than reconstructing it.
       templateVars: brandInitialTemplateVars(options.templateVars ?? {}),
       frontmatterOutputs: options.frontmatterOutputs ?? [],
       lifecycle: 'running',
       schemaVersion: CURRENT_SCHEMA_VERSION,
     };
 
-    await this.save(state);
+    const store = await this.store();
+    await store.createRun(state, options.ownerTokenHash);
+    void logger.debug('lifecycle-write', { runId: id, next: 'running' });
     return state;
   }
 
   /**
    * Read a runbook state back from the project's store by ID.
    *
-   * Reassembles the run's `state_json` from its row and validates it. Returns
-   * `null` when a traversal-safe id has no matching record, which also covers a
-   * safe id that cannot name a run at all. A traversal-unsafe id never reaches
-   * the store: {@link RunbookStateManager.toRunId} rejects it first. Anything
-   * else is invalid persisted state and is refused rather than adapted: there is
-   * no migration path, and the caller's recovery is always to finish, stop,
-   * prune, or restart the run.
+   * Returns `null` when a traversal-safe id has no matching record, which also
+   * covers a safe id that cannot name a run at all. Anything else is invalid
+   * persisted state and is refused rather than adapted: there is no migration
+   * path, and the caller's recovery is always to finish, stop, prune, or
+   * restart the run.
    *
    * @param id - The runbook state ID (e.g., 'rd_0123456789abcdef0123456789abcdef')
    * @returns The loaded RunbookState, or null when a traversal-safe `id` has no record
@@ -573,52 +478,79 @@ export class RunbookStateManager {
 
     // Legacy dynamic-step snapshots, foreign schema versions, and the two
     // required fields no reader may default, in that order. Shared with
-    // `RunbookStore.readRun` so the in-transaction readers — every
-    // `ctx.readState`, and so `rundown stash`/`pop` on both their bare and
-    // `--claim-id` paths — refuse the same shapes with the same message.
+    // `RunbookStore.readRun` so both readers refuse the same shapes with the
+    // same message.
     assertLoadablePersistedRun(raw, id);
-
-    // Shared with `RunbookStore.readRun` on the same reasoning as the gates
-    // above: a row that clears them and still fails the schema is refused in
-    // this method's taxonomy at BOTH readers, never as the bare `ZodError` the
-    // parse raises (#828).
     return parsePersistedRunState(raw, id, makeRunbookStateSchema(this.cwd));
   }
 
   /**
-   * Write a runbook state to the project's store.
+   * Read a runbook state together with the `state_version` it was read at.
    *
-   * Inserts the run row when no record for `state.id` exists yet and otherwise
-   * commits a wholesale replacement of the existing one, stamping the current
-   * schema version and a fresh `updatedAt` either way. Per-run captured output
-   * under `.rundown/runs/<id>/outputs/` is separate filesystem state and is not
-   * touched here.
+   * The read half of a read-derive-save span: hand the returned version to
+   * {@link save} and the write lands only if nobody wrote the run in between.
    *
-   * @param state - The runbook state to persist
-   * @throws {Error} When the run exists but the replacement cannot be committed
-   *   because a live execution owns it.
-   * @throws {ConcurrentStateModificationError} When another writer committed to
-   *   the same run first and the optimistic CAS budget was spent. Retryable.
+   * @param id - The runbook state ID
+   * @returns The state and its version, or null when the run does not exist
+   * @throws {Error} If `id` is traversal-unsafe
+   * @throws {InvalidRunbookStateError} If the record fails the persisted-state
+   *   gates or the structural parse
+   * @throws {LegacySnapshotError} If the record uses deprecated dynamic-step snapshots
    */
-  async save(state: RunbookState): Promise<void> {
+  async loadWithVersion(id: string): Promise<VersionedRunState | null> {
+    const runId = this.toRunId(id);
+    if (runId === null) {
+      return null;
+    }
+    const store = await this.store();
+    return store.loadRunWithVersion(runId);
+  }
+
+  /**
+   * Resolve an Owner Token hash to the run it owns.
+   *
+   * The sole authority lookup for mutating commands: a run id authorizes
+   * nothing. Resolves finished runs too, so a late command on one can be told
+   * that it finished.
+   *
+   * @param ownerTokenHash - Hash of the presented Owner Token
+   * @returns The owned run and its version, or null when no run carries the hash
+   * @throws {InvalidRunbookStateError} If the matching record fails the
+   *   persisted-state gates or the structural parse
+   * @throws {LegacySnapshotError} If the matching record uses deprecated snapshots
+   */
+  async findByOwnerTokenHash(ownerTokenHash: SecretHash): Promise<VersionedRunState | null> {
+    const store = await this.store();
+    return store.findRunByOwnerTokenHash(ownerTokenHash);
+  }
+
+  /**
+   * Persist a complete runbook state if and only if its row is still at
+   * `expectedVersion`.
+   *
+   * Stamps the current schema version and a fresh `updatedAt`. One conditional
+   * write, one outcome: the caller narrows the result and renders the refusal.
+   * For the throwing form see {@link update} and {@link mutate}.
+   *
+   * @param state - The complete state to persist
+   * @param expectedVersion - The version the caller read the run at
+   * @returns `committed` with the persisted state, or a typed refusal
+   * @throws {StoreInvariantError} When `state.id` is not a canonical run id
+   */
+  async save(state: RunbookState, expectedVersion: StateVersion): Promise<SaveRunResult> {
     const store = await this.store();
     const updated: RunbookState = {
       ...state,
       schemaVersion: CURRENT_SCHEMA_VERSION,
       updatedAt: new Date().toISOString(),
     };
-    const existing = await store.readRunJson(state.id);
-    if (existing === null) {
-      await store.createRun(updated);
-    } else {
-      this.requireCommitted(await store.mutateState(state.id, () => updated), state.id);
-    }
-    const next = updated.lifecycle ?? null;
-    if (next !== null) {
+    const result = await store.saveRun(state.id, expectedVersion, updated);
+    if (result.kind === 'committed' && updated.lifecycle !== undefined) {
       // Diagnostic trail for lifecycle transitions (#536 was found with this
       // signal). Enable with RUNDOWN_LOG_LEVEL=debug; the logger stamps pid.
-      void logger.debug('lifecycle-write', { runId: state.id, next });
+      void logger.debug('lifecycle-write', { runId: state.id, next: updated.lifecycle });
     }
+    return result;
   }
 
   /**
@@ -629,289 +561,66 @@ export class RunbookStateManager {
    *   strings (OUTPUTS), `ArtifactRecord` (exact ARTIFACT), and
    *   `readonly ArtifactRecord[]` (wildcard ARTIFACT).
    * - `templateVars` — `replace(...)` wholesale-replaces (replace-only; seeded once)
-   * - `resolvedCompletions` — `merge(...)` adds one entry; `replace(...)` rewrites the map
    * - `frameEntryCounts` — `replace(...)` wholesale-replaces (replace-only)
    * - All other fields — provided value is taken verbatim; omitted fields are preserved
    *
-   * Use the {@link merge} and {@link replace} constructors at call sites to make
-   * intent visible at the type level; passing a raw record without a tag is a
-   * compile error.
+   * One read, one derivation, one conditional save. A version that moved in
+   * between is refused, not retried.
    *
    * @param id - The runbook state ID to update
    * @param updates - Partial state updates with tagged ops on record-shaped fields
-   * @param options - Optional write options.
-   * @param options.guard - Parent-advance guard; when present the write refuses if the run has a live delegated child.
    * @returns The updated runbook state
    * @throws {Error} If the runbook with the given ID is not found
-   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a live delegated child blocks the advance.
+   * @throws {ConcurrentStateModificationError} If another write landed between
+   *   the read and the save
    */
-  async update(
-    id: string,
-    updates: RunbookStateUpdate,
-    options: { readonly guard?: ParentAdvanceGuard } = {},
-  ): Promise<RunbookState> {
-    const state = await this.mutate(id, () => updates, {
-      missingIsError: true,
-      ...guardOptions(options.guard),
-    });
-    if (state === null) {
-      throw new Error(`Runbook ${id} not found`);
-    }
-    return state;
+  async update(id: string, updates: RunbookStateUpdate): Promise<RunbookState> {
+    return this.mutate(id, () => updates);
   }
 
   /**
-   * Update an existing runbook state with a patch computed from the current
-   * state captured by the guarded store cycle.
+   * Derive a patch from the current state and persist it, in one
+   * read-derive-save cycle.
    *
-   * Use this for read-modify-write operations that replace whole fields such
-   * as `substepStates` or `resolvedCompletions`. The callback runs against the
-   * state read at the start of the cycle and the write commits only if that
-   * state's version is unchanged, so a concurrent writer cannot overwrite this
-   * one; a version that moved reruns the callback against fresh state.
+   * The builder runs exactly once, against the state read at the start of the
+   * cycle. Returning `null` leaves the run unchanged and writes nothing. A
+   * `state_version` that moved between the read and the save is refused as
+   * {@link ConcurrentStateModificationError}; the builder is not re-run.
    *
-   * Returning `null` leaves the current state unchanged and writes nothing.
-   *
-   * @param id - The runbook state ID to update
-   * @param buildUpdates - Callback that derives a patch from current state
-   * @param options - Optional write options.
-   * @param options.guard - Parent-advance guard; when present the write refuses if the run has a live delegated child.
-   * @returns The updated state, or current state when the callback returns `null`
+   * @param id - The runbook state ID to mutate
+   * @param build - Derives the patch from the current state; `null` means leave the state alone
+   * @returns The resulting state (the current state when the builder declined)
    * @throws {Error} If the runbook with the given ID is not found
-   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a live delegated child blocks the advance.
+   * @throws {ConcurrentStateModificationError} If another write landed between
+   *   the read and the save
    */
-  async updateWithState(
-    id: string,
-    buildUpdates: (
-      current: RunbookState,
-    ) => RunbookStateUpdate | null | Promise<RunbookStateUpdate | null>,
-    options: { readonly guard?: ParentAdvanceGuard } = {},
-  ): Promise<RunbookState> {
-    const updated = await this.updateWithStateIfExists(id, buildUpdates, options);
-    if (updated === null) {
-      throw new Error(`Runbook ${id} not found`);
-    }
-    return updated;
-  }
-
-  /**
-   * Like {@link updateWithState}, but returns `null` when the runbook does not
-   * exist instead of throwing.
-   *
-   * Use this for guarded read-modify-write operations where a missing runbook is
-   * a legitimate "nothing to do" outcome rather than an error (for example,
-   * consuming a resolved completion). The callback only runs when the runbook
-   * exists, so it always receives a non-null {@link RunbookState}.
-   *
-   * @param id - The runbook state ID to update
-   * @param buildUpdates - Callback that derives a patch from current state
-   * @param options - Optional write options.
-   * @param options.guard - Parent-advance guard; when present the write refuses if the run has a live delegated child.
-   * @returns The updated state, the current state when the callback returns
-   *   `null`, or `null` when the runbook does not exist
-   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a live delegated child blocks the advance.
-   */
-  async updateWithStateIfExists(
-    id: string,
-    buildUpdates: (
-      current: RunbookState,
-    ) => RunbookStateUpdate | null | Promise<RunbookStateUpdate | null>,
-    options: { readonly guard?: ParentAdvanceGuard } = {},
-  ): Promise<RunbookState | null> {
-    return await this.mutate(id, buildUpdates, {
-      missingIsError: false,
-      ...guardOptions(options.guard),
-    });
-  }
-
-  /**
-   * Like {@link updateWithStateIfExists}, but the callback additionally returns
-   * a typed value that flows out through the result instead of through a
-   * captured closure variable.
-   *
-   * Use this for guarded read-modify-write operations that must also report
-   * something they computed from the captured current state (for example,
-   * consuming and returning a resolved completion). The patch and the reported
-   * value are derived in the same callback against the same captured state, and
-   * the value is recaptured on every retry, so the reported value is always
-   * consistent with the patch that actually committed.
-   *
-   * When the runbook does not exist the callback never runs; the result is
-   * `{ state: null, value: null }`.
-   *
-   * @template R - Type of the value the callback reports.
-   * @param id - The runbook state ID to update.
-   * @param buildResult - Callback deriving `{ updates, value }` from current state.
-   * @returns The updated state (or `null` when missing) and the reported value
-   *   (or `null` when the runbook does not exist).
-   */
-  async updateWithStateReturning<R>(
-    id: string,
-    buildResult: (
-      current: RunbookState,
-    ) =>
-      | { updates: RunbookStateUpdate | null; value: R }
-      | Promise<{ updates: RunbookStateUpdate | null; value: R }>,
-  ): Promise<{ state: RunbookState | null; value: R | null }> {
-    const runId = this.toRunId(id);
-    if (runId === null) {
-      return { state: null, value: null };
-    }
-    const store = await this.store();
-    let captured: R | null = null;
-    const result = await store.mutateState(runId, async (current) => {
-      const { updates, value } = await buildResult(current);
-      // Captured on every attempt, so a retry against fresh state reports the
-      // value derived from the state that actually committed.
-      captured = value;
-      return updates === null
-        ? null
-        : applyRunbookStateUpdate(current, updates, new Date().toISOString());
-    });
-    if (result.kind === 'missing') {
-      return { state: null, value: null };
-    }
-    return { state: this.requireCommitted(result, id), value: captured };
-  }
-
-  /**
-   * Like {@link updateWithStateReturning}, but the callback derives the WHOLE
-   * next state rather than a patch.
-   *
-   * Use this when the next state comes from a derivation that already produced a
-   * complete `RunbookState` — an actor transition prepared by
-   * `RunbookActorService.prepareActorMutation` — so there is no patch to express
-   * and re-deriving one would be a lossy round trip. The returned state is
-   * committed verbatim under the same optimistic compare-and-swap, so the
-   * derivation and the version it commits onto are the same one.
-   *
-   * The callback runs once per attempt, exactly as
-   * {@link RunbookStore.mutateState} requires: on a stale version it is invoked
-   * again against the freshly read state and the earlier derivation is
-   * discarded. Callbacks must therefore be safe to repeat.
-   *
-   * Returning `next: null` leaves the run unchanged and writes nothing. When the
-   * runbook does not exist the callback never runs and the result is
-   * `{ state: null, value: null }`.
-   *
-   * `releaseOnCommit` folds a Run Release into the very transaction that commits
-   * the state, so the two can never be separately observable: a process that dies
-   * has either both or neither. A run committed terminal in one transaction and
-   * taken off session targeting in a later one leaves a window where the session
-   * still resolves to a finished run (#794). Being inside the commit makes it
-   * synchronous by type ({@link SyncWork}), and it runs at most once: losing
-   * attempts write nothing and therefore release nothing. Returning no releases
-   * is free — the session is not even read — so a caller arms it for a whole
-   * sequence rather than predicting which cycle will need it.
-   *
-   * @template R - Type of the value the callback reports.
-   * @param id - The runbook state ID to mutate.
-   * @param build - Callback deriving `{ next, value }` from the captured state.
-   * @param options - Optional Run Release committed with the state write.
-   * @param options.releaseOnCommit - Derives the releases to project, from the
-   *   state the transaction is committing. Applied in place, after the state
-   *   write lands; an empty result reads no session and writes none.
-   * @returns The committed state (or `null` when missing) and the reported value
-   *   (or `null` when the runbook does not exist).
-   * @throws {ConcurrentStateModificationError} When the optimistic retry budget
-   *   is spent under sustained contention.
-   * @throws {Error} When a derived release names any run but this one, returns a
-   *   non-array batch, and whatever reading the session for a non-empty batch
-   *   raises. Each rolls the state write back, so a caller told its release
-   *   failed is never also told its state committed.
-   * @throws {AsyncTransactionWorkError} When `options.releaseOnCommit` returns a
-   *   thenable. Forwarded from {@link RunbookStore.mutateState}, which this
-   *   passes `options` to whole; unreachable through the typed signature, and
-   *   guarded there because that failure is silent rather than loud.
-   */
-  async mutateStateReturning<R>(
+  async mutate(
     id: string,
     build: (
       current: RunbookState,
-    ) => { next: RunbookState | null; value: R } | Promise<{ next: RunbookState | null; value: R }>,
-    // Picked from the store's own options rather than re-spelled: this
-    // forwards `options` WHOLE, so a second declaration of the same field is a
-    // second place for one contract to drift, and the drift would not surface
-    // until the forwarded call itself stopped compiling.
-    options: Pick<MutateStateOptions, 'releaseOnCommit'> = {},
-  ): Promise<{ state: RunbookState | null; value: R | null }> {
-    const runId = this.toRunId(id);
-    if (runId === null) {
-      return { state: null, value: null };
-    }
-    const store = await this.store();
-    let captured: R | null = null;
-    const result = await store.mutateState(
-      runId,
-      async (current) => {
-        const { next, value } = await build(current);
-        // Captured on every attempt, so a retry against fresh state reports the
-        // value derived from the state that actually committed.
-        captured = value;
-        return next;
-      },
-      // Forwarded whole rather than rebuilt field by field. The store already
-      // decides on `releaseOnCommit !== undefined`, so a conditional here would
-      // only restate that decision — and restating it is untestable by
-      // construction: both arms reach the same transaction.
-      options,
-    );
-    if (result.kind === 'missing') {
-      return { state: null, value: null };
-    }
-    return { state: this.requireCommitted(result, id), value: captured };
-  }
-
-  /**
-   * Apply a derived patch to a run inside one guarded store cycle.
-   *
-   * The builder runs against the state read at the start of the cycle and reruns
-   * on a stale-version retry, which is what replaces holding the per-run lock
-   * across the read-modify-write.
-   *
-   * @param id - Runbook id.
-   * @param buildUpdates - Derives the patch; `null` means leave the state alone.
-   * @param options - Whether a missing run throws or resolves to null, and an optional guard.
-   * @param options.missingIsError - When true, a missing run throws; when false, it resolves to null.
-   * @param options.guard - Parent-advance guard forwarded to the store; when
-   *   present the write refuses if the run still has a live delegated child.
-   * @returns The resulting state, or null when missing and tolerated.
-   * @throws {Error} When the run is missing (and not tolerated) or owned by an
-   *   execution.
-   * @throws {ConcurrentStateModificationError} When the cycle lost to a
-   *   concurrent writer and the CAS budget was spent. Retryable.
-   * @throws {OpenDelegatedChildrenError} When `options.guard` is supplied and a
-   *   live delegated child blocks the advance.
-   */
-  private async mutate(
-    id: string,
-    buildUpdates: (
-      current: RunbookState,
     ) => RunbookStateUpdate | null | Promise<RunbookStateUpdate | null>,
-    options: { readonly missingIsError: boolean; readonly guard?: ParentAdvanceGuard },
-  ): Promise<RunbookState | null> {
-    const runId = this.toRunId(id);
-    if (runId === null) {
-      if (options.missingIsError) {
+  ): Promise<RunbookState> {
+    const current = await this.loadWithVersion(id);
+    if (current === null) {
+      throw new Error(`Runbook ${id} not found`);
+    }
+    const updates = await build(current.state);
+    if (updates === null) {
+      return current.state;
+    }
+    const next = applyRunbookStateUpdate(current.state, updates, new Date().toISOString());
+    const result = await this.save(next, current.stateVersion);
+    switch (result.kind) {
+      case 'committed':
+        return result.state;
+      case 'missing':
         throw new Error(`Runbook ${id} not found`);
-      }
-      return null;
+      case 'concurrent_modification':
+        throw new ConcurrentStateModificationError(
+          id,
+          `Run ${id} was modified concurrently by another writer.`,
+        );
     }
-    const store = await this.store();
-    const result = await store.mutateState(
-      runId,
-      async (current) => {
-        const updates = await buildUpdates(current);
-        return updates === null
-          ? null
-          : applyRunbookStateUpdate(current, updates, new Date().toISOString());
-      },
-      guardOptions(options.guard),
-    );
-    if (result.kind === 'missing' && !options.missingIsError) {
-      return null;
-    }
-    return this.requireCommitted(result, id);
   }
 
   /**
@@ -927,14 +636,6 @@ export class RunbookStateManager {
     const runId = this.toRunId(id);
     if (runId !== null) {
       const store = await this.store();
-      // The row delete cascades to claims, stack, stash, completions, and
-      // attempts, and refuses while an execution owns the run. Cascade is the
-      // rule for a run this delete OWNS a row about — `claims.controlled_run`
-      // among them — but not for `claims.parent_run_id`, which is `ON DELETE SET
-      // NULL`: deleting a parent must not destroy its children's claims, so
-      // those rows survive with a nulled column and a `delegation_json` that
-      // still names the deleted parent. `assertClaimColumnsMirrorDelegation`
-      // exempts exactly that pairing for this reason.
       await store.deleteRun(runId);
       // Logged immediately after the row is confirmed removed — and before the
       // outputs-dir cleanup below — so a later `fs.rm` failure cannot suppress
@@ -993,261 +694,41 @@ export class RunbookStateManager {
   }
 
   /**
-   * Load session data from the shared SQLite store.
-   *
-   * @returns Validated session data, or the default empty session when the
-   *   database has no session rows.
-   * @throws {InvalidPersistedSessionError} When the reconstructed session is
-   *   incompatible with the current schema.
-   */
-  async loadSession(): Promise<SessionData> {
-    const store = await this.store();
-    const session = await store.loadSession();
-    // The store reconstructs the session from typed columns. An incompatible
-    // database is rejected by schema version at open, not adapted per read.
-    const result = SessionDataSchema.safeParse(session);
-    if (!result.success) {
-      // Typed, not bare: the message has always stated the recovery, and a bare
-      // `Error` put it under an envelope titled "Unknown error" that argues
-      // against acting on it (#831).
-      throw new InvalidPersistedSessionError(
-        'Session data is invalid for this runbook schema. Finish or prune active runbooks and restart.',
-      );
-    }
-    return result.data;
-  }
-
-  /**
-   * Load a single claim by key, tombstones included.
-   *
-   * {@link loadSession} surfaces only active claims. This is the read a caller
-   * uses to tell a superseded bearer apart from an unknown one.
-   *
-   * @param key - Claim lookup key derived from the presented bearer.
-   * @returns The claim and its status, or null when no row carries that key.
-   */
-  async loadClaim(key: ClaimLookupKey): Promise<PresentedClaim | null> {
-    const store = await this.store();
-    return store.loadClaim(key);
-  }
-
-  /**
-   * Capture a run's current authority counters and state atomically.
-   *
-   * @param runId - Run whose bare controlling authority is required.
-   * @returns Captured authority plus the exact state read with it, or a typed refusal.
-   * @throws {Error} When persisted run state fails schema validation.
-   */
-  async captureRunAuthorityState(runId: RunId): Promise<CapturedRunStateResult> {
-    const store = await this.store();
-    return store.captureRunAuthorityState(runId);
-  }
-
-  /**
-   * Capture a named claim's authority and the run state it controls atomically.
-   *
-   * The re-capture half of a capture-then-commit span: a caller holding an
-   * earlier {@link CapturedAuthority} re-reads under the SAME claim key so a
-   * rotation surfaces as `claim_superseded` rather than silently resolving to
-   * whichever claim controls the run now.
-   *
-   * @param runId - Run the claim must control.
-   * @param claimKey - Lookup key of the previously captured claim.
-   * @returns Captured authority plus the exact state read with it, or a typed refusal.
-   * @throws {Error} When persisted run state fails schema validation.
-   */
-  async captureAuthorityState(
-    runId: RunId,
-    claimKey: ClaimLookupKey,
-  ): Promise<CapturedRunStateResult> {
-    const store = await this.store();
-    return store.captureAuthorityState(runId, claimKey);
-  }
-
-  /**
-   * Commit a whole next state under a previously captured authority.
-   *
-   * Re-classifies the commit row inside the write transaction, so the commit is
-   * compare-and-swapped against BOTH the captured state version and the captured
-   * claim generation — unlike {@link updateWithStateReturning}, whose cycle is
-   * version-only. A moved state version refuses `concurrent_modification`; a
-   * rotated or advanced claim refuses `claim_superseded`.
-   *
-   * @param captured - Authority captured earlier in the same span.
-   * @param next - The complete state to persist.
-   * @returns The committed state, or the first typed refusal.
-   */
-  async saveState(
-    captured: CapturedAuthority,
-    next: RunbookState,
-  ): Promise<GuardedMutationResult<RunbookState>> {
-    const store = await this.store();
-    return store.saveState(captured, next);
-  }
-
-  /**
-   * Persist session data.
-   *
-   * @remarks
-   * The write is one short transaction, so a concurrent reader never observes a
-   * partial session. It is still a wholesale replace: a caller that loads,
-   * mutates, and saves can lose a concurrent writer's change. Callers doing
-   * read-modify-write on session state should mutate inside a single store
-   * transaction rather than round-tripping through load/save.
-   *
-   * @param session - The session data to write
-   */
-  async saveSession(session: SessionData): Promise<void> {
-    const store = await this.store();
-    await store.saveSession(session);
-  }
-
-  /**
-   * Read-modify-write the session inside a single store transaction.
-   *
-   * The atomic replacement for `loadSession` -> mutate -> `saveSession`, which is
-   * lossy under concurrency. Session mutations MUST use this: it is what makes the
-   * workspace session lock unnecessary.
-   *
-   * `work` is synchronous by type ({@link SyncWork}): a transaction must never be
-   * held across an `await`.
-   *
-   * @template T - Value the mutation returns to its caller.
-   * @param work - Mutates `ctx.session` in place and returns the caller's result.
-   * @returns The work's return value, once committed.
-   */
-  async mutateSession<T>(work: (ctx: SessionMutationTxn) => SyncWork<T>): Promise<T> {
-    const store = await this.store();
-    return store.mutateSession(work);
-  }
-
-  /**
-   * {@link mutateSession} with typed execution-ownership refusals.
-   *
-   * Session mutations that can touch a run another process is executing use this
-   * form, so an ownership refusal reaches the caller as a distinct result arm
-   * rather than as a domain `null` or an opaque trigger-abort `Error`.
-   *
-   * @template T - Value the mutation returns to its caller.
-   * @param runIds - Affected runs in deterministic refusal order, or a selector
-   *   reading them off the session snapshot inside the transaction.
-   * @param work - Mutates `ctx.session` in place and returns the caller's result.
-   * @returns The committed value, or the first ownership refusal.
-   */
-  async mutateSessionGuarded<T>(
-    runIds: readonly RunId[] | ((session: SessionData) => readonly RunId[]),
-    work: (ctx: SessionMutationTxn) => SyncWork<T>,
-  ): Promise<SessionMutationResult<T>> {
-    const store = await this.store();
-    return store.mutateSessionGuarded(runIds, work);
-  }
-
-  /**
    * Initialize substep tracking state for a runbook step.
    *
    * Creates SubstepState entries for all substeps with 'pending' status.
-   * When `frameKey` is provided, entries from other frames are preserved
-   * (append semantics for FOR loop iterations).
+   * Entries from other frames are preserved (append semantics for FOR loop
+   * iterations), and existing same-frame entries for still-authored substeps
+   * keep their state.
    *
    * @param id - The runbook state ID
    * @param substeps - The substep definitions from the step
    * @param frameKey - Frame key scoping these entries to a FOR iteration
    * @throws {Error} If the runbook with the given ID is not found
+   * @throws {ConcurrentStateModificationError} If another write landed between
+   *   the read and the save
    */
   async initializeSubsteps(
     id: string,
     substeps: readonly Substep[],
     frameKey: FrameKey,
   ): Promise<void> {
-    await this.mutate(
-      id,
-      (state) => {
-        const existing = state.substepStates ?? [];
-        const authoredIds = new Set(substeps.map((substep) => substep.id));
-        const preserved = existing.filter(
-          (substepState) => substepState.frameKey !== frameKey || authoredIds.has(substepState.id),
-        );
-        const existingSameFrameIds = new Set(
-          preserved
-            .filter((substepState) => substepState.frameKey === frameKey)
-            .map((substepState) => substepState.id),
-        );
-        const initialized: SubstepState[] = substeps
-          .filter((substep) => !existingSameFrameIds.has(substep.id))
-          .map((substep) => ({ id: substep.id, frameKey, status: 'pending' }));
+    await this.mutate(id, (state) => {
+      const existing = state.substepStates ?? [];
+      const authoredIds = new Set(substeps.map((substep) => substep.id));
+      const preserved = existing.filter(
+        (substepState) => substepState.frameKey !== frameKey || authoredIds.has(substepState.id),
+      );
+      const existingSameFrameIds = new Set(
+        preserved
+          .filter((substepState) => substepState.frameKey === frameKey)
+          .map((substepState) => substepState.id),
+      );
+      const initialized: SubstepState[] = substeps
+        .filter((substep) => !existingSameFrameIds.has(substep.id))
+        .map((substep) => ({ id: substep.id, frameKey, status: 'pending' }));
 
-        return { substepStates: [...preserved, ...initialized] };
-      },
-      { missingIsError: true },
-    );
-  }
-
-  /**
-   * Update the FOR loop context for a runbook.
-   *
-   * FOR iteration advancement is owned by the core state machine. This method
-   * exists for direct state repairs and tests; runtime execution should mutate
-   * FOR context through actor-service sync.
-   *
-   * @internal
-   * @param id - The runbook state ID
-   * @param forStack - The updated FOR loop stack
-   * @returns The updated runbook state
-   * @throws {Error} If the runbook with the given ID is not found
-   */
-  async updateForContext(id: string, forStack: ForContext[]): Promise<RunbookState> {
-    const state = await this.mutate(
-      id,
-      (current) => {
-        const snapshot = current.snapshot as Record<string, unknown> | undefined;
-        const patchedSnapshot =
-          snapshot && typeof snapshot === 'object' && 'context' in snapshot
-            ? {
-                ...snapshot,
-                context: { ...(snapshot.context as Record<string, unknown>), forStack },
-              }
-            : snapshot;
-
-        return { forStack, snapshot: patchedSnapshot };
-      },
-      { missingIsError: true },
-    );
-    if (state === null) {
-      throw new Error(`Runbook ${id} not found`);
-    }
-    return state;
-  }
-
-  /**
-   * Mark a substep as completed with a result.
-   *
-   * Updates the substep's status to 'done' and records the pass/fail result.
-   *
-   * @param runbookId - The runbook state ID
-   * @param substepId - The substep ID to complete
-   * @param result - The substep result ('pass' or 'fail')
-   * @param frameKey - Frame key to scope the match
-   * @throws {Error} If the runbook with the given ID is not found
-   */
-  async completeSubstep(
-    runbookId: string,
-    substepId: string,
-    result: 'pass' | 'fail',
-    frameKey: FrameKey,
-  ): Promise<void> {
-    await this.mutate(
-      runbookId,
-      (state) => {
-        const substepStates = state.substepStates ?? [];
-        const updated = substepStates.map((s) =>
-          s.id === substepId && s.frameKey === frameKey
-            ? { ...s, status: 'done' as const, result }
-            : s,
-        );
-
-        return { substepStates: updated };
-      },
-      { missingIsError: true },
-    );
+      return { substepStates: [...preserved, ...initialized] };
+    });
   }
 }

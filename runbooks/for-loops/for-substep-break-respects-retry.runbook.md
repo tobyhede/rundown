@@ -6,16 +6,16 @@ scenarios:
     commands:
       - rd run --prompted for-substep-break-respects-retry.runbook.md
       # Attempt 1: sub1 FAIL (DEFER), sub2 FAIL (BREAK) → retry fires
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.2 --index 1
       # Attempt 2 (retry 1): same → retry fires again
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.2 --index 1
       # Attempt 3 (retry 2): retries exhausted → BREAK exits loop
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.2 --index 1
       # BREAK is non-accumulating → iterationResults=[] → vacuous pass → CONTINUE → step 2
-      - rd pass
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 # Substep BREAK Respects Iteration Retry

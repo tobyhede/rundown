@@ -9,8 +9,8 @@ scenarios:
     description: Frontmatter is parsed and displayed
     commands:
       - rd run --prompted metadata-header.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

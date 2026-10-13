@@ -76,24 +76,22 @@ debt. The fix is to move it, not to rationalise its location.
 
 ### Concurrent writes
 
-**Direction: one writer per run
-([ADR 0005](docs/adr/0005-one-writer-per-run.md)), accepted and not yet built.**
-Every run has exactly one owner, proven by its Owner Token, and only the owner's
-commands write it. A conflicting write is refused, never retried, and a child
-never writes its parent. Do not add new compare-and-swap retry loops, latches,
-fences, claim generations, grants, or file locks for run or session state, and
-do not extend the ones that exist: each is scheduled for deletion. A change that
-seems to need one is a design question to raise with the user, not a pattern to
-copy.
+**One writer per run ([ADR 0005](docs/adr/0005-one-writer-per-run.md)), being
+built in epic #899.** Every run has exactly one owner, proven by its Owner
+Token, and only the owner's commands write it. A conflicting write is refused,
+never retried, and a child never writes its parent. Do not add compare-and-swap
+retry loops, latches, fences, claim generations, grants, or file locks for run
+state. A change that seems to need one is a design question to raise with the
+user, not a pattern to copy.
 
-**Current code still uses the multi-writer mechanisms.** Anything that touches
-them follows [docs/internal/concurrency.md](docs/internal/concurrency.md). Three
-rules from it are easy to break:
+Run-state writes follow
+[docs/internal/concurrency.md](docs/internal/concurrency.md). Two rules from it
+are easy to break:
 
-- `concurrent_modification` is a reachable arm on any path that can be driven
-  concurrently. Handle or retry it; never document it as theoretical.
-- `build` callbacks passed to `mutateState` run once per attempt (up to 8) and
-  must be free of external side effects.
+- Every run-state write is one conditional save on `state_version`.
+  `concurrent_modification` is a reachable arm on any path that can be driven
+  concurrently: render it as itself (`CONCURRENT_MODIFICATION`), never retry it,
+  and never document it as theoretical.
 - File locks are released with `await using`, never from a bare `finally` (the
   RD-102 masking defect). File locks protect file-backed artifacts only (the
   artifact manifest, the sql.js driver, the plugin session lock).
@@ -159,24 +157,23 @@ surface must not invite.
 The full command and flag surface is canonical in the reference docs — **do not
 duplicate or reconstruct it here.** When stepping through a runbook, follow the
 `running-runbooks` skill for the execution protocol (when to
-`rundown pass`/`rundown fail`, claim/delegate, JSON vs `--text`) rather than the
-raw flag list.
+`rundown pass`/`rundown fail`, JSON vs `--text`) rather than the raw flag list.
 
-Post-R1, mutating commands on delegation-exposed runs must name their authority
-with `--claim-id`: orchestrators pass the run-control claim minted by
-`rundown run` (the `claim_id` on the `runbook_started` event), children pass the
-bearer claim from `rundown claim`; bare forms refuse with
-`ACTOR_CONTEXT_REQUIRED`. `--run <rd_…>` (run id from `rundown run` output /
-`runbookId` on events) is a read-only target selector only — never mutation
-authority: combining it with `--claim-id` is rejected `INVALID_SYNTAX`, and
-using it to mutate a delegation-exposed run is refused `ACTOR_CONTEXT_REQUIRED`.
-Read-only commands stay bare.
+`rundown run` prints the run's Owner Token once, as `owner_token` on the
+`runbook_started` event. Every mutating command (`pass`, `fail`, `goto`, `stop`,
+`complete`) names it with `--token <owner_token>`; a bare mutation is refused
+`TOKEN_REQUIRED`. `pass`/`fail` also require `--step` naming the current
+position, and `--index` inside a FOR iteration. `--run <rd_…>` (the `runbookId`
+on events) is a read-only selector, never mutation authority: combining it with
+`--token` is rejected `INVALID_SYNTAX`. Runbooks whose substeps compose other
+runbooks are refused at `run` with `RUNBOOK_COMPOSITION_UNSUPPORTED` until
+inline composition (#903) and delegation (#904) return. Read-only commands stay
+bare.
 
 - [docs/reference/cli.md](docs/reference/cli.md) — every `rundown`/`rd` command
-  (run, pass/fail, goto, status, stop, complete, stash/pop, ls, check, resolve,
-  echo, prune, scenario, scenario-suite, prompt, delegate, claim, abort,
-  collect) with flags and `--run` / `--step` / `--index` / `--claim-id`
-  semantics
+  (run, pass/fail, goto, status, stop, complete, ls, check, resolve, echo,
+  prune, scenario, scenario-suite, prompt, artifact) with flags and `--token` /
+  `--run` / `--step` / `--index` semantics
 - [docs/spec/cli-output.md](docs/spec/cli-output.md) — `--schema` JSON-output
   schemas for programmatic validation
 - [docs/reference/security.md](docs/reference/security.md) — policy flags
@@ -309,7 +306,7 @@ applies to all run data written to SQLite: structured `RunbookState` fields
 (step, variables, lifecycle, etc.) and the opaque `state.snapshot` blob stored
 inside `RunbookState`. Neither is exempt. Persisted runbook state carries the
 schema version in `CURRENT_SCHEMA_VERSION`
-(`packages/core/src/runbook/persisted-state-guards.ts`, currently `2`); state
+(`packages/core/src/runbook/persisted-state-guards.ts`, currently `3`); state
 with any other schema version or incompatible structure is invalid. On schema
 changes, running runbooks should be completed/closed and restarted. The CLI
 should detect invalid state (via schema version or structural guard) and prompt
@@ -323,15 +320,15 @@ not. Historically, #746, #772, and #827 each added a required field and left
 `CURRENT_SCHEMA_VERSION` at `1`; same-version old state was still refused by the
 structural parse (#775). Version `2` now records #854's opaque XState
 progression snapshot contract, so every v1 row is foreign and is refused as
-`invalid_schema_version` before structural parsing. In general, moving the
-constant changes _which_ rejection fires — `invalid_schema_version` (RD-309, via
-the cheap equality check) instead of `schema_validation_failed` (via the full
-parse) — so treat it as worth doing when that distinction matters, not as
-mandatory on every shape edit. See `CURRENT_SCHEMA_VERSION`'s own TSDoc for the
-one case where it is not optional: the opaque `snapshot` field is declared
-`z.unknown()` on purpose, so a change to the XState machine's context shape or
-state IDs is invisible to the structural parse and only the version gate can
-refuse it.
+`invalid_schema_version` before structural parsing; version `3` records #901's
+one-writer `runs` table. In general, moving the constant changes _which_
+rejection fires — `invalid_schema_version` (RD-309, via the cheap equality
+check) instead of `schema_validation_failed` (via the full parse) — so treat it
+as worth doing when that distinction matters, not as mandatory on every shape
+edit. See `CURRENT_SCHEMA_VERSION`'s own TSDoc for the one case where it is not
+optional: the opaque `snapshot` field is declared `z.unknown()` on purpose, so a
+change to the XState machine's context shape or state IDs is invisible to the
+structural parse and only the version gate can refuse it.
 
 `packages/core/__tests__/runbook/persisted-state-shape.test.ts` fails whenever
 the shape changes, whether or not that change needs a version bump — it is a
@@ -345,7 +342,7 @@ identity across runs — so that case is also decided by hand.
 **A fixture's `schemaVersion` field names the constant; it never hard-codes the
 number.** State meant to be readable uses `CURRENT_SCHEMA_VERSION`, state meant
 to be refused uses `FOREIGN_SCHEMA_VERSION` (exported from
-`core/testing/session-fixtures`). A literal in either position is what made #775
+`core/testing/run-fixtures`). A literal in either position is what made #775
 invisible for three PRs: a "valid" fixture pinned to `1` could not notice the
 constant going stale, and a "foreign" fixture pinned to a fixed future number
 would silently become valid current state the moment the constant reached it,

@@ -7,35 +7,31 @@ description: Use when implementing a written plan task-by-task — the per-task 
 
 <important>
 ## Runbook-Orchestrated Skill
-This runbook requires the plan's **artifact URI** as `PlanPath` — an `rd://…`
-value produced by `write-plan`, **not** a filesystem path. Resolve `PlanPath`
-first (ask the user if it is not already known). Load the execution protocol
-*before* starting, so you can handle delegated tasks the moment they appear:
+If a running `implement-plan` step sent you here, the runbook is already
+driving you: skip this block and apply the craft below.
 
-Load and follow the bundled `running-runbooks` skill before starting the
-runbook.
+Resolve `PlanPath` first: the plan's **artifact URI** (`rd://…`, produced by
+`write-plan`), **not** a filesystem path. Ask the user if it is not already
+known. To look it up from the `write-plan` run, read the `uri` field of
+`rundown artifact uri PlanPath --run <run_id>`
+(`rundown artifact ls --run <run_id>` lists the aliases).
 
-Stage 1 does not provide Codex hook parity for delegated child dispatch. If this
-workflow reaches a delegated step that requires automatic child-agent
-orchestration, stop and report that Stage 2 delegation hook support is required.
+The `execute-plan` runbook delegates its implement, review, and fix stages to
+other runbooks, and this build runs standalone runbooks only:
+`rundown run rundown:execute-plan --artifacts PlanPath=<rd://… plan URI>` is
+refused with `RUNBOOK_COMPOSITION_UNSUPPORTED` and creates no run (delegation
+returns in #904). Input refusals are reported before that one, so fixing
+`PlanPath` does not make it start.
 
-Then start it:
+What runs today is the implementation leaf on its own, a standalone runbook:
 
-- **Delegated pipeline** (`write-plan → execute-plan`): `PlanPath` is inherited
-  automatically — no explicit supply needed.
-- **Standalone**: pass the plan's artifact URI through the dedicated artifact
-  channel —
-  `rundown run rundown:execute-plan --artifacts PlanPath=<rd://… plan URI>`
-  (e.g. `--artifacts PlanPath=rd://artifacts/<ctx>/<run>/plan.json`). `PlanPath`
-  is declared `REQUIRED` and consumed as an `ARTIFACTS` input by the runbook, so
-  it must arrive as an `rd://` URI, not a filesystem path. Discover the alias
-  with `rundown artifact ls`, then read the `uri` field of
-  `rundown artifact uri PlanPath` (JSON is the default; agents do not add
-  `--text`).
+1. Load and follow the bundled `running-runbooks` skill.
+2. `rundown run rundown:implement-plan --artifacts PlanPath=<rd://… plan URI>`,
+   then follow the running-runbooks protocol (capture `owner_token` from
+   `runbook_started`; report each step with `--token` and `--step`).
 
-Capture the run id from `rundown run`: it is printed at start and echoed as
-`runbookId` on every event. This runbook delegates the implementer, so every
-orchestrator command must carry `--run <rd_…>`. </important>
+Tell the user the review and verify gates will not run as part of it.
+</important>
 
 Implement a written plan one task at a time, holding each task to its own tests
 and committing as you go. This skill is the **context** an execution runbook
@@ -50,7 +46,7 @@ in the runbook.
 ## When to Use
 
 - Implementing a plan produced by [writing-plans](../writing-plans/SKILL.md),
-  whether driven by the `execute-plan` runbook or by hand.
+  whether driven by the `implement-plan` runbook or by hand.
 - Resolving review findings against an already-implemented plan.
 
 ## When NOT to Use
@@ -82,8 +78,8 @@ The `execute-plan` runbook reviews the implemented changes and runs
 `npm run verify` after implementation, looping a fix step until both are clean.
 Your responsibility is to make those gates _reachable_: leave the tree building,
 tests passing for the work you did, and changes scoped to the plan. When a gate
-sends work back (via `address-review`), resolve the recorded `error`-level
-findings without expanding scope.
+sends work back, resolve the recorded `error`-level findings without expanding
+scope.
 
 ## When to Stop and Escalate
 
@@ -100,9 +96,4 @@ Never start implementation on `main`/`master` without explicit consent.
 
 - [writing-plans](../writing-plans/SKILL.md) — produces the plan this skill
   executes
-- [running-runbooks](../running-runbooks/SKILL.md) — executing the driving
-  runbook
-- Stage 1 delegated child dispatch note: automatic Codex child-agent
-  orchestration requires Stage 2 hook support
-- [composing-runbooks.md](../../../../docs/guides/composing-runbooks.md) — how
-  execute-plan composes the leaves
+- [running-runbooks](../running-runbooks/SKILL.md) — executing a runbook

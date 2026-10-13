@@ -47,3 +47,8 @@ How each part of a `SKILL.md` maps into a house-style runbook. Read alongside
   multiple artifacts. The parent composes leaves by listing their paths in a
   step body; it does not re-derive their artifact paths — it consumes each
   leaf's frontmatter `OUTPUTS`.
+
+A composing parent (rules 6 and 7) is refused by `rundown run` until #903 /
+#904, so only its leaves run today; see
+[Composition in this build](../../writing-runbooks/SKILL.md#composition-in-this-build).
+Tell the user when the conversion produces one.

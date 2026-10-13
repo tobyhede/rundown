@@ -6,13 +6,13 @@ scenarios:
     commands:
       - rd run --prompted for-break-retry.runbook.md
       # Attempt 1: sub1 FAIL (DEFER), sub2 FAIL (BREAK) → retry fires
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.2 --index 1
       # Attempt 2 (retry): sub1 FAIL, sub2 FAIL (BREAK) → retries exhausted, BREAK exits
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.2 --index 1
       # BREAK is non-accumulating → iterationResults=[] → vacuous pass → CONTINUE → step 2
-      - rd pass
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 # BREAK + Iteration RETRY

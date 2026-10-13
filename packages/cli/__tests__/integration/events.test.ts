@@ -5,7 +5,8 @@ import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
-  getActiveState,
+  requireOwnerToken,
+  requireRunId,
   runCliInProcess,
   type TestWorkspace,
 } from '../helpers/test-utils.js';
@@ -230,22 +231,10 @@ describe('force terminal command events', () => {
     await workspace.cleanup();
   });
 
-  async function startInlineChild(parentName: string, childName: string): Promise<void> {
+  async function startWaitingRun(name: string): Promise<{ token: string; runId: string }> {
     await writeFile(
-      join(workspace.cwd, parentName),
-      `# Event Parent
-
-## 1. Compose
-- PASS CONTINUE
-- FAIL STOP
-
-### 1.1 Inline child
-Launch child here.
-`,
-    );
-    await writeFile(
-      join(workspace.cwd, childName),
-      `# Event Child
+      join(workspace.cwd, name),
+      `# Event Run
 
 ## 1. Waiting
 - PASS COMPLETE
@@ -254,12 +243,9 @@ Launch child here.
 Waiting.
 `,
     );
-
-    const parent = await runCliInProcess(`run --prompted ${parentName}`, workspace);
-    expect(parent.exitCode).toBe(0);
-    const child = await runCliInProcess(`run ${childName} --step 1.1`, workspace);
-    expect(child.exitCode).toBe(0);
-    expect((await getActiveState(workspace))!.parentLinkage?.kind).toBe('inline');
+    const started = await runCliInProcess(`run --prompted ${name}`, workspace);
+    expect(started.exitCode).toBe(0);
+    return { token: requireOwnerToken(started.stdout), runId: requireRunId(started.stdout) };
   }
 
   /** Parse streamed JSONL lines whose snake_case `type` matches the given event. */
@@ -278,35 +264,26 @@ Waiting.
       .filter((parsed) => parsed.type === type);
   }
 
-  it('rd complete from an active inline child emits descendant-to-root runbook_completed events', async () => {
-    await startInlineChild('events-parent-complete.runbook.md', 'events-child-complete.runbook.md');
-    const activeChild = await getActiveState(workspace);
-    const childRunId = activeChild!.id;
-    const parentRunId = activeChild!.parentLinkage!.parentRunId;
+  it('rd complete --token emits one runbook_completed stamped with the run', async () => {
+    const { token, runId } = await startWaitingRun('events-complete.runbook.md');
 
-    const result = await runCliInProcess(['complete', 'done'], workspace);
+    const result = await runCliInProcess(['complete', 'done', '--token', token], workspace);
 
     expect(result.exitCode).toBe(0);
     const lines = eventLines(result.stdout, 'runbook_completed');
-    expect(lines).toHaveLength(2);
-    expect(lines[0].runbookId).toBe(childRunId);
-    expect(lines[1].runbookId).toBe(parentRunId);
-    expect(lines[1].seq).toBeGreaterThan(lines[0].seq);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].runbookId).toBe(runId);
+    expect(result.stdout).not.toContain('rdo_');
   });
 
-  it('rd stop from an active inline child emits descendant-to-root runbook_stopped events', async () => {
-    await startInlineChild('events-parent-stop.runbook.md', 'events-child-stop.runbook.md');
-    const activeChild = await getActiveState(workspace);
-    const childRunId = activeChild!.id;
-    const parentRunId = activeChild!.parentLinkage!.parentRunId;
+  it('rd stop --token emits one runbook_stopped stamped with the run and exits 1', async () => {
+    const { token, runId } = await startWaitingRun('events-stop.runbook.md');
 
-    const result = await runCliInProcess(['stop', 'stopped'], workspace);
+    const result = await runCliInProcess(['stop', 'stopped', '--token', token], workspace);
 
     expect(result.exitCode).toBe(1);
     const lines = eventLines(result.stdout, 'runbook_stopped');
-    expect(lines).toHaveLength(2);
-    expect(lines[0].runbookId).toBe(childRunId);
-    expect(lines[1].runbookId).toBe(parentRunId);
-    expect(lines[1].seq).toBeGreaterThan(lines[0].seq);
+    expect(lines).toHaveLength(1);
+    expect(lines[0].runbookId).toBe(runId);
   });
 });

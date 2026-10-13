@@ -5,11 +5,15 @@ description: Use when running the Rundown end-to-end test runbook and reporting 
 
 # End-to-End Testing
 
-Run the end-to-end test through Rundown state. Do not improvise. Start:
+Run the end-to-end test through Rundown state; do not improvise:
 
 ```bash
 rundown run rundown:end-to-end-test
 ```
+
+<important>
+This build runs standalone runbooks only. The end-to-end runbook composes other runbooks (steps 2 and 3), so `rundown run rundown:end-to-end-test` is refused with `RUNBOOK_COMPOSITION_UNSUPPORTED` and creates no run. Inline composition returns in #903 and delegation in #904. Report the refusal to the user as the result and stop.
+</important>
 
 ## Flow
 
@@ -25,38 +29,18 @@ parent.
 
 ## Operating Rules
 
-- Follow the active prompt. Use default JSON output; never add `--text` (it is
-  human-only output, not part of the agent protocol).
-- Treat `rundown run`, `rundown pass`, `rundown fail`, `rundown claim`, and
-  `rundown collect` output as the next context. Parent-side pass/fail/collect
-  carry `--run <rd_…>` (capture the run id from `rundown run` output, echoed as
-  `runbookId` on every event); child-side commands carry
-  `--claim-id <claim_id>`.
-- Use `rundown status` only to recover orientation after an error or
-  interruption.
-- Pass only after the current step is complete; fail when it cannot be completed
-  as written.
+- Follow the [running-runbooks](../running-runbooks/SKILL.md) protocol: capture
+  `owner_token` from `runbook_started` and report each step with `rundown pass`
+  / `rundown fail` carrying `--token <owner_token>` and `--step <position>`.
+- Follow the active prompt. Use default JSON output; never add `--text`
+  (human-only, not part of the agent protocol).
+- Treat `rundown run`, `rundown pass`, and `rundown fail` output as the next
+  context.
+- Use `rundown status --run <run_id>` only to recover orientation after an error
+  or interruption.
+- Pass only after the step is complete; fail when it cannot be completed as
+  written.
 - Preserve state on errors. Do not prune, clear, or delete `.rundown`.
-
-The DELEGATE step auto-issues a claim token (`delegations` in `rundown status`).
-Claim it:
-
-```bash
-rundown claim <token>                  # returns claim_id; dispatch the child to a subagent
-```
-
-Drive the claimed child like any runbook: advance each step with
-`rundown pass --claim-id <claim_id>` / `rundown fail --claim-id <claim_id>`.
-Prompted child steps need this claim-id transition to advance. On a
-delegation-exposed run, a bare `rundown pass`/`rundown fail` is refused with
-`ACTOR_CONTEXT_REQUIRED` regardless of claim state (exposure is sticky). A
-`--run`-targeted parent advance is additionally refused with
-`OPEN_DELEGATED_CHILDREN` while a claimed child is open.
-
-When the child's final step completes it auto-resolves its parent substep and
-the parent auto-aggregates and advances. `rundown pass/fail --claim-id` is
-idempotent on a resolved child, so it also confirms or overrides a child you
-stop early.
 
 ## Artifacts
 
@@ -77,9 +61,9 @@ write-one/check-another mismatches are defects.
 
 ## Feedback
 
-Feedback must be JSON matching `review.schema.json`. Use empty `items` when
-there are no findings.
+Feedback must be JSON matching `review.schema.json`. Use empty `items` for no
+findings.
 
 Capture only concrete issues: unclear prompts, wrong delegation boundary,
 missing/wrong artifact variables, schema mismatches, required manual inference,
-failed commands with observed output.
+failed commands with output.

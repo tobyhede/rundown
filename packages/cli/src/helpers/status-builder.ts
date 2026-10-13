@@ -12,16 +12,16 @@ import {
   countNumberedSteps,
   isArtifactValue,
   mergeEffectiveVars,
+  parseRunbook,
   renderArtifactValue,
   toPublicArtifactVarValue,
   WORK_DIR,
   type ActionBlockData,
+  type ActiveRunbookEntry,
   type ArtifactPathOptions,
   type PublicArtifactVarValue,
-  type ResolvedCompletion,
   type RunbookState,
 } from '@rundown-org/core';
-import { resolvedStepHasSubsteps } from '@rundown-org/parser';
 import {
   getStepRetryMax,
   buildMetadata,
@@ -29,6 +29,7 @@ import {
   formatActionForDisplay,
 } from '../services/execution.js';
 import { getRunbookFromState } from './runbook-loader.js';
+import { getStatus } from './status.js';
 
 /**
  * Internal data structure for status command output.
@@ -39,30 +40,20 @@ import { getRunbookFromState } from './runbook-loader.js';
  * - `step` for step details (name/description)
  *
  * Both text and JSON modes use this same structure — the renderer
- * decides how to format it.
+ * decides how to format it. It never carries an Owner Token.
  *
  * @see StatusResponse in `@rundown-org/core` for the public API contract
  */
 export interface StatusOutputData {
-  /** Whether a runbook is currently active */
+  /** Whether the described run is running (detail form) */
   active: boolean;
-  /** Final lifecycle status when the inspected runbook has ended. */
-  status?: 'completed' | 'stopped';
-  /** Whether the active runbook is stashed (enforcement paused) */
-  stashed: boolean;
+  /** Final lifecycle status when the inspected run has ended. */
+  status?: 'completed' | 'stopped' | 'abandoned';
   /** Runbook file path (flat, not nested) */
   file?: string;
-  /** SQLite run/session authority path. */
+  /** SQLite run authority path. */
   state?: string;
-  /**
-   * Run id this status describes.
-   *
-   * Not caller-scoped: `isCallerScoped` withholds variable *contents* (`vars`,
-   * `artifacts`) from callers who cannot identify themselves, not identity.
-   * `parentLinkage` already discloses `parentRunId` and `tokenHash`
-   * unconditionally, and no read command accepts a run id as a selector, so a
-   * plain caller gains no access from it.
-   */
+  /** Run id this status describes. */
   runId?: string;
   /** Whether runbook is in prompted mode */
   prompted?: boolean;
@@ -74,7 +65,6 @@ export interface StatusOutputData {
     for?: { index: number; end?: number };
     frameKey?: string;
     entry?: number;
-    unresolved?: number;
   };
   /** Current step details */
   step?: {
@@ -83,48 +73,12 @@ export interface StatusOutputData {
   };
   /** Most recent action taken (pass, fail, goto). */
   lastAction?: ActionBlockData;
-  /** Active delegations on substeps. */
-  delegations?: Array<{
-    substep: string;
-    runbook: string;
-    state: 'pending' | 'claimed' | 'cancelled';
-    childRunId?: string;
-    /** Non-secret claim lookup key for claimed delegation correlation. */
-    claimKey?: string;
-    /** SHA-256 hash of the delegation token for cross-system correlation. */
-    tokenHash: string;
-  }>;
-  /**
-   * Parent linkage projection when this runbook was launched as a child.
-   *
-   * Present on both active and stashed states when the runbook carries a
-   * {@link RunbookState.parentLinkage}. Surfaces the identifying fields a
-   * SubagentStop hook (or other consumer) needs to correlate a consumed
-   * delegation token with the child it produced.
-   */
-  parentLinkage?: {
-    kind: 'delegation' | 'inline';
-    /** Present only for `kind: 'delegation'`. SHA-256 hash of the delegation token. */
-    tokenHash?: string;
-    parentRunId: string;
-    parentStepId: string;
-    /** Parent's step name, read at link time for both kinds (e.g., "1"). */
-    parentStep: string;
-    /**
-     * Parent frame key for completion-key construction. Read from the parent's
-     * live frame at link time for `inline`; stamped when the delegation was
-     * issued for `delegation`. This projection flattens both kinds into one
-     * shape, so the timing is per-kind rather than uniform — see
-     * `DelegationLinkage` / `InlineLinkage` in core's `runbook/types.ts`.
-     */
-    parentFrameKey: string;
-    /** Parent entry counter, captured with `parentFrameKey` — same per-kind timing. */
-    parentEntry: number;
-  };
   /** Effective variable space: templateVars (base) merged with step OUTPUTS (state.variables). */
   vars?: Record<string, string>;
   /** Structured effective artifact variables with uri and path projections. */
   artifacts?: Record<string, PublicArtifactVarValue>;
+  /** Every persisted run (bare `rundown status` list form). */
+  runs?: ActiveRunbookEntry[];
 }
 
 function buildArtifactPathOptions(state: RunbookState, cwd: string): ArtifactPathOptions {
@@ -151,8 +105,7 @@ function buildVars(
 ): Record<string, string> | undefined {
   // Single-source the merge order through mergeEffectiveVars (sole producer
   // of EffectiveVars). state.variables (StoredOutputs) wins over
-  // state.templateVars (InitialTemplateVars) on key collision — the same
-  // precedence delegation snapshots and OUTPUTS frames use.
+  // state.templateVars (InitialTemplateVars) on key collision.
   //
   // Status output requires Record<string, string>, so the merged view is
   // post-filtered to scalars and renderable artifact records. Other arrays,
@@ -184,229 +137,115 @@ function buildArtifacts(
 }
 
 /**
- * Project a RunbookState's parentLinkage into the status output shape.
+ * Build status data when the project has no persisted runs.
  *
- * Returns undefined when the state carries no parent linkage.
- *
- * @param state - Runbook state to inspect
- * @returns Minimal projection suitable for status output, or undefined
- */
-function buildParentLinkage(state: RunbookState): StatusOutputData['parentLinkage'] {
-  const linkage = state.parentLinkage;
-  if (!linkage) return undefined;
-  return {
-    kind: linkage.kind,
-    ...(linkage.kind === 'delegation' ? { tokenHash: linkage.tokenHash } : {}),
-    parentRunId: linkage.parentRunId,
-    parentStepId: linkage.parentStepId,
-    parentStep: linkage.parentStep,
-    parentFrameKey: linkage.parentFrameKey,
-    parentEntry: linkage.parentEntry,
-  };
-}
-
-/**
- * Count substeps that have no resolved completion for the active frame+entry.
- * @param substeps - Array of substeps to check for resolution
- * @param resolvedCompletions - Map of completion keys to resolved completions
- * @param activeFrameKey - Current active frame key for scoping lookups
- * @param activeEntry - Current active entry number for scoping lookups
- * @returns Number of substeps without a resolved completion
- */
-function countUnresolvedSubsteps(
-  substeps: ReadonlyArray<{ id: string }>,
-  resolvedCompletions: Record<string, ResolvedCompletion> | undefined,
-  activeFrameKey: string,
-  activeEntry: number,
-): number {
-  const resolvedSubsteps = new Set(
-    Object.values(resolvedCompletions ?? {})
-      .filter(
-        (completion): completion is typeof completion & { targetSubstep: string } =>
-          completion.targetFrameKey === activeFrameKey &&
-          completion.targetEntry === activeEntry &&
-          completion.targetSubstep !== undefined,
-      )
-      .map((completion) => completion.targetSubstep),
-  );
-  return substeps.filter((substep) => !resolvedSubsteps.has(substep.id)).length;
-}
-
-/**
- * Build status data when no runbook is active and nothing is stashed.
- *
- * @returns StatusOutputData indicating inactive state
+ * @returns StatusOutputData with an empty run list
  */
 export function buildInactiveStatus(): StatusOutputData {
-  return { active: false, stashed: false };
+  return { active: false, runs: [] };
 }
 
 /**
- * Build status data for a stashed-only runbook (no active runbook).
+ * Count a persisted run's numbered steps from its stored source.
  *
- * @param stashedState - The stashed runbook state
+ * Parses only: the count is fixed by the source's `## N.` headings, and
+ * template rendering (variables, helpers, FOR bounds) never adds or removes a
+ * top-level step, so a list row does not pay for — or fail on — a render.
+ * A run whose source is missing or no longer parses has no total; its row
+ * omits the field instead of taking down the listing.
+ *
+ * @param state - The persisted run
+ * @returns The numbered step count, or undefined when the source is unusable
+ */
+function countPersistedSteps(state: RunbookState): number | undefined {
+  if (state.runbookSrc === undefined) return undefined;
+  try {
+    return countNumberedSteps(parseRunbook(state.runbookSrc));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Build the bare `rundown status` list: one entry per persisted run with its
+ * id, runbook, lifecycle and position. Never a token.
+ *
+ * Each row's step total comes from parsing the run's stored source, never from
+ * rendering it, and a run whose source cannot be parsed omits `total` rather
+ * than failing the listing.
+ *
+ * @param states - Every persisted run, as the manager lists them
+ * @returns StatusOutputData whose `runs` carries the list
+ */
+export function buildRunListStatus(states: readonly RunbookState[]): StatusOutputData {
+  const runs: ActiveRunbookEntry[] = states.map((state) => {
+    const total = countPersistedSteps(state);
+    const step = state.substep ? `${state.step}.${state.substep}` : state.step;
+    return {
+      id: state.id,
+      runbook: state.runbook.path,
+      status: getStatus(state),
+      step,
+      ...(total !== undefined ? { total } : {}),
+      ...(state.title !== undefined ? { title: state.title } : {}),
+    };
+  });
+  return { active: false, runs };
+}
+
+/**
+ * Build status data for one run (`rundown status --run <id>`).
+ *
+ * Resolves current step, builds action block data, and projects the
+ * effective variables. A finished run reports its lifecycle as `status`
+ * with `active: false`.
+ *
+ * @param runState - The run state
  * @param cwd - Current working directory (for step resolution)
- * @returns StatusOutputData with stashed runbook position info
+ * @returns StatusOutputData with full run details
  */
-export function buildStashedStatus(stashedState: RunbookState, cwd: string): StatusOutputData {
-  const steps = getRunbookFromState(stashedState, cwd);
-  const totalSteps = countNumberedSteps(steps);
-  const metadata = buildMetadata(stashedState);
-  const parentLinkage = buildParentLinkage(stashedState);
-  const artifactPathOptions = buildArtifactPathOptions(stashedState, cwd);
-  const vars = buildVars(stashedState, artifactPathOptions);
-  const artifacts = buildArtifacts(stashedState, artifactPathOptions);
-  // Caller-scoped vars (inherited from a parent runbook via delegation
-  // OUTPUTS/inputs or via inline templateVars) are only surfaced to callers
-  // who can identify themselves. Plain status sees position and file path
-  // but not the variable contents — the original caller can recover
-  // visibility by `rd unstash`-ing the runbook back into the active stack
-  // (where `buildActiveStatus` re-includes vars), or for delegated children
-  // by passing `--claim-id`.
-  const isCallerScoped = stashedState.parentLinkage != null;
-
-  return {
-    active: false,
-    stashed: true,
-    file: metadata.file,
-    state: metadata.state,
-    ...(metadata.runId != null && { runId: metadata.runId }),
-    ...(metadata.prompted != null && { prompted: metadata.prompted }),
-    position: buildStepPosition(
-      stashedState.step,
-      totalSteps,
-      stashedState.substep,
-      stashedState.forStack,
-    ),
-    ...(parentLinkage ? { parentLinkage } : {}),
-    ...(vars != null && !isCallerScoped && { vars }),
-    ...(artifacts != null && !isCallerScoped && { artifacts }),
-  };
-}
-
-/**
- * Read-model options for {@link buildActiveStatus}.
- */
-export interface ActiveStatusOptions {
-  /**
-   * Session claim join map: childRunId → claimKey (#531). When provided, a
-   * delegation whose COMPUTED state is `claimed` and whose childRunId has a
-   * matching entry is surfaced with its `claimKey` so orphaned claims are
-   * recoverable from `rundown status` without inspecting SQLite directly.
-   */
-  readonly claimKeyByChildRunId?: ReadonlyMap<string, string>;
-}
-
-/**
- * Build status data for an active runbook.
- *
- * Resolves current step, builds action block data, collects pending steps
- * and delegations.
- *
- * @param activeState - The active runbook state
- * @param cwd - Current working directory (for step resolution)
- * @param stashedId - Optional stashed runbook ID (to indicate stashed flag)
- * @param lifecycleStatus - Optional terminal lifecycle status override ('completed' | 'stopped')
- * @param options - Read-model options (session claim join map)
- * @returns StatusOutputData with full active runbook details
- */
-export function buildActiveStatus(
-  activeState: RunbookState,
-  cwd: string,
-  stashedId?: string,
-  lifecycleStatus?: 'completed' | 'stopped',
-  options: ActiveStatusOptions = {},
-): StatusOutputData {
-  const steps = getRunbookFromState(activeState, cwd);
-  const currentStepIndex = steps.findIndex((s) => s.name === activeState.step);
+export function buildRunStatus(runState: RunbookState, cwd: string): StatusOutputData {
+  const steps = getRunbookFromState(runState, cwd);
+  const currentStepIndex = steps.findIndex((s) => s.name === runState.step);
   const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
   const totalSteps = countNumberedSteps(steps);
-  const displayStep = activeState.step;
+  const displayStep = runState.step;
+  const lifecycle = runState.lifecycle ?? 'running';
 
-  const metadata = buildMetadata(activeState);
+  const metadata = buildMetadata(runState);
 
   // Build action block data if lastAction exists
   let actionBlockData: ActionBlockData | undefined;
-  if (activeState.lastAction) {
+  if (runState.lastAction) {
     const retryMaxForAction = currentStep ? getStepRetryMax(currentStep) : 0;
-    const retryDisplayCount = extractRetryDisplayCount(
-      activeState.snapshot,
-      activeState.retryCount,
-    );
+    const retryDisplayCount = extractRetryDisplayCount(runState.snapshot, runState.retryCount);
     const actionStr = formatActionForDisplay(
-      activeState.lastAction,
+      runState.lastAction,
       retryDisplayCount,
       retryMaxForAction,
     );
     actionBlockData = { action: actionStr };
-    if (activeState.lastResult) {
-      actionBlockData.result = activeState.lastResult === 'pass' ? 'PASS' : 'FAIL';
+    if (runState.lastResult) {
+      actionBlockData.result = runState.lastResult === 'pass' ? 'PASS' : 'FAIL';
     }
   }
 
   const basePosition = buildStepPosition(
     displayStep,
     totalSteps,
-    activeState.substep,
-    activeState.forStack,
+    runState.substep,
+    runState.forStack,
   );
-  const activeFrameKey = activeState.activeFrameKey;
-  const activeEntry = activeState.activeEntry;
-  const unresolved =
-    currentStep &&
-    resolvedStepHasSubsteps(currentStep) &&
-    currentStep.substeps.length &&
-    activeFrameKey &&
-    activeEntry !== undefined
-      ? countUnresolvedSubsteps(
-          currentStep.substeps,
-          activeState.resolvedCompletions,
-          activeFrameKey,
-          activeEntry,
-        )
-      : undefined;
+  const activeFrameKey = runState.activeFrameKey;
+  const activeEntry = runState.activeEntry;
 
-  const parentLinkage = buildParentLinkage(activeState);
-
-  const delegations = (activeState.substepStates ?? [])
-    .filter((ss) => ss.delegation != null)
-    // Show delegations from the current frame only; include unscoped entries (simple steps)
-    .filter((ss) => !activeFrameKey || !ss.frameKey || ss.frameKey === activeFrameKey)
-    .map((ss) => {
-      const delegation = ss.delegation!;
-      const childRunId = delegation.childRunId;
-      const entryState =
-        delegation.cancelledAt != null
-          ? ('cancelled' as const)
-          : childRunId != null
-            ? ('claimed' as const)
-            : ('pending' as const);
-      // Gate on the COMPUTED state, never childRunId presence: a cancelled-
-      // after-claim delegation retains childRunId with state 'cancelled', and
-      // attaching claimKey there would fail the DelegationStatusEntrySchema
-      // refine (#531).
-      const claimKey =
-        entryState === 'claimed' && childRunId != null
-          ? options.claimKeyByChildRunId?.get(childRunId)
-          : undefined;
-      return {
-        substep: ss.id,
-        runbook: delegation.childRunbookPath,
-        state: entryState,
-        ...(childRunId != null ? { childRunId } : {}),
-        ...(claimKey != null ? { claimKey } : {}),
-        tokenHash: delegation.tokenHash,
-      };
-    });
-
-  const artifactPathOptions = buildArtifactPathOptions(activeState, cwd);
-  const vars = buildVars(activeState, artifactPathOptions);
-  const artifacts = buildArtifacts(activeState, artifactPathOptions);
+  const artifactPathOptions = buildArtifactPathOptions(runState, cwd);
+  const vars = buildVars(runState, artifactPathOptions);
+  const artifacts = buildArtifacts(runState, artifactPathOptions);
 
   return {
-    active: lifecycleStatus === undefined,
-    ...(lifecycleStatus !== undefined ? { status: lifecycleStatus } : {}),
-    stashed: !!stashedId,
+    active: lifecycle === 'running',
+    ...(lifecycle !== 'running' ? { status: lifecycle } : {}),
     file: metadata.file,
     state: metadata.state,
     ...(metadata.runId != null && { runId: metadata.runId }),
@@ -415,7 +254,6 @@ export function buildActiveStatus(
       ...basePosition,
       ...(activeFrameKey ? { frameKey: activeFrameKey } : {}),
       ...(activeEntry !== undefined ? { entry: activeEntry } : {}),
-      ...(unresolved !== undefined ? { unresolved } : {}),
     },
     ...(currentStep && {
       step: {
@@ -424,8 +262,6 @@ export function buildActiveStatus(
       },
     }),
     lastAction: actionBlockData,
-    ...(delegations.length > 0 ? { delegations } : {}),
-    ...(parentLinkage ? { parentLinkage } : {}),
     ...(vars ? { vars } : {}),
     ...(artifacts ? { artifacts } : {}),
   };

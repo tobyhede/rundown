@@ -9,10 +9,10 @@ scenarios:
     description: Fail step 2, GOTO 1, pass both steps
     commands:
       - rd run --prompted goto-step-backward.runbook.md
-      - rd pass
-      - rd fail
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 2
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

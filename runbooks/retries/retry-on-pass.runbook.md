@@ -9,16 +9,16 @@ scenarios:
     description: Passes three times, exhausts pass-retry, continues to next step
     commands:
       - rd run --prompted retry-on-pass.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
   fail-exits:
     description: Fails on first attempt, stops the runbook
     commands:
       - rd run --prompted retry-on-pass.runbook.md
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1
     result: STOP
   auto-execution:
     description: Auto-execute passes three times, continues

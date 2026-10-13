@@ -16,7 +16,6 @@ export {
   commandStartedEffect,
   createExecutionEffectCollector,
   policyDeniedEffect,
-  projectDelegateFrontier,
 } from './execution-observation.js';
 export type {
   CommandStartedObservationInput,

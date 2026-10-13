@@ -2,7 +2,6 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { hashDelegationToken } from '@rundown-org/core';
 
 // ESM under ts-jest: bare __dirname is undefined, so derive it from import.meta.url
 // BEFORE any path.resolve(__dirname, ...) or top-level await import.
@@ -17,7 +16,7 @@ const { dispatch } = await import('../src/dispatcher.js');
 const { Session } = await import('../src/session.js');
 import type { HookInput } from '../src/shared/index.js';
 
-const TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+const LEGACY_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
 
 afterAll(() => {
   if (ORIGINAL_PLUGIN_ROOT === undefined) {
@@ -27,7 +26,7 @@ afterAll(() => {
   }
 });
 
-describe('minimal dispatch contract (run + delegate)', () => {
+describe('minimal dispatch contract (inert delegation hooks, #901)', () => {
   let cwd: string;
   beforeEach(async () => {
     cwd = await mkdtemp(path.join(tmpdir(), 'rd-contract-'));
@@ -36,46 +35,44 @@ describe('minimal dispatch contract (run + delegate)', () => {
     await rm(cwd, { recursive: true, force: true });
   });
 
-  async function markDelegated(agentId = 'agent-1'): Promise<void> {
+  /** Plant the pre-#901 per-agent token map a stale workspace might still carry. */
+  async function plantStaleDelegationMetadata(agentId = 'agent-1'): Promise<void> {
     const session = new Session(cwd);
     await session.set('metadata', {
       delegation_active_tokens: {
         [agentId]: {
           kind: 'delegation-active-token',
           agent_id: agentId,
-          tokenHash: hashDelegationToken(TOKEN),
+          tokenHash: `sha256:${'a'.repeat(64)}`,
           createdAt: '2026-06-08T00:00:00.000Z',
         },
       },
     });
   }
 
-  it('PreToolUse(Agent) carrying a delegation token injects claim context', async () => {
+  it('PreToolUse(Agent) carrying a claim marker is allowed with no context (TODO #907)', async () => {
     const input: HookInput = {
       hook_event_name: 'PreToolUse',
       cwd,
       tool_name: 'Agent',
-      tool_input: { prompt: `Do work. RD_CLAIM_TOKEN=${TOKEN}` },
+      tool_input: { prompt: `Do work. RD_CLAIM_TOKEN=${LEGACY_TOKEN}` },
     };
     const result = await dispatch(input);
-    expect(result.context ?? '').toMatch(/rundown claim/);
-    expect(result.blockReason).toBeUndefined();
+    expect(result).toStrictEqual({});
   });
 
-  it('SubagentStop with an unclosed delegation and no rundown state blocks for closure', async () => {
-    await markDelegated();
+  it('SubagentStop is allowed even over stale delegation metadata (TODO #907)', async () => {
+    await plantStaleDelegationMetadata();
     const input: HookInput = { hook_event_name: 'SubagentStop', cwd, agent_id: 'agent-1' };
     const result = await dispatch(input);
-    expect(result.blockReason).toMatch(/rundown status|claim-id|close/i);
+    expect(result).toStrictEqual({});
   });
 
-  it('PreToolUse(Bash) is no longer routed (delegation closure is enforced by core)', async () => {
-    // The plugin intentionally does NOT intercept Bash anymore. Core's
-    // resolveTransitionTarget is the authoritative refusal for a bare parent
-    // transition while delegated children are open. Even with an active
-    // delegation marked on the session, a bare `rundown pass` Bash command must pass
-    // through the plugin untouched — no block, no context, no stop.
-    await markDelegated();
+  it('PreToolUse(Bash) is not routed: a bare `rundown pass` reaches the CLI untouched', async () => {
+    // The CLI is the authority gate (TOKEN_REQUIRED on a bare mutation). The
+    // plugin does not intercept Bash in T1; #907 adds the claim/release
+    // `--agent-id` stamping hook, which is a rewrite, not a refusal.
+    await plantStaleDelegationMetadata();
     const input: HookInput = {
       hook_event_name: 'PreToolUse',
       cwd,
@@ -84,6 +81,6 @@ describe('minimal dispatch contract (run + delegate)', () => {
       tool_input: { command: 'rundown pass' },
     };
     const result = await dispatch(input);
-    expect(result).toEqual({});
+    expect(result).toStrictEqual({});
   });
 });

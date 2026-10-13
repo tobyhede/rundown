@@ -13,7 +13,6 @@ import {
 } from '../src/schemas.js';
 import { isJsonArrayStream, type RunId } from '../src/runbook/types.js';
 import { buildFrameKey } from '../src/runbook/targeting.js';
-import { makeDelegationCredentialDescriptor } from '../src/testing/delegation-fixtures.js';
 
 const VALID_RUN_ID = `rd_${'a'.repeat(32)}`;
 
@@ -345,50 +344,6 @@ describe('RunbookStateSchema finalVars', () => {
   it('RunbookStateSchema accepts finalVars with numeric values', () => {
     const state = createValidState({ finalVars: { PlanPath: 42 } });
     expect(RunbookStateSchema.parse(state).finalVars).toEqual({ PlanPath: 42 });
-  });
-});
-
-describe('RunbookStateSchema resolvedCompletions finalVars', () => {
-  it('accepts resolved completions with string finalVars', () => {
-    const state = createValidState({
-      resolvedCompletions: {
-        '1||1|1': {
-          agentId: 'delegation',
-          result: 'pass',
-          targetStep: '1',
-          targetSubstep: '1',
-          targetFrameKey: '1|',
-          targetEntry: 1,
-          finalVars: { ChildResult: 'ready' },
-          completedAt: '2026-01-01T00:00:00.000Z',
-        },
-      },
-    });
-
-    expect(RunbookStateSchema.parse(state).resolvedCompletions?.['1||1|1']?.finalVars).toEqual({
-      ChildResult: 'ready',
-    });
-  });
-
-  it('accepts resolved completion finalVars with numeric values', () => {
-    const state = createValidState({
-      resolvedCompletions: {
-        '1||1|1': {
-          agentId: 'delegation',
-          result: 'pass',
-          targetStep: '1',
-          targetSubstep: '1',
-          targetFrameKey: '1|',
-          targetEntry: 1,
-          finalVars: { ChildResult: 42 },
-          completedAt: '2026-01-01T00:00:00.000Z',
-        },
-      },
-    });
-
-    expect(RunbookStateSchema.parse(state).resolvedCompletions?.['1||1|1']?.finalVars).toEqual({
-      ChildResult: 42,
-    });
   });
 });
 
@@ -985,58 +940,6 @@ describe('makeRunbookStateSchema variables — JsonArrayStream validation', () =
   });
 });
 
-describe('makeRunbookStateSchema resolvedCompletions finalVars — JsonArrayStream validation', () => {
-  it('accepts JsonArrayStream in resolved completion finalVars when path stays inside project root', () => {
-    const schema = makeRunbookStateSchema('/project');
-    const state = createValidState({
-      resolvedCompletions: {
-        '1||1|1': {
-          agentId: 'delegation',
-          result: 'pass',
-          targetStep: '1',
-          targetSubstep: '1',
-          targetFrameKey: '1|',
-          targetEntry: 1,
-          finalVars: {
-            items: { kind: 'json-array-stream', path: '/project/items.jsonl' },
-          },
-          completedAt: '2026-01-01T00:00:00.000Z',
-        },
-      },
-    });
-
-    const result = schema.safeParse(state);
-
-    expect(result.success).toBe(true);
-    if (result.success) {
-      const data = result.data as ValidatedRunbookState;
-      expect(isJsonArrayStream(data.resolvedCompletions?.['1||1|1']?.finalVars?.items)).toBe(true);
-    }
-  });
-
-  it('rejects JsonArrayStream in resolved completion finalVars when path escapes project root', () => {
-    const schema = makeRunbookStateSchema('/project');
-    const state = createValidState({
-      resolvedCompletions: {
-        '1||1|1': {
-          agentId: 'delegation',
-          result: 'pass',
-          targetStep: '1',
-          targetSubstep: '1',
-          targetFrameKey: '1|',
-          targetEntry: 1,
-          finalVars: {
-            items: { kind: 'json-array-stream', path: '/outside/items.jsonl' },
-          },
-          completedAt: '2026-01-01T00:00:00.000Z',
-        },
-      },
-    });
-
-    expect(() => schema.parse(state)).toThrow(/escapes project root/i);
-  });
-});
-
 describe('frame-key validation in persisted state', () => {
   const MALFORMED = [
     ['no iteration separator', 'no-iteration-separator'],
@@ -1070,107 +973,6 @@ describe('frame-key validation in persisted state', () => {
     const result = RunbookStateSchema.safeParse(createValidState({ activeFrameKey: frameKey }));
 
     expect(result.success).toBe(true);
-  });
-});
-
-describe('makeRunbookStateSchema — SEC1 nested snapshot var protection', () => {
-  const escaping = { kind: 'json-array-stream', path: '/etc/passwd' };
-  const safe = { kind: 'json-array-stream', path: '/project/data.jsonl' };
-
-  it('rejects state with JsonArrayStream in contextSnapshot.vars escaping project root', () => {
-    const schema = makeRunbookStateSchema('/project');
-    const state = createValidState({
-      substepStates: [
-        {
-          id: 'sub1',
-          frameKey: '1|',
-          status: 'done',
-          result: 'pass',
-          delegation: {
-            credential: makeDelegationCredentialDescriptor(),
-            tokenHash: `sha256:${'a'.repeat(64)}`,
-            childRunbookPath: '/project/child.md',
-            childRunbookRef: { source: 'project', path: 'child.md' },
-            contextSnapshot: {
-              vars: { items: escaping },
-              ancestors: [],
-            },
-            childRunId: null,
-            createdAt: new Date().toISOString(),
-            cancelledAt: null,
-          },
-        },
-      ],
-    });
-    const result = schema.safeParse(state);
-    expect(result.success).toBe(false);
-  });
-
-  it('accepts state with JsonArrayStream in contextSnapshot.vars within project root', () => {
-    const schema = makeRunbookStateSchema('/project');
-    const state = createValidState({
-      substepStates: [
-        {
-          id: 'sub1',
-          frameKey: '1|',
-          status: 'done',
-          result: 'pass',
-          delegation: {
-            credential: makeDelegationCredentialDescriptor(),
-            tokenHash: `sha256:${'a'.repeat(64)}`,
-            childRunbookPath: '/project/child.md',
-            childRunbookRef: { source: 'project', path: 'child.md' },
-            contextSnapshot: {
-              vars: { items: safe },
-              ancestors: [],
-            },
-            childRunId: null,
-            createdAt: new Date().toISOString(),
-            cancelledAt: null,
-          },
-        },
-      ],
-    });
-    const result = schema.safeParse(state);
-    expect(result.success).toBe(true);
-  });
-
-  it('rejects state with JsonArrayStream in ancestors[].vars escaping project root', () => {
-    const schema = makeRunbookStateSchema('/project');
-    const state = createValidState({
-      substepStates: [
-        {
-          id: 'sub1',
-          frameKey: '1|',
-          status: 'done',
-          result: 'pass',
-          delegation: {
-            credential: makeDelegationCredentialDescriptor(),
-            tokenHash: `sha256:${'a'.repeat(64)}`,
-            childRunbookPath: '/project/child.md',
-            childRunbookRef: { source: 'project', path: 'child.md' },
-            contextSnapshot: {
-              vars: {},
-              ancestors: [
-                {
-                  runId: 'run-1',
-                  runbook: 'parent.md',
-                  step: '1',
-                  substep: null,
-                  vars: { evil: escaping },
-                  at: new Date().toISOString(),
-                },
-              ],
-            },
-            childRunId: null,
-            createdAt: new Date().toISOString(),
-            cancelledAt: null,
-          },
-        },
-      ],
-    });
-    const result = schema.safeParse(state);
-    expect(result.success).toBe(false);
   });
 });
 
@@ -1502,33 +1304,45 @@ describe('RunbookStateSchema lastAction internal failures', () => {
   });
 });
 
-describe('RunbookStateSchema lastAction RETRY_ERROR', () => {
-  it('accepts RETRY_ERROR with code and message', () => {
-    const state = createValidState({
-      lifecycle: 'stopped',
-      lastAction: {
-        type: 'RETRY_ERROR',
-        origin: 'direct',
-        code: 'RD-902',
-        message: 'retry hook failed',
-      },
-    });
+describe('RunbookStateSchema lifecycle union', () => {
+  it.each(['running', 'completed', 'stopped', 'abandoned'] as const)(
+    'accepts lifecycle %s',
+    (lifecycle) => {
+      const parsed = RunbookStateSchema.parse(createValidState({ lifecycle }));
+      expect(parsed.lifecycle).toBe(lifecycle);
+    },
+  );
 
-    const parsed = RunbookStateSchema.parse(state);
-    expect(parsed.lastAction).toEqual({
-      type: 'RETRY_ERROR',
-      origin: 'direct',
-      code: 'RD-902',
-      message: 'retry hook failed',
-    });
+  it('rejects a lifecycle outside the union', () => {
+    expect(() => RunbookStateSchema.parse(createValidState({ lifecycle: 'stashed' }))).toThrow();
+  });
+});
+
+describe('RunbookStateSchema one-writer shape', () => {
+  // The v2 multi-writer fields have no home in v3. Each is refused by the
+  // structural parse rather than stripped, so a row that still carries one is
+  // reported as invalid state and never silently adapted.
+  it.each([
+    ['resolvedCompletions', { resolvedCompletions: {} }],
+    ['parentLinkage', { parentLinkage: { kind: 'inline', parentRunId: `rd_${'1'.repeat(32)}` } }],
+    ['nested', { nested: { runbook: 'x', instanceId: 'y' } }],
+  ])('rejects a row carrying %s', (_label, extra) => {
+    expect(RunbookStateSchema.safeParse({ ...createValidState(), ...extra }).success).toBe(false);
   });
 
-  it('rejects RETRY_ERROR without code or message', () => {
+  it('rejects a substep state carrying a child record', () => {
     const state = createValidState({
-      lifecycle: 'stopped',
-      lastAction: { type: 'RETRY_ERROR', origin: 'direct', message: 'no code' },
+      substepStates: [
+        { id: '1', frameKey: '1|', status: 'running', delegation: { childRunId: null } },
+      ],
     });
+    expect(RunbookStateSchema.safeParse(state).success).toBe(false);
+  });
 
-    expect(() => RunbookStateSchema.parse(state)).toThrow();
+  it('accepts a bare substep state', () => {
+    const state = createValidState({
+      substepStates: [{ id: '1', frameKey: '1|', status: 'done', result: 'pass' }],
+    });
+    expect(RunbookStateSchema.safeParse(state).success).toBe(true);
   });
 });

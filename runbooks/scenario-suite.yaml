@@ -12,8 +12,8 @@ cases:
     file: transitions/default-implicit.runbook.md
     commands:
       - rd run --prompted default-implicit.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 
   pass-stop-stopped:
@@ -21,7 +21,7 @@ cases:
     file: transitions/pass-stop.runbook.md
     commands:
       - rd run --prompted pass-stop.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
     result: STOP
 
   forced-stop-command-stopped:
@@ -29,7 +29,7 @@ cases:
     file: transitions/pass-stop.runbook.md
     commands:
       - rd run --prompted pass-stop.runbook.md
-      - rd stop "operator stopped"
+      - rd stop --token ${TOKEN} "operator stopped"
     result: STOP
 
   forced-complete-command-completed:
@@ -37,7 +37,7 @@ cases:
     file: transitions/pass-complete.runbook.md
     commands:
       - rd run --prompted pass-complete.runbook.md
-      - rd complete "enough evidence"
+      - rd complete --token ${TOKEN} "enough evidence"
     result: COMPLETE
 
   fail-continue-completed:
@@ -45,8 +45,8 @@ cases:
     file: transitions/fail-continue.runbook.md
     commands:
       - rd run --prompted fail-continue.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 
   # retries/
@@ -55,8 +55,8 @@ cases:
     file: retries/retry-success.runbook.md
     commands:
       - rd run --prompted retry-success.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 1
     result: COMPLETE
 
   retry-exhaustion-stop:
@@ -64,8 +64,8 @@ cases:
     file: retries/retry-exhaustion-stop.runbook.md
     commands:
       - rd run --prompted retry-exhaustion-stop.runbook.md
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 1
     result: STOP
 
   # goto/
@@ -74,8 +74,8 @@ cases:
     file: goto/goto-step.runbook.md
     commands:
       - rd run --prompted goto-step.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 3
     result: COMPLETE
 
   goto-from-fail-recovered:
@@ -83,8 +83,8 @@ cases:
     file: goto/goto-from-fail.runbook.md
     commands:
       - rd run --prompted goto-from-fail.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 
   # named-steps/
@@ -93,7 +93,7 @@ cases:
     file: named-steps/named-step-basic.runbook.md
     commands:
       - rd run --prompted named-step-basic.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
     result: COMPLETE
 
   # substeps/
@@ -102,9 +102,9 @@ cases:
     file: substeps/mixed-substeps.runbook.md
     commands:
       - rd run --prompted mixed-substeps.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.Cleanup
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 
   # for-loops/
@@ -129,119 +129,14 @@ cases:
       - rd run --allow-all --input-json 'Items=[]' outputs-json-array-for.runbook.md
     result: COMPLETE
 
-  delegate-typed-inheritance-completed:
-    description: Delegated child inherits typed number, array, and object values
-    file: delegation/delegate-typed-inheritance.runbook.md
-    commands:
-      - "true # delegate-typed-inheritance-child.runbook.md"
-      - rd run delegate-typed-inheritance.runbook.md --input-json 'NumberValue=42' --input-json 'ArrayValue=["alpha","beta"]' --input-json 'ObjectValue={"count":2,"enabled":true}'
-      - rd claim ${TOKEN}
-    result: COMPLETE
-
   # prompts/
   implicit-prompt-completed:
     description: Pass both implicit prompt steps
     file: prompts/implicit-prompt.runbook.md
     commands:
       - rd run --prompted implicit-prompt.runbook.md
-      - rd pass
-      - rd pass
-    result: COMPLETE
-
-  # delegation/
-  delegate-basic-completed:
-    description: Delegate substep to child, child auto-completes
-    file: delegation/delegate-basic.runbook.md
-    commands:
-      - "true # delegation-child-pass.runbook.md"
-      - rd run delegate-basic.runbook.md
-      - rd claim ${TOKEN}
-    result: COMPLETE
-
-  delegate-targeted-idempotent-echo-completed:
-    description: >-
-      Targeted `rd delegate --step` echoes the auto-issued token instead of
-      erroring (issue #468 — the /rundown:planning flow), then claim completes.
-      ${TOKEN} is captured from the `rd run` entry frontier, so it stays valid
-      after the idempotent echo.
-    file: delegation/delegate-basic.runbook.md
-    commands:
-      - "true # delegation-child-pass.runbook.md"
-      - rd run delegate-basic.runbook.md
-      - rd delegate --step 1.1 --claim-id ${RUN_CLAIM_ID}
-      - rd claim ${TOKEN}
-    result: COMPLETE
-
-  delegate-failure-child-fails:
-    description: Child fails, failure propagates STOP to parent
-    file: delegation/delegate-failure-child-fails.runbook.md
-    commands:
-      - "true # delegation-child-fail.runbook.md"
-      - rd run delegate-failure-child-fails.runbook.md
-      - rd claim ${TOKEN}
-    result: STOP
-
-  delegate-abort-pending:
-    description: Create delegation then abort before claim
-    file: delegation/delegate-abort.runbook.md
-    commands:
-      - "true # delegation-child-pass.runbook.md"
-      - rd run --prompted delegate-abort.runbook.md
-      - rd abort ${TOKEN} --claim-id ${RUN_CLAIM_ID}
-      - rd pass --claim-id ${RUN_CLAIM_ID}
-    result: COMPLETE
-
-  delegate-bare-pass-refused:
-    description: >-
-      A bare rd pass (no --run / --claim-id) on a delegating run is refused
-      with ACTOR_CONTEXT_REQUIRED — mutations against delegation-exposed runs
-      require named authority.
-    file: delegation/delegate-open-children-guard.runbook.md
-    commands:
-      - "true # delegation-child-manual-one-step.runbook.md"
-      - rd run --prompted delegate-open-children-guard.runbook.md
-      - "! rd pass"
-    expect:
-      errors:
-        - code: ACTOR_CONTEXT_REQUIRED
-          command: pass
-
-  # agent-dispatch/
-  agent-dispatch-orchestrator-completed:
-    description: Same orchestrator claims two children and completes them by claim id
-    file: agent-dispatch/orchestrator.runbook.md
-    commands:
-      - "true # agent-child-prompted.runbook.md"
-      - rd run --prompted orchestrator.runbook.md
-      - rd claim ${TOKEN}
-      - rd claim ${TOKEN_2}
-      - rd pass --claim-id ${CLAIM_ID_2}
-      - rd pass --claim-id ${CLAIM_ID}
-    result: COMPLETE
-
-  agent-dispatch-sibling-fan-out-completed:
-    description: Two sibling agents claim and complete separate delegated children
-    file: agent-dispatch/sibling-fan-out.runbook.md
-    commands:
-      - "true # agent-child-prompted.runbook.md"
-      - rd run --prompted sibling-fan-out.runbook.md
-      - rd claim ${TOKEN}
-      - rd claim ${TOKEN_2}
-      - rd pass --claim-id ${CLAIM_ID}
-      - rd pass --claim-id ${CLAIM_ID_2}
-    result: COMPLETE
-
-  agent-dispatch-claim-stash-completed:
-    description: Claimed stash refuses anonymous pop before claim-id restore completes it
-    file: agent-dispatch/ownership-refusal.runbook.md
-    commands:
-      - "true # agent-child-prompted.runbook.md"
-      - rd run --prompted ownership-refusal.runbook.md
-      - rd claim ${TOKEN}
-      - rd stash --claim-id ${CLAIM_ID}
-      - "! rd pop"
-      - rd pop --claim-id ${CLAIM_ID}
-      - rd pass --claim-id ${CLAIM_ID}
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 
   # for-loops/ (new coverage)
@@ -272,16 +167,16 @@ cases:
     commands:
       - rd run --prompted for-substep-break-respects-retry.runbook.md
       # Attempt 1: sub1 FAIL (DEFER), sub2 FAIL (BREAK) -> retry fires
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.2 --index 1
       # Attempt 2 (retry 1): same -> retry fires again
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.2 --index 1
       # Attempt 3 (retry 2): retries exhausted -> BREAK exits loop
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.2 --index 1
       # BREAK is non-accumulating -> iterationResults=[] -> vacuous pass -> step 2
-      - rd pass
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 
   for-iteration-retry-after-retry:
@@ -325,7 +220,7 @@ cases:
     file: artifacts/artifacts-file-reference.runbook.md
     commands:
       - rd run --prompted artifacts-file-reference.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
     expect:
       result: COMPLETE
       artifacts:
@@ -372,9 +267,9 @@ cases:
     file: transitions/fail-all-standalone.runbook.md
     commands:
       - rd run --prompted fail-all-standalone.runbook.md
-      - rd fail
-      - rd pass
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.2
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 
   fail-all-standalone-stopped:
@@ -382,8 +277,8 @@ cases:
     file: transitions/fail-all-standalone.runbook.md
     commands:
       - rd run --prompted fail-all-standalone.runbook.md
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1
+      - rd fail --token ${TOKEN} --step 1.2
     result: STOP
 
   all-modifier-one-fails-stopped:
@@ -391,8 +286,8 @@ cases:
     file: transitions/all-modifier.runbook.md
     commands:
       - rd run --prompted all-modifier.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.2
     result: STOP
 
   any-modifier-mixed-completed:
@@ -400,8 +295,8 @@ cases:
     file: transitions/any-modifier.runbook.md
     commands:
       - rd run --prompted any-modifier.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.2
     result: COMPLETE
 
   # named-steps/ (new coverage)
@@ -410,49 +305,4 @@ cases:
     file: named-steps/named-step-for-loop.runbook.md
     commands:
       - rd run named-step-for-loop.runbook.md
-    result: COMPLETE
-
-  # stash-pop/
-  stash-pop-basic-resumed:
-    description: Stash mid-execution, pop to resume, then complete
-    file: stash-pop/stash-pop-basic.runbook.md
-    commands:
-      - rd run --prompted stash-pop-basic.runbook.md
-      - rd pass
-      - rd stash
-      - rd pop
-      - rd pass
-    result: COMPLETE
-
-  stash-pop-interleave-completed:
-    description: Stash A, run B to completion, pop A and complete
-    file: stash-pop/stash-pop-interleave.runbook.md
-    commands:
-      - rd run --prompted stash-pop-interleave.runbook.md
-      - rd pass
-      - rd stash
-      - rd run stash-pop-interleave-child.runbook.md
-      - rd pop
-      - rd pass
-    result: COMPLETE
-
-  # delegation/ (cross-feature)
-  delegate-named-step-completed:
-    description: Named step delegates substep to child
-    file: delegation/delegate-named-step.runbook.md
-    commands:
-      - "true # delegation-child-pass.runbook.md"
-      - rd run delegate-named-step.runbook.md
-      - rd claim ${TOKEN}
-    result: COMPLETE
-
-  # composition/
-  step-runbook-list-completed:
-    description: All child workflows pass
-    file: composition/step-runbook-list.runbook.md
-    commands:
-      - rd run --prompted step-runbook-list.runbook.md
-      - rd pass --claim-id ${RUN_CLAIM_ID_2}
-      - rd pass --claim-id ${RUN_CLAIM_ID_3}
-      - rd pass --claim-id ${RUN_CLAIM_ID_4}
     result: COMPLETE

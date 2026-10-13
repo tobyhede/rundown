@@ -5,11 +5,12 @@ import * as path from 'node:path';
 import { RunbookStateSchema } from '../../src/schemas.js';
 import { getRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import {
+  CURRENT_SCHEMA_VERSION,
   InvalidRunbookStateError,
   LegacySnapshotError,
   RunbookStateManager,
-} from '../../src/runbook/index.js';
-import { CURRENT_SCHEMA_VERSION, applyRunbookStateUpdate } from '../../src/runbook/state.js';
+  applyRunbookStateUpdate,
+} from '../../src/runbook/state.js';
 import type { RunbookState } from '../../src/runbook/types.js';
 import {
   brandInitialTemplateVarsForTest,
@@ -22,7 +23,7 @@ import {
   FOREIGN_SCHEMA_VERSION,
   readPersistedRunState,
   writeRawRunJson,
-} from '../../src/testing/session-fixtures.js';
+} from '../../src/testing/run-fixtures.js';
 
 const BASE_RUN_ID = `rd_${'1'.repeat(32)}`;
 const INVALID_RUN_ID = `rd_${'2'.repeat(32)}`;
@@ -580,31 +581,18 @@ describe('applyRunbookStateUpdate — stamps, never migrates', () => {
   });
 });
 
-describe('pre-#772 inline shape — refused by the structural parse, not the version gate', () => {
-  // The regression #775 names. Three PRs added a required field to the persisted
-  // run state without moving CURRENT_SCHEMA_VERSION: #746 introduced
-  // `StepInlineChild.startedAt`, #772 replaced it with a required `started`, and
-  // #827 made `prompted` required. Per CLAUDE.md § Active Development Stance and
-  // § State Persistence, the constant was deliberately left at `1` rather than
-  // moved to cover this: no persisted state outside a local clone or CI run is
-  // worth protecting with the nicer classification, and the structural parse
-  // already refuses this shape on its own. This block pins what that refusal
-  // actually looks like at each reader. The fixture deliberately carries the
-  // current constant so a legitimate version bump does not hide this parser
-  // classification behind the earlier version gate.
-  //
-  // The shape below is what a run persisted mid-inline-launch on a pre-#772 build
-  // carries: `inline.startedAt`, no `inline.started`. Everything else about it is
-  // current and valid, so the missing field is the only thing that can
-  // legitimately refuse it.
-  const PRE_STARTED_RUN_ID = `rd_${'7'.repeat(32)}`;
-  const PRE_STARTED_CHILD_ID = `rd_${'8'.repeat(32)}`;
-  // Stamp the historical structural shape with the current version on purpose:
-  // this suite isolates the structural parser by clearing the version gate.
-  const PRE_STARTED_SCHEMA_VERSION = CURRENT_SCHEMA_VERSION;
+describe('multi-writer substep record — refused by the structural parse, not the version gate', () => {
+  // The structural parse's own refusal, isolated from the version gate: the
+  // fixture is stamped with the CURRENT version so nothing before the parse can
+  // refuse it. The shape is what a v2 row carried on a delegated substep — the
+  // `delegation` child record one writer per run (ADR 0005) removed. A row
+  // this version does not understand is refused as invalid state and never
+  // stripped into something it can read.
+  const STALE_RUN_ID = `rd_${'7'.repeat(32)}`;
+  const STALE_CHILD_ID = `rd_${'8'.repeat(32)}`;
 
-  const preStartedInlineState = {
-    id: PRE_STARTED_RUN_ID,
+  const staleSubstepState = {
+    id: STALE_RUN_ID,
     runbook: { source: 'project', path: 'parent.md' },
     runbookPath: 'parent.md',
     step: '1',
@@ -617,14 +605,10 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
         id: '1',
         frameKey: '1|',
         status: 'running',
-        inline: {
-          childRunbookPath: 'child.md',
-          childRunbookRef: { source: 'project', path: 'child.md' },
-          contextSnapshot: { vars: {}, ancestors: [] },
-          childRunId: PRE_STARTED_CHILD_ID,
+        delegation: {
+          childRunId: STALE_CHILD_ID,
           createdAt: '2026-08-13T00:00:00.000Z',
-          // The pre-#772 latch field. `started` — required since #772 — is absent.
-          startedAt: null,
+          cancelledAt: null,
         },
       },
     ],
@@ -633,14 +617,14 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
     templateVars: {},
     prompted: false,
     lifecycle: 'running',
-    schemaVersion: PRE_STARTED_SCHEMA_VERSION,
+    schemaVersion: CURRENT_SCHEMA_VERSION,
   };
 
   let tmpDir: string;
 
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rundown-test-'));
-    await seedRawRunState(tmpDir, preStartedInlineState);
+    await seedRawRunState(tmpDir, staleSubstepState);
   });
 
   afterEach(async () => {
@@ -651,13 +635,13 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
   });
 
   it('carries the current version to isolate structural refusal', () => {
-    expect(preStartedInlineState.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(staleSubstepState.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
   });
 
   it('clears the version gate and is refused by the structural parse through RunbookStateManager.load', async () => {
     const manager = new RunbookStateManager(tmpDir);
 
-    const load = manager.load(PRE_STARTED_RUN_ID);
+    const load = manager.load(STALE_RUN_ID);
 
     await expect(load).rejects.toBeInstanceOf(InvalidRunbookStateError);
     // The reason, not only the class. `invalid_schema_version` and
@@ -666,7 +650,7 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
     // only the parse's reason is correct here, since the version matches.
     await expect(load).rejects.toMatchObject({
       defect: {
-        runId: PRE_STARTED_RUN_ID,
+        runId: STALE_RUN_ID,
         reason: 'schema_validation_failed',
       },
     });
@@ -674,33 +658,22 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
 
   it('clears the version gate and is refused as invalid state on both store read seams', async () => {
     const store = await getRunbookStore(tmpDir);
-    const runId = brandRunIdForTest(PRE_STARTED_RUN_ID);
+    const runId = brandRunIdForTest(STALE_RUN_ID);
 
-    // `loadRun` and the in-transaction `ctx.readState` share one validating
-    // read, and this is the shape that reaches its parse: the version check
-    // passes (both are `1`), so nothing before the parse can refuse the row.
-    // Until #828 the parse threw a bare `ZodError` here — outside the taxonomy
-    // `isRecoverableActiveStackError` classifies on, so it surfaced as RD-999
-    // "Unknown error" and left a `--claim-id` bearer unable to finish, stop or
-    // prune the run. Both seams, because pinning only `loadRun` would leave the
-    // transactional read — the one `rundown stash` / `pop` go through on all
-    // four of their paths — unpinned.
+    // `loadRun` and the in-transaction `readState` share one validating read,
+    // and this is the shape that reaches its parse: the version check passes,
+    // so nothing before the parse can refuse the row. Until #828 the parse
+    // threw a bare `ZodError` here — outside the taxonomy the CLI classifies
+    // on, so it surfaced as RD-999 "Unknown error".
     const seams: readonly (() => Promise<unknown>)[] = [
       () => store.loadRun(runId),
-      () => store.mutateSession((ctx) => ctx.readState(runId)),
+      () => store.read((txn) => txn.readState(runId)),
     ];
 
     for (const read of seams) {
       await expect(read()).rejects.toBeInstanceOf(InvalidRunbookStateError);
-      // The reason, not only the class. `invalid_schema_version` and
-      // `schema_validation_failed` share one error class, so the class alone
-      // cannot tell the version gate from the parse — and this row's version
-      // matches, so only the parse's reason is correct. It is the same reason
-      // `RunbookStateManager.load` reports for the same row above, which is the
-      // whole point: one taxonomy across both readers, past the gates as well
-      // as before them.
       await expect(read()).rejects.toMatchObject({
-        defect: { runId: PRE_STARTED_RUN_ID, reason: 'schema_validation_failed' },
+        defect: { runId: STALE_RUN_ID, reason: 'schema_validation_failed' },
       });
     }
   });
@@ -712,46 +685,37 @@ describe('pre-#772 inline shape — refused by the structural parse, not the ver
     // failed — so it goes to the debug trail instead.
     const debug = jest.spyOn(logger, 'debug').mockResolvedValue(undefined);
 
-    await expect(new RunbookStateManager(tmpDir).load(PRE_STARTED_RUN_ID)).rejects.toBeInstanceOf(
+    await expect(new RunbookStateManager(tmpDir).load(STALE_RUN_ID)).rejects.toBeInstanceOf(
       InvalidRunbookStateError,
     );
 
     const entry = debug.mock.calls.find(([message]) => message === 'invalid-run-state');
     expect(entry).toBeDefined();
     const data = entry?.[1] as { runId: string; issues: Record<string, unknown>[] };
-    expect(data.runId).toBe(PRE_STARTED_RUN_ID);
-    // The whole array, exactly. The dotted path is the diagnosis — the drift
-    // this fixture carries is inside the inline latch, so a trail that stopped
-    // at the top-level field would name the wrong thing — and comparing the
-    // entries whole is also the redaction guarantee: a Zod issue can quote the
-    // value it rejected, persisted run state holds delegation tokens, and a
-    // third key appearing here would fail this assertion rather than ship.
-    expect(data.issues).toEqual([{ path: 'substepStates.0.inline.started', code: 'invalid_type' }]);
+    expect(data.runId).toBe(STALE_RUN_ID);
+    // The whole array, exactly: the dotted path is the diagnosis, and comparing
+    // the entries whole is also the redaction guarantee — a Zod issue can quote
+    // the value it rejected, and a third key appearing here would fail this
+    // assertion rather than ship.
+    expect(data.issues).toEqual([{ path: 'substepStates.0', code: 'unrecognized_keys' }]);
   });
 
   it('leaves the refused row exactly as persisted', async () => {
     // Refusing is only half the no-migration rule; the other half is that the
-    // refusal writes nothing. A gate that rejected the row and then re-stamped
-    // it with the current version would satisfy a schemaVersion-only assertion
-    // while performing the silent migration CLAUDE.md forbids — and would
-    // destroy the evidence a user needs to understand why the run cannot be
-    // resumed. Comparing the whole row before and after, not just the two
-    // fields the shape drift touches, is what actually pins "exactly as
-    // persisted" rather than "the fields we happened to check".
-    const before = await readPersistedRunState(tmpDir, PRE_STARTED_RUN_ID);
+    // refusal writes nothing. Comparing the whole row before and after is what
+    // pins "exactly as persisted" rather than "the fields we happened to check".
+    const before = await readPersistedRunState(tmpDir, STALE_RUN_ID);
 
-    await expect(new RunbookStateManager(tmpDir).load(PRE_STARTED_RUN_ID)).rejects.toBeInstanceOf(
+    await expect(new RunbookStateManager(tmpDir).load(STALE_RUN_ID)).rejects.toBeInstanceOf(
       InvalidRunbookStateError,
     );
 
-    const after = await readPersistedRunState(tmpDir, PRE_STARTED_RUN_ID);
+    const after = await readPersistedRunState(tmpDir, STALE_RUN_ID);
 
     expect(after).toEqual(before);
-    // Named explicitly too, so a failure here says which field regressed
-    // instead of only "the row changed".
-    expect(after?.schemaVersion).toBe(PRE_STARTED_SCHEMA_VERSION);
-    // The pre-#772 latch field survives too: the row is untouched, not merely
+    expect(after?.schemaVersion).toBe(CURRENT_SCHEMA_VERSION);
+    // The stale child record survives too: the row is untouched, not merely
     // un-renumbered.
-    expect(after?.substepStates).toEqual(preStartedInlineState.substepStates);
+    expect(after?.substepStates).toEqual(staleSubstepState.substepStates);
   });
 });

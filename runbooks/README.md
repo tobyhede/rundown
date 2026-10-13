@@ -25,49 +25,81 @@ together to describe the intent.
 
 ### Coherent Taxonomy
 
-| Category        | Scenario Name                             | Focus                                   |
-| :-------------- | :---------------------------------------- | :-------------------------------------- |
-| **Simple**      | `completed`, `stopped`                    | Standard primary outcomes.              |
-| **Branching**   | `via-[name]`, `skipped-[name]`            | Destination or path taken.              |
-| **Retries**     | `immediate`, `after-retry`                | Timing of success.                      |
-| **Exhaustion**  | `continue`, `stop`, `goto-[name]`         | Action taken after retry limit reached. |
-| **Dynamic**     | `single`, `multiple`, `batch`             | Volume of iterations.                   |
-| **Composition** | `completed`, `agent-fails`, `child-fails` | Failure mode in delegation.             |
+| Category       | Scenario Name                     | Focus                                   |
+| :------------- | :-------------------------------- | :-------------------------------------- |
+| **Simple**     | `completed`, `stopped`            | Standard primary outcomes.              |
+| **Branching**  | `via-[name]`, `skipped-[name]`    | Destination or path taken.              |
+| **Retries**    | `immediate`, `after-retry`        | Timing of success.                      |
+| **Exhaustion** | `continue`, `stop`, `goto-[name]` | Action taken after retry limit reached. |
+| **Dynamic**    | `single`, `multiple`, `batch`     | Volume of iterations.                   |
 
 ## Pattern Categories
 
-| Directory      | Description                                            |
-| -------------- | ------------------------------------------------------ |
-| `transitions/` | PASS/FAIL logic, state transitions, and code execution |
-| `retries/`     | Retry logic and exhaustion handling                    |
-| `goto/`        | GOTO patterns for jumping between steps                |
-| `examples/`    | Real-world use cases                                   |
-| `for-loops/`   | FOR loop iteration patterns                            |
-| `substeps/`    | Nested steps within parent steps                       |
-| `named-steps/` | Steps identified by name instead of number             |
-| `prompts/`     | User prompts and input handling                        |
-| `composition/` | Parent runbooks, agents, and delegation                |
-| `delegation/`  | Delegate/claim patterns for child runbooks             |
-| `stash-pop/`   | Stash/pop enforcement control                          |
-| `variables/`   | Template variables, built-ins, and context             |
+| Directory          | Description                                             |
+| ------------------ | ------------------------------------------------------- |
+| `transitions/`     | PASS/FAIL logic, state transitions, and code execution  |
+| `retries/`         | Retry logic and exhaustion handling                     |
+| `goto/`            | GOTO patterns for jumping between steps                 |
+| `examples/`        | Real-world use cases                                    |
+| `for-loops/`       | FOR loop iteration patterns                             |
+| `substeps/`        | Nested steps within parent steps                        |
+| `named-steps/`     | Steps identified by name instead of number              |
+| `prompts/`         | User prompts and input handling                         |
+| `variables/`       | Template variables, built-ins, and context              |
+| `artifacts/`       | Artifact capture and resolution                         |
+| `context-passing/` | OUTPUTS directives and frontmatter `outputs:`/`inputs:` |
+
+The `composition/`, `delegation/`, `agent-dispatch/`, and `stash-pop/` fixture
+directories were removed with the one-writer rebuild (#901). Inline composition
+fixtures return in #903 and delegation fixtures in #904; stash/pop has no
+replacement.
+
+## Scenario Command Shape
+
+Every run has exactly one owner, proven by its Owner Token. `rd run` prints the
+token as `owner_token` on the `runbook_started` event, and the scenario runner
+captures it as `${TOKEN}`. Every mutating command in a scenario names that
+token:
+
+```yaml
+scenarios:
+  completed:
+    commands:
+      - rd run --prompted my-runbook.runbook.md
+      - rd pass --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 2.1
+      - rd pass --token ${TOKEN} --step 2.2
+    result: COMPLETE
+```
+
+- `rd pass` / `rd fail` (and the aliases `rd yes`, `rd ok`, `rd no`) take
+  `--token ${TOKEN}` and a required `--step <position>`. The position must name
+  the active step exactly: `1` for a top-level step with no active substep,
+  `2.1` for a substep, or a named step such as `ErrorHandler` or `1.Cleanup`. A
+  bare `--step 2` is refused while a substep of step 2 is active.
+- Inside a FOR frame, add `--index <iteration>` naming the active iteration:
+  `rd pass --token ${TOKEN} --step 1.1 --index 2`. `--index` is refused when the
+  active step is not a FOR frame.
+- `rd goto`, `rd stop`, and `rd complete` take `--token ${TOKEN}` and no
+  `--step`: `rd stop --token ${TOKEN} "operator stopped"`.
+- `rd run` and read-only commands (`rd status`, `rd ls`) stay bare. `--run` is a
+  read-only target selector and is never combined with `--token`.
+
+Nothing is written on a refusal, so a wrong `--step` leaves the run where it
+was; the error message names the current position.
 
 ## Creating New Patterns
 
 1. Choose the appropriate category directory
 2. Use descriptive filename: `feature-variant.runbook.md`
-3. Add scenarios following the naming taxonomy above
+3. Add scenarios following the naming taxonomy above and the command shape in
+   [Scenario Command Shape](#scenario-command-shape)
 4. Include `result: COMPLETE` or `result: STOP` in scenario metadata (or use
    `expect:` block for step-level assertions)
-5. Rebuild the CLI (`npm run build -w packages/cli`) before running any
-   cross-referenced runbook through `rd scenario run` — the scenario runner
-   reads from `packages/cli/dist/runbooks/`, which is refreshed by the
-   post-build `scripts/copy-runbooks.js` hook. Skipping this produces
-   `RD-805 Child runbook not found` at delegation time.
-
-Use `expect.entered` when the behavior under test is entry-only, especially
-inline runbook-list composition. A non-DELEGATE runbook-list entry enters a
-generated substep such as `Runbook: child.runbook.md` and may auto-launch the
-child before the parent emits a transition.
+5. Rebuild the CLI (`npm run build -w packages/cli`) before running a runbook
+   that references another runbook through `rd scenario run` — the scenario
+   runner reads from `packages/cli/dist/runbooks/`, which is refreshed by the
+   post-build `scripts/copy-runbooks.js` hook.
 
 ## Path Assembly with `rdpath`
 
@@ -112,66 +144,11 @@ ls "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"/*-pass*.md
 
 ### How ContextId Flows
 
-`ContextId` is a built-in variable generated once per execution. Children in a
-delegation tree inherit the parent's `ContextId` automatically via `--input`, so
-all runbooks in the same delegation tree share the same context directory. This
-allows the synthesis step to find all review findings without knowing which
-children produced them.
-
-## Authoring DELEGATE Steps
-
-Use the `- DELEGATE` annotation to mark a step's substeps for delegation — when
-the step is entered, the engine auto-issues a token per substep and the
-orchestrating agent dispatches a subagent for each. This is the recommended
-pattern for any step that delegates more than one substep.
-
-Three equivalent forms are available. Pick whichever reads best for the step:
-
-```markdown
-## 1. Step-level — propagates to every H3 substep
-- DELEGATE
-- PASS ALL CONTINUE
-- FAIL ANY STOP
-### 1.1 First task
-- child-a.runbook.md
-```
-
-```markdown
-## 1. Per-substep — annotate only the delegated H3 substeps
-### 1.1 First task
-- DELEGATE
-- child-a.runbook.md
-```
-
-```markdown
-## 1. Runbook-list shorthand — nested under each entry
-- child-a.runbook.md
-  - DELEGATE
-- child-b.runbook.md
-  - DELEGATE
-```
-
-Worked examples for each form live in `delegation/delegate-keyword-*.runbook.md`
-(e.g., `delegate-keyword-h2-propagation.runbook.md`,
-`delegate-keyword-h3-explicit.runbook.md`,
-`delegate-keyword-runbook-shorthand.runbook.md`). See
-[docs/spec/language.md §7](../docs/spec/language.md#7-delegation) for syntax
-rules and
-[docs/guides/agent-orchestration.md](../docs/guides/agent-orchestration.md#delegate-annotation)
-for the auto-issuance lifecycle and `rd collect`.
-
-A DELEGATE target must resolve to a runbook reference. Prompt-only delegated
-substeps and bare H3 substeps with no runbook reference are invalid. Conversely,
-a runbook-list entry without nested `- DELEGATE` is inline composition: the
-runtime auto-launches the child in-session and propagates its terminal result to
-the parent substep. Add nested `- DELEGATE` only when the child should be
-claimed by an out-of-process subagent.
-
-For `RETRY` + DELEGATE examples, see
-`delegation/delegate-keyword-retry-recovers.runbook.md` and
-`delegation/delegate-keyword-retry-exhausts.runbook.md`.
-`delegation/delegation-child-fail-once.runbook.md` uses a filesystem marker
-pattern for stateful fail-then-pass behavior; see its description for details.
+`ContextId` is a built-in variable generated once per execution. Pass it
+explicitly with `--input ContextId=...` when a second runbook should write into
+the same context directory (see `context-passing/outputs-inputs.runbook.md`).
+Automatic inheritance across a parent/child run tree returns with delegation in
+#904.
 
 ## See Also
 

@@ -1,12 +1,17 @@
 // packages/cli/src/commands/prune.ts
 
 import type { Command } from 'commander';
-import { RunbookStateManager, SessionService, isRunId } from '@rundown-org/core';
+import { CLIErrorCodes, RunbookStateManager, hashRunSecret } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { getStatus } from '../helpers/status.js';
-import { renderSessionMutationRefusal } from '../helpers/session-mutation-result.js';
+import {
+  TOKEN_OPTION_DESCRIPTION,
+  UNKNOWN_TOKEN_MESSAGE,
+  parseOptionalTokenOption,
+  withTokenOption,
+} from '../helpers/token-option.js';
 
 async function listAllRunIds(cwd: string): Promise<string[]> {
   // Must include runs whose persisted state is INVALID — they are precisely what
@@ -23,23 +28,38 @@ interface PruneOptions {
   active?: boolean;
   inactive?: boolean;
   all?: boolean;
+  token?: string;
+  run?: string;
   text?: boolean;
 }
 
+/** Reason a selected run was kept rather than deleted. */
+const TOKEN_REQUIRED_REASON = 'token required';
+
 /**
- * Registers the 'prune' command for removing runbook state.
+ * Registers the 'prune' command for removing run state.
+ *
+ * Finished runs (completed, stopped, abandoned) prune by lifecycle filter as
+ * before. A RUNNING run is deleted only when `--token` names it — one run per
+ * invocation, proven by its Owner Token. `--active` / `--all` without a token
+ * skip running runs and report them retained with reason `token required`.
+ * Invalid persisted rows prune with `--inactive` / `--all`. `--token` is
+ * parsed by the shared token option, so `--run` (a read-only selector) is
+ * refused `INVALID_SYNTAX` here as on every other mutating command.
+ *
  * @param program - Commander program instance to register the command on
  */
 export function registerPruneCommand(program: Command): void {
-  program
-    .command('prune')
-    .description('Remove runbook state (does not delete runbook files)')
+  withTokenOption(
+    program.command('prune').description('Remove run state (does not delete runbook files)'),
+    `${TOKEN_OPTION_DESCRIPTION}; deletes that one running run`,
+  )
     .option('--dry-run', 'Show what would be removed without deleting')
-    .option('--completed', 'Prune successfully completed runbook state')
-    .option('--stopped', 'Prune stopped (aborted/failed) runbook state')
-    .option('--active', 'Prune active runbook state')
-    .option('--inactive', 'Prune inactive (orphaned) runbook state')
-    .option('--all', 'Prune all runbook state')
+    .option('--completed', 'Prune successfully completed run state')
+    .option('--stopped', 'Prune stopped (aborted/failed) run state')
+    .option('--active', 'Prune running run state (each running run needs its --token)')
+    .option('--inactive', 'Prune invalid or abandoned run state')
+    .option('--all', 'Prune all run state')
     .option('--text', 'Output as human-readable text')
     .action(async (options: PruneOptions) => {
       await withErrorHandling(
@@ -47,170 +67,144 @@ export function registerPruneCommand(program: Command): void {
           const cwd = getCwd();
           const output = new OutputEmitter({ text: options.text, command: 'prune' });
 
+          const parsedToken = parseOptionalTokenOption(options, 'prune', output);
+          if (parsedToken.kind === 'refused') return;
+          const token = parsedToken.kind === 'present' ? parsedToken.token : undefined;
+
           const manager = new RunbookStateManager(cwd);
-          const sessionService = new SessionService(manager);
           const states = await manager.list();
           const allIds = await listAllRunIds(cwd);
-          let activeState: Awaited<ReturnType<typeof sessionService.getActive>> = null;
-          let stashedId: Awaited<ReturnType<typeof sessionService.getStashedRunbookId>> = null;
-          // `--all` is the recovery path for incompatible persisted sessions.
-          // It does not need targeting metadata because every persisted run is selected.
-          if (!options.all) {
-            try {
-              activeState = await sessionService.getActive();
-            } catch {
-              activeState = null;
-            }
-            stashedId = await sessionService.getStashedRunbookId();
-          }
 
-          // Default to --completed --stopped (all terminal runs) if no filter flags provided
+          // The one running run the token names, if any.
+          const owned =
+            token === undefined ? null : await manager.findByOwnerTokenHash(hashRunSecret(token));
+          if (token !== undefined && owned === null) {
+            output.error(UNKNOWN_TOKEN_MESSAGE, CLIErrorCodes.UNKNOWN_TOKEN);
+            output.flush();
+            process.exitCode = 1;
+            return;
+          }
+          const ownedRunId = owned?.state.id;
+
+          // Default to --completed --stopped (all terminal runs) if no filter
+          // flags provided; a bare `--token` selects exactly its run.
           const hasFilter =
             options.completed ??
             options.stopped ??
             options.active ??
             options.inactive ??
-            options.all;
+            options.all ??
+            (token !== undefined ? true : undefined);
           const pruneCompleted = options.all ?? options.completed ?? !hasFilter;
           const pruneStopped = options.all ?? options.stopped ?? !hasFilter;
-          const pruneActive = options.all ?? options.active;
-          const pruneInactive = options.all ?? options.inactive;
+          const pruneActive = options.all ?? options.active ?? false;
+          const pruneInactive = options.all ?? options.inactive ?? false;
 
-          const toDelete = states.filter((state) => {
-            const isActive = activeState?.id === state.id;
-            const isStashed = state.id === stashedId;
-            const isCompleted = state.lifecycle === 'completed';
-            const isStopped = state.lifecycle === 'stopped';
-            const isInactive = !isActive && !isStashed && !isCompleted && !isStopped;
+          const toDelete: typeof states = [];
+          const retained: typeof states = [];
+          for (const state of states) {
+            const lifecycle = state.lifecycle ?? 'running';
+            if (state.id === ownedRunId) {
+              toDelete.push(state);
+              continue;
+            }
+            switch (lifecycle) {
+              case 'completed':
+                if (pruneCompleted) toDelete.push(state);
+                break;
+              case 'stopped':
+                if (pruneStopped) toDelete.push(state);
+                break;
+              case 'abandoned':
+                if (pruneInactive) toDelete.push(state);
+                break;
+              case 'running':
+                // A running run is deleted only under its own token.
+                if (pruneActive) retained.push(state);
+                break;
+              default: {
+                const _exhaustive: never = lifecycle;
+                throw new Error(`Unhandled lifecycle: ${String(_exhaustive)}`);
+              }
+            }
+          }
 
-            if (pruneCompleted && isCompleted) return true;
-            if (pruneStopped && isStopped) return true;
-            if (pruneActive && isActive) return true;
-            if (pruneInactive && isInactive) return true;
-            return false;
-          });
-
-          // Invalid files (skipped by list() due to schema version mismatch) are invisible to
-          // list() but can still be deleted. Treat them as inactive: prune with
-          // --inactive or --all.
+          // Invalid rows (skipped by list() due to schema refusal) are invisible
+          // to list() but can still be deleted: prune with --inactive or --all.
           const loadedIds = new Set<string>(states.map((s) => s.id));
           const invalidIds = allIds.filter((id) => !loadedIds.has(id));
-          const invalidToDelete = (pruneInactive ?? options.all) ? invalidIds : [];
+          const invalidToDelete = pruneInactive ? invalidIds : [];
 
-          // Enrich items with status string for display
-          const enrichedItems = toDelete.map((state) => ({
-            ...state,
-            runbook: state.runbook.path,
-            _status: getStatus(state, activeState, stashedId),
-          }));
-
-          type LoadedRow = (typeof enrichedItems)[0];
-          type InvalidRow = {
+          type PruneRow = {
             id: string;
             runbook: string;
             title: string | undefined;
             _status: string;
+            _retained?: string;
           };
-          type PruneRow = LoadedRow | InvalidRow;
 
-          // Invalid items carry only the fields needed for display and JSON output
-          const invalidEnrichedItems: InvalidRow[] = invalidToDelete.map((id) => ({
-            id,
-            runbook: '(invalid)',
-            title: undefined,
-            _status: 'invalid',
-          }));
+          const rows: PruneRow[] = [
+            ...toDelete.map((state) => ({
+              id: state.id,
+              runbook: state.runbook.path,
+              title: state.title,
+              _status: getStatus(state),
+            })),
+            ...invalidToDelete.map((id) => ({
+              id,
+              runbook: '(invalid)',
+              title: undefined,
+              _status: 'invalid',
+            })),
+            ...retained.map((state) => ({
+              id: state.id,
+              runbook: state.runbook.path,
+              title: state.title,
+              _status: getStatus(state),
+              _retained: TOKEN_REQUIRED_REASON,
+            })),
+          ];
 
-          const allItems: PruneRow[] = [...enrichedItems, ...invalidEnrichedItems];
-
-          if (options.all && !options.dryRun) {
-            await sessionService.resetForPruneAll();
-          }
-
-          // Define columns once for reuse
           const columns = [
             { header: 'ID', key: 'id' as const },
             { header: 'STATUS', key: (item: PruneRow) => item._status },
             { header: 'RUNBOOK', key: 'runbook' as const },
             { header: 'TITLE', key: (item: PruneRow) => (item.title ? `[${item.title}]` : '') },
+            {
+              header: 'RETAINED',
+              key: (item: PruneRow) => item._retained ?? '',
+            },
           ];
 
-          // Emit only the documented ActiveRunbookEntry fields
-          // (PruneResponseSchema = ActiveRunbookListSchema). Spreading the
-          // enriched row would leak internal RunbookState fields into JSON.
-          // `step`/`total` are intentionally omitted: prune rows are not
-          // enriched with step counts (unlike `ls`); both are optional in
-          // ActiveRunbookEntrySchema.
+          // Emit only the documented ActiveRunbookEntry fields plus `retained`
+          // (PruneResponseSchema). `step`/`total` are intentionally omitted.
           const jsonMapper = (item: PruneRow): Record<string, unknown> => ({
             id: item.id,
             runbook: item.runbook,
             status: item._status,
             title: item.title,
+            ...(item._retained !== undefined ? { retained: item._retained } : {}),
           });
 
-          if (allItems.length === 0) {
-            // Use output.list() for consistency - outputs raw array in JSON mode
+          if (rows.length === 0) {
             output.list([], columns, {
-              emptyMessage: 'No runbook state to prune.',
+              emptyMessage: 'No run state to prune.',
               jsonMapper,
             });
             output.flush();
             return;
           }
 
-          if (options.dryRun) {
-            output.list(allItems, columns, {
-              jsonMapper,
-            });
-            output.flush();
-            return;
-          }
-
-          // #534: release pruned ids from the session BEFORE deleting state
-          // files. Release-then-delete converges under interruption: a crash
-          // after the release leaves terminal run rows that a prune re-run
-          // still lists and finishes. (Delete-then-release would strand
-          // dangling stack ids invisible to prune — manager.list() skips ids
-          // with no persisted run.)
-          const loadedRunIdsToDelete = toDelete.map((state) => state.id);
-          const prunedIds = [...loadedRunIdsToDelete, ...invalidToDelete];
-          // Selective prune removes each id from targeting under one lock.
-          // `--all` already replaced all targeting with a canonical empty session.
-          if (!options.all) {
-            // `discarded`: every id here is about to be deleted from the store,
-            // so its claims go with it rather than remaining as terminal
-            // evidence for a run that will not exist.
-            const released = await sessionService.releaseRuns(
-              prunedIds.filter(isRunId).map((runId) => ({ runId, role: 'discarded' as const })),
-            );
-            if (released.kind !== 'committed') {
-              renderSessionMutationRefusal(output, released);
-              output.flush();
-              process.exitCode = 1;
-              return;
+          if (!options.dryRun) {
+            for (const state of toDelete) {
+              await manager.delete(state.id);
             }
-            // Tombstone GC only for ids that are NOT parseable RunIds (invalid
-            // persisted runs) — the release above already deleted claims for
-            // the valid RunIds.
-            const pruned = await sessionService.pruneClaimsForChildren(
-              prunedIds.filter((id) => !isRunId(id)),
-            );
-            if (pruned.kind !== 'committed') {
-              renderSessionMutationRefusal(output, pruned);
-              output.flush();
-              process.exitCode = 1;
-              return;
+            for (const id of invalidToDelete) {
+              await manager.delete(id);
             }
           }
-          // Perform deletion (run rows last — see the ordering note above).
-          for (const id of loadedRunIdsToDelete) {
-            await manager.delete(id);
-          }
-          for (const id of invalidToDelete) {
-            await manager.delete(id);
-          }
 
-          output.list(allItems, columns, { jsonMapper });
+          output.list(rows, columns, { jsonMapper });
           output.flush();
         },
         { text: options.text },

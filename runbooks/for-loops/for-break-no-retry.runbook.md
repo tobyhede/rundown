@@ -6,10 +6,10 @@ scenarios:
     commands:
       - rd run --prompted for-break-no-retry.runbook.md
       # Iter 1: sub1 FAIL (DEFER feeds 'fail'), sub2 FAIL (BREAK exits loop)
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.2 --index 1
       # BREAK is non-accumulating → iterationResults=[] → vacuous pass → CONTINUE → step 2
-      - rd pass
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 # BREAK Without Retry

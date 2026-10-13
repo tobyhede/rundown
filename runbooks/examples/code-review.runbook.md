@@ -9,34 +9,34 @@ scenarios:
     description: Clean review with no issues
     commands:
       - rd run --prompted code-review.runbook.md
-      - rd pass  # 1.1 Verify CI status
-      - rd pass  # 1.2 Check test coverage
-      - rd pass  # 1.3 Scan for security issues
-      - rd pass  # 2.1 Read PR description
-      - rd pass  # 2.2 Verify acceptance criteria
-      - rd pass  # 3 Review code changes
-      - rd pass  # 4.1 Run local tests
-      - rd yes   # 5 Approve PR?
+      - rd pass --token ${TOKEN} --step 1.1  # 1.1 Verify CI status
+      - rd pass --token ${TOKEN} --step 1.2  # 1.2 Check test coverage
+      - rd pass --token ${TOKEN} --step 1.3  # 1.3 Scan for security issues
+      - rd pass --token ${TOKEN} --step 2.1  # 2.1 Read PR description
+      - rd pass --token ${TOKEN} --step 2.2  # 2.2 Verify acceptance criteria
+      - rd pass --token ${TOKEN} --step 3  # 3 Review code changes
+      - rd pass --token ${TOKEN} --step 4.1  # 4.1 Run local tests
+      - rd yes --token ${TOKEN} --step 5   # 5 Approve PR?
     result: COMPLETE
   changes-requested:
     description: Review identifies issues requiring changes
     commands:
       - rd run --prompted code-review.runbook.md
-      - rd pass  # 1.1 Verify CI status
-      - rd pass  # 1.2 Check test coverage
-      - rd pass  # 1.3 Scan for security issues
-      - rd pass  # 2.1 Read PR description
-      - rd pass  # 2.2 Verify acceptance criteria
-      - rd pass  # 3 Review code changes
-      - rd pass  # 4.1 Run local tests
-      - rd no    # 5 Approve PR? (Triggers RequestChanges)
-      - rd pass  # RequestChanges
+      - rd pass --token ${TOKEN} --step 1.1  # 1.1 Verify CI status
+      - rd pass --token ${TOKEN} --step 1.2  # 1.2 Check test coverage
+      - rd pass --token ${TOKEN} --step 1.3  # 1.3 Scan for security issues
+      - rd pass --token ${TOKEN} --step 2.1  # 2.1 Read PR description
+      - rd pass --token ${TOKEN} --step 2.2  # 2.2 Verify acceptance criteria
+      - rd pass --token ${TOKEN} --step 3  # 3 Review code changes
+      - rd pass --token ${TOKEN} --step 4.1  # 4.1 Run local tests
+      - rd no --token ${TOKEN} --step 5    # 5 Approve PR? (Triggers RequestChanges)
+      - rd pass --token ${TOKEN} --step RequestChanges  # RequestChanges
     result: STOP
   ci-failure:
     description: Early exit on CI failure
     commands:
       - rd run --prompted code-review.runbook.md
-      - rd fail  # 1.1 Verify CI status
+      - rd fail --token ${TOKEN} --step 1.1  # 1.1 Verify CI status
     result: STOP
 ---
 

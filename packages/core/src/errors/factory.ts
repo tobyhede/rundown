@@ -1,9 +1,4 @@
-import { truncateDelegationToken } from '../runbook/delegation-token.js';
-import {
-  RundownError,
-  type InvalidRunStateDefect,
-  type InvalidSessionStateDefect,
-} from './rundown-error.js';
+import { RundownError, type InvalidRunStateDefect } from './rundown-error.js';
 
 /**
  * Factory functions for creating typed errors.
@@ -101,20 +96,6 @@ export const Errors = {
   concurrentStateModification: (runId: string, detail: string): RundownError =>
     new RundownError('CONCURRENT_STATE_MODIFICATION', { runId, message: detail }),
 
-  // A Run Progression entry failure after its frontier consume committed.
-  // Context names the run whose transient bearers were lost and preserves the
-  // render failure that must be fixed before the step is explicitly re-issued.
-  // Stryker disable next-line ArrowFunction: undetectable, not uncovered. Every
-  // member of this literal is evaluated at module load, so replacing this body
-  // with `() => undefined` is a STATIC mutant — jest's module registry has
-  // already cached `Errors` by the time the mutant is applied, and the mutated
-  // arrow is never the one the test calls. Verified by hand: editing the source
-  // to `() => undefined` DOES fail the RD-833 factory test. The two mutants on
-  // the same line that Stryker can observe (the code string and the context
-  // literal) are both killed by it.
-  frontierDisclosureFailed: (runId: string, detail: string): RundownError =>
-    new RundownError('DELEGATION_FRONTIER_DISCLOSURE_FAILED', { runId, message: detail }),
-
   // The pre-consume twin of `frontierDisclosureFailed`: the same entry render
   // failed, but on a turn that consumed nothing, so the run keeps its cursor
   // and re-activation re-renders. Context names the run and preserves the
@@ -171,43 +152,7 @@ export const Errors = {
           }),
       message:
         `${terminated} Rundown never migrates persisted state, so this run ` +
-        `cannot be resumed: finish it with "rundown complete", stop it with ` +
-        `"rundown stop", or discard it with "rundown prune --inactive", then ` +
-        `re-run the runbook from source.`,
-    });
-  },
-
-  // RD-310, the claims table's counterpart to `invalidPersistedRunState`. The
-  // recovery is spelled into the MESSAGE for the same reason it is there: a
-  // code's `description` reaches an operator only under `--text --verbose`, and
-  // agents are told never to pass those.
-  //
-  // The recovery differs from RD-309's in ONE respect, and it is the reason
-  // this is a separate factory rather than a second detail string. RD-309 knows
-  // which run to finish, because the refusal is about that run. A corrupt claim
-  // row names a claim, and the run it controls is exactly the thing the row is
-  // too corrupt to state — so the instruction cannot name a target and says so,
-  // rather than inventing one.
-  invalidPersistedSessionState: (
-    detail: string,
-    defect?: InvalidSessionStateDefect,
-  ): RundownError => {
-    const cause = detail.trim();
-    const terminated = cause.endsWith('.') ? cause : `${cause}.`;
-    return new RundownError('INVALID_PERSISTED_SESSION_STATE', {
-      ...(defect === undefined
-        ? {}
-        : {
-            reason: defect.reason,
-            // Omitted rather than emitted as `null` for the session-wide
-            // refusal: an absent key says "not applicable", where a null would
-            // claim the refusal names a row it never read.
-            ...(defect.claimKey === undefined ? {} : { claimKey: defect.claimKey }),
-          }),
-      message:
-        `${terminated} Rundown never migrates persisted state, so this session ` +
-        `cannot be adapted: finish the affected run with "rundown complete", ` +
-        `stop it with "rundown stop", or discard it with ` +
+        `cannot be resumed, completed or stopped: discard it with ` +
         `"rundown prune --inactive", then re-run the runbook from source.`,
     });
   },
@@ -230,9 +175,6 @@ export const Errors = {
   runbookHasNoSteps: (file?: string): RundownError =>
     new RundownError('RUNBOOK_HAS_NO_STEPS', { file }),
 
-  childRunbookActive: (childId?: string): RundownError =>
-    new RundownError('CHILD_RUNBOOK_ACTIVE', { childId }),
-
   // Command
   invalidStepFormat: (value: string): RundownError =>
     new RundownError('INVALID_STEP_FORMAT', { value }),
@@ -242,152 +184,6 @@ export const Errors = {
 
   scenarioNotFound: (scenario: string, file?: string): RundownError =>
     new RundownError('SCENARIO_NOT_FOUND', { scenario, file }),
-
-  // Delegation
-  delegationStepNotFound: (step: string): RundownError =>
-    new RundownError('DELEGATION_STEP_NOT_FOUND', { step }),
-
-  delegationStepNotCurrent: (step: string, current: string): RundownError =>
-    new RundownError('DELEGATION_STEP_NOT_CURRENT', { step, current }),
-
-  delegationSubstepRequired: (step: string, substeps: string[]): RundownError =>
-    new RundownError('DELEGATION_SUBSTEP_REQUIRED', { step, substeps: substeps.join(', ') }),
-
-  delegationAlreadyExists: (step: string, message?: string): RundownError =>
-    new RundownError('DELEGATION_ALREADY_EXISTS', { step, message }),
-
-  delegationRunbookNotFound: (runbook: string): RundownError =>
-    new RundownError('DELEGATION_RUNBOOK_NOT_FOUND', { runbook }),
-
-  delegationRunbookMismatch: (step: string, requested: string, authored: string): RundownError =>
-    new RundownError('DELEGATION_RUNBOOK_MISMATCH', {
-      step,
-      requested,
-      authored,
-      message: `requested ${requested}, authored ${authored}`,
-    }),
-
-  delegationSubstepNotFound: (substep: string, step: string, available: string[]): RundownError =>
-    new RundownError('DELEGATION_SUBSTEP_NOT_FOUND', {
-      substep,
-      step,
-      available: available.join(', '),
-    }),
-
-  // The three bearer-carrying factories truncate HERE rather than at their call
-  // sites. `RundownError.context` is serialised verbatim into the CLI's stdout
-  // error envelope (`wrapper.ts` → `details.context`), and the credentials
-  // addendum binds redaction to *every* refusal and error envelope. Redacting in
-  // the factory closes the class: no caller can reintroduce the leak by passing
-  // the raw value, which is exactly how it was introduced.
-  invalidToken: (token: string): RundownError =>
-    new RundownError('INVALID_TOKEN', { token: truncateDelegationToken(token) }),
-
-  tokenNotFound: (token: string): RundownError =>
-    new RundownError('TOKEN_NOT_FOUND', { token: truncateDelegationToken(token) }),
-
-  tokenCancelled: (token: string): RundownError =>
-    new RundownError('TOKEN_CANCELLED', { token: truncateDelegationToken(token) }),
-
-  delegationAlreadyClaimed: (step: string, childRunId: string): RundownError =>
-    new RundownError('DELEGATION_ALREADY_CLAIMED', { step, childRunId }),
-
-  delegationInFlight: (step: string, childRunId: string): RundownError =>
-    new RundownError('DELEGATION_IN_FLIGHT', {
-      step,
-      childRunId,
-      message: `child run ${childRunId} is still linked; run "rundown abort <token> --claim-id <claim_id> --force" before retrying`,
-    }),
-
-  delegationReplacementConsumed: (
-    step: string,
-    reason: 'claimed' | 'cancelled' | 'entry_superseded',
-  ): RundownError =>
-    new RundownError('DELEGATION_REPLACEMENT_CONSUMED', {
-      step,
-      // `reason` is a closed discriminant naming which remedy applies, so it
-      // rides as a structured key and not only inside the sentence. Like
-      // `claimSeenUnreadable`'s `childId` below, it is OUTSIDE
-      // `formatMessage`'s fixed key list, so it reaches the agent through
-      // `context` (the CLI envelope's `details.context`) and leaves the
-      // rendered message unchanged — `message` still names it in prose.
-      reason,
-      message: `the replacement for this bearer shows committed evidence of use (${reason})`,
-    }),
-
-  delegationRetryIdentityUnmatched: (step: string): RundownError =>
-    new RundownError('DELEGATION_RETRY_IDENTITY_UNMATCHED', {
-      step,
-      message: 'the named bearer matches neither the current delegation nor one it superseded',
-    }),
-
-  delegationSupersessionAmbiguous: (step: string): RundownError =>
-    new RundownError('DELEGATION_SUPERSESSION_AMBIGUOUS', {
-      step,
-      message: 'more than one delegation attempt records this bearer as superseded',
-    }),
-
-  delegationIndexNotActive: (step: string, requested: number, active: number): RundownError =>
-    new RundownError('DELEGATION_INDEX_NOT_ACTIVE', {
-      // Both coordinates ride as structured keys AND in the prose. They are
-      // outside `formatMessage`'s fixed key list, so `context` is the only way
-      // an agent reads them without parsing English — the same shape
-      // `delegationReplacementConsumed` uses for its `reason`.
-      requested,
-      active,
-      step,
-      message: `--index ${String(requested)} names a FOR iteration the parent has not entered; iteration ${String(active)} is active`,
-    }),
-
-  claimSeenUnreadable: (claimKey: string, lastSeenAt: string): RundownError =>
-    new RundownError('CLAIM_SEEN_UNREADABLE', {
-      // These keys are NOT arbitrary — `RundownError.formatMessage` renders a
-      // fixed twelve-key list (rundown-error.ts:99-134) and a key outside it lands
-      // in `context`, reachable only via toJSON() and INVISIBLE in `error.message`.
-      // `ErrorContext`'s index signature (:32) means TypeScript will not warn you.
-      //
-      // `value` renders as the quoted primary identifier. `childId` does NOT also
-      // render: the primary identifier is `value ?? scenario ?? argName ?? childId
-      // ?? agentId`, so only ONE wins and `value` shadows it. It is kept as the
-      // conventional structured correlation slot (readable via toJSON), and the
-      // claim key reaches the MESSAGE via `message` — the same shape the sibling
-      // delegation factories use. Without it, AC6's "loud" error would name the
-      // corrupt value with nothing to correlate it to, on the very surface plan 3
-      // renders to agents.
-      value: lastSeenAt,
-      childId: claimKey,
-      message: `claim ${claimKey}`,
-    }),
-
-  delegationAlreadyResolved: (step: string): RundownError =>
-    new RundownError('DELEGATION_ALREADY_RESOLVED', { step }),
-
-  delegationNoDelegatableSubstep: (step: string): RundownError =>
-    new RundownError('DELEGATION_NO_DELEGATABLE_SUBSTEP', { step }),
-
-  delegationSubstepNoRunbook: (substep: string, step: string): RundownError =>
-    new RundownError('DELEGATION_SUBSTEP_NO_RUNBOOK', { substep, step }),
-
-  delegationStepNoSubsteps: (step: string): RundownError =>
-    new RundownError('DELEGATION_STEP_NO_SUBSTEPS', { step }),
-
-  delegationSnapshotStale: (substepId: string, step: string): RundownError =>
-    new RundownError('DELEGATION_SNAPSHOT_STALE', { substepId, step }),
-
-  delegationOwnerLostSubsteps: (substepId: string, step: string): RundownError =>
-    new RundownError('DELEGATION_OWNER_LOST_SUBSTEPS', { substepId, step }),
-
-  delegationNestedForbidden: (runId: string): RundownError =>
-    new RundownError('DELEGATION_NESTED_FORBIDDEN', { runId }),
-
-  delegationInvariantViolated: (reason: string): RundownError =>
-    new RundownError('DELEGATION_INVARIANT_VIOLATED', { reason }),
-
-  retryHookStaleSubstep: (substepId: string, parentStep: string): RundownError =>
-    new RundownError('RETRY_HOOK_STALE_SUBSTEP', { substepId, parentStep }),
-
-  retryHookMissingRunId: (parentStep: string): RundownError =>
-    new RundownError('RETRY_HOOK_MISSING_RUN_ID', { step: parentStep }),
 
   // Generic
   unknown: (message: string, cause?: Error): RundownError =>

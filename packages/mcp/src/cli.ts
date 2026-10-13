@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { getErrorMessage } from '@rundown-org/core';
+import { getErrorMessage, redactRunSecret } from '@rundown-org/core';
 
 /**
  * Promise-returning `execFile` adapter used by the MCP CLI facade.
@@ -24,19 +24,16 @@ export type ExecFileAsync = (
 const execFileAsync = promisify(execFile) as ExecFileAsync;
 
 /**
- * Parse Rundown CLI output that is either a single JSON payload or JSONL.
+ * Parse CLI stdout/stderr as JSON or JSONL.
  *
- * Per `docs/spec/cli-output.md`, the CLI's JSON output is a documented
- * contract: commands emit either a single JSON
- * value or newline-delimited JSON (one object per line), where a streamed
- * `rundown run`/`rundown pass` etc. sequence ends with the terminal command/action
- * object on the last line. We parse to that contract directly — a single
- * `JSON.parse`, else line-delimited JSON — and prefer the terminal object with
- * a `command`/`action` field so MCP callers receive the command result rather
- * than an intermediate event.
+ * A single JSON value is returned as-is. A JSONL stream is returned whole, as
+ * the array of its JSON lines in emission order: MCP passes the CLI's output
+ * through rather than choosing a line, because the events an agent needs next
+ * are spread across it — `runbook_started` carries the one-time `owner_token`,
+ * and `step_entered` names the position the next `pass`/`fail` must confirm.
  *
  * @param stdout - Raw stdout or stderr text from the CLI.
- * @returns Parsed JSON payload, preferred terminal action payload, raw text, or undefined for empty output.
+ * @returns The parsed JSON value, the array of a JSONL stream's objects, the raw text when no line is JSON, or undefined for empty output.
  */
 function parseJsonOrJsonl(stdout: string): unknown {
   const trimmed = stdout.trim();
@@ -62,15 +59,27 @@ function parseJsonOrJsonl(stdout: string): unknown {
 
   if (parsedObjects.length === 0) return stdout;
   if (parsedObjects.length === 1) return parsedObjects[0];
+  return parsedObjects;
+}
 
-  // Prefer the last (terminal) command-style payload (pass/fail/goto/complete/etc.).
-  const actionOutput = [...parsedObjects].reverse().find((value) => {
-    if (!value || typeof value !== 'object') return false;
-    const record = value as Record<string, unknown>;
-    return 'command' in record || 'action' in record;
-  });
-
-  return actionOutput ?? parsedObjects;
+/**
+ * The CLI error message carried by a parsed payload: its own `error` field, or
+ * for a JSONL stream the `error` field of the last object that has one.
+ *
+ * @param data - Parsed CLI payload.
+ * @returns The error message, or undefined when the payload names none.
+ */
+function errorMessageOf(data: object): string | undefined {
+  const candidates: readonly unknown[] = Array.isArray(data)
+    ? (data as readonly unknown[]).slice().reverse()
+    : [data];
+  for (const candidate of candidates) {
+    if (candidate !== null && typeof candidate === 'object') {
+      const message = (candidate as { error?: unknown }).error;
+      if (typeof message === 'string') return message;
+    }
+  }
+  return undefined;
 }
 
 function hasExecOutput(value: unknown): value is { stdout?: string; stderr?: string } {
@@ -121,8 +130,7 @@ export function createRunCli(execFileImpl: ExecFileAsync): (args: string[]) => P
         if (error.stdout) {
           const data = parseJsonOrJsonl(error.stdout);
           if (data && typeof data === 'object') {
-            const parsedError = (data as { error?: string }).error;
-            return { success: false, error: parsedError ?? 'Command failed', data };
+            return { success: false, error: errorMessageOf(data) ?? 'Command failed', data };
           }
         }
 
@@ -130,8 +138,7 @@ export function createRunCli(execFileImpl: ExecFileAsync): (args: string[]) => P
         if (error.stderr) {
           const data = parseJsonOrJsonl(error.stderr);
           if (data && typeof data === 'object') {
-            const parsedError = (data as { error?: string }).error;
-            return { success: false, error: parsedError ?? 'Command failed', data };
+            return { success: false, error: errorMessageOf(data) ?? 'Command failed', data };
           }
         }
 
@@ -141,10 +148,12 @@ export function createRunCli(execFileImpl: ExecFileAsync): (args: string[]) => P
         const stdout = typeof error.stdout === 'string' ? error.stdout.trim() : '';
         const message = stderr || stdout;
         if (message.length > 0) {
-          return { success: false, error: message };
+          return { success: false, error: redactRunSecret(message) };
         }
       }
-      return { success: false, error: getErrorMessage(error) };
+      // Node's execFile error message embeds the full argv, which carries the
+      // Owner Token on mutating commands; never echo it into a tool result.
+      return { success: false, error: redactRunSecret(getErrorMessage(error)) };
     }
   };
 }

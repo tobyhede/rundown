@@ -9,17 +9,17 @@ scenarios:
     description: Exhausts retry, runbook completes
     commands:
       - rd run --prompted retry-exhaustion-complete.runbook.md
-      - rd fail
-      - rd fail
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 1
     result: COMPLETE
   recovered:
     description: Passes on first attempt, continues to finish step
     commands:
       - rd run --prompted retry-exhaustion-complete.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
   auto-execution:
     description: Auto-execute fails four times, completes via exhaustion

@@ -1,72 +1,30 @@
 import { describe, expect, it } from '@jest/globals';
-import {
-  mintInlineCompositionProgressionAuthority,
-  mintRunProgressionAuthority,
-} from '../../src/runbook/run-progression-authority.js';
-import { claimKeyFromBearer, generateClaimBearer } from '../../src/runbook/claim-id.js';
-import type { DelegationRuntimeCapabilities } from '../../src/runbook/delegation-credential.js';
+import { mintRunProgressionAuthority } from '../../src/runbook/run-progression-authority.js';
 import { brandRunIdForTest } from '../../src/testing/effective-vars.js';
 
-// The two optional halves of a progression authority are OMITTED, never present
-// and undefined. Nothing at runtime can tell the two apart — `authority.claimKey`
-// reads `undefined` either way — so only the own-key check pins it. It is
-// load-bearing at the type level: `claimKey?: ClaimLookupKey` under
-// `exactOptionalPropertyTypes` accepts an absent key and rejects an explicit
-// `undefined`, so a mint that stamped the key would spread into a shape the
-// consuming seams' types say cannot exist.
+// After ADR 0005 the authority carries exactly one fact: the run it may drive.
+// The claim key and delegation capabilities it used to bind went with the
+// multi-writer model, so the mint must not grow optional halves back by
+// accident — a frontend reading `authority.claimKey` would get `undefined`
+// either way, and only the own-key check distinguishes "absent" from "stamped".
 
 const RUN_ID = brandRunIdForTest('rd_cccccccccccccccccccccccccccccccc');
 
-/** Delegation capabilities are opaque to the mint: it binds them, it never reads them. */
-const DELEGATION_RUNTIME = {
-  issueDelegationCredential: () => {
-    throw new Error('not called');
-  },
-} as unknown as DelegationRuntimeCapabilities;
-
 describe('mintRunProgressionAuthority', () => {
-  it('omits claimKey entirely for an authorized bare caller', () => {
+  it('binds the verified run id', () => {
     const authority = mintRunProgressionAuthority({ runId: RUN_ID });
 
-    expect(Object.hasOwn(authority, 'claimKey')).toBe(false);
     expect(authority.runId).toBe(RUN_ID);
   });
 
-  it('binds the presented claim key when the continuation is claim-authenticated', () => {
-    const claimKey = claimKeyFromBearer(generateClaimBearer());
-
-    const authority = mintRunProgressionAuthority({ runId: RUN_ID, claimKey });
-
-    expect(Object.hasOwn(authority, 'claimKey')).toBe(true);
-    expect(authority.claimKey).toBe(claimKey);
-  });
-
-  it('omits delegationRuntime entirely when the caller presented no delegation authority', () => {
+  it('carries nothing but the run id and its brand', () => {
     const authority = mintRunProgressionAuthority({ runId: RUN_ID });
 
-    expect(Object.hasOwn(authority, 'delegationRuntime')).toBe(false);
-  });
-
-  it('binds verified delegation capabilities when the seam derived them', () => {
-    const authority = mintRunProgressionAuthority({
-      runId: RUN_ID,
-      delegationRuntime: DELEGATION_RUNTIME,
-    });
-
-    expect(Object.hasOwn(authority, 'delegationRuntime')).toBe(true);
-    expect(authority.delegationRuntime).toBe(DELEGATION_RUNTIME);
-  });
-});
-
-describe('mintInlineCompositionProgressionAuthority', () => {
-  it('authorizes only the composing parent, carrying neither claim key nor delegation runtime', () => {
-    // Inline composition is not bearer authority. A parent reached this way that
-    // hits a DELEGATE turn must still be refused, and the absent capabilities
-    // are what makes that refusal structural rather than a check someone added.
-    const authority = mintInlineCompositionProgressionAuthority(RUN_ID);
-
-    expect(authority.runId).toBe(RUN_ID);
+    expect(Object.keys(authority)).toEqual(['runId']);
     expect(Object.hasOwn(authority, 'claimKey')).toBe(false);
     expect(Object.hasOwn(authority, 'delegationRuntime')).toBe(false);
+    // The brand is a symbol-keyed own property, so it is invisible to
+    // `Object.keys` and present to `Reflect.ownKeys`.
+    expect(Reflect.ownKeys(authority).filter((key) => typeof key === 'symbol')).toHaveLength(1);
   });
 });

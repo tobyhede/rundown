@@ -1,7 +1,15 @@
 import type { Command } from 'commander';
-import { analyzeForSources, forSourceWarnings } from '@rundown-org/core';
+import {
+  analyzeForSources,
+  findUnsupportedComposition,
+  forSourceWarnings,
+} from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { loadAndParseRunbook } from '../helpers/runbook-pipeline.js';
+import {
+  COMPOSITION_RETURNS,
+  describeUnsupportedComposition,
+  loadAndParseRunbook,
+} from '../helpers/runbook-pipeline.js';
 
 /**
  * Registers the 'check' command for validating runbook files.
@@ -43,6 +51,20 @@ export function registerCheckCommand(program: Command): void {
         analyzeForSources(result.runbook.steps, result.frontmatter),
       ).map((message) => ({ severity: 'warning' as const, message }));
       warnings.push(...forWarnings);
+
+      // Composition is valid language, so it never fails the check; but this
+      // build's `rundown run` refuses it, and the author should learn that
+      // here rather than at launch. Core names the substeps, as it does for
+      // the refusal itself.
+      const composing = findUnsupportedComposition(result.runbook.steps);
+      if (composing.length > 0) {
+        warnings.push({
+          severity: 'warning' as const,
+          message:
+            `${describeUnsupportedComposition(composing)}, so \`rundown run\` refuses it ` +
+            `(RUNBOOK_COMPOSITION_UNSUPPORTED). ${COMPOSITION_RETURNS}`,
+        });
+      }
 
       if (errors.length > 0) {
         output.detail(

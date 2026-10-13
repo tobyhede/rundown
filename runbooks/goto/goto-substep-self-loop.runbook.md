@@ -10,16 +10,16 @@ scenarios:
     description: Pass immediately completes (default CONTINUE, last substep)
     commands:
       - rd run --prompted goto-substep-self-loop.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
     result: COMPLETE
 
   looped:
     description: Fail loops back twice, then pass completes
     commands:
       - rd run --prompted goto-substep-self-loop.runbook.md
-      - rd fail
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1.1
+      - rd fail --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.1
     result: COMPLETE
 ---
 

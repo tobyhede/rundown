@@ -7,8 +7,6 @@ import {
   Errors,
   getWriter,
   IncompatibleSchemaError,
-  InvalidPersistedClaimError,
-  InvalidPersistedSessionError,
   InvalidRunbookStateError,
   LegacySnapshotError,
   NativeSqliteUnavailableError,
@@ -97,10 +95,10 @@ function toRundownError(error: unknown): RundownError {
     return Errors.stateStoreUnavailable(error.message, undefined, error);
   }
 
-  // A run-state write that lost its optimistic CAS — RD-308, and the only
-  // storage arm here that is transient rather than a refusal. It must not share
-  // RD-999 with genuinely unknown failures: the operator action is "run it
-  // again", which "Unknown error" actively argues against.
+  // A run-state conditional save that found the row moved — RD-308 (the
+  // throwing face of `CONCURRENT_MODIFICATION`). Nothing was written; the
+  // operator re-reads the run and re-issues the command. It must not share
+  // RD-999 with genuinely unknown failures.
   if (error instanceof ConcurrentStateModificationError) {
     return Errors.concurrentStateModification(error.runId, error.message);
   }
@@ -111,22 +109,11 @@ function toRundownError(error: unknown): RundownError {
   // a schemaVersion other than `CURRENT_SCHEMA_VERSION`, a missing
   // `templateVars` or `prompted`, and a failed schema parse; `LegacySnapshotError`
   // covers the deprecated dynamic-step snapshot. Both are cleared by
-  // `rundown complete` / `rundown stop` (which route through
-  // `isRecoverableActiveStackError` to drop the unusable entry) or by
   // `rundown prune`.
   //
   // Raised at BOTH readers of persisted state since #828, not only
   // `RunbookStateManager.load`: `RunbookStore.readRun` reframes its own parse
-  // failure the same way, so every in-transaction read reaches this arm too. One
-  // consequence is worth knowing before reading a report of it as a bug. The
-  // parent-advance guard `openDelegatedChildrenFor` performs a validating read
-  // of each delegated CHILD, so a `rundown pass` on a healthy parent with a
-  // corrupt child now surfaces RD-309 naming the child — a run the operator did
-  // not target and is nonetheless told to prune. That coupling is deliberate and
-  // predates this arm (a guard that skipped unreadable children would report "no
-  // open children" and advance the parent past a delegation it cannot evaluate);
-  // what changed is only that the refusal now arrives classified instead of as
-  // RD-999. See the note at the child read in `runbook-store.ts`.
+  // failure the same way, so every in-transaction read reaches this arm too.
   //
   // This arm is what makes CLAUDE.md § State Persistence's required behaviour —
   // "detect invalid state ... and prompt the user to finish or prune" —
@@ -148,31 +135,6 @@ function toRundownError(error: unknown): RundownError {
   // prose-only envelope rather than losing the error.
   if (error instanceof InvalidRunbookStateError || error instanceof LegacySnapshotError) {
     return Errors.invalidPersistedRunState(error.message, error.defect);
-  }
-
-  // The claims table's half of the same condition — RD-310, and two classes for
-  // one code for the same reason the arm above has two: they share one
-  // recovery. `InvalidPersistedClaimError` covers every persisted edge of one
-  // claim row (unparseable or schema-invalid grants, a malformed delegation
-  // linkage, mirrored columns that disagree with it, a malformed key / secret
-  // hash / run id); `InvalidPersistedSessionError` covers the session
-  // reconstructed from those rows failing its schema.
-  //
-  // Before this arm all of them reached the operator as RD-999 "Unknown error",
-  // and none was clearable — `complete` / `stop` / `prune` branch on refusal
-  // class, so a corrupt claim row could not be cleared through the CLI at all
-  // (#831). It is a separate code from RD-309 because the scope differs: a
-  // claim refusal names a claim key, not a run id, and RD-309's description
-  // names four causes a claim row cannot have.
-  //
-  // Ordered after RD-309 for the same reason RD-309 sits after RD-305: the
-  // classes are disjoint so order is not load-bearing, but the narrower
-  // diagnosis must not be able to shadow the broader one.
-  if (
-    error instanceof InvalidPersistedClaimError ||
-    error instanceof InvalidPersistedSessionError
-  ) {
-    return Errors.invalidPersistedSessionState(error.message, error.defect);
   }
 
   // Generic error - wrap it

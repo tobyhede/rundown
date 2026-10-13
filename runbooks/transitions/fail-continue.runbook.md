@@ -9,8 +9,8 @@ scenarios:
     description: Step fails, CONTINUE advances to cleanup, which passes
     commands:
       - rd run --prompted fail-continue.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

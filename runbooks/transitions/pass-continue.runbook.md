@@ -9,17 +9,17 @@ scenarios:
     description: Both steps pass on first attempt
     commands:
       - rd run --prompted pass-continue.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
   after-retry:
     description: Step 2 fails twice then passes (using retry)
     commands:
       - rd run --prompted pass-continue.runbook.md
-      - rd pass
-      - rd fail
-      - rd fail
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 2
+      - rd fail --token ${TOKEN} --step 2
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
   auto-execution:
     description: Step 1 passes, step 2 fails twice then passes on retry

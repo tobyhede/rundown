@@ -6,8 +6,7 @@ import { registerPassCommand } from '../../src/commands/pass.js';
 import { registerFailCommand } from '../../src/commands/fail.js';
 import { registerCompleteCommand } from '../../src/commands/complete.js';
 import { registerStopCommand } from '../../src/commands/stop.js';
-import { registerCollectCommand } from '../../src/commands/collect.js';
-import { registerDelegateCommand } from '../../src/commands/delegate.js';
+import { registerStatusCommand } from '../../src/commands/status.js';
 import { registerGotoCommand } from '../../src/commands/goto.js';
 import { takeExitCode } from './exit-code.js';
 
@@ -48,11 +47,11 @@ describe('parseRunOption', () => {
 });
 
 describe('--run registration drift guard', () => {
-  // pass/fail derive --run from the single-source PASS_FAIL_VALUE_TAKING_OPTION_NAMES
-  // mechanism; the other mutating commands register it manually. This guard
-  // pins every mutating command in the subprocess withhold set (plus goto) to a
-  // --run Commander option so a future command cannot silently miss the flag.
-  const registrations: ReadonlyArray<{
+  // One writer per run (ADR 0005): `--run` is a read-only selector. `status`
+  // advertises it; every mutating command registers it HIDDEN so the
+  // `--run`+`--token` combination is refused with the documented
+  // `INVALID_SYNTAX` envelope instead of Commander's plain-text usage error.
+  const mutating: ReadonlyArray<{
     readonly name: string;
     readonly register: (program: Command) => void;
   }> = [
@@ -60,17 +59,27 @@ describe('--run registration drift guard', () => {
     { name: 'fail', register: registerFailCommand },
     { name: 'complete', register: registerCompleteCommand },
     { name: 'stop', register: registerStopCommand },
-    { name: 'collect', register: registerCollectCommand },
-    { name: 'delegate', register: registerDelegateCommand },
     { name: 'goto', register: registerGotoCommand },
   ];
 
-  it.each(registrations)('registers --run on $name', ({ name, register }) => {
+  it.each(mutating)('registers a hidden --run on $name', ({ name, register }) => {
     const program = new Command();
     register(program);
     const command = program.commands.find((c) => c.name() === name);
     expect(command).toBeDefined();
     const runOption = command!.options.find((o) => o.long === '--run');
     expect(runOption).toBeDefined();
+    expect(runOption!.hidden).toBe(true);
+  });
+
+  it('advertises --run on status and never --token', () => {
+    const program = new Command();
+    registerStatusCommand(program);
+    const command = program.commands.find((c) => c.name() === 'status');
+    expect(command).toBeDefined();
+    const runOption = command!.options.find((o) => o.long === '--run');
+    expect(runOption).toBeDefined();
+    expect(runOption!.hidden).toBe(false);
+    expect(command!.options.find((o) => o.long === '--token')).toBeUndefined();
   });
 });

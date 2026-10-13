@@ -10,15 +10,15 @@ scenarios:
     description: Pass loops back to step 1, then fail exits with STOP
     commands:
       - rd run --prompted goto-self-loop.runbook.md
-      - rd pass
-      - rd fail
+      - rd pass --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 1
     result: STOP
 
   immediate-stop:
     description: Fail immediately triggers default STOP
     commands:
       - rd run --prompted goto-self-loop.runbook.md
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1
     result: STOP
 ---
 

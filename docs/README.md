@@ -34,7 +34,7 @@ This index routes you to the right document based on what you're trying to do.
 - **[docs/guides/scripting.md](guides/scripting.md)** — Scripting and automation
   guide.
 - **[docs/guides/agent-orchestration.md](guides/agent-orchestration.md)** —
-  Subagent delegation lifecycle, tokens, `rd collect`, retry fan-out.
+  Driving a run from an agent: the Owner Token, step positions, refusals.
 
 ### Use the MCP server or RDX/rdpath tools
 

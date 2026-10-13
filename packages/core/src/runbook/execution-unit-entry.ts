@@ -11,10 +11,10 @@
  * (#799); `undefined`-as-signal is a missing type.
  *
  * Both are answered here. {@link deriveExecutionUnitEntry} renders against the
- * run's own frame and returns {@link ExecutionUnitEntry} — `awaiting`,
- * `runnable`, or `inline-launch`. The command travels only on the `runnable`
- * arm, inside a {@link RenderedUnitCommand} whose brand is mintable only in this
- * module, so there is no path from the result back to unexpanded text.
+ * run's own frame and returns {@link ExecutionUnitEntry} — `awaiting` or
+ * `runnable`. The command travels only on the `runnable` arm, inside a
+ * {@link RenderedUnitCommand} whose brand is mintable only in this module, so
+ * there is no path from the result back to unexpanded text.
  *
  * Pure: no filesystem, no persistence, no actor. `RunbookActorService`
  * .`enterExecutionUnit` is the seam callers reach, binding this function's two
@@ -24,7 +24,6 @@
  * @module runbook/execution-unit-entry
  */
 
-import type { DelegateFrontierEntry, InlineLaunchIntent } from '../events/types.js';
 import {
   deriveStepEnteredEffect,
   type ExecutionObservationEffect,
@@ -32,7 +31,7 @@ import {
 } from '../events/execution-observation.js';
 import { InvalidRunbookStateError } from './persisted-state-guards.js';
 import { BUILTIN_VARIABLES } from './variable-preparation.js';
-import { buildStepPosition, deriveOpenFrames, type FrameKey } from './targeting.js';
+import { buildStepPosition } from './targeting.js';
 import { countNumberedSteps } from './step-utils.js';
 import { extractDisplayCommand } from '../cli/command-utils.js';
 import { findStepOrThrow, resolveCurrentExecutionUnit } from './execution-units.js';
@@ -44,12 +43,6 @@ import {
   type TemplateRenderContext,
   type TemplateRenderOptions,
 } from './template-renderer.js';
-import {
-  isInlineLaunchIntentWithoutParentEntry,
-  type InlineLaunchIntentWithoutParentEntry,
-} from './actors/inline-launch-intent-actor.js';
-import { rebrandContextSnapshotArtifacts } from './delegation-context.js';
-import { inferFrameEntryFromState } from './frame-entry.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { ResolvedStep, RunbookState } from './types.js';
 import type { RunId } from './run-id.js';
@@ -131,14 +124,6 @@ export interface ExecutionUnitRunnable extends ExecutionUnitEntryBase {
   readonly command: RenderedUnitCommand;
 }
 
-/** The unit was entered and composes a child runbook inline. */
-export interface ExecutionUnitInlineLaunch extends ExecutionUnitEntryBase {
-  /** Discriminant. */
-  readonly kind: 'inline-launch';
-  /** One-shot intent the machine prepared for this frame. */
-  readonly launch: InlineLaunchIntent;
-}
-
 /**
  * What entering one execution unit leaves the caller to do.
  *
@@ -148,10 +133,7 @@ export interface ExecutionUnitInlineLaunch extends ExecutionUnitEntryBase {
  * at all — three conditions the caller previously spelled out itself and can no
  * longer get wrong.
  */
-export type ExecutionUnitEntry =
-  | ExecutionUnitAwaiting
-  | ExecutionUnitRunnable
-  | ExecutionUnitInlineLaunch;
+export type ExecutionUnitEntry = ExecutionUnitAwaiting | ExecutionUnitRunnable;
 
 /** Inputs to {@link deriveExecutionUnitEntry}. */
 export interface DeriveExecutionUnitEntryInput {
@@ -159,15 +141,6 @@ export interface DeriveExecutionUnitEntryInput {
   readonly state: RunbookState;
   /** Parsed steps for that run. */
   readonly steps: readonly ResolvedStep[];
-  /**
-   * Reconstructed delegation bearers disclosed with this entry.
-   *
-   * Supplied only by the re-entry frontier seam, which verifies each token
-   * against its persisted hash before handing it here. Absent on every ordinary
-   * entry, and `| undefined` because absent and explicitly-undefined are the
-   * same fact to this function.
-   */
-  readonly delegateFrontier?: readonly DelegateFrontierEntry[] | undefined;
   /** Canonicalised project directory used as the helper containment boundary. */
   readonly cwd: string;
   /** Runtime template helpers loaded for this process, if any were declared. */
@@ -266,68 +239,6 @@ function buildRdInjectedEnv(
 }
 
 /**
- * Whether a persisted one-shot inline-launch intent belongs to THIS entry.
- *
- * Moved here from `actor-service.ts` with the rest of the entry projection, so
- * the classification and the payload field it turns on are derived in one place.
- *
- * @param state - Run being entered.
- * @param entry - Entry metadata for the unit the cursor names.
- * @param intent - Persisted intent read from the run's snapshot context.
- * @returns True when the intent names this run, step, substep, and a live frame.
- */
-function shouldProjectInlineLaunchIntent(
-  state: RunbookState,
-  entry: StepEntryMetadata,
-  intent: InlineLaunchIntentWithoutParentEntry,
-): boolean {
-  if (state.id !== intent.parentRunId) return false;
-  if (state.step !== intent.parentStep) return false;
-  // The RESOLVED substep, not the raw cursor. Two checks used to stand here —
-  // one on `state.substep` and one on the entry — and the entry's subsumes the
-  // cursor's: they agree whenever the cursor names a live substep, and where
-  // they differ the entry carries `undefined`, which rejects any real intent.
-  // A cursor naming no live substep is not the substep an intent addresses.
-  if (entry.substepId !== intent.parentStepId) return false;
-
-  // Project the one-shot intent only when its authored frame is still live (the
-  // active frame or an open FOR context). Openness flows from `deriveOpenFrames`
-  // (forStack) — never from the monotonic entry counter, whose keys persist after
-  // a loop advances and would otherwise re-project a stale prior-iteration intent
-  // onto the current frame.
-  return deriveOpenFrames(state).has(intent.parentFrameKey as FrameKey);
-}
-
-/**
- * Attach the run's live inline-launch intent to an entry, when it has one.
- *
- * @param state - Run being entered.
- * @param context - The run's persisted machine context.
- * @param entry - Entry metadata for the unit the cursor names.
- * @returns The entry, carrying `inlineLaunch` when a live intent names it.
- */
-function withInlineLaunchIntent(
-  state: RunbookState,
-  context: Readonly<Record<string, unknown>>,
-  entry: StepEntryMetadata,
-): StepEntryMetadata {
-  const persisted = context.inlineLaunchIntent;
-  if (!isInlineLaunchIntentWithoutParentEntry(persisted)) return entry;
-  const intent: InlineLaunchIntentWithoutParentEntry = {
-    ...persisted,
-    contextSnapshot: rebrandContextSnapshotArtifacts(persisted.contextSnapshot),
-  };
-  if (!shouldProjectInlineLaunchIntent(state, entry, intent)) return entry;
-  return {
-    ...entry,
-    inlineLaunch: {
-      ...intent,
-      parentEntry: inferFrameEntryFromState(state, intent.parentFrameKey as FrameKey),
-    },
-  };
-}
-
-/**
  * The persisted machine context a run carries, if it has synced one.
  *
  * `RunbookState.snapshot` is `unknown` and may be absent entirely (a run that has
@@ -337,7 +248,8 @@ function withInlineLaunchIntent(
  * `deriveStepEnteredEffect` validated the entry's `stepId` / `substepId` against
  * it. Those guards are gone (#820) — the entry has one producer, which reads the
  * cursor off the same state — and with them the only fields the overlay existed
- * to supply. What remains reads two keys, both of which are the machine's own.
+ * to supply. What remains is the machine's own context, handed to the
+ * observation derivation as-is.
  *
  * @param state - Run being entered.
  * @returns The persisted context, or an empty one.
@@ -364,7 +276,7 @@ function persistedContext(state: RunbookState): Record<string, unknown> {
  * prompted-FOR step is prompted whatever the run was started as, and the
  * `awaiting` classification turns on the same composed term.
  *
- * @param input - Run state, steps, render dependencies, and any frontier bearers.
+ * @param input - Run state, steps, and render dependencies.
  * @returns The classified entry.
  * @throws {InvalidRunbookStateError} When the run carries no `ContextId` or
  *   `WorkPath` to render against.
@@ -429,15 +341,12 @@ export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): 
     // A prompted-FOR step is prompted whatever the run was started as, and the
     // `awaiting` classification below turns on this same composed term.
     prompted: state.prompted || currentStep.kind === 'prompted-for',
-    delegateFrontier: input.delegateFrontier,
   };
 
-  const context = persistedContext(state);
-  const observed = withInlineLaunchIntent(state, context, entry);
   const effects = [
     deriveStepEnteredEffect({
-      snapshot: context,
-      entry: observed,
+      snapshot: persistedContext(state),
+      entry,
       // The SAME `workPath` the helper context renders against. It used to fall
       // back to `WORK_DIR` here while the render context refused without it, so
       // an entry could project artifact paths under one root and expand helper
@@ -446,17 +355,12 @@ export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): 
     }),
   ];
 
-  const launch = observed.inlineLaunch;
-  if (launch !== undefined) {
-    return { kind: 'inline-launch', effects, launch };
-  }
-
   // The three conditions that leave this process nothing to run, collapsed into
   // one arm: a prompted run, a prompted-FOR step, and a unit declaring no
   // command. `hasCommand` comes off the parsed unit rather than off whether an
   // expansion produced text, so a command that renders to the empty string is
   // still runnable.
-  if (observed.prompted || code === undefined) {
+  if (entry.prompted || code === undefined) {
     return { kind: 'awaiting', effects };
   }
 

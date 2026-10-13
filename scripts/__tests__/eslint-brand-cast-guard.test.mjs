@@ -235,7 +235,7 @@ test('resolves the ban for production core source, and lifts it only for the pro
   };
 
   assert.equal(
-    await severity('packages/core/src/runbook/collection-service.ts'),
+    await severity('packages/core/src/runbook/lifecycle-command-service.ts'),
     2,
     'the ban must be an error on ordinary core source',
   );

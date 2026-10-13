@@ -8,15 +8,15 @@ scenarios:
     description: Step 1 passes — OUTPUTS stored, step 2 value injected, runbook completes
     commands:
       - rd run --prompted outputs-inputs.runbook.md --input ContextId=scenario1
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
   fail-missing-inputs:
     description: Step 1 fails — no OUTPUTS stored, step 2 renders literally, runbook still completes
     commands:
       - rd run --prompted outputs-inputs.runbook.md --input ContextId=scenario2
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

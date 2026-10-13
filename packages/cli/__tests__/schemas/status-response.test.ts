@@ -18,7 +18,6 @@ describe('StatusResponseSchema', () => {
       const statusResponse = {
         kind: 'status',
         active: true,
-        stashed: false,
         file: 'test.runbook.md',
         state: 'running',
         position: {
@@ -43,7 +42,6 @@ describe('StatusResponseSchema', () => {
       const statusResponse = {
         kind: 'status',
         active: true,
-        stashed: false,
         lastAction: {
           action: 'fail',
           result: 'FAIL', // enum string for failed action
@@ -59,7 +57,6 @@ describe('StatusResponseSchema', () => {
       const statusResponse = {
         kind: 'status',
         active: true,
-        stashed: false,
         lastAction: {
           action: 'start',
           // result is optional
@@ -77,7 +74,6 @@ describe('StatusResponseSchema', () => {
       const statusResponse = {
         kind: 'status',
         active: false,
-        stashed: false,
       };
 
       const parseResult = StatusResponseSchema.safeParse(statusResponse);
@@ -91,7 +87,6 @@ describe('StatusResponseSchema', () => {
       const statusResponse = {
         kind: 'status',
         active: true,
-        stashed: false,
         vars: {
           PlanPath: 'rd://artifacts/ctx-a/rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/plan.json',
         },
@@ -106,7 +101,6 @@ describe('StatusResponseSchema', () => {
       const statusResponse = {
         kind: 'status',
         active: true,
-        stashed: false,
         vars: {
           PlanPath: {
             kind: 'artifact-record',
@@ -125,7 +119,6 @@ describe('StatusResponseSchema', () => {
     it('rejects response without kind field', () => {
       const statusResponse = {
         active: false,
-        stashed: false,
       };
 
       const parseResult = StatusResponseSchema.safeParse(statusResponse);

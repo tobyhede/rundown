@@ -2,12 +2,10 @@ import { brandInitialTemplateVarsForTest } from './brand-helpers.js';
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type { ResolvedStep, Substep, ForClause, Transitions } from '@rundown-org/parser';
 import type {
-  ClaimId,
-  DelegationCredentialIssuer,
-  DelegationTokenDeriver,
-  ExecutionEpoch,
   LifecycleNavigationMutationOutcome,
   LifecycleNavigationCapability,
+  OwnedRunResolution,
+  OwnerToken,
   RunProgressionDirective,
   RunProgressionOutcome,
   RunbookLifecycleCommandService,
@@ -19,34 +17,21 @@ import type { OutputEmitter } from '../../src/services/output-emitter.js';
 import { brandRunIdForTest } from './brand-helpers.js';
 import { mockErrorHelpers } from './mock-error-helpers.js';
 import { mockFn } from './typed-mocks.js';
-import { delegationRuntimeDouble } from './delegation-runtime-helpers.js';
 
 const DEFAULT_RUNBOOK_ID = brandRunIdForTest(`rd_${'6'.repeat(32)}`);
-// Branded by cast rather than assertClaimId: core is mocked in this suite, so
-// the real validator is unavailable and only the value's identity matters here.
-const CLAIM_ID = 'rdclm_abcdefghijklmnopqrstu1' as unknown as ClaimId;
+const TOKEN = 'rdo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' as OwnerToken;
 
-/** The refusal half of a fenced navigation outcome, minus the applied arm. */
+/** The refusal half of a navigation mutation outcome, minus the applied arm. */
 type NavigationRefusal = Exclude<LifecycleNavigationMutationOutcome, { kind: 'applied' }>;
 
-// Branded by cast for the same reason as CLAIM_ID above: core is mocked here, so
-// `assertExecutionEpoch` is unavailable and only the value's identity matters.
-const TEST_EPOCH = 4 as ExecutionEpoch;
-
-// Mock @rundown-org/core
+// Mock @rundown-org/core. The real module is spread back so the token-option
+// renderers keep their real codes; the collaborators goto drives are jest fns.
+const actualCore = await import('@rundown-org/core');
+const mockResolveOwnedRun =
+  mockFn<(manager: RunbookStateManager, token: OwnerToken) => Promise<OwnedRunResolution>>();
 jest.unstable_mockModule('@rundown-org/core', () => ({
-  RunbookStateManager: jest.fn(),
-  SessionService: jest.fn(),
-  // Statically imported by delegation-completion.js (pulled in via executeGoto's
-  // propagateDrivenRunTerminal call); the ESM link check needs the names, but the
-  // executeGoto tests below make `manager.load` return null so propagation
-  // short-circuits `skipped` without invoking any of these.
-  ExecutionLifecycleService: jest.fn(),
-  RunbookCompletionService: jest.fn(),
-  projectDelegationTerminalOutcome: jest.fn(),
-  // Satisfies the ESM named-import link check for delegation-completion.ts,
-  // which this module pulls in transitively.
-  COMPLETION_TARGET_MISMATCH_CODE: 'COMPLETION_TARGET_MISMATCH',
+  ...actualCore,
+  resolveOwnedRun: mockResolveOwnedRun,
   parseStepIdFromString: jest.fn(),
   stepIdToString: jest.fn((id: { step: string; substep?: string }) =>
     id.substep ? `${id.step}.${id.substep}` : id.step,
@@ -56,16 +41,6 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
     from: '1',
     at: target.step,
   })),
-  // Runtime-only validator with no service dependencies; pass-through preserves
-  // structural mocking — every static import from @rundown-org/core resolves
-  // through the factory rather than leaking the real module.
-  assertClaimId: jest.fn((s: string) => s),
-  claimKeyFromBearer: jest.fn((s: string) => `key:${s}`),
-  runbooksDir: jest.fn((cwd: string) => `${cwd}/.rundown/runbooks`),
-  // Statically imported by refusal-renderers.js, which goto-workflow.js pulls in
-  // for renderNavigationRefusal. Only the terminal-claim renderers call it, and
-  // navigation has no such arm — but the ESM link check needs the name present.
-  redactClaimId: jest.fn((claimId: string) => claimId),
   ...mockErrorHelpers,
 }));
 
@@ -73,7 +48,7 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 // navigation seam through it (not exercised by these unit tests); mocking the
 // factory keeps this suite off the seam's core-service import graph.
 jest.unstable_mockModule('../../src/helpers/lifecycle-seam-factory', () => ({
-  buildNonDelegatingLifecycleSeam: jest.fn(),
+  buildLifecycleSeam: jest.fn(),
 }));
 
 // GOTO owns only rendering and verbatim directive forwarding. Keep the shared
@@ -100,8 +75,8 @@ jest.unstable_mockModule('../../src/helpers/execution-emitter', () => ({
   createBridgedEmitter: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
 }));
 
-// Delegation completion still imports this factory transitively; keep that
-// collaborator structural even though GotoContext no longer carries it.
+// Keep the actor-service factory structural: the seam factory is mocked, but
+// the module graph still links it.
 jest.unstable_mockModule('../../src/helpers/actor-service-factory', () => ({
   createCliRunbookActorService: mockFn<() => Record<string, unknown>>().mockReturnValue({}),
 }));
@@ -118,9 +93,8 @@ const {
   renderNavigationRefusal,
   buildGotoContext,
 } = await import('../../src/helpers/goto-workflow.js');
-const { buildNonDelegatingLifecycleSeam } = await import(
-  '../../src/helpers/lifecycle-seam-factory.js'
-);
+const { buildLifecycleSeam } = await import('../../src/helpers/lifecycle-seam-factory.js');
+const { UNKNOWN_TOKEN_MESSAGE } = await import('../../src/helpers/token-option.js');
 
 const DEFAULT_TRANSITIONS: Transitions = {
   pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
@@ -213,143 +187,82 @@ beforeEach(() => {
 //    arm exists only to bind `const _exhaustive: never = mutation`, so reaching it
 //    is a compile error, not a runtime state a test could drive.
 
-describe('buildGotoContext claim-target coupling (#613)', () => {
-  /**
-   * Pin that goto derives caller evidence and the target selector from the SAME
-   * `--claim-id`.
-   *
-   * `docs/reference/cli.md` and `docs/internal/architecture.md` both state that
-   * `CLAIM_BEARER_MISMATCH` is unreachable from the CLI. That claim rests
-   * entirely on this coupling: the seam refuses a divergence, so a frontend
-   * sourcing the two fields independently would refuse every claim-targeted
-   * goto at runtime AND silently falsify both docs. Nothing else fails if the
-   * coupling breaks, so it is pinned here, where drift would originate.
-   *
-   * `readLifecycleCallerEvidence` is deliberately NOT mocked in this suite, so
-   * this exercises the real derivation rather than a stand-in.
-   */
-  it('derives caller evidence and target selector from one --claim-id', async () => {
-    const captured: unknown[] = [];
-    jest.mocked(buildNonDelegatingLifecycleSeam).mockReturnValue({
-      manager: {} as never,
-      seam: {
-        resolveRunNavigation: async (input: unknown) => {
-          captured.push(input);
-          // `none` short-circuits buildGotoContext before it assembles context,
-          // which keeps this test about input construction only.
-          return { kind: 'none' } as never;
-        },
-      } as never,
-    } as never);
-    const output = { noActiveRunbook: () => {} } as unknown as OutputEmitter;
+describe('buildGotoContext', () => {
+  const manager = { load: jest.fn() } as unknown as RunbookStateManager;
+  const resolveRunNavigation = mockFn<RunbookLifecycleCommandService['resolveRunNavigation']>();
+  const seam = { resolveRunNavigation } as unknown as RunbookLifecycleCommandService;
+  const output = {} as OutputEmitter;
+  const state = { id: DEFAULT_RUNBOOK_ID, step: '1', lifecycle: 'running' } as RunbookState;
+  const run = { state, stateVersion: 2 as never };
 
-    await buildGotoContext(output, '/cwd', { claimId: CLAIM_ID });
-
-    expect(captured).toHaveLength(1);
-    const input = captured[0] as {
-      callerEvidence: { kind: string; claimId?: unknown };
-      targetSelector: { kind: string; claimId?: unknown };
-    };
-    expect(input.callerEvidence).toEqual({ kind: 'claim_bearer', claimId: CLAIM_ID });
-    expect(input.targetSelector).toEqual({ kind: 'claim', claimId: CLAIM_ID });
-    // The invariant, stated as the seam's own gate states it: same id on both.
-    expect(input.callerEvidence.claimId).toBe(input.targetSelector.claimId);
+  beforeEach(() => {
+    jest.mocked(buildLifecycleSeam).mockReturnValue({ manager, seam });
+    mockResolveOwnedRun.mockReset();
+    resolveRunNavigation.mockReset();
   });
 
-  it('presents no bearer when no --claim-id is supplied, so the gate cannot fire', async () => {
-    const captured: unknown[] = [];
-    jest.mocked(buildNonDelegatingLifecycleSeam).mockReturnValue({
-      manager: {} as never,
-      seam: {
-        resolveRunNavigation: async (input: unknown) => {
-          captured.push(input);
-          return { kind: 'none' } as never;
-        },
-      } as never,
-    } as never);
-    const output = { noActiveRunbook: () => {} } as unknown as OutputEmitter;
-
-    await buildGotoContext(output, '/cwd', {});
-
-    const input = captured[0] as {
-      callerEvidence: { kind: string };
-      targetSelector: { kind: string };
-    };
-    // Anti-vacuity for the case above: without `--claim-id` neither field is
-    // claim-shaped, so the reconciliation is a no-op rather than a refusal.
-    expect(input.callerEvidence).toEqual({ kind: 'direct_cli' });
-    expect(input.targetSelector.kind).not.toBe('claim');
-  });
-});
-
-describe('buildGotoContext delegation authority propagation', () => {
-  /**
-   * Pin that the claim-bound capability pair reaches the goto context.
-   *
-   * `resolveRunNavigation` mints one opaque capability containing authority and
-   * the graph it verified. The runtime pair remains nested inside that
-   * authority, making a separately threaded issuer, deriver, or graph
-   * impossible at the CLI boundary.
-   */
-  function seamReturning(outcome: unknown): void {
-    jest.mocked(buildNonDelegatingLifecycleSeam).mockReturnValue({
-      manager: {} as never,
-      seam: { resolveRunNavigation: async () => outcome } as never,
-    } as never);
-  }
-
-  const allowedOutcome = (
-    navigation: LifecycleNavigationCapability,
-  ): Record<string, unknown> & { kind: 'allowed' } => ({
-    kind: 'allowed',
-    runId: DEFAULT_RUNBOOK_ID,
-    state: { id: DEFAULT_RUNBOOK_ID, step: '1' },
-    steps: navigation.steps,
-    navigation,
-  });
-
-  it('carries both claim-bound delegation capabilities onto the context', async () => {
-    const issueDelegationCredential = jest.fn() as unknown as DelegationCredentialIssuer;
-    const deriveDelegationToken = jest.fn() as unknown as DelegationTokenDeriver;
-    const delegationRuntime = delegationRuntimeDouble({
-      issueDelegationCredential,
-      deriveDelegationToken,
+  it('resolves the token through core and hands the owned run to the navigation seam', async () => {
+    mockResolveOwnedRun.mockResolvedValue({ kind: 'running', run });
+    const navigation = { authority: { runId: DEFAULT_RUNBOOK_ID }, steps: [], run } as never;
+    resolveRunNavigation.mockResolvedValue({
+      kind: 'allowed',
+      runId: DEFAULT_RUNBOOK_ID,
+      state,
+      navigation,
     });
-    const navigation = {
-      authority: { runId: DEFAULT_RUNBOOK_ID, delegationRuntime },
-      steps: [makeStep()],
-    } as unknown as LifecycleNavigationCapability;
-    seamReturning(allowedOutcome(navigation));
-    const output = {} as unknown as OutputEmitter;
 
-    const result = await buildGotoContext(output, '/cwd', {});
+    const result = await buildGotoContext(output, '/cwd', {
+      token: TOKEN,
+      commandStreamOptions: { commandOutput: 'stderr' },
+    });
 
+    expect(mockResolveOwnedRun).toHaveBeenCalledWith(manager, TOKEN);
+    expect(resolveRunNavigation.mock.calls).toEqual([[{ run }]]);
     expect(result.kind).toBe('ready');
-    if (result.kind !== 'ready') return;
-    expect(result.ctx.navigation).toBe(navigation);
-    expect(result.ctx.navigation.authority.delegationRuntime).toBe(delegationRuntime);
-    expect(result.ctx.navigation.authority.delegationRuntime?.issueDelegationCredential).toBe(
-      issueDelegationCredential,
-    );
-    expect(result.ctx.navigation.authority.delegationRuntime?.deriveDelegationToken).toBe(
-      deriveDelegationToken,
-    );
+    if (result.kind === 'ready') {
+      expect(result.ctx.output).toBe(output);
+      expect(result.ctx.manager).toBe(manager);
+      expect(result.ctx.seam).toBe(seam);
+      expect(result.ctx.state).toBe(state);
+      expect(result.ctx.cwd).toBe('/cwd');
+      expect(result.ctx.commandStreamOptions).toEqual({ commandOutput: 'stderr' });
+      expect(result.ctx.navigation).toBe(navigation);
+    }
   });
 
-  it('keeps the capability whole when verified authority has no delegation runtime', async () => {
-    const navigation = {
-      authority: { runId: DEFAULT_RUNBOOK_ID },
-      steps: [makeStep()],
-    } as unknown as LifecycleNavigationCapability;
-    seamReturning(allowedOutcome(navigation));
-    const output = {} as unknown as OutputEmitter;
+  it('passes an unknown_token resolution straight through without reaching the seam', async () => {
+    mockResolveOwnedRun.mockResolvedValue({ kind: 'unknown_token' });
 
-    const result = await buildGotoContext(output, '/cwd', {});
+    const result = await buildGotoContext(output, '/cwd', { token: TOKEN });
 
-    expect(result.kind).toBe('ready');
-    if (result.kind !== 'ready') return;
-    expect(result.ctx.navigation).toBe(navigation);
-    expect(result.ctx.navigation.authority.delegationRuntime).toBeUndefined();
+    expect(result).toEqual({ kind: 'unknown_token' });
+    expect(resolveRunNavigation).not.toHaveBeenCalled();
+  });
+
+  it('passes a finished resolution straight through without reaching the seam', async () => {
+    mockResolveOwnedRun.mockResolvedValue({ kind: 'finished', state, lifecycle: 'completed' });
+
+    const result = await buildGotoContext(output, '/cwd', { token: TOKEN });
+
+    expect(result).toEqual({ kind: 'finished', state, lifecycle: 'completed' });
+    expect(resolveRunNavigation).not.toHaveBeenCalled();
+  });
+
+  it('passes a run_finished seam refusal straight through', async () => {
+    mockResolveOwnedRun.mockResolvedValue({ kind: 'running', run });
+    resolveRunNavigation.mockResolvedValue({
+      kind: 'run_finished',
+      runId: DEFAULT_RUNBOOK_ID,
+      lifecycle: 'stopped',
+    });
+
+    const result = await buildGotoContext(output, '/cwd', { token: TOKEN });
+
+    expect(result).toEqual({
+      kind: 'run_finished',
+      runId: DEFAULT_RUNBOOK_ID,
+      lifecycle: 'stopped',
+    });
   });
 });
 
@@ -369,106 +282,65 @@ describe('renderNavigationRefusal', () => {
     return { output, errors, noActive };
   }
 
-  it('reports `none` as a no-op, not a failure', () => {
-    const { output, errors, noActive } = refusalEmitter();
-
-    // The empty-stack case is the one non-`ready` result that exits 0 — the
-    // caller maps this polarity to process.exitCode.
-    expect(renderNavigationRefusal(output, { kind: 'none' })).toBe(false);
-    expect(noActive).toEqual([['goto']]);
-    expect(errors).toEqual([]);
-  });
-
-  it('renders stale_claim under the code core assigned to the refusal', () => {
+  it('renders unknown_token as UNKNOWN_TOKEN, exit non-zero', () => {
     const { output, errors } = refusalEmitter();
 
-    const exitError = renderNavigationRefusal(output, {
-      kind: 'stale_claim',
-      claimId: CLAIM_ID,
-      message: 'superseded by the parent',
-      code: 'DELEGATION_SUPERSEDED',
-    });
-
-    expect(exitError).toBe(true);
-    // The code travels with the refusal — it is not hard-coded per arm.
-    expect(errors).toEqual([['superseded by the parent', 'DELEGATION_SUPERSEDED']]);
+    expect(renderNavigationRefusal(output, { kind: 'unknown_token' })).toBe(true);
+    expect(errors[0]?.[1]).toBe('UNKNOWN_TOKEN');
+    expect(errors[0]?.[0]).toContain('owner_token');
   });
 
-  it('renders terminal_claim as CLAIMED_RUNBOOK_UNAVAILABLE', () => {
-    const { output, errors } = refusalEmitter();
+  it('renders a finished resolution as RD-303 / RD-304 naming goto and the lifecycle', () => {
+    const state = { id: DEFAULT_RUNBOOK_ID } as RunbookState;
+    const completed = refusalEmitter();
+    expect(
+      renderNavigationRefusal(completed.output, {
+        kind: 'finished',
+        state,
+        lifecycle: 'completed',
+      }),
+    ).toBe(true);
+    expect(completed.errors[0]?.[1]).toBe('RD-303');
+    expect(completed.errors[0]?.[0]).toContain('rundown goto');
+    expect(completed.errors[0]?.[2]).toEqual({ runId: DEFAULT_RUNBOOK_ID, lifecycle: 'completed' });
 
-    const exitError = renderNavigationRefusal(output, {
-      kind: 'terminal_claim',
-      claimId: CLAIM_ID,
-      lifecycle: 'completed',
-      message: 'child already completed',
-    });
-
-    expect(exitError).toBe(true);
-    expect(errors).toEqual([['child already completed', 'CLAIMED_RUNBOOK_UNAVAILABLE']]);
+    const stopped = refusalEmitter();
+    expect(
+      renderNavigationRefusal(stopped.output, { kind: 'finished', state, lifecycle: 'stopped' }),
+    ).toBe(true);
+    expect(stopped.errors[0]?.[1]).toBe('RD-304');
   });
 
-  it('renders unknown_run as RUN_TARGET_UNAVAILABLE', () => {
+  it('renders the seam run_finished refusal the same way', () => {
     const { output, errors } = refusalEmitter();
 
-    const exitError = renderNavigationRefusal(output, {
-      kind: 'unknown_run',
-      runId: DEFAULT_RUNBOOK_ID,
-      message: 'not a member of this session stack',
-    });
-
-    expect(exitError).toBe(true);
-    expect(errors).toEqual([['not a member of this session stack', 'RUN_TARGET_UNAVAILABLE']]);
-  });
-
-  it('renders actor_context_required naming goto and echoing no run id', () => {
-    const { output, errors } = refusalEmitter();
-
-    const exitError = renderNavigationRefusal(output, { kind: 'actor_context_required' });
-
-    expect(exitError).toBe(true);
-    expect(errors[0]?.[1]).toBe('ACTOR_CONTEXT_REQUIRED');
-    expect(errors[0]?.[0]).toContain('rundown goto');
-    expect(errors[0]?.[0]).toContain('--claim-id');
-    // Accident barrier: no details object, and no run id anywhere.
-    expect(errors[0]?.[2]).toBeUndefined();
-    expect(JSON.stringify(errors[0])).not.toContain(DEFAULT_RUNBOOK_ID);
+    expect(
+      renderNavigationRefusal(output, {
+        kind: 'run_finished',
+        runId: DEFAULT_RUNBOOK_ID,
+        lifecycle: 'abandoned',
+      }),
+    ).toBe(true);
+    expect(errors[0]?.[1]).toBe('RD-304');
+    expect(errors[0]?.[2]).toEqual({ runId: DEFAULT_RUNBOOK_ID, lifecycle: 'abandoned' });
   });
 
   it('names the invoking command, so the run --prompted --step path does not say goto', () => {
     // `run --prompted --step` routes its launch-local jump through this same
-    // navigation seam (it did not before #855, which built the context by
-    // hand). The remedial advice is identical either way, but naming `rundown
-    // goto` to someone who typed `rundown run` points at a command they never
-    // invoked — and `command` also rides the JSON `no_active_runbook` envelope
-    // that agents route on.
+    // navigation seam. The remedial advice is identical either way, but naming
+    // `rundown goto` to someone who typed `rundown run` points at a command
+    // they never invoked.
     const { output, errors } = refusalEmitter();
 
-    expect(renderNavigationRefusal(output, { kind: 'actor_context_required' }, 'run')).toBe(true);
+    expect(
+      renderNavigationRefusal(
+        output,
+        { kind: 'run_finished', runId: DEFAULT_RUNBOOK_ID, lifecycle: 'completed' },
+        'run',
+      ),
+    ).toBe(true);
     expect(errors[0]?.[0]).toContain('rundown run');
     expect(errors[0]?.[0]).not.toContain('rundown goto');
-
-    const mismatch = refusalEmitter();
-    expect(renderNavigationRefusal(mismatch.output, { kind: 'claim_bearer_mismatch' }, 'run')).toBe(
-      true,
-    );
-    expect(mismatch.errors[0]?.[0]).toContain('rundown run');
-    expect(mismatch.errors[0]?.[0]).not.toContain('rundown goto');
-  });
-
-  it('renders claim_bearer_mismatch under its own code, naming goto (#613)', () => {
-    const { output, errors } = refusalEmitter();
-
-    const exitError = renderNavigationRefusal(output, { kind: 'claim_bearer_mismatch' });
-
-    expect(exitError).toBe(true);
-    expect(errors[0]?.[1]).toBe('CLAIM_BEARER_MISMATCH');
-    expect(errors[0]?.[1]).not.toBe('ACTOR_CONTEXT_REQUIRED');
-    // Names this command, so the message cannot be command-agnostic boilerplate.
-    expect(errors[0]?.[0]).toContain('rundown goto');
-    // The caller DID present a claim id, so the bare-form advice would misdiagnose.
-    expect(errors[0]?.[0]).not.toContain('Pass `--claim-id');
-    expect(errors[0]?.[2]).toBeUndefined();
   });
 
   it('fails closed on an unrecognized kind rather than exiting zero', () => {
@@ -492,19 +364,6 @@ describe('renderNavigationRefusal', () => {
     // Nothing is rendered for a kind we cannot describe — no guessed envelope.
     expect(errors).toEqual([]);
     expect(noActive).toEqual([]);
-  });
-
-  it('distinguishes the two claim-authority refusals from each other', () => {
-    const bare = refusalEmitter();
-    const mismatch = refusalEmitter();
-
-    renderNavigationRefusal(bare.output, { kind: 'actor_context_required' });
-    renderNavigationRefusal(mismatch.output, { kind: 'claim_bearer_mismatch' });
-
-    // Same command, same exit polarity, different diagnosis — the whole point
-    // of splitting the code rather than reusing ACTOR_CONTEXT_REQUIRED (#613).
-    expect(bare.errors[0]?.[1]).not.toBe(mismatch.errors[0]?.[1]);
-    expect(bare.errors[0]?.[0]).not.toBe(mismatch.errors[0]?.[0]);
   });
 });
 
@@ -775,35 +634,15 @@ describe('executeGoto', () => {
     };
   }
 
-  // Every refusal the fenced navigation mutation can return, each mapped to its
-  // own symbolic code. The codes are the branch an agent acts on — re-claim,
-  // re-read, wait, recover, or give up — so the table asserts the message is
-  // forwarded verbatim alongside the code, not merely that the goto failed.
-  //
-  // Each outcome is typed as the concrete union member rather than cast, so the
-  // fixtures are checked against the contract they stand in for: only
-  // `recovery_required` carries an epoch, and a row that drifted from core's
-  // shape would fail to compile instead of silently testing a shape core never
-  // produces.
+  // The one refusal the navigation mutation can return under one writer per
+  // run: a conditional save that found the row moved. The message is forwarded
+  // verbatim alongside the code, not merely "the goto failed".
   it.each<{
     readonly label: string;
     readonly outcome: NavigationRefusal;
     readonly code: string;
+    readonly error: string;
   }>([
-    {
-      label: 'a vanished run target',
-      outcome: { kind: 'missing', runId: DEFAULT_RUNBOOK_ID, message: 'run disappeared' },
-      code: 'RUN_TARGET_UNAVAILABLE',
-    },
-    {
-      label: 'a superseded claim',
-      outcome: {
-        kind: 'claim_superseded',
-        runId: DEFAULT_RUNBOOK_ID,
-        message: 'A newer claim controls this run.',
-      },
-      code: 'STALE_CLAIM',
-    },
     {
       label: 'a concurrent state change',
       outcome: {
@@ -812,27 +651,16 @@ describe('executeGoto', () => {
         message: 'The run changed while this goto was deciding.',
       },
       code: 'CONCURRENT_MODIFICATION',
+      error: 'The run changed while this goto was deciding.',
     },
     {
-      label: 'an in-flight execution',
-      outcome: {
-        kind: 'execution_in_progress',
-        runId: DEFAULT_RUNBOOK_ID,
-        message: 'Another actor owns this run.',
-      },
-      code: 'EXECUTION_IN_PROGRESS',
+      // Pruned by another process between token resolution and the save.
+      label: 'a run pruned before the save',
+      outcome: { kind: 'unknown_token' },
+      code: 'UNKNOWN_TOKEN',
+      error: UNKNOWN_TOKEN_MESSAGE,
     },
-    {
-      label: 'an interrupted execution',
-      outcome: {
-        kind: 'recovery_required',
-        runId: DEFAULT_RUNBOOK_ID,
-        epoch: TEST_EPOCH,
-        message: 'The execution outcome is unknown and requires recovery.',
-      },
-      code: 'RECOVERY_REQUIRED',
-    },
-  ])('returns $code when the fenced core mutation refuses with $label', async (refusal) => {
+  ])('returns $code when the core mutation refuses with $label', async (refusal) => {
     const update = mockFn<RunbookStateManager['update']>();
     const runNavigationMutation = mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
     runNavigationMutation.mockResolvedValue(refusal.outcome);
@@ -847,7 +675,6 @@ describe('executeGoto', () => {
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
       seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
-      callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
       steps: [makeStep()],
       cwd: '/test',
@@ -859,10 +686,10 @@ describe('executeGoto', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe(refusal.code);
-      expect(result.error).toBe(refusal.outcome.message);
+      expect(result.error).toBe(refusal.error);
     }
-    // A refused navigation must not write: the fence owns the commit, so a CLI
-    // fallback write would be the shadow persistence path the fence replaced.
+    // A refused navigation must not write: core owns the commit, so a CLI
+    // fallback write would be a shadow persistence path.
     expect(update).not.toHaveBeenCalled();
   });
 
@@ -884,7 +711,6 @@ describe('executeGoto', () => {
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
       seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
-      callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
@@ -900,13 +726,10 @@ describe('executeGoto', () => {
     }
     expect(action).toHaveBeenCalled();
     expect(runNavigationMutation).toHaveBeenCalledTimes(1);
-    // The seam decides authority, target, and release policy from this input
-    // alone — the CLI performs no navigation write of its own — so an input that
-    // silently lost a field would hand the fence a different mutation.
-    expect(runNavigationMutation).toHaveBeenCalledWith({
-      navigation,
-      target,
-    });
+    // The seam applies the GOTO from this input alone — the CLI performs no
+    // navigation write of its own — so an input that silently lost a field
+    // would hand the seam a different mutation.
+    expect(runNavigationMutation.mock.calls[0]?.[0]).toEqual({ navigation, target });
     expect(driveRunProgression).toHaveBeenCalledWith(
       progressionDirective,
       expect.objectContaining({ manager: ctx.manager, cwd: '/test' }),
@@ -937,7 +760,6 @@ describe('executeGoto', () => {
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
       seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
-      callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
@@ -978,7 +800,6 @@ describe('executeGoto', () => {
         load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
       } as unknown as RunbookStateManager,
       seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
-      callerEvidence: { kind: 'direct_cli' as const },
       state: makeState(),
       steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
       cwd: '/test',
@@ -995,52 +816,6 @@ describe('executeGoto', () => {
       });
     }
   });
-
-  it('does not unpack or reconstruct the authority used by mutation and continuation', async () => {
-    const runNavigationMutation = mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
-    const issueDelegationCredential = jest.fn() as unknown as DelegationCredentialIssuer;
-    const deriveDelegationToken = jest.fn() as unknown as DelegationTokenDeriver;
-    const delegationRuntime = delegationRuntimeDouble({
-      issueDelegationCredential,
-      deriveDelegationToken,
-    });
-    const navigationWithRuntime = {
-      authority: { runId: DEFAULT_RUNBOOK_ID, delegationRuntime },
-      steps: gotoSteps,
-    } as unknown as LifecycleNavigationCapability;
-    const directiveWithRuntime = {
-      ...progressionDirective,
-      authority: navigationWithRuntime.authority,
-    } satisfies Extract<RunProgressionDirective, { kind: 'activate' }>;
-    runNavigationMutation.mockResolvedValue({
-      ...appliedMutation(),
-      progression: directiveWithRuntime,
-    });
-    const ctx = {
-      output: {
-        action: jest.fn(),
-        flush: jest.fn(),
-      } as unknown as OutputEmitter,
-      manager: {
-        load: mockFn<RunbookStateManager['load']>().mockResolvedValue(null),
-      } as unknown as RunbookStateManager,
-      seam: { runNavigationMutation } as unknown as RunbookLifecycleCommandService,
-      callerEvidence: { kind: 'direct_cli' as const },
-      state: makeState(),
-      steps: [makeStep({ name: '1' }), makeStep({ name: '2' })],
-      cwd: '/test',
-      navigation: navigationWithRuntime,
-    };
-
-    await executeGoto(ctx, { step: '2' });
-
-    expect(runNavigationMutation).toHaveBeenCalledWith({
-      navigation: navigationWithRuntime,
-      target: { step: '2' },
-    });
-    expect(driveRunProgression).toHaveBeenCalledWith(directiveWithRuntime, expect.anything());
-    expect(directiveWithRuntime.authority.delegationRuntime).toBe(delegationRuntime);
-  });
 });
 
 describe('gotoResultRequiresFailureExit', () => {
@@ -1056,9 +831,9 @@ describe('gotoResultRequiresFailureExit', () => {
       {
         kind: 'refused',
         runId: DEFAULT_RUNBOOK_ID,
-        reason: 'actor_context_required',
-        message: 'authority required',
-        recovery: 'provide_authority',
+        reason: 'run_missing',
+        message: 'the run no longer exists',
+        recovery: 'permanent',
       },
       true,
     ],

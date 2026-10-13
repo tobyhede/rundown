@@ -9,8 +9,8 @@
  * - the ordinal never goes backwards, and never jumps by more than one, so a
  *   credential stamped in a frame is always reproducible from committed state;
  * - it advances by one *exactly* when a frame is entered — a switch, or a
- *   re-entry the transition declared — so `classifyDelegationLiveness` cannot
- *   close a delegation the cursor never left, nor keep one it did;
+ *   re-entry the transition declared — so an entry-keyed reader can neither
+ *   close a frame the cursor never left, nor keep one it did;
  * - a frame's recorded count never falls, so `inferFrameEntryFromState` can
  *   still answer for a frame the cursor has left;
  * - the active frame's own answer is the active entry, which is the identity

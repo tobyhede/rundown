@@ -2,8 +2,7 @@ import type { StepPosition } from '../cli/types.js';
 import type { RunbookRef } from '../runbook/runbook-ref.js';
 import type { ActionType } from '../runbook/transition-kernel.js';
 import type { PublicArtifactVarValue } from '../runbook/artifact-schema.js';
-import type { ContextSnapshot } from '../runbook/types.js';
-import type { ClaimId } from '../runbook/claim-id.js';
+import type { OwnerToken } from '../runbook/run-secrets.js';
 
 // Re-export StepPosition for backwards compatibility and event payload typing
 export type { StepPosition };
@@ -38,48 +37,15 @@ export interface RunbookStartedPayload {
   readonly title?: string;
   readonly description?: string;
   readonly prompted: boolean;
-  /** Orchestrator bearer claim id minted for the run controller. */
-  readonly claimId?: ClaimId;
-}
-
-/**
- * Public credential-delivery entry for one delegated substep.
- *
- * This token-bearing shape is never persisted in runbook state or XState
- * context. Core derives it from a descriptor-bearing frontier intent only at
- * an authorized observation boundary.
- */
-export interface DelegateFrontierEntry {
-  readonly id: string;
-  readonly runbook: string;
-  readonly token: string;
-}
-
-/**
- * Machine-owned intent for a front end to launch a child runbook inline.
- *
- * The state machine prepares this public payload while the CLI performs the
- * external child process launch from it.
- */
-export interface InlineLaunchIntent {
-  /** Parent run ID whose active substep owns this inline child launch. */
-  readonly parentRunId: string;
-  /** Parent substep ID that authored the child runbook reference. */
-  readonly parentStepId: string;
-  /** Parent step name containing the inline child substep. */
-  readonly parentStep: string;
-  /** Parent execution frame key for the substep instance. */
-  readonly parentFrameKey: string;
-  /** Parent frame entry number observed when the intent is emitted. */
-  readonly parentEntry: number;
-  /** Preallocated child run ID the front end must use when starting the child. */
-  readonly childRunId: string;
-  /** Resolved display/path string for the child runbook. */
-  readonly childRunbookPath: string;
-  /** Canonical resolved child runbook reference. */
-  readonly childRunbookRef: RunbookRef;
-  /** Parent context snapshot inherited by the inline child. */
-  readonly contextSnapshot: ContextSnapshot;
+  /**
+   * The run's Owner Token, printed once here and nowhere else.
+   *
+   * Serialised as `owner_token` on the public event. It is the sole authority
+   * over the run: every mutating command names it with `--token`. Status,
+   * `step_entered` and every other event omit it, so reading them grants
+   * nothing.
+   */
+  readonly ownerToken?: OwnerToken;
 }
 
 /** Payload emitted when a step begins execution (STEP_ENTERED event). */
@@ -98,14 +64,6 @@ export interface StepEnteredPayload {
   readonly prompted: boolean;
   /** Current execution unit's resolved ARTIFACTS working set. */
   readonly artifacts: Readonly<Record<string, PublicArtifactVarValue>>;
-  /**
-   * Delegation frontier — present when entering the first substep of a DELEGATE step.
-   * Each entry contains the substep id, runbook path, and pre-issued delegation token.
-   * The agent dispatches N subagents using these tokens, then calls `rd collect`.
-   */
-  readonly delegateFrontier?: ReadonlyArray<DelegateFrontierEntry>;
-  /** Inline child runbook launch intent for non-DELEGATE child-runbook units. */
-  readonly inlineLaunch?: InlineLaunchIntent;
 }
 
 /** Payload emitted when a step command begins execution (COMMAND_STARTED event). */
@@ -190,16 +148,10 @@ export interface RunbookStoppedPayload {
   readonly message?: string;
   readonly position: StepPosition;
   readonly reason?:
-    | 'actor_context_required'
     | 'policy_denied'
     | 'command_execution_failed'
     | 'fail_transition'
     | 'user_abort'
-    | 'delegation_resolution_failed'
-    | 'nested_delegation_forbidden'
-    | 'inline_launch_failed'
-    | 'inline_launch_forbidden'
-    | 'retry_error_failed'
     | 'output_capture_failed'
     | 'artifact_resolution_failed'
     | 'for_resolution_failed';

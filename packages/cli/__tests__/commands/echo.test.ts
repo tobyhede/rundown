@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { Command } from 'commander';
-import { createTestWorkspace, runCliInProcess, type TestWorkspace } from '../helpers/test-utils.js';
+import {
+  createTestWorkspace,
+  requireRunId,
+  runCliInProcess,
+  type TestWorkspace,
+} from '../helpers/test-utils.js';
 // Stryker static-import linkage (mutation testing): links this test file into
 // Jest's static inverse-module graph so `--findRelatedTests src/commands/echo.ts`
 // credits the behavioural tests below (which reach the command only via the
@@ -43,25 +48,34 @@ describe('echo command', () => {
   });
 
   describe('result sequence', () => {
+    // `rd echo` runs inside a step command, where execution injects RD_RUN_ID
+    // naming the run; the test supplies it the same way.
+    let env: Record<string, string>;
+
     beforeEach(async () => {
-      // Start a runbook first (prompted mode to keep it active)
-      await runCliInProcess('run --prompted runbooks/retry.runbook.md --text', workspace);
+      const start = await runCliInProcess('run --prompted runbooks/retry.runbook.md', workspace);
+      expect(start.exitCode).toBe(0);
+      env = { RD_RUN_ID: requireRunId(start.stdout) };
     });
 
     it('returns pass by default (no flags)', async () => {
-      const result = await runCliInProcess('echo npm install --text', workspace);
+      const result = await runCliInProcess('echo npm install --text', workspace, { env });
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('npm install');
     });
 
     it('returns pass with explicit --result pass', async () => {
-      const result = await runCliInProcess('echo --result pass npm install --text', workspace);
+      const result = await runCliInProcess('echo --result pass npm install --text', workspace, {
+        env,
+      });
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('npm install');
     });
 
     it('returns fail with --result fail', async () => {
-      const result = await runCliInProcess('echo --result fail npm install --text', workspace);
+      const result = await runCliInProcess('echo --result fail npm install --text', workspace, {
+        env,
+      });
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toContain('npm install');
     });
@@ -72,17 +86,31 @@ describe('echo command', () => {
   });
 
   describe('error handling', () => {
-    it('fails when no active runbook', async () => {
-      const result = await runCliInProcess(['echo', 'hello', '--text'], workspace);
+    it('fails when no run context is set', async () => {
+      const result = await runCliInProcess(['echo', 'hello', '--text'], workspace, {
+        env: { RD_RUN_ID: undefined },
+      });
 
       expect(result.exitCode).toBe(1);
-      expect(result.stderr).toContain('No active runbook');
+      expect(result.stderr).toContain('No run context');
+    });
+
+    it('fails when RD_RUN_ID names no run', async () => {
+      const result = await runCliInProcess(['echo', 'hello', '--text'], workspace, {
+        env: { RD_RUN_ID: 'rd_00000000000000000000000000000000' },
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(result.stderr).toContain('not found');
     });
 
     it('fails with invalid result value', async () => {
-      await runCliInProcess('run --prompted runbooks/simple.runbook.md --text', workspace);
+      const start = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      const env = { RD_RUN_ID: requireRunId(start.stdout) };
 
-      const result = await runCliInProcess('echo --result maybe npm install --text', workspace);
+      const result = await runCliInProcess('echo --result maybe npm install --text', workspace, {
+        env,
+      });
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('Invalid result');
     });
