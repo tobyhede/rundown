@@ -25,7 +25,6 @@ import type { RunId } from './run-id.js';
 import type { SecretHash } from './run-secrets.js';
 import { findSubstepState, upsertSubstepStateChild, type FrameKey } from './targeting.js';
 import type {
-  ReplacedDelegation,
   ContextSnapshot,
   DelegationChildReservation,
   ResolvedStep,
@@ -106,7 +105,7 @@ export function reserveDelegationChildren(
     };
     substepStates = upsertSubstepStateChild(substepStates, substep.id, input.frameKey, child);
     // An earlier entry's child — cancelled by the re-entry, or Collected
-    // before it — is recorded as replaced: its ticket is refused as no longer
+    // before it — has its ticket recorded as replaced: refused as no longer
     // counted, never as unknown.
     if (existing?.kind === 'delegation') {
       substepStates = recordReplaced(substepStates, substep.id, input.frameKey, existing);
@@ -116,13 +115,16 @@ export function reserveDelegationChildren(
 }
 
 /**
- * Append a replaced Delegation to its substep state's record.
+ * Record a replaced Delegation's Claim Ticket hash on its substep state.
+ *
+ * A reservation never issued a ticket leaves nothing to refuse, so it records
+ * nothing.
  *
  * @param substepStates - The substep states, the replacement already recorded.
  * @param substepId - The substep whose Delegation was replaced.
  * @param frameKey - The frame it was reserved in.
  * @param replaced - The replaced reservation.
- * @returns The substep states with the replacement recorded.
+ * @returns The substep states with the replaced ticket recorded.
  */
 function recordReplaced(
   substepStates: readonly SubstepState[],
@@ -130,13 +132,14 @@ function recordReplaced(
   frameKey: FrameKey,
   replaced: DelegationChildReservation,
 ): readonly SubstepState[] {
-  const record: ReplacedDelegation = {
-    runId: replaced.runId,
-    ticketHash: replaced.ticketHash,
-  };
+  const { ticketHash } = replaced;
+  if (ticketHash === null) return substepStates;
   return substepStates.map((substepState) =>
     substepState.id === substepId && substepState.frameKey === frameKey
-      ? { ...substepState, replaced: [...(substepState.replaced ?? []), record] }
+      ? {
+          ...substepState,
+          replacedTicketHashes: [...(substepState.replacedTicketHashes ?? []), ticketHash],
+        }
       : substepState,
   );
 }
@@ -172,7 +175,8 @@ export function retryableDelegation(
  * The fresh child runs the same runbook with the context the cancelled one
  * was reserved with — a sibling Collected since must not leak into it — under
  * a new run id and a new Claim Ticket. The cancelled one is recorded as
- * replaced on the substep state. Every other substep state is left untouched.
+ * replaced on the substep state, by its ticket's hash when it was issued one.
+ * Every other substep state is left untouched.
  *
  * @param view - The parent's frame-entry coordinates and substep states.
  * @param delegation - The Delegation to cancel, from {@link retryableDelegation}.
@@ -372,9 +376,9 @@ export function delegationStanding(
     parentRunId: linkage.parentRunId,
     parentStep: linkage.parentStep,
   };
-  if (findReplacedDelegation(parent, (record) => record.runId === childRunId) !== undefined) {
-    return cancelled;
-  }
+  // A child the parent replaced (retried, or the frame re-entered) is no
+  // longer among the active entry's reservations, so it falls through to
+  // `cancelled` here; it needs no record of its own.
   const step = parentSteps.find((candidate) => candidate.name === parent.step);
   const delegation = activeEntryDelegations(parent).find(
     (candidate) => candidate.reservation.runId === childRunId,
@@ -407,18 +411,18 @@ export function findTicketReservation(
 }
 
 /**
- * Find a Delegation the parent recorded as replaced (#905).
+ * Find the substep state that recorded a Claim Ticket as replaced (#905).
  *
  * @param state - The parent run.
- * @param matches - Selects the record sought.
+ * @param ticketHash - Hash of the presented Claim Ticket.
  * @returns The substep state recording it, or `undefined`.
  */
-export function findReplacedDelegation(
+export function findReplacedTicket(
   state: Pick<RunbookState, 'substepStates'>,
-  matches: (record: ReplacedDelegation) => boolean,
+  ticketHash: SecretHash,
 ): SubstepState | undefined {
   return (state.substepStates ?? []).find((substepState) =>
-    (substepState.replaced ?? []).some(matches),
+    (substepState.replacedTicketHashes ?? []).includes(ticketHash),
   );
 }
 

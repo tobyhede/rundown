@@ -3,12 +3,12 @@
 import type { Command } from 'commander';
 import {
   CONCURRENT_MODIFICATION_CODE,
-  isRunId,
   releaseDelegation,
   RunbookStateManager,
   type ReleaseDelegationOutcome,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
+import { parseRunId } from '../helpers/run-option.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
@@ -23,8 +23,10 @@ import { renderExecutionLeaseRefusal, renderRunFinished } from '../helpers/token
  * because it lost the child's Owner Token — ends it `abandoned` in the child's
  * own record, so its parent's Collect reads a definite result (a fail). The
  * authority is the agent id `rundown claim` recorded, matched by core (both
- * absent match); the plugin's hook stamps `--agent-id`. Release grants nothing
- * else and never touches the parent.
+ * absent match). The agent passes `--agent-id` itself, the same id it gave
+ * `rundown claim`: no hook stamps it yet (#907). Release grants nothing else
+ * and never touches the parent; the running Inline Children the child composes
+ * are abandoned with it.
  *
  * @param program - Commander program instance to register the command on
  */
@@ -38,12 +40,8 @@ export function registerReleaseCommand(program: Command): void {
       await withErrorHandling(
         async () => {
           const output = new OutputEmitter({ text: options.text, command: 'release' });
-          if (!isRunId(rawId)) {
-            output.error('Invalid run id. Expected rd_<32 hex characters>.', 'INVALID_RUN_ID');
-            output.flush();
-            process.exitCode = 1;
-            return;
-          }
+          const runId = parseRunId(rawId, output);
+          if (runId === undefined) return;
           if (options.agentId?.trim() === '') {
             output.error('--agent-id must not be empty.', 'INVALID_SYNTAX');
             output.flush();
@@ -59,7 +57,7 @@ export function registerReleaseCommand(program: Command): void {
               loadSteps: (state) => getRunbookFromState(state, cwd),
             },
             {
-              runId: rawId,
+              runId,
               ...(options.agentId !== undefined ? { agentId: options.agentId } : {}),
             },
           );
@@ -69,11 +67,12 @@ export function registerReleaseCommand(program: Command): void {
             process.exitCode = 1;
             return;
           }
-          const child = await manager.load(outcome.runId);
-          if (child === null) throw new Error(`Run ${outcome.runId} vanished after its release`);
-          createBridgedEmitter(child, output).emit({
+          // The child as the release committed it: never re-read, so a prune
+          // of the now-finished row cannot turn a committed release into a
+          // failure.
+          createBridgedEmitter(outcome.state, output).emit({
             type: 'RUNBOOK_ABANDONED',
-            payload: outcome.parent === undefined ? {} : { parent: outcome.parent },
+            payload: { parent: outcome.parent, abandonedInline: outcome.abandonedInline },
           });
           output.flush();
         },

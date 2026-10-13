@@ -706,19 +706,27 @@ text form does.
 
 ### `rundown release <child-id> [--agent-id <id>]`
 
-The released child's `runbook_abandoned` event, naming its parent while the
-parent exists:
+The released child's `runbook_abandoned` event. `parent` names the parent unit
+the child ran for and its `standing` — whether anything will Collect the
+abandoned child: `current` (the parent's next `collect` applies it as a fail),
+`cancelled` (the parent no longer counts it), `parent_finished`, or
+`parent_pruned` (no `runId`). `abandonedInline` lists the running Inline
+Children the child composed, abandoned with it in the same write:
 
 ```jsonl
-{"type":"runbook_abandoned","parent":{"runId":"rd_46cbdd5f19324d3b91667e2ff0e96386","step":"1.1"},"runbookId":"rd_7af1d92df90a405edbf718ca20012b3f","runbook":{"source":"project","path":"child.runbook.md"},"seq":1}
+{"type":"runbook_abandoned","parent":{"standing":"current","runId":"rd_46cbdd5f19324d3b91667e2ff0e96386","step":"1.1"},"abandonedInline":[],"runbookId":"rd_7af1d92df90a405edbf718ca20012b3f","runbook":{"source":"project","path":"child.runbook.md"},"seq":1}
 ```
 
 Refusals are error envelopes with `command: "release"`: `INVALID_RUN_ID`,
 `INVALID_SYNTAX` (an empty `--agent-id`), `RUN_TARGET_UNAVAILABLE`,
 `NOT_A_DELEGATION`, `AGENT_MISMATCH`, `RD-303` / `RD-304`,
 `EXECUTION_IN_PROGRESS` and `CONCURRENT_MODIFICATION`. Nothing is written on any
-of them. The text form prints
-`Run <runId> abandoned; run <parent> collects it at <step> as a fail`.
+of them. The text form prints one line per standing —
+`Run <runId> abandoned; run <parent> collects it at <step> as a fail`,
+`…; run <parent> no longer counts it at <step>, so nothing collects it`,
+`…; run <parent> has finished, so nothing collects it at <step>`, or
+`…; its parent run was pruned, so nothing collects it at <step>` — then
+`Inline child <runId> abandoned with it` for each abandoned Inline Child.
 
 ## `rundown artifact`
 

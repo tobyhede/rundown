@@ -128,6 +128,34 @@ export type DeleteRunResult =
   | { readonly kind: 'concurrent_modification' }
   | { readonly kind: 'missing' };
 
+/** One run's part of {@link RunbookStore.saveRunsResolvingLeases}. */
+export interface RunWriteAtVersion {
+  /** The `state_version` the caller read the run at. */
+  readonly expectedVersion: StateVersion;
+  /** The complete state to persist; its `id` names the run. */
+  readonly state: RunbookState;
+}
+
+/**
+ * Outcome of {@link RunbookStore.saveRunsResolvingLeases}.
+ *
+ * - `committed` — every row was written; `runs` lists each persisted state with
+ *   the version its write produced, in the order given.
+ * - `concurrent_modification` — `runId`'s `state_version` moved since the
+ *   caller read it. Nothing was written. Refused, never retried.
+ * - `missing` — no row carries `runId`. Nothing was written.
+ */
+export type SaveRunsResult =
+  | {
+      readonly kind: 'committed';
+      readonly runs: readonly {
+        readonly state: RunbookState;
+        readonly stateVersion: StateVersion;
+      }[];
+    }
+  | { readonly kind: 'concurrent_modification'; readonly runId: RunId }
+  | { readonly kind: 'missing'; readonly runId: RunId };
+
 /** Input to {@link RunbookStore.claimDelegationChild}. */
 export interface ClaimDelegationChildInput<R> {
   /** The parent whose reservation the claim names. */
@@ -493,11 +521,13 @@ export class RunbookStore {
   /**
    * The runs whose persisted state records a Claim Ticket hash (#904).
    *
-   * One read that selects by the hash's exact serialized form inside
-   * `state_json` and validates only the rows it selects, so a claim neither
-   * parses every run in the project nor reports on runs it does not concern.
-   * The hash is a SHA-256 of a random ticket, so a match is the issuing run;
-   * the caller still confirms the reservation on the validated state.
+   * One read that selects by the hash's exact serialized form (the quoted
+   * string) inside `state_json` and validates only the rows it selects, so a
+   * claim neither parses every run in the project nor reports on runs it does
+   * not concern. The quoted form matches both a reservation's `ticketHash` and
+   * an entry of a substep's `replacedTicketHashes` (#905). The hash is a
+   * SHA-256 of a random ticket, so a match is the issuing run; the caller still
+   * confirms the reservation, or the replaced ticket, on the validated state.
    *
    * @param ticketHash - Hash of the presented Claim Ticket.
    * @returns The validated runs carrying the hash, in id order (at most one in
@@ -513,7 +543,7 @@ export class RunbookStore {
         .prepare(
           `SELECT ${VERSIONED_ROW_COLUMNS} FROM runs WHERE instr(state_json, :needle) > 0 ORDER BY id`,
         )
-        .all<VersionedRunRow>({ needle: `"ticketHash":${JSON.stringify(ticketHash)}` })
+        .all<VersionedRunRow>({ needle: JSON.stringify(ticketHash) })
         .map((row) => this.validateVersionedRow(row)),
     );
   }
@@ -569,6 +599,53 @@ export class RunbookStore {
   ): Promise<SaveRunResult> {
     assertStateBelongsTo(runId, state);
     return this.transaction((txn) => txn.writeStateResolvingLease(runId, expectedVersion, state));
+  }
+
+  /**
+   * Persist several runs that one decision ends together, all or nothing:
+   * each row is written if and only if every row is still at the version the
+   * caller read it at, clearing the execution lease each version carries.
+   *
+   * For a decision whose authority covers more than one row — `rundown
+   * release` ends a Delegation and the running Inline Children it composes,
+   * which share its authority (#905). Every version is compared inside the
+   * same writing transaction before any row is written, so a refusal writes
+   * nothing. Like {@link RunbookStore.saveRunResolvingLease}, the caller must
+   * have decided about each lease it read.
+   *
+   * @param writes - Each run's complete next state with the version it was read at.
+   * @returns `committed` with every persisted state, or the first refusal.
+   * @throws {StoreInvariantError} When a row compared at its version is then
+   *   not written — the comparison and the write share one transaction, so
+   *   this is a defect, and the transaction rolls back.
+   */
+  saveRunsResolvingLeases(writes: readonly RunWriteAtVersion[]): Promise<SaveRunsResult> {
+    return this.transaction((txn): SaveRunsResult => {
+      for (const write of writes) {
+        const runId = write.state.id;
+        const row = txn.tx
+          .prepare('SELECT state_version FROM runs WHERE id = :id')
+          .get<{ readonly state_version: number }>({ id: runId });
+        if (row === undefined) return { kind: 'missing', runId };
+        if (row.state_version !== write.expectedVersion) {
+          return { kind: 'concurrent_modification', runId };
+        }
+      }
+      const runs = writes.map((write) => {
+        const saved = txn.writeStateResolvingLease(
+          write.state.id,
+          write.expectedVersion,
+          write.state,
+        );
+        if (saved.kind !== 'committed') {
+          throw new StoreInvariantError(
+            `Run ${write.state.id} was compared at version ${String(write.expectedVersion)} but not written (${saved.kind})`,
+          );
+        }
+        return { state: saved.state, stateVersion: saved.stateVersion };
+      });
+      return { kind: 'committed', runs };
+    });
   }
 
   /**

@@ -88,7 +88,7 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
   },
   claim: {
     description:
-      'Claim a delegated child by the Claim Ticket its parent step listed, and start it. The response carries the child owner token.',
+      'Claim a delegated child by the Claim Ticket its parent step listed, and start it. Pass your agentId: release is matched against it, and nothing stamps it for you. The response carries the child owner token.',
     inputSchema: z.object({ ticket: z.string(), agentId: z.string().optional() }),
   },
   collect: {
@@ -103,7 +103,7 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
   },
   release: {
     description:
-      'Abandon a delegated child you claimed but cannot finish; its parent collects it as a fail. Takes the child run id and the agent id the claim recorded, never a token.',
+      'Abandon a delegated child you claimed but cannot finish; its parent collects it as a fail while it still counts it (the response says whether). Takes the child run id and the same agentId the claim recorded, never a token.',
     inputSchema: z.object({ runId: z.string(), agentId: z.string().optional() }),
   },
 };

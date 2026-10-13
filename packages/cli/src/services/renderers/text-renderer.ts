@@ -22,6 +22,9 @@ import {
   printStepSeparator,
   printStepBlock,
   printRunbookComplete,
+  printChildrenCollected,
+  printDelegationRetried,
+  printRunbookAbandoned,
   printRunbookStopped,
   printRunbookStoppedAtStep,
   printNoActiveRunbook,
@@ -731,33 +734,14 @@ export class TextRenderer implements OutputRenderer {
         this.handleErrorOccurred(event);
         break;
       case 'CHILDREN_COLLECTED':
-        for (const child of event.payload.children) {
-          const result = child.result === undefined ? '' : ` (${child.result})`;
-          this.writer.writeLine(`Child ${child.step} ${child.runId}: ${child.status}${result}`);
-        }
+        printChildrenCollected(event.payload, this.writer);
         break;
       case 'DELEGATION_RETRIED':
-        // `rundown retry` (#905): the cancelled child, then the fresh one with
-        // its new Claim Ticket — printed here once, as on the JSON event.
-        this.writer.writeLine(
-          `Retried ${event.payload.step}: cancelled ${event.payload.cancelledRunId}`,
-        );
-        for (const child of event.payload.children) {
-          const ticket = child.ticket === undefined ? '' : ` ticket ${child.ticket}`;
-          this.writer.writeLine(
-            `Delegation ${child.step}: ${child.runbook} (${child.runId})${ticket}`,
-          );
-        }
+        printDelegationRetried(event.payload, this.writer);
         break;
-      case 'RUNBOOK_ABANDONED': {
-        const parent = event.payload.parent;
-        this.writer.writeLine(
-          parent === undefined
-            ? `Run ${event.runbookId} abandoned`
-            : `Run ${event.runbookId} abandoned; run ${parent.runId} collects it at ${parent.step} as a fail`,
-        );
+      case 'RUNBOOK_ABANDONED':
+        printRunbookAbandoned(event.runbookId, event.payload, this.writer);
         break;
-      }
     }
   }
 

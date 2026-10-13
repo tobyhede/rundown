@@ -5056,7 +5056,17 @@ export function compileRunbookToMachine(
       FORCE_STOP: buildForceStopTransition(),
       FORCE_COMPLETE: buildForceCompleteTransition(),
       // `rundown release` of a Delegation (#905): its own run ends abandoned.
-      ABANDON: { target: `.${ABANDONED_STATE_NAME}` },
+      // No handler chose an ACTION here and no step produced a RESULT, so no
+      // action type describes it: the last action is cleared, never mapped to
+      // STOP (no silent mapping), so the previous step's does not stand as
+      // the reason the run ended.
+      ABANDON: {
+        target: `.${ABANDONED_STATE_NAME}`,
+        actions: runbookSetup.assign({
+          lastAction: () => undefined,
+          lastMessage: () => undefined,
+        }),
+      },
       SET_VARIABLES: {
         actions: runbookSetup.assign({
           variables: ({ context, event }) => {

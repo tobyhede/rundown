@@ -74,8 +74,9 @@ delegations: you drive them with your own Owner Token. See
    )
    ```
 
-   `--agent-id` is optional; it records the claiming agent on the child, and
-   a later `release` must name the same one.
+   Give every sub-agent its own `--agent-id` and have it pass that id on both
+   `claim` and `release`: `claim` records it on the child, `release` is
+   matched against it, and nothing stamps it for you.
 
 4. **Collect** once sub-agents report (or any time — it never blocks):
 
@@ -94,7 +95,9 @@ delegations: you drive them with your own Owner Token. See
    | `cancelled`         | The run no longer counts it (substep decided, step left)    |
 
    Terminal children are applied in any order (`completed` = PASS, `stopped`
-   or `abandoned` = FAIL; a released child is `abandoned`). Pending and
+   or `abandoned` = FAIL; a released child is `abandoned`, and its
+   `runbook_abandoned` event's `parent.standing` says whether your run still
+   counts it). Pending and
    unclaimed children exit 0 with nothing applied. Repeat `collect` until no
    child is `pending` or `unclaimed`.
 
@@ -145,11 +148,16 @@ rundown release <child run id> --agent-id <id>  # only when you cannot finish it
   work will never be collected: end the child with
   `rundown stop --token <owner_token>` (the one command it still accepts), then
   report.
+- Pass your agent id on `claim` and on `release`, the same `--agent-id` both
+  times: release is authorized only for the id the claim recorded, and nothing
+  stamps it for you.
 - If you cannot finish the child — you lost its `owner_token` — release it
   with `rundown release <child run id> --agent-id <id>`, naming the child's
   `runbookId` from its `runbook_started` and the same `--agent-id` your claim
-  used (omit it if the claim did). The child ends `abandoned` and its parent
-  collects it as a FAIL. Release touches nothing else and grants nothing else.
+  used. The child ends `abandoned`, with any inline child it was running, and
+  its parent collects it as a FAIL while it still counts it
+  (`parent.standing: current` on the `runbook_abandoned` event). Release
+  touches nothing else and grants nothing else.
 
 ## Fan-out and FOR Loops
 

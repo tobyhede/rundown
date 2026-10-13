@@ -576,6 +576,29 @@ function activeSubstepsPatch(
 }
 
 /**
+ * The lifecycle each final machine state ends a run in: the one table that
+ * maps the machine's terminal state ids to the persisted `lifecycle`, so a new
+ * final state must be named here or the snapshot is not recognised as final.
+ */
+const FINAL_STATE_LIFECYCLE = {
+  COMPLETE: 'completed',
+  STOPPED: 'stopped',
+  // A Delegation its claiming agent released (#905).
+  ABANDONED: 'abandoned',
+} as const satisfies Record<string, Lifecycle>;
+
+/**
+ * Whether a snapshot's state value is one of the machine's final states.
+ *
+ * @param stateValue - The snapshot's (string) state value.
+ * @returns True for `COMPLETE`, `STOPPED` and `ABANDONED`, narrowing
+ *   `stateValue` to a key of {@link FINAL_STATE_LIFECYCLE}; false otherwise.
+ */
+function isFinalStateValue(stateValue: string): stateValue is keyof typeof FINAL_STATE_LIFECYCLE {
+  return Object.hasOwn(FINAL_STATE_LIFECYCLE, stateValue);
+}
+
+/**
  * Derive the persistence patch for an actor snapshot, purely.
  *
  * The single source of the terminal and non-terminal patch shapes shared by
@@ -592,24 +615,6 @@ function activeSubstepsPatch(
  * @throws {Error} If the snapshot value shape is unsupported, references a
  *   transient parent-entry state, is malformed, or references a missing step.
  */
-/** The lifecycle each final machine state ends a run in. */
-const FINAL_STATE_LIFECYCLE = {
-  COMPLETE: 'completed',
-  STOPPED: 'stopped',
-  // A Delegation its claiming agent released (#905).
-  ABANDONED: 'abandoned',
-} as const satisfies Record<string, Lifecycle>;
-
-/**
- * Whether a snapshot's state value is one of the machine's final states.
- *
- * @param stateValue - The snapshot's (string) state value.
- * @returns True for `COMPLETE`, `STOPPED` and `ABANDONED`.
- */
-function isFinalStateValue(stateValue: string): stateValue is keyof typeof FINAL_STATE_LIFECYCLE {
-  return Object.hasOwn(FINAL_STATE_LIFECYCLE, stateValue);
-}
-
 function deriveActorStatePatch(
   id: string,
   snapshot: PersistedRunbookSnapshot,

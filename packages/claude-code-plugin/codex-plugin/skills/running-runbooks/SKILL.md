@@ -193,12 +193,12 @@ child's commands are refused `DELEGATION_CANCELLED`.
 If you were handed a Claim Ticket, you own that child run:
 
 ```bash
-rundown claim <ticket> --agent-id <id>    # --agent-id is optional
+rundown claim <ticket> --agent-id <id>    # your agent id; release needs the same one
 ```
 
 `claim` prints the child's `runbook_started` with the child's **own**
 `owner_token`; use it as `<owner_token>` in the loop above, and `--step` names
-the child's steps. Two extra rules:
+the child's steps. Extra rules:
 
 - Stop at the child's terminal. You never write or collect the parent; its owner
   collects your result.
@@ -206,11 +206,14 @@ the child's steps. Two extra rules:
   will never be collected: end the child with
   `rundown stop --token <owner_token>` (the one command it still accepts), then
   report.
+- Pass the same `--agent-id` on `claim` and on `release`: release is authorized
+  only for the agent id the claim recorded, and nothing stamps it for you.
 - If you cannot finish the child — you lost its `owner_token` — run
   `rundown release <child run id> --agent-id <id>` with the child's `runbookId`
-  and the `--agent-id` your claim used (omit it if the claim did). The child
-  ends `abandoned`, which its parent collects as a fail; release grants nothing
-  else.
+  and the same `--agent-id` your claim used. The child ends `abandoned`, with
+  any inline child it was running; its parent collects it as a fail while it
+  still counts it (`parent.standing` on `runbook_abandoned`). Release grants
+  nothing else.
 
 ## Refusals
 

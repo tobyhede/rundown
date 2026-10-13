@@ -12,7 +12,7 @@
  * @module runbook/transition-cursor
  */
 
-import { parseStepIdFromString } from '@rundown-org/parser';
+import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import type { ResolvedStep } from '@rundown-org/parser';
 import { activeFrame, deriveActiveFrame, deriveExecutionAt, type Frame } from './targeting.js';
 import type { RunbookState } from './types.js';
@@ -125,8 +125,9 @@ export type RetryTargetResolution =
  * current position (#905).
  *
  * The rules of {@link resolveTransitionCursor}, except that `--step` must
- * name a substep and may name any substep of the active step. Whether that
- * substep delegates is the caller's decision.
+ * name a substep and may name any substep of the active step — one the step
+ * defines; a substep it does not define is refused like any other wrong
+ * position. Whether that substep delegates is the caller's decision.
  *
  * @param steps - Parsed runbook steps for the run
  * @param state - Run state the target is confirmed against
@@ -199,6 +200,15 @@ function resolveCursor(
     if (parsed.substep === undefined || state.substep === undefined) {
       return invalid(
         `--step ${target.stepId} must name a delegated substep of step "${state.step}"; the current position is ${at}`,
+      );
+    }
+    const named = parsed.substep;
+    if (
+      !resolvedStepHasSubsteps(activeStep) ||
+      !activeStep.substeps.some((substep) => substep.id === named)
+    ) {
+      return invalid(
+        `--step ${target.stepId} names substep "${named}" but step "${state.step}" has no substep "${named}"; the current position is ${at}`,
       );
     }
   } else if (parsed.substep !== undefined) {

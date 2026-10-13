@@ -99,8 +99,11 @@ was pruned; either means stop, and end the child with
 `rundown stop --token <child owner_token>`, the one command it still accepts. A
 subagent that cannot finish its child — it lost the child's `owner_token` — runs
 `rundown release <child run id> --agent-id <id>` with the agent id its claim
-used: the child ends `abandoned`, and your collect applies it as a FAIL. Release
-grants nothing else and never touches your run. See
+used — the subagent passes that id by hand on both `claim` and `release`, since
+no hook stamps it yet (#907): the child ends `abandoned` (with any Inline Child
+it was running), and your collect applies it as a FAIL while your run still
+counts it; the `runbook_abandoned` event's `parent.standing` says whether it
+does. Release grants nothing else and never touches your run. See
 [docs/reference/cli.md § Delegation](../reference/cli.md#delegation).
 
 The Claude Code plugin's `PreToolUse` (`Agent|Task`) and `SubagentStop` hooks

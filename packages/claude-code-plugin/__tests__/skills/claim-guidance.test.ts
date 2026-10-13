@@ -156,6 +156,16 @@ describe('delegating-runbooks Delegation protocol', () => {
     expect(orchestrator).toMatch(/rundown release rd_… --agent-id/);
   });
 
+  it('has every sub-agent pass its agent id on claim and on release, since nothing stamps it', () => {
+    const subAgent = section(skill, '## Sub-agent Choreography');
+
+    expect(skill).not.toMatch(/`--agent-id` is optional/);
+    expect(skill).not.toMatch(/omit it if the claim did/);
+    expect(subAgent).toContain('rundown claim <ticket> --agent-id <id>');
+    expect(subAgent).toMatch(/same `--agent-id`/);
+    expect(skill).toMatch(/nothing stamps it/);
+  });
+
   it('teaches no retired or unbuilt delegation surface', () => {
     expect(skill).not.toContain('--claim-id');
     expect(skill).not.toContain('rdtk_');
@@ -184,6 +194,17 @@ describe('running-runbooks Delegation recovery (#905), in both plugin copies', (
       expect(claimed).toContain('rundown release <child run id> --agent-id <id>');
       expect(skill).toContain('rundown retry --token <owner_token> --step <substep>');
       expect(skill).not.toMatch(/no agent\s+recovery/);
+    },
+  );
+
+  it.each(Object.entries(copies))(
+    '%s: a claimed child passes its agent id on claim and on release, since nothing stamps it',
+    (_copy, skill) => {
+      const claimed = section(skill, '## Claimed Delegations');
+      expect(claimed).not.toMatch(/--agent-id is optional|omit it if the claim did/);
+      expect(claimed).toContain('rundown claim <ticket> --agent-id <id>');
+      expect(claimed).toMatch(/same\s+`--agent-id`/);
+      expect(claimed).toMatch(/nothing\s+stamps\s+it/);
     },
   );
 });

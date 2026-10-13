@@ -242,10 +242,40 @@ export interface DelegationRetriedPayload {
   readonly children: readonly StepEnteredChild[];
 }
 
+/**
+ * Where an abandoned Delegation stood with its parent when it was released
+ * (#905), as the parent's Collect decides it.
+ *
+ * - `current` — the parent still counts the child: its next Collect reads the
+ *   abandoned child as a fail.
+ * - `cancelled` — the parent no longer counts the child (the substep was
+ *   decided, retried or entered again): nothing will Collect it.
+ * - `parent_finished` — the parent reached a terminal: nothing will Collect it.
+ * - `parent_pruned` — the parent was pruned: nothing will Collect it.
+ */
+export type AbandonedDelegationParent =
+  | {
+      readonly standing: 'current' | 'cancelled' | 'parent_finished';
+      /** The parent run. */
+      readonly runId: string;
+      /** The parent unit the Delegation ran for (`step.substep`). */
+      readonly step: string;
+    }
+  | {
+      readonly standing: 'parent_pruned';
+      /** The parent unit the Delegation ran for (`step.substep`). */
+      readonly step: string;
+    };
+
 /** Payload emitted by `rundown release` (RUNBOOK_ABANDONED event, #905). */
 export interface RunbookAbandonedPayload {
-  /** The parent unit the abandoned Delegation ran for, while the parent exists. */
-  readonly parent?: { readonly runId: string; readonly step: string };
+  /** The parent unit the abandoned Delegation ran for, and whether it still counts it. */
+  readonly parent: AbandonedDelegationParent;
+  /**
+   * The running Inline Children the Delegation composed, abandoned with it in
+   * the same write: they shared its authority, so nothing else could end them.
+   */
+  readonly abandonedInline: readonly string[];
 }
 
 // ─── Event Union ─────────────────────────────────────────────────────────────

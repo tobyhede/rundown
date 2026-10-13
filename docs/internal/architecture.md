@@ -204,10 +204,12 @@ by construction.
   children are all reserved when the first is entered. The snapshot is captured
   here, from machine context, because the child is claimed later by another
   agent and a sibling Collected in between must not leak into it. A reservation
-  of an earlier entry that this one replaces is appended to the substep state's
-  `replaced` list (`{ runId, ticketHash }`), Collected or not, so its ticket and
-  its child's commands are refused as no longer counted rather than unknown. The
-  transient state's `always` also raises the substep's `PASS` / `FAIL` when its
+  of an earlier entry that this one replaces has its Claim Ticket hash appended
+  to the substep state's `replacedTicketHashes`, Collected or not, so its ticket
+  is refused as no longer counted rather than unknown; a reservation never
+  issued a ticket records nothing. Its child's commands need no record: the
+  child is no longer among the active entry's reservations. The transient
+  state's `always` also raises the substep's `PASS` / `FAIL` when its
   reservation was already Collected out of order (below).
 
 Every composing leaf handles `CHILD_RESULT` in `idle` — Collect — for its own
@@ -228,9 +230,12 @@ named substep's Delegation of the active entry still counting
 (`retryableDelegation`), its assign cancels it and reserves a fresh child at the
 same entry under a newly minted run id, carrying the event's ticket hash and the
 cancelled reservation's runbook and context snapshot (`replaceDelegation`), and
-records the cancelled one as `replaced`. `ABANDON` is a machine-root handler
-targeting the `ABANDONED` final state, which assigns `lifecycle: 'abandoned'`
-and stores no frontmatter outputs.
+records the cancelled one's ticket hash in `replacedTicketHashes`. `ABANDON` is
+a machine-root handler targeting the `ABANDONED` final state, which assigns
+`lifecycle: 'abandoned'` and stores no frontmatter outputs. It clears
+`lastAction` and `lastMessage`: abandoning is neither a RESULT nor a handler's
+ACTION, so no action type describes it, and mapping it to `STOP` would be a
+silent mapping.
 
 Two further children serve the machine-selected Run Progression turn:
 `__progression-waiting-input` emits the typed `waiting` intent and
@@ -542,12 +547,12 @@ Before descending, `resolveCommandTarget` checks the token's run's standing as a
 Delegation (`delegationStandingOf`, `delegation-progression.ts`): a delegated
 child whose parent finished or was pruned (its linkage reads
 `orphaned_delegation`) is refused `parent_run_finished`, and one its parent no
-longer counts (recorded on the parent as `replaced`, or by `countsDelegation`:
-reserved at the parent's active entry, not yet Collected, for the cursor's
-substep or a later one) is refused `delegation_cancelled`. Every other run is
-`current`. The check is skipped for `stop` alone (the caller names its command,
-`CommandTargetPurpose`): the child's owner owns the child's row and may end it,
-though nothing collects its result.
+longer counts (by `countsDelegation`: reserved at the parent's active entry, not
+yet Collected, for the cursor's substep or a later one; a retried or re-entered
+child is no longer reserved there at all) is refused `delegation_cancelled`.
+Every other run is `current`. The check is skipped for `stop` alone (the caller
+names its command, `CommandTargetPurpose`): the child's owner owns the child's
+row and may end it, though nothing collects its result.
 
 ### The command's target: the deepest running Inline Child
 
@@ -724,9 +729,16 @@ belongs to whichever agent claims it.
 - **Release.** `releaseDelegation` (`delegation-recovery.ts`, #905) is the one
   write not authorized by an Owner Token. It loads the child by id, requires a
   Delegation linkage (live or orphaned) whose `claimedBy` equals the presented
-  agent id (both absent match), refuses a finished child and a live lease, and
-  commits `ABANDON` on the child with one conditional save. It never reads the
-  parent for writing; the parent's Collect reads `abandoned` as FAIL.
+  agent id (both absent match), and refuses a finished child. The running Inline
+  Children the child composes (its Current Inline Child, transitively) share its
+  authority and would be unreachable once it ends, so each takes `ABANDON` with
+  it: the lease rule applies to every one, and `RunbookStateManager.saveRuns`
+  commits them all in one transaction that compares every row's version before
+  writing any. It never reads the parent for writing; after the commit it reads
+  the parent once to report the child's standing (`delegationStandingOf`), so
+  the event says truthfully whether the parent's Collect will read `abandoned`
+  as FAIL. The CLI renders the committed state the outcome carries and never
+  re-reads the child.
 
 ### Guards do no cross-run IO or policy
 

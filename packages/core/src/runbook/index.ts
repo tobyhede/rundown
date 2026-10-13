@@ -113,7 +113,9 @@ export type {
   DeleteRunResult,
   LeaseRefusingSaveResult,
   RunAtVersion,
+  RunWriteAtVersion,
   SaveRunResult,
+  SaveRunsResult,
   VersionedRunState,
 } from './storage/runbook-store.js';
 export {

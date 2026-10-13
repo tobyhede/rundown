@@ -406,9 +406,11 @@ claims it.
   is claimed once.
 - A sub-agent that cannot finish its child ends it with `rundown release` (see
   [release](#rundown-release-child-id---release-a-delegation)): the child is
-  `abandoned`, which Collect applies as FAIL.
-- Every child a re-entry or a `retry` replaced stays recorded on the parent, so
-  its ticket is refused `DELEGATION_CANCELLED` rather than `UNKNOWN_TICKET`.
+  `abandoned`, which Collect applies as FAIL while the parent still counts it;
+  the event says whether it does.
+- The ticket of every child a re-entry or a `retry` replaced stays recorded on
+  the parent (its hash only), so it is refused `DELEGATION_CANCELLED` rather
+  than `UNKNOWN_TICKET`, however many replacements ago it was issued.
 - If the turn that entered the step could not record the Claim Tickets (another
   of the owner's commands wrote the run first, refused
   `CONCURRENT_MODIFICATION`), no ticket was printed. The owner's
@@ -432,8 +434,9 @@ rundown claim rdt_… --agent-id <id>    # Record the claiming agent on the chil
 **Flags:**
 
 - `--agent-id <id>` — Identity of the claiming agent, recorded on the child; a
-  later `release` of the child is matched against it. The Claude Code plugin's
-  hook supplies it; a human may pass it by hand.
+  later `release` of the child is matched against it. The agent passes it by
+  hand, and must pass the same id to `release`: no plugin hook stamps it yet
+  (#907).
 - `--text` — Human-readable output.
 
 In one transaction, `claim` verifies the reservation is still a child its parent
@@ -502,10 +505,10 @@ The cancelled child's commands and its old ticket are refused
 `DELEGATION_CANCELLED` (its owner may still `stop` it), and nothing collects it,
 even if it is already terminal. Refusals: `TOKEN_REQUIRED`, `UNKNOWN_TOKEN`,
 `RD-303` / `RD-304`, `EXECUTION_IN_PROGRESS` / `EXECUTION_INTERRUPTED`,
-`INVALID_STEP` (no `--step`, another step, a bare step id, or a wrong
-`--index`), `NOTHING_TO_RETRY` (the substep delegates nothing, or its child was
-already collected or decided by hand), and `CONCURRENT_MODIFICATION` (nothing
-was cancelled and no ticket was issued).
+`INVALID_STEP` (no `--step`, another step, a bare step id, a substep the step
+does not define, or a wrong `--index`), `NOTHING_TO_RETRY` (the substep
+delegates nothing, or its child was already collected or decided by hand), and
+`CONCURRENT_MODIFICATION` (nothing was cancelled and no ticket was issued).
 
 #### `rundown release <child-id>` - Release a Delegation
 
@@ -521,17 +524,31 @@ rundown release rd_… --agent-id <id>
 
 - `--agent-id <id>` — Identity of the releasing agent. It must equal the agent
   id the claim recorded; a child claimed without one is released without one.
-  The Claude Code plugin's hook supplies it.
+  The agent passes it by hand — the same id it gave `claim` — since no plugin
+  hook stamps it yet (#907).
 - `--text` — Human-readable output.
 
 Release is authorized by that agent id, not an Owner Token, and grants nothing
-else: it writes only the child's own row, in one conditional save, and never
-touches the parent. The output is the child's `runbook_abandoned` event, naming
-its `parent: { runId, step }` while the parent exists. Refusals (nothing is
-written): `INVALID_RUN_ID`, `RUN_TARGET_UNAVAILABLE` (no such run),
-`NOT_A_DELEGATION`, `AGENT_MISMATCH`, `RD-303` / `RD-304` (the child already
-finished), `EXECUTION_IN_PROGRESS` (its command is running; an Interrupted one
-is decided by the release), and `CONCURRENT_MODIFICATION`.
+else: it never touches the parent. It ends the child `abandoned` together with
+the running Inline Children the child composes — they have no token of their
+own, so once the child is abandoned nothing else could end them — in one
+conditional write naming the version each was read at. The output is the child's
+`runbook_abandoned` event:
+`{ parent: { standing, runId?, step }, abandonedInline: [runId…] }`, where
+`standing` says whether anything will Collect the abandoned child:
+
+| `standing`        | Meaning                                                                     |
+| ----------------- | --------------------------------------------------------------------------- |
+| `current`         | The parent still counts it; its next `collect` applies it as FAIL           |
+| `cancelled`       | The parent no longer counts it (decided, retried or re-entered); never read |
+| `parent_finished` | The parent reached a terminal; nothing collects it                          |
+| `parent_pruned`   | The parent was pruned (no `runId`); nothing collects it                     |
+
+Refusals (nothing is written): `INVALID_RUN_ID`, `RUN_TARGET_UNAVAILABLE` (no
+such run), `NOT_A_DELEGATION`, `AGENT_MISMATCH`, `RD-303` / `RD-304` (the child
+already finished), `EXECUTION_IN_PROGRESS` (its command, or a command of an
+Inline Child it composes, is running; an Interrupted one is decided by the
+release), and `CONCURRENT_MODIFICATION`.
 
 #### `rundown stop` - Abort Runbook
 

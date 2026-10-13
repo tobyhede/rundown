@@ -35,8 +35,9 @@ import {
  * on its `runbook_started` event, and the child's Run Progression starts
  * exactly as `rundown run`'s does. A second claim of the same ticket is
  * refused `ALREADY_CLAIMED`. `--agent-id` records the claiming agent on the
- * child, the identity a later `release` is matched against; the plugin's hook
- * stamps it.
+ * child, the identity a later `release` is matched against. The agent passes
+ * it itself, and must pass the same id to `release`: no hook stamps it yet
+ * (#907).
  *
  * @param program - Commander program instance to register the command on
  */

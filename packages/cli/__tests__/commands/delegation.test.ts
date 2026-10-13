@@ -6,7 +6,8 @@
  * and exit codes, what the JSON events carry (and never carry), and the text
  * rendering. Status must never show a Claim Ticket.
  */
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
+import { RunbookStateManager } from '@rundown-org/core';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
@@ -351,12 +352,17 @@ describe('rundown claim / rundown collect (#904)', () => {
       expect(wrongStep.exitCode).toBe(1);
       expect(errorEnvelope(wrongStep.stdout)).toMatchObject({ code: 'INVALID_STEP' });
 
-      const noChild = await runCliInProcess(
+      // Step 1 has the one substep 1.1: naming one it does not have is a
+      // wrong position, not a substep with nothing to retry.
+      const noSuchSubstep = await runCliInProcess(
         ['retry', '--token', token, '--step', '1.2'],
         workspace,
       );
-      expect(noChild.exitCode).toBe(1);
-      expect(errorEnvelope(noChild.stdout)).toMatchObject({ code: 'NOTHING_TO_RETRY' });
+      expect(noSuchSubstep.exitCode).toBe(1);
+      expect(errorEnvelope(noSuchSubstep.stdout)).toMatchObject({
+        code: 'INVALID_STEP',
+        error: expect.stringContaining('has no substep "2"'),
+      });
     });
 
     it('renders the retried child and its ticket in --text', async () => {
@@ -396,7 +402,8 @@ describe('rundown claim / rundown collect (#904)', () => {
         expect.objectContaining({
           type: 'runbook_abandoned',
           runbookId: childId,
-          parent: { runId, step: '1.1' },
+          parent: { standing: 'current', runId, step: '1.1' },
+          abandonedInline: [],
         }),
       ]);
       const status = await runCliInProcess(['status', '--run', runId], workspace);
@@ -446,10 +453,61 @@ describe('rundown claim / rundown collect (#904)', () => {
     });
 
     it('renders the release in --text', async () => {
-      const { childId } = await claimAs();
+      const { runId, childId } = await claimAs();
       const release = await runCliInProcess(['release', childId, '--text'], workspace);
       expect(release.exitCode).toBe(0);
-      expect(release.stdout).toMatch(/abandoned/i);
+      expect(release.stdout).toContain(
+        `Run ${childId} abandoned; run ${runId} collects it at 1.1 as a fail`,
+      );
+    });
+
+    it('says, in JSON and text, that a parent which retried the child never collects it', async () => {
+      const { token, runId, childId } = await claimAs();
+      const retried = await runCliInProcess(
+        ['retry', '--token', token, '--step', '1.1'],
+        workspace,
+      );
+      expect(retried.exitCode).toBe(0);
+
+      const release = await runCliInProcess(['release', childId, '--text'], workspace);
+      expect(release.exitCode).toBe(0);
+      expect(release.stdout).toContain(
+        `Run ${childId} abandoned; run ${runId} no longer counts it at 1.1, so nothing collects it`,
+      );
+      expect(release.stdout).not.toContain('as a fail');
+    });
+
+    it('reports the standing on the JSON event when the parent no longer counts the child', async () => {
+      const { token, runId, childId } = await claimAs();
+      await runCliInProcess(['retry', '--token', token, '--step', '1.1'], workspace);
+
+      const release = await runCliInProcess(['release', childId], workspace);
+
+      expect(envelopes(release.stdout)).toEqual([
+        expect.objectContaining({
+          type: 'runbook_abandoned',
+          parent: { standing: 'cancelled', runId, step: '1.1' },
+        }),
+      ]);
+    });
+
+    it('reports a committed release even when the child is pruned before it is rendered', async () => {
+      const { childId } = await claimAs();
+      // Stands in for a concurrent `prune --inactive` deleting the finished
+      // child after the release committed: any read of it now finds nothing.
+      const load = jest
+        .spyOn(RunbookStateManager.prototype, 'load')
+        .mockImplementation(async () => null);
+      try {
+        const release = await runCliInProcess(['release', childId], workspace);
+
+        expect(release.exitCode).toBe(0);
+        expect(envelopes(release.stdout)).toEqual([
+          expect.objectContaining({ type: 'runbook_abandoned', runbookId: childId }),
+        ]);
+      } finally {
+        load.mockRestore();
+      }
     });
   });
 });

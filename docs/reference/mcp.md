@@ -103,9 +103,11 @@ ownership model (see
   Ticket (`rdt_<43 base64url characters>`). `claim` REQUIRES it as `ticket`; it
   is that tool's only authority, and its response carries the child's own Owner
   Token.
-- **Agent id** — `release` takes the child's run id as `runId` and the claiming
-  agent's id as `agentId`; the CLI matches it against the agent id the claim
-  recorded. It takes no token, and its authority covers that one write.
+- **Agent id** — `claim` records `agentId` on the child; `release` takes the
+  child's run id as `runId` and the same `agentId`, which the CLI matches
+  against the one the claim recorded. The agent supplies it on both calls: no
+  hook stamps it yet (#907). It takes no token, and its authority covers that
+  one write.
 - **Run selector** — `runId` (`rd_<32 hex>`), accepted by `status` and forwarded
   as `--run <runId>`, selects a run for reading. It is never mutation authority:
   `release` takes a `runId` only to name the child its agent id authorizes.
@@ -336,16 +338,19 @@ Refusals (`INVALID_STEP`, `NOTHING_TO_RETRY`, …) pass through unchanged.
 ### 5.10d `release`
 
 Abandon a delegated child its claiming agent cannot finish; its parent collects
-it as a fail.
+it as a fail while it still counts it.
 
 | Parameter | Type   | Required | Behavior                                                                           |
 | --------- | ------ | -------- | ---------------------------------------------------------------------------------- |
 | `runId`   | string | Yes      | The child's run id (`runbookId` of its `runbook_started`), forwarded positionally. |
 | `agentId` | string | No       | The agent id the claim recorded, forwarded as `--agent-id <value>`.                |
 
-The payload is the child's `runbook_abandoned` event. Refusals
-(`AGENT_MISMATCH`, `NOT_A_DELEGATION`, `RUN_TARGET_UNAVAILABLE`, `RD-303` /
-`RD-304`) pass through unchanged.
+The payload is the child's `runbook_abandoned` event: `parent.standing` says
+whether the parent still collects it (`current`) or never will (`cancelled`,
+`parent_finished`, `parent_pruned`), and `abandonedInline` lists the running
+Inline Children abandoned with it. Refusals (`AGENT_MISMATCH`,
+`NOT_A_DELEGATION`, `RUN_TARGET_UNAVAILABLE`, `RD-303` / `RD-304`) pass through
+unchanged.
 
 <a id="unsupported-cli-operations"></a>
 

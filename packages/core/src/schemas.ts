@@ -502,10 +502,8 @@ function makeSubstepStateSchema(contextSnapshotSchema: z.ZodType) {
               .strict(),
           ])
           .optional(),
-        // Delegations the parent replaced by reserving afresh (#905).
-        replaced: z
-          .array(z.object({ runId: RunIdSchema, ticketHash: SecretHashSchema.nullable() }).strict())
-          .optional(),
+        // Ticket hashes of Delegations the parent replaced (#905).
+        replacedTicketHashes: z.array(SecretHashSchema).optional(),
       })
       // Strict, so a record this version does not carry — the v2 `delegation`
       // and `inline` child records, or any later drift — is refused by the

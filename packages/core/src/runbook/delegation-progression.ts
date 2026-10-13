@@ -35,13 +35,14 @@ import {
   activeEntryDelegations,
   countsDelegation,
   delegationStanding,
-  findReplacedDelegation,
+  findReplacedTicket,
   findTicketReservation,
   owesClaimTickets,
   type CurrentDelegation,
   type DelegationStanding,
 } from './delegation-child.js';
 import { refuseUnderLease, type ExecutionLeaseRefusal } from './execution-lease.js';
+import type { ConcurrentModificationRefusal } from './lifecycle-command-service.js';
 import { childResultEvent } from './inline-progression.js';
 import { childResultOf } from './inline-child.js';
 import type { ProcessIdentity } from './process-identity.js';
@@ -201,10 +202,7 @@ export async function claimDelegation(
     // A ticket whose child the parent replaced (`retry`, or a re-entry) is
     // told the parent no longer counts it: the owner holds the current ticket
     // (#905).
-    const replaced = findReplacedDelegation(
-      run.state,
-      (record) => record.ticketHash === ticketHash,
-    );
+    const replaced = findReplacedTicket(run.state, ticketHash);
     if (replaced !== undefined) {
       return claimRefused(
         'cancelled',
@@ -372,12 +370,8 @@ export async function delegationStandingOf(
 export type CollectDelegationsOutcome =
   | ExecutionLeaseRefusal
   | DelegationRefusal
-  | {
-      /** The row moved between a read and a Collect commit; nothing more was written. */
-      readonly kind: 'concurrent_modification';
-      readonly runId: RunId;
-      readonly message: string;
-    }
+  // The row moved between a read and a Collect commit; nothing more was written.
+  | ConcurrentModificationRefusal
   | { readonly kind: 'unknown_token' }
   | {
       readonly kind: 'collected';
