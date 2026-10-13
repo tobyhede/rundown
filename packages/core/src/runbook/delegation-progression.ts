@@ -302,9 +302,9 @@ export async function claimDelegation(
 /** A claimed child's machine could not be initialised; carries the cause. */
 class ChildInitializationError extends Error {
   /**
-   * Wrap what initialising the child's machine threw.
+   * Wrap what initializing the child's machine threw.
    *
-   * @param cause - What initialising the child's machine threw.
+   * @param cause - What initializing the child's machine threw.
    */
   constructor(cause: unknown) {
     super(`Delegation could not be initialised: ${getErrorMessage(cause)}`, { cause });

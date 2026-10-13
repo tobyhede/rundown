@@ -243,7 +243,19 @@ test('local Docker tarball producers share the Dockerfile package list', async (
 
 test('Rundown MCP tool surface includes Stage 1 execution tools', async () => {
   const definitions = await readRepoFile('packages/mcp/src/tool-definitions.ts');
-  const tools = ['validate', 'list', 'status', 'run', 'pass', 'fail', 'goto', 'complete', 'stop'];
+  const tools = [
+    'validate',
+    'list',
+    'status',
+    'run',
+    'pass',
+    'fail',
+    'goto',
+    'complete',
+    'stop',
+    'claim',
+    'collect',
+  ];
 
   for (const tool of tools) {
     assert.match(definitions, new RegExp(`${tool}: \\{`));
@@ -253,10 +265,8 @@ test('Rundown MCP tool surface includes Stage 1 execution tools', async () => {
   assert.match(definitions, /'Mark the current step passed\. Requires the owner token/);
   assert.match(definitions, /'Mark the current step failed\. Requires the owner token/);
 
-  // Delegation tools return with the delegation rebuild (#904), not before.
-  for (const tool of ['delegate', 'claim', 'collect']) {
-    assert.doesNotMatch(definitions, new RegExp(`^  ${tool}: \\{`, 'm'));
-  }
+  // Delegation (#904) is claim and collect; there is no delegate tool.
+  assert.doesNotMatch(definitions, /^  delegate: \{/m);
 });
 
 test('E2E image copies the Rundown Codex plugin root', async () => {

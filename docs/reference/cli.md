@@ -367,8 +367,8 @@ claims it.
 - The `step_entered` event that announces the entry lists the children:
   `children: [{ step, index?, runId, runbook, ticket }]`. The `ticket` is a
   Claim Ticket, printed only on the entry that issued it — hand each to one
-  sub-agent. Status and later events never show it; a lost ticket is recovered
-  by retrying the step, never by re-reading it.
+  sub-agent. Status and later events never show it, so a lost ticket cannot be
+  read again.
 - `rundown claim <ticket>` (see
   [claim](#rundown-claim-ticket---claim-a-delegation)) creates the child under
   its reserved run id, prints its `runbook_started` with the child's own
