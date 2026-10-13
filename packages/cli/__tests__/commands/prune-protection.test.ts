@@ -25,6 +25,20 @@ import {
   type TestWorkspace,
 } from '../helpers/test-utils.js';
 import { validateCommandOutput } from '../helpers/schema-validator.js';
+import type { HumanConfirmation } from '../../src/services/human-confirmation.js';
+
+/** A human at a terminal who answers every question yes, recording each. */
+function humanSayingYes(): HumanConfirmation & { readonly asked: string[] } {
+  const asked: string[] = [];
+  return {
+    interactive: true,
+    asked,
+    confirm: (question: string) => {
+      asked.push(question);
+      return Promise.resolve(true);
+    },
+  };
+}
 
 const DELEGATING_PARENT = [
   '# Parent',
@@ -263,6 +277,62 @@ describe('prune protects a Current Child until its parent is done with it (#906)
       expect(pruneRows(pruned.stdout)).toEqual([expect.objectContaining({ id: childId })]);
       expect(await storedIds()).toEqual([]);
       expect(parentId).not.toBe(childId);
+    });
+
+    it('deletes a finished child the selection picks with the parent its token prunes, never reporting it uncollected', async () => {
+      const { token, parentId, childId } = await finishedDelegation();
+
+      const pruned = await runCliInProcess(['prune', '--completed', '--token', token], workspace);
+
+      expect(pruned.exitCode).toBe(0);
+      const rows = pruneRows(pruned.stdout);
+      expect(rows.map((row) => row.id)).toEqual([parentId, childId]);
+      expect(rows.some((row) => 'retained' in row)).toBe(false);
+      expect(await storedIds()).toEqual([]);
+    });
+
+    it('never deletes a running child with the parent a human confirmed: it is kept as a child run', async () => {
+      const run = await runCliInProcess('run parent.runbook.md', workspace);
+      const parentId = requireRunId(run.stdout);
+      const claim = await runCliInProcess(['claim', ticketOf(run.stdout)], workspace);
+      const childId = requireRunId(claim.stdout);
+      const human = humanSayingYes();
+
+      const pruned = await runCliInProcess('prune --all', workspace, { human });
+
+      expect(pruned.exitCode).toBe(0);
+      expect(human.asked).toEqual([expect.stringContaining(parentId)]);
+      const rows = pruneRows(pruned.stdout);
+      expect(rows).toEqual([
+        expect.objectContaining({ id: parentId, confirmedBy: expect.any(Object) }),
+        expect.objectContaining({
+          id: childId,
+          retained: 'child run',
+          detail: expect.stringContaining(`rundown release ${childId}`),
+        }),
+      ]);
+      expect(await storedIds()).toEqual([childId]);
+    });
+
+    it('never offers a running child no parent counts for confirmation: it is kept as a child run', async () => {
+      const run = await runCliInProcess('run parent.runbook.md', workspace);
+      const claim = await runCliInProcess(['claim', ticketOf(run.stdout)], workspace);
+      const childId = requireRunId(claim.stdout);
+      const stopped = await runCliInProcess(
+        ['stop', '--token', requireOwnerToken(run.stdout)],
+        workspace,
+      );
+      expect(stopped.exitCode).toBe(1);
+      const human = humanSayingYes();
+
+      const pruned = await runCliInProcess('prune --active', workspace, { human });
+
+      expect(pruned.exitCode).toBe(0);
+      expect(human.asked).toEqual([]);
+      expect(pruneRows(pruned.stdout)).toEqual([
+        expect.objectContaining({ id: childId, retained: 'child run' }),
+      ]);
+      expect(await storedIds()).toContain(childId);
     });
 
     it('never deletes a running Current Child, even under its own token', async () => {

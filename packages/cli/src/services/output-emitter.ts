@@ -303,12 +303,14 @@ export class OutputEmitter {
    *
    * @param message - Optional stop message
    * @param position - Optional stop position
+   * @param stoppedInline - The running Inline Children stopped with the run
    */
-  stopped(message?: string, position?: StepPosition): void {
+  stopped(message?: string, position?: StepPosition, stoppedInline?: readonly string[]): void {
     const event: StoppedOutput = {
       type: 'stopped',
       message,
       position,
+      ...(stoppedInline !== undefined && stoppedInline.length > 0 ? { stoppedInline } : {}),
     };
     this.renderer.render(event);
   }

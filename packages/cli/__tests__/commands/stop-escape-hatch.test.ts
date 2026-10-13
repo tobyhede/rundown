@@ -11,6 +11,7 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
+import { RunbookStateManager } from '@rundown-org/core';
 import {
   createTestWorkspace,
   parseConcatenatedJson,
@@ -69,6 +70,29 @@ const DELEGATING_PARENT = [
 ].join('\n');
 
 const CHILD = ['# Child', '', '## Check', '', '- PASS COMPLETE', '', 'Check.', ''].join('\n');
+
+/** A runbook whose step 1.1 composes `runbook` inline. */
+function composing(title: string, runbook: string): string {
+  return [
+    `# ${title}`,
+    '',
+    '## 1. Compose',
+    '',
+    '- PASS ALL CONTINUE',
+    '- FAIL ANY STOP',
+    '',
+    '### 1.1 Run it',
+    '',
+    `- ${runbook}`,
+    '',
+    '## 2. After',
+    '',
+    '- PASS COMPLETE',
+    '',
+    'Finish.',
+    '',
+  ].join('\n');
+}
 
 describe('rundown stop --run: the human escape hatch (#906)', () => {
   let workspace: TestWorkspace;
@@ -254,5 +278,154 @@ describe('rundown stop --run: the human escape hatch (#906)', () => {
     expect(String(envelope?.error)).toContain('rundown release');
     expect(human.asked).toEqual([]);
     expect(await lifecycle(childId)).toBe('running');
+  });
+
+  describe('a root composing inline children', () => {
+    let rootId: string;
+    let middleId: string;
+    let leafId: string;
+
+    /** Run root -> middle -> leaf, each an Inline Child of the one above. */
+    beforeEach(async () => {
+      await writeFile(
+        join(workspace.cwd, 'root.runbook.md'),
+        composing('Root', 'middle.runbook.md'),
+      );
+      await writeFile(
+        join(workspace.cwd, 'middle.runbook.md'),
+        composing('Middle', 'child.runbook.md'),
+      );
+      await writeFile(join(workspace.cwd, 'child.runbook.md'), CHILD);
+      const root = await runCliInProcess('run root.runbook.md', workspace);
+      expect(root.exitCode).toBe(0);
+      rootId = requireRunId(root.stdout);
+      const manager = new RunbookStateManager(workspace.cwd);
+      const listed = await manager.listWithVersion();
+      const childOf = (parentId: string | undefined) =>
+        listed.find(
+          (run) => run.linkage?.kind === 'inline' && run.linkage.parentRunId === parentId,
+        );
+      const middle = childOf(rootId);
+      const leaf = childOf(middle?.state.id);
+      if (middle === undefined || leaf === undefined) throw new Error('inline chain not launched');
+      middleId = middle.state.id;
+      leafId = leaf.state.id;
+    });
+
+    /** Lease a run as a live command step would: In Progress. */
+    async function leaseLive(id: string): Promise<void> {
+      const manager = new RunbookStateManager(workspace.cwd);
+      const read = await manager.loadWithVersion(id);
+      if (!read) throw new Error('run missing');
+      const acquired = await manager.acquireExecutionLease(read.state.id, read.stateVersion, {
+        pid: process.ppid,
+        startId: null,
+      });
+      if (acquired.kind !== 'acquired') throw new Error(`lease not set: ${acquired.kind}`);
+    }
+
+    it('stops the root and its running inline children together, listing them', async () => {
+      const human = humanAnswering(true);
+
+      const result = await runCliInProcess(['stop', 'gone', '--run', rootId], workspace, { human });
+
+      expect(result.exitCode).toBe(1);
+      expect(errorEnvelope(result.stdout)).toBeUndefined();
+      const action = envelopes(result.stdout).at(-1);
+      expect(validateCommandOutput('stop', action)).toEqual({ valid: true, errors: [] });
+      expect(action).toMatchObject({
+        action: 'stop',
+        runId: rootId,
+        stoppedInline: [middleId, leafId],
+      });
+      expect(await lifecycle(rootId)).toBe('stopped');
+      expect(await lifecycle(middleId)).toBe('stopped');
+      expect(await lifecycle(leafId)).toBe('stopped');
+      // The audit is the root's; the children were stopped by the same write.
+      expect((await readRunbookState(workspace, rootId))?.humanStop).toMatchObject({
+        message: 'gone',
+      });
+      expect((await readRunbookState(workspace, leafId))?.humanStop).toBeUndefined();
+    });
+
+    it('names the stopped inline children in text output', async () => {
+      const result = await runCliInProcess(['stop', '--run', rootId, '--text'], workspace, {
+        human: humanAnswering(true),
+      });
+
+      expect(result.stdout).toContain(`Inline:   ${middleId}`);
+      expect(result.stdout).toContain(`Inline:   ${leafId}`);
+    });
+
+    it('is refused EXECUTION_IN_PROGRESS before anyone is asked when an inline child is mid-command, stopping nothing', async () => {
+      await leaseLive(leafId);
+      const human = humanAnswering(true);
+
+      const result = await runCliInProcess(['stop', '--run', rootId], workspace, { human });
+
+      expect(result.exitCode).toBe(1);
+      expect(errorEnvelope(result.stdout)).toMatchObject({
+        code: 'EXECUTION_IN_PROGRESS',
+        details: { runId: leafId },
+      });
+      expect(human.asked).toEqual([]);
+      expect(await lifecycle(rootId)).toBe('running');
+      expect(await lifecycle(leafId)).toBe('running');
+    });
+
+    it('is refused EXECUTION_IN_PROGRESS before anyone is asked when the root is mid-command', async () => {
+      await leaseLive(rootId);
+      const human = humanAnswering(true);
+
+      const result = await runCliInProcess(['stop', '--run', rootId], workspace, { human });
+
+      expect(result.exitCode).toBe(1);
+      expect(errorEnvelope(result.stdout)).toMatchObject({
+        code: 'EXECUTION_IN_PROGRESS',
+        details: { runId: rootId },
+      });
+      expect(human.asked).toEqual([]);
+      expect(await lifecycle(rootId)).toBe('running');
+    });
+
+    it('refuses a nested inline child NOT_A_TOP_LEVEL_RUN, naming the root to stop, not its parent', async () => {
+      const human = humanAnswering(true);
+
+      const result = await runCliInProcess(['stop', '--run', leafId], workspace, { human });
+
+      expect(result.exitCode).toBe(1);
+      const envelope = errorEnvelope(result.stdout);
+      expect(envelope).toMatchObject({ code: 'NOT_A_TOP_LEVEL_RUN' });
+      expect(String(envelope?.error)).toContain(`rundown stop --run ${rootId}`);
+      expect(String(envelope?.error)).not.toContain(middleId);
+      expect(human.asked).toEqual([]);
+    });
+  });
+
+  it('refuses an orphaned Delegation NOT_A_TOP_LEVEL_RUN, naming only recoveries that can reach it', async () => {
+    await writeFile(join(workspace.cwd, 'parent.runbook.md'), DELEGATING_PARENT);
+    await writeFile(join(workspace.cwd, 'child.runbook.md'), CHILD);
+    const parent = await runCliInProcess('run parent.runbook.md', workspace);
+    const entered = envelopes(parent.stdout).filter((event) => event.type === 'step_entered');
+    const [reserved] = (entered.at(-1)?.children ?? []) as (Envelope | undefined)[];
+    const claim = await runCliInProcess(['claim', String(reserved?.ticket)], workspace);
+    const childId = requireRunId(claim.stdout);
+    const pruned = await runCliInProcess(
+      ['prune', '--token', requireOwnerToken(parent.stdout)],
+      workspace,
+    );
+    expect(pruned.exitCode).toBe(0);
+    const human = humanAnswering(true);
+
+    const result = await runCliInProcess(['stop', '--run', childId], workspace, { human });
+
+    expect(result.exitCode).toBe(1);
+    const envelope = errorEnvelope(result.stdout);
+    expect(envelope).toMatchObject({ code: 'NOT_A_TOP_LEVEL_RUN', details: { runId: childId } });
+    // Its parent was pruned: nobody can `retry` it.
+    expect(String(envelope?.error)).not.toContain('retry');
+    expect(String(envelope?.error)).toContain(`rundown release ${childId}`);
+    expect(String(envelope?.error)).toContain('rundown stop --token');
+    expect(human.asked).toEqual([]);
   });
 });

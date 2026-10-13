@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { spawnSync } from 'node:child_process';
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
+import { hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import {
   Errors,
@@ -379,6 +380,30 @@ describe('prune command', () => {
       expect(output[0]).not.toHaveProperty('retained');
       expect(human.asked).toEqual([expect.stringContaining(runId)]);
       expect(await listRunbookStates(workspace)).toEqual([]);
+    });
+
+    it('records who confirmed the delete, where and when, on the deleted run’s row, in JSON and text', async () => {
+      const { runId } = await startRunning();
+      const before = new Date().toISOString();
+
+      const result = await runCliInProcess('prune --active', workspace, {
+        human: humanAnswering(true),
+      });
+
+      const [row] = JSON.parse(result.stdout) as ({ confirmedBy?: { at: string } } | undefined)[];
+      expect(row).toMatchObject({
+        id: runId,
+        confirmedBy: { at: expect.any(String), user: expect.any(String), host: hostname() },
+      });
+      expect((row?.confirmedBy?.at ?? '') >= before).toBe(true);
+
+      const second = await startRunning();
+      const text = await runCliInProcess('prune --active --text', workspace, {
+        human: humanAnswering(true),
+      });
+      expect(text.stdout).toContain(second.runId);
+      expect(text.stdout).toContain(`confirmed by `);
+      expect(text.stdout).toContain(`@${hostname()}`);
     });
 
     it('retains a running run the human declines as "not confirmed"', async () => {

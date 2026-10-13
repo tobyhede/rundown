@@ -12,7 +12,8 @@
  * @module services/human-confirmation
  */
 
-import { createInterface } from 'node:readline/promises';
+import { hostname, userInfo } from 'node:os';
+import { createInterface } from 'node:readline';
 import type { Command } from 'commander';
 
 /** The human at the terminal, if there is one. */
@@ -50,6 +51,47 @@ export function isYes(answer: string): boolean {
 }
 
 /**
+ * A human answering on a pair of streams.
+ *
+ * Every way the question can end is an answer: a line is read with
+ * {@link isYes}, and the input ending (Ctrl-D) or Ctrl-C is no. So an abort
+ * at the prompt is refused as a decline, never left unsettled to exit the
+ * process silently.
+ *
+ * @param input - Where the answer is read.
+ * @param output - Where the question is written.
+ * @param options - Reader options.
+ * @param options.terminal - Whether `input` is a terminal in raw mode.
+ * @returns An interactive confirmation over the streams.
+ */
+export function streamHumanConfirmation(
+  input: NodeJS.ReadableStream,
+  output: NodeJS.WritableStream,
+  options: { readonly terminal?: boolean } = {},
+): HumanConfirmation {
+  return {
+    interactive: true,
+    confirm(question: string): Promise<boolean> {
+      return new Promise<boolean>((resolve) => {
+        const reader = createInterface({ input, output, ...options });
+        let answer = false;
+        // The first settlement wins; closing the reader settles the rest.
+        reader.once('close', () => {
+          resolve(answer);
+        });
+        reader.once('SIGINT', () => {
+          reader.close();
+        });
+        reader.question(`${question} [y/N] `, (line) => {
+          answer = isYes(line);
+          reader.close();
+        });
+      });
+    },
+  };
+}
+
+/**
  * The human at this process's terminal.
  *
  * @returns A confirmation that is interactive only when stdin and stderr are
@@ -58,17 +100,7 @@ export function isYes(answer: string): boolean {
 export function terminalHumanConfirmation(): HumanConfirmation {
   const interactive = process.stdin.isTTY && process.stderr.isTTY;
   if (!interactive) return NO_HUMAN;
-  return {
-    interactive: true,
-    async confirm(question: string): Promise<boolean> {
-      const terminal = createInterface({ input: process.stdin, output: process.stderr });
-      try {
-        return isYes(await terminal.question(`${question} [y/N] `));
-      } finally {
-        terminal.close();
-      }
-    },
-  };
+  return streamHumanConfirmation(process.stdin, process.stderr);
 }
 
 /**
@@ -86,4 +118,20 @@ export function humanAt(command: Command, human: HumanConfirmation): HumanConfir
   return command.optsWithGlobals<{ nonInteractive?: boolean }>().nonInteractive === true
     ? NO_HUMAN
     : human;
+}
+
+/**
+ * Who is at this terminal, for the audit of what they confirm.
+ *
+ * @returns The login name — or the `USER` / `USERNAME` environment variable
+ *   where the host cannot report one, or `unknown` — and the host name.
+ */
+export function humanAtTerminal(): { readonly user: string; readonly host: string } {
+  let user: string;
+  try {
+    user = userInfo().username;
+  } catch {
+    user = process.env.USER ?? process.env.USERNAME ?? 'unknown';
+  }
+  return { user, host: hostname() };
 }

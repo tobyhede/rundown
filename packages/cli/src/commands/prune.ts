@@ -7,7 +7,8 @@ import {
   RunbookStateManager,
   hashRunSecret,
   planPrune,
-  type VersionedRunState,
+  type HumanConfirmationAudit,
+  type RunDeletion,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -21,7 +22,12 @@ import {
   renderExecutionLeaseRefusal,
   withTokenOption,
 } from '../helpers/token-option.js';
-import { NO_HUMAN, humanAt, type HumanConfirmation } from '../services/human-confirmation.js';
+import {
+  NO_HUMAN,
+  humanAt,
+  humanAtTerminal,
+  type HumanConfirmation,
+} from '../services/human-confirmation.js';
 
 async function listAllRunIds(cwd: string): Promise<string[]> {
   // Must include runs whose persisted state is INVALID — they are precisely what
@@ -47,11 +53,39 @@ interface PruneOptions {
  * The question put to the human before a running run is deleted without its
  * Owner Token.
  *
- * @param run - The running run.
+ * @param deletion - The delete: the running run, and the Inline Children it removes with it.
+ * @param deletion.root - The running run.
+ * @param deletion.inlineDescendants - The Inline Children its delete removes.
+ * @param who - The user and host the confirmation is recorded as.
+ * @param who.user - The login name.
+ * @param who.host - The host name.
  * @returns The question.
  */
-function confirmRunningQuestion(run: VersionedRunState): string {
-  return `Run ${run.state.id} (${run.state.runbook.path}) is still running. Delete it without its owner token?`;
+function confirmRunningQuestion(
+  { root, inlineDescendants }: RunDeletion,
+  who: { readonly user: string; readonly host: string },
+): string {
+  const children =
+    inlineDescendants.length === 0
+      ? ''
+      : `, with the ${String(inlineDescendants.length)} inline child run(s) it composes,`;
+  return `Run ${root.state.id} (${root.state.runbook.path}) is still running. Delete it${children} without its owner token? This is recorded in the prune output as confirmed by ${who.user} on ${who.host}.`;
+}
+
+/**
+ * Ask the human about one running run's delete, recording who confirmed it.
+ *
+ * @param person - The human at the terminal.
+ * @param deletion - The delete to confirm.
+ * @returns Who confirmed it and when, or `undefined` for anything but yes.
+ */
+async function confirmDeletion(
+  person: HumanConfirmation,
+  deletion: RunDeletion,
+): Promise<HumanConfirmationAudit | undefined> {
+  const who = humanAtTerminal();
+  if (!(await person.confirm(confirmRunningQuestion(deletion, who)))) return undefined;
+  return { at: new Date().toISOString(), ...who };
 }
 
 /**
@@ -63,11 +97,15 @@ function confirmRunningQuestion(run: VersionedRunState): string {
  * runs (completed, stopped, abandoned) prune by lifecycle filter. A Current
  * Child its running parent still counts is never deleted, whatever the
  * filter (`retained: "uncollected"` once terminal, `"current child"` while it
- * runs), and `--token` naming one is refused `CURRENT_CHILD_PROTECTED`. A
- * RUNNING run is deleted when `--token` names it, or — selected by `--active`
- * / `--all` — when the human at an interactive terminal confirms it;
- * otherwise it is kept as `token required` (no terminal, or `--dry-run`) or
- * `not confirmed`. Deleting a run deletes its Inline Children with it (#903),
+ * runs), and `--token` naming one is refused `CURRENT_CHILD_PROTECTED`; a
+ * finished child the selection picks goes after a parent this prune deletes.
+ * A RUNNING run is deleted when `--token` names it, or — a top-level run
+ * selected by `--active` / `--all` — when the human at an interactive
+ * terminal confirms it, and its row then records who confirmed it
+ * (`confirmedBy`); otherwise it is kept as `token required` (no terminal, or
+ * `--dry-run`) or `not confirmed`. A running child run is never offered: it is
+ * kept as `child run`, with the recoveries that reach it (`detail`). Deleting
+ * a run deletes its Inline Children with it (#903),
  * so core's execution-lease rule covers the whole chain: In Progress in the
  * token's chain refuses the invocation `EXECUTION_IN_PROGRESS` with nothing
  * deleted, and keeps any other run (`retained: "execution in progress"`).
@@ -142,7 +180,7 @@ export function registerPruneCommand(program: Command, human: HumanConfirmation 
               running: options.all ?? options.active ?? false,
             },
             ...(person.interactive
-              ? { confirmRunning: (run) => person.confirm(confirmRunningQuestion(run)) }
+              ? { confirmRunning: (deletion) => confirmDeletion(person, deletion) }
               : {}),
             loadSteps: (state) => getRunbookFromState(state, cwd),
           });
@@ -175,29 +213,34 @@ export function registerPruneCommand(program: Command, human: HumanConfirmation 
             title: string | undefined;
             _status: string;
             _retained?: string;
+            _detail?: string;
+            _confirmedBy?: HumanConfirmationAudit;
           };
 
           const rows: PruneRow[] = [
-            ...deletions
-              .flatMap((deletion) => [deletion.root, ...deletion.inlineDescendants])
-              .map(({ state }) => ({
+            // A delete the human confirmed records them on every row it removes.
+            ...deletions.flatMap(({ root, inlineDescendants, confirmedBy }) =>
+              [root, ...inlineDescendants].map(({ state }) => ({
                 id: state.id,
                 runbook: state.runbook.path,
                 title: state.title,
                 _status: getStatus(state),
+                ...(confirmedBy !== undefined ? { _confirmedBy: confirmedBy } : {}),
               })),
+            ),
             ...invalidToDelete.map((id) => ({
               id,
               runbook: '(invalid)',
               title: undefined,
               _status: 'invalid',
             })),
-            ...retained.map(({ run: { state }, reason }) => ({
-              id: state.id,
-              runbook: state.runbook.path,
-              title: state.title,
-              _status: getStatus(state),
-              _retained: reason,
+            ...retained.map((kept) => ({
+              id: kept.run.state.id,
+              runbook: kept.run.state.runbook.path,
+              title: kept.run.state.title,
+              _status: getStatus(kept.run.state),
+              _retained: kept.reason,
+              ...('detail' in kept ? { _detail: kept.detail } : {}),
             })),
           ];
 
@@ -210,16 +253,26 @@ export function registerPruneCommand(program: Command, human: HumanConfirmation 
               header: 'RETAINED',
               key: (item: PruneRow) => item._retained ?? '',
             },
+            {
+              header: 'NOTE',
+              key: (item: PruneRow) =>
+                item._confirmedBy !== undefined
+                  ? `confirmed by ${item._confirmedBy.user}@${item._confirmedBy.host} at ${item._confirmedBy.at}`
+                  : (item._detail ?? ''),
+            },
           ];
 
-          // Emit only the documented ActiveRunbookEntry fields plus `retained`
-          // (PruneResponseSchema). `step`/`total` are intentionally omitted.
+          // Emit only the documented ActiveRunbookEntry fields plus `retained`,
+          // `detail` and `confirmedBy` (PruneResponseSchema). `step`/`total` are
+          // intentionally omitted.
           const jsonMapper = (item: PruneRow): Record<string, unknown> => ({
             id: item.id,
             runbook: item.runbook,
             status: item._status,
             title: item.title,
             ...(item._retained !== undefined ? { retained: item._retained } : {}),
+            ...(item._detail !== undefined ? { detail: item._detail } : {}),
+            ...(item._confirmedBy !== undefined ? { confirmedBy: item._confirmedBy } : {}),
           });
 
           if (rows.length === 0) {

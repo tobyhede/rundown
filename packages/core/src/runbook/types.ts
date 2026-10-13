@@ -960,20 +960,28 @@ export interface RunbookState {
 }
 
 /**
- * Who stopped a run through the human escape hatch, when, and why (#906).
- *
- * The escape hatch recovers a top-level run whose Owner Token was lost: a
- * human at an interactive terminal names the run by id and confirms. Nothing
- * here authorizes anything; it is the record that the one run-id mutation
- * happened.
+ * Who confirmed, at an interactive terminal, an act on a run made without its
+ * Owner Token, and when (#906): the human escape hatch's stop, or a prune of
+ * a running run. Nothing here authorizes anything; it is the record that a
+ * person, not an agent, decided.
  */
-export interface HumanStopAudit {
-  /** When the human confirmed the stop (ISO 8601). */
+export interface HumanConfirmationAudit {
+  /** When the human confirmed (ISO 8601). */
   readonly at: string;
   /** The login name of the user at the terminal. */
   readonly user: string;
   /** The host the terminal was on. */
   readonly host: string;
+}
+
+/**
+ * Who stopped a run through the human escape hatch, when, and why (#906).
+ *
+ * The escape hatch recovers a top-level run whose Owner Token was lost: a
+ * human at an interactive terminal names the run by id and confirms. It is
+ * recorded on the run the stop names.
+ */
+export interface HumanStopAudit extends HumanConfirmationAudit {
   /** The stop message the human gave, if any: their reason. */
   readonly message?: string;
 }

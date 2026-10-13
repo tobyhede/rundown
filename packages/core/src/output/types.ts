@@ -180,6 +180,11 @@ export interface StoppedOutput extends BaseOutputEvent {
   message?: string;
   /** Step position where stopped */
   position?: StepPosition;
+  /**
+   * The running Inline Children stopped with the run, nearest first: only the
+   * human escape hatch, which stops the whole run (#906), sets it.
+   */
+  stoppedInline?: readonly string[];
 }
 
 /**

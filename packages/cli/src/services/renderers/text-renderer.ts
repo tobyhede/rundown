@@ -156,6 +156,9 @@ export class TextRenderer implements OutputRenderer {
         break;
       case 'stopped':
         printRunbookStopped(event.message, this.writer);
+        for (const runId of event.stoppedInline ?? []) {
+          this.writer.writeLine(`Inline:   ${runId} ${failure('STOP')}`);
+        }
         break;
       case 'no_active_runbook':
         printNoActiveRunbook(this.writer);

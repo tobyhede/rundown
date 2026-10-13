@@ -586,20 +586,30 @@ the one mutation a run id may drive, and it is interactive and audited:
   written. `--yes` does not answer it. MCP has no tool for it.
 - It refuses before asking: an id that names no run is `RUN_TARGET_UNAVAILABLE`,
   a malformed one `INVALID_RUN_ID`, a finished run `RD-303` / `RD-304`, and a
-  child run `NOT_A_TOP_LEVEL_RUN` — an inline child runs on its root's token
-  (use the root's id), and a delegation is ended by `rundown release` or the
-  parent's `rundown retry`.
-- It then asks on stderr, naming the run, its runbook, its step, and the user
-  and host it will record. Anything but `y` / `yes` is refused `NOT_CONFIRMED`
-  with nothing written.
-- On yes it stops exactly the run named — it does not descend to a running
-  inline child as `stop --token` does — and the same conditional save records
-  the audit on the run: `humanStop: { at, user, host, message? }`, where `user`
-  is the login name, `host` the host name, and `message` the stop message.
-  `rundown status --run <run-id>` shows it. An attempt In Progress refuses it
-  `EXECUTION_IN_PROGRESS`; an Interrupted one is cleared, as any `stop` clears
-  it. A write to the run while the human decided refuses it
-  `CONCURRENT_MODIFICATION`, never retried.
+  child run `NOT_A_TOP_LEVEL_RUN`, naming only the recoveries that reach it. An
+  inline child runs on the token of the run at the top of its inline chain, so
+  the refusal names that run (`rundown stop --run <root-id>` if its token is
+  lost), never an intermediate inline child. A delegation is ended by its own
+  `stop --token`, or by its claiming agent's `rundown release <child-id>` (with
+  the `--agent-id` it claimed with); while its parent still counts it, the
+  parent's owner can also `rundown retry` it. An orphaned delegation (its parent
+  was pruned) has no parent to ask. An attempt In Progress on the run or any
+  running inline child it composes refuses it `EXECUTION_IN_PROGRESS`, so the
+  human is never asked to confirm a stop that would be refused.
+- It then asks on stderr, naming the run, its runbook, its step, the running
+  inline children that will stop with it, and the user and host it will record.
+  Anything but `y` / `yes` — an empty answer, end of input (Ctrl-D), or Ctrl-C —
+  is refused `NOT_CONFIRMED` with nothing written.
+- On yes it stops the whole run: the named run and every running inline child it
+  composes (its current inline child, transitively), each through its own
+  machine, in one all-or-nothing conditional write. Those children ran on the
+  lost token and nothing else could reach them. The same write records the audit
+  on the named run: `humanStop: { at, user, host, message? }`, where `user` is
+  the login name, `host` the host name, and `message` the stop message.
+  `rundown status --run <run-id>` shows it. The action object lists the stopped
+  children in `stoppedInline`. An Interrupted attempt is cleared, as any `stop`
+  clears it. A write to any of the runs while the human decided refuses it
+  `CONCURRENT_MODIFICATION`, never retried, and nothing is stopped.
 
 Agents must never run it: an agent that has lost a top-level token asks the user
 to run `rundown stop --run <run-id>` themselves.
@@ -951,14 +961,21 @@ rundown prune --token <owner_token>  # Delete that one run
 ```
 
 The lifecycle filters select finished and invalid runs. A **running** run is
-deleted when `--token <owner_token>` names it, one run per invocation, or —
-selected by `--active` or `--all` — when a human at an interactive terminal
-confirms it: prune asks on stderr, once per running run, and only about a run it
-would otherwise delete. Without a terminal (a pipe, an agent's shell, CI,
-`--non-interactive`) and under `--dry-run`, prune never asks, and keeps each
-running run with `retained: "token required"`; one the human declines is kept
-with `retained: "not confirmed"`. A running inline child is never offered: it
-has no token of its own and goes only with its root. Runs whose persisted state
+deleted when `--token <owner_token>` names it, one run per invocation, or — a
+top-level run selected by `--active` or `--all` — when a human at an interactive
+terminal confirms it: prune asks on stderr, once per running run, and only about
+a run it would otherwise delete. The deleted row is gone, so the prune output
+records who confirmed it: each row the confirmed delete removes carries
+`confirmedBy: { at, user, host }` in JSON, and
+`confirmed by <user>@<host> at <time>` in the text `NOTE` column. Without a
+terminal (a pipe, an agent's shell, CI, `--non-interactive`) and under
+`--dry-run`, prune never asks, and keeps each running top-level run with
+`retained: "token required"`; one the human declines (or answers with Ctrl-D or
+Ctrl-C) is kept with `retained: "not confirmed"`. A running child run is never
+offered, as the [escape hatch](#escape-hatch) never stops one: it is kept with
+`retained: "child run"` and a `detail` naming the recoveries that reach it (an
+inline child goes with its root; a delegation is ended by its own `--token`, its
+claiming agent's `release`, or its parent's owner). Runs whose persisted state
 this build cannot read are reached only by `--inactive` or `--all` (they are
 listed with `status: "invalid"`); a bare `rundown prune` never sees them.
 `prune` takes no `--run`: naming a run id is refused `INVALID_SYNTAX`, since a
@@ -976,9 +993,18 @@ ends when the parent collects the child (`rundown collect`, or the implicit
 collect of an inline child), when cancellation makes its result unnecessary
 (`rundown retry`, the owner's own `pass` / `fail` on the substep, or a re-entry
 of the step), when the parent finishes, or when the parent is pruned. Ending
-protection deletes nothing: the child becomes eligible for an ordinary prune.
-Retention is what keeps a delegated child's reserved id taken, so its claim
-ticket can never claim a second child.
+protection deletes nothing by itself: the child becomes eligible for an ordinary
+prune. Within one prune that deletes the parent, a finished delegation the
+prune's own filters select is deleted after it (so
+`prune --completed --token <parent-token>` removes a completed delegation with
+its parent, while a bare `prune --token` does not select it); a running one is
+never deleted this way and is kept as `"child run"`. Whether a running parent
+still counts a delegation is read from the parent's runbook; if that runbook
+cannot be parsed, the parent's delegations are kept with
+`retained: "parent unreadable"` and a `detail` saying why, and the rest of the
+prune proceeds (`prune --token` naming such a delegation is refused
+`CURRENT_CHILD_PROTECTED`). Retention is what keeps a delegated child's reserved
+id taken, so its claim ticket can never claim a second child.
 
 Deleting a run deletes its inline children with it, transitively, and lists each
 of them; protection ends with the parent, so a current inline child of the
@@ -1377,8 +1403,8 @@ and `details` where known. Their exact shapes are in
 | `NOT_A_DELEGATION`                          | `rundown release` named a run that is not a delegated child. Nothing is written                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `CURRENT_CHILD_PROTECTED`                   | `rundown prune --token` named a current child its running parent still counts: a delegation that is running, or finished with a result the parent has not collected. Nothing is deleted; `details` names the run, its parent and the parent step                                                                                                                                                                                                                                                                                           | Let the parent collect it (or `rundown retry` it), or finish or prune the parent; the child is prunable once [protection ends](#prune-retention)                                                                                                                                                                                                                            |
 | `INTERACTIVE_REQUIRED`                      | `rundown stop --run` (the [human escape hatch](#escape-hatch)) without a human at an interactive terminal, or under `--non-interactive`. Nothing is written                                                                                                                                                                                                                                                                                                                                                                                | An agent stops its run with `--token`; for a lost top-level token, ask the user to run `rundown stop --run <run-id>` at a terminal                                                                                                                                                                                                                                          |
-| `NOT_CONFIRMED`                             | The human answered anything but yes to `rundown stop --run`. Nothing is written                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Re-run it and answer `y` if the stop is intended                                                                                                                                                                                                                                                                                                                            |
-| `NOT_A_TOP_LEVEL_RUN`                       | `rundown stop --run` named a child run. Nothing is asked or written                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | An inline child: use its root's id. A delegation: its claiming agent runs `rundown release`, or the parent's owner `rundown retry`                                                                                                                                                                                                                                          |
+| `NOT_CONFIRMED`                             | The human answered anything but yes to `rundown stop --run`, including end of input (Ctrl-D) or Ctrl-C. Nothing is written                                                                                                                                                                                                                                                                                                                                                                                                                 | Re-run it and answer `y` if the stop is intended                                                                                                                                                                                                                                                                                                                            |
+| `NOT_A_TOP_LEVEL_RUN`                       | `rundown stop --run` named a child run. Nothing is asked or written                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Follow the recovery the message names. An inline child: the run at the top of its inline chain, by its `--token` or `rundown stop --run <root-id>`. A delegation: its own `stop --token`, its claiming agent's `rundown release <child-id>`, or — while its parent still counts it — the parent's owner's `rundown retry`                                                   |
 | `EXECUTION_IN_PROGRESS`                     | The run's current step holds the execution lease and the process running its command is alive. Every mutating command is refused so the command never runs twice; nothing was written. `details` names `runId`, `step`, `attempt`, `pid`, `startedAt`                                                                                                                                                                                                                                                                                      | Wait for the command to finish, then re-read the run (`rundown status --run <run_id>`)                                                                                                                                                                                                                                                                                      |
 | `EXECUTION_INTERRUPTED`                     | The run's current step holds the execution lease but the process that started its command is gone, so its outcome is unknown. `pass` and `complete` are refused; Rundown never repeats the command. `details` as for `EXECUTION_IN_PROGRESS`                                                                                                                                                                                                                                                                                               | Decide explicitly: `rundown fail --token <owner_token> --step <step>` (the FAIL handler, including an authored `RETRY`), `rundown goto <step> --token <owner_token>`, `rundown stop --token <owner_token>`, or discard the run with `rundown prune --token <owner_token>`                                                                                                   |
 | `EXECUTION_PENDING`                         | `pass` named a step whose command has not run: the command that entered the step ended before running it, so no lease is held. Nothing is written. `details`: `runId`, `step`                                                                                                                                                                                                                                                                                                                                                              | Run it with `rundown goto <step> --token <owner_token>`, or decide explicitly with `rundown fail --token <owner_token> --step <step>` or `rundown stop --token <owner_token>`                                                                                                                                                                                               |

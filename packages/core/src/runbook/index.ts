@@ -127,9 +127,12 @@ export {
 // Prune protection (#906): one rule for every pruning caller.
 export {
   CURRENT_CHILD_PROTECTED_CODE,
+  childProtection,
   planPrune,
-  protectingParentOf,
+  type ChildProtection,
   type CurrentChildProtectedRefusal,
+  type LoadSteps,
+  type PlannedDeletion,
   type PrunePlan,
   type PrunePlanInput,
   type PruneRetentionReason,
@@ -139,11 +142,16 @@ export {
 // The human escape hatch (#906): `rundown stop --run`, interactive and audited.
 export {
   NOT_A_TOP_LEVEL_RUN_CODE,
+  childRunRemedy,
   resolveHumanStopTarget,
   stopByHuman,
+  type ChildRunContext,
+  type HumanStopDeps,
+  type HumanStoppedRun,
   type HumanStopOutcome,
   type HumanStopTargetRefusal,
   type HumanStopTargetResolution,
+  type RunLookup,
 } from './human-stop.js';
 export { assertStateVersion, type StateVersion } from './storage/mutation-result.js';
 export {

@@ -189,14 +189,20 @@ write on the parent.
   Collected, cancelled or replaced reservation is never counted again, and a
   finished or deleted parent never runs again — so a child unprotected at the
   read stays unprotected. A child row inserted after the listing (a claim) is
-  not in it, so prune never deletes it. Asking a human to confirm a running run
-  happens between the read and the delete; a run that moved meanwhile is refused
-  by the same version check.
-- **`stop --run`**, the human escape hatch, reads the named run with its version
-  before the human is asked, and the stop — with its `humanStop` audit — is the
-  seam's ordinary `runTerminal` save at that version. A write while the human
-  decided refuses it `CONCURRENT_MODIFICATION`. It writes nothing but the named
-  run's row.
+  not in it, so prune never deletes it. A finished child whose protection ends
+  because the same plan deletes its parent is deleted after the parent, so a
+  parent whose delete is refused stops the prune before its child goes. Each
+  parent's runbook is parsed once per listing; one that cannot be parsed keeps
+  its delegations protected rather than aborting the prune. Asking a human to
+  confirm a running top-level run happens between the read and the delete; a run
+  that moved meanwhile is refused by the same version check.
+- **`stop --run`**, the human escape hatch, reads the named run and each running
+  inline child it composes with its version, and applies the lease rule to each
+  before the human is asked. The stop is one `saveRuns` write
+  (`saveRunsResolvingLeases`, as `release` uses): every run's `FORCE_STOP`, and
+  the named run's `humanStop` audit, commit at the versions read, or none do. A
+  write to any of them while the human decided refuses it
+  `CONCURRENT_MODIFICATION`, never retried.
 
 ## No other coordination
 

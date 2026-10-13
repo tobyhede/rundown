@@ -405,6 +405,11 @@ export const ActionResponseSchema = z
     complete: z.boolean().optional().describe('Whether the runbook completed'),
     /** Whether this resulted in runbook stopping */
     stopped: z.boolean().optional().describe('Whether the runbook was stopped'),
+    /** The running Inline Children the human escape hatch stopped with the run (#906) */
+    stoppedInline: z
+      .array(z.string().regex(RUN_ID_PATTERN))
+      .optional()
+      .describe('Running inline children stopped with the run by `stop --run`, nearest first'),
     /** Runbook context */
     runbook: RunbookContextSchema.optional().describe('Runbook context information'),
     // Flat format fields
@@ -1169,23 +1174,49 @@ export const PruneResponseSchema = z
     ActiveRunbookEntrySchema.extend({
       /**
        * Present on a run that was selected but kept (#906): `"token required"`
-       * for a running run no `--token` names and no human at a terminal
-       * confirmed, `"not confirmed"` for one the human declined,
-       * `"uncollected"` for a terminal Current Child whose running parent has
-       * not Collected it, `"current child"` for a running one, and
-       * `"execution in progress"` for a run with an attempt In Progress in its
-       * inline chain.
+       * for a running top-level run no `--token` names and no human at a
+       * terminal confirmed, `"not confirmed"` for one the human declined,
+       * `"child run"` for a running child run (never offered for
+       * confirmation), `"uncollected"` for a terminal Current Child whose
+       * running parent has not Collected it, `"current child"` for a running
+       * one, `"parent unreadable"` for a delegation whose running parent's
+       * runbook could not be parsed, and `"execution in progress"` for a run
+       * with an attempt In Progress in its inline chain.
        */
       retained: z
         .enum([
           'token required',
           'not confirmed',
+          'child run',
           'uncollected',
           'current child',
+          'parent unreadable',
           'execution in progress',
         ])
         .optional()
         .describe('Why a selected run was kept rather than deleted'),
+      /**
+       * With `retained: "child run"`, the recoveries that reach the child;
+       * with `"parent unreadable"`, why the parent could not be read.
+       */
+      detail: z
+        .string()
+        .optional()
+        .describe('What to do about a retained child run, or why its parent is unreadable'),
+      /**
+       * On a running run deleted without its Owner Token: the human who
+       * confirmed it at an interactive terminal. The row is gone, so the
+       * command's output is the record.
+       */
+      confirmedBy: z
+        .object({
+          at: z.string().describe('ISO-8601 time the human confirmed the delete'),
+          user: z.string().describe('Login name of the user at the terminal'),
+          host: z.string().describe('Host the terminal was on'),
+        })
+        .strict()
+        .optional()
+        .describe('The human who confirmed deleting this running run without its token'),
     }),
   )
   .describe('Runs that were/would be pruned, plus each selected run retained, with its reason');

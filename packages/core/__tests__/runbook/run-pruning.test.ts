@@ -1,8 +1,8 @@
 import { describe, expect, it } from '@jest/globals';
 import {
   CURRENT_CHILD_PROTECTED_CODE,
+  childProtection,
   planPrune,
-  protectingParentOf,
   type PrunePlan,
   type PrunePlanInput,
 } from '../../src/runbook/run-pruning.js';
@@ -134,6 +134,19 @@ function delegatingParent(collected?: 'pass' | 'fail') {
 
 const loadSteps = () => STEPS;
 
+/** The parent protecting `run` within `runs`, or `undefined`. */
+async function protectingParentOf(
+  run: VersionedRunState,
+  runs: readonly VersionedRunState[],
+  load: PrunePlanInput['loadSteps'],
+): Promise<VersionedRunState | undefined> {
+  const protection = await childProtection(runs, load)(run);
+  return protection.kind === 'protected' ? protection.parent : undefined;
+}
+
+/** The human who confirmed a delete, as the front end records them. */
+const AUDIT = { at: '2026-10-14T00:00:00.000Z', user: 'ada', host: 'desk' } as const;
+
 const ALL = { running: true, completed: true, stopped: true, abandoned: true } as const;
 const FINISHED = { running: false, completed: true, stopped: true, abandoned: false } as const;
 
@@ -151,7 +164,13 @@ function planned(result: PrunePlan) {
   };
 }
 
-describe('protectingParentOf', () => {
+/** The `detail` of each retained run that carries one. */
+function detailsOf(result: PrunePlan): string[] {
+  if (result.kind !== 'planned') return [];
+  return result.retained.flatMap((kept) => ('detail' in kept ? [kept.detail] : []));
+}
+
+describe('childProtection', () => {
   it('protects an Inline Child while its running parent’s cursor names it', async () => {
     const parent = inlineParent();
     const child = run(CHILD, { lifecycle: 'completed', linkage: linkage('inline', '1.1') });
@@ -253,9 +272,9 @@ describe('planPrune', () => {
     const result = planned(
       await plan({
         runs: [parent, strayChild, other],
-        confirmRunning: (listed) => {
-          asked.push(listed.state.id);
-          return Promise.resolve(true);
+        confirmRunning: (deletion) => {
+          asked.push(deletion.root.state.id);
+          return Promise.resolve(AUDIT);
         },
       }),
     );
@@ -269,7 +288,8 @@ describe('planPrune', () => {
 
     expect(planned(await plan({ runs: [other] })).retained).toEqual([[OTHER, 'token required']]);
     expect(
-      planned(await plan({ runs: [other], confirmRunning: () => Promise.resolve(false) })).retained,
+      planned(await plan({ runs: [other], confirmRunning: () => Promise.resolve(undefined) }))
+        .retained,
     ).toEqual([[OTHER, 'not confirmed']]);
   });
 
@@ -280,9 +300,9 @@ describe('planPrune', () => {
     const result = planned(
       await plan({
         runs: [leased],
-        confirmRunning: (listed) => {
-          asked.push(listed.state.id);
-          return Promise.resolve(true);
+        confirmRunning: (deletion) => {
+          asked.push(deletion.root.state.id);
+          return Promise.resolve(AUDIT);
         },
       }),
     );
@@ -299,5 +319,159 @@ describe('planPrune', () => {
     expect(
       planned(await plan({ runs: [completed, abandoned, running], select: FINISHED })),
     ).toEqual({ deleted: [OTHER], retained: [] });
+  });
+
+  describe('when a prune deletes a Delegation’s parent (protection ends with it)', () => {
+    const terminalChild = () =>
+      run(CHILD, { lifecycle: 'completed', linkage: linkage('delegation', '1.2') });
+
+    it('deletes a terminal child the selection picks with the parent its token names, never reporting it uncollected', async () => {
+      const parent = delegatingParent();
+
+      expect(planned(await plan({ runs: [parent, terminalChild()], owned: parent }))).toEqual({
+        deleted: [PARENT, CHILD],
+        retained: [],
+      });
+    });
+
+    it('deletes it with a parent the human confirmed', async () => {
+      const parent = delegatingParent();
+
+      const result = planned(
+        await plan({
+          runs: [parent, terminalChild()],
+          confirmRunning: () => Promise.resolve(AUDIT),
+        }),
+      );
+
+      expect(result).toEqual({ deleted: [PARENT, CHILD], retained: [] });
+    });
+
+    it('leaves a terminal child the selection does not pick, unreported', async () => {
+      const parent = delegatingParent();
+      const none = { running: false, completed: false, stopped: false, abandoned: false };
+
+      expect(
+        planned(await plan({ runs: [parent, terminalChild()], owned: parent, select: none })),
+      ).toEqual({ deleted: [PARENT], retained: [] });
+    });
+
+    it('never deletes a running child with its parent: it is kept as a child run, with the recoveries left to it', async () => {
+      const parent = delegatingParent();
+      const child = run(CHILD, { linkage: linkage('delegation', '1.2') });
+
+      const result = await plan({ runs: [parent, child], owned: parent });
+
+      expect(planned(result)).toEqual({ deleted: [PARENT], retained: [[CHILD, 'child run']] });
+      const [detail] = detailsOf(result);
+      expect(detail).toContain(`rundown release ${CHILD}`);
+      expect(detail).not.toContain('retry');
+    });
+
+    it('keeps the child uncollected when the parent’s own delete is refused under the lease', async () => {
+      const leasedParent = { ...delegatingParent(), lease: LIVE_LEASE };
+
+      const result = planned(
+        await plan({
+          runs: [leasedParent, terminalChild()],
+          confirmRunning: () => Promise.resolve(AUDIT),
+        }),
+      );
+
+      expect(result).toEqual({
+        deleted: [],
+        retained: [
+          [PARENT, 'execution in progress'],
+          [CHILD, 'uncollected'],
+        ],
+      });
+    });
+  });
+
+  describe('a running run without its token', () => {
+    it('is confirmable only when top-level: a running child is kept as a child run, and nobody is asked', async () => {
+      // The parent finished, so the Delegation is no longer its Current Child.
+      const parent = run(PARENT, { lifecycle: 'stopped' });
+      const child = run(CHILD, { linkage: linkage('delegation', '1.2') });
+      const asked: RunId[] = [];
+
+      const result = await plan({
+        runs: [parent, child],
+        select: { ...ALL, stopped: false },
+        confirmRunning: (deletion) => {
+          asked.push(deletion.root.state.id);
+          return Promise.resolve(AUDIT);
+        },
+      });
+
+      expect(asked).toEqual([]);
+      expect(planned(result)).toEqual({ deleted: [], retained: [[CHILD, 'child run']] });
+      const [detail] = detailsOf(result);
+      expect(detail).toContain('rundown stop --token');
+      // Its parent finished, so no `retry` of the parent reaches it.
+      expect(detail).not.toContain('retry');
+    });
+
+    it('records who confirmed its delete, and when, on the planned delete', async () => {
+      const other = run(OTHER);
+
+      const result = await plan({ runs: [other], confirmRunning: () => Promise.resolve(AUDIT) });
+
+      expect(result.kind === 'planned' ? result.deletions : []).toEqual([
+        expect.objectContaining({ root: other, confirmedBy: AUDIT }),
+      ]);
+    });
+  });
+
+  describe('a parent whose runbook cannot be read', () => {
+    const unreadable = () => {
+      throw new Error('parse failed');
+    };
+
+    it('keeps its Delegations protected, with the reason, and still prunes everything else', async () => {
+      const parent = delegatingParent();
+      const child = run(CHILD, { lifecycle: 'completed', linkage: linkage('delegation', '1.2') });
+      const finished = run(OTHER, { lifecycle: 'completed' });
+
+      const result = await plan({ runs: [parent, child, finished], loadSteps: unreadable });
+
+      expect(planned(result)).toEqual({
+        deleted: [OTHER],
+        retained: [
+          [PARENT, 'token required'],
+          [CHILD, 'parent unreadable'],
+        ],
+      });
+      expect(detailsOf(result)).toEqual([expect.stringContaining('parse failed')]);
+    });
+
+    it('refuses --token naming such a child CURRENT_CHILD_PROTECTED, deleting nothing', async () => {
+      const parent = delegatingParent();
+      const child = run(CHILD, { lifecycle: 'completed', linkage: linkage('delegation', '1.2') });
+
+      const result = await plan({ runs: [parent, child], owned: child, loadSteps: unreadable });
+
+      expect(result).toEqual({
+        kind: 'refused',
+        refusal: expect.objectContaining({ code: CURRENT_CHILD_PROTECTED_CODE, runId: CHILD }),
+      });
+    });
+
+    it('parses each parent once, however many children it has', async () => {
+      const parent = delegatingParent();
+      const child = run(CHILD, { lifecycle: 'completed', linkage: linkage('delegation', '1.2') });
+      const sibling = run(OTHER, { lifecycle: 'completed', linkage: linkage('delegation', '1.2') });
+      let parses = 0;
+
+      await plan({
+        runs: [parent, child, sibling],
+        loadSteps: () => {
+          parses += 1;
+          return STEPS;
+        },
+      });
+
+      expect(parses).toBe(1);
+    });
   });
 });

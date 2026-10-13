@@ -747,42 +747,56 @@ Which runs a prune deletes is decided in core by `planPrune` (`run-pruning.ts`,
 #906) over one listing (`listWithVersion`); `rundown prune` lists the store,
 renders the plan and makes its deletes. In order:
 
-- **Current Child protection.** `protectingParentOf` names the running parent
-  that still counts a child: an Inline Child while its parent's
+- **Current Child protection.** `childProtection` decides, over the listing,
+  which running parent still counts a child: an Inline Child while its parent's
   `currentInlineReservation` names it (the predicate the parent's progression
   launches and Collects by), a Delegation while `delegationStanding` reads it
-  `current`. Such a child is never deleted on its own, whatever its lifecycle —
-  `retained: "uncollected"` once terminal, `"current child"` while running — and
-  `--token` naming one is refused `CURRENT_CHILD_PROTECTED`. Collect,
-  Cancellation, the parent's terminal and the parent's prune each end it; ending
-  it deletes nothing. Protection is read from one listing and only ever ends (a
-  replaced reservation is never counted again, a finished parent never runs), so
-  a planned delete cannot become wrong before it lands.
-- **Running runs.** A running run no token names is deleted only when the
-  frontend's `confirmRunning` callable — a human at an interactive terminal,
-  Category A — says yes, asked only after the lease rule passes its chain. A
-  running Inline Child is never offered; it goes with its root.
+  `current`. Each parent's graph is parsed once per listing; a parent whose
+  runbook cannot be parsed leaves its Delegations `undetermined`, retained
+  `"parent unreadable"` (and `--token` naming one refused), rather than aborting
+  the prune. A protected child is never deleted on its own, whatever its
+  lifecycle — `retained: "uncollected"` once terminal, `"current child"` while
+  running — and `--token` naming one is refused `CURRENT_CHILD_PROTECTED`.
+  Collect, Cancellation, the parent's terminal and the parent's prune each end
+  it. Ending it deletes nothing by itself, except within the prune that deletes
+  the parent: a terminal child the prune's own selection picks is planned after
+  the parent's delete, and a running one is retained `"child run"`. Protection
+  is read from one listing and only ever ends (a replaced reservation is never
+  counted again, a finished parent never runs), so a planned delete cannot
+  become wrong before it lands.
+- **Running runs.** A running top-level run no token names is deleted only when
+  the frontend's `confirmRunning` callable — a human at an interactive terminal,
+  Category A — confirms its delete, asked only after the lease rule passes its
+  chain. The callable returns the `HumanConfirmationAudit`, which the planned
+  delete carries (`confirmedBy`) for the front end to report, since the row it
+  would be recorded on is deleted. A running Child Run is never offered, the
+  same restriction as the escape hatch: it is retained `"child run"` with
+  `childRunRemedy`'s recoveries.
 - **Deletes.** `planRunDeletions` folds each selected run's Inline Children into
   its root's delete (`run-deletion.ts`), and `refuseDeletionUnderLease` applies
-  the lease rule to the whole chain: a refusal of the owned run refuses the
-  prune; any other is retained. A run a delete removes with its root is reported
-  deleted, never retained. Each delete is one `deleteAtVersion` naming every row
-  at the version it was read at.
+  the lease rule to the whole chain, once per delete: a refusal of the owned run
+  refuses the prune before anyone is asked; any other is retained. A run a
+  delete removes with its root is reported deleted, never retained. Each delete
+  is one `deleteAtVersion` naming every row at the version it was read at.
 
 ### The human escape hatch
 
 `rundown stop --run <run-id>` (#906) is the one mutation a run id drives. The
 CLI decides that a human is at an interactive terminal and asks them
-(`helpers/escape-hatch.ts`, through the injected `HumanConfirmation`); core
-decides the rest (`human-stop.ts`). `resolveHumanStopTarget` refuses, before
-anyone is asked, an id that names no run, a finished run, and a Child Run
-(`NOT_A_TOP_LEVEL_RUN`), and otherwise returns the run with the version it was
-read at. After a yes, `stopByHuman` calls the seam's own `runTerminal` with
-`command: 'stop'` and the `HumanStopAudit` (`at`, `user`, `host`, `message`);
-`runTerminal` writes it as `RunbookState.humanStop` in the same conditional save
-as the stop. It stops exactly the named run: it never descends to a running
-Inline Child, which is left unreachable and goes with the root's prune. MCP has
-no tool for it.
+(`helpers/escape-hatch.ts`, through the injected `HumanConfirmation`, which
+reads end of input and Ctrl-C as no); core decides the rest (`human-stop.ts`).
+`resolveHumanStopTarget` refuses, before anyone is asked, an id that names no
+run, a finished run, a Child Run (`NOT_A_TOP_LEVEL_RUN`, with `childRunRemedy`'s
+recoveries: an Inline Child's remedy names the run at the top of its inline
+chain), and an attempt In Progress on the run or any running Inline Child it
+composes (`runningInlineChain`, shared with `release`). It otherwise returns the
+run and that chain, each with the version it was read at. After a yes,
+`stopByHuman` derives each run's `FORCE_STOP` through its own machine and
+commits them in one `saveRuns` write at those versions, the root's state
+carrying the `HumanStopAudit` (`at`, `user`, `host`, `message`) as
+`RunbookState.humanStop`; a version that moved refuses the whole stop. The
+Inline Children stop with the root because the lost token was their only
+authority. MCP has no tool for it.
 
 ### Guards do no cross-run IO or policy
 

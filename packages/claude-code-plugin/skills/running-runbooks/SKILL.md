@@ -36,8 +36,9 @@ the run.
 No other command, status response, or listing ever shows it again, and it cannot
 be recovered. If you lose it, you can still read the run but no longer drive it.
 Stopping it is then the user's decision, not yours: `rundown stop --run <run_id>`
-is a human-only escape hatch that asks a person at a terminal to confirm and
-records who stopped the run. Never run `rundown stop --run` yourself — it is
+is a human-only escape hatch that asks a person at a terminal to confirm, stops
+the whole run — with any inline child runbook it is running — and records who
+stopped it. Never run `rundown stop --run` yourself — it is
 refused `INTERACTIVE_REQUIRED` without a person at a terminal. Tell the user you
 lost the token, give them the run id, and ask the user to run
 `rundown stop --run <run_id>` themselves if the run should stop.

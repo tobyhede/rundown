@@ -249,17 +249,21 @@ deleting a delegation would free its reserved id for its claim ticket to claim
 again. Protection ends when the parent durably collects the child, when
 cancellation makes its result unnecessary, when the parent reaches a terminal,
 or when the parent is deleted. Ending protection deletes nothing; the child
-becomes eligible for an ordinary prune. A bulk prune reports each retained run
-with its reason. Deleting a running run requires its Owner Token or the
-confirmation of a person at an interactive terminal. See
+becomes eligible for an ordinary prune; a finished child the same prune's
+filters select is deleted after the parent it is pruning. A bulk prune reports
+each retained run with its reason. Deleting a running run requires its Owner
+Token or, for a top-level run, the confirmation of a person at an interactive
+terminal, which the prune output records (`confirmedBy`); a running child run is
+never deleted by confirmation. See
 [docs/reference/cli.md Child Result retention](cli.md#prune-retention).
 
 Every run has exactly one owner. A mutating command presents the Owner Token,
 which the runtime hashes to find the run; there is no other mutation authority,
 and the run id is a read-only selector. The one exception is the human escape
 hatch for a lost top-level token: `rundown stop --run <run-id>`, which a person
-at an interactive terminal confirms and which records who stopped the run, when
-and why on it (`humanStop`); an agent never uses it. A mutation commits with one
+at an interactive terminal confirms, which stops the run with every running
+inline child it composes, and which records who stopped the run, when and why on
+it (`humanStop`); an agent never uses it. A mutation commits with one
 conditional write against `state_version`; if another write landed first, the
 command is refused `CONCURRENT_MODIFICATION` and nothing is written. See
 [docs/reference/cli.md Run Ownership](cli.md#run-ownership).

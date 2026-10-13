@@ -6,13 +6,13 @@
  * refused unless a person at an interactive terminal is there to confirm it,
  * and the stop records who confirmed it, when, and their message on the run.
  * Everything this module does is Category A — detecting the terminal, asking,
- * reading the login name and host. Core's `stopByHuman` decides what the id
- * may stop and stops it through the lifecycle seam.
+ * reading the login name and host. Core decides what the id may stop
+ * (`resolveHumanStopTarget`) and stops the run with the running Inline
+ * Children it composes, in one write (`stopByHuman`).
  *
  * @module helpers/escape-hatch
  */
 
-import { hostname, userInfo } from 'node:os';
 import {
   CONCURRENT_MODIFICATION_CODE,
   resolveHumanStopTarget,
@@ -20,11 +20,12 @@ import {
   type HumanStopAudit,
   type RunId,
 } from '@rundown-org/core';
-import type { HumanConfirmation } from '../services/human-confirmation.js';
+import { humanAtTerminal, type HumanConfirmation } from '../services/human-confirmation.js';
+import { buildMetadata } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
-import { buildLifecycleSeam } from './lifecycle-seam-factory.js';
-import { renderTerminalOutcome } from './terminal-command.js';
-import { renderRunFinished } from './token-option.js';
+import { buildLifecycleDeps } from './lifecycle-seam-factory.js';
+import { ForceTerminalEventBridge } from './terminal-command.js';
+import { renderExecutionLeaseRefusal, renderRunFinished } from './token-option.js';
 
 /** Code of the refusal of the escape hatch with no human at a terminal. */
 export const INTERACTIVE_REQUIRED_CODE = 'INTERACTIVE_REQUIRED';
@@ -34,20 +35,6 @@ export const NOT_CONFIRMED_CODE = 'NOT_CONFIRMED';
 /** Message of the {@link INTERACTIVE_REQUIRED_CODE} refusal. */
 export const INTERACTIVE_REQUIRED_MESSAGE =
   'rundown stop --run is the human escape hatch for a lost owner token: it asks for confirmation at an interactive terminal and records who stopped the run. There is no terminal here, so nothing was stopped. An agent must not use it: stop the run with --token <owner_token>, or ask the user to run `rundown stop --run <id>` themselves.';
-
-/**
- * The login name of the user at this terminal.
- *
- * @returns The login name, or the `USER` / `USERNAME` environment variable
- *   where the host cannot report one, or `unknown`.
- */
-function loginName(): string {
-  try {
-    return userInfo().username;
-  } catch {
-    return process.env.USER ?? process.env.USERNAME ?? 'unknown';
-  }
-}
 
 /** Input to {@link runEscapeHatchStop}. */
 export interface EscapeHatchStopInput {
@@ -60,7 +47,14 @@ export interface EscapeHatchStopInput {
 }
 
 /**
- * Refuse, ask, and — on an explicit yes — stop the named run with its audit.
+ * Refuse, ask, and — on an explicit yes — stop the named run, and the running
+ * Inline Children it composes, with its audit.
+ *
+ * Core resolves the target first — refusing an unknown, finished or child run,
+ * and an attempt In Progress anywhere in the run's inline chain — so the human
+ * is only asked about a stop that can apply. The stop's conditional write
+ * remains the final authority: a run that moves while the human decides is
+ * refused, never retried.
  *
  * @param output - Output emitter for CLI output.
  * @param cwd - Current working directory.
@@ -78,14 +72,19 @@ export async function runEscapeHatchStop(
     output.flush();
     return true;
   }
-  const { manager, seam } = buildLifecycleSeam(cwd);
+  const deps = buildLifecycleDeps(cwd);
   // Core refuses what the hatch may not stop before anyone is asked.
-  const target = await resolveHumanStopTarget(manager, input.runId);
+  const target = await resolveHumanStopTarget(deps, input.runId);
   switch (target.kind) {
     case 'target':
       break;
     case 'run_finished':
       renderRunFinished(output, 'stop', target.runId, target.lifecycle);
+      output.flush();
+      return true;
+    case 'execution_in_progress':
+    case 'execution_interrupted':
+      renderExecutionLeaseRefusal(output, target);
       output.flush();
       return true;
     case 'unknown_run':
@@ -99,10 +98,13 @@ export async function runEscapeHatchStop(
     }
   }
   const { state } = target.run;
-  const user = loginName();
-  const host = hostname();
+  const { user, host } = humanAtTerminal();
+  const children =
+    target.inline.length === 0
+      ? ''
+      : `, and the ${String(target.inline.length)} inline child run(s) it is running (${target.inline.map((run) => run.state.id).join(', ')}),`;
   const confirmed = await input.human.confirm(
-    `Stop run ${state.id} (${state.runbook.path}, at step ${state.step}) without its owner token? This is recorded on the run as stopped by ${user} on ${host}.`,
+    `Stop run ${state.id} (${state.runbook.path}, at step ${state.step})${children} without its owner token? This is recorded on the run as stopped by ${user} on ${host}.`,
   );
   if (!confirmed) {
     output.error(
@@ -119,7 +121,7 @@ export async function runEscapeHatchStop(
     host,
     ...(input.message !== undefined ? { message: input.message } : {}),
   };
-  const outcome = await stopByHuman(seam, target, audit);
+  const outcome = await stopByHuman(deps, target, audit);
   switch (outcome.kind) {
     case 'unknown_run':
       output.error(outcome.message, outcome.code, { runId: outcome.runId });
@@ -129,19 +131,22 @@ export async function runEscapeHatchStop(
       output.error(outcome.message, CONCURRENT_MODIFICATION_CODE, { runId: outcome.runId });
       output.flush();
       return true;
-    case 'run_finished':
-    case 'execution_in_progress':
-    case 'execution_interrupted':
     case 'applied': {
-      const exitError = await renderTerminalOutcome(
-        output,
-        'stop',
-        manager,
-        outcome,
-        input.message,
+      const root = await deps.manager.load(outcome.root.runId);
+      if (root) output.metadata(buildMetadata(root));
+      const bridge = new ForceTerminalEventBridge(output);
+      for (const run of [outcome.root, ...outcome.inline]) {
+        for (const event of run.events) {
+          bridge.emit({ id: run.runId, runbook: run.runbook }, event);
+        }
+      }
+      output.stopped(
+        input.message ?? 'Runbook stopped',
+        undefined,
+        outcome.inline.map((run) => run.runId),
       );
       output.flush();
-      return exitError;
+      return true;
     }
     default: {
       const _exhaustive: never = outcome;

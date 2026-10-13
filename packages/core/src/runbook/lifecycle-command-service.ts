@@ -72,7 +72,7 @@ import {
   reconcileFencedTerminalObservation,
   type TransitionObservationEvent,
 } from '../events/transition-observation.js';
-import type { HumanStopAudit, ResolvedStep, RunbookState } from './types.js';
+import type { ResolvedStep, RunbookState } from './types.js';
 
 /** The manual transition commands. */
 export type TransitionCommandName = 'pass' | 'fail';
@@ -205,18 +205,11 @@ interface LifecycleTerminalInputFields {
 /**
  * Input to {@link RunbookLifecycleCommandService.runTerminal}, discriminated on
  * the terminal command (it drives FORCE_COMPLETE vs FORCE_STOP, never a
- * literal). Only a stop can carry the human escape hatch's audit (#906).
+ * literal).
  */
-export type LifecycleTerminalInput =
-  | (LifecycleTerminalInputFields & { readonly command: 'complete' })
-  | (LifecycleTerminalInputFields & {
-      readonly command: 'stop';
-      /**
-       * The audit of a human stopping the run without its Owner Token, written
-       * on the run by the same save that stops it (`human-stop.ts`).
-       */
-      readonly humanStop?: HumanStopAudit;
-    });
+export type LifecycleTerminalInput = LifecycleTerminalInputFields & {
+  readonly command: TerminalCommandName;
+};
 
 /** Result of a complete/stop command through the seam. */
 export type LifecycleTerminalOutcome =
@@ -844,12 +837,7 @@ export class RunbookLifecycleCommandService {
         ...(input.message !== undefined ? { message: input.message } : {}),
       },
     );
-    // The escape hatch's audit lands in the same conditional save as the stop.
-    const nextState =
-      input.command === 'stop' && input.humanStop !== undefined
-        ? { ...prepared.nextState, humanStop: input.humanStop }
-        : prepared.nextState;
-    const saved = await this.#deps.manager.save(nextState, stateVersion);
+    const saved = await this.#deps.manager.save(prepared.nextState, stateVersion);
     if (saved.kind !== 'committed') return this.#refuseSave(saved.kind, previousState.id);
     const updatedState = saved.state;
     const lifecycle = updatedState.lifecycle;
