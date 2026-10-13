@@ -122,6 +122,7 @@ describe('storage schema', () => {
       'parent_frame_key',
       'parent_entry',
       'parent_kind',
+      'claim_agent_id',
       'lease_attempt',
       'lease_pid',
       'lease_start_id',
@@ -343,6 +344,24 @@ describe('storage schema', () => {
           .all<Record<string, unknown>>(),
       );
       expect(rows).toEqual([{ id: 'rd_delegate', parent_run_id: null, parent_kind: null }]);
+    });
+
+    it('records the claiming agent on a delegation child, and on nothing else (#904)', async () => {
+      await using driver = await schemaDriver();
+      await driver.immediate((tx) => {
+        insertRun(tx);
+        insertRun(tx, CHILD_LINK);
+        tx.prepare("UPDATE runs SET claim_agent_id = 'agent-1' WHERE id = :id").run({
+          id: CHILD_LINK.id,
+        });
+      });
+      await expect(
+        driver.immediate((tx) => {
+          tx.prepare("UPDATE runs SET claim_agent_id = 'agent-1' WHERE id = :id").run({
+            id: RUN_DEFAULTS.id,
+          });
+        }),
+      ).rejects.toThrow(/CHECK constraint/i);
     });
 
     it('refuses a delegation child without an owner token hash', async () => {
