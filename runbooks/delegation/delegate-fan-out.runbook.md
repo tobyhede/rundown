@@ -65,6 +65,39 @@ scenarios:
           status: collected
         - step: '1.2'
           status: already_collected
+
+  owner-fail-cancels:
+    description: The owner fails 1.1 by hand; its claimed child is cancelled, and the other three are Collected into the aggregation, which stops on the fail
+    commands:
+      - rd run delegate-fan-out.runbook.md
+      - rd claim ${TICKET}
+      - rd claim ${TICKET_2}
+      - rd claim ${TICKET_3}
+      - rd claim ${TICKET_4}
+      - rd fail --token ${TOKEN} --step 1.1
+      - "! rd pass --token ${CHILD_TOKEN} --step Check"
+      - rd pass --token ${CHILD_TOKEN_2} --step Check
+      - rd pass --token ${CHILD_TOKEN_3} --step Check
+      - rd pass --token ${CHILD_TOKEN_4} --step Check
+      - "! rd collect --token ${TOKEN}"
+    result: STOP
+    expect:
+      errors:
+        - code: DELEGATION_CANCELLED
+          command: pass
+      collected:
+        - step: '1.1'
+          status: cancelled
+        - step: '1.2'
+          status: collected
+          result: pass
+        - step: '1.4'
+          status: collected
+          result: pass
+      steps:
+        - from: '1.4'
+          action: STOP
+          aggregated: true
 ---
 
 # Delegate (Fan Out)
