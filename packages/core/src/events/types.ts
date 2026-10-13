@@ -2,7 +2,7 @@ import type { StepPosition } from '../cli/types.js';
 import type { RunbookRef } from '../runbook/runbook-ref.js';
 import type { ActionType } from '../runbook/transition-kernel.js';
 import type { PublicArtifactVarValue } from '../runbook/artifact-schema.js';
-import type { OwnerToken } from '../runbook/run-secrets.js';
+import type { ClaimTicket, OwnerToken } from '../runbook/run-secrets.js';
 
 // Re-export StepPosition for backwards compatibility and event payload typing
 export type { StepPosition };
@@ -46,6 +46,32 @@ export interface RunbookStartedPayload {
    * nothing.
    */
   readonly ownerToken?: OwnerToken;
+  /**
+   * The parent of a Delegation started by `rundown claim` (#904): its run id
+   * and the unit (`step.substep`) the child runs for. Absent for a root run.
+   */
+  readonly parent?: { readonly runId: string; readonly step: string };
+}
+
+/**
+ * One Delegation a step entry lists (#904).
+ *
+ * The Claim Ticket rides only the entry that issued it — once, here, and never
+ * in status or any later event. An entry announced again (the cursor moving on
+ * to the next delegated substep of the same entry) lists the children without
+ * tickets.
+ */
+export interface StepEnteredChild {
+  /** The parent unit the child runs for (`step.substep`). */
+  readonly step: string;
+  /** The FOR iteration the child was reserved in, inside a loop. */
+  readonly index?: number;
+  /** The child run id the reservation preallocated. */
+  readonly runId: string;
+  /** The runbook the child runs. */
+  readonly runbook: string;
+  /** The Claim Ticket `rundown claim` takes; present only where it was issued. */
+  readonly ticket?: ClaimTicket;
 }
 
 /** Payload emitted when a step begins execution (STEP_ENTERED event). */
@@ -64,6 +90,8 @@ export interface StepEnteredPayload {
   readonly prompted: boolean;
   /** Current execution unit's resolved ARTIFACTS working set. */
   readonly artifacts: Readonly<Record<string, PublicArtifactVarValue>>;
+  /** The Delegations the parent counts at this entry, on a delegated unit (#904). */
+  readonly children?: readonly StepEnteredChild[];
 }
 
 /** Payload emitted when a step command begins execution (COMMAND_STARTED event). */
@@ -164,6 +192,43 @@ export interface ErrorOccurredPayload {
   readonly position?: StepPosition;
 }
 
+/**
+ * How one Current Child stood when `rundown collect` read it (#904).
+ *
+ * - `collected` — terminal; this Collect applied its Child Result.
+ * - `already_collected` — an earlier Collect applied it.
+ * - `pending` — claimed and still running.
+ * - `unclaimed` — reserved, but no agent has claimed it yet.
+ * - `cancelled` — the parent no longer counts it: the owner decided its
+ *   substep, or the parent left the entry.
+ */
+export type CollectedChildStatus =
+  | 'collected'
+  | 'already_collected'
+  | 'pending'
+  | 'unclaimed'
+  | 'cancelled';
+
+/** One Current Child in a Collect report (#904). */
+export interface CollectedChild {
+  /** The parent unit the child runs for (`step.substep`). */
+  readonly step: string;
+  /** The FOR iteration the child was reserved in, inside a loop. */
+  readonly index?: number;
+  /** The child run. */
+  readonly runId: string;
+  /** How the child stood. */
+  readonly status: CollectedChildStatus;
+  /** The Child Result, once the child is terminal. */
+  readonly result?: 'pass' | 'fail';
+}
+
+/** Payload emitted by `rundown collect` (CHILDREN_COLLECTED event, #904). */
+export interface ChildrenCollectedPayload {
+  /** Every Delegation reserved at the parent's active entry, in document order. */
+  readonly children: readonly CollectedChild[];
+}
+
 // ─── Event Union ─────────────────────────────────────────────────────────────
 
 /** Discriminated union of all v1 runbook lifecycle events. */
@@ -176,7 +241,8 @@ export type RunbookEventV1 =
   | (EventEnvelope & { type: 'POLICY_DENIED'; payload: PolicyDeniedPayload })
   | (EventEnvelope & { type: 'RUNBOOK_COMPLETED'; payload: RunbookCompletedPayload })
   | (EventEnvelope & { type: 'RUNBOOK_STOPPED'; payload: RunbookStoppedPayload })
-  | (EventEnvelope & { type: 'ERROR_OCCURRED'; payload: ErrorOccurredPayload });
+  | (EventEnvelope & { type: 'ERROR_OCCURRED'; payload: ErrorOccurredPayload })
+  | (EventEnvelope & { type: 'CHILDREN_COLLECTED'; payload: ChildrenCollectedPayload });
 
 /**
  * Pre-correlated `{ type, payload }` input pair accepted by the event emitter.

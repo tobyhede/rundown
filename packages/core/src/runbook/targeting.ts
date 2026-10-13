@@ -446,3 +446,28 @@ export function upsertSubstepStateChild(
   }
   return [...substepStates, { id: substepId, frameKey, status: 'pending' as const, child }];
 }
+
+/**
+ * Record that the parent Collected the Current Child reserved on `(id,
+ * frameKey)`: the reservation keeps its identity and gains the Child Result.
+ *
+ * Pure. A substep state without a reservation is returned unchanged.
+ *
+ * @param substepStates - Existing substep states array
+ * @param substepId - Substep the reservation is for
+ * @param frameKey - Frame the reservation was made in
+ * @param result - The Child Result Collected
+ * @returns New array with the reservation marked collected
+ */
+export function recordChildCollected(
+  substepStates: readonly SubstepState[],
+  substepId: string,
+  frameKey: FrameKey,
+  result: 'pass' | 'fail',
+): readonly SubstepState[] {
+  return substepStates.map((ss) =>
+    ss.id === substepId && ss.frameKey === frameKey && ss.child !== undefined
+      ? { ...ss, child: { ...ss.child, collected: result } }
+      : ss,
+  );
+}

@@ -6,12 +6,13 @@
  * - {@link resolveOwnedRun} — the ONLY way a mutating command names its run.
  *   An Owner Token resolves to the run it owns, together with the row version
  *   a later save must name; a run id authorizes nothing.
- * - {@link findUnsupportedComposition} — whether a runbook delegates to other
- *   runbooks, which this build does not run. Inline composition runs (#903);
- *   delegation returns in #904. Until then `RunbookStateManager.create` — the
- *   seam every run, inline children included, is created through — refuses a
- *   delegating runbook with {@link RunbookCompositionUnsupportedError} before
- *   writing a row, and a frontend only renders the ids the refusal names.
+ * - {@link findUnsupportedComposition} — whether a runbook composes other
+ *   runbooks in a form this build does not run: a substep listing more than
+ *   one runbook. Inline Children (#903) and Delegations (#904) run.
+ *   `RunbookStateManager.create` — the seam every run, child runs included,
+ *   is created through — refuses such a runbook with
+ *   {@link RunbookCompositionUnsupportedError} before writing a row, and a
+ *   frontend only renders the ids the refusal names.
  *
  * @module runbook/run-authority
  */
@@ -100,12 +101,12 @@ export async function resolveOwnedRun(
 /**
  * Name every substep whose composition this build does not run.
  *
- * An inline runbook-list substep naming exactly one runbook launches an Inline
- * Child (#903). Two forms do not run: a `DELEGATE` substep (delegation returns
- * in #904), and an inline substep listing more than one runbook, which would
- * have to launch several children for one unit — the machine reserves one
- * Inline Child per substep. Ids are qualified (`step.substep`) and returned in
- * document order so the refusal can list them verbatim.
+ * A runbook-list substep naming exactly one runbook runs it as a Child Run:
+ * an Inline Child (#903), or a Delegation when it is `DELEGATE` (#904). A
+ * substep listing more than one runbook does not run: the machine reserves
+ * one Current Child per substep, so it would have to compose several children
+ * for one unit. Ids are qualified (`step.substep`) and returned in document
+ * order so the refusal can list them verbatim.
  *
  * Accepts parsed or resolved steps: `rundown check` warns from the parsed
  * runbook, `rundown run` refuses from the resolved one, and both must name
@@ -113,7 +114,7 @@ export async function resolveOwnedRun(
  *
  * @param steps - Parsed or resolved runbook steps
  * @returns Qualified ids of the substeps this build does not run; empty when
- *   every composing substep is a single-runbook inline one
+ *   every composing substep names a single runbook
  */
 export function findUnsupportedComposition(
   steps: readonly (Step | ResolvedStep)[],
@@ -122,8 +123,7 @@ export function findUnsupportedComposition(
   for (const step of steps) {
     if (!('substeps' in step)) continue;
     for (const substep of step.substeps) {
-      const runbookCount = substep.runbooks?.length ?? 0;
-      if (substep.delegate === true || runbookCount > 1) ids.push(`${step.name}.${substep.id}`);
+      if ((substep.runbooks?.length ?? 0) > 1) ids.push(`${step.name}.${substep.id}`);
     }
   }
   return ids;
@@ -131,8 +131,8 @@ export function findUnsupportedComposition(
 
 /**
  * Raised when a run would be created for a runbook whose composition this
- * build does not run (see {@link findUnsupportedComposition}). An inline child
- * whose runbook delegates is refused the same way.
+ * build does not run (see {@link findUnsupportedComposition}). A child run
+ * whose runbook composes that way is refused the same way.
  *
  * Thrown by {@link RunbookStateManager.create} before any store access, so a
  * refused runbook leaves no run row behind. Frontends render it; they do not

@@ -21,7 +21,7 @@ import {
   type RunProgressionOutcome,
 } from '@rundown-org/core';
 import { createBridgedEmitter } from './execution-emitter.js';
-import { createInlineChildPreparer } from './inline-child-preparer.js';
+import { createChildRunPreparer } from './child-run-preparer.js';
 import { createCliCommandServices } from '../services/execution.js';
 import { createCliRunbookActorService } from './actor-service-factory.js';
 import { getRunbookFromState } from './runbook-loader.js';
@@ -108,7 +108,7 @@ export async function driveRunProgression(
       loadSteps: (state) => getRunbookFromState(state, ctx.cwd),
       sink,
       sinkFor,
-      prepareInlineChild: createInlineChildPreparer(ctx.cwd, ctx.output),
+      prepareChildRun: createChildRunPreparer(ctx.cwd, ctx.output),
     },
     activation.entryBoundary,
   );
