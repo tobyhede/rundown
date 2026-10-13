@@ -14,6 +14,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   statSync,
@@ -130,6 +131,56 @@ function resolveScenarioRunbookRef(ref: string, fromDir: string, sourceRoot: str
     return localPath;
   }
   return join(sourceRoot, ref);
+}
+
+/**
+ * The bases a scenario suite searches, in order, for a runbook a staged
+ * runbook composes, mirroring how the runtime resolves the same reference:
+ * beside the composing runbook, under the suite directory, then under each
+ * runbooks root — the nearest `runbooks/` directory above the composing
+ * runbook, and `<suiteDir>/runbooks` (a suite at a plugin's root sees its
+ * runbooks as `$CLAUDE_PLUGIN_ROOT/runbooks`). Plugin runbooks name children
+ * such as `planning/write-plan.runbook.md` from that root; for a bare filename
+ * the directory under a root holding it is tried too, since the runtime finds
+ * a bare `review-plan-collate.runbook.md` by discovery wherever it sits.
+ *
+ * @param ref - The authored reference, already accepted by {@link shouldStageAuthoredRunbookRef}.
+ * @param composerDir - Directory of the runbook that composes `ref`.
+ * @param suiteDir - Directory of the suite file.
+ * @returns Distinct bases to try, in order; `join(base, ref)` is the candidate.
+ */
+export function composedRunbookSearchBases(
+  ref: string,
+  composerDir: string,
+  suiteDir: string,
+): string[] {
+  const roots = [findScenarioRunbookSourceRoot(composerDir), join(suiteDir, 'runbooks')].filter(
+    (root) => basename(root) === 'runbooks' && existsSync(root),
+  );
+  const bases = [composerDir, suiteDir];
+  for (const root of roots) {
+    bases.push(root);
+    if (ref.includes('/')) continue;
+    const holder = findDirectoryHolding(root, ref);
+    if (holder !== undefined) bases.push(holder);
+  }
+  return [...new Set(bases.map((base) => resolve(base)))];
+}
+
+/**
+ * The first directory under `root`, in sorted depth-first order, that holds a
+ * file named `name`.
+ *
+ * @param root - Directory to search.
+ * @param name - Bare filename.
+ * @returns The holding directory, or undefined when no file matches.
+ */
+function findDirectoryHolding(root: string, name: string): string | undefined {
+  const entries = readdirSync(root, { recursive: true, encoding: 'utf8' })
+    .filter((entry) => basename(entry) === name)
+    .sort();
+  const first = entries.at(0);
+  return first === undefined ? undefined : dirname(join(root, first));
 }
 
 function findScenarioRunbookSourceRoot(sourceDir: string): string {

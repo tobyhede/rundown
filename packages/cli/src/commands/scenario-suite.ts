@@ -63,6 +63,7 @@ import { getEffectiveResult } from '../schemas/scenarios.js';
 import { runCliInProcess } from '../services/in-process-cli-runner.js';
 import {
   collectAuthoredRunbookRefs,
+  composedRunbookSearchBases,
   shouldStageAuthoredRunbookRef,
 } from '../helpers/scenario-workflow.js';
 
@@ -271,14 +272,18 @@ async function executeSuiteCase(
 
     // Stage the children the staged runbooks compose (#903), transitively, so
     // an inline child resolves in the isolated workspace exactly as a bare
-    // filename command does. Each is found beside the runbook that names it,
-    // then under the suite directory.
+    // filename command does. Each is found where the runtime would find it:
+    // beside the runbook that names it, under the suite directory, or under
+    // the `runbooks/` root above it (see composedRunbookSearchBases).
     const stagedRefs = new Set<string>([mainBasename, ...referenced]);
     for (let i = 0; i < stagedRunbooks.length; i++) {
       const parent = stagedRunbooks[i];
       for (const ref of collectAuthoredRunbookRefs(parent.sourcePath)) {
         if (!shouldStageAuthoredRunbookRef(ref) || stagedRefs.has(ref)) continue;
-        stageChildRunbook(ref, [dirname(parent.sourcePath), suiteDir]);
+        stageChildRunbook(
+          ref,
+          composedRunbookSearchBases(ref, dirname(parent.sourcePath), suiteDir),
+        );
         stagedRefs.add(ref);
       }
     }
