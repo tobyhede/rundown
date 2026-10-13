@@ -10,8 +10,6 @@ export {
   type RunbookPositionBody,
   RunbookStepBodySchema,
   type RunbookStepBody,
-  SessionStateSchema,
-  type ValidatedSessionState,
 } from './schemas.js';
 
 // Errors

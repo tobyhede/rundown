@@ -120,25 +120,3 @@ export type RunbookPositionBody = z.infer<typeof RunbookPositionBodySchema>;
 
 /** Validated runbook step body. */
 export type RunbookStepBody = z.infer<typeof RunbookStepBodySchema>;
-
-/**
- * Session State Schema - Runtime Validation for Persisted State
- */
-export const SessionStateSchema = z.object({
-  session_id: z.string().default(() => {
-    const now = new Date();
-    return now.toISOString().replace(/[:.]/g, '-').substring(0, 19);
-  }),
-  started_at: z.string().default(() => new Date().toISOString()),
-  active_command: z.string().nullable().default(null),
-  active_skill: z.string().nullable().default(null),
-  edited_files: z.array(z.string()).default([]),
-  file_extensions: z.array(z.string()).default([]),
-  metadata: z.record(z.string(), z.unknown()).default({}),
-});
-
-/**
- * Session state type inferred from SessionStateSchema.
- * Represents validated session state with all defaults applied.
- */
-export type ValidatedSessionState = z.infer<typeof SessionStateSchema>;

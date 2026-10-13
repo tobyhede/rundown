@@ -8,7 +8,7 @@ import * as os from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
-import type { HookInput, SessionState } from '../../src/shared/index.js';
+import type { HookInput } from '../../src/shared/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -213,26 +213,6 @@ export function createMockHookInput(
     default:
       return { ...base, ...rest };
   }
-}
-
-/**
- * Factory for creating SessionState objects with sensible defaults.
- *
- * @param overrides - Partial session state to override defaults
- * @returns Complete SessionState object
- */
-export function createMockSessionState(overrides: Partial<SessionState> = {}): SessionState {
-  const now = new Date();
-  return {
-    session_id: now.toISOString().replace(/[:.]/g, '-').substring(0, 19),
-    started_at: now.toISOString(),
-    active_command: null,
-    active_skill: null,
-    edited_files: [],
-    file_extensions: [],
-    metadata: {},
-    ...overrides,
-  };
 }
 
 /**
