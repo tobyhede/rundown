@@ -136,6 +136,15 @@ export {
   type PruneSelection,
   type RetainedRun,
 } from './run-pruning.js';
+// The human escape hatch (#906): `rundown stop --run`, interactive and audited.
+export {
+  NOT_A_TOP_LEVEL_RUN_CODE,
+  resolveHumanStopTarget,
+  stopByHuman,
+  type HumanStopOutcome,
+  type HumanStopTargetRefusal,
+  type HumanStopTargetResolution,
+} from './human-stop.js';
 export { assertStateVersion, type StateVersion } from './storage/mutation-result.js';
 export {
   applyRunbookStateUpdate,

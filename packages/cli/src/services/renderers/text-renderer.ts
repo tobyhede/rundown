@@ -82,6 +82,8 @@ interface StatusDetailData {
   child?: { runId: string; kind: string; status: string };
   /** The Delegations of the run's active entry (#904). */
   children?: { runId: string; step: string; index?: number; status: string; result?: string }[];
+  /** The human escape hatch's audit, on a run stopped by `stop --run` (#906). */
+  humanStop?: { at: string; user: string; host: string; message?: string };
   /** Bare `rundown status`: every persisted run. */
   runs?: {
     id: string;
@@ -271,6 +273,7 @@ export class TextRenderer implements OutputRenderer {
       parent,
       child,
       children,
+      humanStop,
     } = data as StatusDetailData;
 
     // Bare `rundown status`: the run list.
@@ -317,6 +320,13 @@ export class TextRenderer implements OutputRenderer {
         printRunbookComplete(undefined, this.writer);
       } else {
         printRunbookStopped(undefined, this.writer);
+      }
+      if (humanStop !== undefined) {
+        const reason = humanStop.message === undefined ? '' : `: ${humanStop.message}`;
+        this.writer.writeLine('');
+        this.writer.writeLine(
+          `Stopped by ${humanStop.user} on ${humanStop.host} at ${humanStop.at}, without the owner token${reason}`,
+        );
       }
       this.renderVars(vars);
       return;

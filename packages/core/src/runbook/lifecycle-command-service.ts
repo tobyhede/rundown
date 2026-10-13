@@ -72,7 +72,7 @@ import {
   reconcileFencedTerminalObservation,
   type TransitionObservationEvent,
 } from '../events/transition-observation.js';
-import type { ResolvedStep, RunbookState } from './types.js';
+import type { HumanStopAudit, ResolvedStep, RunbookState } from './types.js';
 
 /** The manual transition commands. */
 export type TransitionCommandName = 'pass' | 'fail';
@@ -192,10 +192,8 @@ export type LifecycleTransitionOutcome =
       readonly updatedState?: RunbookState;
     };
 
-/** Input to {@link RunbookLifecycleCommandService.runTerminal}. */
-export interface LifecycleTerminalInput {
-  /** The terminal command being run. Drives FORCE_COMPLETE vs FORCE_STOP, never a literal. */
-  readonly command: TerminalCommandName;
+/** Fields every {@link LifecycleTerminalInput} carries. */
+interface LifecycleTerminalInputFields {
   /** The run resolved from the caller's Owner Token, with the version it was read at. */
   readonly run: OwnedRun;
   /** Optional terminal message forwarded to the machine (`FORCE_*.message`). */
@@ -203,6 +201,22 @@ export interface LifecycleTerminalInput {
   /** Optional display-result policy for the transition observation projection. */
   readonly computeActionResult?: (actionType: ActionType) => boolean;
 }
+
+/**
+ * Input to {@link RunbookLifecycleCommandService.runTerminal}, discriminated on
+ * the terminal command (it drives FORCE_COMPLETE vs FORCE_STOP, never a
+ * literal). Only a stop can carry the human escape hatch's audit (#906).
+ */
+export type LifecycleTerminalInput =
+  | (LifecycleTerminalInputFields & { readonly command: 'complete' })
+  | (LifecycleTerminalInputFields & {
+      readonly command: 'stop';
+      /**
+       * The audit of a human stopping the run without its Owner Token, written
+       * on the run by the same save that stops it (`human-stop.ts`).
+       */
+      readonly humanStop?: HumanStopAudit;
+    });
 
 /** Result of a complete/stop command through the seam. */
 export type LifecycleTerminalOutcome =
@@ -830,7 +844,12 @@ export class RunbookLifecycleCommandService {
         ...(input.message !== undefined ? { message: input.message } : {}),
       },
     );
-    const saved = await this.#deps.manager.save(prepared.nextState, stateVersion);
+    // The escape hatch's audit lands in the same conditional save as the stop.
+    const nextState =
+      input.command === 'stop' && input.humanStop !== undefined
+        ? { ...prepared.nextState, humanStop: input.humanStop }
+        : prepared.nextState;
+    const saved = await this.#deps.manager.save(nextState, stateVersion);
     if (saved.kind !== 'committed') return this.#refuseSave(saved.kind, previousState.id);
     const updatedState = saved.state;
     const lifecycle = updatedState.lifecycle;

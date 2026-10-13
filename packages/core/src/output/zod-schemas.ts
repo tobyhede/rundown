@@ -76,9 +76,13 @@ export const CLISymbolicErrorCodeValues = [
   'NOTHING_TO_RETRY',
   'AGENT_MISMATCH',
   'NOT_A_DELEGATION',
-  // Prune protection (#906): `prune --token` naming a Current Child its
-  // parent still counts.
+  // Prune protection and the human escape hatch (#906): `prune --token` naming
+  // a Current Child its parent still counts; `stop --run` with no human at an
+  // interactive terminal, declined by the human, or naming a Child Run.
   'CURRENT_CHILD_PROTECTED',
+  'INTERACTIVE_REQUIRED',
+  'NOT_CONFIRMED',
+  'NOT_A_TOP_LEVEL_RUN',
   // The execution lease (#902): a live attempt holds the run's step, or the
   // attempt that held it died and the decision would pass it.
   'EXECUTION_IN_PROGRESS',
@@ -552,6 +556,15 @@ export const StatusResponseSchema = z
       .array(DelegationChildStatusSchema)
       .optional()
       .describe("The Delegations of the run's active entry (#904)"),
+    humanStop: z
+      .object({
+        at: z.string().describe('When the human confirmed the stop (ISO 8601)'),
+        user: z.string().describe('Login name of the user at the terminal'),
+        host: z.string().describe('Host the terminal was on'),
+        message: z.string().optional().describe('The stop message: the human’s reason'),
+      })
+      .optional()
+      .describe('Present on a run stopped by the human escape hatch, `stop --run` (#906)'),
     vars: z
       .record(z.string(), z.string())
       .optional()

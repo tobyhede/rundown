@@ -68,9 +68,9 @@ if (isEntryPoint && process.argv.includes('--schema')) {
 /** What the program reads from outside the runbook, injected for tests (#906). */
 export interface ProgramDependencies {
   /**
-   * The human at the terminal, for the decision only a human may make:
-   * pruning a running run without its token. Defaults to this process's
-   * terminal.
+   * The human at the terminal, for the two decisions only a human may make:
+   * the `stop --run` escape hatch and pruning a running run without its
+   * token. Defaults to this process's terminal.
    */
   readonly human?: HumanConfirmation;
 }
@@ -203,7 +203,7 @@ export function createProgram(deps: ProgramDependencies = {}): Command {
   registerCompleteCommand(program);
   registerGotoCommand(program);
   registerStatusCommand(program);
-  registerStopCommand(program);
+  registerStopCommand(program, human);
   registerClaimCommand(program);
   registerCollectCommand(program);
   registerRetryCommand(program);

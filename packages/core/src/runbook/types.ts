@@ -948,8 +948,34 @@ export interface RunbookState {
   /** Lifecycle state. 'running' during execution; 'completed', 'stopped' or 'abandoned' once terminal. */
   readonly lifecycle?: Lifecycle;
 
+  /**
+   * The audit of a human stopping this run without its Owner Token, through
+   * the interactive escape hatch `rundown stop --run` (#906). Written by the
+   * save that stops the run; absent on every other run.
+   */
+  readonly humanStop?: HumanStopAudit;
+
   /** Persisted state schema version. Must equal `CURRENT_SCHEMA_VERSION`. */
   readonly schemaVersion?: number;
+}
+
+/**
+ * Who stopped a run through the human escape hatch, when, and why (#906).
+ *
+ * The escape hatch recovers a top-level run whose Owner Token was lost: a
+ * human at an interactive terminal names the run by id and confirms. Nothing
+ * here authorizes anything; it is the record that the one run-id mutation
+ * happened.
+ */
+export interface HumanStopAudit {
+  /** When the human confirmed the stop (ISO 8601). */
+  readonly at: string;
+  /** The login name of the user at the terminal. */
+  readonly user: string;
+  /** The host the terminal was on. */
+  readonly host: string;
+  /** The stop message the human gave, if any: their reason. */
+  readonly message?: string;
 }
 
 /**
