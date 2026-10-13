@@ -12,7 +12,7 @@ rundown run rundown:end-to-end-test
 ```
 
 <important>
-Steps 2 and 3 compose their runbooks inline: each runs as a child run driven by your Owner Token, and `--step` names the child's step while it runs (see running-runbooks). Step 3's `review-and-collate` delegates review, then collation. When its `step_entered` lists `children`, dispatch one sub-agent per `ticket` with the ticket and `rundown claim <ticket>` in its prompt (see [delegating-runbooks](../delegating-runbooks/SKILL.md)), then run `rundown collect --token <owner_token>` until no child is `pending` or `unclaimed`. Never pass a delegated substep yourself. Run every step to completion.
+Steps 2 and 3 compose their runbooks inline: each runs as a child run driven by your Owner Token, and `--step` names the child's step while it runs (see running-runbooks). Step 3's `review-and-collate` delegates review, then collation. When its `step_entered` lists `children`, dispatch one sub-agent per `ticket` with `RD_CLAIM_TICKET=<ticket>` on its own line in its prompt — the plugin appends the claim instructions (see [delegating-runbooks](../delegating-runbooks/SKILL.md)), then run `rundown collect --token <owner_token>` until no child is `pending` or `unclaimed`. Never pass a delegated substep yourself. Run every step to completion.
 </important>
 
 ## Flow

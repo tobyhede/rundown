@@ -48,35 +48,32 @@ delegations: you drive them with your own Owner Token. See
    next delegated substep) lists the same children without tickets; they are
    not new work.
 
-3. **Dispatch one sub-agent per ticket**, in parallel. The plugin does not
-   inject claim instructions (its hooks are inert in this build), so the prompt
-   must carry the ticket and the claim command itself:
+3. **Dispatch one sub-agent per ticket**, in parallel. Put the ticket in the
+   prompt as one marker line, `RD_CLAIM_TICKET=rdt_…`, copied verbatim:
 
    ```text
    Agent(
      description="1.2 review-file",
      prompt="""
-   You own one delegated Rundown child run.
-   1. Skill(skill: "rundown:running-runbooks")
-   2. Run exactly once: rundown claim rdt_… --agent-id reviewer-1.2
-   3. Capture owner_token from the runbook_started event it prints. That is
-      your token; drive the child with
-      rundown pass|fail --token <that owner_token> --step <child step>
-      following each step_entered prompt.
-   4. Stop when the child reports runbook_completed or runbook_stopped. If any
-      command is refused DELEGATION_CANCELLED or PARENT_RUN_FINISHED, end the
-      child with rundown stop --token <that owner_token> and stop. If you
-      cannot finish the child (you lost its owner_token), run
-      rundown release rd_… --agent-id reviewer-1.2 with the runbookId of that
-      runbook_started, and stop. Report the outcome. Never run rundown collect
-      and never use any other token.
+   Review the plan as the delegated review-file runbook directs.
+   Skill(skill: "rundown:running-runbooks")
+   RD_CLAIM_TICKET=rdt_…
    """
    )
    ```
 
-   Give every sub-agent its own `--agent-id` and have it pass that id on both
-   `claim` and `release`: `claim` records it on the child, `release` is
-   matched against it, and nothing stamps it for you.
+   The plugin's dispatch hook sees the marker and appends the claim
+   instructions to the sub-agent's prompt: claim once with
+   `rundown claim <ticket>`, drive the child with its own `owner_token`, stop
+   it on `DELEGATION_CANCELLED` or `PARENT_RUN_FINISHED`, release it if the
+   token is lost. One ticket per dispatch: a prompt marking two tickets, or a
+   marker that is not a ticket, is blocked. Never claim a ticket yourself — the
+   plugin refuses `rundown claim` outside a sub-agent.
+
+   The plugin also stamps each sub-agent's own agent id on its `claim` and
+   `release`, so neither you nor the sub-agent passes `--agent-id`. A
+   sub-agent cannot stop while its claimed child is running and your run still
+   counts it: it is told to finish the child or release it first.
 
 4. **Collect** once sub-agents report (or any time — it never blocks):
 
@@ -131,10 +128,10 @@ purpose — for example, the user tells you to abandon a stuck child.
 ## Sub-agent Choreography
 
 ```bash
-rundown claim <ticket> --agent-id <id>          # prints the child's runbook_started
+rundown claim <ticket>                          # prints the child's runbook_started
 rundown pass --token <child owner_token> --step <child step>
 rundown fail --token <child owner_token> --step <child step>
-rundown release <child run id> --agent-id <id>  # only when you cannot finish it
+rundown release <child run id>                  # only when you cannot finish it
 ```
 
 - `claim` prints the child's `runbook_started` with the child's **own**
@@ -148,13 +145,16 @@ rundown release <child run id> --agent-id <id>  # only when you cannot finish it
   work will never be collected: end the child with
   `rundown stop --token <owner_token>` (the one command it still accepts), then
   report.
-- Pass your agent id on `claim` and on `release`, the same `--agent-id` both
-  times: release is authorized only for the id the claim recorded, and nothing
-  stamps it for you.
+- The plugin stamps your agent id on `claim` and on `release`, replacing any
+  `--agent-id` you type: release is authorized only for the id your claim
+  recorded, so only you can release your child. Never pass it yourself.
+- You cannot stop while your child is running and its parent still counts it:
+  the stop is blocked with the instruction to finish or release it, every
+  time, until you do.
 - If you cannot finish the child — you lost its `owner_token` — release it
-  with `rundown release <child run id> --agent-id <id>`, naming the child's
-  `runbookId` from its `runbook_started` and the same `--agent-id` your claim
-  used. The child ends `abandoned`, with any inline child it was running, and
+  with `rundown release <child run id>`, naming the child's `runbookId` from
+  its `runbook_started`. The child ends `abandoned`, with any inline child it
+  was running, and
   its parent collects it as a FAIL while it still counts it
   (`parent.standing: current` on the `runbook_abandoned` event). Release
   touches nothing else and grants nothing else. Never run `rundown stop --run`
@@ -171,9 +171,11 @@ rundown release <child run id> --agent-id <id>  # only when you cannot finish it
   own ticket, listed with `index`. Dispatch and collect per iteration; the next
   iteration's `step_entered` carries the next ticket. Deciding an iteration by
   hand needs `--index`.
-- **Nested:** an inline child may itself delegate. Its `step_entered` issues the
-  tickets, and your root token's `collect` reaches it (your token targets the
-  deepest running inline child).
+- **Inside an inline child:** an inline child may delegate. Its `step_entered`
+  issues the tickets, and your root token's `collect` reaches it (your token
+  targets the deepest running inline child).
+- **Nested delegation** — a delegated child whose own steps delegate — is not
+  supported. Do not author or drive one; report it to the user.
 
 ## Variables and Outputs
 
@@ -202,7 +204,7 @@ A refused command writes nothing.
 | `INVALID_STEP`                    | A token naming the other run's step (child token, parent step, or reverse) | Use the child token for child steps and your token for parent steps                    |
 | `CONCURRENT_MODIFICATION`         | Another write landed first (results applied before it stand)               | Re-read with `rundown status --run <run_id>`, then re-issue. If the step's tickets were never printed, `rundown collect --token <owner_token>` prints them |
 | `NOTHING_TO_RETRY`                | `retry` of a substep whose child was collected or decided, or that delegates nothing | Retry only a delegated substep of the current step that is still `pending` or `unclaimed` |
-| `AGENT_MISMATCH`                  | `release` naming another agent id than the claim recorded                  | Release only the child you claimed, with the same `--agent-id`                         |
+| `AGENT_MISMATCH`                  | `release` by another agent than the one whose claim recorded its id        | Release only the child you claimed; the plugin stamps your own agent id                |
 | `NOT_A_DELEGATION`                | `release` of a run that is not a delegated child                           | Name the child's `runbookId` from the `runbook_started` your `claim` printed           |
 | `RUNBOOK_COMPOSITION_UNSUPPORTED` | A substep lists more than one runbook                                      | Report to the user; each substep composes one child                                    |
 
@@ -215,14 +217,15 @@ its child releases it. `rundown status --run <run_id>` shows the run's
 
 | Mistake                                              | Fix                                                                      |
 | ---------------------------------------------------- | ------------------------------------------------------------------------ |
-| Dispatching a sub-agent without the ticket           | Put the ticket and the `rundown claim` command in its prompt             |
+| Dispatching a sub-agent without the ticket           | Put `RD_CLAIM_TICKET=<ticket>` on its own line in the prompt             |
+| Claiming a ticket yourself                           | Dispatch a sub-agent; the plugin refuses `claim` outside one             |
 | Passing the delegated substep yourself               | `rundown collect --token <owner_token>`; passing it cancels the child    |
 | Sub-agent passing with the orchestrator's token      | The sub-agent uses the `owner_token` its own `claim` printed             |
 | Treating `pending` / `unclaimed` as failure          | Wait for the sub-agents, then collect again                              |
 | Re-dispatching children from a re-announced entry    | Only an entry that prints `ticket` issues new work                       |
 | Sub-agent continuing after `DELEGATION_CANCELLED`    | `rundown stop --token <owner_token>` on the child; its result will never be collected |
 | Telling the user a ticket was lost                   | `rundown retry --token <owner_token> --step <substep>`, then dispatch the new ticket |
-| Sub-agent abandoning a child silently                | `rundown release <child run id> --agent-id <id>`, so collect sees a FAIL |
+| Sub-agent abandoning a child silently                | `rundown release <child run id>`, so collect sees a FAIL                 |
 
 ## Reference
 

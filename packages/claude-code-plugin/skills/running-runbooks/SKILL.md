@@ -109,7 +109,7 @@ Read the JSON for what happened.
 
 ```bash
 rundown goto <step> --token <owner_token>            # Jump to a step (e.g. 3 or 3.1; --index for a FOR iteration)
-rundown stop [message] --token <owner_token>         # Abort the run
+rundown stop [message] --token <owner_token>         # Stop the run
 rundown complete [message] --token <owner_token>     # Force early completion
 
 rundown status                    # List every run (read-only)
@@ -173,7 +173,7 @@ ticket once.
 If you were handed a Claim Ticket, you own that child run:
 
 ```bash
-rundown claim <ticket> --agent-id <id>    # your agent id; release needs the same one
+rundown claim <ticket>
 ```
 
 `claim` prints the child's `runbook_started` with the child's **own**
@@ -186,12 +186,13 @@ the child's steps. Extra rules:
   work will never be collected: end the child with
   `rundown stop --token <owner_token>` (the one command it still accepts), then
   report.
-- Pass the same `--agent-id` on `claim` and on `release`: release is
-  authorized only for the agent id the claim recorded, and nothing stamps it
-  for you.
+- The plugin stamps your agent id on `claim` and `release`; never pass an
+  agent id yourself. Release is authorized only for the agent id your claim
+  recorded.
+- You cannot stop while the child is running and its parent still counts it:
+  finish it, or release it.
 - If you cannot finish the child — you lost its `owner_token` — run
-  `rundown release <child run id> --agent-id <id>` with the child's
-  `runbookId` and the same `--agent-id` your claim used. The child ends
+  `rundown release <child run id>` with the child's `runbookId`. The child ends
   `abandoned`, with any inline child it was running; its parent collects it as
   a fail while it still counts it (`parent.standing` on `runbook_abandoned`).
   Release grants nothing else.
@@ -214,7 +215,7 @@ A refused command writes nothing. Fix the cause and re-issue it.
 | `UNKNOWN_TICKET` / `ALREADY_CLAIMED` | `claim` with an unknown ticket / a ticket already claimed | Copy the ticket verbatim; claim once and keep its `owner_token` |
 | `DELEGATION_CANCELLED` / `PARENT_RUN_FINISHED` | Your delegated child no longer counts / its parent finished or was pruned | `rundown stop --token <owner_token>` on the child, then report |
 | `NOTHING_TO_RETRY` | `retry` of a substep whose child was collected or decided, or that delegates nothing | Retry only a pending or unclaimed delegated substep of the current step |
-| `AGENT_MISMATCH` / `NOT_A_DELEGATION` | `release` with another agent id than the claim's / of a run that is not a delegated child | Release only the child you claimed, by its `runbookId`, with the claim's `--agent-id` |
+| `AGENT_MISMATCH` / `NOT_A_DELEGATION` | `release` by another agent than the claim's / of a run that is not a delegated child | Release only the child you claimed, by its `runbookId` |
 
 A `policy_denied` event means the security policy refused a command step and the
 run stopped. Report it to the user; permission is theirs to grant (see the

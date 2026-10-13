@@ -113,7 +113,7 @@ describe('delegating-runbooks Delegation protocol', () => {
 
     expect(orchestrator).toContain(`${CLAIM_TICKET_MARKER}=rdt_…`);
     expect(orchestrator).toContain('Skill(skill: "rundown:running-runbooks")');
-    expect(orchestrator).toMatch(/appends the claim instructions/);
+    expect(orchestrator).toMatch(/appends the claim\s+instructions/);
     expect(skill).not.toMatch(/hooks are inert/);
   });
 
@@ -156,7 +156,7 @@ describe('delegating-runbooks Delegation protocol', () => {
     const orchestrator = section(skill, '## Orchestrator Choreography');
 
     expect(subAgent).toContain('rundown release <child run id>');
-    expect(orchestrator).toMatch(/rundown release/);
+    expect(orchestrator).toMatch(/release it if the\s+token is lost/);
   });
 
   it('has the plugin hook stamp the agent id: no sub-agent passes --agent-id by hand (#907)', () => {
@@ -171,7 +171,7 @@ describe('delegating-runbooks Delegation protocol', () => {
   it('teaches no nested-delegation pattern (ADR 0005: neither supported nor refused)', () => {
     expect(skill).not.toMatch(/\*\*Nested:\*\*/);
     expect(skill).not.toMatch(/delegation tree/);
-    expect(skill).toMatch(/[Nn]ested delegation[^.]*not supported/);
+    expect(skill).toMatch(/[Nn]ested delegation[^.]*not\s+supported/);
   });
 
   it('teaches no retired or unbuilt delegation surface', () => {
