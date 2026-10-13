@@ -18,17 +18,21 @@
  *
  * - **In Progress** — the process that started the effect is alive. Every
  *   mutation of the run is refused `EXECUTION_IN_PROGRESS`.
- * - **Interrupted** — that process is gone, so the effect's outcome is unknown.
+ * - **Interrupted** — that process is gone, or it is THIS process and no
+ *   attempt of this process still holds the lease (its turn ended without
+ *   committing a finish), so the effect's outcome is unknown.
  *   Rundown never repeats it. A decision that would treat the effect as having
  *   succeeded (`pass`, `complete`) is refused `EXECUTION_INTERRUPTED`; the
  *   owner's explicit decision — `fail` (which takes the step's authored FAIL
- *   handler, including RETRY), `goto`, or `stop` — commits and clears it.
+ *   handler, including RETRY), `goto`, or `stop` — commits and clears it, and
+ *   `prune` deletes the run together with its lease.
  *
  * @module runbook/execution-lease
  */
 
 import { isOwnerAlive, sharedProcessIdentity, type ProcessIdentity } from './process-identity.js';
 import type { RunId } from './run-id.js';
+import { deriveExecutionAt } from './targeting.js';
 
 /** Symbolic refusal code for a mutation attempted while a live attempt holds the lease. */
 export const EXECUTION_IN_PROGRESS_CODE = 'EXECUTION_IN_PROGRESS';
@@ -74,21 +78,80 @@ export function currentLeaseHolder(
 }
 
 /**
+ * The attempts this process is running right now, keyed by run and attempt.
+ *
+ * Process-local by design: `(pid, start id)` liveness cannot tell a live
+ * attempt from a dead one when the holder is this very process — a long-lived
+ * host whose turn ended without committing its finish would otherwise read
+ * In Progress until it exits. This set is the only place that knows, and it
+ * is never persisted.
+ */
+const inFlightAttempts = new Set<string>();
+
+/**
+ * Key one attempt of one run.
+ *
+ * @param runId - The run.
+ * @param attempt - The lease's attempt (the `state_version` its set produced).
+ * @returns The registry key.
+ */
+function inFlightKey(runId: RunId, attempt: number): string {
+  return `${runId}#${String(attempt)}`;
+}
+
+/**
+ * Record that this process is running the attempt a lease it just set names,
+ * until the returned handle is disposed.
+ *
+ * Run Progression holds this for exactly the command turn — from the lease
+ * set until the turn returns or throws — with `using`, so every exit path
+ * releases it. While held, {@link classifyExecutionLease} reads the lease In
+ * Progress; once released, a lease still set by this process reads
+ * Interrupted.
+ *
+ * @param runId - The run whose lease this process set.
+ * @param lease - The lease the set produced.
+ * @returns A handle whose disposal ends the attempt's registration.
+ */
+export function holdInFlightAttempt(runId: RunId, lease: ExecutionLease): Disposable {
+  const key = inFlightKey(runId, lease.attempt);
+  inFlightAttempts.add(key);
+  return {
+    [Symbol.dispose]() {
+      inFlightAttempts.delete(key);
+    },
+  };
+}
+
+/**
  * Decide whether a held lease is In Progress or Interrupted.
  *
- * Liveness is `(pid, start id)`: only a pid with no process, or a recorded and
- * an observed start id that disagree, prove the holder gone. Every unknown
- * reads as alive, so a doubtful lease refuses rather than letting a second
- * attempt run the effect again.
+ * For a lease another process set, liveness is `(pid, start id)`: only a pid
+ * with no process, or a recorded and an observed start id that disagree, prove
+ * the holder gone. Every unknown reads as alive, so a doubtful lease refuses
+ * rather than letting a second attempt run the effect again.
  *
+ * For a lease whose pid is this process's, this process answers for itself:
+ * the lease is In Progress only while one of its turns holds the attempt
+ * ({@link holdInFlightAttempt}). Otherwise the turn that set it has ended
+ * without committing — or an earlier process with a recycled pid set it — and
+ * either way the effect's outcome is unknown: Interrupted.
+ *
+ * @param runId - The run the lease is on.
  * @param lease - The lease read from the run row.
  * @param identity - Start-identity source; defaults to the process-wide one.
  * @returns The lease's condition.
  */
 export function classifyExecutionLease(
+  runId: RunId,
   lease: ExecutionLease,
   identity: ProcessIdentity = sharedProcessIdentity(),
 ): ExecutionCondition {
+  if (lease.pid === process.pid) {
+    return inFlightAttempts.has(inFlightKey(runId, lease.attempt))
+      ? { kind: 'in_progress', lease }
+      : { kind: 'interrupted', lease };
+  }
   return isOwnerAlive(identity, lease.pid, lease.startId)
     ? { kind: 'in_progress', lease }
     : { kind: 'interrupted', lease };
@@ -99,9 +162,13 @@ export function classifyExecutionLease(
  *
  * `pass` and `complete` would treat an Interrupted effect as having
  * succeeded; `fail`, `goto` and `stop` are the explicit decisions that clear
- * it.
+ * it. `prune` deletes the run: while In Progress that would erase the record
+ * of an effect still running (its finish would find no row), so it is refused
+ * like every other decision; once Interrupted no process will write the run
+ * again, so deleting it is the owner's explicit decision to discard the
+ * unknown outcome, as `stop` is.
  */
-export type LeaseDecision = 'pass' | 'complete' | 'fail' | 'goto' | 'stop';
+export type LeaseDecision = 'pass' | 'complete' | 'fail' | 'goto' | 'stop' | 'prune';
 
 /** Refusal: a live attempt holds the lease. Nothing was written. */
 export interface ExecutionInProgressRefusal {
@@ -137,18 +204,6 @@ export interface ExecutionInterruptedRefusal {
 export type ExecutionLeaseRefusal = ExecutionInProgressRefusal | ExecutionInterruptedRefusal;
 
 /**
- * Render the step a run rests on, as the refusal names it.
- *
- * @param state - The run's step cursor.
- * @param state.step - Current top-level step.
- * @param state.substep - Current substep, when inside one.
- * @returns `step` or `step.substep`.
- */
-function stepLabel(state: { readonly step: string; readonly substep?: string }): string {
-  return state.substep === undefined ? state.step : `${state.step}.${state.substep}`;
-}
-
-/**
  * Build the refusal for a held lease's condition.
  *
  * @param runId - The run whose lease is held.
@@ -163,7 +218,8 @@ export function executionLeaseRefusal(
   cursor: { readonly step: string; readonly substep?: string },
   condition: ExecutionCondition,
 ): ExecutionLeaseRefusal {
-  const step = stepLabel(cursor);
+  // The same label `status` shows for the run's position.
+  const step = deriveExecutionAt(cursor.step, cursor.substep);
   const { lease } = condition;
   if (condition.kind === 'in_progress') {
     return {
@@ -181,8 +237,32 @@ export function executionLeaseRefusal(
     runId,
     step,
     lease,
-    message: `Step ${step} of run ${runId} is Interrupted: the process ${String(lease.pid)} that started its command at ${lease.startedAt} is gone, so the command's outcome is unknown. Rundown never repeats it. Decide explicitly: \`rundown fail --step ${step}\` (the step's FAIL handler, including an authored RETRY), \`rundown goto <step>\`, or \`rundown stop\`.`,
+    message: `Step ${step} of run ${runId} is Interrupted: the process ${String(lease.pid)} that started its command at ${lease.startedAt} is gone, so the command's outcome is unknown. Rundown never repeats it. Decide explicitly: \`rundown fail --step ${step} --token <owner_token>\` (the step's FAIL handler, including an authored RETRY), \`rundown goto <step> --token <owner_token>\`, or \`rundown stop --token <owner_token>\`.`,
   };
+}
+
+/**
+ * The operator-facing message for a command whose finish could not be
+ * derived after it ran (Run Progression's `command_outcome_unknown`).
+ *
+ * The lease stays set and the attempt is no longer in flight, so the step now
+ * reads Interrupted; the message names the same explicit decisions the
+ * Interrupted refusal does.
+ *
+ * @param runId - The run whose command finish failed.
+ * @param cursor - The run's step cursor (the lease pins it).
+ * @param cursor.step - Current top-level step.
+ * @param cursor.substep - Current substep, when inside one.
+ * @param cause - What stopped the finish (the machine-effect timeout or the actor error).
+ * @returns The message.
+ */
+export function commandOutcomeUnknownMessage(
+  runId: RunId,
+  cursor: { readonly step: string; readonly substep?: string },
+  cause: string,
+): string {
+  const step = deriveExecutionAt(cursor.step, cursor.substep);
+  return `Step ${step} of run ${runId} is Interrupted: its command ran, but its finish could not be recorded (${cause}), so the command's outcome is unknown. Rundown never repeats it. Decide explicitly: \`rundown fail --step ${step} --token <owner_token>\` (the step's FAIL handler, including an authored RETRY), \`rundown goto <step> --token <owner_token>\`, or \`rundown stop --token <owner_token>\`.`;
 }
 
 /**
@@ -191,7 +271,8 @@ export function executionLeaseRefusal(
  * - No lease: the decision proceeds.
  * - In Progress: every decision is refused.
  * - Interrupted: `pass` and `complete` are refused; `fail`, `goto` and `stop`
- *   proceed, and their state write clears the lease.
+ *   proceed, and their state write clears the lease; `prune` proceeds and its
+ *   delete removes the lease with the row.
  *
  * @param runId - The run being decided about.
  * @param cursor - The run's step cursor.
@@ -210,7 +291,7 @@ export function refuseUnderLease(
   identity: ProcessIdentity = sharedProcessIdentity(),
 ): ExecutionLeaseRefusal | undefined {
   if (lease === null) return undefined;
-  const condition = classifyExecutionLease(lease, identity);
+  const condition = classifyExecutionLease(runId, lease, identity);
   if (condition.kind === 'interrupted' && clearsInterruption(decision)) return undefined;
   return executionLeaseRefusal(runId, cursor, condition);
 }
@@ -222,7 +303,7 @@ export function refuseUnderLease(
  * clear an interruption.
  *
  * @param decision - The owner's decision.
- * @returns True for `fail`, `goto` and `stop`.
+ * @returns True for `fail`, `goto`, `stop` and `prune`.
  * @throws {Error} When an unhandled decision is supplied.
  */
 function clearsInterruption(decision: LeaseDecision): boolean {
@@ -230,6 +311,7 @@ function clearsInterruption(decision: LeaseDecision): boolean {
     case 'fail':
     case 'goto':
     case 'stop':
+    case 'prune':
       return true;
     case 'pass':
     case 'complete':

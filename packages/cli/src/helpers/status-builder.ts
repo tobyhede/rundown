@@ -10,6 +10,7 @@
 import {
   buildStepPosition,
   countNumberedSteps,
+  deriveExecutionAt,
   isArtifactValue,
   mergeEffectiveVars,
   parseRunbook,
@@ -101,7 +102,7 @@ function buildExecutionStatus(
   if (condition === undefined) return undefined;
   return {
     condition: condition.kind,
-    step: state.substep ? `${state.step}.${state.substep}` : state.step,
+    step: deriveExecutionAt(state.step, state.substep),
     attempt: condition.lease.attempt,
     pid: condition.lease.pid,
     startedAt: condition.lease.startedAt,
@@ -211,7 +212,8 @@ export function buildRunListStatus(
 ): StatusOutputData {
   const runs: ActiveRunbookEntry[] = states.map((state) => {
     const total = countPersistedSteps(state);
-    const step = state.substep ? `${state.step}.${state.substep}` : state.step;
+    // Core's one step label, the same one a lease refusal names.
+    const step = deriveExecutionAt(state.step, state.substep);
     const execution = buildExecutionStatus(state, conditions.get(state.id));
     return {
       id: state.id,

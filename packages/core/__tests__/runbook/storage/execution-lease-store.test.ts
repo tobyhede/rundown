@@ -6,7 +6,7 @@ import { openRunbookDriver } from '../../../src/runbook/storage/driver-factory.j
 import type { SqlDriver } from '../../../src/runbook/storage/sql-driver.js';
 import { RunbookStore } from '../../../src/runbook/storage/runbook-store.js';
 import { assertStateVersion } from '../../../src/runbook/storage/mutation-result.js';
-import { RunbookStateManager } from '../../../src/runbook/state.js';
+import { ExecutionLeaseHeldError, RunbookStateManager } from '../../../src/runbook/state.js';
 import { generateOwnerToken, hashRunSecret } from '../../../src/runbook/run-secrets.js';
 import type { RunbookState, Runbook, Step } from '../../../src/runbook/types.js';
 import { makeBaseStep } from '../../helpers/step-factories.js';
@@ -110,7 +110,7 @@ describe('the finish of a leased attempt', () => {
     const acquired = await store.acquireExecutionLease(state.id, assertStateVersion(0), HOLDER);
     if (acquired.kind !== 'acquired') throw new Error('setup: lease not acquired');
 
-    const finished = await store.saveRun(state.id, acquired.stateVersion, {
+    const finished = await store.saveRunResolvingLease(state.id, acquired.stateVersion, {
       ...state,
       stepName: 'finished',
     });
@@ -127,7 +127,7 @@ describe('the finish of a leased attempt', () => {
     if (acquired.kind !== 'acquired') throw new Error('setup: lease not acquired');
     // The owner decides about the attempt (say `fail` on an Interrupted step):
     // that write clears the lease, then a new attempt takes it.
-    const decided = await store.saveRun(state.id, acquired.stateVersion, {
+    const decided = await store.saveRunResolvingLease(state.id, acquired.stateVersion, {
       ...state,
       stepName: 'decided',
     });
@@ -135,7 +135,7 @@ describe('the finish of a leased attempt', () => {
     const retried = await store.acquireExecutionLease(state.id, assertStateVersion(2), HOLDER);
     expect(retried.kind).toBe('acquired');
 
-    const lateFinish = await store.saveRun(state.id, acquired.stateVersion, {
+    const lateFinish = await store.saveRunResolvingLease(state.id, acquired.stateVersion, {
       ...state,
       stepName: 'late finish',
     });
@@ -161,15 +161,139 @@ describe('the finish of a leased attempt', () => {
   });
 });
 
-describe('listExecutionLeases', () => {
-  it('lists the lease of every leased run and no other run', async () => {
-    const leased = await createdRun();
-    await createdRun();
-    const acquired = await store.acquireExecutionLease(leased.id, assertStateVersion(0), HOLDER);
+describe('a write that is not the decision about the lease', () => {
+  // Only the owner's decision or the attempt's finish clears a lease. Any
+  // other write at the leased version would erase the Interrupted marker
+  // without a fail/goto/stop, and a later `pass` would treat an effect of
+  // unknown outcome as having succeeded.
+  it('is refused at the store, naming the held lease, and leaves the lease set', async () => {
+    const state = await createdRun();
+    const acquired = await store.acquireExecutionLease(state.id, assertStateVersion(0), HOLDER);
     if (acquired.kind !== 'acquired') throw new Error('setup: lease not acquired');
 
-    const leases = await store.listExecutionLeases();
+    const write = await store.saveRun(state.id, acquired.stateVersion, {
+      ...state,
+      stepName: 'not a decision',
+    });
 
-    expect([...leases.entries()]).toEqual([[leased.id, acquired.lease]]);
+    expect(write).toEqual({ kind: 'execution_leased', lease: acquired.lease });
+    const read = await store.loadRunWithVersion(state.id);
+    expect(read?.lease).toEqual(acquired.lease);
+    expect(read?.stateVersion).toBe(1);
+    expect(read?.state.stepName).toBe(state.stepName);
+  });
+
+  it("is refused through the manager's read-derive-save, before anything is written", async () => {
+    const cwd = path.join(dir, 'manager');
+    await fs.mkdir(cwd, { recursive: true });
+    const manager = new RunbookStateManager(cwd);
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      {
+        runbookPath: 'test.runbook.md',
+        ownerTokenHash: hashRunSecret(generateOwnerToken()),
+      },
+    );
+    const acquired = await manager.acquireExecutionLease(state.id, assertStateVersion(0), HOLDER);
+    if (acquired.kind !== 'acquired') throw new Error('setup: lease not acquired');
+
+    await expect(manager.update(state.id, { stepName: 'not a decision' })).rejects.toBeInstanceOf(
+      ExecutionLeaseHeldError,
+    );
+    await expect(manager.update(state.id, { stepName: 'not a decision' })).rejects.toMatchObject({
+      runId: state.id,
+      lease: acquired.lease,
+    });
+
+    const read = await manager.loadWithVersion(state.id);
+    expect(read?.lease).toEqual(acquired.lease);
+    expect(read?.stateVersion).toBe(1);
+  });
+});
+
+describe('deleting a run at the version it was read at', () => {
+  // `prune --token` decides about the lease it read, then deletes. A lease
+  // taken between that read and the delete moves the version, so the delete
+  // must be refused rather than discarding an attempt that is now running.
+  async function managedRun(): Promise<{ manager: RunbookStateManager; state: RunbookState }> {
+    const cwd = path.join(dir, 'deleting');
+    await fs.mkdir(cwd, { recursive: true });
+    const manager = new RunbookStateManager(cwd);
+    const state = await manager.create(
+      { source: 'project', path: 'test.runbook.md' },
+      mockRunbook,
+      {
+        runbookPath: 'test.runbook.md',
+        ownerTokenHash: hashRunSecret(generateOwnerToken()),
+      },
+    );
+    return { manager, state };
+  }
+
+  it('deletes the run and its outputs directory when the version still holds', async () => {
+    const { manager, state } = await managedRun();
+    const outputs = path.join(manager.cwd, '.rundown', 'runs', state.id);
+    await fs.mkdir(outputs, { recursive: true });
+
+    expect(await manager.deleteAtVersion(state.id, assertStateVersion(0))).toEqual({
+      kind: 'deleted',
+    });
+
+    expect(await manager.loadWithVersion(state.id)).toBeNull();
+    await expect(fs.stat(outputs)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('refuses concurrent_modification, deleting nothing, when a lease was taken after the read', async () => {
+    const { manager, state } = await managedRun();
+    const read = await manager.loadWithVersion(state.id);
+    const acquired = await manager.acquireExecutionLease(state.id, read!.stateVersion, HOLDER);
+    if (acquired.kind !== 'acquired') throw new Error('setup: lease not acquired');
+    const outputs = path.join(manager.cwd, '.rundown', 'runs', state.id);
+    await fs.mkdir(outputs, { recursive: true });
+
+    expect(await manager.deleteAtVersion(state.id, read!.stateVersion)).toEqual({
+      kind: 'concurrent_modification',
+    });
+
+    expect((await manager.loadWithVersion(state.id))?.lease).toEqual(acquired.lease);
+    expect((await fs.stat(outputs)).isDirectory()).toBe(true);
+  });
+
+  it('reports missing when no row carries the id', async () => {
+    const { manager, state } = await managedRun();
+    await manager.delete(state.id);
+
+    expect(await manager.deleteAtVersion(state.id, assertStateVersion(0))).toEqual({
+      kind: 'missing',
+    });
+  });
+});
+
+describe('listing runs with their leases', () => {
+  // One read carries every run's state, version and lease, so a listing cannot
+  // pair a run's state with a lease read from a different snapshot.
+  it("carries each run's lease on the one listing read, null where none is held", async () => {
+    const cwd = path.join(dir, 'listing');
+    await fs.mkdir(cwd, { recursive: true });
+    const manager = new RunbookStateManager(cwd);
+    const create = (): Promise<RunbookState> =>
+      manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
+        runbookPath: 'test.runbook.md',
+        ownerTokenHash: hashRunSecret(generateOwnerToken()),
+      });
+    const leased = await create();
+    const idle = await create();
+    const acquired = await manager.acquireExecutionLease(leased.id, assertStateVersion(0), HOLDER);
+    if (acquired.kind !== 'acquired') throw new Error('setup: lease not acquired');
+
+    const listed = await manager.listWithVersion();
+
+    const byId = new Map(listed.map((run) => [run.state.id, run]));
+    expect([...byId.keys()].sort()).toEqual([leased.id, idle.id].sort());
+    expect(byId.get(leased.id)?.lease).toEqual(acquired.lease);
+    expect(byId.get(leased.id)?.stateVersion).toBe(1);
+    expect(byId.get(idle.id)?.lease).toBeNull();
+    expect(byId.get(idle.id)?.stateVersion).toBe(0);
   });
 });

@@ -320,7 +320,7 @@ describe('RunbookLifecycleCommandService', () => {
         const { runId, token } = await start(markdown);
         const run = await owned(token);
         const before = await version(runId);
-        const save = jest.spyOn(RunbookStore.prototype, 'saveRun');
+        const save = jest.spyOn(RunbookStore.prototype, 'saveRunResolvingLease');
 
         const outcome = await seam.runTransition({ command: 'pass', run, target });
 
@@ -339,7 +339,7 @@ describe('RunbookLifecycleCommandService', () => {
         await manager.update(runId, { lifecycle });
         const finished = await manager.loadWithVersion(runId);
         if (!finished) throw new Error('run missing');
-        const save = jest.spyOn(RunbookStore.prototype, 'saveRun');
+        const save = jest.spyOn(RunbookStore.prototype, 'saveRunResolvingLease');
 
         const outcome = await seam.runTransition({
           command: 'pass',
@@ -359,7 +359,7 @@ describe('RunbookLifecycleCommandService', () => {
       // The owner's second command landed first.
       await manager.update(runId, { variables: merge({ raced: 'yes' }) });
       const racedVersion = await version(runId);
-      const save = jest.spyOn(RunbookStore.prototype, 'saveRun');
+      const save = jest.spyOn(RunbookStore.prototype, 'saveRunResolvingLease');
 
       const outcome = await seam.runTransition({ command: 'pass', run, target: { stepId: '1' } });
 
@@ -434,7 +434,7 @@ describe('RunbookLifecycleCommandService', () => {
       await manager.update(runId, { lifecycle: 'stopped' });
       const finished = await manager.loadWithVersion(runId);
       if (!finished) throw new Error('run missing');
-      const save = jest.spyOn(RunbookStore.prototype, 'saveRun');
+      const save = jest.spyOn(RunbookStore.prototype, 'saveRunResolvingLease');
 
       const outcome = await seam.runTerminal({
         command: 'complete',
@@ -450,7 +450,7 @@ describe('RunbookLifecycleCommandService', () => {
       const { runId, token } = await start(TWO_STEP);
       const run = await owned(token);
       await manager.update(runId, { variables: merge({ raced: 'yes' }) });
-      const save = jest.spyOn(RunbookStore.prototype, 'saveRun');
+      const save = jest.spyOn(RunbookStore.prototype, 'saveRunResolvingLease');
 
       const outcome = await seam.runTerminal({ command: 'stop', run });
 
@@ -519,7 +519,7 @@ describe('RunbookLifecycleCommandService', () => {
       const allowed = await seam.resolveRunNavigation({ run });
       if (allowed.kind !== 'allowed') throw new Error('expected allowed');
       await manager.update(runId, { variables: merge({ raced: 'yes' }) });
-      const save = jest.spyOn(RunbookStore.prototype, 'saveRun');
+      const save = jest.spyOn(RunbookStore.prototype, 'saveRunResolvingLease');
 
       const outcome = await seam.runNavigationMutation({
         navigation: allowed.navigation,
@@ -554,14 +554,17 @@ describe('RunbookLifecycleCommandService', () => {
      * run` whose command is still running (live) or was SIGKILLed (dead).
      *
      * @param runId - The run.
-     * @param holder - `live` records this process; `dead` records this pid
-     *   under a start id that no longer matches, i.e. a recycled pid.
+     * @param holder - `live` records another live process (the parent, as a
+     *   second `rundown` process would be); `dead` records that pid under a
+     *   start id that no longer matches, i.e. a recycled pid. This process's
+     *   own pid is not used: a lease it holds outside a Run Progression turn
+     *   reads Interrupted by definition.
      */
     async function leaseStep(runId: string, holder: 'live' | 'dead'): Promise<void> {
       const read = await manager.loadWithVersion(runId);
       if (!read) throw new Error('run missing');
       const acquired = await manager.acquireExecutionLease(read.state.id, read.stateVersion, {
-        pid: process.pid,
+        pid: process.ppid,
         startId: holder === 'live' ? SELF_START : 'a process that has since exited',
       });
       if (acquired.kind !== 'acquired') throw new Error(`lease not set: ${acquired.kind}`);
@@ -587,7 +590,7 @@ describe('RunbookLifecycleCommandService', () => {
           kind: 'execution_in_progress',
           runId,
           step: '1',
-          lease: { pid: process.pid, startId: SELF_START },
+          lease: { pid: process.ppid, startId: SELF_START },
         });
         expect(await version(runId)).toBe(before);
       });

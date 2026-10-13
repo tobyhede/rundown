@@ -45,7 +45,9 @@ export function registerStatusCommand(program: Command): void {
               return;
             }
             const condition =
-              loaded.lease === null ? undefined : classifyExecutionLease(loaded.lease);
+              loaded.lease === null
+                ? undefined
+                : classifyExecutionLease(loaded.state.id, loaded.lease);
             output.detail(
               buildRunStatus(loaded.state, cwd, condition) as unknown as Record<string, unknown>,
               'status',
@@ -54,12 +56,20 @@ export function registerStatusCommand(program: Command): void {
             return;
           }
 
-          const states = await manager.list();
+          // One read: each run's state and lease come from the same snapshot.
+          const runs = await manager.listWithVersion();
+          const states = runs.map((listed) => listed.state);
           const conditions = new Map(
-            [...(await manager.listExecutionLeases())].map(([id, lease]) => [
-              id as string,
-              classifyExecutionLease(lease),
-            ]),
+            runs.flatMap((listed) =>
+              listed.lease === null
+                ? []
+                : [
+                    [
+                      listed.state.id as string,
+                      classifyExecutionLease(listed.state.id, listed.lease),
+                    ] as const,
+                  ],
+            ),
           );
           output.detail(
             buildRunListStatus(states, conditions) as unknown as Record<string, unknown>,

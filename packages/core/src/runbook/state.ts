@@ -22,8 +22,7 @@ import {
 import type { RunbookRef } from './runbook-ref.js';
 import type { SecretHash } from './run-secrets.js';
 import { findUnsupportedComposition, RunbookCompositionUnsupportedError } from './run-authority.js';
-import { makeRunbookStateSchema } from '../schemas.js';
-import { isError, isNodeError } from '../errors.js';
+import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
 import {
   brandInitialTemplateVars,
@@ -37,6 +36,7 @@ import { runsDir as _runsDir, assertSafeId } from '../paths.js';
 import { getRunbookStore } from './storage/store-registry.js';
 import type {
   AcquireExecutionLeaseResult,
+  DeleteRunResult,
   RunbookStore,
   SaveRunResult,
   VersionedRunState,
@@ -46,8 +46,6 @@ import type { StateVersion } from './storage/mutation-result.js';
 import type { OpenRunbookDriverOptions } from './storage/driver-factory.js';
 import {
   assertCurrentSchemaVersion,
-  assertLoadablePersistedRun,
-  parsePersistedRunState,
   CURRENT_SCHEMA_VERSION,
   InvalidRunbookStateError,
   LegacySnapshotError,
@@ -141,6 +139,38 @@ export class ConcurrentStateModificationError extends Error {
     super(message);
     this.name = 'ConcurrentStateModificationError';
     this.runId = runId;
+  }
+}
+
+/**
+ * Raised when a write that is not a decision about the execution lease meets a
+ * run whose lease is held.
+ *
+ * Only the owner's decision (`pass`/`fail`/`goto`/`stop`/`complete`, through
+ * the lifecycle seam's lease rule) or the attempt's own finish may clear a
+ * lease. Any other read-derive-save on a leased run is refused before anything
+ * is written: clearing the lease there would erase an Interrupted marker
+ * without the explicit decision the lease rule demands.
+ */
+export class ExecutionLeaseHeldError extends Error {
+  /** The run whose lease is held. */
+  readonly runId: RunId;
+  /** The held lease. */
+  readonly lease: ExecutionLease;
+
+  /**
+   * Construct the refusal.
+   *
+   * @param runId - The run whose lease is held.
+   * @param lease - The held lease.
+   */
+  constructor(runId: RunId, lease: ExecutionLease) {
+    super(
+      `Run ${runId} holds an execution lease (attempt ${String(lease.attempt)}, process ${String(lease.pid)}, started ${lease.startedAt}); only the owner's decision or the attempt's finish may write it. Nothing was written.`,
+    );
+    this.name = 'ExecutionLeaseHeldError';
+    this.runId = runId;
+    this.lease = lease;
   }
 }
 
@@ -303,6 +333,31 @@ export interface RunbookStateManagerOptions {
 }
 
 /**
+ * Stamp a state for persistence: the current schema version and a fresh
+ * `updatedAt`.
+ *
+ * @param state - The state to persist.
+ * @returns The stamped state.
+ */
+function stampForSave(state: RunbookState): RunbookState {
+  return { ...state, schemaVersion: CURRENT_SCHEMA_VERSION, updatedAt: new Date().toISOString() };
+}
+
+/**
+ * Record a committed state write on the lifecycle diagnostic trail.
+ *
+ * Enable with RUNDOWN_LOG_LEVEL=debug; the logger stamps pid (#536 was found
+ * with this signal).
+ *
+ * @param state - The committed state.
+ */
+function logLifecycleWrite(state: RunbookState): void {
+  if (state.lifecycle !== undefined) {
+    void logger.debug('lifecycle-write', { runId: state.id, next: state.lifecycle });
+  }
+}
+
+/**
  * Manager for runbook state persistence and lifecycle.
  *
  * A thin async facade over {@link RunbookStore}: creating, loading, saving and
@@ -462,32 +517,11 @@ export class RunbookStateManager {
     if (runId === null) {
       return null; // Not a run identifier — genuinely missing.
     }
+    // The store's row assembly and gates are the one validation every reader
+    // shares: unparseable JSON, legacy snapshots, foreign schema versions, the
+    // required fields no reader may default, and the structural parse.
     const store = await this.store();
-    // Unparseable `state_json` is invalid persisted state, not an unknown internal
-    // fault: surface it in this method's own taxonomy rather than letting a bare
-    // SyntaxError escape and surface to users as RD-999 / "Unknown error".
-    let raw: Record<string, unknown> | null;
-    try {
-      raw = await store.readRunJson(runId);
-    } catch (error) {
-      if (isError(error) && error.name === 'SyntaxError') {
-        throw new InvalidRunbookStateError(
-          `Invalid runbook state for "${id}": persisted state is not valid JSON.`,
-          { runId, reason: 'unparseable_json' },
-        );
-      }
-      throw error;
-    }
-    if (raw === null) {
-      return null;
-    }
-
-    // Legacy dynamic-step snapshots, foreign schema versions, and the two
-    // required fields no reader may default, in that order. Shared with
-    // `RunbookStore.readRun` so both readers refuse the same shapes with the
-    // same message.
-    assertLoadablePersistedRun(raw, id);
-    return parsePersistedRunState(raw, id, makeRunbookStateSchema(this.cwd));
+    return store.loadRun(runId);
   }
 
   /**
@@ -552,24 +586,17 @@ export class RunbookStateManager {
   }
 
   /**
-   * List the execution lease of every run that holds one, for status.
-   *
-   * @returns Each leased run's lease, keyed by run id
-   */
-  async listExecutionLeases(): Promise<ReadonlyMap<RunId, ExecutionLease>> {
-    const store = await this.store();
-    return store.listExecutionLeases();
-  }
-
-  /**
-   * Persist a complete runbook state if and only if its row is still at
-   * `expectedVersion`.
+   * Persist the owner's decision about a run, or a leased attempt's finish, if
+   * and only if its row is still at `expectedVersion`.
    *
    * Stamps the current schema version and a fresh `updatedAt`. One conditional
    * write, one outcome: the caller narrows the result and renders the refusal.
-   * The write clears the execution lease `expectedVersion` carries, so a seam
-   * that saves has already applied the lease rule to what it read.
-   * For the throwing form see {@link update} and {@link mutate}.
+   * This is the one manager write that clears the execution lease
+   * `expectedVersion` carries, so only a seam that has decided about that lease
+   * may call it: the lifecycle seam after applying the lease rule, and Run
+   * Progression's commit of a finish at the version its own lease produced.
+   * Every other write goes through {@link update} / {@link mutate}, which refuse
+   * a leased run.
    *
    * @param state - The complete state to persist
    * @param expectedVersion - The version the caller read the run at
@@ -578,17 +605,9 @@ export class RunbookStateManager {
    */
   async save(state: RunbookState, expectedVersion: StateVersion): Promise<SaveRunResult> {
     const store = await this.store();
-    const updated: RunbookState = {
-      ...state,
-      schemaVersion: CURRENT_SCHEMA_VERSION,
-      updatedAt: new Date().toISOString(),
-    };
-    const result = await store.saveRun(state.id, expectedVersion, updated);
-    if (result.kind === 'committed' && updated.lifecycle !== undefined) {
-      // Diagnostic trail for lifecycle transitions (#536 was found with this
-      // signal). Enable with RUNDOWN_LOG_LEVEL=debug; the logger stamps pid.
-      void logger.debug('lifecycle-write', { runId: state.id, next: updated.lifecycle });
-    }
+    const updated = stampForSave(state);
+    const result = await store.saveRunResolvingLease(state.id, expectedVersion, updated);
+    if (result.kind === 'committed') logLifecycleWrite(updated);
     return result;
   }
 
@@ -612,6 +631,7 @@ export class RunbookStateManager {
    * @throws {Error} If the runbook with the given ID is not found
    * @throws {ConcurrentStateModificationError} If another write landed between
    *   the read and the save
+   * @throws {ExecutionLeaseHeldError} If the run holds an execution lease
    */
   async update(id: string, updates: RunbookStateUpdate): Promise<RunbookState> {
     return this.mutate(id, () => updates);
@@ -626,12 +646,17 @@ export class RunbookStateManager {
    * `state_version` that moved between the read and the save is refused as
    * {@link ConcurrentStateModificationError}; the builder is not re-run.
    *
+   * This is not a decision about the execution lease, so a leased run is
+   * refused {@link ExecutionLeaseHeldError} before the builder runs, and the
+   * save never clears a lease.
+   *
    * @param id - The runbook state ID to mutate
    * @param build - Derives the patch from the current state; `null` means leave the state alone
    * @returns The resulting state (the current state when the builder declined)
    * @throws {Error} If the runbook with the given ID is not found
    * @throws {ConcurrentStateModificationError} If another write landed between
    *   the read and the save
+   * @throws {ExecutionLeaseHeldError} If the run holds an execution lease
    */
   async mutate(
     id: string,
@@ -643,14 +668,21 @@ export class RunbookStateManager {
     if (current === null) {
       throw new Error(`Runbook ${id} not found`);
     }
+    if (current.lease !== null) {
+      throw new ExecutionLeaseHeldError(current.state.id, current.lease);
+    }
     const updates = await build(current.state);
     if (updates === null) {
       return current.state;
     }
-    const next = applyRunbookStateUpdate(current.state, updates, new Date().toISOString());
-    const result = await this.save(next, current.stateVersion);
+    const next = stampForSave(
+      applyRunbookStateUpdate(current.state, updates, new Date().toISOString()),
+    );
+    const store = await this.store();
+    const result = await store.saveRun(next.id, current.stateVersion, next);
     switch (result.kind) {
       case 'committed':
+        logLifecycleWrite(next);
         return result.state;
       case 'missing':
         throw new Error(`Runbook ${id} not found`);
@@ -659,6 +691,12 @@ export class RunbookStateManager {
           id,
           `Run ${id} was modified concurrently by another writer.`,
         );
+      case 'execution_leased':
+        throw new ExecutionLeaseHeldError(next.id, result.lease);
+      default: {
+        const _exhaustive: never = result;
+        return _exhaustive;
+      }
     }
   }
 
@@ -681,6 +719,43 @@ export class RunbookStateManager {
       // the trail of a deletion that actually committed.
       void logger.debug('lifecycle-write', { runId: id, kind: 'delete' });
     }
+    await this.removeOutputsDir(id);
+  }
+
+  /**
+   * Delete a persisted run, and then its per-run outputs directory, if and
+   * only if its row is still at the version the caller read it at.
+   *
+   * For a caller that decided about the run it read — `prune --token` applies
+   * the execution-lease rule to the lease that version carries — so a lease
+   * taken after that read refuses the delete instead of being discarded with
+   * the run. Nothing is removed on a refusal, outputs included.
+   *
+   * @param id - The run to delete
+   * @param expectedVersion - The version the caller read the run at
+   * @returns `deleted`, or why nothing was deleted (`concurrent_modification`,
+   *   `missing`)
+   * @throws {Error} If `id` is traversal-unsafe, or when removing the outputs
+   *   directory fails for a reason other than its absence
+   */
+  async deleteAtVersion(id: string, expectedVersion: StateVersion): Promise<DeleteRunResult> {
+    const runId = this.toRunId(id);
+    if (runId === null) return { kind: 'missing' };
+    const store = await this.store();
+    const result = await store.deleteRunAtVersion(runId, expectedVersion);
+    if (result.kind !== 'deleted') return result;
+    void logger.debug('lifecycle-write', { runId: id, kind: 'delete' });
+    await this.removeOutputsDir(id);
+    return result;
+  }
+
+  /**
+   * Remove a run's captured-output directory, `.rundown/runs/<id>/`, if any.
+   *
+   * @param id - The run whose outputs directory to remove
+   * @throws {Error} When removal fails for a reason other than absence
+   */
+  private async removeOutputsDir(id: string): Promise<void> {
     try {
       // The per-run captured-output directory is still filesystem state.
       // Use rm -rf semantics so a non-empty directory is removed cleanly.
@@ -710,26 +785,37 @@ export class RunbookStateManager {
    * Load every persisted run in the project, applying the same validation and
    * error taxonomy as a direct {@link load}.
    *
-   * @returns All runbook states currently persisted for this project root.
+   * An invalid run is skipped, with a warning on stderr when it is
+   * `InvalidRunbookStateError`.
+   *
+   * @returns All valid runbook states currently persisted for this project root.
    */
   async list(): Promise<RunbookState[]> {
+    return (await this.listWithVersion()).map((run) => run.state);
+  }
+
+  /**
+   * Load every valid persisted run with the version and execution lease it was
+   * read at, all from one read.
+   *
+   * Same validation and skipping as {@link list}; the lease rides the listing
+   * read, so a caller rendering leases never pairs a run with a lease from a
+   * different snapshot.
+   *
+   * @returns Every valid run with its version and lease, in ascending id order.
+   */
+  async listWithVersion(): Promise<VersionedRunState[]> {
     const store = await this.store();
-    const ids = await store.listRunIds();
-    const states: RunbookState[] = [];
-    for (const id of ids) {
-      try {
-        // Route each row through `load` so listing applies the same validation
-        // and error taxonomy as a direct read rather than a second, laxer path.
-        const state = await this.load(id);
-        if (state) states.push(state);
-      } catch (err) {
-        if (err instanceof InvalidRunbookStateError) {
-          process.stderr.write(`[rundown] Warning: ${err.message}\n`);
-        }
-        // Other errors (invalid rows, legacy snapshots) — skip silently
+    const runs: VersionedRunState[] = [];
+    for (const listed of await store.listRunsWithVersion()) {
+      if (listed.kind === 'valid') {
+        runs.push(listed.run);
+      } else if (listed.error instanceof InvalidRunbookStateError) {
+        process.stderr.write(`[rundown] Warning: ${listed.error.message}\n`);
       }
+      // Other errors (legacy snapshots, unknown lifecycle) — skip silently.
     }
-    return states;
+    return runs;
   }
 
   /**

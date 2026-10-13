@@ -24,7 +24,7 @@ import type {
   CommandExecutionOutput,
   CommandExecutionServices,
 } from './actors/command-exec-actor.js';
-import { isError } from '../errors.js';
+import { getErrorMessage, isError } from '../errors.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import {
   applyRunbookStateUpdate,
@@ -411,6 +411,41 @@ export function extractEnteredArtifacts(
  * of channel files; 30 seconds is generous for any plausible local filesystem.
  */
 const MACHINE_EFFECT_TIMEOUT_MS = 30_000;
+
+/**
+ * The finish of a command could not be derived after the command ran, so its
+ * outcome is unknown.
+ *
+ * Raised by {@link RunbookActorService.prepareActorMutation} for an
+ * `EXECUTE_COMMAND` event in exactly two cases, both after the command
+ * execution phase may have run its external effect:
+ *
+ * - the transient machine-effect wait (OUTPUTS capture, artifact resolution,
+ *   iteration) exceeded its budget, {@link MACHINE_EFFECT_TIMEOUT_MS};
+ * - the actor reached an XState `error` status while finishing the command.
+ *
+ * Nothing about the command's result can be recorded, and the command must
+ * never be repeated (ADR 0005). Run Progression turns this into its closed
+ * `command_outcome_unknown` refusal and leaves the execution lease set. Every
+ * other failure — {@link InvalidRunbookStateError} included — propagates
+ * unchanged.
+ */
+export class MachineEffectOutcomeUnknownError extends Error {
+  /** The run whose command finish could not be derived. */
+  readonly runId: string;
+
+  /**
+   * Wrap the timeout or actor error as the typed outcome-unknown signal.
+   *
+   * @param runId - The run whose command finish could not be derived.
+   * @param cause - The machine-effect timeout or the actor's error.
+   */
+  constructor(runId: string, cause: unknown) {
+    super(`Runbook ${runId} could not finish its command: ${getErrorMessage(cause)}`, { cause });
+    this.name = 'MachineEffectOutcomeUnknownError';
+    this.runId = runId;
+  }
+}
 
 /**
  * Project the persisted frame-entry coordinates to seed `initial.context`.
@@ -1118,8 +1153,12 @@ export class RunbookActorService {
    * @param steps - Parsed runbook steps for machine compilation.
    * @param event - Runbook event to send (PASS, FAIL, GOTO, EXECUTE_COMMAND, …).
    * @returns The computed, not-yet-persisted mutation.
+   * @throws {MachineEffectOutcomeUnknownError} For `EXECUTE_COMMAND`, when the
+   *   machine-effect wait times out or the actor enters an error state after
+   *   the command may have run: the command's outcome is unknown.
    * @throws {Error} If the resulting snapshot is an unsupported/invalid shape
-   *   (mirrors {@link updateFromActor}), or if the actor entered an error state.
+   *   (mirrors {@link updateFromActor}), or if the actor entered an error state
+   *   for any other event.
    */
   async prepareActorMutation(
     id: string,
@@ -1143,12 +1182,28 @@ export class RunbookActorService {
     const errorSubscription = actor.subscribe({ error: () => undefined });
     try {
       actor.send(event);
-      await this.waitForMachineEffects(actor);
+      try {
+        await this.waitForMachineEffects(actor);
+      } catch (cause) {
+        // The wait rejects only on the machine-effect timeout or an actor
+        // error. After EXECUTE_COMMAND either one leaves the command's
+        // outcome unknown; a persisted-state defect keeps its own recovery.
+        if (event.type === 'EXECUTE_COMMAND' && !(cause instanceof InvalidRunbookStateError)) {
+          throw new MachineEffectOutcomeUnknownError(id, cause);
+        }
+        throw cause;
+      }
       const machineOutput = (actor.getSnapshot() as { readonly output?: RunbookMachineOutput })
         .output;
       const snapshot = actor.getPersistedSnapshot() as unknown as PersistedRunbookSnapshot;
       if (snapshot.status === 'error') {
-        throw new Error(`Runbook ${id} actor entered an error state`);
+        const actorError = new Error(`Runbook ${id} actor entered an error state`, {
+          cause: (actor.getSnapshot() as { readonly error?: unknown }).error,
+        });
+        if (event.type === 'EXECUTE_COMMAND') {
+          throw new MachineEffectOutcomeUnknownError(id, actorError);
+        }
+        throw actorError;
       }
       const lastResultSync = lastResultSyncForEvent(event, {
         commandOutput: collector.commandOutput,

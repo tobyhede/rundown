@@ -43,27 +43,58 @@ The vocabulary and the rule live in
   moves `state_version`, and the lease's `attempt` IS the version it produced.
   The command does not start unless the set landed. Entry-render helpers stay
   outside the lease: an entry is re-rendered on every activation anyway.
-- **Clear.** Every state write (`writeStateAtVersion`) clears the lease columns
-  in the same `UPDATE`. A writer at version `v` therefore clears exactly the
-  lease `v` carries — the one its seam read and decided about. The finish of a
-  command commits at `state_version = attempt`, so it commits only if its
-  attempt still holds the lease. If anything wrote in between (an owner's
-  decision on an Interrupted step, a new attempt), the finish is refused
-  `CONCURRENT_MODIFICATION` (`command_not_committed`) and records nothing.
+- **Clear.** Only a decision or a finish clears the lease:
+  `RunbookStore.saveRunResolvingLease` (reached through
+  `RunbookStateManager.save`, which the lifecycle seam and Run Progression's
+  finish call) clears the lease columns in the same `UPDATE`. A writer at
+  version `v` therefore clears exactly the lease `v` carries — the one its seam
+  read and decided about. Every other state write (`saveRun`,
+  `RunbookStateManager.update` / `mutate`) is refused on a leased row
+  (`execution_leased`, or `ExecutionLeaseHeldError` before its build runs), so
+  no incidental write can erase an Interrupted marker. Deleting a run by token
+  (`prune --token`) is conditional on the version whose lease was checked
+  (`deleteAtVersion`), so a lease taken after that read refuses the delete
+  `CONCURRENT_MODIFICATION`. The finish of a command commits at
+  `state_version = attempt`, so it commits only if its attempt still holds the
+  lease. If anything wrote in between (an owner's decision on an Interrupted
+  step, a new attempt), the finish is refused `CONCURRENT_MODIFICATION`
+  (`command_not_committed`) and records nothing.
 - **Readers before the set.** Because the set moves the version, a command that
   read the run before the lease was set is refused `CONCURRENT_MODIFICATION`
   when it saves. A command that reads the lease applies the rule below.
 
-A held lease has one of two conditions, decided by `classifyExecutionLease` from
-`(pid, start id)` through `process-identity.ts`'s `isOwnerAlive`: only a pid
-with no process, or a recorded and an observed start id that disagree, prove the
-holder gone. Every unknown reads as alive, so doubt refuses rather than letting
-the command run twice.
+- **Outcome unknown.** If the finish cannot be derived after the command ran —
+  the machine-effect wait exceeds its budget, or the actor reaches an XState
+  `error` status — `prepareActorMutation` raises
+  `MachineEffectOutcomeUnknownError` (only for `EXECUTE_COMMAND`, and only for
+  those two causes). Run Progression catches exactly that error and refuses
+  `command_outcome_unknown`, code `EXECUTION_INTERRUPTED`, `permanent`. Nothing
+  is written and the lease stays set: the step is now Interrupted, and the
+  message names the same explicit decisions. Every other error from the finish
+  propagates as a defect, also leaving the lease set — and so also Interrupted
+  once the turn has unwound.
 
-| Condition       | Holder | Refused                                                                                                                          | Clears it                                                                        |
-| --------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| **In Progress** | alive  | every owner decision (`pass`, `fail`, `goto`, `stop`, `complete`) and a second Run Progression attempt — `EXECUTION_IN_PROGRESS` | the command's own finish                                                         |
-| **Interrupted** | gone   | `pass`, `complete` and Run Progression — `EXECUTION_INTERRUPTED`                                                                 | the owner's `fail` (FAIL handler, including an authored RETRY), `goto` or `stop` |
+A held lease has one of two conditions, decided by `classifyExecutionLease`:
+
+- **Another process's lease** — `(pid, start id)` through
+  `process-identity.ts`'s `isOwnerAlive`: only a pid with no process, or a
+  recorded and an observed start id that disagree, prove the holder gone. Every
+  unknown reads as alive, so doubt refuses rather than letting the command run
+  twice.
+- **This process's lease** (`pid` is `process.pid`) — liveness cannot answer,
+  because the process is alive by definition. Run Progression registers each
+  attempt it runs in a process-local, never-persisted set (keyed by run and
+  attempt) from the lease set until the turn returns or throws
+  (`holdInFlightAttempt`, released with `using`). The lease is In Progress only
+  while its attempt is registered; otherwise the turn that set it ended without
+  committing (or an earlier process recycled the pid), and it is Interrupted.
+  Without this rule a long-lived host (an MCP server) whose finish failed would
+  read In Progress — refusing even `fail`, `goto` and `stop` — until it exited.
+
+| Condition       | Holder                                      | Refused                                                                                                                                           | Clears it                                                                                                         |
+| --------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **In Progress** | alive (this process: attempt registered)    | every owner decision (`pass`, `fail`, `goto`, `stop`, `complete`, `prune --token`) and a second Run Progression attempt — `EXECUTION_IN_PROGRESS` | the command's own finish                                                                                          |
+| **Interrupted** | gone (this process: attempt not registered) | `pass`, `complete` and Run Progression — `EXECUTION_INTERRUPTED`                                                                                  | the owner's `fail` (FAIL handler, including an authored RETRY), `goto` or `stop`; `prune --token` deletes the run |
 
 `pass` and `complete` are refused on an Interrupted step because each would
 treat an effect of unknown outcome as having succeeded. Rundown never repeats an

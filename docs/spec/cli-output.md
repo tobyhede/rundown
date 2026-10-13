@@ -1453,7 +1453,7 @@ then.
 **Text:**
 
 ```text
-Error: Step 1 of run rd_0123456789abcdef0123456789abcdef is Interrupted: the process 4242 that started its command at 2026-10-13T12:00:00.000Z is gone, so the command's outcome is unknown. Rundown never repeats it. Decide explicitly: `rundown fail --step 1` (the step's FAIL handler, including an authored RETRY), `rundown goto <step>`, or `rundown stop`.
+Error: Step 1 of run rd_0123456789abcdef0123456789abcdef is Interrupted: the process 4242 that started its command at 2026-10-13T12:00:00.000Z is gone, so the command's outcome is unknown. Rundown never repeats it. Decide explicitly: `rundown fail --step 1 --token <owner_token>` (the step's FAIL handler, including an authored RETRY), `rundown goto <step> --token <owner_token>`, or `rundown stop --token <owner_token>`.
 Code: EXECUTION_INTERRUPTED
 ```
 
@@ -1461,7 +1461,7 @@ Code: EXECUTION_INTERRUPTED
 
 ```json
 {
-  "error": "Step 1 of run rd_0123456789abcdef0123456789abcdef is Interrupted: the process 4242 that started its command at 2026-10-13T12:00:00.000Z is gone, so the command's outcome is unknown. Rundown never repeats it. Decide explicitly: `rundown fail --step 1` (the step's FAIL handler, including an authored RETRY), `rundown goto <step>`, or `rundown stop`.",
+  "error": "Step 1 of run rd_0123456789abcdef0123456789abcdef is Interrupted: the process 4242 that started its command at 2026-10-13T12:00:00.000Z is gone, so the command's outcome is unknown. Rundown never repeats it. Decide explicitly: `rundown fail --step 1 --token <owner_token>` (the step's FAIL handler, including an authored RETRY), `rundown goto <step> --token <owner_token>`, or `rundown stop --token <owner_token>`.",
   "kind": "error",
   "code": "EXECUTION_INTERRUPTED",
   "command": "pass",

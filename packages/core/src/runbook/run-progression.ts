@@ -36,7 +36,11 @@ import type { ExecutionObservationEffect } from '../events/execution-observation
 import { Errors } from '../errors/factory.js';
 import { getErrorMessage } from '../errors.js';
 import { CLIErrorCodes } from '../output/zod-schemas.js';
-import type { PreparedActorMutation, RunbookActorService } from './actor-service.js';
+import {
+  MachineEffectOutcomeUnknownError,
+  type PreparedActorMutation,
+  type RunbookActorService,
+} from './actor-service.js';
 import type { RunbookEvent, RunProgressionMachineFeedback } from './compiler.js';
 import { findStepOrThrow } from './execution-units.js';
 import type { ExecutionUnitEntry } from './execution-unit-entry.js';
@@ -44,8 +48,12 @@ import { InvalidRunbookStateError } from './persisted-state-guards.js';
 import type { OwnedRun } from './run-authority.js';
 import {
   classifyExecutionLease,
+  commandOutcomeUnknownMessage,
   currentLeaseHolder,
+  EXECUTION_INTERRUPTED_CODE,
   executionLeaseRefusal,
+  holdInFlightAttempt,
+  type ExecutionLease,
 } from './execution-lease.js';
 import type { ProcessIdentity } from './process-identity.js';
 import type { RunId } from './run-id.js';
@@ -97,7 +105,9 @@ export type RunProgressionWaitReason = 'awaiting_input';
  * - `run_missing` — the run no longer exists (a concurrent prune).
  * - `command_not_started` — the execution lease could not be set because
  *   another of the owner's commands moved the row since this activation read
- *   it. The command did not run and nothing was written.
+ *   it, and no lease is held now. The command did not run and nothing was
+ *   written. (A lease another attempt set in that window refuses as
+ *   `execution_in_progress` / `execution_interrupted` instead.)
  * - `command_not_committed` — the command ran, but its attempt no longer held
  *   the execution lease when its finish was saved (another writer moved the
  *   row). The result was not recorded.
@@ -105,6 +115,11 @@ export type RunProgressionWaitReason = 'awaiting_input';
  *   command was not started a second time.
  * - `execution_interrupted` — the attempt holding the lease died; Rundown
  *   never repeats its command, and the owner decides explicitly.
+ * - `command_outcome_unknown` — this activation's command ran, but its finish
+ *   could not be derived (the machine-effect wait timed out, or the actor
+ *   reached an error state). The result was not recorded, the lease stays set,
+ *   and the step is now Interrupted: Rundown never repeats the command, and
+ *   the owner decides explicitly. Code `EXECUTION_INTERRUPTED`.
  * - `entry_render_failed` — rendering the selected unit's entry threw; nothing
  *   was committed and re-activation re-renders.
  */
@@ -114,6 +129,7 @@ export type RunProgressionRefusalReason =
   | 'command_not_committed'
   | 'execution_in_progress'
   | 'execution_interrupted'
+  | 'command_outcome_unknown'
   | 'entry_render_failed';
 
 /**
@@ -647,6 +663,41 @@ function isSameProgressionSelectionState(selected: RunbookState, durable: Runboo
 }
 
 /**
+ * Diagnose and return the refusal for a lease another attempt holds.
+ *
+ * @param runId - The run whose lease is held.
+ * @param cursor - The run's step cursor as last read (the lease pins it).
+ * @param cursor.step - Current top-level step.
+ * @param cursor.substep - Current substep, when inside one.
+ * @param lease - The held lease.
+ * @param deps - Activation dependencies (process identity).
+ * @param sink - Gated observation sink for the refusal diagnostic.
+ * @returns The closed `execution_in_progress` / `execution_interrupted` refusal.
+ */
+function heldLeaseRefusal(
+  runId: RunId,
+  cursor: { readonly step: string; readonly substep?: string },
+  lease: ExecutionLease,
+  deps: RunProgressionDeps,
+  sink: Pick<ExecutionEventEmitter, 'emit'>,
+): RunProgressionOutcome {
+  const condition = classifyExecutionLease(runId, lease, deps.processIdentity);
+  const refusal = executionLeaseRefusal(runId, cursor, condition);
+  const { code } = refusal;
+  sink.emit({ type: 'ERROR_OCCURRED', payload: { message: refusal.message, code } });
+  return {
+    kind: 'refused',
+    runId,
+    reason: refusal.kind,
+    code,
+    message: refusal.message,
+    // In Progress clears when the live attempt finishes; Interrupted needs a
+    // different, explicit decision from the owner.
+    recovery: refusal.kind === 'execution_in_progress' ? 'retryable' : 'permanent',
+  };
+}
+
+/**
  * Set the execution lease for one command turn, or refuse the turn.
  *
  * @param runId - The run whose command is about to start.
@@ -661,7 +712,12 @@ async function acquireTurnLease(
   deps: RunProgressionDeps,
   sink: Pick<ExecutionEventEmitter, 'emit'>,
 ): Promise<
-  | { readonly kind: 'acquired'; readonly run: VersionedRunState }
+  | {
+      readonly kind: 'acquired';
+      readonly run: VersionedRunState;
+      /** The lease the set produced. */
+      readonly lease: ExecutionLease;
+    }
   | { readonly kind: 'refused'; readonly outcome: RunProgressionOutcome }
 > {
   const leased = await deps.manager.acquireExecutionLease(
@@ -674,10 +730,24 @@ async function acquireTurnLease(
       return {
         kind: 'acquired',
         run: { state: current.state, stateVersion: leased.stateVersion, lease: leased.lease },
+        lease: leased.lease,
       };
     case 'missing':
       return { kind: 'refused', outcome: runMissingRefusal(runId, sink) };
     case 'concurrent_modification': {
+      // Setting a lease moves the version, so a lease another attempt set
+      // after this activation read the run surfaces here, not as `held`. ONE
+      // read — never a retry of the set (ADR 0005) — tells the two apart, so
+      // a racing activation reports the step In Progress (or Interrupted)
+      // rather than a generic modification.
+      const reread = await deps.manager.loadWithVersion(runId);
+      if (!reread) return { kind: 'refused', outcome: runMissingRefusal(runId, sink) };
+      if (reread.lease !== null) {
+        return {
+          kind: 'refused',
+          outcome: heldLeaseRefusal(runId, reread.state, reread.lease, deps, sink),
+        };
+      }
       const message = `Run ${runId} was modified by another writer before its command started; the command did not run and nothing was written — inspect the run and re-activate`;
       sink.emit({
         type: 'ERROR_OCCURRED',
@@ -695,29 +765,80 @@ async function acquireTurnLease(
         },
       };
     }
-    case 'held': {
-      const condition = classifyExecutionLease(leased.lease, deps.processIdentity);
-      const refusal = executionLeaseRefusal(runId, current.state, condition);
-      const { code } = refusal;
-      sink.emit({ type: 'ERROR_OCCURRED', payload: { message: refusal.message, code } });
+    case 'held':
       return {
         kind: 'refused',
-        outcome: {
-          kind: 'refused',
-          runId,
-          reason: refusal.kind,
-          code,
-          message: refusal.message,
-          // In Progress clears when the live attempt finishes; Interrupted
-          // needs a different, explicit decision from the owner.
-          recovery: refusal.kind === 'execution_in_progress' ? 'retryable' : 'permanent',
-        },
+        outcome: heldLeaseRefusal(runId, current.state, leased.lease, deps, sink),
       };
-    }
     default: {
       const _exhaustive: never = leased;
       return _exhaustive;
     }
+  }
+}
+
+/**
+ * Deliver a leased turn's entry observations before its command starts.
+ *
+ * The entry is announced only once the turn holds the lease, and delivery is
+ * the commit gate: no command starts until it returns. If delivery fails the
+ * command has provably not started, so the lease is released by writing the
+ * unchanged run at the lease's version (every state write clears the lease) —
+ * a lease left set would read In Progress, then Interrupted, for a command
+ * that never ran. The release is one conditional write, never retried: a
+ * version that moved means another writer already decided about the run.
+ *
+ * @param entered - The runnable unit's entry.
+ * @param leasedRun - The run at the version the lease produced.
+ * @param manager - Durable state manager for the release.
+ * @param sink - Gated observation sink.
+ * @throws {ObservationDeliveryError} When the sink throws; the lease has been
+ *   released (or another writer already moved the run).
+ */
+async function announceLeasedEntry(
+  entered: ExecutionUnitEntry,
+  leasedRun: VersionedRunState,
+  manager: RunbookStateManager,
+  sink: Pick<ExecutionEventEmitter, 'emit'>,
+): Promise<void> {
+  try {
+    for (const effect of entered.effects) {
+      sink.emit(effect.event);
+    }
+  } catch (error) {
+    await manager.save(leasedRun.state, leasedRun.stateVersion);
+    throw error;
+  }
+}
+
+/**
+ * Commit a leased command turn, naming the one way its finish can fail after
+ * the command ran.
+ *
+ * {@link commitRunProgressionEvent} plus exactly one caught condition: a
+ * {@link MachineEffectOutcomeUnknownError} from the derivation becomes the
+ * `outcome_unknown` arm, because the command may already have run and its
+ * finish cannot be recorded. Every other error — persisted-state defects
+ * included — propagates.
+ *
+ * @param input - As for {@link commitRunProgressionEvent}.
+ * @returns The commit result, or `outcome_unknown` with the typed error.
+ * @throws {Error} Whatever {@link commitRunProgressionEvent} throws other than
+ *   {@link MachineEffectOutcomeUnknownError}.
+ */
+async function commitLeasedCommand(
+  input: CommitRunProgressionEventInput,
+): Promise<
+  | RunProgressionCommitResult
+  | { readonly kind: 'outcome_unknown'; readonly error: MachineEffectOutcomeUnknownError }
+> {
+  try {
+    return await commitRunProgressionEvent(input);
+  } catch (error) {
+    if (error instanceof MachineEffectOutcomeUnknownError) {
+      return { kind: 'outcome_unknown', error };
+    }
+    throw error;
   }
 }
 
@@ -898,26 +1019,32 @@ async function driveProgression(
 
     const currentStep = findStepOrThrow(steps, current.state.step, runId);
     const entered: ExecutionUnitEntry = intent.entered;
-    for (const effect of entered.effects) {
-      sink.emit(effect.event);
-    }
 
     if (entered.kind !== 'runnable') {
+      for (const effect of entered.effects) {
+        sink.emit(effect.event);
+      }
       feedback = { kind: 'awaiting_input' };
       continue;
     }
 
-    // Turn: set the execution lease, run one command, and commit its finish
-    // at the version the lease produced. The lease is one conditional update
-    // and is never retried: a held lease or a moved version refuses the turn
-    // before any effect starts. A finish whose attempt lost the lease is NOT
-    // recorded, and the refusal says so rather than retrying over whoever
-    // wrote.
+    // Turn: set the execution lease, announce the unit, run one command, and
+    // commit its finish at the version the lease produced. The lease is one
+    // conditional update and is never retried: a held lease or a moved
+    // version refuses the turn before any effect starts — and before the
+    // unit's entry is announced, so a refused turn never publishes a start
+    // for a step another attempt owns. A finish whose attempt lost the lease
+    // is NOT recorded, and the refusal says so rather than retrying over
+    // whoever wrote.
     const leased = await acquireTurnLease(runId, current, deps, sink);
     if (leased.kind === 'refused') return leased.outcome;
+    // This process runs the attempt until the turn ends, however it ends: a
+    // lease still set after that reads Interrupted, never In Progress forever.
+    using _inFlight = holdInFlightAttempt(runId, leased.lease);
     current = leased.run;
+    await announceLeasedEntry(entered, current, deps.manager, sink);
     const { code: expandedCommandCode, displayCommand, rdInjected } = entered.command;
-    const committed = await commitRunProgressionEvent({
+    const committed = await commitLeasedCommand({
       authority,
       manager,
       actorService,
@@ -931,6 +1058,25 @@ async function driveProgression(
         rdInjected,
       },
     });
+    if (committed.kind === 'outcome_unknown') {
+      const message = commandOutcomeUnknownMessage(
+        runId,
+        current.state,
+        getErrorMessage(committed.error.cause),
+      );
+      sink.emit({
+        type: 'ERROR_OCCURRED',
+        payload: { message, code: EXECUTION_INTERRUPTED_CODE },
+      });
+      return {
+        kind: 'refused',
+        runId,
+        reason: 'command_outcome_unknown',
+        code: EXECUTION_INTERRUPTED_CODE,
+        message,
+        recovery: 'permanent',
+      };
+    }
     if (committed.kind === 'missing') return runMissingRefusal(runId, sink);
     if (committed.kind === 'concurrent_modification') {
       const message = `Run ${runId} was modified by another writer while its command ran, so its attempt no longer holds the execution lease; the result was not recorded — inspect the run and re-activate`;

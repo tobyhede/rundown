@@ -31,8 +31,8 @@ import type { SqlReadTransaction, SqlTransaction } from './sql-driver.js';
  * table carrying the Owner Token hash, nullable child-linkage and lease column
  * groups, and `state_version`. Version 4 (#902) makes a write to the lease
  * columns move `state_version` too, so the lease's attempt is a version and a
- * reader from before the lease cannot write after it. Versions 1 and 2 carried the multi-writer tables
- * (`claims`, `session_stack`, `stash_slot`, `resolved_completions`,
+ * reader from before the lease cannot write after it. Versions 1 and 2 carried
+ * the multi-writer tables (`claims`, `session_stack`, `stash_slot`, `resolved_completions`,
  * `execution_attempts`); a database at either version is foreign to this build
  * and is refused whole, because none of its coordinating rows has a home here.
  *
@@ -43,8 +43,9 @@ import type { SqlReadTransaction, SqlTransaction } from './sql-driver.js';
  * state inside each `runs.state_json` blob, one row at a time, refused as
  * RD-309. `state_json` is opaque TEXT to this DDL, so a change to the persisted
  * run-state shape moves that constant and not this one; a DDL edit moves this
- * and leaves that. The two happen to both read `3` today because #901 changed
- * both the tables and the blob at once.
+ * and leaves that. Both read `3` after #901, which changed the tables and the
+ * blob at once; #902 moved this one to `4` for a DDL-only change (the lease
+ * trigger) and left the blob's version alone.
  */
 export const SCHEMA_VERSION = 4;
 

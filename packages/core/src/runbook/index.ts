@@ -109,7 +109,12 @@ export * from './transition-kernel.js';
 // The conditional-write vocabulary is public so a front end narrows the store's
 // own result union (`saveRun` / `RunbookStateManager.save`) rather than
 // re-declaring it, and names the version it read a run at.
-export type { SaveRunResult, VersionedRunState } from './storage/runbook-store.js';
+export type {
+  DeleteRunResult,
+  LeaseRefusingSaveResult,
+  SaveRunResult,
+  VersionedRunState,
+} from './storage/runbook-store.js';
 export { assertStateVersion, type StateVersion } from './storage/mutation-result.js';
 export {
   applyRunbookStateUpdate,
@@ -123,6 +128,7 @@ export {
   // literal that goes stale silently — the #775 defect, in the shape it recurs.
   CURRENT_SCHEMA_VERSION,
   InvalidRunbookStateError,
+  ExecutionLeaseHeldError,
   LegacySnapshotError,
 } from './state.js';
 export {
@@ -162,8 +168,9 @@ export type { RunProgressionAuthority } from './run-progression-authority.js';
 // internal to core.
 export type { ProcessIdentity } from './process-identity.js';
 // The execution lease (#902): codes the refusals carry and the classification
-// `status` renders. Setting and clearing it stay inside Run Progression and the
-// store.
+// `status` renders. Setting and clearing it — and this process's in-flight
+// attempts, which the classification consults — stay inside Run Progression
+// and the store.
 export {
   classifyExecutionLease,
   EXECUTION_IN_PROGRESS_CODE,
@@ -173,6 +180,8 @@ export {
   type ExecutionInterruptedRefusal,
   type ExecutionLease,
   type ExecutionLeaseRefusal,
+  refuseUnderLease,
+  type LeaseDecision,
 } from './execution-lease.js';
 export {
   RunbookLifecycleCommandService,
@@ -251,6 +260,7 @@ export {
 } from './snapshot-utils.js';
 export {
   extractEnteredArtifacts,
+  MachineEffectOutcomeUnknownError,
   RunbookActorService,
   type ActorSyncResult,
   type AnyActorRef,
