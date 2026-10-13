@@ -54,12 +54,18 @@ export const UNKNOWN_TOKEN_MESSAGE =
  * refusal of `--run` on a mutating command is `INVALID_SYNTAX`.
  *
  * @param command - The Commander command to register the option on.
+ * @param description - Help text for `--token`; defaults to
+ *   {@link TOKEN_OPTION_DESCRIPTION}. A command whose token selects
+ *   differently (prune) extends that text rather than rewording it.
  * @returns The same command, for chaining.
  */
-export function withTokenOption(command: Command): Command {
+export function withTokenOption(
+  command: Command,
+  description: string = TOKEN_OPTION_DESCRIPTION,
+): Command {
   return (
     command
-      .option('--token <token>', TOKEN_OPTION_DESCRIPTION)
+      .option('--token <token>', description)
       // Registered hidden so that `--run` on a mutating command is refused
       // with the documented `INVALID_SYNTAX` envelope by `parseTokenOption`
       // rather than by Commander's plain-text "unknown option" error.
@@ -68,7 +74,76 @@ export function withTokenOption(command: Command): Command {
 }
 
 /**
- * Parse the raw `--token` value of a mutating command.
+ * Outcome of parsing a `--token` that the command does not require.
+ *
+ * `refused` means the refusal envelope is already flushed and the exit code
+ * set; the caller returns without touching state.
+ */
+export type OptionalTokenOption =
+  | { readonly kind: 'absent' }
+  | { readonly kind: 'present'; readonly token: OwnerToken }
+  | { readonly kind: 'refused' };
+
+// Render a token-option refusal: flushed envelope, exit 1.
+function refuse(output: OutputEmitter, message: string, code: string): void {
+  output.error(message, code);
+  output.flush();
+  process.exitCode = 1;
+}
+
+/**
+ * Parse the raw `--token` value of a mutating command for which the token is
+ * optional (`prune`: finished runs prune without one; only a running run
+ * needs its token).
+ *
+ * Precedence of the refusals, all `exit 1` with the envelope already flushed:
+ *
+ * 1. `--run` supplied, with or without `--token` → `INVALID_SYNTAX`. `--run`
+ *    is a read-only selector and never mutation authority.
+ * 2. A malformed token → `INVALID_SYNTAX`. The offending value is never
+ *    echoed — it may be a near-miss of a real secret.
+ *
+ * @param raw - Raw Commander option values, each `undefined` when absent.
+ * @param raw.token - Raw `--token` value, when supplied.
+ * @param raw.run - Raw `--run` value, when supplied.
+ * @param command - The mutating command, named in the refusal.
+ * @param output - Output emitter used to render a refusal.
+ * @returns `absent` when no token was given, `present` with the parsed Owner
+ *   Token, or `refused` when a refusal was rendered.
+ * @throws {Error} Any failure from parsing the token other than
+ *   `InvalidRunSecretError`, which is rendered as a refusal instead.
+ */
+export function parseOptionalTokenOption(
+  raw: { readonly token?: string; readonly run?: string },
+  command: string,
+  output: OutputEmitter,
+): OptionalTokenOption {
+  if (raw.run !== undefined) {
+    refuse(
+      output,
+      `--run is a read-only selector and cannot authorize rundown ${command}; pass --token <owner_token> alone.`,
+      'INVALID_SYNTAX',
+    );
+    return { kind: 'refused' };
+  }
+  if (raw.token === undefined) return { kind: 'absent' };
+  try {
+    return { kind: 'present', token: parseOwnerToken(raw.token) };
+  } catch (error) {
+    if (error instanceof InvalidRunSecretError) {
+      refuse(
+        output,
+        'Invalid --token: expected an owner token of the form rdo_<43 base64url characters>.',
+        'INVALID_SYNTAX',
+      );
+      return { kind: 'refused' };
+    }
+    throw error;
+  }
+}
+
+/**
+ * Parse the raw `--token` value of a mutating command that requires it.
  *
  * Precedence of the refusals, all `exit 1` with the envelope already flushed:
  *
@@ -94,34 +169,19 @@ export function parseTokenOption(
   command: string,
   output: OutputEmitter,
 ): OwnerToken | undefined {
-  if (raw.run !== undefined) {
-    output.error(
-      `--run is a read-only selector and cannot authorize rundown ${command}; pass --token <owner_token> alone.`,
-      'INVALID_SYNTAX',
-    );
-    output.flush();
-    process.exitCode = 1;
-    return undefined;
-  }
-  if (raw.token === undefined) {
-    output.error(tokenRequiredMessage(command), CLIErrorCodes.TOKEN_REQUIRED);
-    output.flush();
-    process.exitCode = 1;
-    return undefined;
-  }
-  try {
-    return parseOwnerToken(raw.token);
-  } catch (error) {
-    if (error instanceof InvalidRunSecretError) {
-      output.error(
-        'Invalid --token: expected an owner token of the form rdo_<43 base64url characters>.',
-        'INVALID_SYNTAX',
-      );
-      output.flush();
-      process.exitCode = 1;
+  const parsed = parseOptionalTokenOption(raw, command, output);
+  switch (parsed.kind) {
+    case 'present':
+      return parsed.token;
+    case 'absent':
+      refuse(output, tokenRequiredMessage(command), CLIErrorCodes.TOKEN_REQUIRED);
       return undefined;
+    case 'refused':
+      return undefined;
+    default: {
+      const _exhaustive: never = parsed;
+      return _exhaustive;
     }
-    throw error;
   }
 }
 

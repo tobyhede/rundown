@@ -16,9 +16,13 @@ import {
   type Substep,
   type Transitions,
 } from '@rundown-org/parser';
-import { findUnsupportedComposition, resolveOwnedRun } from '../../src/runbook/run-authority.js';
+import {
+  findUnsupportedComposition,
+  resolveOwnedRun,
+  RunbookCompositionUnsupportedError,
+} from '../../src/runbook/run-authority.js';
 import { RunbookStateManager } from '../../src/runbook/state.js';
-import { generateOwnerToken } from '../../src/runbook/run-secrets.js';
+import { generateOwnerToken, hashRunSecret } from '../../src/runbook/run-secrets.js';
 import { closeRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import { seedRun } from '../../src/testing/run-fixtures.js';
 
@@ -183,5 +187,62 @@ describe('findUnsupportedComposition', () => {
       ].join('\n'),
     );
     expect(findUnsupportedComposition(parsed.runbook.steps)).toEqual(['1.2', '1.3']);
+  });
+});
+
+describe('run creation refuses a composing runbook', () => {
+  // The gate lives at `RunbookStateManager.create`, the seam every run passes
+  // through, so no frontend can start a run whose substeps compose other
+  // runbooks: the compiled machine has no state to drive them.
+  let dir: string;
+  let manager: RunbookStateManager;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(path.join(tmpdir(), 'rd-run-authority-'));
+    manager = new RunbookStateManager(dir);
+  });
+
+  afterEach(async () => {
+    await closeRunbookStore(dir);
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  const composing = parseRunbookDocument(
+    [
+      '# Compose',
+      '## 1. Fan out',
+      '- PASS ALL COMPLETE',
+      '- FAIL ANY STOP',
+      '',
+      '### 1.1 Local',
+      '- PASS CONTINUE',
+      '',
+      'do work',
+      '',
+      '### 1.2 Delegated',
+      '- DELEGATE',
+      '- child.runbook.md',
+      '',
+      '### 1.3 Inline',
+      '- child.runbook.md',
+      '',
+    ].join('\n'),
+  ).runbook;
+
+  it('throws a typed refusal naming every composing substep and writes no run', async () => {
+    const created = manager.create({ source: 'project', path: 'compose.runbook.md' }, composing, {
+      runbookPath: 'compose.runbook.md',
+      ownerTokenHash: hashRunSecret(generateOwnerToken()),
+    });
+
+    await expect(created).rejects.toBeInstanceOf(RunbookCompositionUnsupportedError);
+    await expect(created).rejects.toMatchObject({ substeps: ['1.2', '1.3'] });
+    expect(await manager.listRunIds()).toEqual([]);
+  });
+
+  it('still creates a run for a runbook that composes nothing', async () => {
+    const seeded = await seedRun(dir);
+
+    expect(await manager.listRunIds()).toEqual([seeded.runId]);
   });
 });

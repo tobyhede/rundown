@@ -21,7 +21,7 @@ import { mockFn } from './typed-mocks.js';
 const DEFAULT_RUNBOOK_ID = brandRunIdForTest(`rd_${'6'.repeat(32)}`);
 const TOKEN = 'rdo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' as OwnerToken;
 
-/** The refusal half of a fenced navigation outcome, minus the applied arm. */
+/** The refusal half of a navigation mutation outcome, minus the applied arm. */
 type NavigationRefusal = Exclude<LifecycleNavigationMutationOutcome, { kind: 'applied' }>;
 
 // Mock @rundown-org/core. The real module is spread back so the token-option
@@ -94,6 +94,7 @@ const {
   buildGotoContext,
 } = await import('../../src/helpers/goto-workflow.js');
 const { buildLifecycleSeam } = await import('../../src/helpers/lifecycle-seam-factory.js');
+const { UNKNOWN_TOKEN_MESSAGE } = await import('../../src/helpers/token-option.js');
 
 const DEFAULT_TRANSITIONS: Transitions = {
   pass: { kind: 'pass', retry: 0, action: { type: 'COMPLETE' } },
@@ -640,6 +641,7 @@ describe('executeGoto', () => {
     readonly label: string;
     readonly outcome: NavigationRefusal;
     readonly code: string;
+    readonly error: string;
   }>([
     {
       label: 'a concurrent state change',
@@ -649,8 +651,16 @@ describe('executeGoto', () => {
         message: 'The run changed while this goto was deciding.',
       },
       code: 'CONCURRENT_MODIFICATION',
+      error: 'The run changed while this goto was deciding.',
     },
-  ])('returns $code when the fenced core mutation refuses with $label', async (refusal) => {
+    {
+      // Pruned by another process between token resolution and the save.
+      label: 'a run pruned before the save',
+      outcome: { kind: 'unknown_token' },
+      code: 'UNKNOWN_TOKEN',
+      error: UNKNOWN_TOKEN_MESSAGE,
+    },
+  ])('returns $code when the core mutation refuses with $label', async (refusal) => {
     const update = mockFn<RunbookStateManager['update']>();
     const runNavigationMutation = mockFn<RunbookLifecycleCommandService['runNavigationMutation']>();
     runNavigationMutation.mockResolvedValue(refusal.outcome);
@@ -676,10 +686,10 @@ describe('executeGoto', () => {
     expect(result.ok).toBe(false);
     if (!result.ok) {
       expect(result.code).toBe(refusal.code);
-      expect(result.error).toBe(refusal.outcome.message);
+      expect(result.error).toBe(refusal.error);
     }
-    // A refused navigation must not write: the fence owns the commit, so a CLI
-    // fallback write would be the shadow persistence path the fence replaced.
+    // A refused navigation must not write: core owns the commit, so a CLI
+    // fallback write would be a shadow persistence path.
     expect(update).not.toHaveBeenCalled();
   });
 

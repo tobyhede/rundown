@@ -41,9 +41,12 @@ describe('prune command wiring', () => {
         '--inactive',
         '--all',
         '--token',
+        '--run',
         '--text',
       ].sort(),
     );
+    // `--run` is accepted only so it can be refused INVALID_SYNTAX.
+    expect(byLong.get('--run')?.hidden).toBe(true);
     expect(byLong.get('--dry-run')?.description).toBe(
       'Show what would be removed without deleting',
     );
@@ -419,6 +422,31 @@ describe('prune command', () => {
       const output = JSON.parse(result.stdout);
       expect(output.code).toBe('INVALID_SYNTAX');
       expect(String(output.error)).not.toContain('not-a-token');
+    });
+
+    it('refuses --run alongside --token with INVALID_SYNTAX and prunes nothing', async () => {
+      const { runId, token } = await startRunning();
+
+      const result = await runCliInProcess(['prune', '--token', token, '--run', runId], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const output = JSON.parse(result.stdout);
+      expect(output.kind).toBe('error');
+      expect(output.code).toBe('INVALID_SYNTAX');
+      expect(String(output.error)).toContain('--run is a read-only selector');
+      expect(await listRunbookStates(workspace)).toEqual([`${runId}.json`]);
+    });
+
+    it('refuses --run as prune authority with INVALID_SYNTAX and prunes nothing', async () => {
+      const { runId } = await startRunning();
+
+      const result = await runCliInProcess(['prune', '--run', runId], workspace);
+
+      expect(result.exitCode).toBe(1);
+      const output = JSON.parse(result.stdout);
+      expect(output.kind).toBe('error');
+      expect(output.code).toBe('INVALID_SYNTAX');
+      expect(await listRunbookStates(workspace)).toEqual([`${runId}.json`]);
     });
 
     it('honours --dry-run for the token’s run', async () => {

@@ -188,6 +188,7 @@ export {
 export {
   findUnsupportedComposition,
   resolveOwnedRun,
+  RunbookCompositionUnsupportedError,
   type FinishedLifecycle,
   type OwnedRun,
   type OwnedRunResolution,

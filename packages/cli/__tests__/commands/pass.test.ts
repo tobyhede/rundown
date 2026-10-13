@@ -512,5 +512,30 @@ This step stops on pass.
       expect(result.exitCode).toBe(1);
       expect(result.stderr).toContain('--index requires --step');
     });
+
+    it('refuses a non-positive --index with INVALID_SYNTAX and writes nothing', async () => {
+      await start('runbooks/simple.runbook.md');
+
+      const result = await pass('1', '--index', '0');
+
+      expect(result.exitCode).toBe(1);
+      const envelope = errorEnvelope(result.stdout);
+      expect(envelope?.code).toBe('INVALID_SYNTAX');
+      expect(String(envelope?.error)).toContain('Invalid --index value: "0"');
+      expect(validateSchema(ErrorResponseSchema, envelope)).toEqual({ valid: true, errors: [] });
+      expect((await readRunbookState(workspace, runId))?.step).toBe('1');
+    });
+
+    it('refuses an --index that conflicts with the AT in --step with CONFLICTING_INDEX', async () => {
+      await start('runbooks/simple.runbook.md');
+
+      const result = await pass('1.3.1', '--index', '2');
+
+      expect(result.exitCode).toBe(1);
+      const envelope = errorEnvelope(result.stdout);
+      expect(envelope?.code).toBe('CONFLICTING_INDEX');
+      expect(validateSchema(ErrorResponseSchema, envelope)).toEqual({ valid: true, errors: [] });
+      expect((await readRunbookState(workspace, runId))?.step).toBe('1');
+    });
   });
 });

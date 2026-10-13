@@ -52,10 +52,7 @@ export function registerStatusCommand(program: Command): void {
           }
 
           const states = await manager.list();
-          output.detail(
-            buildRunListStatus(states, cwd) as unknown as Record<string, unknown>,
-            'status',
-          );
+          output.detail(buildRunListStatus(states) as unknown as Record<string, unknown>, 'status');
           output.flush();
         },
         { text: options.text },

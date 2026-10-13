@@ -294,14 +294,14 @@ Usage: rundown prune [options]
 Remove run state (does not delete runbook files)
 
 Options:
+  --token <token>  Owner token of the run to mutate (owner_token from
+                   runbook_started); deletes that one running run
   --dry-run        Show what would be removed without deleting
   --completed      Prune successfully completed run state
   --stopped        Prune stopped (aborted/failed) run state
   --active         Prune running run state (each running run needs its --token)
   --inactive       Prune invalid or abandoned run state
   --all            Prune all run state
-  --token <token>  Owner token of the run to mutate (owner_token from
-                   runbook_started); deletes that one running run
   --text           Output as human-readable text
   -h, --help       display help for command
 ```

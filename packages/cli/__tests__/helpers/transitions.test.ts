@@ -315,14 +315,40 @@ describe('runSeamTransition — explicit --step target', () => {
     );
   });
 
-  it('refuses a malformed --index before reaching the seam', async () => {
-    await expect(
-      runSeamTransition(makeOutput(), '/cwd', createPassTransitionConfig(), {
-        token: TOKEN,
-        step: '1',
-        index: 'zero',
-      }),
-    ).rejects.toMatchObject({ code: 'INVALID_SYNTAX' });
+  it('refuses a malformed --index with INVALID_SYNTAX before resolving the token', async () => {
+    const output = makeOutput();
+
+    const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig(), {
+      token: TOKEN,
+      step: '1',
+      index: 'zero',
+    });
+
+    expect(result).toEqual({ exitError: true });
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(output.error).toHaveBeenCalledWith(
+      'Invalid --index value: "zero". Must be a positive integer (>= 1).',
+      'INVALID_SYNTAX',
+    );
+    expect(mockResolveOwnedRun).not.toHaveBeenCalled();
+    expect(mockRunTransition).not.toHaveBeenCalled();
+  });
+
+  it('refuses an --index conflicting with the AT in --step with CONFLICTING_INDEX', async () => {
+    const output = makeOutput();
+
+    const result = await runSeamTransition(output, '/cwd', createPassTransitionConfig(), {
+      token: TOKEN,
+      step: '1.3.1',
+      index: '2',
+    });
+
+    expect(result).toEqual({ exitError: true });
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(output.error).toHaveBeenCalledWith(
+      '--index 2 conflicts with AT 3 from step ID',
+      'CONFLICTING_INDEX',
+    );
     expect(mockRunTransition).not.toHaveBeenCalled();
   });
 

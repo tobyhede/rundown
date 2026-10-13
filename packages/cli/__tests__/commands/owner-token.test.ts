@@ -10,7 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { OwnerTokenSchema } from '@rundown-org/core';
+import { OwnerTokenSchema, RunbookStateManager } from '@rundown-org/core';
 import {
   createTestWorkspace,
   parseConcatenatedJson,
@@ -163,6 +163,9 @@ describe('owner token command seam (#901)', () => {
       expect(String(error?.error)).toContain('1.1');
       expect(String(error?.error)).toContain('#903');
       expect(String(error?.error)).toContain('#904');
+      // Refused by core before any row is written, and no token is printed.
+      expect(result.stdout).not.toMatch(/rdo_/);
+      expect(await new RunbookStateManager(workspace.cwd).listRunIds()).toEqual([]);
     });
 
     it('refuses a DELEGATE runbook as RUNBOOK_COMPOSITION_UNSUPPORTED', async () => {

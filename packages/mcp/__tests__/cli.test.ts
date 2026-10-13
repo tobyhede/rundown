@@ -157,6 +157,37 @@ describe('runCli', () => {
     });
   });
 
+  it('redacts the Owner Token from an execFile error message that echoes argv', async () => {
+    const token = `rdo_${'A'.repeat(43)}`;
+    // A 30s timeout kill: Node's execFile error embeds the full argv, and no output arrived.
+    const error = new Error(`Command failed: npx --no rundown pass --token ${token} --step 2`);
+    execFileAsync.mockRejectedValue(error);
+
+    const result = await runCli(['pass', '--token', token, '--step', '2']);
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Command failed: npx --no rundown pass --token rdo_[redacted] --step 2',
+    });
+    expect(JSON.stringify(result)).not.toContain(token);
+  });
+
+  it('redacts the Owner Token from a raw-text stderr fallback', async () => {
+    const token = `rdo_${'B'.repeat(43)}`;
+    const error = new Error('failed') as Error & { stdout?: string; stderr?: string };
+    error.stdout = '';
+    error.stderr = `npm error could not determine executable for: rundown pass --token ${token}\n`;
+    execFileAsync.mockRejectedValue(error);
+
+    const result = await runCli(['pass', '--token', token]);
+
+    expect(result).toEqual({
+      success: false,
+      error: 'npm error could not determine executable for: rundown pass --token rdo_[redacted]',
+    });
+    expect(JSON.stringify(result)).not.toContain(token);
+  });
+
   it('handles primitive exec rejections gracefully', async () => {
     execFileAsync.mockRejectedValue('boom');
 

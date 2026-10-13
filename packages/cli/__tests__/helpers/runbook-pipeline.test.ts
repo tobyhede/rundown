@@ -40,7 +40,7 @@ const {
   inferFrameEntryFromState: realInferFrameEntryFromState,
   isJsonArrayStream: realIsJsonArrayStream,
   RunbookRefSchema: realRunbookRefSchema,
-  findUnsupportedComposition: realFindUnsupportedComposition,
+  RunbookCompositionUnsupportedError: RealRunbookCompositionUnsupportedError,
   generateOwnerToken: realGenerateOwnerToken,
   hashRunSecret: realHashRunSecret,
   redactRunSecret: realRedactRunSecret,
@@ -51,7 +51,7 @@ const RUN_ID_PATTERN = /^rd_[a-f0-9]{32}$/;
 const MOCK_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
 
 jest.unstable_mockModule('@rundown-org/core', () => ({
-  findUnsupportedComposition: realFindUnsupportedComposition,
+  RunbookCompositionUnsupportedError: RealRunbookCompositionUnsupportedError,
   generateOwnerToken: realGenerateOwnerToken,
   hashRunSecret: realHashRunSecret,
   redactRunSecret: realRedactRunSecret,
@@ -1800,115 +1800,16 @@ describe('prepareRunbook', () => {
   });
 });
 
-describe('prepareRunnableRunbook — composition refusal (#901)', () => {
-  // Core decides what composes (`findUnsupportedComposition`); the CLI only
-  // renders the ids it names, so the real predicate runs here.
+describe('prepareRunbook — composition (#901)', () => {
+  // Whether a composing runbook may start is core's decision, made where the
+  // run would be created (`RunbookStateManager.create`); see the startRunbook
+  // composition test. Read-only preparation never reaches that seam.
   beforeEach(() => {
     jest.mocked(resolveRunbookFile).mockResolvedValue({
       path: '/test/compose.runbook.md',
       source: 'project',
       sourceRoot: '/test',
     });
-  });
-
-  it('refuses a runbook-list substep as RUNBOOK_COMPOSITION_UNSUPPORTED naming the substep', async () => {
-    jest.mocked(parser.parseRunbookDocument).mockReturnValue(
-      mockParseResult({
-        runbook: {
-          steps: [
-            makeStep({
-              name: '1',
-              substeps: [
-                { id: '1', description: 'Local' },
-                { id: '2', description: 'Composes', runbooks: ['child.runbook.md'] },
-              ],
-            }),
-          ],
-        },
-      }),
-    );
-
-    const result = await prepareRunnableRunbook('compose.runbook.md', {}, '/test');
-
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('expected a refusal');
-    expect(result.code).toBe('RUNBOOK_COMPOSITION_UNSUPPORTED');
-    expect(result.details).toEqual({ runbook: 'compose.runbook.md', substeps: ['1.2'] });
-    expect(result.error).toContain('1.2');
-    expect(result.error).toContain('#903');
-    expect(result.error).toContain('#904');
-  });
-
-  it('refuses a DELEGATE substep as RUNBOOK_COMPOSITION_UNSUPPORTED', async () => {
-    jest.mocked(parser.parseRunbookDocument).mockReturnValue(
-      mockParseResult({
-        runbook: {
-          steps: [
-            makeStep({
-              name: '2',
-              substeps: [{ id: '1', description: 'Delegated', delegate: true }],
-            }),
-          ],
-        },
-      }),
-    );
-
-    const result = await prepareRunnableRunbook('compose.runbook.md', {}, '/test');
-
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('expected a refusal');
-    expect(result.code).toBe('RUNBOOK_COMPOSITION_UNSUPPORTED');
-    expect(result.details).toEqual({ runbook: 'compose.runbook.md', substeps: ['2.1'] });
-  });
-
-  it('lists every composing substep in document order', async () => {
-    jest.mocked(parser.parseRunbookDocument).mockReturnValue(
-      mockParseResult({
-        runbook: {
-          steps: [
-            makeStep({
-              name: '1',
-              substeps: [
-                { id: '1', description: 'A', delegate: true },
-                { id: '2', description: 'B', runbooks: ['x.runbook.md'] },
-              ],
-            }),
-            makeStep({ name: '2' }),
-          ],
-        },
-      }),
-    );
-
-    const result = await prepareRunnableRunbook('compose.runbook.md', {}, '/test');
-
-    expect(result.ok).toBe(false);
-    if (result.ok) throw new Error('expected a refusal');
-    expect(result.details).toEqual({
-      runbook: 'compose.runbook.md',
-      substeps: ['1.1', '1.2'],
-    });
-  });
-
-  it('accepts a runbook whose substeps compose nothing', async () => {
-    jest.mocked(parser.parseRunbookDocument).mockReturnValue(
-      mockParseResult({
-        runbook: {
-          steps: [
-            makeStep({
-              name: '1',
-              substeps: [
-                { id: '1', description: 'Local' },
-                { id: '2', description: 'Also local', runbooks: [] },
-              ],
-            }),
-          ],
-        },
-      }),
-    );
-
-    const result = await prepareRunnableRunbook('compose.runbook.md', {}, '/test');
-
-    expect(result.ok).toBe(true);
   });
 
   it('still resolves a composing runbook for read-only preparation (rundown resolve)', async () => {
@@ -2100,6 +2001,40 @@ describe('startRunbook', () => {
     // Nothing was created, so nothing is deleted.
     // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
     expect(ctx.manager.delete).not.toHaveBeenCalled();
+  });
+
+  it("renders core's composition refusal as RUNBOOK_COMPOSITION_UNSUPPORTED and creates nothing", async () => {
+    // Core refuses at `create`, before writing a row; the CLI only renders the
+    // substeps the refusal names, with the text docs/spec/cli-output.md quotes.
+    const runId = brandRunIdForTest(`rd_${'6'.repeat(32)}`);
+    const mockInitialize = mockFn<RunbookActorService['initializeState']>();
+    const ctx = makeRunPipelineContext({
+      manager: {
+        create: mockFn<RunbookStateManager['create']>().mockRejectedValue(
+          new RealRunbookCompositionUnsupportedError(['1.1', '2.3']),
+        ),
+        delete: mockFn<RunbookStateManager['delete']>(),
+      },
+      actorService: { initializeState: mockInitialize },
+    });
+
+    const result = await startRunbook(ctx, prepared(runId), {
+      file: 'runbooks/parent.runbook.md',
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      reason: 'composition-unsupported',
+      error:
+        'Runbook composes other runbooks at 1.1, 2.3; this build runs standalone runbooks only. ' +
+        'Inline composition returns in #903 and delegation in #904.',
+      code: 'RUNBOOK_COMPOSITION_UNSUPPORTED',
+      details: { runbook: 'runbooks/parent.runbook.md', substeps: ['1.1', '2.3'] },
+    });
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(ctx.manager.delete).not.toHaveBeenCalled();
+    expect(mockInitialize).not.toHaveBeenCalled();
+    expect(mockDriveProgression).not.toHaveBeenCalled();
   });
 
   it('preserves the launch error when the best-effort cleanup itself fails', async () => {

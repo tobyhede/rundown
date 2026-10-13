@@ -106,6 +106,9 @@ export async function renderTerminalOutcome(
     case 'concurrent_modification':
       output.error(outcome.message, CONCURRENT_MODIFICATION_CODE, { runId: outcome.runId });
       return true;
+    case 'unknown_token':
+      // Pruned between token resolution and the save; see renderRefusal.
+      return renderOwnedRunRefusal(output, command, outcome);
     case 'applied': {
       const state = await manager.load(outcome.runId);
       if (state) output.metadata(buildMetadata(state));

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { getErrorMessage } from '@rundown-org/core';
+import { getErrorMessage, redactRunSecret } from '@rundown-org/core';
 
 /**
  * Promise-returning `execFile` adapter used by the MCP CLI facade.
@@ -148,10 +148,12 @@ export function createRunCli(execFileImpl: ExecFileAsync): (args: string[]) => P
         const stdout = typeof error.stdout === 'string' ? error.stdout.trim() : '';
         const message = stderr || stdout;
         if (message.length > 0) {
-          return { success: false, error: message };
+          return { success: false, error: redactRunSecret(message) };
         }
       }
-      return { success: false, error: getErrorMessage(error) };
+      // Node's execFile error message embeds the full argv, which carries the
+      // Owner Token on mutating commands; never echo it into a tool result.
+      return { success: false, error: redactRunSecret(getErrorMessage(error)) };
     }
   };
 }

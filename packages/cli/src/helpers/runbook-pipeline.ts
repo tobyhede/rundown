@@ -29,7 +29,7 @@ import {
   type RunProgressionDirective,
   type RunProgressionOutcome,
   progressionDirectiveForStartedRun,
-  findUnsupportedComposition,
+  RunbookCompositionUnsupportedError,
   generateOwnerToken,
   generateRunId,
   hashRunSecret,
@@ -153,13 +153,27 @@ function deriveClaudePluginRoot(sourceRoot: string): string {
 }
 
 /** Failure produced while initializing a runbook launch. */
-export interface RunbookStartFailure {
-  ok: false;
-  reason: 'launch-failed';
-  error: string;
-  code: typeof ErrorCodes.ENGINE_INIT_FAILED.code;
-  details: { runbookName: string };
-}
+export type RunbookStartFailure =
+  | {
+      ok: false;
+      reason: 'launch-failed';
+      error: string;
+      code: typeof ErrorCodes.ENGINE_INIT_FAILED.code;
+      details: { runbookName: string };
+    }
+  | {
+      /**
+       * Core refused to create the run: the runbook composes other runbooks
+       * (a `DELEGATE` or runbook-list substep), which this build does not run.
+       * No run row was written. Inline composition returns in #903 and
+       * delegation in #904.
+       */
+      ok: false;
+      reason: 'composition-unsupported';
+      error: string;
+      code: 'RUNBOOK_COMPOSITION_UNSUPPORTED';
+      details: { runbook: string; substeps: readonly string[] };
+    };
 
 /** Result of starting a runbook execution loop via {@link startRunbook}. */
 export type RunbookStartResult =
@@ -277,15 +291,6 @@ export type PrepareFailure =
   | (PrepareFailureBase & {
       readonly code: 'ARTIFACT_CHANNEL_COLLISION' | 'INVALID_ARTIFACT_INPUT';
       readonly details: { readonly runbook: string; readonly variable: string };
-    })
-  | (PrepareFailureBase & {
-      /**
-       * The runbook composes other runbooks (a `DELEGATE` substep or a
-       * runbook-list substep), which this build does not run. Inline
-       * composition returns in #903 and delegation in #904.
-       */
-      readonly code: 'RUNBOOK_COMPOSITION_UNSUPPORTED';
-      readonly details: { readonly runbook: string; readonly substeps: readonly string[] };
     });
 
 /** Discriminated union result of {@link prepareRunbook}. */
@@ -768,23 +773,6 @@ async function prepareLoadedRunbook(
   const templateVars = parsedPreparation.templateVars;
   const unresolvedNames = parsedPreparation.unresolved;
 
-  // Core decides what composes; the CLI only renders the ids it names. Only a
-  // RUNNABLE preparation (`rundown run`) is refused: `rundown resolve` is a
-  // read-only inspection of the runbook and still resolves a composing one.
-  const composing = identity.kind === 'runnable' ? findUnsupportedComposition(runbook.steps) : [];
-  if (composing.length > 0) {
-    return {
-      ok: false,
-      error: `${describeUnsupportedComposition(composing)}. ${COMPOSITION_RETURNS}`,
-      code: 'RUNBOOK_COMPOSITION_UNSUPPORTED',
-      details: { runbook: displayName, substeps: composing },
-      variables: templateVars,
-      stats,
-      diagnostics,
-      warnings: allWarnings.length > 0 ? allWarnings : undefined,
-    };
-  }
-
   const preparedBaseFields = {
     filePath,
     source,
@@ -896,6 +884,17 @@ async function launchRunbook(
 
     launch = { state: initializedState, runbookSteps: [...runbook.steps], emitter };
   } catch (err) {
+    // Core's refusal to create a composing run: no row exists, so there is
+    // nothing to clean up; the CLI only renders the substeps core names.
+    if (err instanceof RunbookCompositionUnsupportedError) {
+      return {
+        ok: false,
+        reason: 'composition-unsupported',
+        error: `${describeUnsupportedComposition(err.substeps)}. ${COMPOSITION_RETURNS}`,
+        code: 'RUNBOOK_COMPOSITION_UNSUPPORTED',
+        details: { runbook: options.runbookName, substeps: err.substeps },
+      };
+    }
     if (stateId !== undefined) {
       try {
         await manager.delete(stateId);

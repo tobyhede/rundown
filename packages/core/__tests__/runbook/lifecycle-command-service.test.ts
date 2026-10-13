@@ -360,6 +360,19 @@ describe('RunbookLifecycleCommandService', () => {
       expect(persisted?.variables).toMatchObject({ raced: 'yes' });
       expect(await version(runId)).toBe(racedVersion);
     });
+
+    it('refuses unknown_token when the run is pruned between token resolution and the save', async () => {
+      const { runId, token } = await start(TWO_STEP);
+      const run = await owned(token);
+      // `rundown prune --token T` lands in another shell.
+      await manager.delete(runId);
+
+      const outcome = await seam.runTransition({ command: 'pass', run, target: { stepId: '1' } });
+
+      expect(outcome).toEqual({ kind: 'unknown_token' });
+      expect(await manager.load(runId)).toBeNull();
+      expect(await resolveOwnedRun(manager, token)).toEqual({ kind: 'unknown_token' });
+    });
   });
 
   describe('runTerminal', () => {
@@ -431,6 +444,17 @@ describe('RunbookLifecycleCommandService', () => {
       expect(save).toHaveBeenCalledTimes(1);
       expect((await manager.load(runId))?.lifecycle).toBe('running');
     });
+
+    it('refuses unknown_token when the run is pruned between token resolution and the save', async () => {
+      const { runId, token } = await start(TWO_STEP);
+      const run = await owned(token);
+      await manager.delete(runId);
+
+      const outcome = await seam.runTerminal({ command: 'stop', run });
+
+      expect(outcome).toEqual({ kind: 'unknown_token' });
+      expect(await manager.load(runId)).toBeNull();
+    });
   });
 
   describe('navigation', () => {
@@ -491,6 +515,22 @@ describe('RunbookLifecycleCommandService', () => {
       expect(outcome).toMatchObject({ kind: 'concurrent_modification', runId });
       expect(save).toHaveBeenCalledTimes(1);
       expect((await manager.load(runId))?.step).toBe('1');
+    });
+
+    it('refuses unknown_token when the run is pruned between resolution and the GOTO', async () => {
+      const { runId, token } = await start(TWO_STEP);
+      const run = await owned(token);
+      const allowed = await seam.resolveRunNavigation({ run });
+      if (allowed.kind !== 'allowed') throw new Error('expected allowed');
+      await manager.delete(runId);
+
+      const outcome = await seam.runNavigationMutation({
+        navigation: allowed.navigation,
+        target: { step: '2' },
+      });
+
+      expect(outcome).toEqual({ kind: 'unknown_token' });
+      expect(await manager.load(runId)).toBeNull();
     });
   });
 });

@@ -134,6 +134,58 @@ describe('status command', () => {
     expect(output.runs).toHaveLength(2);
   });
 
+  it('still lists every run when one run cannot be rendered, omitting only its total', async () => {
+    // R6: the list must not re-render every run's source to count steps, and
+    // one row whose stored source is unusable must degrade that row rather
+    // than take down the whole listing.
+    await writeFile(
+      join(workspace.cwd, 'for-bound.runbook.md'),
+      `# For Bound
+
+## 1. Loop
+- FOR item IN 1 TO {{N}}
+
+### 1.1 Handle
+Handle {{item}}.
+
+## 2. Done
+Finish.
+`,
+    );
+    const healthy = await startPrompted(workspace);
+    const missingSrc = await startPrompted(workspace, 'runbooks/retry.runbook.md');
+    const badBound = await startPrompted(workspace, 'for-bound.runbook.md', ' --input N=2');
+
+    await patchPersistedRunState(workspace.cwd, missingSrc.runId, (current) => {
+      const { runbookSrc: _dropped, ...rest } = current;
+      return rest;
+    });
+    // A FOR bound that no longer resolves makes rendering throw; counting the
+    // numbered steps needs only the parse.
+    await patchPersistedRunState(workspace.cwd, badBound.runId, (current) => ({
+      ...current,
+      templateVars: { ...(current.templateVars as Record<string, unknown>), N: 'not-a-number' },
+    }));
+
+    const result = await runCliInProcess('status', workspace);
+
+    expect(result.exitCode).toBe(0);
+    const output = JSON.parse(result.stdout);
+    expect(validateStatusOutput(output)).toEqual({ valid: true, errors: [] });
+    expect(output.runs).toHaveLength(3);
+    const byId = new Map(
+      (output.runs as { id: string }[]).map((run) => [run.id, run as Record<string, unknown>]),
+    );
+    expect(byId.get(healthy.runId)).toMatchObject({ status: 'running', step: '1', total: 2 });
+    expect(byId.get(missingSrc.runId)).toMatchObject({
+      runbook: 'runbooks/retry.runbook.md',
+      status: 'running',
+      step: '1',
+    });
+    expect(byId.get(missingSrc.runId)).not.toHaveProperty('total');
+    expect(byId.get(badBound.runId)).toMatchObject({ status: 'running', step: '1.1', total: 2 });
+  });
+
   it('reports a finished run as inactive with its lifecycle in detail form', async () => {
     const { runId, token } = await startPrompted(workspace);
     const complete = await runCliInProcess(`complete --token ${token}`, workspace);

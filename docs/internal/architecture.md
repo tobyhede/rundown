@@ -185,7 +185,7 @@ After `__resolve-artifacts` (or `__resolve-iteration`, or directly) every leaf
 rests in `idle`. A DELEGATE or runbook-list substep compiles to the same leaf as
 any other: there is no issuance or launch-intent child and no completion
 mailbox, and its PASS/FAIL is sent directly by the lifecycle seam after `--step`
-validation. `rundown run` refuses such runbooks
+validation. Core refuses to create a run of such a runbook
 (`RUNBOOK_COMPOSITION_UNSUPPORTED`; see
 [§ Lifecycle Command Seam](#lifecycle-command-seam)).
 
@@ -478,10 +478,13 @@ nothing else. The plaintext token appears in exactly one place, the
 `runbook_started` event, and never in a message, a row, or a refusal.
 
 The same module holds `findUnsupportedComposition(steps)`, the decision behind
-`RUNBOOK_COMPOSITION_UNSUPPORTED`: `rundown run` refuses a runbook whose
-substeps are authored `DELEGATE` or carry a runbook list until inline
-composition (#903) and delegation (#904) return on this model. The CLI only
-renders the ids core names.
+`RUNBOOK_COMPOSITION_UNSUPPORTED`. `RunbookStateManager.create` applies it
+before minting a run id or writing a row, throwing
+`RunbookCompositionUnsupportedError` for a runbook whose substeps are authored
+`DELEGATE` or carry a runbook list, until inline composition (#903) and
+delegation (#904) return on this model. Every front end that creates a run is
+refused the same way; the CLI only renders the ids core names, and
+`rundown check` warns from the same predicate.
 
 ### What the seam does
 
@@ -625,7 +628,7 @@ One row per run. Besides `id`, `created_at` and `updated_at`, it carries:
 | --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `lifecycle`                                                                       | `running`, `completed`, `stopped`, or `abandoned`, pinned by a `CHECK`. Its home is this column, not the state JSON.                                          |
 | `owner_token_hash`                                                                | `UNIQUE` SHA-256 hash of the Owner Token. The token itself is printed once on `runbook_started` and never stored; this hash is the only authority lookup key. |
-| `parent_run_id`, `parent_step`, `parent_frame_key`, `parent_entry`, `parent_kind` | Child linkage, nullable all-or-none under a `CHECK`. Nothing writes it today: composing runbooks are refused at `rundown run`.                                |
+| `parent_run_id`, `parent_step`, `parent_frame_key`, `parent_entry`, `parent_kind` | Child linkage, nullable all-or-none under a `CHECK`. Nothing writes it today: core refuses to create a run of a composing runbook.                            |
 | `lease_attempt`, `lease_pid`, `lease_start_id`, `lease_started_at`                | Execution lease, nullable all-or-none under a `CHECK`. Nothing writes it today.                                                                               |
 | `state_version`                                                                   | Lost-update counter, bumped only by the `runs_bump_state_version` trigger on every `state_json` write.                                                        |
 | `state_json`                                                                      | The authoritative `RunbookState` (minus `lifecycle`), including the opaque XState `snapshot`.                                                                 |

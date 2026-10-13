@@ -12,6 +12,7 @@ import {
   countNumberedSteps,
   isArtifactValue,
   mergeEffectiveVars,
+  parseRunbook,
   renderArtifactValue,
   toPublicArtifactVarValue,
   WORK_DIR,
@@ -145,24 +146,47 @@ export function buildInactiveStatus(): StatusOutputData {
 }
 
 /**
+ * Count a persisted run's numbered steps from its stored source.
+ *
+ * Parses only: the count is fixed by the source's `## N.` headings, and
+ * template rendering (variables, helpers, FOR bounds) never adds or removes a
+ * top-level step, so a list row does not pay for — or fail on — a render.
+ * A run whose source is missing or no longer parses has no total; its row
+ * omits the field instead of taking down the listing.
+ *
+ * @param state - The persisted run
+ * @returns The numbered step count, or undefined when the source is unusable
+ */
+function countPersistedSteps(state: RunbookState): number | undefined {
+  if (state.runbookSrc === undefined) return undefined;
+  try {
+    return countNumberedSteps(parseRunbook(state.runbookSrc));
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Build the bare `rundown status` list: one entry per persisted run with its
  * id, runbook, lifecycle and position. Never a token.
  *
+ * Each row's step total comes from parsing the run's stored source, never from
+ * rendering it, and a run whose source cannot be parsed omits `total` rather
+ * than failing the listing.
+ *
  * @param states - Every persisted run, as the manager lists them
- * @param cwd - Current working directory (for step-total resolution)
  * @returns StatusOutputData whose `runs` carries the list
  */
-export function buildRunListStatus(states: readonly RunbookState[], cwd: string): StatusOutputData {
+export function buildRunListStatus(states: readonly RunbookState[]): StatusOutputData {
   const runs: ActiveRunbookEntry[] = states.map((state) => {
-    const steps = getRunbookFromState(state, cwd);
-    const total = countNumberedSteps(steps);
-    const position = buildStepPosition(state.step, total, state.substep, state.forStack);
+    const total = countPersistedSteps(state);
+    const step = state.substep ? `${state.step}.${state.substep}` : state.step;
     return {
       id: state.id,
       runbook: state.runbook.path,
       status: getStatus(state),
-      step: position.substep ? `${position.current}.${position.substep}` : position.current,
-      total,
+      step,
+      ...(total !== undefined ? { total } : {}),
       ...(state.title !== undefined ? { title: state.title } : {}),
     };
   });

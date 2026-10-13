@@ -8,8 +8,9 @@
  *   a later save must name; a run id authorizes nothing.
  * - {@link findUnsupportedComposition} — whether a runbook composes other
  *   runbooks, which T1 does not run. Inline composition returns in #903 and
- *   delegation in #904; until then `rundown run` refuses such a runbook and
- *   the CLI only renders the ids this function names.
+ *   delegation in #904; until then `RunbookStateManager.create` refuses such a
+ *   runbook with {@link RunbookCompositionUnsupportedError} before writing a
+ *   row, and a frontend only renders the ids the refusal names.
  *
  * @module runbook/run-authority
  */
@@ -114,4 +115,30 @@ export function findUnsupportedComposition(
     }
   }
   return ids;
+}
+
+/**
+ * Raised when a run would be created for a runbook that composes other
+ * runbooks, which T1 does not run (inline composition returns in #903,
+ * delegation in #904).
+ *
+ * Thrown by {@link RunbookStateManager.create} before any store access, so a
+ * refused runbook leaves no run row behind. Frontends render it; they do not
+ * decide it.
+ */
+export class RunbookCompositionUnsupportedError extends Error {
+  /** Qualified ids of the composing substeps, in document order. */
+  readonly substeps: readonly string[];
+
+  /**
+   * Construct a composition refusal.
+   *
+   * @param substeps - Qualified composing substep ids from
+   *   {@link findUnsupportedComposition}; never empty
+   */
+  constructor(substeps: readonly string[]) {
+    super(`Runbook composes other runbooks at ${substeps.join(', ')}`);
+    this.name = 'RunbookCompositionUnsupportedError';
+    this.substeps = substeps;
+  }
 }

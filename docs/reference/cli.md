@@ -630,7 +630,9 @@ is deleted only when `--token <owner_token>` names it, one run per invocation;
 `--active` or `--all` without a token keeps each running run and reports it with
 `retained: "token required"`. Runs whose persisted state this build cannot read
 are reached only by `--inactive` or `--all` (they are listed with
-`status: "invalid"`); a bare `rundown prune` never sees them.
+`status: "invalid"`); a bare `rundown prune` never sees them. `prune` takes no
+`--run`: naming a run id is refused `INVALID_SYNTAX`, since a run id is never
+authority to delete.
 
 ### Testing and Utilities
 

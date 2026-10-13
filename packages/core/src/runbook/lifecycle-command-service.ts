@@ -9,7 +9,9 @@
  * version that moved is refused as `concurrent_modification` and never
  * retried; a run that already finished is refused as `run_finished`; a
  * `--step` / `--index` that does not confirm the current position is refused
- * as `invalid_step_target`. Nothing is written on any refusal.
+ * as `invalid_step_target`; a run deleted (pruned) between token resolution
+ * and the save is refused as `unknown_token`, exactly what re-resolving the
+ * token would now answer. Nothing is written on any refusal.
  *
  * The seam returns transition-observation events plus a Run Progression
  * directive as data. It does not spawn processes or render.
@@ -24,7 +26,7 @@ import {
   mintRunProgressionAuthority,
   type RunProgressionAuthority,
 } from './run-progression-authority.js';
-import type { FinishedLifecycle, OwnedRun } from './run-authority.js';
+import type { FinishedLifecycle, OwnedRun, OwnedRunResolution } from './run-authority.js';
 import type { RunId } from './run-id.js';
 import type { RunbookStateManager } from './state.js';
 import {
@@ -98,6 +100,18 @@ export interface ConcurrentModificationRefusal {
   readonly message: string;
 }
 
+/**
+ * Refusal: the run the Owner Token resolved to was deleted before the save.
+ *
+ * Another process pruned the run (`rundown prune --token`, `prune
+ * --inactive`) between the frontend's token resolution and this command's
+ * conditional save. Nothing was written. The arm is the very value
+ * `resolveOwnedRun` now returns for the same token, so a frontend renders
+ * it the way it renders an unresolvable token — re-issuing the command cannot
+ * succeed, which is what separates it from `concurrent_modification`.
+ */
+export type UnknownTokenRefusal = Extract<OwnedRunResolution, { readonly kind: 'unknown_token' }>;
+
 /** Input to {@link RunbookLifecycleCommandService.runTransition}. */
 export interface LifecycleTransitionInput {
   /**
@@ -124,6 +138,7 @@ export type LifecycleTransitionOutcome =
   | InvalidStepTargetRefusal
   | RunFinishedRefusal
   | ConcurrentModificationRefusal
+  | UnknownTokenRefusal
   | {
       readonly kind: 'applied';
       /** Run the transition was applied to. */
@@ -154,6 +169,7 @@ export interface LifecycleTerminalInput {
 export type LifecycleTerminalOutcome =
   | RunFinishedRefusal
   | ConcurrentModificationRefusal
+  | UnknownTokenRefusal
   | {
       readonly kind: 'applied';
       /** The run forced terminal. */
@@ -211,6 +227,7 @@ export interface LifecycleNavigationMutationInput {
 /** Result of applying an already-authorized GOTO. */
 export type LifecycleNavigationMutationOutcome =
   | ConcurrentModificationRefusal
+  | UnknownTokenRefusal
   | {
       readonly kind: 'applied';
       readonly runId: RunId;
@@ -488,8 +505,8 @@ export class RunbookLifecycleCommandService {
    * Apply an authorized GOTO with one conditional save.
    *
    * @param input - Core-verified navigation capability and validated target.
-   * @returns Applied transition data or the `concurrent_modification` refusal.
-   * @throws {Error} When the run vanished between authorization and the save.
+   * @returns Applied transition data, or the `concurrent_modification` /
+   *   `unknown_token` refusal.
    */
   async runNavigationMutation(
     input: LifecycleNavigationMutationInput,
@@ -520,17 +537,23 @@ export class RunbookLifecycleCommandService {
     };
   }
 
-  // One refusal shape for every save that did not commit. A missing run here
-  // is an invariant: the owned run was read moments ago and nothing in this
-  // process deletes it, so a vanished row is thrown rather than rendered.
+  // The refusal for each save that did not commit. A missing row is another
+  // process pruning the run after the frontend resolved its token: a refusal,
+  // not a crash, and the token no longer resolves.
   #refuseSave(
     kind: 'concurrent_modification' | 'missing',
     runId: RunId,
-  ): ConcurrentModificationRefusal {
-    if (kind === 'missing') {
-      throw new Error(`Run ${runId} vanished before its lifecycle command could be saved`);
+  ): ConcurrentModificationRefusal | UnknownTokenRefusal {
+    switch (kind) {
+      case 'missing':
+        return { kind: 'unknown_token' };
+      case 'concurrent_modification':
+        return concurrentModification(runId);
+      default: {
+        const _exhaustive: never = kind;
+        throw new Error(`Unsupported save refusal: ${String(_exhaustive)}`);
+      }
     }
-    return concurrentModification(runId);
   }
 
   // Find a step by name, throwing on a corrupted state/steps mismatch.

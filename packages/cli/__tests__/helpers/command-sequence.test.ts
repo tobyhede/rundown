@@ -1304,17 +1304,91 @@ describe('executeCommandSequence timings', () => {
     ]);
   });
 
-  it('hard-fails non-expected rd commands after a terminal result', async () => {
-    const cliPath = await writeFakeCli();
+  it("fails a stale command on a finished run through the CLI's own refusal", async () => {
+    const token = `rdo_${'A'.repeat(43)}`;
+    const commandExecutor = {
+      runRd: async (args: string[]) => {
+        if (args[0] === 'run') {
+          return {
+            stdout: `${JSON.stringify({ type: 'runbook_started', runbookId: 'rd_a', owner_token: token })}\n`,
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        if (args[0] === 'complete') {
+          return {
+            stdout: `${JSON.stringify({ type: 'runbook_completed', runbookId: 'rd_a' })}\n`,
+            stderr: '',
+            exitCode: 0,
+          };
+        }
+        // The CLI refuses a token whose run already finished: RD-303, exit 1.
+        return {
+          stdout: `${JSON.stringify({ kind: 'error', code: 'RD-303', error: 'run finished', command: args[0] })}\n`,
+          stderr: '',
+          exitCode: 1,
+        };
+      },
+    };
+    const base = ['rundown run a.md', 'rundown complete --token ${TOKEN}'];
 
     await expect(
       executeCommandSequence({
-        commands: ['rd pass', 'rd pass'],
+        commands: [...base, 'rundown pass --token ${TOKEN}'],
         cwd: process.cwd(),
-        cliPath,
+        cliPath: '/unused/cli.js',
         quiet: true,
+        commandExecutor,
       }),
-    ).rejects.toThrow('Scenario command ran after terminal result COMPLETE: rd pass');
+    ).rejects.toThrow('Command failed with exit code 1: rundown pass --token rdo_[redacted]');
+
+    const negative = await executeCommandSequence({
+      commands: [...base, '! rundown pass --token ${TOKEN}'],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      commandExecutor,
+    });
+    expect(negative.terminalResult).toBe('COMPLETE');
+    expect(negative.errors).toEqual([expect.objectContaining({ code: 'RD-303', command: 'pass' })]);
+  });
+
+  it('drives a second run by its own token after the first run completes', async () => {
+    const tokenA = `rdo_${'A'.repeat(43)}`;
+    const tokenB = `rdo_${'B'.repeat(43)}`;
+    const calls: string[][] = [];
+
+    const result = await executeCommandSequence({
+      commands: [
+        'rundown run a.md',
+        'rundown run b.md',
+        'rundown complete --token ${TOKEN}',
+        'rundown pass --token ${TOKEN_2} --step 1',
+      ],
+      cwd: process.cwd(),
+      cliPath: '/unused/cli.js',
+      quiet: true,
+      commandExecutor: {
+        runRd: async (args) => {
+          calls.push(args);
+          const started = (runbookId: string, ownerToken: string): string =>
+            `${JSON.stringify({ type: 'runbook_started', runbookId, owner_token: ownerToken })}\n`;
+          const stdoutFor: Record<string, string> = {
+            'a.md': started('rd_a', tokenA),
+            'b.md': started('rd_b', tokenB),
+            complete: `${JSON.stringify({ type: 'runbook_completed', runbookId: 'rd_a' })}\n`,
+            pass: `${JSON.stringify({ type: 'step_entered', runbookId: 'rd_b', position: { current: '2' } })}\n`,
+          };
+          const key = args[0] === 'run' ? args[1] : args[0];
+          return { stdout: stdoutFor[key] ?? '', stderr: '', exitCode: 0 };
+        },
+      },
+    });
+
+    // The mutation against run B reached the CLI: run A finishing says
+    // nothing about run B under one writer per run.
+    expect(calls.at(-1)).toEqual(['pass', '--token', tokenB, '--step', '1']);
+    expect(result.capturedRunIds).toEqual(['rd_a', 'rd_b']);
   });
 
   it('hard-fails when a command references ${CAPTURE_ARTIFACT} but no resolver is provided', async () => {
@@ -1338,45 +1412,6 @@ describe('executeCommandSequence timings', () => {
     ).rejects.toThrow(/no resolveCapturedArtifact resolver was provided/);
     // The guard fires before dispatch, so the executor is never reached.
     expect(calls).toEqual([]);
-  });
-
-  it('allows default-active rd commands after an inline child runbook completion', async () => {
-    const calls: string[][] = [];
-
-    const result = await executeCommandSequence({
-      commands: ['rd run child.runbook.md --step 1.1', 'rd collect'],
-      cwd: process.cwd(),
-      cliPath: '/unused/cli.js',
-      quiet: true,
-      commandExecutor: {
-        runRd: async (args) => {
-          calls.push(args);
-          if (args[0] === 'run') {
-            return {
-              stdout: `${JSON.stringify({ type: 'runbook_completed', runbookId: 'rd_child' })}\n`,
-              stderr: '',
-              exitCode: 0,
-            };
-          }
-          return {
-            stdout: `${JSON.stringify({ type: 'runbook_completed', runbookId: 'rd_parent' })}\n`,
-            stderr: '',
-            exitCode: 0,
-          };
-        },
-      },
-    });
-
-    expect(calls).toEqual([['run', 'child.runbook.md', '--step', '1.1'], ['collect']]);
-    expect(result.terminalResult).toBe('COMPLETE');
-    expect(result.commandTimings).toEqual([
-      expect.objectContaining({
-        command: 'rd run child.runbook.md --step 1.1',
-        kind: 'rd',
-        exitCode: 0,
-      }),
-      expect.objectContaining({ command: 'rd collect', kind: 'rd', exitCode: 0 }),
-    ]);
   });
 
   it('allows intentional expected-failure rd commands after a terminal result', async () => {

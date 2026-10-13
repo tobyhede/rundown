@@ -262,12 +262,9 @@ export class RunbookStore {
   findRunByOwnerTokenHash(ownerTokenHash: SecretHash): Promise<VersionedRunState | null> {
     return this.driver.read((tx) => {
       const row = tx
-        .prepare('SELECT id FROM runs WHERE owner_token_hash = :hash')
-        .get<{ readonly id: string }>({ hash: ownerTokenHash });
-      if (row === undefined) {
-        return null;
-      }
-      return this.readRunWithVersion(tx, assertRunId(row.id));
+        .prepare(`SELECT ${VERSIONED_ROW_COLUMNS} FROM runs WHERE owner_token_hash = :hash`)
+        .get<VersionedRunRow>({ hash: ownerTokenHash });
+      return row === undefined ? null : this.validateVersionedRow(row);
     });
   }
 
@@ -415,13 +412,30 @@ export class RunbookStore {
    */
   private readRunWithVersion(tx: SqlReadTransaction, runId: RunId): VersionedRunState | null {
     const row = tx
-      .prepare('SELECT state_version FROM runs WHERE id = :id')
-      .get<{ readonly state_version: number }>({ id: runId });
-    if (row === undefined) {
-      return null;
-    }
-    const state = this.readRun(tx, runId);
-    return state === null ? null : { state, stateVersion: assertStateVersion(row.state_version) };
+      .prepare(`SELECT ${VERSIONED_ROW_COLUMNS} FROM runs WHERE id = :id`)
+      .get<VersionedRunRow>({ id: runId });
+    return row === undefined ? null : this.validateVersionedRow(row);
+  }
+
+  /**
+   * Validate one versioned row read in a single statement.
+   *
+   * The state and its version come from the same row read, so they cannot
+   * describe two different writes.
+   *
+   * @param row - The row as read.
+   * @returns The validated state and its version.
+   * @throws {LegacySnapshotError} When the row carries a deprecated dynamic-step
+   *   snapshot shape.
+   * @throws {InvalidRunbookStateError} When the row fails the persisted-state
+   *   gates or the structural parse.
+   */
+  private validateVersionedRow(row: VersionedRunRow): VersionedRunState {
+    const runId = assertRunId(row.id);
+    return {
+      state: this.validateRaw(assembleRaw(row), runId),
+      stateVersion: assertStateVersion(row.state_version),
+    };
   }
 
   /**
@@ -443,13 +457,40 @@ export class RunbookStore {
    */
   private readRun(tx: SqlReadTransaction, runId: RunId): RunbookState | null {
     const raw = readRunRaw(tx, runId);
-    if (raw === null) {
-      return null;
-    }
+    return raw === null ? null : this.validateRaw(raw, runId);
+  }
+
+  /**
+   * Gate and structurally parse an assembled run object.
+   *
+   * @param raw - The assembled, unvalidated state object.
+   * @param runId - Run the object was read for.
+   * @returns The validated run state.
+   * @throws {LegacySnapshotError} When the object carries a deprecated
+   *   dynamic-step snapshot shape.
+   * @throws {InvalidRunbookStateError} When the object fails the persisted-state
+   *   gates or the structural parse.
+   */
+  private validateRaw(raw: Record<string, unknown>, runId: RunId): RunbookState {
     assertLoadablePersistedRun(raw, runId);
     return parsePersistedRunState(raw, runId, this.stateSchema);
   }
 }
+
+/** Columns a versioned read selects: everything a validated, versioned state needs. */
+const VERSIONED_ROW_COLUMNS = 'id, state_version, lifecycle, state_json';
+
+/** One `runs` row as a versioned read selects it. */
+type VersionedRunRow = PersistedRunRow & {
+  readonly id: string;
+  readonly state_version: number;
+};
+
+/** The columns a run state is reassembled from. */
+type PersistedRunRow = {
+  readonly lifecycle: string;
+  readonly state_json: string;
+};
 
 /**
  * Read every run id in ascending order.
@@ -535,10 +576,19 @@ function writeStateAtVersion(
 function readRunRaw(tx: SqlReadTransaction, runId: RunId): Record<string, unknown> | null {
   const row = tx
     .prepare('SELECT lifecycle, state_json FROM runs WHERE id = :id')
-    .get<{ readonly lifecycle: string; readonly state_json: string }>({ id: runId });
-  if (row === undefined) {
-    return null;
-  }
+    .get<PersistedRunRow>({ id: runId });
+  return row === undefined ? null : assembleRaw(row);
+}
+
+/**
+ * Reassemble a run's full state object from its row, unvalidated: `state_json`
+ * plus the `lifecycle` column, whose home is outside the JSON.
+ *
+ * @param row - The row's state columns.
+ * @returns The assembled object.
+ * @throws {Error} When the lifecycle column holds an unknown value.
+ */
+function assembleRaw(row: PersistedRunRow): Record<string, unknown> {
   const raw = JSON.parse(row.state_json) as Record<string, unknown>;
   raw.lifecycle = assertLifecycle(row.lifecycle);
   return raw;

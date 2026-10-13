@@ -1,18 +1,17 @@
 // packages/cli/src/commands/prune.ts
 
 import type { Command } from 'commander';
-import {
-  InvalidRunSecretError,
-  RunbookStateManager,
-  hashRunSecret,
-  parseOwnerToken,
-  type OwnerToken,
-} from '@rundown-org/core';
+import { CLIErrorCodes, RunbookStateManager, hashRunSecret } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { getStatus } from '../helpers/status.js';
-import { TOKEN_OPTION_DESCRIPTION, UNKNOWN_TOKEN_MESSAGE } from '../helpers/token-option.js';
+import {
+  TOKEN_OPTION_DESCRIPTION,
+  UNKNOWN_TOKEN_MESSAGE,
+  parseOptionalTokenOption,
+  withTokenOption,
+} from '../helpers/token-option.js';
 
 async function listAllRunIds(cwd: string): Promise<string[]> {
   // Must include runs whose persisted state is INVALID — they are precisely what
@@ -30,6 +29,7 @@ interface PruneOptions {
   inactive?: boolean;
   all?: boolean;
   token?: string;
+  run?: string;
   text?: boolean;
 }
 
@@ -43,21 +43,23 @@ const TOKEN_REQUIRED_REASON = 'token required';
  * before. A RUNNING run is deleted only when `--token` names it — one run per
  * invocation, proven by its Owner Token. `--active` / `--all` without a token
  * skip running runs and report them retained with reason `token required`.
- * Invalid persisted rows prune with `--inactive` / `--all`.
+ * Invalid persisted rows prune with `--inactive` / `--all`. `--token` is
+ * parsed by the shared token option, so `--run` (a read-only selector) is
+ * refused `INVALID_SYNTAX` here as on every other mutating command.
  *
  * @param program - Commander program instance to register the command on
  */
 export function registerPruneCommand(program: Command): void {
-  program
-    .command('prune')
-    .description('Remove run state (does not delete runbook files)')
+  withTokenOption(
+    program.command('prune').description('Remove run state (does not delete runbook files)'),
+    `${TOKEN_OPTION_DESCRIPTION}; deletes that one running run`,
+  )
     .option('--dry-run', 'Show what would be removed without deleting')
     .option('--completed', 'Prune successfully completed run state')
     .option('--stopped', 'Prune stopped (aborted/failed) run state')
     .option('--active', 'Prune running run state (each running run needs its --token)')
     .option('--inactive', 'Prune invalid or abandoned run state')
     .option('--all', 'Prune all run state')
-    .option('--token <token>', `${TOKEN_OPTION_DESCRIPTION}; deletes that one running run`)
     .option('--text', 'Output as human-readable text')
     .action(async (options: PruneOptions) => {
       await withErrorHandling(
@@ -65,23 +67,9 @@ export function registerPruneCommand(program: Command): void {
           const cwd = getCwd();
           const output = new OutputEmitter({ text: options.text, command: 'prune' });
 
-          let token: OwnerToken | undefined;
-          if (options.token !== undefined) {
-            try {
-              token = parseOwnerToken(options.token);
-            } catch (error) {
-              if (error instanceof InvalidRunSecretError) {
-                output.error(
-                  'Invalid --token: expected an owner token of the form rdo_<43 base64url characters>.',
-                  'INVALID_SYNTAX',
-                );
-                output.flush();
-                process.exitCode = 1;
-                return;
-              }
-              throw error;
-            }
-          }
+          const parsedToken = parseOptionalTokenOption(options, 'prune', output);
+          if (parsedToken.kind === 'refused') return;
+          const token = parsedToken.kind === 'present' ? parsedToken.token : undefined;
 
           const manager = new RunbookStateManager(cwd);
           const states = await manager.list();
@@ -91,7 +79,7 @@ export function registerPruneCommand(program: Command): void {
           const owned =
             token === undefined ? null : await manager.findByOwnerTokenHash(hashRunSecret(token));
           if (token !== undefined && owned === null) {
-            output.error(UNKNOWN_TOKEN_MESSAGE, 'UNKNOWN_TOKEN');
+            output.error(UNKNOWN_TOKEN_MESSAGE, CLIErrorCodes.UNKNOWN_TOKEN);
             output.flush();
             process.exitCode = 1;
             return;

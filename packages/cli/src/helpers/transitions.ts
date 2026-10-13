@@ -26,7 +26,7 @@ import {
   type TransitionObservationEvent,
 } from '@rundown-org/core';
 import { buildLifecycleSeam } from './lifecycle-seam-factory.js';
-import { resolveIndexOption } from './index-option.js';
+import { IndexOptionError, resolveIndexOption, type IndexOptionErrorCode } from './index-option.js';
 import { driveRunProgression, progressionFailedClosed } from './run-progression-adapters.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
@@ -215,6 +215,10 @@ export function renderRefusal(
     case 'concurrent_modification':
       output.error(outcome.message, CONCURRENT_MODIFICATION_CODE, { runId: outcome.runId });
       return true;
+    case 'unknown_token':
+      // The run was pruned between token resolution and the save: the token no
+      // longer resolves, exactly as if it had been unknown from the start.
+      return renderOwnedRunRefusal(output, config.commandName, outcome);
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
@@ -293,15 +297,49 @@ export async function renderApplied(
   };
 }
 
+/** Parsed `--step` / `--index` target, or the typed refusal of malformed input. */
+type ParsedTransitionTarget =
+  | { readonly kind: 'parsed'; readonly target: ExplicitTransitionTarget | undefined }
+  | { readonly kind: 'invalid'; readonly message: string; readonly code: IndexOptionErrorCode };
+
+// Category-A string parsing only: numeric `--index` validation and the
+// AT-conflict check. Every state-dependent check (step match, substep match,
+// FOR iteration) happens in core before anything is written.
+function parseTransitionTarget(
+  step: string | undefined,
+  index: string | undefined,
+): ParsedTransitionTarget {
+  if (step === undefined) return { kind: 'parsed', target: undefined };
+  let iteration: number | undefined;
+  try {
+    iteration = resolveIndexOption(index, parseStepIdFromString(step)?.at);
+  } catch (error) {
+    // The same typed refusal `goto` renders for the same input
+    // (validateGotoTarget), rather than an RD-999 from the error wrapper.
+    if (error instanceof IndexOptionError) {
+      return { kind: 'invalid', message: error.message, code: error.code };
+    }
+    throw error;
+  }
+  return {
+    kind: 'parsed',
+    target: { stepId: step, ...(iteration !== undefined ? { iteration } : {}) },
+  };
+}
+
 /**
  * Drive a pass/fail transition through the core lifecycle command seam.
  *
- * The CLI keeps only Category-A work: it resolves the Owner Token through
- * core, parses the raw `--step` / `--index` strings (numeric `--index`
- * validation and the AT-conflict check), renders the seam's typed outcome,
- * and activates Run Progression. Every state-dependent decision — which run
- * the token owns, whether `--step` names the current position, the machine
+ * The CLI keeps only Category-A work: it parses the raw `--step` / `--index`
+ * strings (numeric `--index` validation and the AT-conflict check), resolves
+ * the Owner Token through core, renders the seam's typed outcome, and
+ * activates Run Progression. Every state-dependent decision — which run the
+ * token owns, whether `--step` names the current position, the machine
  * dispatch, the conditional save — lives in core.
+ *
+ * Malformed `--index` input (`INVALID_SYNTAX`, or `CONFLICTING_INDEX` when it
+ * disagrees with the AT in `--step`) is refused before the token is resolved,
+ * so nothing is read or written.
  *
  * @param output - Output emitter for CLI output
  * @param cwd - Current working directory
@@ -309,7 +347,6 @@ export async function renderApplied(
  * @param options - Parsed `--token` / `--step` / `--index` options
  * @returns The applied transition (when one occurred) and whether the
  *   transition itself requests a non-zero exit code
- * @throws {IndexOptionError} if `--index` syntax validation fails
  */
 export async function runSeamTransition(
   output: OutputEmitter,
@@ -317,6 +354,13 @@ export async function runSeamTransition(
   config: TransitionConfig,
   options: SeamTransitionOptions,
 ): Promise<SeamTransitionResult> {
+  const parsed = parseTransitionTarget(options.step, options.index);
+  if (parsed.kind === 'invalid') {
+    output.error(parsed.message, parsed.code);
+    output.flush();
+    return { exitError: true };
+  }
+
   const { manager, seam } = buildLifecycleSeam(cwd);
 
   const resolution = await resolveOwnedRun(manager, options.token);
@@ -326,23 +370,10 @@ export async function runSeamTransition(
     return { exitError };
   }
 
-  let target: ExplicitTransitionTarget | undefined;
-  if (options.step !== undefined) {
-    // Category-A string parsing only: numeric `--index` validation and the
-    // AT-conflict check. Every state-dependent check (step match, substep
-    // match, FOR iteration) happens in core before anything is written.
-    const parsedAt = parseStepIdFromString(options.step)?.at;
-    const iteration = resolveIndexOption(options.index, parsedAt);
-    target = {
-      stepId: options.step,
-      ...(iteration !== undefined ? { iteration } : {}),
-    };
-  }
-
   const outcome = await seam.runTransition({
     command: config.commandName,
     run: resolution.run,
-    target,
+    target: parsed.target,
     computeActionResult: config.computeActionResult,
   });
 

@@ -34,6 +34,7 @@ jest.unstable_mockModule('@rundown-org/core', () => {
         `${step}${iteration != null ? `.${String(iteration)}` : ''}${substep ? `.${substep}` : ''}`,
     ),
     countNumberedSteps,
+    parseRunbook: mockFn<typeof CoreModule.parseRunbook>(),
     isArtifactRecord: jest.fn(
       (value: unknown) =>
         value !== null &&
@@ -187,22 +188,26 @@ describe('buildInactiveStatus', () => {
 
 describe('buildRunListStatus', () => {
   beforeEach(() => {
-    jest
-      .mocked(getRunbookFromState)
-      .mockReturnValue([makeStep({ name: '1' }), makeStep({ name: '2' })]);
+    jest.mocked(core.parseRunbook).mockReturnValue([]);
     jest.mocked(core.countNumberedSteps).mockReturnValue(2);
   });
 
   it('lists every run with id, runbook, lifecycle and position', () => {
-    const running = makeState({ id: DEFAULT_RUN_ID, step: '2', title: 'Running one' });
+    const running = makeState({
+      id: DEFAULT_RUN_ID,
+      step: '2',
+      title: 'Running one',
+      runbookSrc: '## 1. A\n\n## 2. B\n',
+    });
     const completed = makeState({
       id: ARTIFACT_RUN_ID,
+      runbookSrc: '## 1. A\n\n## 2. B\n',
       step: '2',
       lifecycle: 'completed',
       runbook: { source: 'project', path: 'done.runbook.md' },
     });
 
-    const result = buildRunListStatus([running, completed], '/test');
+    const result = buildRunListStatus([running, completed]);
 
     expect(result.active).toBe(false);
     expect(result.runs).toEqual([
@@ -221,7 +226,7 @@ describe('buildRunListStatus', () => {
   it('renders a substep position as step.substep', () => {
     const state = makeState({ step: '2', substep: '1' });
 
-    const result = buildRunListStatus([state], '/test');
+    const result = buildRunListStatus([state]);
 
     expect(result.runs?.[0]?.step).toBe('2.1');
   });
@@ -230,17 +235,43 @@ describe('buildRunListStatus', () => {
     const stopped = makeState({ id: DEFAULT_RUN_ID, lifecycle: 'stopped' });
     const abandoned = makeState({ id: ARTIFACT_RUN_ID, lifecycle: 'abandoned' });
 
-    const result = buildRunListStatus([stopped, abandoned], '/test');
+    const result = buildRunListStatus([stopped, abandoned]);
 
     expect(result.runs?.map((run) => run.status)).toEqual(['stopped', 'abandoned']);
   });
 
+  it('omits total for a run with no stored source without failing the list', () => {
+    const withSrc = makeState({ id: DEFAULT_RUN_ID, runbookSrc: '## 1. A\n' });
+    const withoutSrc = makeState({ id: ARTIFACT_RUN_ID });
+
+    const result = buildRunListStatus([withSrc, withoutSrc]);
+
+    expect(result.runs).toEqual([
+      { id: DEFAULT_RUN_ID, runbook: 'test.runbook.md', status: 'running', step: '1', total: 2 },
+      { id: ARTIFACT_RUN_ID, runbook: 'test.runbook.md', status: 'running', step: '1' },
+    ]);
+  });
+
+  it('omits total only for the run whose stored source fails to parse', () => {
+    jest.mocked(core.parseRunbook).mockImplementation((src) => {
+      if (src === 'broken') throw new Error('parse failure');
+      return [];
+    });
+    const broken = makeState({ id: DEFAULT_RUN_ID, runbookSrc: 'broken' });
+    const healthy = makeState({ id: ARTIFACT_RUN_ID, runbookSrc: '## 1. A\n' });
+
+    const result = buildRunListStatus([broken, healthy]);
+
+    expect(result.runs?.[0]).not.toHaveProperty('total');
+    expect(result.runs?.[1]).toMatchObject({ id: ARTIFACT_RUN_ID, total: 2 });
+  });
+
   it('returns an empty list for no runs', () => {
-    expect(buildRunListStatus([], '/test')).toEqual({ active: false, runs: [] });
+    expect(buildRunListStatus([])).toEqual({ active: false, runs: [] });
   });
 
   it('never carries a token', () => {
-    const result = buildRunListStatus([makeState()], '/test');
+    const result = buildRunListStatus([makeState()]);
     expect(JSON.stringify(result)).not.toMatch(/rdo_|token/i);
   });
 });

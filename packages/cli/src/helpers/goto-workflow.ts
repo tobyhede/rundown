@@ -9,6 +9,7 @@
  */
 
 import {
+  CLIErrorCodes,
   CONCURRENT_MODIFICATION_CODE,
   parseStepIdFromString,
   stepIdToString,
@@ -31,7 +32,7 @@ import { createBridgedEmitter } from './execution-emitter.js';
 import { resolveIndexOption, IndexOptionError } from './index-option.js';
 import { buildLifecycleSeam } from './lifecycle-seam-factory.js';
 import { driveRunProgression, progressionFailedClosed } from './run-progression-adapters.js';
-import { renderOwnedRunRefusal, renderRunFinished } from './token-option.js';
+import { UNKNOWN_TOKEN_MESSAGE, renderOwnedRunRefusal, renderRunFinished } from './token-option.js';
 
 /**
  * Context for executing a goto operation.
@@ -318,10 +319,13 @@ export async function executeGoto(ctx: GotoContext, target: StepId): Promise<Got
     navigation,
     target,
   });
-  if (mutation.kind !== 'applied') {
-    // The refusal travels back to the caller as a structured result; the
-    // only refusing arm is a conditional save that found the row moved.
+  // A refusal travels back to the caller as a structured result.
+  if (mutation.kind === 'concurrent_modification') {
     return { ok: false, error: mutation.message, code: CONCURRENT_MODIFICATION_CODE };
+  }
+  if (mutation.kind === 'unknown_token') {
+    // The run was pruned between token resolution and the save.
+    return { ok: false, error: UNKNOWN_TOKEN_MESSAGE, code: CLIErrorCodes.UNKNOWN_TOKEN };
   }
 
   output.action(

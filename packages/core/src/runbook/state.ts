@@ -21,6 +21,7 @@ import {
 } from './state-update-ops.js';
 import type { RunbookRef } from './runbook-ref.js';
 import type { SecretHash } from './run-secrets.js';
+import { findUnsupportedComposition, RunbookCompositionUnsupportedError } from './run-authority.js';
 import { makeRunbookStateSchema } from '../schemas.js';
 import { isError, isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
@@ -377,6 +378,9 @@ export class RunbookStateManager {
    * @param runbook - The parsed runbook definition
    * @param options - Owner token hash, run identity, prompted flag, variables
    * @returns The newly created RunbookState
+   * @throws {RunbookCompositionUnsupportedError} When the runbook composes
+   *   other runbooks (a `DELEGATE` or runbook-list substep). Raised before any
+   *   store access, so no run row is written.
    * @throws {StoreInvariantError} When a run already carries the id or the
    *   owner token hash.
    */
@@ -385,6 +389,14 @@ export class RunbookStateManager {
     runbook: Runbook | ResolvedRunbook,
     options: CreateOptions,
   ): Promise<RunbookState> {
+    // The compiled machine has no state for a composing substep, so no run of
+    // one may exist. Refused here, the seam every run is created through,
+    // rather than by each frontend.
+    const composing = findUnsupportedComposition(runbook.steps);
+    if (composing.length > 0) {
+      throw new RunbookCompositionUnsupportedError(composing);
+    }
+
     const id = options.runId ?? generateRunId();
     const now = new Date().toISOString();
 
