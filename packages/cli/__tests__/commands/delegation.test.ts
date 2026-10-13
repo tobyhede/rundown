@@ -510,4 +510,70 @@ describe('rundown claim / rundown collect (#904)', () => {
       }
     });
   });
+
+  describe('rundown status --claimed-by (#907)', () => {
+    async function claimAs(agentId: string) {
+      const { token, runId, ticket } = await start();
+      const claim = await runCliInProcess(['claim', ticket, '--agent-id', agentId], workspace);
+      return { token, runId, childId: requireRunId(claim.stdout) };
+    }
+
+    it('lists the running children an agent claimed that the parent still counts', async () => {
+      const { runId, childId } = await claimAs('agent-1');
+
+      const held = await runCliInProcess(['status', '--claimed-by', 'agent-1'], workspace);
+
+      expect(held.exitCode).toBe(0);
+      expect(envelopes(held.stdout)).toEqual([
+        {
+          kind: 'claimed_delegations',
+          agentId: 'agent-1',
+          delegations: [
+            { runId: childId, runbook: 'child.runbook.md', parentRunId: runId, step: '1.1' },
+          ],
+        },
+      ]);
+      expect(held.stdout).not.toMatch(/rd[ot]_/);
+    });
+
+    it('lists nothing for another agent, or once the agent released its child', async () => {
+      const { childId } = await claimAs('agent-1');
+
+      const other = await runCliInProcess(['status', '--claimed-by', 'agent-2'], workspace);
+      expect(envelopes(other.stdout)[0]).toMatchObject({ delegations: [] });
+
+      await runCliInProcess(['release', childId, '--agent-id', 'agent-1'], workspace);
+      const after = await runCliInProcess(['status', '--claimed-by', 'agent-1'], workspace);
+      expect(after.exitCode).toBe(0);
+      expect(envelopes(after.stdout)[0]).toMatchObject({ delegations: [] });
+    });
+
+    it('refuses --claimed-by with --run, or empty, INVALID_SYNTAX', async () => {
+      const { runId } = await claimAs('agent-1');
+
+      const both = await runCliInProcess(
+        ['status', '--run', runId, '--claimed-by', 'agent-1'],
+        workspace,
+      );
+      expect(both.exitCode).toBe(1);
+      expect(errorEnvelope(both.stdout)).toMatchObject({ code: 'INVALID_SYNTAX' });
+
+      const empty = await runCliInProcess(['status', '--claimed-by', ''], workspace);
+      expect(empty.exitCode).toBe(1);
+      expect(errorEnvelope(empty.stdout)).toMatchObject({ code: 'INVALID_SYNTAX' });
+    });
+
+    it('renders the held children in --text', async () => {
+      const { childId } = await claimAs('agent-1');
+
+      const held = await runCliInProcess(
+        ['status', '--claimed-by', 'agent-1', '--text'],
+        workspace,
+      );
+
+      expect(held.exitCode).toBe(0);
+      expect(held.stdout).toContain(childId);
+      expect(held.stdout).toContain('1.1');
+    });
+  });
 });
