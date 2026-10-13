@@ -390,6 +390,7 @@ export async function runSeamTransition(
         : {}),
     },
     options.token,
+    config.commandName,
   );
   if (resolution.kind !== 'running') {
     const exitError = renderOwnedRunRefusal(output, config.commandName, resolution);

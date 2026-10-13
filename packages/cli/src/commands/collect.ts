@@ -55,6 +55,7 @@ export function registerCollectCommand(program: Command): void {
           const resolution = await resolveCommandTarget(
             { seam, manager, cwd, output, commandStreamOptions },
             token,
+            'collect',
           );
           if (resolution.kind !== 'running') {
             if (renderOwnedRunRefusal(output, 'collect', resolution)) process.exitCode = 1;

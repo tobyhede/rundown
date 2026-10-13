@@ -148,7 +148,8 @@ export type RunProgressionWaitReason = 'awaiting_input' | 'collected';
  * - `claim_tickets_not_issued` — the Claim Tickets for the entry's
  *   Delegations could not be recorded: another of the owner's commands moved
  *   the run since this activation read it. Nothing was written and no ticket
- *   was printed (#904).
+ *   was printed (#904). The owner's `rundown collect` activates the unit
+ *   again, which issues and prints them.
  */
 export type RunProgressionRefusalReason =
   | 'run_missing'
@@ -1558,7 +1559,7 @@ function claimTicketsNotIssuedRefusal(
   runId: RunId,
   sink: Pick<ExecutionEventEmitter, 'emit'>,
 ): RunProgressionOutcome {
-  const message = `Run ${runId} was modified by another writer before its Claim Tickets were recorded; nothing was written and no ticket was issued — re-read the run and re-issue the command`;
+  const message = `Run ${runId} was modified by another writer before its Claim Tickets were recorded; nothing was written and no ticket was issued — run \`rundown collect --token <owner_token>\` on this run to issue them`;
   sink.emit({ type: 'ERROR_OCCURRED', payload: { message, code: CONCURRENT_MODIFICATION_CODE } });
   return {
     kind: 'refused',

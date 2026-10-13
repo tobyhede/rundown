@@ -222,6 +222,48 @@ describe('rundown claim / rundown collect (#904)', () => {
     });
   });
 
+  it('lets a cancelled child stop, exit 0, while its complete stays DELEGATION_CANCELLED', async () => {
+    const { token, ticket } = await start();
+    const claim = await runCliInProcess(['claim', ticket], workspace);
+    const childToken = requireOwnerToken(claim.stdout);
+    const childId = requireRunId(claim.stdout);
+    await runCliInProcess(['pass', '--token', token, '--step', '1.1'], workspace);
+
+    const complete = await runCliInProcess(['complete', '--token', childToken], workspace);
+    expect(complete.exitCode).toBe(1);
+    expect(errorEnvelope(complete.stdout)).toMatchObject({ code: 'DELEGATION_CANCELLED' });
+
+    const stop = await runCliInProcess(['stop', '--token', childToken], workspace);
+    expect(stop.exitCode).toBe(0);
+    const status = await runCliInProcess(['status', '--run', childId], workspace);
+    expect(envelopes(status.stdout)[0]).toMatchObject({
+      active: false,
+      lastAction: { action: 'STOP' },
+    });
+  });
+
+  it('refuses a child whose parent was pruned PARENT_RUN_FINISHED, and lets it stop', async () => {
+    const { token, ticket } = await start();
+    const childToken = requireOwnerToken(
+      (await runCliInProcess(['claim', ticket], workspace)).stdout,
+    );
+    await runCliInProcess(['stop', '--token', token], workspace);
+    expect((await runCliInProcess(['prune', '--stopped'], workspace)).exitCode).toBe(0);
+
+    const pass = await runCliInProcess(
+      ['pass', '--token', childToken, '--step', 'Check'],
+      workspace,
+    );
+    expect(pass.exitCode).toBe(1);
+    expect(errorEnvelope(pass.stdout)).toMatchObject({
+      code: 'PARENT_RUN_FINISHED',
+      command: 'pass',
+    });
+
+    const stop = await runCliInProcess(['stop', '--token', childToken], workspace);
+    expect(stop.exitCode).toBe(0);
+  });
+
   it('renders tickets on the entry and the collect report in --text', async () => {
     const run = await runCliInProcess('run parent.runbook.md --text', workspace);
     expect(run.stdout).toMatch(

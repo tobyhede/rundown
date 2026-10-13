@@ -527,10 +527,13 @@ core names, and `rundown check` warns from the same predicate.
 
 Before descending, `resolveCommandTarget` checks the token's run's standing as a
 Delegation (`delegationStandingOf`, `delegation-progression.ts`): a delegated
-child whose parent finished or was pruned is refused `parent_run_finished`, and
-one its parent no longer counts (`countsDelegation`: reserved at the parent's
-active entry, not yet Collected, for the cursor's substep or a later one) is
-refused `delegation_cancelled`. Every other run is `current`.
+child whose parent finished or was pruned (its linkage reads
+`orphaned_delegation`) is refused `parent_run_finished`, and one its parent no
+longer counts (`countsDelegation`: reserved at the parent's active entry, not
+yet Collected, for the cursor's substep or a later one) is refused
+`delegation_cancelled`. Every other run is `current`. The check is skipped for
+`stop` alone (the caller names its command, `CommandTargetPurpose`): the child's
+owner owns the child's row and may end it, though nothing collects its result.
 
 ### The command's target: the deepest running Inline Child
 
@@ -673,10 +676,14 @@ belongs to whichever agent claims it.
   with one conditional save (a moved version refuses the turn
   `claim_tickets_not_issued`, `CONCURRENT_MODIFICATION`), and emits the entry's
   `STEP_ENTERED` with `children` carrying the plaintext tickets. An entry
-  announced again lists the children without tickets. Then the turn waits.
-- **Claim.** `claimDelegation` (`delegation-progression.ts`) scans the runs for
-  the reservation whose `ticketHash` the ticket hashes to, checks its standing
-  on the parent, prepares the child runbook through the same `PrepareChildRun`
+  announced again lists the children without tickets. Then the turn waits. A
+  parent resting on a delegated substep that still owes a ticket
+  (`owesClaimTickets`, `delegation-child.ts`) is activated again by the owner's
+  `collect`, whose activation re-enters the unit and issues them.
+- **Claim.** `claimDelegation` (`delegation-progression.ts`) reads only the runs
+  whose `state_json` records the ticket's hash (`findByTicketHash`), finds the
+  reservation whose `ticketHash` the ticket hashes to, checks its standing on
+  the parent, prepares the child runbook through the same `PrepareChildRun`
   frontend service an Inline Child's launch uses (`child-preparation.ts`), mints
   the child's Owner Token, and calls `RunbookStateManager.claimDelegationChild`:
   one transaction that re-reads the parent, re-runs the standing check on it,
@@ -760,24 +767,27 @@ DDL edit must move `SCHEMA_VERSION`.
 
 One row per run. Besides `id`, `created_at` and `updated_at`, it carries:
 
-| Column                                                                            | Meaning                                                                                                                                                                                                                             |
-| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lifecycle`                                                                       | `running`, `completed`, `stopped`, or `abandoned`, pinned by a `CHECK`. Its home is this column, not the state JSON.                                                                                                                |
-| `owner_token_hash`                                                                | `UNIQUE` SHA-256 hash of the Owner Token. The token itself is printed once on `runbook_started` and never stored; this hash is the only authority lookup key.                                                                       |
-| `parent_run_id`, `parent_step`, `parent_frame_key`, `parent_entry`, `parent_kind` | Child linkage, nullable all-or-none under a `CHECK`, written once when a child row is inserted: an Inline Child at launch (`inline`, no `owner_token_hash`), a Delegation at claim (`delegation`, its own `owner_token_hash`).      |
-| `claim_agent_id`                                                                  | The agent id `rundown claim --agent-id` recorded on a Delegation; NULL for every other row (`CHECK`). Part of the linkage: unlinking clears it.                                                                                     |
-| `lease_attempt`, `lease_pid`, `lease_start_id`, `lease_started_at`                | Execution lease, nullable all-or-none under a `CHECK`. Set by Run Progression before a command turn and cleared by the state write that commits its finish; see [concurrency.md § Execution lease](concurrency.md#execution-lease). |
-| `state_version`                                                                   | Lost-update counter, bumped only by the `runs_bump_state_version` trigger on every `state_json` or `lease_attempt` write.                                                                                                           |
-| `state_json`                                                                      | The authoritative `RunbookState` (minus `lifecycle`), including the opaque XState `snapshot`.                                                                                                                                       |
+| Column                                                                            | Meaning                                                                                                                                                                                                                                                                                                                              |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `lifecycle`                                                                       | `running`, `completed`, `stopped`, or `abandoned`, pinned by a `CHECK`. Its home is this column, not the state JSON.                                                                                                                                                                                                                 |
+| `owner_token_hash`                                                                | `UNIQUE` SHA-256 hash of the Owner Token. The token itself is printed once on `runbook_started` and never stored; this hash is the only authority lookup key.                                                                                                                                                                        |
+| `parent_run_id`, `parent_step`, `parent_frame_key`, `parent_entry`, `parent_kind` | Child linkage, nullable all-or-none under a `CHECK`, written once when a child row is inserted: an Inline Child at launch (`inline`, no `owner_token_hash`), a Delegation at claim (`delegation`, its own `owner_token_hash`). Pruning a Delegation's parent nulls `parent_run_id` alone (the one orphaned form the `CHECK` admits). |
+| `claim_agent_id`                                                                  | The agent id `rundown claim --agent-id` recorded on a Delegation; NULL for every other row (`CHECK`). Part of the linkage: an orphaned Delegation keeps it.                                                                                                                                                                          |
+| `lease_attempt`, `lease_pid`, `lease_start_id`, `lease_started_at`                | Execution lease, nullable all-or-none under a `CHECK`. Set by Run Progression before a command turn and cleared by the state write that commits its finish; see [concurrency.md § Execution lease](concurrency.md#execution-lease).                                                                                                  |
+| `state_version`                                                                   | Lost-update counter, bumped only by the `runs_bump_state_version` trigger on every `state_json` or `lease_attempt` write.                                                                                                                                                                                                            |
+| `state_json`                                                                      | The authoritative `RunbookState` (minus `lifecycle`), including the opaque XState `snapshot`.                                                                                                                                                                                                                                        |
 
 Two triggers complete the schema. `runs_bump_state_version` owns
 `state_version`, so the conditional write below is a complete lost-update check
 for every writer by construction rather than by call-site discipline. It fires
 on the lease column too, so setting the execution lease moves the version and
-the lease's `attempt` is the version it produced. `runs_unlink_children` clears
-the whole linkage group of any row naming a deleted run as its parent; the
-referential action `ON DELETE SET NULL` would null `parent_run_id` alone, which
-the all-or-none `CHECK` then refuses.
+the lease's `attempt` is the version it produced. `runs_unlink_children` unlinks
+any Delegation naming a deleted run as its parent by nulling `parent_run_id`
+alone and keeping the rest of the group — the one orphaned form the linkage
+`CHECK` admits, read as `orphaned_delegation` so the child's commands are
+refused `PARENT_RUN_FINISHED` — and deletes the deleted run's Inline Children.
+The referential action `ON DELETE SET NULL` is not used, so the trigger, not the
+foreign key, decides what an orphan keeps.
 
 ### Two schema versions, deliberately distinct
 
@@ -786,7 +796,7 @@ a documented mistake:
 
 | Version                      | Governs                                                                            | Where it lives         | Rule                                                |
 | ---------------------------- | ---------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------- |
-| SQLite storage schema        | The whole database — the DDL of the `runs` table and its triggers                  | `PRAGMA user_version`  | Must equal `SCHEMA_VERSION` (currently `6`)         |
+| SQLite storage schema        | The whole database — the DDL of the `runs` table and its triggers                  | `PRAGMA user_version`  | Must equal `SCHEMA_VERSION` (currently `8`)         |
 | `RunbookState.schemaVersion` | One run's structured state fields and its opaque `snapshot` blob, and nothing else | The row's `state_json` | Must equal `CURRENT_SCHEMA_VERSION` (currently `4`) |
 
 A wrong storage version invalidates the whole database (`RD-305`); a wrong

@@ -207,6 +207,7 @@ export async function buildGotoContext(
         : {}),
     },
     options.token,
+    'goto',
   );
   if (resolution.kind !== 'running') return resolution;
 

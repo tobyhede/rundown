@@ -201,6 +201,30 @@ export function countsDelegation(
   );
 }
 
+/**
+ * Whether the parent's cursor rests on a delegated substep whose entry still
+ * owes a Claim Ticket: a Delegation the parent counts that was never issued
+ * one, because the turn that entered the unit did not commit its issuance
+ * (its save was refused, or the process died first).
+ *
+ * Only the owner's activation of the unit issues tickets, so a parent that
+ * owes one must be activated again — `rundown collect` does that.
+ *
+ * @param state - The parent run.
+ * @param step - The parent's current step, or `undefined` when unknown.
+ * @returns True when an activation would issue at least one ticket.
+ */
+export function owesClaimTickets(state: RunbookState, step: ResolvedStep | undefined): boolean {
+  if ((state.lifecycle ?? 'running') !== 'running' || step === undefined) return false;
+  if (state.substep === undefined || delegatedRunbookOf(step, state.substep) === undefined) {
+    return false;
+  }
+  return activeEntryDelegations(state).some(
+    (delegation) =>
+      delegation.reservation.ticketHash === null && countsDelegation(state, step, delegation),
+  );
+}
+
 /** Where a Delegation stands with its parent, as its owner's commands see it. */
 export type DelegationStanding =
   | { readonly kind: 'current' }
@@ -211,9 +235,15 @@ export type DelegationStanding =
       readonly parentStep: string;
     }
   | {
-      /** The parent reached a terminal (or was pruned) and can Collect nothing. */
+      /** The parent reached a terminal and can Collect nothing. */
       readonly kind: 'parent_finished';
       readonly parentRunId: RunId;
+    }
+  | {
+      /** The parent was pruned: nothing can Collect the child (#904). */
+      readonly kind: 'parent_pruned';
+      /** The parent unit the child ran for. */
+      readonly parentStep: string;
     };
 
 /**

@@ -87,7 +87,9 @@ subagent that claims it.
 
 A subagent whose child the parent no longer counts — you decided the substep by
 hand, or the step was entered again — is refused `DELEGATION_CANCELLED`, and
-`PARENT_RUN_FINISHED` once the parent finished; either means stop. See
+`PARENT_RUN_FINISHED` once the parent finished or was pruned; either means stop,
+and end the child with `rundown stop --token <child owner_token>`, the one
+command it still accepts. See
 [docs/reference/cli.md § Delegation](../reference/cli.md#delegation).
 
 The Claude Code plugin's `PreToolUse` (`Agent|Task`) and `SubagentStop` hooks

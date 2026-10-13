@@ -143,11 +143,17 @@ write on the parent.
 - The Claim Ticket hashes are committed into the parent by Run Progression's
   turn that announces the step entry: one conditional save naming the version it
   read, refused `CONCURRENT_MODIFICATION` and never retried; the minted tickets
-  are then discarded unprinted.
+  are then discarded unprinted. The owner's next `collect` activates the unit
+  again and issues them.
 - `rundown collect` commits each terminal child's result as its own conditional
-  save, each naming the version the previous one produced. A save refused
-  because the run moved stops the Collect there: the results applied before it
-  stand, and the next `collect` reports them `already_collected`.
+  save, each naming the version the previous one produced — returned by that
+  save from inside its own transaction, never re-read afterwards, so a write by
+  anyone else in between refuses the next save rather than being absorbed.
+  Whether a child still counts is decided on the run as this Collect has left
+  it, so a child after one that finished the run is reported `cancelled`, not
+  applied. A save refused because the run moved stops the Collect there: the
+  results applied before it stand, and the next `collect` reports them
+  `already_collected`.
 - A Delegation's own command first reads its parent to check it still counts.
   That read may race the parent's next write; it is harmless, because Collect —
   the parent owner's write — decides what counts.

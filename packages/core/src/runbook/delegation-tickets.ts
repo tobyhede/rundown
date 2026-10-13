@@ -112,9 +112,13 @@ export async function issueClaimTickets(args: {
   if (![...minted.keys()].every((runId) => issued.has(runId))) {
     throw new Error(`Run ${run.state.id} did not record the Claim Tickets it was issued`);
   }
-  const reread = await deps.manager.loadWithVersion(run.state.id);
-  if (reread === null) return { kind: 'missing' };
-  return { kind: 'issued', run: reread, children: children() };
+  // The parent at the version this save produced, not a re-read: a write by
+  // anyone else after it must refuse this turn's next save, not be absorbed.
+  return {
+    kind: 'issued',
+    run: { ...run, state: saved.state, stateVersion: saved.stateVersion, lease: null },
+    children: children(),
+  };
 }
 
 /**

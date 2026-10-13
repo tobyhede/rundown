@@ -197,7 +197,12 @@ export {
   type DelegationDeps,
   type DelegationRefusal,
 } from './delegation-progression.js';
-export type { ChildKind, ChildLinkage } from './child-linkage.js';
+export type {
+  ChildKind,
+  ChildLinkage,
+  OrphanedDelegationLinkage,
+  RunLinkage,
+} from './child-linkage.js';
 // The DI seam of the two above. Type-only, and exported so their signatures are
 // nameable by the CLI that calls them; the liveness readers behind it stay
 // internal to core.
@@ -233,6 +238,7 @@ export {
   type LifecycleTransitionInput,
   type LifecycleTransitionOutcome,
   type RunbookLifecycleCommandServiceDependencies,
+  type CommandTargetPurpose,
   type CommandTargetResolution,
   type DelegationStandingRefusal,
   type LifecycleCollectInput,

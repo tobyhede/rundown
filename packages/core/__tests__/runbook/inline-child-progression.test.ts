@@ -314,7 +314,7 @@ function seam(): RunbookLifecycleCommandService {
 
 /** Resolve the command target as a frontend does, settling with a real activation. */
 async function target(token: OwnerToken, root: RunbookState) {
-  return seam().resolveCommandTarget(token, (directive) => activate(directive, root));
+  return seam().resolveCommandTarget(token, (directive) => activate(directive, root), 'pass');
 }
 
 async function childOf(parent: RunbookState): Promise<RunbookState> {

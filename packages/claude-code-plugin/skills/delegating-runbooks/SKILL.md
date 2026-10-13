@@ -61,10 +61,10 @@ delegations: you drive them with your own Owner Token. See
       your token; drive the child with
       rundown pass|fail --token <that owner_token> --step <child step>
       following each step_entered prompt.
-   4. Stop when the child reports runbook_completed or runbook_stopped, or as
-      soon as any command is refused DELEGATION_CANCELLED or
-      PARENT_RUN_FINISHED. Report the outcome. Never run rundown collect and
-      never use any other token.
+   4. Stop when the child reports runbook_completed or runbook_stopped. If any
+      command is refused DELEGATION_CANCELLED or PARENT_RUN_FINISHED, end the
+      child with rundown stop --token <that owner_token> and stop. Report the
+      outcome. Never run rundown collect and never use any other token.
    """
    )
    ```
@@ -118,7 +118,9 @@ rundown fail --token <child owner_token> --step <child step>
   step, from the child's latest `step_entered`.
 - Stop at the child's terminal. You never write the parent and never collect.
 - `DELEGATION_CANCELLED` or `PARENT_RUN_FINISHED` on any command means your
-  work will never be collected: stop and report.
+  work will never be collected: end the child with
+  `rundown stop --token <owner_token>` (the one command it still accepts), then
+  report.
 
 ## Fan-out and FOR Loops
 
@@ -155,11 +157,11 @@ A refused command writes nothing.
 | --------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | `UNKNOWN_TICKET`                  | `claim` with a ticket no reservation carries (mistyped, parent pruned)     | Copy the ticket verbatim from the `children` that issued it                            |
 | `ALREADY_CLAIMED`                 | A second `claim` of the same ticket                                        | Drive the child with the token the first claim printed; never claim twice              |
-| `DELEGATION_CANCELLED`            | The parent no longer counts the child (substep decided by hand, step re-entered) | Sub-agent: stop. Orchestrator: dispatch the fresh ticket, if a re-entry issued one |
-| `PARENT_RUN_FINISHED`             | The parent completed, stopped, or was pruned                               | Sub-agent: stop; nothing can collect it                                                |
+| `DELEGATION_CANCELLED`            | The parent no longer counts the child (substep decided by hand, step re-entered) | Sub-agent: `rundown stop --token <owner_token>` on the child, then stop. Orchestrator: dispatch the fresh ticket, if a re-entry issued one |
+| `PARENT_RUN_FINISHED`             | The parent completed, stopped, or was pruned                               | Sub-agent: `rundown stop --token <owner_token>` on the child, then stop; nothing can collect it |
 | `NOTHING_TO_COLLECT`              | `collect` while the run's current step delegates nothing                   | Collect only while resting on a step whose `step_entered` listed `children`            |
 | `INVALID_STEP`                    | A token naming the other run's step (child token, parent step, or reverse) | Use the child token for child steps and your token for parent steps                    |
-| `CONCURRENT_MODIFICATION`         | Another write landed first (results applied before it stand)               | Re-read with `rundown status --run <run_id>`, then re-issue                            |
+| `CONCURRENT_MODIFICATION`         | Another write landed first (results applied before it stand)               | Re-read with `rundown status --run <run_id>`, then re-issue. If the step's tickets were never printed, `rundown collect --token <owner_token>` prints them |
 | `RUNBOOK_COMPOSITION_UNSUPPORTED` | A substep lists more than one runbook                                      | Report to the user; each substep composes one child                                    |
 
 A lost ticket, or a sub-agent that lost its child's `owner_token`, has no agent
@@ -175,7 +177,7 @@ run's `children` (run id, lifecycle, result) but never a ticket or token.
 | Sub-agent passing with the orchestrator's token      | The sub-agent uses the `owner_token` its own `claim` printed             |
 | Treating `pending` / `unclaimed` as failure          | Wait for the sub-agents, then collect again                              |
 | Re-dispatching children from a re-announced entry    | Only an entry that prints `ticket` issues new work                       |
-| Sub-agent continuing after `DELEGATION_CANCELLED`    | Stop; its result will never be collected                                 |
+| Sub-agent continuing after `DELEGATION_CANCELLED`    | `rundown stop --token <owner_token>` on the child; its result will never be collected |
 
 ## Reference
 

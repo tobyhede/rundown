@@ -3,7 +3,8 @@
  * Collect.
  *
  * - {@link claimDelegation} — `rundown claim <ticket>`. Locates the
- *   reservation by the ticket's hash, prepares the child runbook (the
+ *   reservation by the ticket's hash (one read of the runs recording it, never
+ *   a scan that validates every run), prepares the child runbook (the
  *   frontend's service), and in ONE transaction verifies the reservation is
  *   still the parent's Current Child and inserts the child row under the
  *   preallocated id with a fresh Owner Token of its own. The primary key
@@ -35,6 +36,7 @@ import {
   countsDelegation,
   delegationStanding,
   findTicketReservation,
+  owesClaimTickets,
   type CurrentDelegation,
   type DelegationStanding,
 } from './delegation-child.js';
@@ -135,6 +137,7 @@ function claimRefusal(
     case 'cancelled':
       return 'cancelled';
     case 'parent_finished':
+    case 'parent_pruned':
       return 'parent_finished';
     default: {
       const _exhaustive: never = standing;
@@ -174,7 +177,7 @@ function claimRefused(refusal: ClaimRefusal, parentRunId: RunId, step: string): 
  * @param input.agentId - The claiming agent's id, recorded on the child row.
  * @returns The claimed child with its Owner Token, or a refusal. Nothing is
  *   written on a refusal.
- * @throws {Error} Whatever reading a run's persisted state throws.
+ * @throws {Error} Whatever reading the issuing run's persisted state throws.
  */
 export async function claimDelegation(
   deps: DelegationDeps & { readonly prepareChildRun: PrepareChildRun },
@@ -187,7 +190,7 @@ export async function claimDelegation(
         readonly substepState: NonNullable<ReturnType<typeof findTicketReservation>>;
       }
     | undefined;
-  for (const run of await deps.manager.listWithVersion()) {
+  for (const run of await deps.manager.findByTicketHash(ticketHash)) {
     const substepState = findTicketReservation(run.state, ticketHash);
     if (substepState !== undefined) {
       found = { parent: run, substepState };
@@ -332,13 +335,17 @@ function alreadyClaimed(childRunId: RunId, step: string): DelegationRefusal {
  *
  * @param deps - Store and graph loader.
  * @param run - The run the command's token resolved to.
- * @returns `current` for any run that is not a Delegation, else its standing.
+ * @returns `current` for any run that is not a Delegation, `parent_pruned` for
+ *   a Delegation whose parent was pruned, else its standing.
  */
 export async function delegationStandingOf(
   deps: Pick<DelegationDeps, 'manager' | 'loadSteps'>,
   run: Pick<OwnedRun, 'state' | 'linkage'>,
 ): Promise<DelegationStanding> {
   const linkage = run.linkage;
+  if (linkage?.kind === 'orphaned_delegation') {
+    return { kind: 'parent_pruned', parentStep: linkage.parentStep };
+  }
   if (linkage?.kind !== 'delegation') return { kind: 'current' };
   const parent = await deps.manager.loadWithVersion(linkage.parentRunId);
   const steps = parent === null ? null : await deps.loadSteps(parent.state);
@@ -367,20 +374,30 @@ export type CollectDelegationsOutcome =
       /**
        * Whether Run Progression continues: `activate` when a Collect moved the
        * cursor (it may have entered the next unit, finished the run, or
-       * finished an Inline Child its parent now Collects), `none` otherwise.
+       * finished an Inline Child its parent now Collects), or when the run
+       * rests on a delegated unit whose entry never committed its Claim
+       * Tickets (the activation issues and prints them); `none` otherwise.
        */
       readonly progression: RunProgressionDirective;
     };
 
 /**
- * The report entry for one Delegation, before any Collect is applied.
+ * The report entry for one Delegation, read against the parent as this
+ * Collect has left it so far.
  *
- * @param state - The parent as last read.
+ * Whether the child is applied is decided on the fresh parent, never on the
+ * reservation as the Collect first read it: an earlier Collect of the same
+ * pass may have finished the parent, moved it out of the step, or advanced a
+ * FOR loop to a new frame, and a child the parent no longer counts is
+ * reported `cancelled` with nothing applied.
+ *
+ * @param state - The parent as this Collect has left it.
  * @param stepName - The step the Delegation was reserved for.
  * @param step - The parent's current step.
- * @param delegation - One Delegation of the active entry.
+ * @param delegation - The Delegation as the Collect first read it.
  * @param child - The child row, or null when unclaimed.
- * @returns The report entry, and whether Collect should apply the child.
+ * @returns The report entry, and the live Delegation to apply when the parent
+ *   still counts a terminal child.
  */
 function standingOf(
   state: RunbookState,
@@ -388,7 +405,7 @@ function standingOf(
   step: ResolvedStep | undefined,
   delegation: CurrentDelegation,
   child: VersionedRunState | null,
-): { readonly report: CollectedChild; readonly apply: boolean } {
+): { readonly report: CollectedChild; readonly apply: CurrentDelegation | undefined } {
   const { reservation } = delegation;
   const base = {
     step: `${stepName}.${delegation.substepId}`,
@@ -400,31 +417,43 @@ function standingOf(
   if (reservation.collected !== undefined) {
     return {
       report: { ...base, status: 'already_collected', result: reservation.collected },
-      apply: false,
+      apply: undefined,
     };
   }
   const result = childResultOf(child?.state.lifecycle);
   const withResult = result === undefined ? base : { ...base, result };
-  if (step === undefined || !countsDelegation(state, step, delegation)) {
-    return { report: { ...withResult, status: 'cancelled' }, apply: false };
+  const live = activeEntryDelegations(state).find(
+    (candidate) => candidate.reservation.runId === reservation.runId,
+  );
+  if (
+    (state.lifecycle ?? 'running') !== 'running' ||
+    step === undefined ||
+    live === undefined ||
+    !countsDelegation(state, step, live)
+  ) {
+    return { report: { ...withResult, status: 'cancelled' }, apply: undefined };
   }
-  if (child === null) return { report: { ...base, status: 'unclaimed' }, apply: false };
-  if (result === undefined) return { report: { ...base, status: 'pending' }, apply: false };
-  return { report: { ...withResult, status: 'collected' }, apply: true };
+  if (child === null) return { report: { ...base, status: 'unclaimed' }, apply: undefined };
+  if (result === undefined) return { report: { ...base, status: 'pending' }, apply: undefined };
+  return { report: { ...withResult, status: 'collected' }, apply: live };
 }
 
 /**
  * Collect the owner's run's Current Children.
  *
  * Reads every Delegation reserved at the run's active frame entry, in
- * document order. Each terminal child the run still counts is sent into the
- * machine as one `CHILD_RESULT`, committed by one conditional save at the
- * version the previous step of this Collect left; the machine applies the
- * cursor's own result at once and holds a later substep's until the cursor
- * arrives. A save refused because the run moved stops the Collect there,
- * never retried: the commits before it stand, and the next `collect` reads
- * them as already collected. Running and unclaimed children are reported,
- * and nothing is applied for them.
+ * document order, and their child rows. Each terminal child the run still
+ * counts — decided on the run as this Collect has left it, not as it was
+ * first read — is sent into the machine as one `CHILD_RESULT`, committed by
+ * one conditional save at the version the previous save of this Collect
+ * produced; the machine applies the cursor's own result at once and holds a
+ * later substep's until the cursor arrives. A save refused because the run
+ * moved — including a write by another writer between two of this Collect's
+ * saves — stops the Collect there, never retried: the commits before it
+ * stand, and the next `collect` reads them as already collected. Running and
+ * unclaimed children are reported, and nothing is applied for them; a child
+ * the run stopped counting during this Collect (it finished, or left the
+ * entry) is reported `cancelled`.
  *
  * @param deps - Store, actor service, graph loader and process identity.
  * @param run - The run resolved from the owner's token, with its version.
@@ -438,7 +467,13 @@ export async function collectDelegations(
   run: OwnedRun,
   computeActionResult?: (actionType: ActionType) => boolean,
 ): Promise<CollectDelegationsOutcome> {
-  const leased = refuseUnderLease(run.state.id, run.state, run.lease, 'pass', deps.processIdentity);
+  const leased = refuseUnderLease(
+    run.state.id,
+    run.state,
+    run.lease,
+    'collect',
+    deps.processIdentity,
+  );
   if (leased) return leased;
   const steps = await deps.loadSteps(run.state);
   const delegations = activeEntryDelegations(run.state);
@@ -449,6 +484,9 @@ export async function collectDelegations(
       message: `Run ${run.state.id} has no delegation at its current step ${run.state.step}${run.state.substep === undefined ? '' : `.${run.state.substep}`}; nothing was written.`,
     };
   }
+  const childRows = await Promise.all(
+    delegations.map(({ reservation }) => deps.manager.loadWithVersion(reservation.runId)),
+  );
 
   let current: VersionedRunState = run;
   // Every Delegation of the active entry belongs to the step the cursor rests
@@ -457,22 +495,12 @@ export async function collectDelegations(
   const children: CollectedChild[] = [];
   const events: TransitionObservationEvent[] = [];
   let moved = false;
-  for (const delegation of delegations) {
+  for (const [position, delegation] of delegations.entries()) {
     const step = steps.find((candidate) => candidate.name === current.state.step);
-    const child = await deps.manager.loadWithVersion(delegation.reservation.runId);
-    // Re-read the reservation from the run as Collect has left it: an earlier
-    // Collect of this pass may have moved the cursor past it.
-    const live =
-      activeEntryDelegations(current.state).find(
-        (candidate) => candidate.reservation.runId === delegation.reservation.runId,
-      ) ?? delegation;
-    const { report, apply } = standingOf(current.state, reservedFor, step, live, child);
-    if (!apply || child === null || step === undefined) {
-      children.push(
-        current.state.lifecycle === 'running' || report.status === 'already_collected'
-          ? report
-          : { ...report, status: 'cancelled' },
-      );
+    const child = childRows[position] ?? null;
+    const { report, apply } = standingOf(current.state, reservedFor, step, delegation, child);
+    if (apply === undefined || child === null || step === undefined) {
+      children.push(report);
       continue;
     }
     const previous = current.state;
@@ -493,7 +521,7 @@ export async function collectDelegations(
       };
     }
     children.push(report);
-    if (live.substepId === previous.substep) {
+    if (apply.substepId === previous.substep) {
       moved = true;
       // The cursor's own result: a transition the owner observes.
       const observation = deriveTransitionObservation({
@@ -517,9 +545,9 @@ export async function collectDelegations(
         }).events,
       );
     }
-    const reread = await deps.manager.loadWithVersion(previous.id);
-    if (reread === null) return { kind: 'unknown_token' };
-    current = reread;
+    // The next save expects the version this one produced: a write by anyone
+    // else in between refuses it, rather than being absorbed by a re-read.
+    current = { ...current, state: saved.state, stateVersion: saved.stateVersion, lease: null };
   }
 
   const lifecycle = current.state.lifecycle ?? 'running';
@@ -527,13 +555,16 @@ export async function collectDelegations(
     // Only `release` writes `abandoned`, and only on a child's own row.
     throw new Error(`Run ${current.state.id} was abandoned while its owner Collected`);
   }
+  const restingStep = steps.find((candidate) => candidate.name === current.state.step);
   return {
     kind: 'collected',
     runId: run.state.id,
     children,
     events,
-    // Only a Collect that moved the cursor continues Run Progression; a result
-    // held for a later substep leaves the parent resting where it was.
+    // A Collect that moved the cursor continues Run Progression; a result held
+    // for a later substep leaves the parent resting where it was. A parent
+    // resting on a delegated unit whose entry never committed its Claim
+    // Tickets is activated on that unit, which issues and prints them.
     progression: moved
       ? {
           kind: 'activate',
@@ -545,7 +576,15 @@ export async function collectDelegations(
             lifecycle,
           },
         }
-      : { kind: 'none' },
+      : owesClaimTickets(current.state, restingStep)
+        ? {
+            kind: 'activate',
+            authority: mintRunProgressionAuthority({ runId: run.state.id }),
+            runbook: run.state.runbook,
+            steps,
+            entryBoundary: { kind: 'resume' },
+          }
+        : { kind: 'none' },
   };
 }
 
@@ -575,11 +614,14 @@ export async function delegationChildrenStatus(
   manager: RunbookStateManager,
   state: RunbookState,
 ): Promise<readonly DelegationChildStatus[]> {
-  const statuses: DelegationChildStatus[] = [];
-  for (const { substepId, reservation } of activeEntryDelegations(state)) {
-    const child = await manager.load(reservation.runId);
+  const delegations = activeEntryDelegations(state);
+  const childRows = await Promise.all(
+    delegations.map(({ reservation }) => manager.load(reservation.runId)),
+  );
+  return delegations.map(({ substepId, reservation }, position): DelegationChildStatus => {
+    const child = childRows[position] ?? null;
     const result = childResultOf(child?.lifecycle);
-    statuses.push({
+    return {
       runId: reservation.runId,
       step: `${state.step}.${substepId}`,
       ...(reservation.contextSnapshot.index !== undefined
@@ -587,7 +629,6 @@ export async function delegationChildrenStatus(
         : {}),
       status: child === null ? 'reserved' : (child.lifecycle ?? 'running'),
       ...(result !== undefined ? { result } : {}),
-    });
-  }
-  return statuses;
+    };
+  });
 }

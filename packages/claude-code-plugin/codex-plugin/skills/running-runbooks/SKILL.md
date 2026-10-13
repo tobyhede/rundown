@@ -199,7 +199,9 @@ the child's steps. Two extra rules:
 - Stop at the child's terminal. You never write or collect the parent; its owner
   collects your result.
 - `DELEGATION_CANCELLED` or `PARENT_RUN_FINISHED` on any command means your work
-  will never be collected: stop and report.
+  will never be collected: end the child with
+  `rundown stop --token <owner_token>` (the one command it still accepts), then
+  report.
 
 ## Refusals
 
@@ -216,7 +218,7 @@ A refused command writes nothing. Fix the cause and re-issue it.
 | `RUNBOOK_COMPOSITION_UNSUPPORTED`              | A substep lists more than one runbook                                                        | Report it to the user and stop                                             |
 | `NOTHING_TO_COLLECT`                           | `collect` while the current step delegates nothing                                           | Collect only after a `step_entered` that listed `children`                 |
 | `UNKNOWN_TICKET` / `ALREADY_CLAIMED`           | `claim` with an unknown ticket / a ticket already claimed                                    | Copy the ticket verbatim; claim once and keep its `owner_token`            |
-| `DELEGATION_CANCELLED` / `PARENT_RUN_FINISHED` | Your delegated child no longer counts / its parent finished                                  | Stop working on the child and report                                       |
+| `DELEGATION_CANCELLED` / `PARENT_RUN_FINISHED` | Your delegated child no longer counts / its parent finished or was pruned                    | `rundown stop --token <owner_token>` on the child, then report             |
 
 A `policy_denied` event means the security policy refused a command step and the
 run stopped. Report it to the user; permission is theirs to grant (see the

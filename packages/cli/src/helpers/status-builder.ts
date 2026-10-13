@@ -20,7 +20,6 @@ import {
   type ActionBlockData,
   type ActiveRunbookEntry,
   type ArtifactPathOptions,
-  type ChildLinkage,
   type CurrentChildStatus,
   type DelegationChildStatus,
   type ParentLinkStatus,
@@ -28,6 +27,7 @@ import {
   type ExecutionStatus,
   type PublicArtifactVarValue,
   type RunbookState,
+  type RunLinkage,
 } from '@rundown-org/core';
 import {
   getStepRetryMax,
@@ -104,10 +104,11 @@ export interface StatusOutputData {
  * unit and kind. Nothing in it authorizes anything.
  *
  * @param linkage - The row's linkage, or null for a top-level run.
- * @returns The status form, or undefined for a top-level run.
+ * @returns The status form, or undefined for a top-level run and for a
+ *   Delegation whose parent was pruned (there is no parent run to name).
  */
-export function buildParentStatus(linkage: ChildLinkage | null): ParentLinkStatus | undefined {
-  if (linkage === null) return undefined;
+export function buildParentStatus(linkage: RunLinkage | null): ParentLinkStatus | undefined {
+  if (linkage === null || linkage.kind === 'orphaned_delegation') return undefined;
   return { runId: linkage.parentRunId, step: linkage.parentStep, kind: linkage.kind };
 }
 

@@ -23,7 +23,7 @@ import type { RunbookStateManager } from './state.js';
 import type { StateVersion } from './storage/mutation-result.js';
 import type { ExecutionLease } from './execution-lease.js';
 import type { Lifecycle, RunbookState } from './types.js';
-import type { ChildLinkage } from './child-linkage.js';
+import type { RunLinkage } from './child-linkage.js';
 
 /**
  * A running run resolved by its Owner Token.
@@ -44,9 +44,10 @@ export interface OwnedRun {
   readonly lease: ExecutionLease | null;
   /**
    * The parent coordinate the run's row records, or null for a top-level run.
-   * An Inline Child target carries its linkage (#903).
+   * An Inline Child target carries its linkage (#903); a Delegation whose
+   * parent was pruned reads `orphaned_delegation` (#904).
    */
-  readonly linkage: ChildLinkage | null;
+  readonly linkage: RunLinkage | null;
 }
 
 /** A lifecycle a finished run can carry. */

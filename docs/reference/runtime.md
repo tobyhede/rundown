@@ -424,8 +424,9 @@ owned by whichever agent claims it, which never writes its parent:
 4. **Standing.** Every command on a Delegation first checks that its parent is
    running and still counts it — reserved at the parent's active entry, not yet
    Collected, for the substep the parent rests on or a later one — else
-   `DELEGATION_CANCELLED` or `PARENT_RUN_FINISHED`. The check may race the
-   parent's next write; Collect decides what counts.
+   `DELEGATION_CANCELLED` or `PARENT_RUN_FINISHED` — except `stop`, which ends
+   the child's own run and is always accepted. The check may race the parent's
+   next write; Collect decides what counts.
 5. **Collect.** `rundown collect --token` reads the Delegations of the run's
    active entry and commits each terminal child's Child Result — `completed` as
    PASS, `stopped` or `abandoned` as FAIL — with its `finalVars`, one

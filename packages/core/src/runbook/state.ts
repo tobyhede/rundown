@@ -727,6 +727,23 @@ export class RunbookStateManager {
   }
 
   /**
+   * Find the run that issued a Claim Ticket, by the ticket's hash (#904).
+   *
+   * Reads only the runs whose persisted state records the hash, so a claim
+   * neither validates nor warns about any other run in the project.
+   *
+   * @param ticketHash - Hash of the presented Claim Ticket
+   * @returns Every run recording the hash, validated (at most one in practice)
+   * @throws {InvalidRunbookStateError} If a matching record fails the
+   *   persisted-state gates or the structural parse
+   * @throws {LegacySnapshotError} If a matching record uses deprecated snapshots
+   */
+  async findByTicketHash(ticketHash: SecretHash): Promise<readonly VersionedRunState[]> {
+    const store = await this.store();
+    return store.findRunsByTicketHash(ticketHash);
+  }
+
+  /**
    * Set a run's execution lease immediately before an external effect (#902).
    *
    * One conditional update; see `RunbookStore.acquireExecutionLease`. The

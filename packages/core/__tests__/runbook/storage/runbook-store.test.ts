@@ -356,7 +356,11 @@ describe('saveRun — one conditional write, no retry', () => {
       stepName: 'mutated',
     });
 
-    expect(result).toEqual({ kind: 'committed', state: { ...state, stepName: 'mutated' } });
+    expect(result).toEqual({
+      kind: 'committed',
+      state: { ...state, stepName: 'mutated' },
+      stateVersion: 1,
+    });
     expect((await store.loadRun(state.id))?.stepName).toBe('mutated');
     expect(await versionOf(state.id)).toBe(1);
   });
@@ -704,7 +708,7 @@ describe('delegation child claim (#904)', () => {
     ).rejects.toBeInstanceOf(StoreInvariantError);
   });
 
-  it('unlinks, rather than deletes, a delegation child whose parent is deleted', async () => {
+  it('orphans, rather than deletes, a delegation child whose parent is deleted', async () => {
     const parent = await newState();
     await store.createRun(parent, freshHash());
     const child = await newState();
@@ -716,6 +720,12 @@ describe('delegation child claim (#904)', () => {
       linkage: delegationTo(parent, 'agent-7'),
     });
     await store.deleteRun(parent.id);
-    expect((await store.loadRunWithVersion(child.id))?.linkage).toBeNull();
+    expect((await store.loadRunWithVersion(child.id))?.linkage).toEqual({
+      kind: 'orphaned_delegation',
+      parentStep: delegationTo(parent).parentStep,
+      parentFrameKey: delegationTo(parent).parentFrameKey,
+      parentEntry: delegationTo(parent).parentEntry,
+      claimedBy: 'agent-7',
+    });
   });
 });

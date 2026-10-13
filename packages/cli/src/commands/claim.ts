@@ -102,9 +102,9 @@ export function registerClaimCommand(program: Command): void {
             child.state,
             child.state.prompted,
             outcome.ownerToken,
-            child.linkage === null
-              ? undefined
-              : { runId: child.linkage.parentRunId, step: child.linkage.parentStep },
+            child.linkage?.kind === 'delegation'
+              ? { runId: child.linkage.parentRunId, step: child.linkage.parentStep }
+              : undefined,
           );
           const progression = await driveRunProgression(outcome.progression, {
             manager,

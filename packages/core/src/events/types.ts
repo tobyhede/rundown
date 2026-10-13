@@ -200,7 +200,8 @@ export interface ErrorOccurredPayload {
  * - `pending` — claimed and still running.
  * - `unclaimed` — reserved, but no agent has claimed it yet.
  * - `cancelled` — the parent no longer counts it: the owner decided its
- *   substep, or the parent left the entry.
+ *   substep, the parent left the entry, or an earlier result applied by the
+ *   same Collect finished the parent. Nothing is applied for it.
  */
 export type CollectedChildStatus =
   | 'collected'

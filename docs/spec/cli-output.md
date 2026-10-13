@@ -662,13 +662,13 @@ result moved the run — its `step_transitioned` and continuation, as for
 {"type":"step_transitioned","action":"DEFER","from":"1.1","at":"1.2","result":"PASS","runbookId":"rd_844d1d8e050f8f8fff2deb5a1063f57b","runbook":{"source":"project","path":"parent.runbook.md"},"seq":2}
 ```
 
-| `children[].status` | Meaning                                                                                 |
-| ------------------- | --------------------------------------------------------------------------------------- |
-| `collected`         | Terminal; this collect applied its Child Result (`result`)                              |
-| `already_collected` | An earlier collect applied it                                                           |
-| `pending`           | Claimed and still running; nothing applied                                              |
-| `unclaimed`         | Reserved, but not yet claimed; nothing applied                                          |
-| `cancelled`         | The run no longer counts it (its substep was decided by hand, or the run left the step) |
+| `children[].status` | Meaning                                                                                                                                                          |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `collected`         | Terminal; this collect applied its Child Result (`result`)                                                                                                       |
+| `already_collected` | An earlier collect applied it                                                                                                                                    |
+| `pending`           | Claimed and still running; nothing applied                                                                                                                       |
+| `unclaimed`         | Reserved, but not yet claimed; nothing applied                                                                                                                   |
+| `cancelled`         | The run no longer counts it (its substep was decided by hand, the run left the step, or an earlier result in the same collect finished the run); nothing applied |
 
 Pending and unclaimed children exit 0. Refusals are error envelopes with
 `command: "collect"`: `TOKEN_REQUIRED`, `INVALID_SYNTAX`, `UNKNOWN_TOKEN`,
@@ -1526,17 +1526,17 @@ Code: RUNBOOK_COMPOSITION_UNSUPPORTED
 Delegation (#904) adds five refusals. Each writes nothing, exits 1 and carries
 `details` only where shown.
 
-| Code                   | Command                               | When                                                                                                                                                |
-| ---------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `UNKNOWN_TICKET`       | `claim`                               | A well-formed Claim Ticket no reservation carries                                                                                                   |
-| `ALREADY_CLAIMED`      | `claim`                               | The ticket's child was already claimed                                                                                                              |
-| `DELEGATION_CANCELLED` | `claim`, and any command on the child | The parent no longer counts the child (its substep was decided by hand, or the step re-entered); `details.runId` names the child on a child command |
-| `PARENT_RUN_FINISHED`  | `claim`, and any command on the child | The parent reached a terminal or was pruned; `details.runId` names the child on a child command                                                     |
-| `NOTHING_TO_COLLECT`   | `collect`                             | The run's current step delegates nothing                                                                                                            |
+| Code                   | Command                                          | When                                                                                                                                                |
+| ---------------------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `UNKNOWN_TICKET`       | `claim`                                          | A well-formed Claim Ticket no reservation carries                                                                                                   |
+| `ALREADY_CLAIMED`      | `claim`                                          | The ticket's child was already claimed                                                                                                              |
+| `DELEGATION_CANCELLED` | `claim`, and any command on the child but `stop` | The parent no longer counts the child (its substep was decided by hand, or the step re-entered); `details.runId` names the child on a child command |
+| `PARENT_RUN_FINISHED`  | `claim`, and any command on the child but `stop` | The parent reached a terminal or was pruned; `details.runId` names the child on a child command                                                     |
+| `NOTHING_TO_COLLECT`   | `collect`                                        | The run's current step delegates nothing                                                                                                            |
 
 ```json
 {
-  "error": "Run rd_7af1d92df90a405edbf718ca20012b3f is a delegation that run rd_46cbdd5f19324d3b91667e2ff0e96386 no longer counts at 1.1 (the step was decided or entered again); its result would never be collected, so nothing was written. Stop working on it.",
+  "error": "Run rd_7af1d92df90a405edbf718ca20012b3f is a delegation that run rd_46cbdd5f19324d3b91667e2ff0e96386 no longer counts at 1.1 (the step was decided or entered again); its result would never be collected, so nothing was written. Stop working on it, and end it with `rundown stop --token <owner_token>`.",
   "kind": "error",
   "code": "DELEGATION_CANCELLED",
   "command": "pass",
