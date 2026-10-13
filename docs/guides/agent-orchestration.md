@@ -1,8 +1,8 @@
 # Driving a Run from an Agent
 
-How an agent drives a Rundown run today: start it, keep its Owner Token, and
-report each step's result against the run's current position. Subagent
-delegation returns in #904.
+How an agent drives a Rundown run today: start it, keep its Owner Token, report
+each step's result against the run's current position, and hand delegated steps
+to subagents by Claim Ticket.
 
 **Related docs:**
 
@@ -68,12 +68,31 @@ command feeds its result and outputs into the parent substep and the parent
 continues. `rundown status` shows the chain through each child's `parent`. See
 [docs/reference/cli.md § Composition](../reference/cli.md#composition).
 
-A runbook with a `DELEGATE` substep is refused at `rundown run` with
-`RUNBOOK_COMPOSITION_UNSUPPORTED`, before any run is created; the error names
-the delegating substeps. Subagent delegation returns in #904.
+## Delegating to subagents
+
+A substep marked `DELEGATE` runs as a **Delegation**: a child run owned by the
+subagent that claims it.
+
+1. Entering the step lists each child on `step_entered`:
+   `children: [{ step, runId, runbook, ticket }]`. The `ticket` (`rdt_…`) is a
+   Claim Ticket, printed only there, once.
+2. Dispatch one subagent per child, with its ticket in the prompt and the
+   instruction to run `rundown claim <ticket>`. The claim prints the child's own
+   `owner_token`; the subagent drives the child with it like any run it owns,
+   and stops at the child's terminal.
+3. Apply the results with `rundown collect --token <owner_token>`. Collect
+   reports each child (`collected`, `pending`, `unclaimed`, …) and applies every
+   terminal one, in any order; when the step's children are all applied the run
+   continues. Repeat it while children are pending.
+
+A subagent whose child the parent no longer counts — you decided the substep by
+hand, or the step was entered again — is refused `DELEGATION_CANCELLED`, and
+`PARENT_RUN_FINISHED` once the parent finished; either means stop. See
+[docs/reference/cli.md § Delegation](../reference/cli.md#delegation).
 
 The Claude Code plugin's `PreToolUse` (`Agent|Task`) and `SubagentStop` hooks
-are registered but currently allow every call without injecting context; see
+are registered but currently allow every call without injecting context, so the
+dispatched prompt must carry the ticket and the claim instruction itself; see
 [docs/internal/plugin-trust-model.md](../internal/plugin-trust-model.md).
 
 ---

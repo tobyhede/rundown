@@ -164,9 +164,9 @@ ls "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"/*-pass*.md
 
 `ContextId` is a built-in variable generated once per execution. Pass it
 explicitly with `--input ContextId=...` when a second runbook should write into
-the same context directory (see `context-passing/outputs-inputs.runbook.md`).
-Automatic inheritance across a parent/child run tree returns with delegation in
-#904.
+the same context directory (see `context-passing/outputs-inputs.runbook.md`). A
+child run — inline or delegated — inherits its parent's `ContextId` with the
+rest of the parent's variables.
 
 ## See Also
 

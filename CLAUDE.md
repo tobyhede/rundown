@@ -161,19 +161,20 @@ duplicate or reconstruct it here.** When stepping through a runbook, follow the
 
 `rundown run` prints the run's Owner Token once, as `owner_token` on the
 `runbook_started` event. Every mutating command (`pass`, `fail`, `goto`, `stop`,
-`complete`) names it with `--token <owner_token>`; a bare mutation is refused
-`TOKEN_REQUIRED`. `pass`/`fail` also require `--step` naming the current
+`complete`, `collect`) names it with `--token <owner_token>`; a bare mutation is
+refused `TOKEN_REQUIRED`. `pass`/`fail` also require `--step` naming the current
 position, and `--index` inside a FOR iteration. `--run <rd_…>` (the `runbookId`
 on events) is a read-only selector, never mutation authority: combining it with
 `--token` is rejected `INVALID_SYNTAX`. An inline substep's child runbook runs
-on the parent's Owner Token; `DELEGATE` substeps are refused at `run` with
-`RUNBOOK_COMPOSITION_UNSUPPORTED` until delegation (#904) returns. Read-only
-commands stay bare.
+on the parent's Owner Token. A `DELEGATE` substep's entry lists each child with
+a Claim Ticket on `step_entered`; `rundown claim <ticket>` starts the child
+under its own Owner Token, and the parent's owner applies its result with
+`rundown collect --token <owner_token>`. Read-only commands stay bare.
 
 - [docs/reference/cli.md](docs/reference/cli.md) — every `rundown`/`rd` command
-  (run, pass/fail, goto, status, stop, complete, ls, check, resolve, echo,
-  prune, scenario, scenario-suite, prompt, artifact) with flags and `--token` /
-  `--run` / `--step` / `--index` semantics
+  (run, pass/fail, goto, status, stop, complete, claim, collect, ls, check,
+  resolve, echo, prune, scenario, scenario-suite, prompt, artifact) with flags
+  and `--token` / `--run` / `--step` / `--index` semantics
 - [docs/spec/cli-output.md](docs/spec/cli-output.md) — `--schema` JSON-output
   schemas for programmatic validation
 - [docs/reference/security.md](docs/reference/security.md) — policy flags

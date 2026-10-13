@@ -233,9 +233,11 @@ Each run is one row of the `runs` table, keyed by run id. A row holds:
 The table also has execution-lease columns, set while a step's command runs (see
 [Execution lease](#execution-lease) below), and child-linkage columns
 (`parent_run_id`, `parent_step`, `parent_frame_key`, `parent_entry`,
-`parent_kind`), all-or-none, written once when an Inline Child's row is created
-(§7.5). Deleting a run deletes its inline children with it: nothing else can
-reach them.
+`parent_kind`), all-or-none, written once when a child's row is created — an
+Inline Child's at launch, a Delegation's at `rundown claim` (§7.5). A
+Delegation's row also records `claim_agent_id`, the agent id its claim named.
+Deleting a run deletes its inline children with it — nothing else can reach them
+— and unlinks its delegated children, which keep their own tokens.
 
 Every run has exactly one owner. A mutating command presents the Owner Token,
 which the runtime hashes to find the run; there is no other mutation authority,
@@ -337,31 +339,30 @@ Each SQLite run state row stores enough information to resume deterministically.
 }
 ```
 
-| Field                                               | Runtime requirement                                                                                                                                                                                                                                                                              |
-| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `id`                                                | Persisted run identifier generated at execution start.                                                                                                                                                                                                                                           |
-| `runbook`                                           | Canonical runbook identity object: `{ source, path }`, where `source` is `project`, `plugin`, `bundled`, or `external`. For `project`, `plugin`, and `bundled` sources, `path` is a source-root-relative Markdown path. For `external` sources, `path` is a normalized absolute filesystem path. |
-| `runbookPath`                                       | Display/execution file path relative to the current project when possible.                                                                                                                                                                                                                       |
-| `step`, `substep`                                   | Current structural position.                                                                                                                                                                                                                                                                     |
-| `stepName`                                          | Human-readable description of the current step.                                                                                                                                                                                                                                                  |
-| `steps`                                             | Per-step status records.                                                                                                                                                                                                                                                                         |
-| `prompted`                                          | Whether the run announces its commands rather than executing them. Required; written once at creation.                                                                                                                                                                                           |
-| `retryCount`                                        | User-visible retry count across retry sites.                                                                                                                                                                                                                                                     |
-| `variables`                                         | Live variable space, including accumulated outputs.                                                                                                                                                                                                                                              |
-| `templateVars`                                      | Frozen variable map used for deterministic resume rendering.                                                                                                                                                                                                                                     |
-| `forStack`                                          | Active loop frame and current source value.                                                                                                                                                                                                                                                      |
-| `iterationResults`                                  | Results recorded for current loop aggregation.                                                                                                                                                                                                                                                   |
-| `substepStates`                                     | Substep lifecycle and result, and the Current Child an inline substep reserved for its latest entry (`child`: `{ kind, runId, entry, runbook, contextSnapshot }`, §7.5).                                                                                                                         |
-| `resolvedCompletions`                               | Completion records keyed by frame, entry, and substep.                                                                                                                                                                                                                                           |
-| `frameEntryCounts`, `activeFrameKey`, `activeEntry` | Re-entry-safe frame identity. Monotonic entry counts for GOTO/RETRY scope isolation — frame presence means _ever entered_, never _currently open_.                                                                                                                                               |
-| `lastResult`, `lastAction`                          | Last result signal and resolved action.                                                                                                                                                                                                                                                          |
-| `startedAt`, `updatedAt`                            | ISO timestamps for run creation and last state write.                                                                                                                                                                                                                                            |
-| `frontmatterOutputs`                                | Frontmatter `outputs:` declarations parsed at startup, seeded into the machine on every actor creation.                                                                                                                                                                                          |
-| `finalVars`                                         | Evaluated frontmatter output values at runbook termination.                                                                                                                                                                                                                                      |
-| `lifecycle`                                         | Run lifecycle state: `running` during execution; `completed`, `stopped`, or `abandoned` once terminal. No current command writes `abandoned`.                                                                                                                                                    |
-| `runbookSrc`                                        | Raw source content with template placeholders preserved.                                                                                                                                                                                                                                         |
-| `snapshot`                                          | Opaque XState persisted snapshot.                                                                                                                                                                                                                                                                |
-| `schemaVersion`                                     | Persisted state schema version. MUST equal `CURRENT_SCHEMA_VERSION` (currently `4`).                                                                                                                                                                                                             |
+| Field                                               | Runtime requirement                                                                                                                                                                                                                                                                                                                                                                          |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                                                | Persisted run identifier generated at execution start.                                                                                                                                                                                                                                                                                                                                       |
+| `runbook`                                           | Canonical runbook identity object: `{ source, path }`, where `source` is `project`, `plugin`, `bundled`, or `external`. For `project`, `plugin`, and `bundled` sources, `path` is a source-root-relative Markdown path. For `external` sources, `path` is a normalized absolute filesystem path.                                                                                             |
+| `runbookPath`                                       | Display/execution file path relative to the current project when possible.                                                                                                                                                                                                                                                                                                                   |
+| `step`, `substep`                                   | Current structural position.                                                                                                                                                                                                                                                                                                                                                                 |
+| `stepName`                                          | Human-readable description of the current step.                                                                                                                                                                                                                                                                                                                                              |
+| `steps`                                             | Per-step status records.                                                                                                                                                                                                                                                                                                                                                                     |
+| `prompted`                                          | Whether the run announces its commands rather than executing them. Required; written once at creation.                                                                                                                                                                                                                                                                                       |
+| `retryCount`                                        | User-visible retry count across retry sites.                                                                                                                                                                                                                                                                                                                                                 |
+| `variables`                                         | Live variable space, including accumulated outputs.                                                                                                                                                                                                                                                                                                                                          |
+| `templateVars`                                      | Frozen variable map used for deterministic resume rendering.                                                                                                                                                                                                                                                                                                                                 |
+| `forStack`                                          | Active loop frame and current source value.                                                                                                                                                                                                                                                                                                                                                  |
+| `iterationResults`                                  | Results recorded for current loop aggregation.                                                                                                                                                                                                                                                                                                                                               |
+| `substepStates`                                     | Substep lifecycle and result, and the Current Child a composing substep reserved for its latest entry (`child`, §7.5): `{ kind: "inline", runId, entry, runbook, collected? }`, or `{ kind: "delegation", runId, entry, runbook, contextSnapshot, ticketHash, collected? }`. `ticketHash` is the Claim Ticket's SHA-256 (null until issued); `collected` is the Child Result once Collected. |
+| `frameEntryCounts`, `activeFrameKey`, `activeEntry` | Re-entry-safe frame identity. Monotonic entry counts for GOTO/RETRY scope isolation — frame presence means _ever entered_, never _currently open_.                                                                                                                                                                                                                                           |
+| `lastResult`, `lastAction`                          | Last result signal and resolved action.                                                                                                                                                                                                                                                                                                                                                      |
+| `startedAt`, `updatedAt`                            | ISO timestamps for run creation and last state write.                                                                                                                                                                                                                                                                                                                                        |
+| `frontmatterOutputs`                                | Frontmatter `outputs:` declarations parsed at startup, seeded into the machine on every actor creation.                                                                                                                                                                                                                                                                                      |
+| `finalVars`                                         | Evaluated frontmatter output values at runbook termination.                                                                                                                                                                                                                                                                                                                                  |
+| `lifecycle`                                         | Run lifecycle state: `running` during execution; `completed`, `stopped`, or `abandoned` once terminal. No current command writes `abandoned`.                                                                                                                                                                                                                                                |
+| `runbookSrc`                                        | Raw source content with template placeholders preserved.                                                                                                                                                                                                                                                                                                                                     |
+| `snapshot`                                          | Opaque XState persisted snapshot.                                                                                                                                                                                                                                                                                                                                                            |
+| `schemaVersion`                                     | Persisted state schema version. MUST equal `CURRENT_SCHEMA_VERSION` (currently `4`).                                                                                                                                                                                                                                                                                                         |
 
 The runtime MUST treat `snapshot` as persisted state subject to the no-migration
 rule.
@@ -375,9 +376,10 @@ owner's commands:
 1. **Reservation.** Each entry into the substep — the first, each FOR iteration,
    each re-entry by `GOTO` or `RETRY` — records a Current Child on the substep's
    `substepStates` entry: a preallocated child run id, the frame entry it was
-   made at, the runbook reference, and a context snapshot of the parent's
-   variables and iteration binding. A reservation from an earlier entry is
-   stale: its child, finished or not, is never collected.
+   made at, and the runbook reference. The context the child inherits — the
+   parent's variables and iteration binding — is read from the parent row at
+   launch, while the parent still rests on that entry. A reservation from an
+   earlier entry is stale: its child, finished or not, is never collected.
 2. **Launch.** Run Progression creates the child row under the reserved id, with
    child linkage and no Owner Token hash, initialises it, and drives it. The
    child inherits the parent's variables (below explicit inputs), the
@@ -398,10 +400,44 @@ The execution lease (§7.2) is per run: a child's command holds the child's
 lease; the parent holds none while its inline child runs. Inline children nest
 up to 32 deep.
 
-A `DELEGATE` substep, and an inline substep listing more than one runbook, are
-refused at `rundown run` with `RUNBOOK_COMPOSITION_UNSUPPORTED`; delegation
-returns in #904. An inline child whose own runbook delegates is refused when it
-launches, leaving the parent on the substep for the owner to decide.
+A runbook-list substep marked `DELEGATE` composes a **Delegation**: a child run
+owned by whichever agent claims it, which never writes its parent:
+
+1. **Reservation.** Each entry into a delegated substep records a Current Child
+   for it and for every later delegated substep of the step that has none at
+   this entry: a preallocated child run id, the frame entry, the runbook
+   reference, and a context snapshot of the parent's variables and iteration
+   binding taken at that moment. As for an Inline Child, a reservation from an
+   earlier entry is stale.
+2. **Claim Ticket.** The Run Progression turn that announces the entry mints a
+   full-entropy Claim Ticket for every reservation that has none, commits only
+   their SHA-256 hashes (one conditional save), and prints the tickets in the
+   `step_entered` event's `children`. Nothing persists a ticket.
+3. **Claim.** `rundown claim <ticket>` finds the reservation by the ticket's
+   hash, prepares the child runbook exactly as an Inline Child's launch does,
+   and — in one transaction that re-reads the parent and verifies the
+   reservation still counts and the parent is running — inserts the child row
+   under the reserved id with an Owner Token of its own, its linkage and its
+   claiming agent. The child's id is the row's primary key, so a second claim is
+   refused `ALREADY_CLAIMED`. The child inherits the context snapshot (below
+   explicit inputs) and the parent's `prompted` mode.
+4. **Standing.** Every command on a Delegation first checks that its parent is
+   running and still counts it — reserved at the parent's active entry, not yet
+   Collected, for the substep the parent rests on or a later one — else
+   `DELEGATION_CANCELLED` or `PARENT_RUN_FINISHED`. The check may race the
+   parent's next write; Collect decides what counts.
+5. **Collect.** `rundown collect --token` reads the Delegations of the run's
+   active entry and commits each terminal child's Child Result — `completed` as
+   PASS, `stopped` or `abandoned` as FAIL — with its `finalVars`, one
+   conditional save per child. The substep the cursor rests on takes its result
+   at once; a later substep's is recorded on its reservation and raised when the
+   cursor arrives, so a fan-out Collects in any order. Running and unclaimed
+   children are reported, and nothing is applied for them. Collect is the only
+   path by which a Delegation's result reaches its parent.
+
+A substep listing more than one runbook is refused at `rundown run` with
+`RUNBOOK_COMPOSITION_UNSUPPORTED`, and a child whose runbook has one is refused
+when it launches or is claimed.
 
 <a id="template-variables"></a>
 
@@ -472,8 +508,9 @@ The runtime exposes canonical namespaced context paths.
 | `context.vars.NAME` | Current variable namespace: every user-visible variable, under `NAME`. |
 
 Parent and ancestor context paths (`context.parent.*`, `context.ancestors.N.*`)
-are populated in an Inline Child (§7.5) from the context snapshot its parent
-reserved: `context.parent.vars.NAME`, `context.parent.step`,
+are populated in a child run (§7.5) from its context snapshot — an Inline
+Child's read from its parent at launch, a Delegation's captured on its
+reservation: `context.parent.vars.NAME`, `context.parent.step`,
 `context.parent.substep`, `context.parent.at` and `context.parent.index`.
 
 <a id="built-in-variables"></a>

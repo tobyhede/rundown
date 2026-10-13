@@ -54,10 +54,13 @@ pretty-printed.
   transition that ends the run, shows the command-name action (`"complete"`,
   `"stop"`).
 - **Authority**: Mutating commands (`pass`, `fail`, `goto`, `stop`, `complete`,
-  and `prune --token`) name the run they mutate with `--token <owner_token>`.
-  The Owner Token is printed once, as `owner_token` on the `runbook_started`
-  event of `rundown run`, and appears in no other output. `--run <rd_…>` is a
-  read-only selector (`status`, `artifact`) and is never mutation authority.
+  `collect`, and `prune --token`) name the run they mutate with
+  `--token <owner_token>`. The Owner Token is printed once, as `owner_token` on
+  the `runbook_started` event of `rundown run` — or, for a delegated child, of
+  `rundown claim` — and appears in no other output. A Claim Ticket (`rdt_…`) is
+  printed once, in the `children` of the `step_entered` event that issued it,
+  and is `rundown claim`'s only authority. `--run <rd_…>` is a read-only
+  selector (`status`, `artifact`) and is never mutation authority.
 
 ### Schema Reference
 
@@ -312,12 +315,13 @@ produces.
 
 ### Child runs
 
-An Inline Child (#903) is a run with its own id and its own row, so it appears
-in the run list like any run. Each child carries `parent` — in its list entry
-and in its `--run` detail — and a run whose current step composes a child
-carries `child` in its `--run` detail. Following `parent` from any child reaches
-the root, whose Owner Token drives the whole chain. Neither field ever carries a
-token.
+An Inline Child (#903) or a Delegation (#904) is a run with its own id and its
+own row, so it appears in the run list like any run. Each child carries `parent`
+— in its list entry and in its `--run` detail. A run whose current step composes
+an Inline Child carries `child` in its `--run` detail, and a run whose current
+step delegates carries `children`. Following `parent` from an inline child
+reaches the root, whose Owner Token drives the whole inline chain. No field ever
+carries a token or a Claim Ticket.
 
 ```json
 {
@@ -348,12 +352,35 @@ token.
 | -------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | `parent.runId` | The parent run                                                                                                                |
 | `parent.step`  | The parent substep (`step.substep`) the child runs for                                                                        |
-| `parent.kind`  | `inline` — the parent's Owner Token drives the child                                                                          |
+| `parent.kind`  | `inline` — the parent's Owner Token drives the child; `delegation` — the child's own token, printed by `rundown claim`, does  |
 | `child.runId`  | The child the run's current step counts; a child from an earlier entry into the step (a loop, `GOTO` or `RETRY`) is not shown |
 | `child.status` | The child's lifecycle (`running`, `completed`, `stopped`), or `reserved` before its run exists                                |
 
-The text forms add a `PARENT` column to the list and `Parent:` / `Child:` lines
-to the detail.
+A delegating step's Delegations of the current entry, by id, lifecycle and Child
+Result only:
+
+```json
+{
+  "children": [
+    {
+      "runId": "rd_1b63d698a4ca35c6fa2e8c5ad4a4f779",
+      "step": "1.1",
+      "status": "completed",
+      "result": "pass"
+    },
+    { "runId": "rd_05cf2674816f973e6434760c30cb55bb", "step": "1.2", "status": "reserved" }
+  ]
+}
+```
+
+| Field               | Meaning                                                                                                    |
+| ------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `children[].step`   | The delegated substep (`step.substep`); `index` is added inside a FOR loop                                 |
+| `children[].status` | The child's lifecycle (`running`, `completed`, `stopped`, `abandoned`), or `reserved` before it is claimed |
+| `children[].result` | The Child Result once the child is terminal: `pass` for `completed`, `fail` otherwise                      |
+
+The text forms add a `PARENT` column to the list and `Parent:` / `Child:` /
+`Delegation:` lines to the detail.
 
 ### `rundown status --run <rd_…>`
 
@@ -561,12 +588,35 @@ child's step.
 An inline child that cannot be launched leaves the parent resting on the
 substep, with an `error_occurred` on the parent carrying the reason's code — the
 child preparation's own (`RUNBOOK_NOT_FOUND`, `MISSING_REQUIRED_VARS`, …),
-`RUNBOOK_COMPOSITION_UNSUPPORTED` for a child that delegates, or
-`INLINE_CHILD_LAUNCH_FAILED` — and the command exits non-zero.
+`RUNBOOK_COMPOSITION_UNSUPPORTED` for a child with a substep listing more than
+one runbook, or `INLINE_CHILD_LAUNCH_FAILED` — and the command exits non-zero.
 
-A runbook with a `DELEGATE` substep, or an inline substep listing more than one
-runbook, is refused before any run is created; see
+A runbook with a substep listing more than one runbook is refused before any run
+is created; see
 [Runbook composition unsupported](#runbook-composition-unsupported).
+
+#### Delegations
+
+A `DELEGATE` runbook-list substep's `step_entered` lists the Delegations its
+entry counts — the substep's own and every later delegated substep's — in
+`children`. Each carries its Claim Ticket only on the entry that issued it; an
+entry announced again (the run moving on to the next delegated substep of the
+same entry) lists them without tickets, and no other output ever carries one.
+
+```jsonl
+{"type":"step_entered","position":{"current":"1","total":2,"substep":"1"},"stepName":"1","description":"Runbook: child.runbook.md","hasCommand":false,"isSubstep":true,"prompted":false,"artifacts":{},"children":[{"step":"1.1","runId":"rd_7af1d92df90a405edbf718ca20012b3f","runbook":"child.runbook.md","ticket":"rdt_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"},{"step":"1.2","runId":"rd_fb058ba87b6b900bd1646f7ea3f6175c","runbook":"child.runbook.md","ticket":"rdt_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"}],"runbookId":"rd_46cbdd5f19324d3b91667e2ff0e96386","runbook":{"source":"project","path":"parent.runbook.md"},"seq":2}
+```
+
+| Field                | Meaning                                                                  |
+| -------------------- | ------------------------------------------------------------------------ |
+| `children[].step`    | The delegated substep (`step.substep`)                                   |
+| `children[].index`   | The FOR iteration the child was reserved in, inside a loop               |
+| `children[].runId`   | The child's preallocated run id                                          |
+| `children[].runbook` | The runbook the child runs                                               |
+| `children[].ticket`  | The Claim Ticket `rundown claim` takes; present only where it was issued |
+
+The text form prints `Delegation <step>: <runbook> (<runId>) ticket <ticket>`
+per child.
 
 ### `STEP_ENTERED` with artifacts
 
@@ -581,6 +631,51 @@ Text output remains human-readable and does not print raw artifact JSON by
 default. Artifact values may appear in rendered prompt or command text when
 authors reference them directly or through helpers. JSON output is the
 authoritative interface for artifact identity and provenance.
+
+## claim
+
+### `rundown claim <ticket> [--agent-id <id>]`
+
+The child's event stream, exactly as `rundown run`'s. Its `runbook_started`
+carries the child's own `owner_token` (printed nowhere else) and its `parent`:
+
+```jsonl
+{"type":"runbook_started","title":"Child","prompted":false,"parent":{"runId":"rd_46cbdd5f19324d3b91667e2ff0e96386","step":"1.1"},"owner_token":"rdo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","runbookId":"rd_7af1d92df90a405edbf718ca20012b3f","runbook":{"source":"project","path":"child.runbook.md"},"seq":1}
+{"type":"step_entered","position":{"current":"1","total":1},"stepName":"1","description":"Work","prompt":"Do it.","hasCommand":false,"isSubstep":false,"prompted":false,"artifacts":{},"runbookId":"rd_7af1d92df90a405edbf718ca20012b3f","runbook":{"source":"project","path":"child.runbook.md"},"seq":2}
+```
+
+Refusals are error envelopes with `command: "claim"`: `INVALID_SYNTAX` (not a
+Claim Ticket; the value is never echoed), `UNKNOWN_TICKET`, `ALREADY_CLAIMED`,
+`DELEGATION_CANCELLED`, `PARENT_RUN_FINISHED`, and the child runbook's own
+preparation codes. Nothing is created on any of them.
+
+## collect
+
+### `rundown collect --token <owner_token>`
+
+One `children_collected` event for the run the token targets, then — when a
+result moved the run — its `step_transitioned` and continuation, as for
+[pass](#pass):
+
+```jsonl
+{"type":"children_collected","children":[{"step":"1.1","runId":"rd_1b63d698a4ca35c6fa2e8c5ad4a4f779","result":"pass","status":"collected"},{"step":"1.2","runId":"rd_05cf2674816f973e6434760c30cb55bb","status":"pending"}],"runbookId":"rd_844d1d8e050f8f8fff2deb5a1063f57b","runbook":{"source":"project","path":"parent.runbook.md"},"seq":1}
+{"type":"step_transitioned","action":"DEFER","from":"1.1","at":"1.2","result":"PASS","runbookId":"rd_844d1d8e050f8f8fff2deb5a1063f57b","runbook":{"source":"project","path":"parent.runbook.md"},"seq":2}
+```
+
+| `children[].status` | Meaning                                                                                 |
+| ------------------- | --------------------------------------------------------------------------------------- |
+| `collected`         | Terminal; this collect applied its Child Result (`result`)                              |
+| `already_collected` | An earlier collect applied it                                                           |
+| `pending`           | Claimed and still running; nothing applied                                              |
+| `unclaimed`         | Reserved, but not yet claimed; nothing applied                                          |
+| `cancelled`         | The run no longer counts it (its substep was decided by hand, or the run left the step) |
+
+Pending and unclaimed children exit 0. Refusals are error envelopes with
+`command: "collect"`: `TOKEN_REQUIRED`, `INVALID_SYNTAX`, `UNKNOWN_TOKEN`,
+`RD-303` / `RD-304`, `EXECUTION_IN_PROGRESS` / `EXECUTION_INTERRUPTED`,
+`CONCURRENT_MODIFICATION` (results applied before it stand), and
+`NOTHING_TO_COLLECT`. The text form prints `Child <step> <runId>: <status>` per
+child.
 
 ## `rundown artifact`
 
@@ -1399,15 +1494,15 @@ Code: INVALID_STEP
 
 ### Runbook composition unsupported
 
-`rundown run` refuses a runbook with a `DELEGATE` substep (delegation returns in
-#904) or an inline substep listing more than one runbook. No run is created.
-`details.substeps` names every such substep. A single-runbook inline substep
-runs (see [Inline children](#inline-children)).
+`rundown run` refuses a runbook with a substep listing more than one runbook:
+each substep composes one child. No run is created. `details.substeps` names
+every such substep. A single-runbook inline or `DELEGATE` substep runs (see
+[Inline children](#inline-children) and [Delegations](#delegations)).
 
 **Text:**
 
 ```text
-Error: Runbook composes other runbooks at 1.1 in a form this build does not run (a DELEGATE substep, or an inline substep listing more than one runbook). Delegation returns in #904.
+Error: Runbook composes other runbooks at 1.1 in a form this build does not run (a substep listing more than one runbook: each substep composes one child).
 Code: RUNBOOK_COMPOSITION_UNSUPPORTED
 ```
 
@@ -1415,7 +1510,7 @@ Code: RUNBOOK_COMPOSITION_UNSUPPORTED
 
 ```json
 {
-  "error": "Runbook composes other runbooks at 1.1 in a form this build does not run (a DELEGATE substep, or an inline substep listing more than one runbook). Delegation returns in #904.",
+  "error": "Runbook composes other runbooks at 1.1 in a form this build does not run (a substep listing more than one runbook: each substep composes one child).",
   "kind": "error",
   "code": "RUNBOOK_COMPOSITION_UNSUPPORTED",
   "command": "run",
@@ -1423,6 +1518,29 @@ Code: RUNBOOK_COMPOSITION_UNSUPPORTED
     "runbook": "runbooks/parent.runbook.md",
     "substeps": ["1.1"]
   }
+}
+```
+
+### Delegation refusals
+
+Delegation (#904) adds five refusals. Each writes nothing, exits 1 and carries
+`details` only where shown.
+
+| Code                   | Command                               | When                                                                                                                                                |
+| ---------------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `UNKNOWN_TICKET`       | `claim`                               | A well-formed Claim Ticket no reservation carries                                                                                                   |
+| `ALREADY_CLAIMED`      | `claim`                               | The ticket's child was already claimed                                                                                                              |
+| `DELEGATION_CANCELLED` | `claim`, and any command on the child | The parent no longer counts the child (its substep was decided by hand, or the step re-entered); `details.runId` names the child on a child command |
+| `PARENT_RUN_FINISHED`  | `claim`, and any command on the child | The parent reached a terminal or was pruned; `details.runId` names the child on a child command                                                     |
+| `NOTHING_TO_COLLECT`   | `collect`                             | The run's current step delegates nothing                                                                                                            |
+
+```json
+{
+  "error": "Run rd_7af1d92df90a405edbf718ca20012b3f is a delegation that run rd_46cbdd5f19324d3b91667e2ff0e96386 no longer counts at 1.1 (the step was decided or entered again); its result would never be collected, so nothing was written. Stop working on it.",
+  "kind": "error",
+  "code": "DELEGATION_CANCELLED",
+  "command": "pass",
+  "details": { "runId": "rd_7af1d92df90a405edbf718ca20012b3f" }
 }
 ```
 

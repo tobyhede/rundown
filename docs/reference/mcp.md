@@ -97,8 +97,12 @@ ownership model (see
 - **Owner Token** — `rundown run` prints the run's Owner Token
   (`rdo_<43 base64url characters>`) once, as `owner_token` on the
   `runbook_started` event. Every mutating tool (`pass`, `fail`, `goto`,
-  `complete`, `stop`) REQUIRES it as `token`, forwarded as `--token <token>`.
-  The token both selects the run and proves ownership.
+  `complete`, `stop`, `collect`) REQUIRES it as `token`, forwarded as
+  `--token <token>`. The token both selects the run and proves ownership.
+- **Claim Ticket** — a delegated step's `step_entered` lists each child's Claim
+  Ticket (`rdt_<43 base64url characters>`). `claim` REQUIRES it as `ticket`; it
+  is that tool's only authority, and its response carries the child's own Owner
+  Token.
 - **Run selector** — `runId` (`rd_<32 hex>`), accepted only by `status` and
   forwarded as `--run <runId>`, selects a run for reading. It is never mutation
   authority, and no mutating tool accepts it.
@@ -122,6 +126,8 @@ The server MUST register exactly the following tools:
 | [`goto`](#goto)         | `token`, `step`     | `index`                                                                | `rundown goto <step> --token <token> [--index <n>]`                                                                 |
 | [`complete`](#complete) | `token`             | `message`                                                              | `rundown complete [<message>] --token <token>`                                                                      |
 | [`stop`](#stop)         | `token`             | `message`                                                              | `rundown stop [<message>] --token <token>`                                                                          |
+| [`claim`](#claim)       | `ticket`            | `agentId`                                                              | `rundown claim <ticket> [--agent-id <agentId>]`                                                                     |
+| [`collect`](#collect)   | `token`             | —                                                                      | `rundown collect --token <token>`                                                                                   |
 
 Parameter types are defined per tool below. The server MUST validate tool inputs
 against the declared schema and reject inputs that fail validation without
@@ -193,9 +199,11 @@ and apply unchanged when variables are supplied through MCP.
 
 Inline children (runbook-list substeps without `DELEGATE`) run as they do
 through the CLI: the run's Owner Token drives the deepest running inline child,
-and the event stream carries each child's events under its own `runbookId`. A
-runbook with a `DELEGATE` substep is refused by the CLI with
-`RUNBOOK_COMPOSITION_UNSUPPORTED`; delegation returns in #904.
+and the event stream carries each child's events under its own `runbookId`.
+Delegations (`DELEGATE` substeps) are driven by the `claim` and `collect` tools:
+a delegated step's `step_entered` lists each child's Claim Ticket, `claim`
+starts the child and returns its own Owner Token, and `collect` applies the
+children's results with the parent's token.
 
 <a id="pass"></a>
 
@@ -268,6 +276,37 @@ its final action object is still returned as the payload (see
 [§6.4](#response-format)). See
 [docs/reference/cli.md](cli.md#force-terminal-targeting) for force-terminal
 semantics.
+
+<a id="claim"></a>
+
+### 5.10a `claim`
+
+Claim a delegated child by its Claim Ticket and start it.
+
+| Parameter | Type   | Required | Behavior                                                                                     |
+| --------- | ------ | -------- | -------------------------------------------------------------------------------------------- |
+| `ticket`  | string | Yes      | Claim Ticket from a delegated step's `step_entered` `children`, forwarded positionally.      |
+| `agentId` | string | No       | Identity of the claiming agent, forwarded as `--agent-id <value>` and recorded on the child. |
+
+The payload is the child's event stream; its `runbook_started` carries the
+child's `owner_token`, which every later tool call on the child presents as
+`token`. Refusals (`UNKNOWN_TICKET`, `ALREADY_CLAIMED`, `DELEGATION_CANCELLED`,
+`PARENT_RUN_FINISHED`) pass through unchanged. See
+[docs/reference/cli.md § Delegation](cli.md#delegation).
+
+<a id="collect"></a>
+
+### 5.10b `collect`
+
+Apply the results of the run's delegated children.
+
+| Parameter | Type   | Required | Behavior                                                            |
+| --------- | ------ | -------- | ------------------------------------------------------------------- |
+| `token`   | string | Yes      | Owner Token from `runbook_started`, forwarded as `--token <value>`. |
+
+The payload starts with a `children_collected` event naming each child's status
+(`collected`, `already_collected`, `pending`, `unclaimed`, `cancelled`),
+followed by the run's continuation when a result moved it.
 
 <a id="unsupported-cli-operations"></a>
 
