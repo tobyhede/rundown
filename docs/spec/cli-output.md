@@ -416,6 +416,32 @@ The text form adds a
 `Stopped by <user> on <host> at <at>, without the owner token[: <message>]`
 line.
 
+### `rundown status --claimed-by <agent-id>`
+
+The Delegations that still hold an agent: running, claimed under that agent id,
+and still counted by their parent. The Claude Code plugin's `SubagentStop` hook
+blocks a sub-agent while the list is not empty. Run ids and step labels only:
+
+```json
+{
+  "kind": "claimed_delegations",
+  "agentId": "a5a1f32a3ad196aa7",
+  "delegations": [
+    {
+      "runId": "rd_7af1d92df90a405edbf718ca20012b3f",
+      "runbook": "child.runbook.md",
+      "parentRunId": "rd_46cbdd5f19324d3b91667e2ff0e96386",
+      "step": "1.1"
+    }
+  ]
+}
+```
+
+A finished, abandoned or cancelled child, one whose parent finished or was
+pruned, and another agent's child are not listed; an agent holding nothing gets
+`"delegations": []`. `--claimed-by` with `--run`, or empty, is refused
+`INVALID_SYNTAX`.
+
 ### `rundown status --run <rd_…>`
 
 **Text:**

@@ -171,7 +171,7 @@ describe('delegating-runbooks Delegation protocol', () => {
   it('teaches no nested-delegation pattern (ADR 0005: neither supported nor refused)', () => {
     expect(skill).not.toMatch(/\*\*Nested:\*\*/);
     expect(skill).not.toMatch(/delegation tree/);
-    expect(skill).toMatch(/[Nn]ested delegation[^.]*not\s+supported/);
+    expect(skill).toMatch(/nested delegation[^.]*not\s+supported/i);
   });
 
   it('teaches no retired or unbuilt delegation surface', () => {

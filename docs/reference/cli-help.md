@@ -213,9 +213,11 @@ Usage: rundown status [options]
 Show run state (all runs, or one run with --run)
 
 Options:
-  --run <runId>  Show one run in detail
-  --text         Output as human-readable text
-  -h, --help     display help for command
+  --run <runId>            Show one run in detail
+  --claimed-by <agent-id>  List the delegated children this agent claimed that
+                           are still running and counted
+  --text                   Output as human-readable text
+  -h, --help               display help for command
 ```
 
 ### `rundown stop`

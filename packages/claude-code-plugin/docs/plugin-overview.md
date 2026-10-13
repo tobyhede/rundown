@@ -1,32 +1,27 @@
 # Claude Code Plugin Overview
 
-Developer-facing reference for `@rundown-org/claude-code-plugin` as it exists on
-branch `#463` (post-minimization). This is descriptive documentation of the
-current code, intended for engineers new to the plugin.
+Developer-facing reference for `@rundown-org/claude-code-plugin`: what the
+plugin's hooks do today, and where each piece lives. Descriptive documentation
+of the current code, for engineers new to the plugin.
 
-> **Where the logic lives.** The plugin is a **thin front-end** to
-> `@rundown-org/core`. All runbook behaviour — step transitions, result
-> aggregation, delegation lifecycle, closure rules — is owned by the XState
-> state machine in core. The plugin never re-implements that logic; it calls
-> core primitives (`hashDelegationToken`, `readConsumedDelegationClosureForCwd`,
-> `assertDelegationTokenHash`, `findDelegationClaimToken`,
-> `isDelegationTokenHash`) and the `rundown` CLI. See the root
-> [`CLAUDE.md`](../../../CLAUDE.md) architectural principles.
+> **Where the logic lives.** The plugin is a **thin front end** to
+> `@rundown-org/core`. Every delegation rule — who may claim, who may release,
+> which children still hold a sub-agent — is decided by core and reached through
+> the `rundown` CLI. The plugin parses hook payloads, rewrites or refuses tool
+> calls, and relays core's answers. See the root
+> [`CLAUDE.md`](../../../CLAUDE.md) architectural principles and
+> [ADR 0005](../../../docs/adr/0005-one-writer-per-run.md).
 
 ---
 
-## 1. What exists (architecture)
+## 1. Architecture
 
 The plugin is a single Node entry point (`dist/cli.js`) registered against two
 native Claude Code hook events. It reads a hook payload on **stdin**, routes it
-to one of two fixed delegation gates, and writes a hook-response JSON object on
-**stdout**.
-
-There is **no** repository-level gate config, **no** generic gate engine, and
-**no** context files. Those were removed in this branch. The routing table is
-fixed in code.
-
-### 1.1 Component / containment diagram
+to one fixed gate, and writes a hook-response JSON object on **stdout**. There
+is no repository-level gate config, no generic gate engine, no context files,
+and no plugin state: the routing table is fixed in code and the hooks record
+nothing.
 
 ```mermaid
 flowchart TD
@@ -34,502 +29,156 @@ flowchart TD
 
     subgraph plugin["@rundown-org/claude-code-plugin (dist/cli.js)"]
         CLI["cli.ts<br/>handleHookDispatch()"]
-        PARSE["shared/schemas.ts<br/>parseHookInput()"]
-        DISP["dispatcher.ts<br/>dispatch()"]
-        ROUTE["routeOf(input)<br/>→ Route | null"]
-        SELECT["gatesFor(route)<br/>→ Gate[]"]
+        DISP["dispatcher.ts<br/>routeOf → gatesFor → dispatch"]
         OUT["hook-output.ts<br/>buildHookOutput()"]
 
         subgraph gates["src/gates/"]
             G1["on-delegation-dispatch<br/>(Agent | Task)"]
+            G2["on-bash-command<br/>(Bash)"]
             G3["on-subagent-stop<br/>(SubagentStop)"]
         end
 
         subgraph handlers["src/workflow/hooks/"]
-            H1["delegation-dispatch.ts<br/>+ delegation-detector.ts"]
+            H1["delegation-dispatch.ts<br/>+ shared/claim-ticket-marker.ts"]
+            H2["stamp-agent-id.ts<br/>+ shell-command.ts"]
             H3["subagent-stop.ts"]
             HR["rundown.ts<br/>execFileSync → rundown CLI"]
         end
-
-        STORE["session.ts + shared/schemas.ts<br/>.claude/session/state.json"]
     end
 
-    CORE["@rundown-org/core<br/>hashDelegationToken,<br/>findDelegationClaimToken,<br/>assertDelegationTokenHash,<br/>readConsumedDelegationClosureForCwd"]
-    RD["rundown / rundown CLI<br/>(@rundown-org/cli)"]
+    RD["rundown status --claimed-by<br/>(@rundown-org/cli → core delegationsHeldBy)"]
 
-    CLI --> PARSE --> DISP
-    DISP --> ROUTE --> SELECT --> gates
-    G1 --> H1
-    G3 --> H3
-    H1 --> HR --> RD
-    H1 --> CORE
-    H3 --> CORE
-    H1 -.read/write.-> STORE
-    H3 -.read/consume.-> STORE
+    CLI --> DISP
+    DISP --> G1 --> H1
+    DISP --> G2 --> H2
+    DISP --> G3 --> H3 --> HR --> RD
     DISP --> OUT -->|stdout: hook JSON| CC
 ```
 
-### 1.2 The CLI entry point — `src/cli.ts`
+### 1.1 The entry point — `src/cli.ts`
 
-The plugin's **only** CLI mode is native hook dispatch over stdin. The old
-`session` / `log-path` / `log-dir` subcommands were removed; `main()` simply
-calls `handleHookDispatch()`.
+Drain stdin, `parseHookInput` (Zod), `dispatch`, `buildHookOutput`, print the
+output when non-empty. An empty, malformed or failing payload fails **closed**:
+stderr plus exit code 2, the universal blocking channel of the hook protocol
+(`hook-refusal.ts`).
 
-The flow (`cli.ts:15-108`):
-
-1. Drain stdin into a UTF-8 string.
-2. Empty input → emit `{ continue: false, stopReason: 'Empty input received' }`
-   and `exit(1)`.
-3. `parseHookInput(inputStr)` (`shared/schemas.ts:77`) — JSON-parse +
-   Zod-validate against `HookInputSchema`. On failure →
-   `{ continue: false, stopReason }` + `exit(1)`.
-4. `dispatch(input)` → `DispatchResult`.
-5. `buildHookOutput(input, result)` → the Claude Code hook JSON.
-6. Print the output to stdout **only if it is non-empty**.
-7. Any thrown error → `{ continue: false, stopReason: 'Unexpected error: …' }`
-   - `exit(1)`.
-
-Hook invocations are always logged (`logger.always('HOOK_INVOKED', …)`) for
-debugging.
-
-### 1.3 The fixed delegation router — `src/dispatcher.ts`
-
-The router has three pieces:
-
-**`routeOf(input)`** (`dispatcher.ts:35`) maps a native hook event to a typed
-`Route`, or `null` when no gate applies:
-
-```ts
-type Route =
-  | { event: 'PreToolUse'; tool: 'Agent' | 'Task' }
-  | { event: 'SubagentStop' };
-```
-
-- `SubagentStop` → `{ event: 'SubagentStop' }`
-- `PreToolUse` with `tool_name ∈ {Agent, Task}` → the matching `PreToolUse`
-  route
-- anything else → `null` (the plugin returns `{}` and emits nothing)
-
-**`gatesFor(route)`** (`dispatcher.ts:52`) selects the fixed, ordered gates:
+### 1.2 The router — `src/dispatcher.ts`
 
 | Route                     | Gate                           |
 | ------------------------- | ------------------------------ |
-| `SubagentStop`            | `onSubagentStop.execute`       |
 | `PreToolUse(Agent\|Task)` | `onDelegationDispatch.execute` |
+| `PreToolUse(Bash)`        | `onBashCommand.execute`        |
+| `SubagentStop`            | `onSubagentStop.execute`       |
 
-**`dispatch(input)`** (`dispatcher.ts:68`) runs the selected gates in order:
+Anything else returns `{}` and emits nothing. A gate's `decision: 'block'`
+short-circuits; its `updatedInput` becomes the tool input Claude Code runs; its
+`additionalContext` accumulates. A gate that throws is logged and skipped (the
+fail-open backstop), which is safe only because every enforcement gate turns its
+own errors into a block first.
 
-- Each gate's `additionalContext` accumulates (joined with `\n\n`).
-- The first gate that returns `decision: 'block'` short-circuits and returns
-  `{ context, blockReason }`.
-- A gate that **throws** is logged and skipped — the **fail-open backstop**.
-  This is safe only because the two enforcement gates (`on-subagent-stop`,
-  `on-delegation-dispatch`) convert their _own_ internal errors into blocking
-  decisions **before** they could throw past this catch, so the backstop can
-  only ever swallow the additive (context-enrichment) part of a gate. See the
-  comment block at `dispatcher.ts:77-90`.
+### 1.3 The gates and handlers
 
-`DispatchResult` also carries an optional `stopMessage` (bridged to
-`continue:false`/`stopReason`). It is a supported output surface but **no
-current gate produces it** — `dispatch` never sets it today.
+- **Delegation dispatch** (`gates/on-delegation-dispatch.ts`,
+  `workflow/hooks/delegation-dispatch.ts`). Looks for the Claim Ticket marker —
+  `RD_CLAIM_TICKET=rdt_…` on a line of its own, defined once in
+  `shared/claim-ticket-marker.ts` — in the Agent/Task prompt and description.
+  One ticket: the dispatch proceeds with the claim instructions appended to the
+  sub-agent's prompt through `updatedInput` (a PreToolUse `additionalContext`
+  reaches the caller, not the spawned agent). Two tickets, or a marker that is
+  not a ticket: blocked. No marker: untouched. Fails closed only for a marked
+  dispatch.
+- **Bash command** (`gates/on-bash-command.ts`,
+  `workflow/hooks/stamp-agent-id.ts`, `workflow/hooks/shell-command.ts`). A
+  conservative shell scanner finds every `rundown claim` / `rundown release`
+  (also `rd`, `node …/cli.js`, behind `cd …&&`, `VAR=…`, `env`, `npx`,
+  `pnpm exec`, global options, pipes and redirections). It removes any
+  `--agent-id` the agent typed and inserts `--agent-id '<agent_id>'` from the
+  hook input right after the subcommand. Without an `agent_id` (the top-level
+  agent), `claim` is denied and `release` is only stripped, so it matches only a
+  claim recorded without an id. A claim or release hidden in command
+  substitution, backticks, a here-document, `sh -c`, `eval` or `xargs` is
+  denied. The rewrite carries no `permissionDecision`, so Claude Code still
+  applies the user's permission rules to it. Fails closed.
+- **Subagent stop** (`gates/on-subagent-stop.ts`,
+  `workflow/hooks/subagent-stop.ts`). With an `agent_id` and an existing
+  `.rundown/rundown.db`, runs `rundown status --claimed-by <agent_id>` and
+  blocks with the finish-or-release instruction while any Delegation is listed
+  (core's `delegationsHeldBy`: running, claimed under that id, still counted by
+  its parent). It keeps no counter and never creates the store. Fails closed: a
+  CLI failure blocks.
+- **`rundown.ts`** resolves `@rundown-org/cli` with `require.resolve` and runs
+  `node <cliPath> <args>` through `execFileSync` with an argv array (no shell).
+  `setExecSync` injects a fake in tests.
 
-### 1.4 Hook-dispatch flowchart
+### 1.4 Hook output — `src/hook-output.ts`
 
-```mermaid
-flowchart TD
-    A["dispatch(input)"] --> B{"routeOf(input)"}
-    B -->|null| Z["return {} (no output)"]
-    B -->|Route| C["gatesFor(route) → ordered gates"]
-    C --> D["context = ''"]
-    D --> E{"next gate?"}
-    E -->|no| Y["return context ? {context} : {}"]
-    E -->|yes| F["await gate(input)"]
-    F -->|throws| G["log error;<br/>skip gate (fail-open backstop)"]
-    G --> E
-    F -->|GateResult| H{"result.additionalContext?"}
-    H -->|yes| I["accumulate context"]
-    H -->|no| J
-    I --> J{"result.decision === 'block'?"}
-    J -->|yes| K["return {context, blockReason}<br/>(short-circuit)"]
-    J -->|no| E
-```
+| Dispatch result | PreToolUse output                               | SubagentStop output                    |
+| --------------- | ----------------------------------------------- | -------------------------------------- |
+| `blockReason`   | `permissionDecision: 'deny'` + reason           | `decision: 'block'` + `reason`         |
+| `updatedInput`  | `hookSpecificOutput.updatedInput` (no decision) | —                                      |
+| `context`       | `hookSpecificOutput.additionalContext`          | `hookSpecificOutput.additionalContext` |
+| nothing         | `{}` (nothing printed)                          | `{}`                                   |
 
-### 1.5 The two gates — `src/gates/`
+### 1.5 Hook registration — `hooks/hooks.json`
 
-Gates are the thin adapter layer between the router and the workflow handlers.
-Each exposes `execute(input): Promise<GateResult>`.
+`PreToolUse` with matchers `Agent|Task` and `Bash`, and `SubagentStop` with
+`.*`, all running `node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js"`.
 
-- **`on-delegation-dispatch.ts`** — handles `PreToolUse(Agent|Task)`. Calls
-  `handleDelegationDispatch`. **Enforcement gate, fails CLOSED**: if a
-  delegation token was detected but recording it failed
-  (`DelegationTokenRecordingError`), it returns `decision: 'block'` rather than
-  letting the error reach the fail-open backstop (which would launch the
-  subagent with no recorded token and silently bypass closure enforcement). A
-  detected `violation` also blocks; a returned `context` becomes
-  `additionalContext`.
+### 1.6 Sibling bins — `rdpath` and `rdx`
 
-- **`on-subagent-stop.ts`** — handles `SubagentStop`. Calls
-  `handleSubagentStop`. **Enforcement gate, fails CLOSED**: any session I/O
-  error is caught and converted into a blocking decision
-  (`'Could not verify delegation closure …'`), so the dispatcher's fail-open
-  catch can never bypass closure enforcement. A `violation` blocks; a `context`
-  becomes `additionalContext`.
-
-### 1.6 The workflow handlers — `src/workflow/hooks/`
-
-The handlers hold the actual behaviour; gates just translate their results into
-`GateResult`s.
-
-- **`delegation-detector.ts`** —
-  `detectDelegationInToolInput(prompt, description)` scans the Agent/Task
-  `prompt` (then `description`) for a canonical `RD_CLAIM_TOKEN` line using
-  core's `findDelegationClaimToken`. Returns `{ token }` or `null`.
-
-- **`delegation-dispatch.ts`** — `handleDelegationDispatch(input)`:
-  1. Only acts on `PreToolUse(Agent|Task)`.
-  2. Runs the detector; no token → `{}`.
-  3. **Records** the token: `recordDelegationToken` hashes it with
-     `hashDelegationToken` (raw token never stored) and writes it into session
-     `metadata.delegation_active_tokens[input.agent_id]` (or the legacy global
-     `metadata.delegation_active_token` when there is no `agent_id`). A failure
-     here is wrapped in `DelegationTokenRecordingError` (fail-closed at the
-     gate).
-  4. Best-effort: runs `rundown status` (via `rundown.ts`) to enrich with the
-     active runbook/step names.
-  5. Returns a `## Delegation Context` Markdown block instructing the subagent
-     to claim and use `--claim-id`.
-
-- **`subagent-stop.ts`** — `handleSubagentStop(input)`:
-  1. Only acts on `SubagentStop`.
-  2. **Consumes** the active token for `input.agent_id` (or the legacy global
-     token) out of session metadata — exactly once.
-  3. `kind: 'none'` → `{}`; `kind: 'tampered'` → an "unable to verify, check
-     `rundown status`" context message.
-  4. For a consumed token, asks core (`readConsumedDelegationClosureForCwd`)
-     whether the delegated child still `requiresClosure`. If closed → `{}`. If
-     still open (or state can't prove closure) → a `violation` requiring
-     explicit `rundown pass`/`rundown fail --claim-id` (or
-     `rundown delegate --retry` / `rundown abort` for an unclaimed token). Never
-     destroys child runbook state.
-
-- **`rundown.ts`** — `rundown(args, cwd)` resolves `@rundown-org/cli` via
-  `require.resolve` and runs `node <cliPath> <args>` with `execFileSync` (no
-  shell, so no command injection). `setExecSync` allows injection in tests.
-
-### 1.7 Building the hook output — `src/hook-output.ts`
-
-`buildHookOutput(input, result)` (`hook-output.ts:54`) maps a `DispatchResult`
-onto the modern Claude Code hook contract:
-
-```mermaid
-flowchart TD
-    A["buildHookOutput(input, result)"] --> B{"result.stopMessage?"}
-    B -->|yes| C["{ continue:false, stopReason, hookSpecificOutput? }"]
-    B -->|no| D{"result.blockReason?"}
-    D -->|"yes &amp; PreToolUse"| E["hookSpecificOutput:<br/>permissionDecision:'deny'<br/>permissionDecisionReason<br/>(+ additionalContext)"]
-    D -->|"yes &amp; other event"| F["decision:'block', reason,<br/>hookSpecificOutput(+ context)"]
-    D -->|no| G{"context?"}
-    G -->|yes| H["hookSpecificOutput.additionalContext"]
-    G -->|no| I["{} (nothing emitted)"]
-```
-
-Key mapping: a block on **PreToolUse** becomes a `permissionDecision: 'deny'`
-(only `'deny'` is currently produced); a block on **SubagentStop** becomes
-`decision: 'block'` + `reason`.
-
-### 1.8 Session state — `src/session.ts` + `src/shared/schemas.ts`
-
-`Session` stores state at `.claude/session/state.json` under the project `cwd`
-with atomic temp-write-then-rename. `SessionStateSchema` defines the shape;
-delegation correlation lives in the open-ended `metadata` map.
-
-The delegation-specific metadata keys:
-
-| Key                                 | Schema                                                                                                                                                              | Used by                      |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
-| `metadata.delegation_active_tokens` | `DelegationActiveTokensMetadataSchema` — a record keyed by `agent_id`, each entry `{ kind:'delegation-active-token', agent_id, session_id?, tokenHash, createdAt }` | identified agents            |
-| `metadata.delegation_active_token`  | a bare token-hash string                                                                                                                                            | legacy / unidentified agents |
-
-`tokenHash` is validated by `DelegationTokenHashSchema` (core's
-`isDelegationTokenHash`, format `sha256:<64 hex>`). The record's `superRefine`
-enforces that each map key equals its entry's `agent_id`.
-
-> The schemas module also defines `RunbookPositionBodySchema`,
-> `RunbookStepBodySchema`, and `ParentLinkageSchema` — validators for
-> `rundown status` JSON projections — used when correlating delegation state.
-
-### 1.9 Hook registration — `hooks/hooks.json`
-
-Registration matches `routeOf` exactly:
-
-```json
-{
-  "hooks": {
-    "PreToolUse":   [{ "matcher": "Agent|Task", "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"" }] }],
-    "SubagentStop": [{ "matcher": ".*",         "hooks": [{ "type": "command", "command": "node \"${CLAUDE_PLUGIN_ROOT}/dist/cli.js\"" }] }]
-  }
-}
-```
-
-- `PreToolUse` matcher `Agent|Task` ⇆ the `PreToolUse(Agent|Task)` route.
-- `SubagentStop` matcher `.*` ⇆ the single `SubagentStop` route.
-
-No other events are registered, so the plugin runs only for the events it owns.
-
-### 1.10 Sibling bins — `rdpath` and `rdx`
-
-The package publishes two **minor** bins (`package.json` `bin`), independent of
-the hook dispatcher and of decreasing importance as functionality moves into
-runbook artifacts:
-
-- **`rdpath`** (`src/rdpath.ts`) — assembles artifact paths with optional
-  context scoping; delegates to core (`assembleRdPath`, `findRdPathFiles`,
-  `readActiveRunScope`).
-- **`rdx`** (`src/rdx.ts`, with `rdx-core.ts`, `rdx-validate.ts`) — renders a
-  JSON file to Markdown and optionally validates it against a plugin artifact
-  schema (`plan-schema.ts`, `review-schema.ts`, `location-schema.ts`, plus
-  `plan-validators.ts`).
-
-Reach for these only when a runbook explicitly invokes them.
+Minor bins, independent of the hooks: `rdpath` (`src/rdpath.ts`) assembles
+artifact paths; `rdx` (`src/rdx.ts`, `rdx-core.ts`, `rdx-validate.ts`) renders
+JSON artifacts to Markdown and validates them against the plugin schemas. Reach
+for them only when a runbook invokes them.
 
 ---
 
-## 2. What capabilities the plugin provides
-
-The plugin delivers exactly **two** delegation-safety capabilities. Both exist
-to keep a delegated child runbook honest: a token must be tracked, and the child
-must not stop with delegated work left open. (Reporting work through the claim
-is enforced authoritatively by core's `resolveTransitionTarget`, which refuses a
-bare parent transition while delegated children are open — the plugin no longer
-duplicates that check.)
-
-### 2.1 Delegation dispatch enrichment
-
-On `PreToolUse(Agent|Task)` carrying an `RD_CLAIM_TOKEN`, the plugin records the
-token **hash** in session metadata and injects a `## Delegation Context` block
-telling the subagent to `rundown claim <token>` and then use `--claim-id` for
-every subsequent transition.
-
-```mermaid
-flowchart LR
-    A["PreToolUse(Agent/Task)"] --> B{"RD_CLAIM_TOKEN<br/>in prompt/description?"}
-    B -->|no| C["{} — no enrichment"]
-    B -->|yes| D["record hash in<br/>delegation_active_tokens[agent_id]"]
-    D -->|record fails| E["block (fail closed)"]
-    D -->|recorded| F["inject ## Delegation Context"]
-```
-
-### 2.2 Delegation closure enforcement
-
-On `SubagentStop`, the plugin consumes the agent's active token and asks core
-whether the delegated work still requires closure. If it does, the stop is
-**blocked** with a violation telling the orchestrator how to close it.
-
-```mermaid
-flowchart TD
-    A["SubagentStop"] --> B["consume token for agent_id"]
-    B --> C{"kind?"}
-    C -->|none| D["{} — allow stop"]
-    C -->|tampered| E["context: 'check rundown status'"]
-    C -->|consumed| F["readConsumedDelegationClosureForCwd"]
-    F --> G{"requiresClosure?"}
-    G -->|no| H["{} — allow stop (work closed)"]
-    G -->|yes| I["BLOCK — close it explicitly"]
-```
-
-> **Note:** A bare `rundown pass`/`rundown fail` (missing `--claim-id`) issued
-> while the parent run has open delegated children is refused authoritatively by
-> core's `resolveTransitionTarget` (it returns `open_delegated_children`,
-> surfaced as a CLI error). The plugin no longer intercepts `PreToolUse(Bash)`
-> for this — that guard duplicated core logic non-authoritatively and was
-> removed.
-
-### 2.3 Delegation token lifecycle
-
-The two capabilities are stages of one token lifecycle. The plugin owns
-detection/recording (dispatch) and verification (stop); core owns the claim and
-the transitions.
-
-```mermaid
-stateDiagram-v2
-    [*] --> Detected: PreToolUse(Agent/Task) carries RD_CLAIM_TOKEN
-    Detected --> Recorded: plugin stores tokenHash in<br/>delegation_active_tokens[agent_id]
-    Recorded --> Claimed: subagent runs `rundown claim &lt;token&gt;`<br/>(core issues claim_id)
-    Claimed --> Working: subagent does the work
-    Working --> Reported: `rundown pass --claim-id &lt;id&gt;`<br/>or `rundown fail --claim-id &lt;id&gt;`<br/>(core refuses a bare transition while children are open)
-    Reported --> Verified: SubagentStop → plugin consumes token,<br/>core confirms closure (requiresClosure=false)
-    Verified --> [*]: stop allowed
-
-    Recorded --> BlockedStop: SubagentStop while still open<br/>(closure enforcement)
-    Claimed --> BlockedStop
-    Working --> BlockedStop
-    BlockedStop --> Reported: close explicitly, then stop
-```
-
----
-
-## 3. End-to-end walkthrough — the planning runbook
-
-This walkthrough uses the real planning runbook
-[`runbooks/planning/write-plan.runbook.md`](../runbooks/planning/write-plan.runbook.md)
-(resolvable as `rundown:write-plan`) and the
-[`running-runbooks`](../skills/running-runbooks/SKILL.md) /
-[`delegating-runbooks`](../skills/delegating-runbooks/SKILL.md) skills for the
-command protocol. The `write-plan` runbook drives the
-[`writing-plans`](../skills/writing-plans/SKILL.md) skill, validates the result
-against `plan.schema.json`, and exports `PlanPath` as an OUTPUT.
-
-Scenario: an orchestrator runs a parent runbook that delegates the
-plan-authoring substep to a subagent. We follow where each plugin hook fires.
-
-> Note: the plugin hooks fire on the **delegating step** of a _parent_ runbook
-> (any runbook with a `- DELEGATE` substep). `write-plan` itself is the
-> **child** the subagent claims and executes. The walkthrough shows both sides.
-
-### 3.1 Sequence diagram
+## 2. A delegated step, end to end
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    participant O as Orchestrator (Claude)
-    participant P as Plugin hook (cli.js)
-    participant S as Session state<br/>(.claude/session/state.json)
-    participant C as Core (rundown CLI / state machine)
-    participant Sub as Subagent
+    participant O as Orchestrator
+    participant P as Plugin hooks
+    participant S as Sub-agent
+    participant C as rundown CLI / core
 
-    O->>C: rundown run <parent-runbook>
-    C-->>O: events (JSON) — advance to delegating step
-
-    O->>C: rundown delegate --step 2.1
-    C-->>O: token issued (rdtk_...)
-
-    O->>P: PreToolUse(Task) — prompt contains<br/>RD_CLAIM_TOKEN=rdtk_...
-    Note over P: on-delegation-dispatch
-    P->>S: record tokenHash in<br/>delegation_active_tokens[agent_id]
-    P->>C: rundown status (best-effort enrichment)
-    P-->>O: additionalContext = "## Delegation Context"
-    O->>Sub: Task launches with injected claim instructions
-
-    Sub->>C: rundown claim rdtk_...
-    C-->>Sub: claim_id (child write-plan starts)
-
-    Sub->>C: rundown status --claim-id <claim_id>
-    C-->>Sub: child step state
-
-    Note over Sub: works through write-plan steps,<br/>writes plan.json, validateSchema passes
-
-    rect rgb(245,230,230)
-    Sub->>C: rundown pass (no --claim-id)
-    Note over C: resolveTransitionTarget → open_delegated_children
-    C-->>Sub: ERROR (core refuses the bare parent transition)
-    end
-
-    Sub->>C: rundown pass --claim-id <claim_id>
-    C-->>Sub: child COMPLETE — result propagates to parent 2.1
-
-    Sub->>P: SubagentStop
-    Note over P: on-subagent-stop
-    P->>S: consume token for agent_id
-    P->>C: readConsumedDelegationClosureForCwd
-    C-->>P: requiresClosure = false (work was closed)
-    P-->>O: {} — stop allowed
+    O->>C: rundown run <runbook>  (keeps owner_token)
+    C-->>O: step_entered children[{ runId, ticket: rdt_… }]
+    O->>P: Agent(prompt … RD_CLAIM_TICKET=rdt_…)
+    P-->>S: prompt + claim instructions
+    S->>P: Bash: rundown claim rdt_…
+    P->>C: rundown claim --agent-id '<agent_id>' rdt_…
+    C-->>S: runbook_started { owner_token (child), parent }
+    S->>C: rundown pass --token <child token> --step 1 …
+    S->>P: SubagentStop
+    P->>C: rundown status --claimed-by <agent_id>
+    C-->>P: delegations: [] once the child finished
+    P-->>S: stop allowed
+    O->>C: rundown collect --token <owner_token>
+    C-->>O: children_collected, the run continues
 ```
 
-If the subagent had stopped **without** running `rundown pass --claim-id` (step
-16), the final exchange flips: `readConsumedDelegationClosureForCwd` returns
-`requiresClosure = true`, and `on-subagent-stop` returns `decision: 'block'`
-with the violation requiring explicit closure.
-
-### 3.2 Step-by-step (real commands)
-
-1. **`rundown run <parent-runbook>`** — orchestrator starts the parent runbook
-   (JSON output by default; agents never add `--text`).
-
-2. **`rundown delegate --step 2.1`** — the orchestrator reaches a `- DELEGATE`
-   substep and asks core to issue a delegation token (`rdtk_...`). (See
-   [`delegating-runbooks`](../skills/delegating-runbooks/SKILL.md).)
-
-3. **PreToolUse(Task) fires → `on-delegation-dispatch`.** The orchestrator
-   launches a `Task`/`Agent` whose prompt contains `RD_CLAIM_TOKEN=rdtk_...`.
-   The plugin detects the token (`findDelegationClaimToken`), records its
-   **hash** in `metadata.delegation_active_tokens[agent_id]`, and injects this
-   exact context block verbatim (`delegation-dispatch.ts:154-180`, fenced
-   sub-blocks shown as `~~~` here so this quote nests cleanly):
-
-   ````text
-   ## Delegation Context
-
-   This task is a delegated substep. Claim the delegation token before starting work:
-
-   ```
-   rundown claim rdtk_...
-   ```
-
-   Copy the `claim_id` from the claim output. Use it for all later Rundown commands:
-
-   ```
-   rundown status --claim-id <claim_id>
-   rundown pass --claim-id <claim_id>
-   rundown fail --claim-id <claim_id>
-   rundown stash --claim-id <claim_id>
-   rundown pop --claim-id <claim_id>
-   rundown stop --claim-id <claim_id>
-   rundown complete --claim-id <claim_id>
-   ```
-
-   Active runbook: <file>
-   Current step: <step name>
-
-   Before stopping, complete the delegated runbook explicitly with `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`.
-   ````
-
-   (The literal template emits ` ``` ` fences; the `Active runbook:` /
-   `Current step:` lines are best-effort, populated from `rundown status` when
-   available.)
-
-4. **Subagent claims: `rundown claim rdtk_...`.** Core starts the child
-   `write-plan` runbook and returns a `claim_id`. The subagent copies it from
-   the output.
-
-5. **Subagent does the planning work**, working step-by-step through
-   `write-plan` (invoke writing-plans skill → review schema → scope →
-   requirements → research → map files → output path → write `plan.json` →
-   `validateSchema PlanPath` → verify structure), responding with
-   `rundown pass --claim-id <claim_id>` and checking
-   `rundown status --claim-id <claim_id>` as it goes.
-
-6. **If the subagent runs a bare `rundown pass` (no `--claim-id`)** → core's
-   `resolveTransitionTarget` refuses the transition (it returns
-   `open_delegated_children` because the parent run still has open delegated
-   children), surfaced as a CLI error. The plugin no longer intercepts this on
-   `PreToolUse(Bash)`; the refusal is authoritative and lives in core. The
-   subagent retries with `rundown pass --claim-id <claim_id>`.
-
-7. **Subagent stops → SubagentStop fires → `on-subagent-stop`.** The plugin
-   consumes the agent's token and calls `readConsumedDelegationClosureForCwd`.
-   Because the child was closed in step 5 (`rundown pass --claim-id`),
-   `requiresClosure` is `false` and the stop is allowed (`{}`). Had the work
-   still been open, the gate would **block** the stop with the explicit-closure
-   violation (`subagent-stop.ts:194-197`).
-
-The child's result propagates back to the parent's substep `2.1` via core's
-delegation linkage and OUTPUTS (`PlanPath`), with no manual variable plumbing on
-the orchestrator side.
+If the sub-agent tries to stop while its child is running and counted, the gate
+blocks with the finish-or-release instruction; a sub-agent that lost the child's
+token runs `rundown release <child run id>`, which the Bash hook stamps with its
+agent id, and the parent's `collect` applies the abandoned child as a fail. The
+orchestrator recovers a lost ticket, an unclaimed child or a lost child token
+with `rundown retry --token <owner_token> --step <substep>`.
 
 ---
 
 ## Quick file map
 
-| Concern                                      | File                                                                                        |
-| -------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| Entry point (stdin → dispatch → stdout)      | `src/cli.ts`                                                                                |
-| Router (`routeOf` / `gatesFor` / `dispatch`) | `src/dispatcher.ts`                                                                         |
-| Hook JSON builder                            | `src/hook-output.ts`                                                                        |
-| Gates                                        | `src/gates/on-delegation-dispatch.ts`, `src/gates/on-subagent-stop.ts`                      |
-| Handlers                                     | `src/workflow/hooks/{delegation-dispatch,delegation-detector,subagent-stop,rundown}.ts`     |
-| Session state                                | `src/session.ts`, `src/shared/schemas.ts`                                                   |
-| Hook registration                            | `hooks/hooks.json`                                                                          |
-| Plugin manifest                              | `.claude-plugin/plugin.json`                                                                |
-| Sibling bins                                 | `src/rdpath.ts`, `src/rdx.ts` (+ `rdx-core`, `rdx-validate`, `*-schema`, `plan-validators`) |
-| Planning runbook                             | `runbooks/planning/write-plan.runbook.md`                                                   |
-| Skills                                       | `skills/running-runbooks/SKILL.md`, `skills/delegating-runbooks/SKILL.md`                   |
+| Concern                                 | File                                                                                             |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| Entry point (stdin → dispatch → stdout) | `src/cli.ts`, `src/hook-refusal.ts`                                                              |
+| Router                                  | `src/dispatcher.ts`                                                                              |
+| Hook JSON builder                       | `src/hook-output.ts`                                                                             |
+| Gates                                   | `src/gates/on-{delegation-dispatch,bash-command,subagent-stop}.ts`                               |
+| Handlers                                | `src/workflow/hooks/{delegation-dispatch,stamp-agent-id,shell-command,subagent-stop,rundown}.ts` |
+| Claim Ticket marker                     | `src/shared/claim-ticket-marker.ts`                                                              |
+| Hook registration                       | `hooks/hooks.json`                                                                               |
+| Plugin manifest                         | `.claude-plugin/plugin.json`                                                                     |
+| Sibling bins                            | `src/rdpath.ts`, `src/rdx.ts` (+ `rdx-core`, `rdx-validate`, `*-schema`, `plan-validators`)      |
+| Skills                                  | `skills/running-runbooks/SKILL.md`, `skills/delegating-runbooks/SKILL.md`                        |
+| Trust model                             | [`docs/internal/plugin-trust-model.md`](../../../docs/internal/plugin-trust-model.md)            |

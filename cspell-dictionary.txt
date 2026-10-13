@@ -495,3 +495,5 @@ cursorless
 unmigrated
 watchpoints
 reselects
+bunx
+nohup

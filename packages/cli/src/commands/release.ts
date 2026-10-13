@@ -23,8 +23,9 @@ import { renderExecutionLeaseRefusal, renderRunFinished } from '../helpers/token
  * because it lost the child's Owner Token — ends it `abandoned` in the child's
  * own record, so its parent's Collect reads a definite result (a fail). The
  * authority is the agent id `rundown claim` recorded, matched by core (both
- * absent match). The agent passes `--agent-id` itself, the same id it gave
- * `rundown claim`: no hook stamps it yet (#907). Release grants nothing else
+ * absent match). In Claude Code the plugin's Bash hook stamps `--agent-id`
+ * from the sub-agent's `agent_id`, the same id it stamped on `claim` (#907);
+ * elsewhere the agent passes the id its claim used. Release grants nothing else
  * and never touches the parent; the running Inline Children the child composes
  * are abandoned with it.
  *

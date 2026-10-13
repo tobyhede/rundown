@@ -437,9 +437,11 @@ rundown claim rdt_… --agent-id <id>    # Record the claiming agent on the chil
 **Flags:**
 
 - `--agent-id <id>` — Identity of the claiming agent, recorded on the child; a
-  later `release` of the child is matched against it. The agent passes it by
-  hand, and must pass the same id to `release`: no plugin hook stamps it yet
-  (#907).
+  later `release` of the child is matched against it. In Claude Code the
+  plugin's Bash hook stamps it from the sub-agent's `agent_id`, replacing any
+  value typed, and refuses `claim` from an agent with none (the orchestrator).
+  Elsewhere — Codex, a person, the scenario harness — the claimant passes one
+  stable id by hand, and the same id to `release`.
 - `--text` — Human-readable output.
 
 In one transaction, `claim` verifies the reservation is still a child its parent
@@ -526,9 +528,11 @@ rundown release rd_… --agent-id <id>
 **Flags:**
 
 - `--agent-id <id>` — Identity of the releasing agent. It must equal the agent
-  id the claim recorded; a child claimed without one is released without one.
-  The agent passes it by hand — the same id it gave `claim` — since no plugin
-  hook stamps it yet (#907).
+  id the claim recorded; a child claimed without one is released without one. In
+  Claude Code the plugin's Bash hook stamps the sub-agent's own `agent_id`,
+  replacing any value typed, and strips it from a top-level agent's release, so
+  that releases only a child claimed without one. Elsewhere the claimant passes
+  the id its claim used.
 - `--text` — Human-readable output.
 
 Release is authorized by that agent id, not an Owner Token, and grants nothing
@@ -816,6 +820,7 @@ Show every run, or one run in detail. `status` is read-only and takes no
 rundown status                       # List every run (JSON output by default)
 rundown status --run <run_id>        # Show one run in detail
 rundown status --run <run_id> --text # Human-readable detail
+rundown status --claimed-by <agent-id> # Delegations still holding an agent
 ```
 
 **Flags:**
@@ -823,6 +828,14 @@ rundown status --run <run_id> --text # Human-readable detail
 - `--run <runId>` — Show one run in detail. A malformed id is refused
   `INVALID_RUN_ID`; a well-formed id that names no run is refused
   `RUN_TARGET_UNAVAILABLE`.
+- `--claimed-by <agent-id>` — List the Delegations that still hold an agent:
+  running, claimed under that agent id (`claim --agent-id`), and still counted
+  by their parent. The answer is
+  `{ kind: "claimed_delegations", agentId, delegations: [{ runId, runbook, parentRunId, step }] }`;
+  a finished, abandoned or cancelled child, or one whose parent finished or was
+  pruned, is not listed. The Claude Code plugin's `SubagentStop` hook reads it
+  to hold a sub-agent until it finishes or releases its child. Combined with
+  `--run`, or empty, it is refused `INVALID_SYNTAX`.
 
 While a run's step command is running or was interrupted, both forms carry
 `execution: { condition: "in_progress" | "interrupted", step, attempt, pid, startedAt }`;

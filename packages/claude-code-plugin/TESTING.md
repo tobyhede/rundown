@@ -1,9 +1,8 @@
 # Testing Guide for @rundown-org/claude-code-plugin
 
 How to run and write tests for the `claude-code-plugin` package. For the
-architecture under test (the fixed hook dispatcher, the two delegation gates,
-and the session state model), see
-[`docs/plugin-overview.md`](docs/plugin-overview.md).
+architecture under test (the fixed hook dispatcher and its three delegation
+gates), see [`docs/plugin-overview.md`](docs/plugin-overview.md).
 
 The plugin's only runtime surface is **native hook dispatch over stdin** (plus
 the `rdpath`/`rdx` sibling bins). There is no repository gate config, no gate
@@ -18,15 +17,14 @@ current surface only.
 __tests__/
 ├── helpers/                         # Shared test utilities
 │   ├── test-utils.ts                # createMockHookInput, runCli, temp dirs, timing
-│   ├── execfile-mock.ts             # execFileSync injection for rundown() calls
-│   └── session-mock.ts              # Session doubles
-├── gates/                           # The two fixed gates
+│   └── execfile-mock.ts             # execFileSync injection for rundown() calls
+├── gates/                           # Gate plumbing (handlers mocked)
 │   ├── on-delegation-dispatch.test.ts
 │   └── on-subagent-stop.test.ts
 ├── workflow/hooks/                  # Gate handler logic
-│   ├── delegation-dispatch.test.ts
-│   ├── delegation-detector.test.ts
-│   ├── subagent-stop.test.ts
+│   ├── delegation-dispatch.test.ts  # Claim Ticket marker + prompt rewrite
+│   ├── stamp-agent-id.test.ts       # Bash hook: --agent-id stamp, claim refusal
+│   ├── delegation-hooks.integration.test.ts  # all three hooks over the real CLI
 │   └── rundown.test.ts
 ├── runbooks/                        # Bundled-runbook runtime + validation
 ├── skills/                          # Skill content checks
@@ -127,31 +125,34 @@ boundary, not untested code.
 
 ## Manual Hook Verification
 
-Pipe a hook payload to the built CLI (`pnpm build` first). The plugin only acts
-on `PreToolUse(Agent|Task)` and `SubagentStop`; any other event is a no-op (`{}`
-/ empty stdout).
+Pipe a hook payload to the built CLI (`pnpm build` first). The plugin acts on
+`PreToolUse(Agent|Task)`, `PreToolUse(Bash)` and `SubagentStop`; any other event
+is a no-op (empty stdout).
 
 ```bash
-# SubagentStop with no active delegation — fast no-op
+# SubagentStop holding nothing (no Rundown store in cwd) — allow, empty stdout
 echo '{"hook_event_name":"SubagentStop","cwd":"'$(pwd)'","agent_id":"a1"}' | node dist/cli.js
 
-# PreToolUse(Task) carrying a delegation token — records hash + injects claim context
-echo '{"hook_event_name":"PreToolUse","cwd":"'$(pwd)'","tool_name":"Task","agent_id":"a1","tool_input":{"prompt":"... RD_CLAIM_TOKEN=rdtk_..."}}' | node dist/cli.js
+# PreToolUse(Task) carrying the Claim Ticket marker — updatedInput.prompt gains the claim instructions
+echo '{"hook_event_name":"PreToolUse","cwd":"'$(pwd)'","tool_name":"Task","tool_input":{"prompt":"Review.\nRD_CLAIM_TICKET=rdt_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}' | node dist/cli.js
+
+# PreToolUse(Bash) claim from a sub-agent — updatedInput.command carries --agent-id 'a1'
+echo '{"hook_event_name":"PreToolUse","cwd":"'$(pwd)'","tool_name":"Bash","agent_id":"a1","tool_input":{"command":"rundown claim rdt_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}' | node dist/cli.js
 ```
 
 ## Test Utilities
 
 `__tests__/helpers/test-utils.ts` exports: `createMockHookInput`,
-`createMockSessionState`, `createTempTestDir`, `getCliPath`, `runCli`,
-`measureExecutionTime`, `measureExecutionTimeSync`, `createMockExecSync`,
-`createMockExecSyncError`, `sleep`, `assertDefined`.
+`createTempTestDir`, `getCliPath`, `runCli`, `measureExecutionTime`,
+`measureExecutionTimeSync`, `createMockExecSync`, `createMockExecSyncError`,
+`sleep`, `assertDefined`.
 
 ```typescript
 import { createMockHookInput, createTempTestDir } from '../helpers/test-utils.js';
 
 const input = createMockHookInput('PreToolUse', {
   tool_name: 'Task',
-  tool_input: { prompt: 'work … RD_CLAIM_TOKEN=rdtk_…' },
+  tool_input: { prompt: 'work …\nRD_CLAIM_TICKET=rdt_…' },
 });
 
 const testDir = await createTempTestDir();
