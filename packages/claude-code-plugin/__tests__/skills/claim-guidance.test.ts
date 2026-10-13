@@ -222,15 +222,15 @@ describe('the human escape hatch is the user’s, never an agent’s (#906), in 
     (_copy, skill) => {
       const owner = section(skill, '## The Owner Token');
       expect(owner).toContain('rundown stop --run <run_id>');
-      expect(owner).toMatch(/[Nn]ever run `rundown stop --run`/);
-      expect(owner).toMatch(/ask the user/);
+      expect(owner).toMatch(/[Nn]ever run\s+`rundown stop --run`/);
+      expect(owner).toMatch(/ask the user\s+to run/);
       expect(section(skill, '## Refusals')).toContain('`INTERACTIVE_REQUIRED`');
     },
   );
 
   it('delegating-runbooks keeps a lost child token on retry and release, never the escape hatch', () => {
     const skill = readSkill('delegating-runbooks/SKILL.md');
-    expect(skill).toMatch(/[Nn]ever run `rundown stop --run`/);
+    expect(skill).toMatch(/[Nn]ever run\s+`rundown stop --run`/);
     expect(skill).not.toMatch(/rundown stop --run <child/);
   });
 });
