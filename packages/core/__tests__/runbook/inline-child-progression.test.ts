@@ -24,10 +24,8 @@ import {
   type RunProgressionOutcome,
 } from '../../src/runbook/run-progression.js';
 import { RunbookLifecycleCommandService } from '../../src/runbook/lifecycle-command-service.js';
-import {
-  MAX_INLINE_CHILD_DEPTH,
-  type PrepareInlineChild,
-} from '../../src/runbook/inline-progression.js';
+import { MAX_INLINE_CHILD_DEPTH } from '../../src/runbook/inline-progression.js';
+import type { PrepareChildRun } from '../../src/runbook/child-preparation.js';
 import { currentInlineReservation } from '../../src/runbook/inline-child.js';
 
 // Inline Children on the parent's Owner Token (#903, ADR 0005), driven through
@@ -122,14 +120,16 @@ echo leaf
 \`\`\`
 `;
 
-const DELEGATING = `# Delegating
+// One substep listing two runbooks: one unit cannot reserve two children.
+const PAIRED = `# Paired
 
-## 1. Fan out
-- DELEGATE
+## 1. Pair
 - PASS ALL COMPLETE
 - FAIL ANY STOP
 
+### 1.1 Both
 - leaf-pass.runbook.md
+- leaf-manual.runbook.md
 `;
 
 const SELF = `# Self
@@ -189,12 +189,12 @@ const SOURCES: Readonly<Partial<Record<string, string>>> = {
   'leaf-manual.runbook.md': LEAF_MANUAL,
   'leaf-outputs.runbook.md': LEAF_OUTPUTS,
   'middle.runbook.md': MIDDLE,
-  'delegating.runbook.md': DELEGATING,
+  'paired.runbook.md': PAIRED,
   'self.runbook.md': SELF,
 };
 
 /** The preparer the next activation uses; `undefined` stands for a frontend with none. */
-let preparer: PrepareInlineChild | undefined;
+let preparer: PrepareChildRun | undefined;
 
 let dir: string;
 let manager: RunbookStateManager;
@@ -235,7 +235,7 @@ function builtins(
 }
 
 /** The frontend's preparer, standing in for the CLI's file-reading service. */
-const prepare: PrepareInlineChild = async ({ reservation }) => {
+const prepare: PrepareChildRun = async ({ reservation }) => {
   const source = SOURCES[reservation.runbook];
   if (source === undefined) {
     return { kind: 'refused', code: 'RUNBOOK_NOT_FOUND', message: `no ${reservation.runbook}` };
@@ -274,7 +274,7 @@ function deps(root: RunbookState): RunProgressionDeps {
     loadSteps,
     sink: sinkFor(root),
     sinkFor,
-    ...(preparer === undefined ? {} : { prepareInlineChild: preparer }),
+    ...(preparer === undefined ? {} : { prepareChildRun: preparer }),
   };
 }
 
@@ -492,8 +492,8 @@ describe('Inline Child launch and implicit Collect (#903)', () => {
     expect((await manager.listWithVersion()).filter((run) => run.linkage !== null)).toEqual([]);
   });
 
-  it('refuses an inline child whose runbook delegates, writing no child', async () => {
-    const { root, outcome } = await start(PARENT_PASS.replace('leaf-pass', 'delegating'));
+  it('refuses an inline child whose runbook composes in a form this build does not run, writing no child', async () => {
+    const { root, outcome } = await start(PARENT_PASS.replace('leaf-pass', 'paired'));
 
     expect(outcome).toMatchObject({
       kind: 'refused',
@@ -501,7 +501,7 @@ describe('Inline Child launch and implicit Collect (#903)', () => {
       reason: 'inline_child_launch_failed',
       code: 'RUNBOOK_COMPOSITION_UNSUPPORTED',
       message: expect.stringMatching(
-        /^Inline child delegating\.runbook\.md at 1\.1 could not be launched: .* at 1\.1\. Delegation returns in #904\.$/,
+        /^Inline child paired\.runbook\.md at 1\.1 could not be launched: .* at 1\.1$/,
       ),
       recovery: 'permanent',
     });
