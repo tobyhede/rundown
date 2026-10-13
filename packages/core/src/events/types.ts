@@ -230,6 +230,24 @@ export interface ChildrenCollectedPayload {
   readonly children: readonly CollectedChild[];
 }
 
+/** Payload emitted by `rundown retry` (DELEGATION_RETRIED event, #905). */
+export interface DelegationRetriedPayload {
+  /** The delegated substep retried (`step.substep`). */
+  readonly step: string;
+  /** The FOR iteration it was retried in, inside a loop. */
+  readonly index?: number;
+  /** The child the retry cancelled. Its commands and its ticket are refused. */
+  readonly cancelledRunId: string;
+  /** The fresh child, carrying its new Claim Ticket — printed here once. */
+  readonly children: readonly StepEnteredChild[];
+}
+
+/** Payload emitted by `rundown release` (RUNBOOK_ABANDONED event, #905). */
+export interface RunbookAbandonedPayload {
+  /** The parent unit the abandoned Delegation ran for, while the parent exists. */
+  readonly parent?: { readonly runId: string; readonly step: string };
+}
+
 // ─── Event Union ─────────────────────────────────────────────────────────────
 
 /** Discriminated union of all v1 runbook lifecycle events. */
@@ -243,7 +261,9 @@ export type RunbookEventV1 =
   | (EventEnvelope & { type: 'RUNBOOK_COMPLETED'; payload: RunbookCompletedPayload })
   | (EventEnvelope & { type: 'RUNBOOK_STOPPED'; payload: RunbookStoppedPayload })
   | (EventEnvelope & { type: 'ERROR_OCCURRED'; payload: ErrorOccurredPayload })
-  | (EventEnvelope & { type: 'CHILDREN_COLLECTED'; payload: ChildrenCollectedPayload });
+  | (EventEnvelope & { type: 'CHILDREN_COLLECTED'; payload: ChildrenCollectedPayload })
+  | (EventEnvelope & { type: 'DELEGATION_RETRIED'; payload: DelegationRetriedPayload })
+  | (EventEnvelope & { type: 'RUNBOOK_ABANDONED'; payload: RunbookAbandonedPayload });
 
 /**
  * Pre-correlated `{ type, payload }` input pair accepted by the event emitter.

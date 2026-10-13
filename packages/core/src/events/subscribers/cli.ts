@@ -83,6 +83,12 @@ export class CLISubscriber {
       case 'CHILDREN_COLLECTED':
         this.handleChildrenCollected(event);
         break;
+      case 'DELEGATION_RETRIED':
+        this.handleDelegationRetried(event);
+        break;
+      case 'RUNBOOK_ABANDONED':
+        this.writer.writeLine(`Run ${event.runbookId} abandoned`);
+        break;
       default: {
         // Exhaustiveness check - TypeScript errors if a case is missing
         const _exhaustive: never = event;
@@ -193,6 +199,15 @@ export class CLISubscriber {
     for (const child of event.payload.children) {
       const result = child.result === undefined ? '' : ` (${child.result})`;
       this.writer.writeLine(`Child ${child.step} ${child.runId}: ${child.status}${result}`);
+    }
+  }
+
+  private handleDelegationRetried(event: RunbookEventV1 & { type: 'DELEGATION_RETRIED' }): void {
+    const { payload } = event;
+    this.writer.writeLine(`Retried ${payload.step}: cancelled ${payload.cancelledRunId}`);
+    for (const child of payload.children) {
+      const ticket = child.ticket === undefined ? '' : ` ticket ${child.ticket}`;
+      this.writer.writeLine(`Delegation ${child.step}: ${child.runbook} (${child.runId})${ticket}`);
     }
   }
 
