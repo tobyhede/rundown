@@ -460,13 +460,20 @@ describe('Collect (#904)', () => {
     ]);
     expect((await manager.load(root.id))?.substep).toBe('1');
 
+    // Parked results move no cursor, so the first collect announces nothing.
+    expect(first.kind === 'collected' && first.progression.kind).toBe('none');
+
     await pass(owners[0], '1');
     const second = await collect(token);
-    expect(second.kind === 'collected' && second.children.map((child) => child.status)).toEqual([
-      'collected',
-      'already_collected',
-      'already_collected',
-      'already_collected',
+    // The children keep naming the step they were reserved for, though the
+    // Collect moved the parent on to step 2.
+    expect(
+      second.kind === 'collected' && second.children.map((child) => [child.step, child.status]),
+    ).toEqual([
+      ['1.1', 'collected'],
+      ['1.2', 'already_collected'],
+      ['1.3', 'already_collected'],
+      ['1.4', 'already_collected'],
     ]);
     expect((await manager.load(root.id))?.step).toBe('2');
   });
