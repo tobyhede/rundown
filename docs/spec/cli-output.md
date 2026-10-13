@@ -253,9 +253,12 @@ rd_0123456789abcdef0123456789abcdef  running  1/3   runbooks/deploy.runbook.md  
 
 The list form describes no run in particular, so `active` is always `false`;
 each entry's `status` is that run's lifecycle (`running`, `complete`, `stopped`,
-or `abandoned`). A run whose persisted state this build cannot read is left out
-of the list, and a `[rundown] Warning: Invalid runbook state for …` line is
-written to stderr; see [`RD-309`](#rd-309--invalid-persisted-run-state).
+or `abandoned`). A run whose current step holds the execution lease also carries
+`execution` (see [Execution condition](#execution-condition)), and its text
+STATUS reads `running (in progress)` or `running (interrupted)`. A run whose
+persisted state this build cannot read is left out of the list, and a
+`[rundown] Warning: Invalid runbook state for …` line is written to stderr; see
+[`RD-309`](#rd-309--invalid-persisted-run-state).
 
 ### `rundown status` (no runs)
 
@@ -274,6 +277,38 @@ No runs.
   "kind": "status"
 }
 ```
+
+### Execution condition
+
+While a run's current step holds the execution lease — its command has started
+and its finish has not committed — both status forms carry an `execution`
+object. It is absent otherwise.
+
+```json
+{
+  "execution": {
+    "condition": "interrupted",
+    "step": "1",
+    "attempt": 2,
+    "pid": 4242,
+    "startedAt": "2026-10-13T12:00:00.000Z"
+  }
+}
+```
+
+| Field       | Meaning                                                                                                                                          |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `condition` | `in_progress` — the process that started the command is alive; `interrupted` — it is gone and the outcome is unknown                             |
+| `step`      | The step (`step` or `step.substep`) whose command holds the lease                                                                                |
+| `attempt`   | The attempt holding the lease                                                                                                                    |
+| `pid`       | The process that started the command. Liveness is decided by this pid together with that process's start identity, so a reused pid reads as gone |
+| `startedAt` | ISO-8601 time the command started                                                                                                                |
+
+The `--text` detail form adds one line:
+`Execution: Interrupted (step 1, pid 4242, started 2026-10-13T12:00:00.000Z)`.
+See [Execution in progress](#execution-in-progress) and
+[Execution interrupted](#execution-interrupted) for the refusals each condition
+produces.
 
 ### `rundown status --run <rd_…>`
 
@@ -1115,9 +1150,10 @@ code indicates failure. Text renders the pair `Error: <message>` /
 Mutating commands check their arguments in a fixed order, and the first refusal
 wins: `--run` alongside `--token` (`INVALID_SYNTAX`), then a missing `--token`
 (`TOKEN_REQUIRED`), then a malformed token (`INVALID_SYNTAX`), then a token no
-run carries (`UNKNOWN_TOKEN`), then a finished run (`RD-303` / `RD-304`), then —
-for `pass` and `fail` — the step (`INVALID_STEP`). Nothing is written on any of
-these refusals.
+run carries (`UNKNOWN_TOKEN`), then a finished run (`RD-303` / `RD-304`), then
+the execution lease (`EXECUTION_IN_PROGRESS` / `EXECUTION_INTERRUPTED`), then —
+for `pass` and `fail` — the step (`INVALID_STEP`), and last the conditional save
+(`CONCURRENT_MODIFICATION`). Nothing is written on any of these refusals.
 
 ### Token required
 
@@ -1365,6 +1401,76 @@ Code: CONCURRENT_MODIFICATION
   "command": "pass",
   "details": {
     "runId": "rd_0123456789abcdef0123456789abcdef"
+  }
+}
+```
+
+### Execution in progress
+
+The run's current step holds the execution lease and the process that started
+its command is still running. Every mutating command (`pass`, `fail`, `goto`,
+`stop`, `complete`) is refused, and so is a second Run Progression attempt at
+the step, so the command never runs twice. Nothing is written. `details` names
+the step and the attempt holding the lease. Wait for the command to finish, then
+re-read the run.
+
+**Text:**
+
+```text
+Error: Step 1 of run rd_0123456789abcdef0123456789abcdef is In Progress: its command started at 2026-10-13T12:00:00.000Z in process 4242 and is still running. Nothing was written. Wait for it to finish, then re-read the run.
+Code: EXECUTION_IN_PROGRESS
+```
+
+**JSON:**
+
+```json
+{
+  "error": "Step 1 of run rd_0123456789abcdef0123456789abcdef is In Progress: its command started at 2026-10-13T12:00:00.000Z in process 4242 and is still running. Nothing was written. Wait for it to finish, then re-read the run.",
+  "kind": "error",
+  "code": "EXECUTION_IN_PROGRESS",
+  "command": "pass",
+  "details": {
+    "runId": "rd_0123456789abcdef0123456789abcdef",
+    "step": "1",
+    "attempt": 2,
+    "pid": 4242,
+    "startedAt": "2026-10-13T12:00:00.000Z"
+  }
+}
+```
+
+### Execution interrupted
+
+The run's current step holds the execution lease, but the process that started
+its command is gone (killed, crashed, or its pid reused by another process), so
+the command's outcome is unknown. Rundown never repeats the command. `pass` and
+`complete` — which would treat it as having succeeded — are refused, and so is
+Run Progression. Nothing is written. The owner decides explicitly: `fail --step`
+(the step's FAIL handler, including an authored `RETRY`), `goto`, or `stop`
+commits and clears the lease. `rundown status` shows the step Interrupted until
+then.
+
+**Text:**
+
+```text
+Error: Step 1 of run rd_0123456789abcdef0123456789abcdef is Interrupted: the process 4242 that started its command at 2026-10-13T12:00:00.000Z is gone, so the command's outcome is unknown. Rundown never repeats it. Decide explicitly: `rundown fail --step 1` (the step's FAIL handler, including an authored RETRY), `rundown goto <step>`, or `rundown stop`.
+Code: EXECUTION_INTERRUPTED
+```
+
+**JSON:**
+
+```json
+{
+  "error": "Step 1 of run rd_0123456789abcdef0123456789abcdef is Interrupted: the process 4242 that started its command at 2026-10-13T12:00:00.000Z is gone, so the command's outcome is unknown. Rundown never repeats it. Decide explicitly: `rundown fail --step 1` (the step's FAIL handler, including an authored RETRY), `rundown goto <step>`, or `rundown stop`.",
+  "kind": "error",
+  "code": "EXECUTION_INTERRUPTED",
+  "command": "pass",
+  "details": {
+    "runId": "rd_0123456789abcdef0123456789abcdef",
+    "step": "1",
+    "attempt": 2,
+    "pid": 4242,
+    "startedAt": "2026-10-13T12:00:00.000Z"
   }
 }
 ```
