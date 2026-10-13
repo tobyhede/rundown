@@ -113,7 +113,9 @@ export type {
   DeleteRunResult,
   LeaseRefusingSaveResult,
   RunAtVersion,
+  RunWriteAtVersion,
   SaveRunResult,
+  SaveRunsResult,
   VersionedRunState,
 } from './storage/runbook-store.js';
 export {
@@ -197,6 +199,19 @@ export {
   type DelegationDeps,
   type DelegationRefusal,
 } from './delegation-progression.js';
+// Delegation recovery (#905): `rundown retry` by the parent's owner and
+// `rundown release` by the claiming agent.
+export {
+  AGENT_MISMATCH_CODE,
+  NOT_A_DELEGATION_CODE,
+  NOTHING_TO_RETRY_CODE,
+  RUN_TARGET_UNAVAILABLE_CODE,
+  releaseDelegation,
+  type DelegationRecoveryDeps,
+  type ReleaseDelegationOutcome,
+  type RetriedChild,
+  type RetryDelegationOutcome,
+} from './delegation-recovery.js';
 export type {
   ChildKind,
   ChildLinkage,
@@ -243,6 +258,8 @@ export {
   type DelegationStandingRefusal,
   type LifecycleCollectInput,
   type LifecycleCollectOutcome,
+  type LifecycleRetryInput,
+  type LifecycleRetryOutcome,
   type SettleInlineChild,
   type RunFinishedRefusal,
   type TerminalCommandName,

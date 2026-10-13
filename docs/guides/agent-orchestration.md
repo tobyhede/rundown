@@ -85,11 +85,25 @@ subagent that claims it.
    terminal one, in any order; when the step's children are all applied the run
    continues. Repeat it while children are pending.
 
+4. Recover with `rundown retry --token <owner_token> --step <substep>` (plus
+   `--index` in a FOR loop) when a ticket was lost, a child stays `unclaimed`,
+   or a subagent lost its child's `owner_token`. Retry cancels that child and
+   reserves a fresh one; its `delegation_retried` event prints the new ticket
+   once. Dispatch it as in step 2. There is no re-claim and no re-reveal: a
+   ticket is printed once, and a child is claimed once.
+
 A subagent whose child the parent no longer counts — you decided the substep by
-hand, or the step was entered again — is refused `DELEGATION_CANCELLED`, and
-`PARENT_RUN_FINISHED` once the parent finished or was pruned; either means stop,
-and end the child with `rundown stop --token <child owner_token>`, the one
-command it still accepts. See
+hand, retried it, or the step was entered again — is refused
+`DELEGATION_CANCELLED`, and `PARENT_RUN_FINISHED` once the parent finished or
+was pruned; either means stop, and end the child with
+`rundown stop --token <child owner_token>`, the one command it still accepts. A
+subagent that cannot finish its child — it lost the child's `owner_token` — runs
+`rundown release <child run id> --agent-id <id>` with the agent id its claim
+used — the subagent passes that id by hand on both `claim` and `release`, since
+no hook stamps it yet (#907): the child ends `abandoned` (with any Inline Child
+it was running), and your collect applies it as a FAIL while your run still
+counts it; the `runbook_abandoned` event's `parent.standing` says whether it
+does. Release grants nothing else and never touches your run. See
 [docs/reference/cli.md § Delegation](../reference/cli.md#delegation).
 
 The Claude Code plugin's `PreToolUse` (`Agent|Task`) and `SubagentStop` hooks

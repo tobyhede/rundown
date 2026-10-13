@@ -40,7 +40,9 @@ import type {
   DeleteRunResult,
   RunAtVersion,
   RunbookStore,
+  RunWriteAtVersion,
   SaveRunResult,
+  SaveRunsResult,
   VersionedRunState,
 } from './storage/runbook-store.js';
 import type { ExecutionLease, ExecutionLeaseHolder } from './execution-lease.js';
@@ -787,6 +789,28 @@ export class RunbookStateManager {
     const updated = stampForSave(state);
     const result = await store.saveRunResolvingLease(state.id, expectedVersion, updated);
     if (result.kind === 'committed') logLifecycleWrite(updated);
+    return result;
+  }
+
+  /**
+   * Persist several runs that one decision ends together, all or nothing, each
+   * at the version the caller read it at (`RunbookStore.saveRunsResolvingLeases`).
+   *
+   * Stamps each state as {@link save} does, and clears the execution lease each
+   * version carries, so only a seam that decided about every one of those
+   * leases may call it. A version that moved refuses the whole write; it is
+   * never retried.
+   *
+   * @param writes - Each run's complete next state with the version it was read at
+   * @returns `committed` with every persisted state, or the first refusal
+   */
+  async saveRuns(writes: readonly RunWriteAtVersion[]): Promise<SaveRunsResult> {
+    const store = await this.store();
+    const stamped = writes.map((write) => ({ ...write, state: stampForSave(write.state) }));
+    const result = await store.saveRunsResolvingLeases(stamped);
+    if (result.kind === 'committed') {
+      for (const write of stamped) logLifecycleWrite(write.state);
+    }
     return result;
   }
 

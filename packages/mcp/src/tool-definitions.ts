@@ -19,12 +19,14 @@ const optionalIndex = z.number().int().nonnegative().optional();
 /**
  * Tool descriptions and input schemas for the CLI-facade MCP surface.
  *
- * Mutating tools (`pass`, `fail`, `goto`, `complete`, `stop`, `collect`) take
+ * Mutating tools (`pass`, `fail`, `goto`, `complete`, `stop`, `collect`, `retry`) take
  * the Owner Token; `pass`/`fail` also require `step` (the current position)
  * and accept `index` for a FOR iteration. `claim` takes the Claim Ticket a
  * delegated step's `step_entered` listed, and its response carries the
- * child's own Owner Token (#904). Read-only tools stay bare; `status` narrows
- * by `runId`.
+ * child's own Owner Token (#904). `retry` takes the Owner Token and the
+ * delegated substep, and its response carries the fresh child's ticket;
+ * `release` takes the child run id and the claiming agent's id, never a
+ * token (#905). Read-only tools stay bare; `status` narrows by `runId`.
  */
 export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefinition> = {
   validate: {
@@ -86,13 +88,23 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
   },
   claim: {
     description:
-      'Claim a delegated child by the Claim Ticket its parent step listed, and start it. The response carries the child owner token.',
+      'Claim a delegated child by the Claim Ticket its parent step listed, and start it. Pass your agentId: release is matched against it, and nothing stamps it for you. The response carries the child owner token.',
     inputSchema: z.object({ ticket: z.string(), agentId: z.string().optional() }),
   },
   collect: {
     description:
       "Collect the results of the run's current delegated children into the run. Requires the owner token.",
     inputSchema: z.object({ ...tokenShape }),
+  },
+  retry: {
+    description:
+      'Cancel the delegated child of a substep (a lost ticket, an unclaimed child, or a child whose owner token was lost) and reserve a fresh one. The response carries its new claim ticket, once. Requires the owner token.',
+    inputSchema: z.object({ ...tokenShape, step: z.string(), index: optionalIndex }),
+  },
+  release: {
+    description:
+      'Abandon a delegated child you claimed but cannot finish; its parent collects it as a fail while it still counts it (the response says whether). Takes the child run id and the same agentId the claim recorded, never a token.',
+    inputSchema: z.object({ runId: z.string(), agentId: z.string().optional() }),
   },
 };
 

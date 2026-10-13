@@ -9,6 +9,9 @@ import {
   printCommandExec,
   printPolicyDenied,
   printStepSeparator,
+  printChildrenCollected,
+  printDelegationRetried,
+  printRunbookAbandoned,
 } from '../../cli/output.js';
 import type { RunbookMetadata, ActionBlockData } from '../../cli/types.js';
 import type { Step, Substep } from '../../runbook/types.js';
@@ -81,7 +84,13 @@ export class CLISubscriber {
         this.handleErrorOccurred(event);
         break;
       case 'CHILDREN_COLLECTED':
-        this.handleChildrenCollected(event);
+        printChildrenCollected(event.payload, this.writer);
+        break;
+      case 'DELEGATION_RETRIED':
+        printDelegationRetried(event.payload, this.writer);
+        break;
+      case 'RUNBOOK_ABANDONED':
+        printRunbookAbandoned(event.runbookId, event.payload, this.writer);
         break;
       default: {
         // Exhaustiveness check - TypeScript errors if a case is missing
@@ -187,13 +196,6 @@ export class CLISubscriber {
 
   private handleRunbookStopped(event: RunbookEventV1 & { type: 'RUNBOOK_STOPPED' }): void {
     printRunbookStoppedAtStep(event.payload.position, event.payload.message, this.writer);
-  }
-
-  private handleChildrenCollected(event: RunbookEventV1 & { type: 'CHILDREN_COLLECTED' }): void {
-    for (const child of event.payload.children) {
-      const result = child.result === undefined ? '' : ` (${child.result})`;
-      this.writer.writeLine(`Child ${child.step} ${child.runId}: ${child.status}${result}`);
-    }
   }
 
   private handleErrorOccurred(event: RunbookEventV1 & { type: 'ERROR_OCCURRED' }): void {

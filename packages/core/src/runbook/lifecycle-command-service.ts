@@ -49,6 +49,7 @@ import {
   PARENT_RUN_FINISHED_CODE,
   type CollectDelegationsOutcome,
 } from './delegation-progression.js';
+import { retryDelegation, type RetryDelegationOutcome } from './delegation-recovery.js';
 import { deriveExecutionAt } from './targeting.js';
 import { MAX_INLINE_CHILD_DEPTH } from './inline-progression.js';
 import type { RunId } from './run-id.js';
@@ -298,7 +299,14 @@ export type SettleInlineChild = (
  * them but `stop` (#904): the child's owner owns the child's row and may end
  * it, though its result is never collected.
  */
-export type CommandTargetPurpose = 'pass' | 'fail' | 'goto' | 'stop' | 'complete' | 'collect';
+export type CommandTargetPurpose =
+  | 'pass'
+  | 'fail'
+  | 'goto'
+  | 'stop'
+  | 'complete'
+  | 'collect'
+  | 'retry';
 
 /**
  * Whether a command may act on a Delegation its parent no longer counts.
@@ -320,6 +328,7 @@ function actsOnUncountedDelegation(command: CommandTargetPurpose): boolean {
     case 'goto':
     case 'complete':
     case 'collect':
+    case 'retry':
       return false;
     default: {
       const _exhaustive: never = command;
@@ -387,6 +396,17 @@ export interface LifecycleCollectInput {
 
 /** Result of `rundown collect` through the seam. */
 export type LifecycleCollectOutcome = RunFinishedRefusal | CollectDelegationsOutcome;
+
+/** Input to {@link RunbookLifecycleCommandService.runRetry}. */
+export interface LifecycleRetryInput {
+  /** The run resolved from the caller's Owner Token, with the version it was read at. */
+  readonly run: OwnedRun;
+  /** Raw `--step` / `--index` target, or `undefined` when the caller supplied no `--step`. */
+  readonly target: ExplicitTransitionTarget | undefined;
+}
+
+/** Result of `rundown retry` through the seam. */
+export type LifecycleRetryOutcome = RunFinishedRefusal | RetryDelegationOutcome;
 
 /** Symbolic code for {@link ExecutionPendingRefusal}. */
 export const EXECUTION_PENDING_CODE = 'EXECUTION_PENDING';
@@ -606,7 +626,7 @@ export class RunbookLifecycleCommandService {
           kind: 'delegation_cancelled',
           code: DELEGATION_CANCELLED_CODE,
           runId: run.state.id,
-          message: `Run ${run.state.id} is a delegation that run ${standing.parentRunId} no longer counts at ${standing.parentStep} (the step was decided or entered again); its result would never be collected, so nothing was written. Stop working on it, and end it with \`rundown stop --token <owner_token>\`.`,
+          message: `Run ${run.state.id} is a delegation that run ${standing.parentRunId} no longer counts at ${standing.parentStep} (the substep was decided, retried or entered again); its result would never be collected, so nothing was written. Stop working on it, and end it with \`rundown stop --token <owner_token>\`.`,
         };
       case 'parent_finished':
         return {
@@ -767,6 +787,19 @@ export class RunbookLifecycleCommandService {
     const finished = finishedRefusal(input.run);
     if (finished) return finished;
     return collectDelegations(this.#deps, input.run, input.computeActionResult);
+  }
+
+  /**
+   * Retry one delegated substep of the owned run (#905): `rundown retry`.
+   *
+   * @param input - The owned run and the raw `--step` / `--index` target.
+   * @returns A refusal, or the fresh child with its new Claim Ticket.
+   * @throws {Error} As {@link retryDelegation}.
+   */
+  async runRetry(input: LifecycleRetryInput): Promise<LifecycleRetryOutcome> {
+    const finished = finishedRefusal(input.run);
+    if (finished) return finished;
+    return retryDelegation(this.#deps, input.run, input.target);
   }
 
   /**

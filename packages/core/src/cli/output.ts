@@ -1,3 +1,8 @@
+import type {
+  ChildrenCollectedPayload,
+  DelegationRetriedPayload,
+  RunbookAbandonedPayload,
+} from '../events/types.js';
 import type { Step, Substep } from '../runbook/types.js';
 import { isNumberedStepName } from '../runbook/step-utils.js';
 import { derivePositionAt } from '../runbook/targeting.js';
@@ -172,6 +177,95 @@ export function printCommandExec(command: string, writer: OutputWriter = getWrit
  */
 export function printRunbookComplete(_message?: string, writer: OutputWriter = getWriter()): void {
   writer.writeLine(`Runbook:  ${success('COMPLETE')}`);
+}
+
+/**
+ * Print what `rundown collect` found for each Delegation (CHILDREN_COLLECTED,
+ * #904): one line per child, with its result once it is terminal.
+ *
+ * The one text rendering of the event, shared by every text front end.
+ *
+ * @param payload - The event payload
+ * @param writer - OutputWriter to use (defaults to global writer)
+ */
+export function printChildrenCollected(
+  payload: ChildrenCollectedPayload,
+  writer: OutputWriter = getWriter(),
+): void {
+  for (const child of payload.children) {
+    const result = child.result === undefined ? '' : ` (${child.result})`;
+    writer.writeLine(`Child ${child.step} ${child.runId}: ${child.status}${result}`);
+  }
+}
+
+/**
+ * Print what `rundown retry` did (DELEGATION_RETRIED, #905): the cancelled
+ * child, then the fresh one with its new Claim Ticket — printed here once, as
+ * on the JSON event.
+ *
+ * The one text rendering of the event, shared by every text front end.
+ *
+ * @param payload - The event payload
+ * @param writer - OutputWriter to use (defaults to global writer)
+ */
+export function printDelegationRetried(
+  payload: DelegationRetriedPayload,
+  writer: OutputWriter = getWriter(),
+): void {
+  writer.writeLine(`Retried ${payload.step}: cancelled ${payload.cancelledRunId}`);
+  for (const child of payload.children) {
+    const ticket = child.ticket === undefined ? '' : ` ticket ${child.ticket}`;
+    writer.writeLine(`Delegation ${child.step}: ${child.runbook} (${child.runId})${ticket}`);
+  }
+}
+
+/**
+ * Print what `rundown release` did (RUNBOOK_ABANDONED, #905): the abandoned
+ * Delegation, whether its parent still Collects it (as a fail) or never will,
+ * and any running Inline Children abandoned with it.
+ *
+ * The one text rendering of the event, shared by every text front end.
+ *
+ * @param runId - The abandoned Delegation
+ * @param payload - The event payload
+ * @param writer - OutputWriter to use (defaults to global writer)
+ * @throws {Error} When the parent's standing is outside the closed union
+ */
+export function printRunbookAbandoned(
+  runId: string,
+  payload: RunbookAbandonedPayload,
+  writer: OutputWriter = getWriter(),
+): void {
+  const { parent } = payload;
+  switch (parent.standing) {
+    case 'current':
+      writer.writeLine(
+        `Run ${runId} abandoned; run ${parent.runId} collects it at ${parent.step} as a fail`,
+      );
+      break;
+    case 'cancelled':
+      writer.writeLine(
+        `Run ${runId} abandoned; run ${parent.runId} no longer counts it at ${parent.step}, so nothing collects it`,
+      );
+      break;
+    case 'parent_finished':
+      writer.writeLine(
+        `Run ${runId} abandoned; run ${parent.runId} has finished, so nothing collects it at ${parent.step}`,
+      );
+      break;
+    case 'parent_pruned':
+      writer.writeLine(
+        `Run ${runId} abandoned; its parent run was pruned, so nothing collects it at ${parent.step}`,
+      );
+      break;
+    default: {
+      const _exhaustive: never = parent;
+      throw new Error(`Unhandled abandoned standing: ${JSON.stringify(_exhaustive)}`);
+    }
+  }
+  for (const inline of payload.abandonedInline) {
+    writer.writeLine(`Inline child ${inline} abandoned with it`);
+  }
 }
 
 /**

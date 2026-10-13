@@ -255,6 +255,8 @@ test('Rundown MCP tool surface includes Stage 1 execution tools', async () => {
     'stop',
     'claim',
     'collect',
+    'retry',
+    'release',
   ];
 
   for (const tool of tools) {
@@ -265,7 +267,8 @@ test('Rundown MCP tool surface includes Stage 1 execution tools', async () => {
   assert.match(definitions, /'Mark the current step passed\. Requires the owner token/);
   assert.match(definitions, /'Mark the current step failed\. Requires the owner token/);
 
-  // Delegation (#904) is claim and collect; there is no delegate tool.
+  // Delegation (#904) is claim and collect, recovered by retry and release
+  // (#905); there is no delegate tool.
   assert.doesNotMatch(definitions, /^  delegate: \{/m);
 });
 

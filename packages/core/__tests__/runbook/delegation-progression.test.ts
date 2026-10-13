@@ -29,6 +29,8 @@ import {
   type CommandTargetPurpose,
 } from '../../src/runbook/lifecycle-command-service.js';
 import { claimDelegation } from '../../src/runbook/delegation-progression.js';
+import { releaseDelegation } from '../../src/runbook/delegation-recovery.js';
+import type { RunId } from '../../src/runbook/run-id.js';
 import type { PrepareChildRun } from '../../src/runbook/child-preparation.js';
 
 // Delegation (#904, ADR 0005) through the public seams: Run Progression's
@@ -177,9 +179,77 @@ const INLINE_DELEGATING = `# Inline delegating
 - single.runbook.md
 `;
 
+const CHILD_TWO_STEPS = `# Child two steps
+
+## 1. First
+- PASS CONTINUE
+- FAIL STOP
+
+Do the first part by hand.
+
+## 2. Second
+- PASS COMPLETE
+- FAIL STOP
+
+Do the second part by hand.
+`;
+
+const CHILD_COMPOSING = `# Child composing
+
+## 1. Compose
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+- child-manual.runbook.md
+`;
+
+const DELEGATES_TWO_STEPS = `# Delegates two steps
+
+## 1. Delegate
+- DELEGATE
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+- child-two-steps.runbook.md
+`;
+
+const DELEGATES_COMPOSING = `# Delegates composing
+
+## 1. Delegate
+- DELEGATE
+- PASS ALL COMPLETE
+- FAIL ANY STOP
+
+- child-composing.runbook.md
+`;
+
+const MIXED = `# Mixed
+
+## 1. Review
+- PASS ALL CONTINUE
+- FAIL ANY STOP
+
+### 1.1 Delegated
+- DELEGATE
+
+- child-manual.runbook.md
+
+### 1.2 By hand
+
+Check by hand.
+
+## 2. Done
+- PASS COMPLETE
+- FAIL STOP
+
+Finish by hand.
+`;
+
 const SOURCES: Readonly<Partial<Record<string, string>>> = {
   'child-pass.runbook.md': CHILD_PASS,
   'child-manual.runbook.md': CHILD_MANUAL,
+  'child-two-steps.runbook.md': CHILD_TWO_STEPS,
+  'child-composing.runbook.md': CHILD_COMPOSING,
   'single.runbook.md': SINGLE,
 };
 
@@ -317,6 +387,17 @@ class InterleavingManager extends RunbookStateManager {
     }
     return saved;
   }
+
+  override async saveRuns(
+    ...args: Parameters<RunbookStateManager['saveRuns']>
+  ): ReturnType<RunbookStateManager['saveRuns']> {
+    const interleave = this.#interleave;
+    if (this.#when === 'before' && interleave !== undefined) {
+      this.#interleave = undefined;
+      await interleave();
+    }
+    return super.saveRuns(...args);
+  }
 }
 
 function seam(): RunbookLifecycleCommandService {
@@ -356,6 +437,13 @@ async function claim(ticket: string, agentId?: string) {
 
 async function claimed(ticket: string) {
   const outcome = await claim(ticket);
+  if (outcome.kind !== 'claimed') throw new Error(`claim refused: ${outcome.code}`);
+  return outcome;
+}
+
+/** Claim a ticket as the named agent, failing the test on a refusal. */
+async function claimedAs(ticket: string, agentId: string) {
+  const outcome = await claim(ticket, agentId);
   if (outcome.kind !== 'claimed') throw new Error(`claim refused: ${outcome.code}`);
   return outcome;
 }
@@ -890,5 +978,523 @@ describe('An Inline Child that delegates (#903 + #904)', () => {
     expect(outcome).toMatchObject({ kind: 'collected', runId: inlineId });
     expect((await manager.load(inlineId))?.lifecycle).toBe('completed');
     expect((await manager.load(root.id))?.lifecycle).toBe('completed');
+  });
+});
+
+/** Drive `rundown retry --token --step [--index]` as the owner does. */
+async function retry(token: OwnerToken, step: string | undefined, index?: number) {
+  const resolved = await target(token, 'retry');
+  if (resolved.kind !== 'running') throw new Error(`token refused: ${resolved.kind}`);
+  return seam().runRetry({
+    run: resolved.run,
+    target:
+      step === undefined
+        ? undefined
+        : { stepId: step, ...(index !== undefined ? { iteration: index } : {}) },
+  });
+}
+
+/** Drive `rundown release <child-id> [--agent-id]` as a sub-agent does. */
+function release(runId: string, agentId?: string) {
+  return releaseDelegation(
+    { manager, actorService, loadSteps },
+    { runId: runId as RunId, ...(agentId !== undefined ? { agentId } : {}) },
+  );
+}
+
+describe('Retry (#905)', () => {
+  it('cancels the Current Child and reserves a fresh one whose new ticket is printed once', async () => {
+    const { root, token } = await start(SINGLE_MANUAL);
+    const [lost] = enteredChildren(root.id);
+    const before = await manager.loadWithVersion(root.id);
+
+    const outcome = await retry(token, '1.1');
+
+    expect(outcome).toMatchObject({
+      kind: 'retried',
+      runId: root.id,
+      cancelledRunId: lost.runId,
+      child: {
+        step: '1.1',
+        runbook: 'child-manual.runbook.md',
+        ticket: expect.stringMatching(/^rdt_/),
+      },
+    });
+    if (outcome.kind !== 'retried') throw new Error('expected a retry');
+    expect(outcome.child.runId).not.toBe(lost.runId);
+    expect(outcome.child.ticket).not.toBe(lost.ticket);
+    // The cancel and the new reservation are one conditional save.
+    expect((await manager.loadWithVersion(root.id))?.stateVersion).toBe(
+      (before?.stateVersion ?? 0) + 1,
+    );
+    // Only the hash is stored: the ticket is printed once, by the retry.
+    expect(JSON.stringify(await manager.load(root.id))).not.toContain(outcome.child.ticket);
+
+    expect(await claim(lost.ticket ?? '')).toMatchObject({
+      kind: 'refused',
+      code: 'DELEGATION_CANCELLED',
+    });
+    const fresh = await claimed(outcome.child.ticket);
+    expect(fresh.child.state.id).toBe(outcome.child.runId);
+    await pass(fresh.ownerToken, '1');
+    expect(await collect(token)).toMatchObject({
+      kind: 'collected',
+      children: [{ runId: outcome.child.runId, status: 'collected', result: 'pass' }],
+    });
+    expect((await manager.load(root.id))?.step).toBe('2');
+  });
+
+  it("refuses the cancelled child's commands DELEGATION_CANCELLED, and lets it stop", async () => {
+    const { root, token } = await start(SINGLE_MANUAL);
+    const [lost] = enteredChildren(root.id);
+    const { ownerToken } = await claimed(lost.ticket ?? '');
+
+    expect((await retry(token, '1.1')).kind).toBe('retried');
+
+    expect(await target(ownerToken, 'pass')).toMatchObject({
+      kind: 'delegation_cancelled',
+      code: 'DELEGATION_CANCELLED',
+    });
+    expect((await target(ownerToken, 'stop')).kind).toBe('running');
+  });
+
+  it('never collects a terminal child the retry cancelled', async () => {
+    const { root, token } = await start(SINGLE_MANUAL);
+    const [first] = enteredChildren(root.id);
+    await pass((await claimed(first.ticket ?? '')).ownerToken, '1');
+
+    const outcome = await retry(token, '1.1');
+    if (outcome.kind !== 'retried') throw new Error(`retry refused: ${outcome.kind}`);
+
+    expect(await collect(token)).toMatchObject({
+      kind: 'collected',
+      children: [{ runId: outcome.child.runId, status: 'unclaimed' }],
+    });
+    expect((await manager.load(root.id))?.step).toBe('1');
+  });
+
+  it('retries one child of a fan-out and leaves its siblings current', async () => {
+    const { root, token } = await start(FAN_OUT);
+    const children = enteredChildren(root.id);
+    const sibling = await claimed(children[1].ticket ?? '');
+
+    const outcome = await retry(token, '1.3');
+    if (outcome.kind !== 'retried') throw new Error(`retry refused: ${outcome.kind}`);
+
+    expect(outcome.cancelledRunId).toBe(children[2].runId);
+    expect((await target(sibling.ownerToken)).kind).toBe('running');
+    expect((await claim(children[3].ticket ?? '')).kind).toBe('claimed');
+    expect(await claim(children[2].ticket ?? '')).toMatchObject({ code: 'DELEGATION_CANCELLED' });
+    expect((await claim(outcome.child.ticket)).kind).toBe('claimed');
+  });
+
+  it('requires --index inside a FOR loop and reserves the retried child in that iteration', async () => {
+    const { root, token } = await start(FOR_DELEGATE);
+    const [lost] = enteredChildren(root.id);
+
+    expect(await retry(token, '1.1')).toMatchObject({ kind: 'invalid_step_target' });
+    expect(await retry(token, '1.1', 2)).toMatchObject({ kind: 'invalid_step_target' });
+
+    const outcome = await retry(token, '1.1', 1);
+    expect(outcome).toMatchObject({ kind: 'retried', child: { step: '1.1', index: 1 } });
+    expect(outcome.kind === 'retried' && outcome.child.runId).not.toBe(lost.runId);
+  });
+
+  it('refuses a --step that is not a delegated substep of the current step, writing nothing', async () => {
+    const { root, token } = await start(SINGLE_MANUAL);
+    const before = await manager.loadWithVersion(root.id);
+
+    expect(await retry(token, undefined)).toMatchObject({ kind: 'invalid_step_target' });
+    expect(await retry(token, '1')).toMatchObject({ kind: 'invalid_step_target' });
+    expect(await retry(token, '2')).toMatchObject({ kind: 'invalid_step_target' });
+    // Step 1 has one substep: a substep it does not have is a typo, not a
+    // substep with nothing to retry.
+    expect(await retry(token, '1.2')).toMatchObject({
+      kind: 'invalid_step_target',
+      message: expect.stringContaining('has no substep "2"'),
+    });
+    expect(await retry(token, '1.9')).toMatchObject({ kind: 'invalid_step_target' });
+
+    expect((await manager.loadWithVersion(root.id))?.stateVersion).toBe(before?.stateVersion);
+  });
+
+  it('refuses a substep of the step that delegates nothing NOTHING_TO_RETRY', async () => {
+    const { root, token } = await start(MIXED);
+    const before = await manager.loadWithVersion(root.id);
+
+    expect(await retry(token, '1.2')).toMatchObject({ kind: 'refused', code: 'NOTHING_TO_RETRY' });
+
+    expect((await manager.loadWithVersion(root.id))?.stateVersion).toBe(before?.stateVersion);
+  });
+
+  it('refuses a substep whose child was already collected NOTHING_TO_RETRY', async () => {
+    const { root, token } = await start(FAN_OUT);
+    const children = enteredChildren(root.id);
+    await pass((await claimed(children[1].ticket ?? '')).ownerToken, '1');
+    // Collected out of order: held for 1.2 until the cursor arrives.
+    await collect(token);
+
+    expect(await retry(token, '1.2')).toMatchObject({ kind: 'refused', code: 'NOTHING_TO_RETRY' });
+  });
+
+  it('refuses CONCURRENT_MODIFICATION when the run moved before its save, and cancels nothing', async () => {
+    const { root, token } = await start(SINGLE_MANUAL);
+    const [lost] = enteredChildren(root.id);
+    const resolved = await target(token, 'retry');
+    if (resolved.kind !== 'running') throw new Error('expected a running root');
+    const racing = new InterleavingManager(
+      dir,
+      async () => {
+        const read = await manager.loadWithVersion(root.id);
+        if (read === null) throw new Error('root vanished');
+        expect((await manager.save(read.state, read.stateVersion)).kind).toBe('committed');
+      },
+      'before',
+    );
+    const retrying = new RunbookLifecycleCommandService({
+      manager: racing,
+      actorService,
+      loadSteps,
+    });
+
+    const outcome = await retrying.runRetry({ run: resolved.run, target: { stepId: '1.1' } });
+
+    expect(outcome.kind).toBe('concurrent_modification');
+    expect((await claim(lost.ticket ?? '')).kind).toBe('claimed');
+  });
+
+  it('refuses an old ticket DELEGATION_CANCELLED after two replacements', async () => {
+    const { root, token } = await start(SINGLE_MANUAL);
+    const [first] = enteredChildren(root.id);
+    const second = await retry(token, '1.1');
+    if (second.kind !== 'retried') throw new Error(`retry refused: ${second.kind}`);
+    const third = await retry(token, '1.1');
+    if (third.kind !== 'retried') throw new Error(`retry refused: ${third.kind}`);
+
+    expect(await claim(first.ticket ?? '')).toMatchObject({ code: 'DELEGATION_CANCELLED' });
+    expect(await claim(second.child.ticket)).toMatchObject({ code: 'DELEGATION_CANCELLED' });
+    expect((await claim(third.child.ticket)).kind).toBe('claimed');
+  });
+
+  it('records only the hash of each replaced ticket, and nothing for a reservation never issued one', async () => {
+    const { root, token } = await start(FAN_OUT);
+    const children = enteredChildren(root.id);
+    const read = await manager.loadWithVersion(root.id);
+    if (read === null) throw new Error('root vanished');
+    // Strip the 1.2 reservation's ticket, as when the turn that entered the
+    // step could not commit its issuance.
+    const unissued: RunbookState = {
+      ...read.state,
+      substepStates: (read.state.substepStates ?? []).map((substepState) =>
+        substepState.id === '2' && substepState.child?.kind === 'delegation'
+          ? { ...substepState, child: { ...substepState.child, ticketHash: null } }
+          : substepState,
+      ),
+    };
+    expect((await manager.save(unissued, read.stateVersion)).kind).toBe('committed');
+
+    expect((await retry(token, '1.2')).kind).toBe('retried');
+    expect((await retry(token, '1.3')).kind).toBe('retried');
+
+    const states = (await manager.load(root.id))?.substepStates ?? [];
+    expect(
+      states.find((substepState) => substepState.id === '2')?.replacedTicketHashes,
+    ).toBeUndefined();
+    expect(states.find((substepState) => substepState.id === '3')?.replacedTicketHashes).toEqual([
+      hashRunSecret(parseClaimTicket(children[2].ticket ?? '')),
+    ]);
+  });
+
+  it('refuses a ticket from a reservation a GOTO re-entry replaced DELEGATION_CANCELLED', async () => {
+    const { root, token } = await start(SINGLE_MANUAL);
+    const [stale] = enteredChildren(root.id);
+    await pass(token, '1.1');
+    const resolved = await target(token);
+    if (resolved.kind !== 'running') throw new Error('expected a running root');
+    const fail = await seam().runTransition({
+      command: 'fail',
+      run: resolved.run,
+      target: { stepId: '2' },
+    });
+    if (fail.kind !== 'applied') throw new Error(`fail refused: ${fail.kind}`);
+    await activate(fail.progression, resolved.run.state);
+
+    expect(await claim(stale.ticket ?? '')).toMatchObject({
+      kind: 'refused',
+      code: 'DELEGATION_CANCELLED',
+    });
+  });
+});
+
+describe('Release (#905)', () => {
+  it("writes abandoned on the child's own row when the agent matches, never touching the parent", async () => {
+    const { root } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    await claimedAs(child.ticket ?? '', 'agent-1');
+    const parentBefore = await manager.loadWithVersion(root.id);
+
+    const outcome = await release(child.runId, 'agent-1');
+
+    expect(outcome).toMatchObject({ kind: 'released', runId: child.runId });
+    expect((await manager.load(child.runId))?.lifecycle).toBe('abandoned');
+    expect((await manager.loadWithVersion(root.id))?.stateVersion).toBe(parentBefore?.stateVersion);
+  });
+
+  it('is Collected as a fail', async () => {
+    const { root, token } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    await claimedAs(child.ticket ?? '', 'agent-1');
+    expect((await release(child.runId, 'agent-1')).kind).toBe('released');
+
+    expect(await collect(token)).toMatchObject({
+      kind: 'collected',
+      children: [{ runId: child.runId, status: 'collected', result: 'fail' }],
+    });
+    expect((await manager.load(root.id))?.lifecycle).toBe('stopped');
+  });
+
+  it('matches when neither the claim nor the release names an agent', async () => {
+    const { root } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    await claimed(child.ticket ?? '');
+
+    expect((await release(child.runId)).kind).toBe('released');
+  });
+
+  it('refuses a different agent, or a missing one, AGENT_MISMATCH and writes nothing', async () => {
+    const { root } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    await claimedAs(child.ticket ?? '', 'agent-1');
+    const before = await manager.loadWithVersion(child.runId);
+
+    expect(await release(child.runId, 'agent-2')).toMatchObject({
+      kind: 'refused',
+      code: 'AGENT_MISMATCH',
+    });
+    expect(await release(child.runId)).toMatchObject({ kind: 'refused', code: 'AGENT_MISMATCH' });
+
+    const after = await manager.loadWithVersion(child.runId);
+    expect(after?.state.lifecycle).toBe('running');
+    expect(after?.stateVersion).toBe(before?.stateVersion);
+  });
+
+  it('refuses an agent when the claim recorded none AGENT_MISMATCH', async () => {
+    const { root } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    await claimed(child.ticket ?? '');
+
+    expect(await release(child.runId, 'agent-1')).toMatchObject({ code: 'AGENT_MISMATCH' });
+  });
+
+  it('refuses a run that is not a Delegation NOT_A_DELEGATION, and an unknown run RUN_TARGET_UNAVAILABLE', async () => {
+    const { root } = await start(SINGLE_MANUAL);
+
+    expect(await release(root.id)).toMatchObject({ kind: 'refused', code: 'NOT_A_DELEGATION' });
+    expect(await release(generateRunId())).toMatchObject({
+      kind: 'refused',
+      code: 'RUN_TARGET_UNAVAILABLE',
+    });
+    expect((await manager.load(root.id))?.lifecycle).toBe('running');
+  });
+
+  it('refuses a child that already finished run_finished', async () => {
+    const { root } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    await claimed(child.ticket ?? '');
+    expect((await release(child.runId)).kind).toBe('released');
+
+    expect(await release(child.runId)).toMatchObject({
+      kind: 'run_finished',
+      lifecycle: 'abandoned',
+    });
+  });
+
+  it("refuses the abandoned child's own token as a finished run", async () => {
+    const { root } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    const { ownerToken } = await claimed(child.ticket ?? '');
+    await release(child.runId);
+
+    expect(await target(ownerToken, 'pass')).toMatchObject({
+      kind: 'finished',
+      lifecycle: 'abandoned',
+    });
+  });
+
+  it('refuses CONCURRENT_MODIFICATION when the child moved before its save', async () => {
+    const { root } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    await claimed(child.ticket ?? '');
+    const racing = new InterleavingManager(
+      dir,
+      async () => {
+        const read = await manager.loadWithVersion(child.runId);
+        if (read === null) throw new Error('child vanished');
+        expect((await manager.save(read.state, read.stateVersion)).kind).toBe('committed');
+      },
+      'before',
+    );
+
+    const outcome = await releaseDelegation(
+      { manager: racing, actorService, loadSteps },
+      { runId: child.runId as RunId },
+    );
+
+    expect(outcome.kind).toBe('concurrent_modification');
+    expect((await manager.load(child.runId))?.lifecycle).toBe('running');
+  });
+
+  it('releases a Delegation whose parent was pruned, and says nothing collects it', async () => {
+    const { root } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    await claimed(child.ticket ?? '');
+    await manager.delete(root.id);
+
+    expect(await release(child.runId)).toMatchObject({
+      kind: 'released',
+      parent: { standing: 'parent_pruned', step: '1.1' },
+    });
+  });
+
+  it('returns the committed child, and says its parent collects it as a fail while it counts it', async () => {
+    const { root } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    await claimed(child.ticket ?? '');
+
+    const outcome = await release(child.runId);
+
+    expect(outcome).toMatchObject({
+      kind: 'released',
+      runId: child.runId,
+      state: { id: child.runId, lifecycle: 'abandoned' },
+      parent: { standing: 'current', runId: root.id, step: '1.1' },
+    });
+  });
+
+  it('says the parent never collects a child it no longer counts (retried)', async () => {
+    const { root, token } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    await claimed(child.ticket ?? '');
+    expect((await retry(token, '1.1')).kind).toBe('retried');
+
+    expect(await release(child.runId)).toMatchObject({
+      kind: 'released',
+      parent: { standing: 'cancelled', runId: root.id, step: '1.1' },
+    });
+  });
+
+  it('says the parent never collects a child once the parent finished', async () => {
+    const { root, token } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    await claimed(child.ticket ?? '');
+    const resolved = await target(token, 'stop');
+    if (resolved.kind !== 'running') throw new Error('expected a running root');
+    expect(
+      (await seam().runTerminal({ command: 'stop', run: resolved.run, message: 'done' })).kind,
+    ).toBe('applied');
+
+    expect(await release(child.runId)).toMatchObject({
+      kind: 'released',
+      parent: { standing: 'parent_finished', runId: root.id, step: '1.1' },
+    });
+  });
+
+  it("clears the last action: abandoning is no handler's action, so the step before it does not stand", async () => {
+    const { root } = await start(DELEGATES_TWO_STEPS);
+    const [child] = enteredChildren(root.id);
+    const { ownerToken } = await claimed(child.ticket ?? '');
+    await pass(ownerToken, '1');
+    expect((await manager.load(child.runId))?.lastAction).toMatchObject({ type: 'CONTINUE' });
+
+    expect((await release(child.runId)).kind).toBe('released');
+
+    const abandoned = await manager.load(child.runId);
+    expect(abandoned?.lifecycle).toBe('abandoned');
+    expect(abandoned?.lastAction).toBeUndefined();
+  });
+
+  it('ends the running Inline Child the released child composes, in the same write', async () => {
+    const { root } = await start(DELEGATES_COMPOSING);
+    const [child] = enteredChildren(root.id);
+    await claimed(child.ticket ?? '');
+    const inlineOf = async () =>
+      (await manager.listWithVersion()).find(
+        (run) => run.linkage?.kind === 'inline' && run.linkage.parentRunId === child.runId,
+      );
+    const grandchild = await inlineOf();
+    expect(grandchild?.state.lifecycle).toBe('running');
+
+    expect(await release(child.runId)).toMatchObject({
+      kind: 'released',
+      abandonedInline: [grandchild?.state.id],
+    });
+
+    expect((await manager.load(child.runId))?.lifecycle).toBe('abandoned');
+    expect((await inlineOf())?.state.lifecycle).toBe('abandoned');
+  });
+
+  it('refuses CONCURRENT_MODIFICATION and writes nothing when the Inline Child moved before the save', async () => {
+    const { root } = await start(DELEGATES_COMPOSING);
+    const [child] = enteredChildren(root.id);
+    await claimed(child.ticket ?? '');
+    const grandchild = (await manager.listWithVersion()).find(
+      (run) => run.linkage?.kind === 'inline' && run.linkage.parentRunId === child.runId,
+    );
+    if (grandchild === undefined) throw new Error('expected a running inline child');
+    const racing = new InterleavingManager(
+      dir,
+      async () => {
+        const read = await manager.loadWithVersion(grandchild.state.id);
+        if (read === null) throw new Error('inline child vanished');
+        expect((await manager.save(read.state, read.stateVersion)).kind).toBe('committed');
+      },
+      'before',
+    );
+
+    const outcome = await releaseDelegation(
+      { manager: racing, actorService, loadSteps },
+      { runId: child.runId as RunId },
+    );
+
+    expect(outcome).toMatchObject({ kind: 'concurrent_modification', runId: grandchild.state.id });
+    expect((await manager.load(child.runId))?.lifecycle).toBe('running');
+    expect((await manager.load(grandchild.state.id))?.lifecycle).toBe('running');
+  });
+});
+
+describe('No re-claim and no re-reveal (#905)', () => {
+  it('prints each ticket on the one event that issued it, and on nothing after', async () => {
+    const { root, token } = await start(FAN_OUT);
+    const issued = ticketsOf(root.id);
+    expect(issued).toHaveLength(4);
+    const after = events.length;
+
+    await collect(token);
+    await claimed(issued[0]);
+    await collect(token);
+    const retried = await retry(token, '1.2');
+    if (retried.kind !== 'retried') throw new Error(`retry refused: ${retried.kind}`);
+    await collect(token);
+
+    const later = JSON.stringify(events.slice(after));
+    for (const ticket of issued) expect(later).not.toContain(ticket);
+    expect(ticketsOf(root.id)).toEqual(issued);
+    expect(JSON.stringify(await manager.load(root.id))).not.toContain(retried.child.ticket);
+  });
+
+  it('claims each child once: a finished, a released or a retried child cannot be claimed again', async () => {
+    const { root, token } = await start(FAN_OUT);
+    const [first, second, third] = enteredChildren(root.id);
+    await pass((await claimed(first.ticket ?? '')).ownerToken, '1');
+    await claimed(second.ticket ?? '');
+    await release(second.runId);
+    const retried = await retry(token, '1.3');
+    if (retried.kind !== 'retried') throw new Error(`retry refused: ${retried.kind}`);
+    await claimed(retried.child.ticket);
+
+    expect(await claim(first.ticket ?? '')).toMatchObject({ code: 'ALREADY_CLAIMED' });
+    expect(await claim(second.ticket ?? '')).toMatchObject({ code: 'ALREADY_CLAIMED' });
+    expect(await claim(third.ticket ?? '')).toMatchObject({ code: 'DELEGATION_CANCELLED' });
+    expect(await claim(retried.child.ticket)).toMatchObject({ code: 'ALREADY_CLAIMED' });
   });
 });

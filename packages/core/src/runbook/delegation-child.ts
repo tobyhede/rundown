@@ -104,8 +104,111 @@ export function reserveDelegationChildren(
       ticketHash: null,
     };
     substepStates = upsertSubstepStateChild(substepStates, substep.id, input.frameKey, child);
+    // An earlier entry's child — cancelled by the re-entry, or Collected
+    // before it — has its ticket recorded as replaced: refused as no longer
+    // counted, never as unknown.
+    if (existing?.kind === 'delegation') {
+      substepStates = recordReplaced(substepStates, substep.id, input.frameKey, existing);
+    }
   }
   return substepStates;
+}
+
+/**
+ * Record a replaced Delegation's Claim Ticket hash on its substep state.
+ *
+ * A reservation never issued a ticket leaves nothing to refuse, so it records
+ * nothing.
+ *
+ * @param substepStates - The substep states, the replacement already recorded.
+ * @param substepId - The substep whose Delegation was replaced.
+ * @param frameKey - The frame it was reserved in.
+ * @param replaced - The replaced reservation.
+ * @returns The substep states with the replaced ticket recorded.
+ */
+function recordReplaced(
+  substepStates: readonly SubstepState[],
+  substepId: string,
+  frameKey: FrameKey,
+  replaced: DelegationChildReservation,
+): readonly SubstepState[] {
+  const { ticketHash } = replaced;
+  if (ticketHash === null) return substepStates;
+  return substepStates.map((substepState) =>
+    substepState.id === substepId && substepState.frameKey === frameKey
+      ? {
+          ...substepState,
+          replacedTicketHashes: [...(substepState.replacedTicketHashes ?? []), ticketHash],
+        }
+      : substepState,
+  );
+}
+
+/**
+ * The Delegation `rundown retry` may replace: the one reserved for `substepId`
+ * at the active frame entry, while the parent still counts it.
+ *
+ * @param view - The parent's frame-entry coordinates and substep states.
+ * @param step - The step owning the substep.
+ * @param cursorSubstep - The substep the cursor rests on.
+ * @param substepId - The delegated substep named by `--step`.
+ * @returns The Delegation, or `undefined` when there is none to retry.
+ */
+export function retryableDelegation(
+  view: DelegationFrameView,
+  step: ResolvedStep,
+  cursorSubstep: string | undefined,
+  substepId: string,
+): CurrentDelegation | undefined {
+  const delegation = activeEntryDelegations(view).find(
+    (candidate) => candidate.substepId === substepId,
+  );
+  return delegation !== undefined && countsDelegation({ substep: cursorSubstep }, step, delegation)
+    ? delegation
+    : undefined;
+}
+
+/**
+ * Cancel a Delegation and reserve a fresh child in its place, at the same
+ * frame entry, issued `ticketHash` (#905, `rundown retry`).
+ *
+ * The fresh child runs the same runbook with the context the cancelled one
+ * was reserved with — a sibling Collected since must not leak into it — under
+ * a new run id and a new Claim Ticket. The cancelled one is recorded as
+ * replaced on the substep state, by its ticket's hash when it was issued one.
+ * Every other substep state is left untouched.
+ *
+ * @param view - The parent's frame-entry coordinates and substep states.
+ * @param delegation - The Delegation to cancel, from {@link retryableDelegation}.
+ * @param runId - The fresh child's preallocated run id.
+ * @param ticketHash - Hash of the fresh child's Claim Ticket.
+ * @returns The substep states with the fresh child and the replaced one recorded.
+ * @throws {Error} When the view has no active frame — a retryable Delegation
+ *   always has one, so this is a defect.
+ */
+export function replaceDelegation(
+  view: DelegationFrameView,
+  delegation: CurrentDelegation,
+  runId: RunId,
+  ticketHash: SecretHash,
+): readonly SubstepState[] {
+  const { reservation } = delegation;
+  const fresh: DelegationChildReservation = {
+    kind: 'delegation',
+    runId,
+    entry: reservation.entry,
+    runbook: reservation.runbook,
+    contextSnapshot: reservation.contextSnapshot,
+    ticketHash,
+  };
+  const frameKey = view.activeFrameKey;
+  if (frameKey === undefined) throw new Error('A Delegation was retried with no active frame');
+  return recordReplaced(
+    upsertSubstepStateChild(view.substepStates ?? [], delegation.substepId, frameKey, fresh),
+    delegation.substepId,
+    frameKey,
+    reservation,
+  );
 }
 
 /** The frame-entry coordinates and substep states a Current-Children read needs. */
@@ -273,6 +376,9 @@ export function delegationStanding(
     parentRunId: linkage.parentRunId,
     parentStep: linkage.parentStep,
   };
+  // A child the parent replaced (retried, or the frame re-entered) is no
+  // longer among the active entry's reservations, so it falls through to
+  // `cancelled` here; it needs no record of its own.
   const step = parentSteps.find((candidate) => candidate.name === parent.step);
   const delegation = activeEntryDelegations(parent).find(
     (candidate) => candidate.reservation.runId === childRunId,
@@ -302,6 +408,22 @@ export function findTicketReservation(
     }
   }
   return undefined;
+}
+
+/**
+ * Find the substep state that recorded a Claim Ticket as replaced (#905).
+ *
+ * @param state - The parent run.
+ * @param ticketHash - Hash of the presented Claim Ticket.
+ * @returns The substep state recording it, or `undefined`.
+ */
+export function findReplacedTicket(
+  state: Pick<RunbookState, 'substepStates'>,
+  ticketHash: SecretHash,
+): SubstepState | undefined {
+  return (state.substepStates ?? []).find((substepState) =>
+    (substepState.replacedTicketHashes ?? []).includes(ticketHash),
+  );
 }
 
 /** One issued Claim Ticket, as the machine records it: its hash only. */

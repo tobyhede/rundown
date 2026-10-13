@@ -313,14 +313,24 @@ export async function renderApplied(
 }
 
 /** Parsed `--step` / `--index` target, or the typed refusal of malformed input. */
-type ParsedTransitionTarget =
+export type ParsedTransitionTarget =
   | { readonly kind: 'parsed'; readonly target: ExplicitTransitionTarget | undefined }
   | { readonly kind: 'invalid'; readonly message: string; readonly code: IndexOptionErrorCode };
 
-// Category-A string parsing only: numeric `--index` validation and the
-// AT-conflict check. Every state-dependent check (step match, substep match,
-// FOR iteration) happens in core before anything is written.
-function parseTransitionTarget(
+/**
+ * Parse raw `--step` / `--index` strings into a transition target.
+ *
+ * Category-A string parsing only: numeric `--index` validation and the
+ * AT-conflict check. Every state-dependent check (step match, substep match,
+ * FOR iteration) happens in core before anything is written. Shared by
+ * `pass` / `fail` and `retry` (#905).
+ *
+ * @param step - Raw `--step`, or `undefined` when absent.
+ * @param index - Raw `--index`, or `undefined` when absent.
+ * @returns The parsed target, or the typed refusal of malformed input.
+ * @throws {Error} Whatever `resolveIndexOption` throws other than an `IndexOptionError`.
+ */
+export function parseTransitionTarget(
   step: string | undefined,
   index: string | undefined,
 ): ParsedTransitionTarget {

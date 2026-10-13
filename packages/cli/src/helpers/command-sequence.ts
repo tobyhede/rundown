@@ -446,8 +446,9 @@ function isClaimedStart(value: Record<string, unknown>): boolean {
  * - `${RUN_ID[_n]}` — the n-th run id (`runbookId`) on a `runbook_started`
  *   event that is not a claimed Delegation, for selector and status
  *   assertions (`status --run ${RUN_ID}`).
- * - `${TICKET[_n]}` — the n-th Claim Ticket listed in a `step_entered`
- *   event's `children` (#904), in listing order.
+ * - `${TICKET[_n]}` — the n-th Claim Ticket listed in the `children` of a
+ *   `step_entered` (#904) or `delegation_retried` (#905) event, in listing
+ *   order.
  * - `${CHILD_TOKEN[_n]}` / `${CHILD_RUN[_n]}` — the Owner Token and run id
  *   of the n-th Delegation `rundown claim` started (its `runbook_started`
  *   names its `parent`).
@@ -475,9 +476,10 @@ export const CAPTURE_PLACEHOLDERS: readonly CapturePlaceholder[] = [
   },
   {
     name: 'TICKET',
-    describe: 'claim ticket from step_entered.children[].ticket',
+    describe: 'claim ticket from step_entered / delegation_retried children[].ticket',
     capture: (value) =>
-      value.type === 'step_entered' && Array.isArray(value.children)
+      (value.type === 'step_entered' || value.type === 'delegation_retried') &&
+      Array.isArray(value.children)
         ? value.children.flatMap((child: unknown) =>
             typeof child === 'object' &&
             child !== null &&

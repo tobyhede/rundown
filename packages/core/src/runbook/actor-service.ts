@@ -19,6 +19,7 @@ import type {
   RunbookState,
   ForContext,
   LastAction,
+  Lifecycle,
 } from './types.js';
 import type {
   CommandExecutionOutput,
@@ -302,11 +303,13 @@ function lastResultSyncForEvent(
     case 'GOTO':
     case 'FORCE_STOP':
     case 'FORCE_COMPLETE':
+    case 'ABANDON':
       return { kind: 'clear' };
     case 'RETRY':
     case 'SET_VARIABLES':
     case 'SELECT_RUN_PROGRESSION':
     case 'ISSUE_CLAIM_TICKETS':
+    case 'RETRY_DELEGATION':
       return { kind: 'preserve' };
     default: {
       const _exhaustive: never = event;
@@ -573,6 +576,29 @@ function activeSubstepsPatch(
 }
 
 /**
+ * The lifecycle each final machine state ends a run in: the one table that
+ * maps the machine's terminal state ids to the persisted `lifecycle`, so a new
+ * final state must be named here or the snapshot is not recognised as final.
+ */
+const FINAL_STATE_LIFECYCLE = {
+  COMPLETE: 'completed',
+  STOPPED: 'stopped',
+  // A Delegation its claiming agent released (#905).
+  ABANDONED: 'abandoned',
+} as const satisfies Record<string, Lifecycle>;
+
+/**
+ * Whether a snapshot's state value is one of the machine's final states.
+ *
+ * @param stateValue - The snapshot's (string) state value.
+ * @returns True for `COMPLETE`, `STOPPED` and `ABANDONED`, narrowing
+ *   `stateValue` to a key of {@link FINAL_STATE_LIFECYCLE}; false otherwise.
+ */
+function isFinalStateValue(stateValue: string): stateValue is keyof typeof FINAL_STATE_LIFECYCLE {
+  return Object.hasOwn(FINAL_STATE_LIFECYCLE, stateValue);
+}
+
+/**
  * Derive the persistence patch for an actor snapshot, purely.
  *
  * The single source of the terminal and non-terminal patch shapes shared by
@@ -605,15 +631,14 @@ function deriveActorStatePatch(
 
   // If the runbook is in a final state, don't try to parse a step number.
   // Just update the snapshot and variables, preserving the last step number.
-  if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') {
+  if (isFinalStateValue(stateValue)) {
     const variables = snapshot.context?.variables ?? {};
     const rawFinalVars = snapshot.context?.finalVars ?? {};
     // Empty finalVars on terminal: explicitly write `undefined` so the persisted
     // state has no `finalVars` field. This matches the schema's optional contract
     // and avoids storing a misleading empty object.
     const finalVars = Object.keys(rawFinalVars).length > 0 ? rawFinalVars : undefined;
-    const lifecycle =
-      snapshot.context?.lifecycle ?? (stateValue === 'COMPLETE' ? 'completed' : 'stopped');
+    const lifecycle = snapshot.context?.lifecycle ?? FINAL_STATE_LIFECYCLE[stateValue];
     const lastAction = isPersistableLastAction(snapshot.context?.lastAction)
       ? snapshot.context.lastAction
       : undefined;
@@ -805,7 +830,7 @@ export class RunbookActorService {
     if (stateValue === null) {
       throw unsupportedShape();
     }
-    if (stateValue === 'COMPLETE' || stateValue === 'STOPPED') return;
+    if (isFinalStateValue(stateValue)) return;
 
     // Defense-in-depth (Issue 6): the machine-internal `__parent-entry::*`
     // sibling resolves entry-time artifacts BEFORE routing into the real
