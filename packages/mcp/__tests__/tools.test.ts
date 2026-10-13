@@ -305,9 +305,11 @@ describe('registerRundownTools', () => {
   // The human escape hatch (`rundown stop --run`, #906) needs a person at an
   // interactive terminal; an MCP caller has none, so the tool never offers it.
   it('stop never exposes the human escape hatch: a runId is not passed as --run', async () => {
-    expect(Object.keys(RUNDOWN_TOOL_DEFINITIONS.stop.inputSchema.shape).sort()).toEqual(
-      ['message', 'token'].sort(),
-    );
+    const parsed = RUNDOWN_TOOL_DEFINITIONS.stop.inputSchema.safeParse({
+      token: TOKEN,
+      runId: RUN_ID,
+    });
+    expect(parsed.success && Object.keys(parsed.data).sort()).toEqual(['token']);
     const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: {} });
     const handlers = registerWithHandlers(runCli);
 
