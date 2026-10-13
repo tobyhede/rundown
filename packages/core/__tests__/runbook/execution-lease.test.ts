@@ -115,7 +115,17 @@ describe('commandOutcomeUnknownMessage', () => {
 });
 
 describe('refuseUnderLease', () => {
-  const decisions: readonly LeaseDecision[] = ['pass', 'complete', 'fail', 'goto', 'stop', 'prune'];
+  const decisions: readonly LeaseDecision[] = [
+    'pass',
+    'complete',
+    'fail',
+    'goto',
+    'stop',
+    'prune',
+    'collect',
+    'retry',
+    'release',
+  ];
 
   it('lets every decision proceed when no lease is held', () => {
     for (const decision of decisions) {
@@ -137,7 +147,7 @@ describe('refuseUnderLease', () => {
 
   it('refuses pass and complete on an Interrupted attempt, naming the decisions that clear it', () => {
     const lease = leaseFor(process.ppid, 'an earlier process');
-    for (const decision of ['pass', 'complete'] as const) {
+    for (const decision of ['pass', 'complete', 'collect', 'retry'] as const) {
       const refusal = refuseUnderLease(RUN, { step: '2', substep: '1' }, lease, decision, identity);
       expect(refusal).toMatchObject({ kind: 'execution_interrupted', step: '2.1', lease });
       expect(refusal?.message).toContain('rundown fail --step 2.1');
@@ -173,9 +183,9 @@ describe('refuseUnderLease', () => {
     }
   });
 
-  it('lets fail, goto, stop and prune decide an Interrupted attempt', () => {
+  it('lets fail, goto, stop, prune and release decide an Interrupted attempt', () => {
     const lease = leaseFor(process.ppid, 'an earlier process');
-    for (const decision of ['fail', 'goto', 'stop', 'prune'] as const) {
+    for (const decision of ['fail', 'goto', 'stop', 'prune', 'release'] as const) {
       expect(refuseUnderLease(RUN, CURSOR, lease, decision, identity)).toBeUndefined();
     }
   });
