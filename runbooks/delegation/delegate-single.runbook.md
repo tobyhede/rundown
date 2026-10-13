@@ -199,6 +199,26 @@ scenarios:
         - code: AGENT_MISMATCH
           command: release
 
+  prune-keeps-uncollected-child:
+    description: prune --all keeps the finished child its parent has not collected, so its ticket cannot claim a second child; collect then applies it (#906)
+    commands:
+      - rd run delegate-single.runbook.md
+      - rd claim ${TICKET}
+      - rd pass --token ${CHILD_TOKEN} --step Check
+      - rd prune --all
+      - "! rd claim ${TICKET}"
+      - rd collect --token ${TOKEN}
+      - rd pass --token ${TOKEN} --step 2
+    result: COMPLETE
+    expect:
+      errors:
+        - code: ALREADY_CLAIMED
+          command: claim
+      collected:
+        - step: '1.1'
+          status: collected
+          result: pass
+
   wrong-run-step-refused:
     description: The child's token naming the parent's step is INVALID_STEP; nothing is written
     commands:
