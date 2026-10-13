@@ -122,7 +122,7 @@ describe('RunbookStore round-trip', () => {
     const state = await newState();
     await store.createRun(state, freshHash());
     const versioned = await store.loadRunWithVersion(state.id);
-    expect(versioned).toEqual({ state, stateVersion: 0 });
+    expect(versioned).toEqual({ state, stateVersion: 0, lease: null });
     expect(await store.loadRunWithVersion(assertRunId(`rd_${'e'.repeat(32)}`))).toBeNull();
   });
 
@@ -236,6 +236,39 @@ describe('RunbookStore round-trip', () => {
     },
   );
 
+  // Unparseable `state_json` is invalid persisted state (RD-309), not an
+  // internal fault: every reader of the row refuses it in the same taxonomy,
+  // not only `RunbookStateManager.load`. A bare SyntaxError escaping a
+  // versioned read surfaced `status --run` as a generic internal error.
+  it('refuses unparseable state_json as unparseable_json, on every read seam', async () => {
+    const ownerHash = freshHash();
+    const state = await newState();
+    await store.createRun(state, ownerHash);
+    await store.transaction((txn) => {
+      txn.tx
+        .prepare('UPDATE runs SET state_json = :json WHERE id = :id')
+        .run({ id: state.id, json: '{ not valid json' });
+    });
+
+    const seams: readonly (() => Promise<unknown>)[] = [
+      () => store.loadRun(state.id),
+      () => store.loadRunWithVersion(state.id),
+      () => store.read((txn) => txn.readState(state.id)),
+      () => store.read((txn) => txn.readStateWithVersion(state.id)),
+      () => store.findRunByOwnerTokenHash(ownerHash),
+      () => store.listRuns(),
+    ];
+    for (const read of seams) {
+      await expect(read()).rejects.toThrow(
+        `Invalid runbook state for "${state.id}": persisted state is not valid JSON.`,
+      );
+      await expect(read()).rejects.toBeInstanceOf(InvalidRunbookStateError);
+      await expect(read()).rejects.toMatchObject({
+        defect: { runId: state.id, reason: 'unparseable_json' },
+      });
+    }
+  });
+
   it.each([
     ['templateVars', { templateVars: undefined }, 'missing_template_vars'],
     ['prompted', { prompted: undefined }, 'missing_prompted'],
@@ -267,7 +300,7 @@ describe('findRunByOwnerTokenHash', () => {
     await store.createRun(await newState(), freshHash());
 
     const found = await store.findRunByOwnerTokenHash(hashRunSecret(token));
-    expect(found).toEqual({ state, stateVersion: 0 });
+    expect(found).toEqual({ state, stateVersion: 0, lease: null });
   });
 
   it('returns null for a hash no run carries', async () => {

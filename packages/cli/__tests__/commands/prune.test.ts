@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
+import { describe, it, expect, beforeEach, afterEach, jest } from '@jest/globals';
 import { writeFile, mkdir, readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { Errors, RunbookStateManager, type RunId } from '@rundown-org/core';
@@ -354,6 +354,36 @@ describe('prune command', () => {
 
       const statesAfter = await listRunbookStates(workspace);
       expect(statesAfter).toEqual([`${second.runId}.json`]);
+    });
+
+    it('refuses CONCURRENT_MODIFICATION and deletes nothing when the run changed after it was read', async () => {
+      // A write (or a lease taken by a command) landing between prune's read
+      // and its delete moves `state_version`; the delete is conditional on the
+      // version prune read, so it must refuse rather than drop the run.
+      const completedId = await startCompleted();
+      const { runId, token } = await startRunning();
+      // eslint-disable-next-line @typescript-eslint/unbound-method -- re-bound with `.call(this, …)` below.
+      const realFind = RunbookStateManager.prototype.findByOwnerTokenHash;
+      const spy = jest
+        .spyOn(RunbookStateManager.prototype, 'findByOwnerTokenHash')
+        .mockImplementation(async function (this: RunbookStateManager, hash) {
+          const found = await realFind.call(this, hash);
+          return found === null
+            ? null
+            : { ...found, stateVersion: (found.stateVersion - 1) as typeof found.stateVersion };
+        });
+      try {
+        const result = await runCliInProcess(`prune --all --token ${token}`, workspace);
+
+        expect(result.exitCode).toBe(1);
+        expect(JSON.parse(result.stdout)).toEqual(
+          expect.objectContaining({ kind: 'error', code: 'CONCURRENT_MODIFICATION' }),
+        );
+        const statesAfter = await listRunbookStates(workspace);
+        expect(statesAfter.sort()).toEqual([`${completedId}.json`, `${runId}.json`].sort());
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it('selects only the token’s run when no lifecycle filter is given', async () => {

@@ -18,6 +18,7 @@ import { Option, type Command } from 'commander';
 import {
   CLIErrorCodes,
   InvalidRunSecretError,
+  type ExecutionLeaseRefusal,
   parseOwnerToken,
   type FinishedLifecycle,
   type OwnedRunResolution,
@@ -246,4 +247,29 @@ export function renderRunFinished(
     runFinishedCode(lifecycle),
     { runId, lifecycle },
   );
+}
+
+/**
+ * Render a core execution-lease refusal (#902) as its error envelope.
+ *
+ * Core decided the refusal, its code and its message; this only carries the
+ * lease's public fields as details. The lease never
+ * carries a secret.
+ *
+ * @param output - Output emitter for CLI output.
+ * @param refusal - The core lease refusal.
+ * @returns `true`: a lease refusal always requests a non-zero exit.
+ */
+export function renderExecutionLeaseRefusal(
+  output: OutputEmitter,
+  refusal: ExecutionLeaseRefusal,
+): true {
+  output.error(refusal.message, refusal.code, {
+    runId: refusal.runId,
+    step: refusal.step,
+    attempt: refusal.lease.attempt,
+    pid: refusal.lease.pid,
+    startedAt: refusal.lease.startedAt,
+  });
+  return true;
 }

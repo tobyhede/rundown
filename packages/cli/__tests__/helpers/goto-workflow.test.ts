@@ -193,7 +193,7 @@ describe('buildGotoContext', () => {
   const seam = { resolveRunNavigation } as unknown as RunbookLifecycleCommandService;
   const output = {} as OutputEmitter;
   const state = { id: DEFAULT_RUNBOOK_ID, step: '1', lifecycle: 'running' } as RunbookState;
-  const run = { state, stateVersion: 2 as never };
+  const run = { state, stateVersion: 2 as never, lease: null };
 
   beforeEach(() => {
     jest.mocked(buildLifecycleSeam).mockReturnValue({ manager, seam });

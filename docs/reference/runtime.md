@@ -227,11 +227,12 @@ Each run is one row of the `runs` table, keyed by run id. A row holds:
 | `lifecycle`                | Run lifecycle state: `running` during execution; `completed`, `stopped`, or `abandoned` once terminal. No current command writes `abandoned`. |
 | `owner_token_hash`         | SHA-256 hash of the run's Owner Token. The token itself is never stored.                                                                      |
 | `state_json`               | The run's `RunbookState` (§7.4), minus `lifecycle`.                                                                                           |
-| `state_version`            | Counter bumped on every `state_json` write; the basis of the single conditional save.                                                         |
+| `state_version`            | Counter bumped on every `state_json` or execution-lease write; the basis of the single conditional save.                                      |
 | `created_at`, `updated_at` | Row timestamps.                                                                                                                               |
 
-The table also has child-linkage columns and execution-lease columns; no current
-command writes them (composition, #903 / #904; execution leases, #902).
+The table also has execution-lease columns, set while a step's command runs (see
+[Execution lease](#execution-lease) below), and child-linkage columns that no
+current command writes (composition, #903 / #904).
 
 Every run has exactly one owner. A mutating command presents the Owner Token,
 which the runtime hashes to find the run; there is no other mutation authority,
@@ -239,6 +240,21 @@ and the run id is a read-only selector. A mutation commits with one conditional
 write against `state_version`; if another write landed first, the command is
 refused `CONCURRENT_MODIFICATION` and nothing is written. See
 [docs/reference/cli.md Run Ownership](cli.md#run-ownership).
+
+<a id="execution-lease"></a>
+
+**Execution lease.** Immediately before a step's command runs, the runtime sets
+the run's execution lease — the attempt, the pid and start identity of the
+process running the command, and the start time — by one conditional write, and
+the write that records the command's result clears it. While the lease is held
+and its process is alive the step is **In Progress**: every mutating command and
+any second attempt at the step is refused `EXECUTION_IN_PROGRESS`, so the
+command never runs twice. If that process dies first, the step is
+**Interrupted**: the runtime MUST NOT repeat the command; `pass` and `complete`
+are refused `EXECUTION_INTERRUPTED`, and the owner decides with `fail` (the
+step's FAIL handler, including an authored `RETRY`), `goto`, or `stop`, whose
+write clears the lease. A result whose attempt no longer holds the lease is not
+recorded. `rundown status` reports either condition.
 
 <a id="invalid-persisted-state--no-migration"></a>
 

@@ -66,6 +66,13 @@ interface StatusDetailData {
   lastAction?: { action: string; result?: 'PASS' | 'FAIL' };
   vars?: Record<string, string>;
   pending?: string[];
+  /** Execution lease condition (#902). */
+  execution?: {
+    condition: 'in_progress' | 'interrupted';
+    step: string;
+    pid: number;
+    startedAt: string;
+  };
   /** Bare `rundown status`: every persisted run. */
   runs?: {
     id: string;
@@ -74,6 +81,7 @@ interface StatusDetailData {
     step?: string;
     total?: number;
     title?: string;
+    execution?: { condition: 'in_progress' | 'interrupted' };
   }[];
 }
 
@@ -237,8 +245,20 @@ export class TextRenderer implements OutputRenderer {
    * @param data - Status data: a run list (bare status) or one run's detail
    */
   private renderStatusDetail(data: Record<string, unknown>): void {
-    const { active, status, file, state, runId, prompted, position, step, lastAction, vars, runs } =
-      data as StatusDetailData;
+    const {
+      active,
+      status,
+      file,
+      state,
+      runId,
+      prompted,
+      position,
+      step,
+      lastAction,
+      vars,
+      runs,
+      execution,
+    } = data as StatusDetailData;
 
     // Bare `rundown status`: the run list.
     if (runs !== undefined) {
@@ -250,7 +270,13 @@ export class TextRenderer implements OutputRenderer {
       this.writer.writeLines(
         formatTable<RunRow>(runs, [
           { header: 'ID', get: (r) => r.id },
-          { header: 'STATUS', get: (r) => r.status ?? '' },
+          {
+            header: 'STATUS',
+            get: (r) =>
+              r.execution === undefined
+                ? (r.status ?? '')
+                : `${r.status ?? ''} (${r.execution.condition === 'in_progress' ? 'in progress' : 'interrupted'})`,
+          },
           {
             header: 'STEP',
             get: (r) => (r.step !== undefined ? `${r.step}/${String(r.total ?? '?')}` : ''),
@@ -305,6 +331,13 @@ export class TextRenderer implements OutputRenderer {
     if (position?.entry !== undefined) {
       this.writer.writeLine('');
       this.writer.writeLine(`Entry: ${String(position.entry)}`);
+    }
+    if (execution !== undefined) {
+      const condition = execution.condition === 'in_progress' ? 'In Progress' : 'Interrupted';
+      this.writer.writeLine('');
+      this.writer.writeLine(
+        `Execution: ${condition} (step ${execution.step}, pid ${String(execution.pid)}, started ${execution.startedAt})`,
+      );
     }
 
     this.renderVars(vars);

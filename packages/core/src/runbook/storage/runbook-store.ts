@@ -13,6 +13,14 @@
  * racing is a usage error the caller is told about, not a race the store
  * serialises on its behalf.
  *
+ * The execution lease (#902) rides the same version. Setting it is one
+ * conditional `UPDATE` that moves `state_version`. Clearing it is explicit:
+ * only {@link RunbookStore.saveRunResolvingLease} — the owner's decision or the
+ * attempt's finish — clears the lease its expected version carries, and the
+ * finish of a leased attempt commits only at the version its lease produced.
+ * Every other state write ({@link RunbookStore.saveRun}) is refused on a leased
+ * row, so no incidental writer can erase an Interrupted marker.
+ *
  * @module runbook/storage/runbook-store
  */
 
@@ -22,9 +30,14 @@ import { getErrorMessage } from '../../errors.js';
 import type { RunbookState, Lifecycle } from '../types.js';
 import { type RunId, assertRunId } from '../run-id.js';
 import type { SecretHash } from '../run-secrets.js';
-import { assertLoadablePersistedRun, parsePersistedRunState } from '../persisted-state-guards.js';
+import {
+  assertLoadablePersistedRun,
+  InvalidRunbookStateError,
+  parsePersistedRunState,
+} from '../persisted-state-guards.js';
 import type { SqlDriver, SqlTransaction, SqlReadTransaction, SyncWork } from './sql-driver.js';
 import { type StateVersion, assertStateVersion } from './mutation-result.js';
+import type { ExecutionLease, ExecutionLeaseHolder } from '../execution-lease.js';
 
 /** Machine lifecycle values persisted in the `runs.lifecycle` column. */
 const LIFECYCLES: readonly Lifecycle[] = ['running', 'completed', 'stopped', 'abandoned'];
@@ -68,13 +81,60 @@ export interface VersionedRunState {
   readonly state: RunbookState;
   /** The row's `state_version` at read time; the expectation a later save names. */
   readonly stateVersion: StateVersion;
+  /**
+   * The execution lease the row carried at that version, or null. A save at
+   * `stateVersion` clears it, so a seam that writes must have decided about it.
+   */
+  readonly lease: ExecutionLease | null;
 }
 
 /**
- * Outcome of {@link RunbookStore.saveRun}.
+ * One row of {@link RunbookStore.listRunsWithVersion}: validated, or the error
+ * its validation raised.
+ */
+export type ListedRun =
+  | { readonly kind: 'valid'; readonly run: VersionedRunState }
+  | { readonly kind: 'invalid'; readonly runId: RunId; readonly error: unknown };
+
+/**
+ * Outcome of {@link RunbookStore.deleteRunAtVersion}.
+ *
+ * - `deleted` — the row was still at the expected version and is gone.
+ * - `concurrent_modification` — the row exists but its `state_version` moved
+ *   since the caller read it (a write, or an execution lease taken). Nothing
+ *   was deleted. Refused, never retried.
+ * - `missing` — no row carries the id. Nothing was deleted.
+ */
+export type DeleteRunResult =
+  | { readonly kind: 'deleted' }
+  | { readonly kind: 'concurrent_modification' }
+  | { readonly kind: 'missing' };
+
+/**
+ * Outcome of {@link RunbookStore.acquireExecutionLease}.
+ *
+ * - `acquired` — the lease is set; `stateVersion` (equal to `lease.attempt`) is
+ *   the only version the attempt's finish may commit at.
+ * - `held` — a lease is already set at the expected version. Nothing written.
+ * - `concurrent_modification` — the version moved since the caller read the
+ *   run. Nothing written. Refused, never retried.
+ * - `missing` — no row carries the id. Nothing written.
+ */
+export type AcquireExecutionLeaseResult =
+  | {
+      readonly kind: 'acquired';
+      readonly lease: ExecutionLease;
+      readonly stateVersion: StateVersion;
+    }
+  | { readonly kind: 'held'; readonly lease: ExecutionLease }
+  | { readonly kind: 'concurrent_modification' }
+  | { readonly kind: 'missing' };
+
+/**
+ * Outcome of {@link RunbookStore.saveRunResolvingLease}.
  *
  * - `committed` — the one conditional `UPDATE` landed; `state` is what is now
- *   persisted.
+ *   persisted and the row carries no lease.
  * - `concurrent_modification` — the row exists but its `state_version` moved
  *   since the caller read it. Nothing was written. Refused, never retried.
  * - `missing` — no row carries the id. Nothing was written.
@@ -83,6 +143,17 @@ export type SaveRunResult =
   | { readonly kind: 'committed'; readonly state: RunbookState }
   | { readonly kind: 'concurrent_modification' }
   | { readonly kind: 'missing' };
+
+/**
+ * Outcome of {@link RunbookStore.saveRun}: every {@link SaveRunResult} arm, plus
+ *
+ * - `execution_leased` — the row is still at the expected version but holds an
+ *   execution lease, which this write is not entitled to clear. Nothing was
+ *   written.
+ */
+export type LeaseRefusingSaveResult =
+  | SaveRunResult
+  | { readonly kind: 'execution_leased'; readonly lease: ExecutionLease };
 
 /** Typed read operations available inside a store transaction. */
 export interface RunbookStoreReadTxn {
@@ -118,7 +189,7 @@ export interface RunbookStoreTxn extends RunbookStoreReadTxn {
   insertRun(state: RunbookState, ownerTokenHash: SecretHash): void;
   /**
    * Write a run's state if and only if its `state_version` still equals the
-   * expectation.
+   * expectation and it holds no execution lease.
    *
    * @param runId - Run to write.
    * @param expectedVersion - Version captured when the caller read the run.
@@ -126,6 +197,21 @@ export interface RunbookStoreTxn extends RunbookStoreReadTxn {
    * @returns Why the write did or did not land.
    */
   writeStateAtVersion(
+    runId: RunId,
+    expectedVersion: StateVersion,
+    next: RunbookState,
+  ): LeaseRefusingSaveResult;
+  /**
+   * Write a run's state if and only if its `state_version` still equals the
+   * expectation, clearing the execution lease that version carries. Only the
+   * owner's decision or the leased attempt's finish may write this way.
+   *
+   * @param runId - Run to write.
+   * @param expectedVersion - Version captured when the caller read the run.
+   * @param next - The complete state to persist.
+   * @returns Why the write did or did not land.
+   */
+  writeStateResolvingLease(
     runId: RunId,
     expectedVersion: StateVersion,
     next: RunbookState,
@@ -270,12 +356,13 @@ export class RunbookStore {
 
   /**
    * Persist a run's complete state if and only if nobody wrote it since the
-   * caller read it.
+   * caller read it and it holds no execution lease.
    *
    * One conditional `UPDATE`, one outcome. A `concurrent_modification` is not
    * retried here and must not be retried by the caller either: under one writer
    * per run it means two of the owner's own commands raced, and the second is
-   * told so rather than silently serialised behind the first.
+   * told so rather than silently serialised behind the first. A held lease is
+   * refused `execution_leased`: this write is not the decision about it.
    *
    * @param runId - Run to write.
    * @param expectedVersion - The `state_version` the caller read the run at.
@@ -289,13 +376,85 @@ export class RunbookStore {
     runId: RunId,
     expectedVersion: StateVersion,
     state: RunbookState,
-  ): Promise<SaveRunResult> {
-    if (state.id !== runId) {
-      throw new StoreInvariantError(
-        `saveRun for ${runId} was handed state belonging to ${String(state.id)}.`,
-      );
-    }
+  ): Promise<LeaseRefusingSaveResult> {
+    assertStateBelongsTo(runId, state);
     return this.transaction((txn) => txn.writeStateAtVersion(runId, expectedVersion, state));
+  }
+
+  /**
+   * Persist the owner's decision or a leased attempt's finish, clearing the
+   * execution lease the expected version carries.
+   *
+   * The one write that may clear a lease. The caller must have decided about
+   * the lease it read at `expectedVersion`: the lifecycle seam applies the
+   * lease rule before deriving, and a finish commits only at the version its
+   * own lease produced. Otherwise identical to {@link RunbookStore.saveRun}.
+   *
+   * @param runId - Run to write.
+   * @param expectedVersion - The `state_version` the caller read the run at.
+   * @param state - The complete state to persist. `lifecycle` defaults to
+   *   `running` when absent.
+   * @returns `committed` with the persisted state, or a typed refusal.
+   * @throws {StoreInvariantError} When `state.id` names a different run than
+   *   `runId`.
+   */
+  saveRunResolvingLease(
+    runId: RunId,
+    expectedVersion: StateVersion,
+    state: RunbookState,
+  ): Promise<SaveRunResult> {
+    assertStateBelongsTo(runId, state);
+    return this.transaction((txn) => txn.writeStateResolvingLease(runId, expectedVersion, state));
+  }
+
+  /**
+   * Set the run's execution lease immediately before an external effect.
+   *
+   * One conditional `UPDATE`: it lands only when the row is still at
+   * `expectedVersion` and carries no lease. It moves `state_version` to
+   * `expectedVersion + 1`, which becomes the lease's `attempt`. The effect must
+   * not start unless this returns `acquired`.
+   *
+   * @param runId - Run whose effect is about to start.
+   * @param expectedVersion - The version the caller read the run at.
+   * @param holder - The process starting the effect.
+   * @returns The acquired lease and its version, or why it was not set.
+   * @throws {StoreInvariantError} When the set landed but the row does not read
+   *   back at the attempt's version.
+   */
+  acquireExecutionLease(
+    runId: RunId,
+    expectedVersion: StateVersion,
+    holder: ExecutionLeaseHolder,
+  ): Promise<AcquireExecutionLeaseResult> {
+    return this.transaction((txn) =>
+      acquireLease(txn.tx, runId, expectedVersion, holder, new Date().toISOString()),
+    );
+  }
+
+  /**
+   * List every run row with the version and lease it was read at, in one read.
+   *
+   * Each row is validated on its own: an unreadable row is reported in place
+   * as `invalid` with the error it raised, so a lenient caller can skip it and
+   * a strict one can refuse, without either taking a second read. State,
+   * version and lease of every entry come from the same snapshot.
+   *
+   * @returns One entry per row, in ascending id order.
+   */
+  listRunsWithVersion(): Promise<readonly ListedRun[]> {
+    return this.driver.read((tx) =>
+      tx
+        .prepare(`SELECT ${VERSIONED_ROW_COLUMNS} FROM runs ORDER BY id`)
+        .all<VersionedRunRow>()
+        .map((row): ListedRun => {
+          try {
+            return { kind: 'valid', run: this.validateVersionedRow(row) };
+          } catch (error: unknown) {
+            return { kind: 'invalid', runId: assertRunId(row.id), error };
+          }
+        }),
+    );
   }
 
   /**
@@ -310,6 +469,33 @@ export class RunbookStore {
   deleteRun(runId: RunId): Promise<void> {
     return this.transaction((txn) => {
       txn.deleteRun(runId);
+    });
+  }
+
+  /**
+   * Delete a run row if and only if it is still at the version the caller read
+   * it at.
+   *
+   * One conditional `DELETE`, one outcome. A caller that decided about the run
+   * it read — including the execution lease that version carries — deletes
+   * exactly that run, never one that moved since (say, one whose next command
+   * took the lease). Child linkage is cleared by the `runs_unlink_children`
+   * trigger as for {@link RunbookStore.deleteRun}.
+   *
+   * @param runId - Run to delete.
+   * @param expectedVersion - The `state_version` the caller read the run at.
+   * @returns `deleted`, or why nothing was deleted.
+   */
+  deleteRunAtVersion(runId: RunId, expectedVersion: StateVersion): Promise<DeleteRunResult> {
+    return this.transaction((txn): DeleteRunResult => {
+      const changes = txn.tx
+        .prepare('DELETE FROM runs WHERE id = :id AND state_version = :expectedVersion')
+        .run({ id: runId, expectedVersion }).changes;
+      if (changes === 1) return { kind: 'deleted' };
+      const present = txn.tx
+        .prepare('SELECT 1 AS present FROM runs WHERE id = :id')
+        .get<{ readonly present: 1 }>({ id: runId });
+      return present === undefined ? { kind: 'missing' } : { kind: 'concurrent_modification' };
     });
   }
 
@@ -350,15 +536,14 @@ export class RunbookStore {
   }
 
   /**
-   * Reassemble a run's persisted JSON without validating it.
+   * Reassemble a run's persisted JSON without validating its shape.
    *
-   * Exposed for the state manager, which reframes an unparseable `state_json` as
-   * its own `unparseable_json` refusal and must therefore reach the row before
-   * anything validates it — a parsed value would already have been refused on
-   * its behalf, under a reason it did not choose.
+   * For test fixtures that round-trip state the gates would refuse. The JSON
+   * itself must parse: unparseable `state_json` is refused here as everywhere.
    *
    * @param runId - Run to read.
    * @returns The assembled state object, or null when absent.
+   * @throws {InvalidRunbookStateError} When `state_json` is not valid JSON.
    */
   readRunJson(runId: RunId): Promise<Record<string, unknown> | null> {
     return this.driver.read((tx) => readRunRaw(tx, runId));
@@ -392,7 +577,9 @@ export class RunbookStore {
         insertRun(tx, state, ownerTokenHash);
       },
       writeStateAtVersion: (runId, expectedVersion, next) =>
-        writeStateAtVersion(tx, runId, expectedVersion, next),
+        writeStateRefusingLease(tx, runId, expectedVersion, next),
+      writeStateResolvingLease: (runId, expectedVersion, next) =>
+        writeStateResolvingLease(tx, runId, expectedVersion, next),
       deleteRun: (runId) => {
         tx.prepare('DELETE FROM runs WHERE id = :id').run({ id: runId });
       },
@@ -433,8 +620,9 @@ export class RunbookStore {
   private validateVersionedRow(row: VersionedRunRow): VersionedRunState {
     const runId = assertRunId(row.id);
     return {
-      state: this.validateRaw(assembleRaw(row), runId),
+      state: this.validateRaw(assembleRaw(row, runId), runId),
       stateVersion: assertStateVersion(row.state_version),
+      lease: leaseFromRow(row),
     };
   }
 
@@ -477,14 +665,100 @@ export class RunbookStore {
   }
 }
 
+/** The lease column group. */
+const LEASE_COLUMNS = 'lease_attempt, lease_pid, lease_start_id, lease_started_at';
+
 /** Columns a versioned read selects: everything a validated, versioned state needs. */
-const VERSIONED_ROW_COLUMNS = 'id, state_version, lifecycle, state_json';
+const VERSIONED_ROW_COLUMNS = `id, state_version, lifecycle, state_json, ${LEASE_COLUMNS}`;
+
+/** The lease column group as read. All-or-none under the table's `CHECK`. */
+type LeaseRow = {
+  readonly lease_attempt: number | null;
+  readonly lease_pid: number | null;
+  readonly lease_start_id: string | null;
+  readonly lease_started_at: string | null;
+};
 
 /** One `runs` row as a versioned read selects it. */
-type VersionedRunRow = PersistedRunRow & {
-  readonly id: string;
-  readonly state_version: number;
-};
+type VersionedRunRow = PersistedRunRow &
+  LeaseRow & {
+    readonly id: string;
+    readonly state_version: number;
+  };
+
+/**
+ * Read the lease column group, or null when no lease is set.
+ *
+ * @param row - The lease columns as read.
+ * @returns The lease, or null.
+ */
+function leaseFromRow(row: LeaseRow): ExecutionLease | null {
+  if (row.lease_attempt === null || row.lease_pid === null || row.lease_started_at === null) {
+    return null;
+  }
+  return {
+    attempt: row.lease_attempt,
+    pid: row.lease_pid,
+    startId: row.lease_start_id,
+    startedAt: row.lease_started_at,
+  };
+}
+
+/**
+ * Set a run's execution lease under one conditional `UPDATE`.
+ *
+ * @param tx - Open writing transaction.
+ * @param runId - Run to lease.
+ * @param expectedVersion - Version the caller read the run at.
+ * @param holder - Process starting the effect.
+ * @param startedAt - ISO-8601 time the lease is set.
+ * @returns The acquired lease, or why it was not set.
+ * @throws {StoreInvariantError} When the set landed but the row does not read
+ *   back at the attempt's version — a tampered schema, not a race.
+ */
+function acquireLease(
+  tx: SqlTransaction,
+  runId: RunId,
+  expectedVersion: StateVersion,
+  holder: ExecutionLeaseHolder,
+  startedAt: string,
+): AcquireExecutionLeaseResult {
+  const attempt = expectedVersion + 1;
+  const changes = tx
+    .prepare(
+      `UPDATE runs
+          SET lease_attempt = :attempt, lease_pid = :pid,
+              lease_start_id = :startId, lease_started_at = :startedAt
+        WHERE id = :id
+          AND state_version = :expectedVersion
+          AND lease_attempt IS NULL`,
+    )
+    .run({
+      id: runId,
+      attempt,
+      pid: holder.pid,
+      startId: holder.startId,
+      startedAt,
+      expectedVersion,
+    }).changes;
+  const row = tx
+    .prepare(`SELECT state_version, ${LEASE_COLUMNS} FROM runs WHERE id = :id`)
+    .get<LeaseRow & { readonly state_version: number }>({ id: runId });
+  if (row === undefined) return { kind: 'missing' };
+  const lease = leaseFromRow(row);
+  if (changes === 1) {
+    // The trigger moved the version to exactly the attempt; anything else is a
+    // tampered schema, not a race.
+    if (row.state_version !== attempt || lease === null) {
+      throw new StoreInvariantError(
+        `Lease for run ${runId} set attempt ${String(attempt)} but the row reads version ${String(row.state_version)}.`,
+      );
+    }
+    return { kind: 'acquired', lease, stateVersion: assertStateVersion(attempt) };
+  }
+  if (lease !== null && row.state_version === expectedVersion) return { kind: 'held', lease };
+  return { kind: 'concurrent_modification' };
+}
 
 /** The columns a run state is reassembled from. */
 type PersistedRunRow = {
@@ -527,7 +801,54 @@ function insertRun(tx: SqlTransaction, state: RunbookState, ownerTokenHash: Secr
 }
 
 /**
- * Write run state under the one conditional `UPDATE`.
+ * Refuse a state handed to a write for another run.
+ *
+ * @param runId - Run the write targets.
+ * @param state - State to persist.
+ * @throws {StoreInvariantError} When `state.id` names a different run.
+ */
+function assertStateBelongsTo(runId: RunId, state: RunbookState): void {
+  if (state.id !== runId) {
+    throw new StoreInvariantError(
+      `saveRun for ${runId} was handed state belonging to ${String(state.id)}.`,
+    );
+  }
+}
+
+/** Named parameters bound by both state writes. */
+type StateWriteParams = {
+  readonly id: RunId;
+  readonly stateJson: string;
+  readonly lifecycle: Lifecycle;
+  readonly updatedAt: string;
+  readonly expectedVersion: StateVersion;
+};
+
+/**
+ * The bound parameters of a state write.
+ *
+ * @param runId - Run to write.
+ * @param expectedVersion - Version captured at read.
+ * @param next - New state.
+ * @returns Named parameters for the conditional `UPDATE`.
+ */
+function stateWriteParams(
+  runId: RunId,
+  expectedVersion: StateVersion,
+  next: RunbookState,
+): StateWriteParams {
+  return {
+    id: runId,
+    stateJson: serializeStateJson(next),
+    lifecycle: next.lifecycle ?? 'running',
+    updatedAt: next.updatedAt,
+    expectedVersion,
+  };
+}
+
+/**
+ * Write run state under the one conditional `UPDATE`, clearing the execution
+ * lease the expected version carries. The decision's and the finish's write.
  *
  * @param tx - Open writing transaction.
  * @param runId - Run to write.
@@ -535,7 +856,7 @@ function insertRun(tx: SqlTransaction, state: RunbookState, ownerTokenHash: Secr
  * @param next - New state.
  * @returns Why the write did or did not land.
  */
-function writeStateAtVersion(
+function writeStateResolvingLease(
   tx: SqlTransaction,
   runId: RunId,
   expectedVersion: StateVersion,
@@ -546,17 +867,13 @@ function writeStateAtVersion(
       `UPDATE runs
           SET state_json = :stateJson,
               lifecycle  = :lifecycle,
-              updated_at = :updatedAt
+              updated_at = :updatedAt,
+              lease_attempt = NULL, lease_pid = NULL,
+              lease_start_id = NULL, lease_started_at = NULL
         WHERE id = :id
           AND state_version = :expectedVersion`,
     )
-    .run({
-      id: runId,
-      stateJson: serializeStateJson(next),
-      lifecycle: next.lifecycle ?? 'running',
-      updatedAt: next.updatedAt,
-      expectedVersion,
-    }).changes;
+    .run(stateWriteParams(runId, expectedVersion, next)).changes;
   if (changes === 1) {
     return { kind: 'committed', state: next };
   }
@@ -564,6 +881,47 @@ function writeStateAtVersion(
     .prepare('SELECT 1 AS present FROM runs WHERE id = :id')
     .get<{ readonly present: 1 }>({ id: runId });
   return present === undefined ? { kind: 'missing' } : { kind: 'concurrent_modification' };
+}
+
+/**
+ * Write run state under the one conditional `UPDATE`, only on a row that holds
+ * no execution lease. Every write that is not a decision about the lease.
+ *
+ * @param tx - Open writing transaction.
+ * @param runId - Run to write.
+ * @param expectedVersion - Version captured at read.
+ * @param next - New state.
+ * @returns Why the write did or did not land.
+ */
+function writeStateRefusingLease(
+  tx: SqlTransaction,
+  runId: RunId,
+  expectedVersion: StateVersion,
+  next: RunbookState,
+): LeaseRefusingSaveResult {
+  const changes = tx
+    .prepare(
+      `UPDATE runs
+          SET state_json = :stateJson,
+              lifecycle  = :lifecycle,
+              updated_at = :updatedAt
+        WHERE id = :id
+          AND state_version = :expectedVersion
+          AND lease_attempt IS NULL`,
+    )
+    .run(stateWriteParams(runId, expectedVersion, next)).changes;
+  if (changes === 1) {
+    return { kind: 'committed', state: next };
+  }
+  const row = tx
+    .prepare(`SELECT state_version, ${LEASE_COLUMNS} FROM runs WHERE id = :id`)
+    .get<LeaseRow & { readonly state_version: number }>({ id: runId });
+  if (row === undefined) return { kind: 'missing' };
+  const lease = leaseFromRow(row);
+  if (lease !== null && row.state_version === expectedVersion) {
+    return { kind: 'execution_leased', lease };
+  }
+  return { kind: 'concurrent_modification' };
 }
 
 /**
@@ -577,19 +935,38 @@ function readRunRaw(tx: SqlReadTransaction, runId: RunId): Record<string, unknow
   const row = tx
     .prepare('SELECT lifecycle, state_json FROM runs WHERE id = :id')
     .get<PersistedRunRow>({ id: runId });
-  return row === undefined ? null : assembleRaw(row);
+  return row === undefined ? null : assembleRaw(row, runId);
 }
 
 /**
  * Reassemble a run's full state object from its row, unvalidated: `state_json`
  * plus the `lifecycle` column, whose home is outside the JSON.
  *
+ * Every reader of a row comes through here, so unparseable `state_json` is
+ * refused once, in the persisted-state taxonomy (RD-309), rather than escaping
+ * one reader as a bare `SyntaxError` that a frontend can only render as an
+ * internal error.
+ *
  * @param row - The row's state columns.
+ * @param runId - Run the row belongs to, named by the refusal.
  * @returns The assembled object.
+ * @throws {InvalidRunbookStateError} When `state_json` is not valid JSON
+ *   (`unparseable_json`).
  * @throws {Error} When the lifecycle column holds an unknown value.
  */
-function assembleRaw(row: PersistedRunRow): Record<string, unknown> {
-  const raw = JSON.parse(row.state_json) as Record<string, unknown>;
+function assembleRaw(row: PersistedRunRow, runId: RunId): Record<string, unknown> {
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(row.state_json) as Record<string, unknown>;
+  } catch (error: unknown) {
+    if (error instanceof SyntaxError) {
+      throw new InvalidRunbookStateError(
+        `Invalid runbook state for "${runId}": persisted state is not valid JSON.`,
+        { runId, reason: 'unparseable_json' },
+      );
+    }
+    throw error;
+  }
   raw.lifecycle = assertLifecycle(row.lifecycle);
   return raw;
 }

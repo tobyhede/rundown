@@ -3,7 +3,8 @@
 Descriptive: this is how run and file-backed state is written **today**. Run
 state follows [ADR 0005](../adr/0005-one-writer-per-run.md): every run has one
 Run Owner, proven by its Owner Token, and only the owner's commands write it.
-The execution lease the ADR also calls for is not built yet (#902).
+The one other thing written on a run row is the execution lease below, and it
+rides the same conditional write.
 
 ## Run state: one conditional write, never retried
 
@@ -24,6 +25,87 @@ command read. The save returns a closed outcome:
 Treat `concurrent_modification` as a reachable arm on any path that can be
 driven concurrently, and render it as itself; never fold it into a generic
 failure or document it as theoretical.
+
+## Execution lease
+
+A run row carries at most one execution lease: the columns `lease_attempt`,
+`lease_pid`, `lease_start_id` and `lease_started_at`, all-or-none under the
+table's `CHECK`. It is run-row data — never machine context, never a file lock.
+The vocabulary and the rule live in
+`packages/core/src/runbook/execution-lease.ts`; the writes live in
+`RunbookStore`.
+
+- **Set.** Run Progression (`run-progression.ts`, `acquireTurnLease`) sets the
+  lease immediately before a command turn — the command execution, together with
+  the OUTPUTS helper evaluation inside its finish — by ONE conditional
+  `UPDATE … WHERE state_version = :expected AND lease_attempt IS NULL`. The
+  `runs_bump_state_version` trigger fires on `lease_attempt` too, so the set
+  moves `state_version`, and the lease's `attempt` IS the version it produced.
+  The command does not start unless the set landed. Entry-render helpers stay
+  outside the lease: an entry is re-rendered on every activation anyway.
+- **Clear.** Only a decision or a finish clears the lease:
+  `RunbookStore.saveRunResolvingLease` (reached through
+  `RunbookStateManager.save`, which the lifecycle seam and Run Progression's
+  finish call) clears the lease columns in the same `UPDATE`. A writer at
+  version `v` therefore clears exactly the lease `v` carries — the one its seam
+  read and decided about. Every other state write (`saveRun`,
+  `RunbookStateManager.update` / `mutate`) is refused on a leased row
+  (`execution_leased`, or `ExecutionLeaseHeldError` before its build runs), so
+  no incidental write can erase an Interrupted marker. Deleting a run by token
+  (`prune --token`) is conditional on the version whose lease was checked
+  (`deleteAtVersion`), so a lease taken after that read refuses the delete
+  `CONCURRENT_MODIFICATION`. The finish of a command commits at
+  `state_version = attempt`, so it commits only if its attempt still holds the
+  lease. If anything wrote in between (an owner's decision on an Interrupted
+  step, a new attempt), the finish is refused `CONCURRENT_MODIFICATION`
+  (`command_not_committed`) and records nothing.
+- **Readers before the set.** Because the set moves the version, a command that
+  read the run before the lease was set is refused `CONCURRENT_MODIFICATION`
+  when it saves. A command that reads the lease applies the rule below.
+
+- **Outcome unknown.** If the finish cannot be derived after the command ran —
+  the machine-effect wait exceeds its budget, or the actor reaches an XState
+  `error` status — `prepareActorMutation` raises
+  `MachineEffectOutcomeUnknownError` (only for `EXECUTE_COMMAND`, and only for
+  those two causes). Run Progression catches exactly that error and refuses
+  `command_outcome_unknown`, code `EXECUTION_INTERRUPTED`, `permanent`. Nothing
+  is written and the lease stays set: the step is now Interrupted, and the
+  message names the same explicit decisions. Every other error from the finish
+  propagates as a defect, also leaving the lease set — and so also Interrupted
+  once the turn has unwound.
+
+A held lease has one of two conditions, decided by `classifyExecutionLease`:
+
+- **Another process's lease** — `(pid, start id)` through
+  `process-identity.ts`'s `isOwnerAlive`: only a pid with no process, or a
+  recorded and an observed start id that disagree, prove the holder gone. Every
+  unknown reads as alive, so doubt refuses rather than letting the command run
+  twice.
+- **This process's lease** (`pid` is `process.pid`) — liveness cannot answer,
+  because the process is alive by definition. Run Progression registers each
+  attempt it runs in a process-local, never-persisted set (keyed by run and
+  attempt) from the lease set until the turn returns or throws
+  (`holdInFlightAttempt`, released with `using`). The lease is In Progress only
+  while its attempt is registered; otherwise the turn that set it ended without
+  committing (or an earlier process recycled the pid), and it is Interrupted.
+  Without this rule a long-lived host (an MCP server) whose finish failed would
+  read In Progress — refusing even `fail`, `goto` and `stop` — until it exited.
+
+| Condition       | Holder                                      | Refused                                                                                                                                           | Clears it                                                                                                         |
+| --------------- | ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| **In Progress** | alive (this process: attempt registered)    | every owner decision (`pass`, `fail`, `goto`, `stop`, `complete`, `prune --token`) and a second Run Progression attempt — `EXECUTION_IN_PROGRESS` | the command's own finish                                                                                          |
+| **Interrupted** | gone (this process: attempt not registered) | `pass`, `complete` and Run Progression — `EXECUTION_INTERRUPTED`                                                                                  | the owner's `fail` (FAIL handler, including an authored RETRY), `goto` or `stop`; `prune --token` deletes the run |
+
+`pass` and `complete` are refused on an Interrupted step because each would
+treat an effect of unknown outcome as having succeeded. Rundown never repeats an
+Interrupted command itself; the owner's decision is the only way past it. The
+rule is `refuseUnderLease`, applied by `RunbookLifecycleCommandService` before
+any derivation, and `status` renders the condition as `execution`.
+
+The lease is never retried, backed off or waited on. A refused set is a refused
+turn.
+
+## No other coordination
 
 There are no file locks, compare-and-swap retry budgets, latches, fences, claim
 generations or grants on run state. Adding any of them reintroduces a second
@@ -97,6 +179,11 @@ all.
 "Stub it out and see what breaks" is a BLIND check when every unit suite mocks
 the module boundary you stubbed: nothing fails, and nothing was tested. Only a
 real multi-process test observes a genuine race.
+
+**For the execution lease:**
+`packages/cli/__tests__/integration/execution-lease.test.ts` starts a real
+`rundown run` whose command sleeps, observes `EXECUTION_IN_PROGRESS` from a
+second process, and SIGKILLs the owner to observe Interrupted.
 
 **For manifest writes:** Wrap `findEquivalentManifestRow` + append in a lock at
 `.rundown/locks/.rd-<contextId>.manifest.lock` (`appendArtifactManifestRecord`

@@ -27,10 +27,12 @@ import type { SqlReadTransaction, SqlTransaction } from './sql-driver.js';
  * version is invalid and rejected with an {@link IncompatibleSchemaError}; the
  * recovery path is explicit user action (finish, stop, prune, restart).
  *
- * Version 3 is the one-writer-per-run schema (ADR 0005, #901): a single `runs`
+ * Version 3 was the one-writer-per-run schema (ADR 0005, #901): a single `runs`
  * table carrying the Owner Token hash, nullable child-linkage and lease column
- * groups, and `state_version`. Versions 1 and 2 carried the multi-writer tables
- * (`claims`, `session_stack`, `stash_slot`, `resolved_completions`,
+ * groups, and `state_version`. Version 4 (#902) makes a write to the lease
+ * columns move `state_version` too, so the lease's attempt is a version and a
+ * reader from before the lease cannot write after it. Versions 1 and 2 carried
+ * the multi-writer tables (`claims`, `session_stack`, `stash_slot`, `resolved_completions`,
  * `execution_attempts`); a database at either version is foreign to this build
  * and is refused whole, because none of its coordinating rows has a home here.
  *
@@ -41,10 +43,11 @@ import type { SqlReadTransaction, SqlTransaction } from './sql-driver.js';
  * state inside each `runs.state_json` blob, one row at a time, refused as
  * RD-309. `state_json` is opaque TEXT to this DDL, so a change to the persisted
  * run-state shape moves that constant and not this one; a DDL edit moves this
- * and leaves that. The two happen to both read `3` today because #901 changed
- * both the tables and the blob at once.
+ * and leaves that. Both read `3` after #901, which changed the tables and the
+ * blob at once; #902 moved this one to `4` for a DDL-only change (the lease
+ * trigger) and left the blob's version alone.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /** `user_version` value of a freshly created, never-installed database. */
 const UNINITIALIZED_VERSION = 0;
@@ -88,10 +91,12 @@ export class IncompatibleSchemaError extends Error {
  * their own `CHECK`s, so a half-written linkage or lease is unrepresentable.
  *
  * `state_version` is owned solely by the `runs_bump_state_version` trigger: it
- * advances on every `state_json` write, for any writer present or future, so
- * the conditional `UPDATE … WHERE state_version = :expected` in the store is a
- * complete lost-update check by construction rather than by call-site
- * discipline.
+ * advances on every `state_json` or `lease_attempt` write, for any writer
+ * present or future, so the conditional `UPDATE … WHERE state_version =
+ * :expected` in the store is a complete lost-update check by construction
+ * rather than by call-site discipline. Covering the lease column is what makes
+ * the execution lease (#902) a version: setting it refuses every reader that
+ * read the run before it, and its attempt is the version it produced.
  *
  * Child linkage is cleared by the `runs_unlink_children` trigger when the
  * parent row is deleted, not by `ON DELETE SET NULL`: the referential action
@@ -121,13 +126,16 @@ CREATE TABLE runs (
   parent_frame_key  TEXT,
   parent_entry      INTEGER,
   parent_kind       TEXT    CHECK (parent_kind IS NULL OR parent_kind IN ('delegation', 'inline')),
-  -- Execution lease (nullable all-or-none; written by #902). lease_start_id may
-  -- be NULL where the host supplies no process start id.
+  -- Execution lease (nullable all-or-none). Set by one conditional update
+  -- before an external effect; cleared by the state write that commits its
+  -- finish. lease_attempt is the state_version the set produced.
+  -- lease_start_id may be NULL where the host supplies no process start id.
   lease_attempt     INTEGER,
   lease_pid         INTEGER,
   lease_start_id    TEXT,
   lease_started_at  TEXT,
-  -- Lost-update counter: bumped by the trigger below on every state_json write.
+  -- Lost-update counter: bumped by the trigger below on every state_json or
+  -- lease_attempt write.
   state_version     INTEGER NOT NULL DEFAULT 0,
   -- Authoritative RunbookState JSON, minus \`lifecycle\`, whose home is its own
   -- column so the CHECK above can pin it.
@@ -150,7 +158,7 @@ CREATE TABLE runs (
 
 CREATE INDEX runs_parent_run ON runs(parent_run_id);
 
-CREATE TRIGGER runs_bump_state_version AFTER UPDATE OF state_json ON runs
+CREATE TRIGGER runs_bump_state_version AFTER UPDATE OF state_json, lease_attempt ON runs
 BEGIN
   UPDATE runs SET state_version = state_version + 1 WHERE id = NEW.id;
 END;

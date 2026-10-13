@@ -10,6 +10,7 @@
 import {
   buildStepPosition,
   countNumberedSteps,
+  deriveExecutionAt,
   isArtifactValue,
   mergeEffectiveVars,
   parseRunbook,
@@ -19,6 +20,8 @@ import {
   type ActionBlockData,
   type ActiveRunbookEntry,
   type ArtifactPathOptions,
+  type ExecutionCondition,
+  type ExecutionStatus,
   type PublicArtifactVarValue,
   type RunbookState,
 } from '@rundown-org/core';
@@ -79,6 +82,31 @@ export interface StatusOutputData {
   artifacts?: Record<string, PublicArtifactVarValue>;
   /** Every persisted run (bare `rundown status` list form). */
   runs?: ActiveRunbookEntry[];
+  /** Execution lease condition, present while the run holds the lease (#902). */
+  execution?: ExecutionStatus;
+}
+
+/**
+ * Project a core-classified execution condition onto the status field.
+ *
+ * Core decided In Progress versus Interrupted; this only names the fields.
+ *
+ * @param state - The run whose step holds the lease
+ * @param condition - Core's classification of the lease, or undefined
+ * @returns The status `execution` field, or undefined when no lease is held
+ */
+function buildExecutionStatus(
+  state: RunbookState,
+  condition: ExecutionCondition | undefined,
+): ExecutionStatus | undefined {
+  if (condition === undefined) return undefined;
+  return {
+    condition: condition.kind,
+    step: deriveExecutionAt(state.step, state.substep),
+    attempt: condition.lease.attempt,
+    pid: condition.lease.pid,
+    startedAt: condition.lease.startedAt,
+  };
 }
 
 function buildArtifactPathOptions(state: RunbookState, cwd: string): ArtifactPathOptions {
@@ -175,12 +203,18 @@ function countPersistedSteps(state: RunbookState): number | undefined {
  * than failing the listing.
  *
  * @param states - Every persisted run, as the manager lists them
+ * @param conditions - Core's execution condition for each run holding a lease
  * @returns StatusOutputData whose `runs` carries the list
  */
-export function buildRunListStatus(states: readonly RunbookState[]): StatusOutputData {
+export function buildRunListStatus(
+  states: readonly RunbookState[],
+  conditions: ReadonlyMap<string, ExecutionCondition> = new Map(),
+): StatusOutputData {
   const runs: ActiveRunbookEntry[] = states.map((state) => {
     const total = countPersistedSteps(state);
-    const step = state.substep ? `${state.step}.${state.substep}` : state.step;
+    // Core's one step label, the same one a lease refusal names.
+    const step = deriveExecutionAt(state.step, state.substep);
+    const execution = buildExecutionStatus(state, conditions.get(state.id));
     return {
       id: state.id,
       runbook: state.runbook.path,
@@ -188,6 +222,7 @@ export function buildRunListStatus(states: readonly RunbookState[]): StatusOutpu
       step,
       ...(total !== undefined ? { total } : {}),
       ...(state.title !== undefined ? { title: state.title } : {}),
+      ...(execution !== undefined ? { execution } : {}),
     };
   });
   return { active: false, runs };
@@ -202,9 +237,14 @@ export function buildRunListStatus(states: readonly RunbookState[]): StatusOutpu
  *
  * @param runState - The run state
  * @param cwd - Current working directory (for step resolution)
+ * @param condition - Core's execution condition when the run holds a lease
  * @returns StatusOutputData with full run details
  */
-export function buildRunStatus(runState: RunbookState, cwd: string): StatusOutputData {
+export function buildRunStatus(
+  runState: RunbookState,
+  cwd: string,
+  condition?: ExecutionCondition,
+): StatusOutputData {
   const steps = getRunbookFromState(runState, cwd);
   const currentStepIndex = steps.findIndex((s) => s.name === runState.step);
   const currentStep = currentStepIndex >= 0 ? steps[currentStepIndex] : undefined;
@@ -242,6 +282,7 @@ export function buildRunStatus(runState: RunbookState, cwd: string): StatusOutpu
   const artifactPathOptions = buildArtifactPathOptions(runState, cwd);
   const vars = buildVars(runState, artifactPathOptions);
   const artifacts = buildArtifacts(runState, artifactPathOptions);
+  const execution = buildExecutionStatus(runState, condition);
 
   return {
     active: lifecycle === 'running',
@@ -250,6 +291,7 @@ export function buildRunStatus(runState: RunbookState, cwd: string): StatusOutpu
     state: metadata.state,
     ...(metadata.runId != null && { runId: metadata.runId }),
     ...(metadata.prompted != null && { prompted: metadata.prompted }),
+    ...(execution !== undefined ? { execution } : {}),
     position: {
       ...basePosition,
       ...(activeFrameKey ? { frameKey: activeFrameKey } : {}),

@@ -271,9 +271,10 @@ let sharedIdentity: ProcessIdentity | undefined;
 /**
  * The one {@link ProcessIdentity} for this process.
  *
- * `createProcessIdentity`'s memo is per-instance, and `SqliteExecutionLeaseService`
- * is constructed per mutation — so a per-instance default would pay the BSD `ps`
- * spawn on every acquisition rather than once. This process's own start id is
+ * `createProcessIdentity`'s memo is per-instance, and the execution lease
+ * (`execution-lease.ts`) reads this process's identity on every acquisition —
+ * so a per-instance default would pay the BSD `ps` spawn on every acquisition
+ * rather than once. This process's own start id is
  * immutable for its whole lifetime, so a process-wide memo needs no
  * invalidation and cannot go stale. Built lazily rather than at import so
  * nothing is spawned by the act of importing this module.

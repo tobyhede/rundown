@@ -410,7 +410,7 @@ describe('storage schema', () => {
   });
 
   describe('state_version trigger', () => {
-    it('bumps state_version on every state_json write and on nothing else', async () => {
+    it('bumps state_version on every state_json or lease write and on nothing else', async () => {
       await using driver = await schemaDriver();
       await driver.immediate((tx) => {
         insertRun(tx);
@@ -427,13 +427,18 @@ describe('storage schema', () => {
         tx.prepare("UPDATE runs SET lifecycle = 'completed' WHERE id = :id").run({
           id: RUN_DEFAULTS.id,
         });
+      });
+      expect(await version()).toBe(0);
+      // Setting the execution lease moves the version (#902): a reader from
+      // before the lease cannot write after it.
+      await driver.immediate((tx) => {
         tx.prepare(
           "UPDATE runs SET lease_attempt = 1, lease_pid = 1, lease_started_at = 'now' WHERE id = :id",
         ).run({
           id: RUN_DEFAULTS.id,
         });
       });
-      expect(await version()).toBe(0);
+      expect(await version()).toBe(1);
       await driver.immediate((tx) => {
         tx.prepare('UPDATE runs SET state_json = \'{"a":1}\' WHERE id = :id').run({
           id: RUN_DEFAULTS.id,
@@ -442,7 +447,14 @@ describe('storage schema', () => {
           id: RUN_DEFAULTS.id,
         });
       });
-      expect(await version()).toBe(2);
+      expect(await version()).toBe(3);
+      // One statement writing both columns is one bump.
+      await driver.immediate((tx) => {
+        tx.prepare(
+          'UPDATE runs SET state_json = \'{"a":3}\', lease_attempt = NULL, lease_pid = NULL, lease_started_at = NULL WHERE id = :id',
+        ).run({ id: RUN_DEFAULTS.id });
+      });
+      expect(await version()).toBe(4);
     });
   });
 
