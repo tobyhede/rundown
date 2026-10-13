@@ -21,6 +21,7 @@ import {
 } from './state-update-ops.js';
 import type { RunbookRef } from './runbook-ref.js';
 import type { SecretHash } from './run-secrets.js';
+import type { ChildLinkage } from './child-linkage.js';
 import { findUnsupportedComposition, RunbookCompositionUnsupportedError } from './run-authority.js';
 import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
@@ -322,6 +323,20 @@ export interface CreateOptions {
 }
 
 /**
+ * Options accepted by {@link RunbookStateManager.createInlineChild}.
+ *
+ * Everything {@link CreateOptions} carries except the Owner Token hash — an
+ * Inline Child has no token of its own (#903) — plus the preallocated id its
+ * parent reserved and the linkage naming that reservation.
+ */
+export interface CreateInlineChildOptions extends Omit<CreateOptions, 'ownerTokenHash' | 'runId'> {
+  /** The child run id the parent's reservation preallocated. */
+  readonly runId: RunId;
+  /** The parent coordinate; its `kind` is `inline`. */
+  readonly linkage: ChildLinkage;
+}
+
+/**
  * Construction options for {@link RunbookStateManager}.
  */
 export interface RunbookStateManagerOptions {
@@ -341,6 +356,58 @@ export interface RunbookStateManagerOptions {
  */
 function stampForSave(state: RunbookState): RunbookState {
   return { ...state, schemaVersion: CURRENT_SCHEMA_VERSION, updatedAt: new Date().toISOString() };
+}
+
+/**
+ * Build the initial state of a new run, applying the composition refusal.
+ *
+ * `templateVars` is always written — `{}` when the caller supplies none — and
+ * so is `prompted` (`false` when the caller names no mode), because `load`
+ * refuses a persisted row without either.
+ *
+ * @param runbookRef - Canonical runbook identity
+ * @param runbook - The parsed runbook definition
+ * @param id - The run id
+ * @param options - Path, prompted flag, source and variables
+ * @returns The initial state, not yet persisted
+ * @throws {RunbookCompositionUnsupportedError} When the runbook delegates (a
+ *   `DELEGATE` substep): the compiled machine has no state for one until #904.
+ */
+function initialRunState(
+  runbookRef: RunbookRef,
+  runbook: Runbook | ResolvedRunbook,
+  id: RunId,
+  options: Omit<CreateOptions, 'ownerTokenHash' | 'runId'>,
+): RunbookState {
+  // Refused here, below the seam every run — inline children included — is
+  // created through, rather than by each frontend.
+  const composing = findUnsupportedComposition(runbook.steps);
+  if (composing.length > 0) {
+    throw new RunbookCompositionUnsupportedError(composing);
+  }
+  const now = new Date().toISOString();
+  const initialStep = runbook.steps[0];
+  return {
+    id,
+    runbook: runbookRef,
+    runbookPath: options.runbookPath,
+    title: runbook.title,
+    description: runbook.description,
+    step: initialStep.name,
+    stepName: initialStep.description,
+    retryCount: 0,
+    variables: brandStoredOutputs(assertTrustedArtifactValues(options.initialVariables ?? {})),
+    steps: [],
+    frameEntryCounts: {},
+    startedAt: now,
+    updatedAt: now,
+    prompted: options.prompted ?? false,
+    runbookSrc: options.runbookSrc,
+    templateVars: brandInitialTemplateVars(options.templateVars ?? {}),
+    frontmatterOutputs: options.frontmatterOutputs ?? [],
+    lifecycle: 'running',
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+  };
 }
 
 /**
@@ -439,9 +506,9 @@ export class RunbookStateManager {
    * @param runbook - The parsed runbook definition
    * @param options - Owner token hash, run identity, prompted flag, variables
    * @returns The newly created RunbookState
-   * @throws {RunbookCompositionUnsupportedError} When the runbook composes
-   *   other runbooks (a `DELEGATE` or runbook-list substep). Raised before any
-   *   store access, so no run row is written.
+   * @throws {RunbookCompositionUnsupportedError} When the runbook delegates
+   *   to other runbooks (a `DELEGATE` substep). Raised before any store
+   *   access, so no run row is written.
    * @throws {StoreInvariantError} When a run already carries the id or the
    *   owner token hash.
    */
@@ -450,48 +517,37 @@ export class RunbookStateManager {
     runbook: Runbook | ResolvedRunbook,
     options: CreateOptions,
   ): Promise<RunbookState> {
-    // The compiled machine has no state for a composing substep, so no run of
-    // one may exist. Refused here, the seam every run is created through,
-    // rather than by each frontend.
-    const composing = findUnsupportedComposition(runbook.steps);
-    if (composing.length > 0) {
-      throw new RunbookCompositionUnsupportedError(composing);
-    }
-
-    const id = options.runId ?? generateRunId();
-    const now = new Date().toISOString();
-
-    const initialStep = runbook.steps[0];
-
-    const state: RunbookState = {
-      id,
-      runbook: runbookRef,
-      runbookPath: options.runbookPath,
-      title: runbook.title,
-      description: runbook.description,
-      step: initialStep.name,
-      stepName: initialStep.description,
-      retryCount: 0,
-      variables: brandStoredOutputs(assertTrustedArtifactValues(options.initialVariables ?? {})),
-      steps: [],
-      frameEntryCounts: {},
-      startedAt: now,
-      updatedAt: now,
-      // Always written, `false` when the caller names no mode: `load` refuses a
-      // persisted row without `prompted` rather than defaulting one.
-      prompted: options.prompted ?? false,
-      runbookSrc: options.runbookSrc,
-      // Always written, `{}` when the caller supplies none: `load` refuses a
-      // persisted row without templateVars rather than reconstructing it.
-      templateVars: brandInitialTemplateVars(options.templateVars ?? {}),
-      frontmatterOutputs: options.frontmatterOutputs ?? [],
-      lifecycle: 'running',
-      schemaVersion: CURRENT_SCHEMA_VERSION,
-    };
-
+    const state = initialRunState(runbookRef, runbook, options.runId ?? generateRunId(), options);
     const store = await this.store();
     await store.createRun(state, options.ownerTokenHash);
-    void logger.debug('lifecycle-write', { runId: id, next: 'running' });
+    void logger.debug('lifecycle-write', { runId: state.id, next: 'running' });
+    return state;
+  }
+
+  /**
+   * Create an Inline Child (#903) under the id its parent reserved.
+   *
+   * The parent owner's command creates the child row; the row records its
+   * linkage and carries no Owner Token hash, because the parent's token
+   * authorizes it. The same composition refusal as {@link create} applies.
+   *
+   * @param runbookRef - Canonical identity of the child runbook
+   * @param runbook - The parsed child runbook definition
+   * @param options - Preallocated id, linkage, prompted flag and variables
+   * @returns The newly created child state
+   * @throws {RunbookCompositionUnsupportedError} When the child runbook
+   *   delegates (a `DELEGATE` substep). No row is written.
+   * @throws {StoreInvariantError} When a run already carries the id.
+   */
+  async createInlineChild(
+    runbookRef: RunbookRef,
+    runbook: Runbook | ResolvedRunbook,
+    options: CreateInlineChildOptions,
+  ): Promise<RunbookState> {
+    const state = initialRunState(runbookRef, runbook, options.runId, options);
+    const store = await this.store();
+    await store.createInlineChildRun(state, options.linkage);
+    void logger.debug('lifecycle-write', { runId: state.id, next: 'running' });
     return state;
   }
 

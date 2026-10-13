@@ -645,7 +645,7 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
         txn.tx
           .prepare(
             `UPDATE runs SET parent_run_id = :parent, parent_step = '1', parent_frame_key = '1|',
-               parent_entry = 1, parent_kind = 'inline' WHERE id = :id`,
+               parent_entry = 1, parent_kind = 'delegation' WHERE id = :id`,
           )
           .run({ parent: parent.id, id: child.id });
       });

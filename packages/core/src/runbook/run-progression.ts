@@ -729,7 +729,7 @@ async function acquireTurnLease(
     case 'acquired':
       return {
         kind: 'acquired',
-        run: { state: current.state, stateVersion: leased.stateVersion, lease: leased.lease },
+        run: { ...current, stateVersion: leased.stateVersion, lease: leased.lease },
         lease: leased.lease,
       };
     case 'missing':

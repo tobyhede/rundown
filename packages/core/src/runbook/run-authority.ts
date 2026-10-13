@@ -6,11 +6,12 @@
  * - {@link resolveOwnedRun} — the ONLY way a mutating command names its run.
  *   An Owner Token resolves to the run it owns, together with the row version
  *   a later save must name; a run id authorizes nothing.
- * - {@link findUnsupportedComposition} — whether a runbook composes other
- *   runbooks, which T1 does not run. Inline composition returns in #903 and
- *   delegation in #904; until then `RunbookStateManager.create` refuses such a
- *   runbook with {@link RunbookCompositionUnsupportedError} before writing a
- *   row, and a frontend only renders the ids the refusal names.
+ * - {@link findUnsupportedComposition} — whether a runbook delegates to other
+ *   runbooks, which this build does not run. Inline composition runs (#903);
+ *   delegation returns in #904. Until then `RunbookStateManager.create` — the
+ *   seam every run, inline children included, is created through — refuses a
+ *   delegating runbook with {@link RunbookCompositionUnsupportedError} before
+ *   writing a row, and a frontend only renders the ids the refusal names.
  *
  * @module runbook/run-authority
  */
@@ -94,21 +95,20 @@ export async function resolveOwnedRun(
 }
 
 /**
- * Name every substep that composes another runbook.
+ * Name every substep whose composition this build does not run.
  *
- * A substep composes when it is authored `DELEGATE` or carries a non-empty
- * runbook list — the two predicates the compiler used to route into
- * delegation issuance and inline launch before #901 removed both. Ids are
- * qualified (`step.substep`) and returned in document order so the refusal
- * can list them verbatim.
+ * Only a `DELEGATE` substep qualifies: an inline runbook-list substep launches
+ * an Inline Child (#903), and delegation returns in #904. Ids are qualified
+ * (`step.substep`) and returned in document order so the refusal can list
+ * them verbatim.
  *
  * Accepts parsed or resolved steps: `rundown check` warns from the parsed
  * runbook, `rundown run` refuses from the resolved one, and both must name
  * the same substeps.
  *
  * @param steps - Parsed or resolved runbook steps
- * @returns Qualified ids of the composing substeps; empty when the runbook
- *   composes nothing
+ * @returns Qualified ids of the delegating substeps; empty when the runbook
+ *   delegates nothing
  */
 export function findUnsupportedComposition(
   steps: readonly (Step | ResolvedStep)[],
@@ -117,19 +117,16 @@ export function findUnsupportedComposition(
   for (const step of steps) {
     if (!('substeps' in step)) continue;
     for (const substep of step.substeps) {
-      const composes =
-        substep.delegate === true ||
-        (Array.isArray(substep.runbooks) && substep.runbooks.length > 0);
-      if (composes) ids.push(`${step.name}.${substep.id}`);
+      if (substep.delegate === true) ids.push(`${step.name}.${substep.id}`);
     }
   }
   return ids;
 }
 
 /**
- * Raised when a run would be created for a runbook that composes other
- * runbooks, which T1 does not run (inline composition returns in #903,
- * delegation in #904).
+ * Raised when a run would be created for a runbook that delegates to other
+ * runbooks, which this build does not run (delegation returns in #904). An
+ * inline child whose runbook delegates is refused the same way.
  *
  * Thrown by {@link RunbookStateManager.create} before any store access, so a
  * refused runbook leaves no run row behind. Frontends render it; they do not
@@ -142,11 +139,11 @@ export class RunbookCompositionUnsupportedError extends Error {
   /**
    * Construct a composition refusal.
    *
-   * @param substeps - Qualified composing substep ids from
+   * @param substeps - Qualified delegating substep ids from
    *   {@link findUnsupportedComposition}; never empty
    */
   constructor(substeps: readonly string[]) {
-    super(`Runbook composes other runbooks at ${substeps.join(', ')}`);
+    super(`Runbook delegates to other runbooks at ${substeps.join(', ')}`);
     this.name = 'RunbookCompositionUnsupportedError';
     this.substeps = substeps;
   }

@@ -24,6 +24,8 @@ import {
 } from '../../../src/runbook/run-secrets.js';
 import { assertRunId, type RunId } from '../../../src/runbook/run-id.js';
 import type { RunbookState, Runbook, Step } from '../../../src/runbook/types.js';
+import type { ChildLinkage } from '../../../src/runbook/child-linkage.js';
+import type { FrameKey } from '../../../src/runbook/targeting.js';
 import { makeBaseStep } from '../../helpers/step-factories.js';
 
 const mockSteps: Step[] = [makeBaseStep({ name: '1', description: 'Initial step' })];
@@ -122,7 +124,7 @@ describe('RunbookStore round-trip', () => {
     const state = await newState();
     await store.createRun(state, freshHash());
     const versioned = await store.loadRunWithVersion(state.id);
-    expect(versioned).toEqual({ state, stateVersion: 0, lease: null });
+    expect(versioned).toEqual({ state, stateVersion: 0, lease: null, linkage: null });
     expect(await store.loadRunWithVersion(assertRunId(`rd_${'e'.repeat(32)}`))).toBeNull();
   });
 
@@ -300,7 +302,7 @@ describe('findRunByOwnerTokenHash', () => {
     await store.createRun(await newState(), freshHash());
 
     const found = await store.findRunByOwnerTokenHash(hashRunSecret(token));
-    expect(found).toEqual({ state, stateVersion: 0, lease: null });
+    expect(found).toEqual({ state, stateVersion: 0, lease: null, linkage: null });
   });
 
   it('returns null for a hash no run carries', async () => {
@@ -535,5 +537,63 @@ describe('readRunJson', () => {
     expect(raw?.schemaVersion).toBe(FOREIGN_SCHEMA_VERSION);
     expect(raw?.lifecycle).toBe('running');
     expect(await store.readRunJson(assertRunId(`rd_${'f'.repeat(32)}`))).toBeNull();
+  });
+});
+
+describe('inline child rows (#903)', () => {
+  /** Linkage naming `parent` at frame entry 1 of step 1, substep 1. */
+  function linkageTo(parent: RunbookState, entry = 1): ChildLinkage {
+    return {
+      kind: 'inline',
+      parentRunId: parent.id,
+      parentStep: '1.1',
+      parentFrameKey: '1|' as FrameKey,
+      parentEntry: entry,
+    };
+  }
+
+  it('creates an inline child carrying its linkage and no token of its own', async () => {
+    const token = generateOwnerToken();
+    const parent = await newState();
+    await store.createRun(parent, hashRunSecret(token));
+    const child = await newState();
+    await store.createInlineChildRun(child, linkageTo(parent));
+
+    expect(await store.loadRunWithVersion(child.id)).toEqual({
+      state: child,
+      stateVersion: 0,
+      lease: null,
+      linkage: linkageTo(parent),
+    });
+    // The parent's token still resolves to the parent, never to its child.
+    expect((await store.findRunByOwnerTokenHash(hashRunSecret(token)))?.state.id).toBe(parent.id);
+  });
+
+  it('refuses an inline child whose parent does not exist, writing nothing', async () => {
+    const orphanParent = await newState();
+    const child = await newState();
+    await expect(store.createInlineChildRun(child, linkageTo(orphanParent))).rejects.toThrow(
+      /FOREIGN KEY/i,
+    );
+    expect(await store.loadRun(child.id)).toBeNull();
+  });
+
+  it('refuses a second child row for the same preallocated id', async () => {
+    const parent = await newState();
+    await store.createRun(parent, freshHash());
+    const child = await newState();
+    await store.createInlineChildRun(child, linkageTo(parent));
+    await expect(store.createInlineChildRun(child, linkageTo(parent, 2))).rejects.toBeInstanceOf(
+      StoreInvariantError,
+    );
+  });
+
+  it('deletes the inline child with its parent', async () => {
+    const parent = await newState();
+    await store.createRun(parent, freshHash());
+    const child = await newState();
+    await store.createInlineChildRun(child, linkageTo(parent));
+    await store.deleteRun(parent.id);
+    expect(await store.loadRun(child.id)).toBeNull();
   });
 });

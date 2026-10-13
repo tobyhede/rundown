@@ -38,6 +38,8 @@ import {
 import type { SqlDriver, SqlTransaction, SqlReadTransaction, SyncWork } from './sql-driver.js';
 import { type StateVersion, assertStateVersion } from './mutation-result.js';
 import type { ExecutionLease, ExecutionLeaseHolder } from '../execution-lease.js';
+import type { ChildKind, ChildLinkage } from '../child-linkage.js';
+import type { FrameKey } from '../targeting.js';
 
 /** Machine lifecycle values persisted in the `runs.lifecycle` column. */
 const LIFECYCLES: readonly Lifecycle[] = ['running', 'completed', 'stopped', 'abandoned'];
@@ -86,6 +88,11 @@ export interface VersionedRunState {
    * `stateVersion` clears it, so a seam that writes must have decided about it.
    */
   readonly lease: ExecutionLease | null;
+  /**
+   * The parent coordinate the row records, or null for a top-level run. Written
+   * once when a child row is inserted (#903) and never changed afterwards.
+   */
+  readonly linkage: ChildLinkage | null;
 }
 
 /**
@@ -187,6 +194,14 @@ export interface RunbookStoreTxn extends RunbookStoreReadTxn {
    * @param ownerTokenHash - Hash of the run's Owner Token.
    */
   insertRun(state: RunbookState, ownerTokenHash: SecretHash): void;
+  /**
+   * Insert a brand-new Inline Child row at `state_version` 0, carrying its
+   * linkage and no Owner Token hash of its own.
+   *
+   * @param state - Initial child run state.
+   * @param linkage - The parent coordinate; its `kind` must be `inline`.
+   */
+  insertInlineChildRun(state: RunbookState, linkage: ChildLinkage): void;
   /**
    * Write a run's state if and only if its `state_version` still equals the
    * expectation and it holds no execution lease.
@@ -290,6 +305,31 @@ export class RunbookStore {
     try {
       await this.transaction((txn) => {
         txn.insertRun(state, ownerTokenHash);
+      });
+    } catch (error: unknown) {
+      throw uniqueViolationAsInvariant(error, state.id);
+    }
+  }
+
+  /**
+   * Create an Inline Child (#903): a run its parent's Owner Token authorizes,
+   * so its row carries no token hash and records its linkage instead.
+   *
+   * Written by the parent owner's command, which is the only writer of either
+   * row; the child never writes its parent.
+   *
+   * @param state - Initial child run state, carrying the preallocated child id.
+   * @param linkage - The parent coordinate; its `kind` must be `inline`.
+   * @returns Resolves once committed.
+   * @throws {StoreInvariantError} When a row already carries `state.id`, or the
+   *   linkage is not `inline`.
+   * @throws {Error} When the linkage names a parent no row carries (the
+   *   foreign key).
+   */
+  async createInlineChildRun(state: RunbookState, linkage: ChildLinkage): Promise<void> {
+    try {
+      await this.transaction((txn) => {
+        txn.insertInlineChildRun(state, linkage);
       });
     } catch (error: unknown) {
       throw uniqueViolationAsInvariant(error, state.id);
@@ -576,6 +616,9 @@ export class RunbookStore {
       insertRun: (state, ownerTokenHash) => {
         insertRun(tx, state, ownerTokenHash);
       },
+      insertInlineChildRun: (state, linkage) => {
+        insertInlineChildRun(tx, state, linkage);
+      },
       writeStateAtVersion: (runId, expectedVersion, next) =>
         writeStateRefusingLease(tx, runId, expectedVersion, next),
       writeStateResolvingLease: (runId, expectedVersion, next) =>
@@ -623,6 +666,7 @@ export class RunbookStore {
       state: this.validateRaw(assembleRaw(row, runId), runId),
       stateVersion: assertStateVersion(row.state_version),
       lease: leaseFromRow(row),
+      linkage: linkageFromRow(row),
     };
   }
 
@@ -668,8 +712,20 @@ export class RunbookStore {
 /** The lease column group. */
 const LEASE_COLUMNS = 'lease_attempt, lease_pid, lease_start_id, lease_started_at';
 
+/** The child-linkage column group. */
+const LINKAGE_COLUMNS = 'parent_run_id, parent_step, parent_frame_key, parent_entry, parent_kind';
+
 /** Columns a versioned read selects: everything a validated, versioned state needs. */
-const VERSIONED_ROW_COLUMNS = `id, state_version, lifecycle, state_json, ${LEASE_COLUMNS}`;
+const VERSIONED_ROW_COLUMNS = `id, state_version, lifecycle, state_json, ${LEASE_COLUMNS}, ${LINKAGE_COLUMNS}`;
+
+/** The child-linkage column group as read. All-or-none under the table's `CHECK`. */
+type LinkageRow = {
+  readonly parent_run_id: string | null;
+  readonly parent_step: string | null;
+  readonly parent_frame_key: string | null;
+  readonly parent_entry: number | null;
+  readonly parent_kind: string | null;
+};
 
 /** The lease column group as read. All-or-none under the table's `CHECK`. */
 type LeaseRow = {
@@ -681,7 +737,8 @@ type LeaseRow = {
 
 /** One `runs` row as a versioned read selects it. */
 type VersionedRunRow = PersistedRunRow &
-  LeaseRow & {
+  LeaseRow &
+  LinkageRow & {
     readonly id: string;
     readonly state_version: number;
   };
@@ -702,6 +759,47 @@ function leaseFromRow(row: LeaseRow): ExecutionLease | null {
     startId: row.lease_start_id,
     startedAt: row.lease_started_at,
   };
+}
+
+/**
+ * Read the child-linkage column group, or null for a top-level run.
+ *
+ * @param row - The linkage columns as read.
+ * @returns The linkage, or null.
+ * @throws {StoreInvariantError} When the kind is outside the closed union — a
+ *   tampered schema, since the column's `CHECK` pins it.
+ */
+function linkageFromRow(row: LinkageRow): ChildLinkage | null {
+  if (
+    row.parent_run_id === null ||
+    row.parent_step === null ||
+    row.parent_frame_key === null ||
+    row.parent_entry === null ||
+    row.parent_kind === null
+  ) {
+    return null;
+  }
+  return {
+    kind: assertChildKind(row.parent_kind),
+    parentRunId: assertRunId(row.parent_run_id),
+    parentStep: row.parent_step,
+    parentFrameKey: row.parent_frame_key as FrameKey,
+    parentEntry: row.parent_entry,
+  };
+}
+
+/**
+ * Narrow a persisted `parent_kind` to {@link ChildKind}.
+ *
+ * @param value - The column value.
+ * @returns The kind.
+ * @throws {StoreInvariantError} When the value is not a known kind.
+ */
+function assertChildKind(value: string): ChildKind {
+  if (value !== 'inline' && value !== 'delegation') {
+    throw new StoreInvariantError(`Invalid persisted parent kind: ${JSON.stringify(value)}`);
+  }
+  return value;
 }
 
 /**
@@ -794,6 +892,46 @@ function insertRun(tx: SqlTransaction, state: RunbookState, ownerTokenHash: Secr
     id: state.id,
     lifecycle: state.lifecycle ?? 'running',
     ownerTokenHash,
+    stateJson: serializeStateJson(state),
+    startedAt: state.startedAt,
+    updatedAt: state.updatedAt,
+  });
+}
+
+/**
+ * Insert a new Inline Child row at `state_version` 0: no Owner Token hash, and
+ * the linkage group set in the same statement.
+ *
+ * @param tx - Open writing transaction.
+ * @param state - Initial child run state.
+ * @param linkage - The parent coordinate.
+ * @throws {StoreInvariantError} When the linkage is not `inline`.
+ */
+function insertInlineChildRun(
+  tx: SqlTransaction,
+  state: RunbookState,
+  linkage: ChildLinkage,
+): void {
+  if (linkage.kind !== 'inline') {
+    throw new StoreInvariantError(
+      `Inline child ${state.id} was handed ${linkage.kind} linkage; only an inline child carries no token.`,
+    );
+  }
+  tx.prepare(
+    `INSERT INTO runs (id, lifecycle, owner_token_hash,
+       parent_run_id, parent_step, parent_frame_key, parent_entry, parent_kind,
+       state_version, state_json, created_at, updated_at)
+     VALUES (:id, :lifecycle, NULL,
+       :parentRunId, :parentStep, :parentFrameKey, :parentEntry, :parentKind,
+       0, :stateJson, :startedAt, :updatedAt)`,
+  ).run({
+    id: state.id,
+    lifecycle: state.lifecycle ?? 'running',
+    parentRunId: linkage.parentRunId,
+    parentStep: linkage.parentStep,
+    parentFrameKey: linkage.parentFrameKey,
+    parentEntry: linkage.parentEntry,
+    parentKind: linkage.kind,
     stateJson: serializeStateJson(state),
     startedAt: state.startedAt,
     updatedAt: state.updatedAt,

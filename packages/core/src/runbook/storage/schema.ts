@@ -45,9 +45,11 @@ import type { SqlReadTransaction, SqlTransaction } from './sql-driver.js';
  * run-state shape moves that constant and not this one; a DDL edit moves this
  * and leaves that. Both read `3` after #901, which changed the tables and the
  * blob at once; #902 moved this one to `4` for a DDL-only change (the lease
- * trigger) and left the blob's version alone.
+ * trigger) and left the blob's version alone. Version 5 (#903) lets an Inline
+ * Child's row carry no Owner Token hash: its parent's token authorizes it, so
+ * `owner_token_hash` is nullable exactly when `parent_kind` is `inline`.
  */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 5;
 
 /** `user_version` value of a freshly created, never-installed database. */
 const UNINITIALIZED_VERSION = 0;
@@ -104,6 +106,10 @@ export class IncompatibleSchemaError extends Error {
  * the parent could never be pruned while a child row remained. The trigger
  * clears the whole group inside the same statement, and the foreign key (no
  * action) still refuses any other write that would leave a dangling reference.
+ * The same trigger first deletes the deleted run's Inline Children and theirs,
+ * transitively (#903): an Inline Child carries no Owner Token of its own, so
+ * once the run whose token authorized it is gone nothing can reach it, and
+ * unlinking it would leave a row the token `CHECK` refuses.
  *
  * `PRAGMA user_version` is set last, inside the same transaction, so a crash
  * mid-install leaves the version at `0` and the next open re-installs rather
@@ -118,8 +124,12 @@ CREATE TABLE runs (
                             CHECK (lifecycle IN ('running', 'completed', 'stopped', 'abandoned')),
   -- SHA-256 hash of the run's Owner Token. The token itself is printed once at
   -- \`rundown run\` and never stored; this hash is the sole authority lookup key.
-  owner_token_hash  TEXT    NOT NULL UNIQUE,
+  -- NULL exactly for an Inline Child (#903), which has no token of its own: its
+  -- parent's Owner Token authorizes it (CHECK below).
+  owner_token_hash  TEXT    UNIQUE,
   -- Child linkage (nullable all-or-none; written by #903/#904).
+  -- parent_step is the qualified parent unit (\`step.substep\`) the child runs for;
+  -- parent_frame_key and parent_entry name the frame entry that reserved it.
   -- parent_kind: 'delegation' | 'inline'.
   parent_run_id     TEXT,
   parent_step       TEXT,
@@ -148,6 +158,7 @@ CREATE TABLE runs (
     OR (parent_run_id IS NOT NULL AND parent_step IS NOT NULL AND parent_frame_key IS NOT NULL
       AND parent_entry IS NOT NULL AND parent_kind IS NOT NULL)
   ),
+  CHECK ((owner_token_hash IS NULL) = (COALESCE(parent_kind, '') = 'inline')),
   CHECK (
     (lease_attempt IS NULL AND lease_pid IS NULL AND lease_start_id IS NULL
       AND lease_started_at IS NULL)
@@ -165,6 +176,16 @@ END;
 
 CREATE TRIGGER runs_unlink_children AFTER DELETE ON runs
 BEGIN
+  DELETE FROM runs WHERE id IN (
+    WITH RECURSIVE inline_descendants(id) AS (
+      SELECT id FROM runs WHERE parent_run_id = OLD.id AND parent_kind = 'inline'
+      UNION
+      SELECT runs.id FROM runs
+        JOIN inline_descendants ON runs.parent_run_id = inline_descendants.id
+       WHERE runs.parent_kind = 'inline'
+    )
+    SELECT id FROM inline_descendants
+  );
   UPDATE runs
      SET parent_run_id = NULL, parent_step = NULL, parent_frame_key = NULL,
          parent_entry = NULL, parent_kind = NULL
