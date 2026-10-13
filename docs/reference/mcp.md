@@ -191,9 +191,11 @@ reserved names — are defined by
 [docs/reference/runtime.md §Variable Resolution](runtime.md#template-variables)
 and apply unchanged when variables are supplied through MCP.
 
-A runbook whose steps compose other runbooks (runbook-list or `DELEGATE`
-substeps) is refused by the CLI with `RUNBOOK_COMPOSITION_UNSUPPORTED`; inline
-composition returns in #903 and delegation in #904.
+Inline children (runbook-list substeps without `DELEGATE`) run as they do
+through the CLI: the run's Owner Token drives the deepest running inline child,
+and the event stream carries each child's events under its own `runbookId`. A
+runbook with a `DELEGATE` substep is refused by the CLI with
+`RUNBOOK_COMPOSITION_UNSUPPORTED`; delegation returns in #904.
 
 <a id="pass"></a>
 

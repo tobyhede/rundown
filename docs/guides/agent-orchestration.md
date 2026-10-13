@@ -60,10 +60,17 @@ refusal.
 
 ## Composed runbooks
 
-A runbook whose substeps compose other runbooks — a runbook list or a `DELEGATE`
-annotation — is refused at `rundown run` with `RUNBOOK_COMPOSITION_UNSUPPORTED`,
-before any run is created. The error names the composing substeps. Inline
-composition returns in #903 and subagent delegation in #904.
+A substep that lists one other runbook, without `DELEGATE`, runs it as an
+**Inline Child**: a child run you drive with your own Owner Token. While it
+runs, every mutating command with your token acts on the deepest running inline
+child and `--step` names that child's step; when the child finishes, the same
+command feeds its result and outputs into the parent substep and the parent
+continues. `rundown status` shows the chain through each child's `parent`. See
+[docs/reference/cli.md § Composition](../reference/cli.md#composition).
+
+A runbook with a `DELEGATE` substep is refused at `rundown run` with
+`RUNBOOK_COMPOSITION_UNSUPPORTED`, before any run is created; the error names
+the delegating substeps. Subagent delegation returns in #904.
 
 The Claude Code plugin's `PreToolUse` (`Agent|Task`) and `SubagentStop` hooks
 are registered but currently allow every call without injecting context; see

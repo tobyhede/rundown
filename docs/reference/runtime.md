@@ -222,17 +222,20 @@ Runtime state persists across process exits and context clears.
 
 Each run is one row of the `runs` table, keyed by run id. A row holds:
 
-| Column                     | Requirement                                                                                                                                   |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lifecycle`                | Run lifecycle state: `running` during execution; `completed`, `stopped`, or `abandoned` once terminal. No current command writes `abandoned`. |
-| `owner_token_hash`         | SHA-256 hash of the run's Owner Token. The token itself is never stored.                                                                      |
-| `state_json`               | The run's `RunbookState` (§7.4), minus `lifecycle`.                                                                                           |
-| `state_version`            | Counter bumped on every `state_json` or execution-lease write; the basis of the single conditional save.                                      |
-| `created_at`, `updated_at` | Row timestamps.                                                                                                                               |
+| Column                     | Requirement                                                                                                                                              |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lifecycle`                | Run lifecycle state: `running` during execution; `completed`, `stopped`, or `abandoned` once terminal. No current command writes `abandoned`.            |
+| `owner_token_hash`         | SHA-256 hash of the run's Owner Token. The token itself is never stored. Absent (NULL) exactly for an Inline Child, which its parent's token authorizes. |
+| `state_json`               | The run's `RunbookState` (§7.4), minus `lifecycle`.                                                                                                      |
+| `state_version`            | Counter bumped on every `state_json` or execution-lease write; the basis of the single conditional save.                                                 |
+| `created_at`, `updated_at` | Row timestamps.                                                                                                                                          |
 
 The table also has execution-lease columns, set while a step's command runs (see
-[Execution lease](#execution-lease) below), and child-linkage columns that no
-current command writes (composition, #903 / #904).
+[Execution lease](#execution-lease) below), and child-linkage columns
+(`parent_run_id`, `parent_step`, `parent_frame_key`, `parent_entry`,
+`parent_kind`), all-or-none, written once when an Inline Child's row is created
+(§7.5). Deleting a run deletes its inline children with it: nothing else can
+reach them.
 
 Every run has exactly one owner. A mutating command presents the Owner Token,
 which the runtime hashes to find the run; there is no other mutation authority,
@@ -348,7 +351,7 @@ Each SQLite run state row stores enough information to resume deterministically.
 | `templateVars`                                      | Frozen variable map used for deterministic resume rendering.                                                                                                                                                                                                                                     |
 | `forStack`                                          | Active loop frame and current source value.                                                                                                                                                                                                                                                      |
 | `iterationResults`                                  | Results recorded for current loop aggregation.                                                                                                                                                                                                                                                   |
-| `substepStates`                                     | Substep lifecycle and result.                                                                                                                                                                                                                                                                    |
+| `substepStates`                                     | Substep lifecycle and result, and the Current Child an inline substep reserved for its latest entry (`child`: `{ kind, runId, entry, runbook, contextSnapshot }`, §7.5).                                                                                                                         |
 | `resolvedCompletions`                               | Completion records keyed by frame, entry, and substep.                                                                                                                                                                                                                                           |
 | `frameEntryCounts`, `activeFrameKey`, `activeEntry` | Re-entry-safe frame identity. Monotonic entry counts for GOTO/RETRY scope isolation — frame presence means _ever entered_, never _currently open_.                                                                                                                                               |
 | `lastResult`, `lastAction`                          | Last result signal and resolved action.                                                                                                                                                                                                                                                          |
@@ -358,17 +361,47 @@ Each SQLite run state row stores enough information to resume deterministically.
 | `lifecycle`                                         | Run lifecycle state: `running` during execution; `completed`, `stopped`, or `abandoned` once terminal. No current command writes `abandoned`.                                                                                                                                                    |
 | `runbookSrc`                                        | Raw source content with template placeholders preserved.                                                                                                                                                                                                                                         |
 | `snapshot`                                          | Opaque XState persisted snapshot.                                                                                                                                                                                                                                                                |
-| `schemaVersion`                                     | Persisted state schema version. MUST equal `CURRENT_SCHEMA_VERSION` (currently `3`).                                                                                                                                                                                                             |
+| `schemaVersion`                                     | Persisted state schema version. MUST equal `CURRENT_SCHEMA_VERSION` (currently `4`).                                                                                                                                                                                                             |
 
 The runtime MUST treat `snapshot` as persisted state subject to the no-migration
 rule.
 
 ### 7.5 Composition
 
-Runbooks whose steps compose other runbooks (runbook-list or `DELEGATE`
-substeps) are currently refused at `rundown run` with
-`RUNBOOK_COMPOSITION_UNSUPPORTED`; inline composition returns in #903 and
-delegation in #904.
+A runbook-list substep without `DELEGATE` composes an **Inline Child**: a child
+run owned by the same agent as its parent. Its lifecycle, all inside the parent
+owner's commands:
+
+1. **Reservation.** Each entry into the substep — the first, each FOR iteration,
+   each re-entry by `GOTO` or `RETRY` — records a Current Child on the substep's
+   `substepStates` entry: a preallocated child run id, the frame entry it was
+   made at, the runbook reference, and a context snapshot of the parent's
+   variables and iteration binding. A reservation from an earlier entry is
+   stale: its child, finished or not, is never collected.
+2. **Launch.** Run Progression creates the child row under the reserved id, with
+   child linkage and no Owner Token hash, initialises it, and drives it. The
+   child inherits the parent's variables (below explicit inputs), the
+   `context.parent.*` / `context.ancestors.*` paths (§8.5), the iteration
+   binding, and the parent's `prompted` mode.
+3. **Targeting.** The parent's Owner Token resolves to the root run; a mutating
+   command targets the deepest running inline child, found by following each
+   run's Current Child. `--step` then names a step of that child.
+4. **Implicit Collect.** When the child reaches a terminal, the same command
+   reads its result from the child's own row — `completed` as PASS, `stopped` as
+   FAIL — and commits it into the parent substep together with the child's
+   `finalVars` (its frontmatter `outputs:`), then continues the parent's
+   progression. The child never writes its parent. If the process died after the
+   child's terminal and before the Collect, the owner's next mutating command
+   Collects first.
+
+The execution lease (§7.2) is per run: a child's command holds the child's
+lease; the parent holds none while its inline child runs. Inline children nest
+up to 32 deep.
+
+A `DELEGATE` substep, and an inline substep listing more than one runbook, are
+refused at `rundown run` with `RUNBOOK_COMPOSITION_UNSUPPORTED`; delegation
+returns in #904. An inline child whose own runbook delegates is refused when it
+launches, leaving the parent on the substep for the owner to decide.
 
 <a id="template-variables"></a>
 
@@ -439,8 +472,9 @@ The runtime exposes canonical namespaced context paths.
 | `context.vars.NAME` | Current variable namespace: every user-visible variable, under `NAME`. |
 
 Parent and ancestor context paths (`context.parent.*`, `context.ancestors.N.*`)
-belong to runbook composition, which is currently refused (§7.5); they return
-with #903 / #904.
+are populated in an Inline Child (§7.5) from the context snapshot its parent
+reserved: `context.parent.vars.NAME`, `context.parent.step`,
+`context.parent.substep`, `context.parent.at` and `context.parent.index`.
 
 <a id="built-in-variables"></a>
 

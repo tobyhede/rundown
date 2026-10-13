@@ -310,6 +310,51 @@ See [Execution in progress](#execution-in-progress) and
 [Execution interrupted](#execution-interrupted) for the refusals each condition
 produces.
 
+### Child runs
+
+An Inline Child (#903) is a run with its own id and its own row, so it appears
+in the run list like any run. Each child carries `parent` — in its list entry
+and in its `--run` detail — and a run whose current step composes a child
+carries `child` in its `--run` detail. Following `parent` from any child reaches
+the root, whose Owner Token drives the whole chain. Neither field ever carries a
+token.
+
+```json
+{
+  "id": "rd_6d2c64e0c61fd41fb0a02f3a91c43f40",
+  "runbook": ".rundown/runbooks/child.runbook.md",
+  "status": "running",
+  "step": "Check",
+  "total": 0,
+  "parent": {
+    "runId": "rd_f9d07121b3784ffcefa3579c4e887f1f",
+    "step": "1.2",
+    "kind": "inline"
+  }
+}
+```
+
+```json
+{
+  "child": {
+    "runId": "rd_6d2c64e0c61fd41fb0a02f3a91c43f40",
+    "kind": "inline",
+    "status": "running"
+  }
+}
+```
+
+| Field          | Meaning                                                                                                                       |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `parent.runId` | The parent run                                                                                                                |
+| `parent.step`  | The parent substep (`step.substep`) the child runs for                                                                        |
+| `parent.kind`  | `inline` — the parent's Owner Token drives the child                                                                          |
+| `child.runId`  | The child the run's current step counts; a child from an earlier entry into the step (a loop, `GOTO` or `RETRY`) is not shown |
+| `child.status` | The child's lifecycle (`running`, `completed`, `stopped`), or `reserved` before its run exists                                |
+
+The text forms add a `PARENT` column to the list and `Parent:` / `Child:` lines
+to the detail.
+
 ### `rundown status --run <rd_…>`
 
 **Text:**
@@ -489,8 +534,36 @@ Runtime command text is rendered once per execution. The exact rendered string
 is reused for the flattened `step_entered.commandCode` field and actual command
 execution.
 
-A runbook whose steps compose other runbooks (runbook-list or `DELEGATE`
-substeps) is refused before any run is created; see
+#### Inline children
+
+A runbook-list substep without `DELEGATE` launches an Inline Child (#903). The
+stream then carries several runs' events, each under its own `runbookId` and
+`runbook`, in order: the parent's `step_entered` for the substep, the child's
+`runbook_started` — which carries **no** `owner_token`, because the parent's
+token drives the child — and the child's own events. When the child reaches a
+terminal, its `runbook_completed` / `runbook_stopped` is followed by the
+parent's `step_transitioned` for the substep, and the parent's progression
+continues. A child's terminal is not the command's outcome: the run the token
+belongs to is. If the stream rests at a child's `step_entered`, the next `pass`
+/ `fail --step` names that child's step.
+
+```jsonl
+{"type":"step_entered","position":{"current":"1","total":2,"substep":"1"},"stepName":"1","description":"Runbook: child.runbook.md","hasCommand":false,"isSubstep":true,"prompted":false,"artifacts":{},"runbookId":"rd_f9d07121b3784ffcefa3579c4e887f1f","runbook":{"source":"project","path":"parent.runbook.md"},"seq":2}
+{"type":"runbook_started","title":"Child","prompted":false,"runbookId":"rd_aab57a8fba1dd497f707f9a216cf2caf","runbook":{"source":"project","path":".rundown/runbooks/child.runbook.md"},"seq":1}
+{"type":"runbook_completed","finalPosition":{"current":"1","total":1},"runbookId":"rd_aab57a8fba1dd497f707f9a216cf2caf","runbook":{"source":"project","path":".rundown/runbooks/child.runbook.md"},"seq":6}
+{"type":"step_transitioned","action":"CONTINUE","from":"1.1","at":"2","result":"PASS","aggregated":true,"runbookId":"rd_f9d07121b3784ffcefa3579c4e887f1f","runbook":{"source":"project","path":"parent.runbook.md"},"seq":3}
+```
+
+(`timestamp` omitted, and the child's step events elided, for brevity.)
+
+An inline child that cannot be launched leaves the parent resting on the
+substep, with an `error_occurred` on the parent carrying the reason's code — the
+child preparation's own (`RUNBOOK_NOT_FOUND`, `MISSING_REQUIRED_VARS`, …),
+`RUNBOOK_COMPOSITION_UNSUPPORTED` for a child that delegates, or
+`INLINE_CHILD_LAUNCH_FAILED` — and the command exits non-zero.
+
+A runbook with a `DELEGATE` substep, or an inline substep listing more than one
+runbook, is refused before any run is created; see
 [Runbook composition unsupported](#runbook-composition-unsupported).
 
 ### `STEP_ENTERED` with artifacts
@@ -1274,7 +1347,10 @@ Code: RD-303
 
 `pass` and `fail` require `--step` naming the run's current position. A bare
 command, or a `--step` that names any other position, is refused and the message
-names the current position.
+names the current position. While an inline child runs, the position is the
+deepest running child's: a `--step` naming the parent's step is refused, and the
+message names the child
+(`… The Owner Token is driving inline child rd_… (child.runbook.md) of run rd_… at 1.1; while it runs, --step names a step of the child`).
 
 **Text:**
 
@@ -1305,14 +1381,15 @@ Code: INVALID_STEP
 
 ### Runbook composition unsupported
 
-`rundown run` refuses a runbook whose steps compose other runbooks (runbook-list
-or `DELEGATE` substeps). No run is created. `details.substeps` names every
-composing substep.
+`rundown run` refuses a runbook with a `DELEGATE` substep (delegation returns in
+#904) or an inline substep listing more than one runbook. No run is created.
+`details.substeps` names every such substep. A single-runbook inline substep
+runs (see [Inline children](#inline-children)).
 
 **Text:**
 
 ```text
-Error: Runbook composes other runbooks at 1.1; this build runs standalone runbooks only. Inline composition returns in #903 and delegation in #904.
+Error: Runbook composes other runbooks at 1.1 in a form this build does not run (a DELEGATE substep, or an inline substep listing more than one runbook). Delegation returns in #904.
 Code: RUNBOOK_COMPOSITION_UNSUPPORTED
 ```
 
@@ -1320,7 +1397,7 @@ Code: RUNBOOK_COMPOSITION_UNSUPPORTED
 
 ```json
 {
-  "error": "Runbook composes other runbooks at 1.1; this build runs standalone runbooks only. Inline composition returns in #903 and delegation in #904.",
+  "error": "Runbook composes other runbooks at 1.1 in a form this build does not run (a DELEGATE substep, or an inline substep listing more than one runbook). Delegation returns in #904.",
   "kind": "error",
   "code": "RUNBOOK_COMPOSITION_UNSUPPORTED",
   "command": "run",
