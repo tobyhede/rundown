@@ -498,6 +498,29 @@ export const DelegationChildStatusSchema = z
   })
   .describe("One Delegation of the run's active entry");
 
+/**
+ * `rundown status --claimed-by <agent-id>` (#907): the Delegations that still
+ * hold an agent — running, claimed under that agent id, and still counted by
+ * their parent. The plugin's SubagentStop gate blocks while the list is not
+ * empty. Run ids and step labels only: never a token or ticket.
+ */
+export const ClaimedDelegationsResponseSchema = z
+  .object({
+    kind: z.literal('claimed_delegations').describe('Response type discriminant'),
+    agentId: z.string().min(1).describe('The agent id the claims recorded'),
+    delegations: z
+      .array(
+        z.object({
+          runId: z.string().regex(RUN_ID_PATTERN).describe('The child run'),
+          runbook: z.string().describe("The child's runbook"),
+          parentRunId: z.string().regex(RUN_ID_PATTERN).describe('The parent that counts it'),
+          step: z.string().describe('Parent unit (`step.substep`) the child runs for'),
+        }),
+      )
+      .describe('Running children the agent claimed that their parent still counts'),
+  })
+  .describe('The Delegations that still hold an agent');
+
 export const StatusResponseSchema = z
   .object({
     /** Response kind discriminant */

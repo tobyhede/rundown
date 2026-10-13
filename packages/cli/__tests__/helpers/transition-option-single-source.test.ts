@@ -68,8 +68,11 @@ describe('mutating-command option surface', () => {
     expect(hiddenOptionLongs(registerStopCommand)).toEqual([]);
   });
 
-  it('status is read-only: --run, never --token', () => {
-    expect(registeredValueTakingOptionLongs(registerStatusCommand)).toEqual(['--run']);
+  it('status is read-only: --run and --claimed-by (#907), never --token', () => {
+    expect(registeredValueTakingOptionLongs(registerStatusCommand)).toEqual([
+      '--claimed-by',
+      '--run',
+    ]);
     expect(hiddenOptionLongs(registerStatusCommand)).toEqual([]);
   });
 });
