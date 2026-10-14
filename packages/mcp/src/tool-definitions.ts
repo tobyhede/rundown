@@ -91,8 +91,8 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
   },
   claim: {
     description:
-      'Claim a delegated child by the Claim Ticket its parent step listed, and start it. Pass your agentId: release is matched against it, and nothing stamps it for you. The response carries the child owner token.',
-    inputSchema: z.object({ ticket: z.string(), agentId: z.string().optional() }),
+      'Claim a delegated child by the Claim Ticket its parent step listed, and start it. agentId is required: use one stable id for yourself, since release is matched against it and nothing stamps it for you. The response carries the child owner token.',
+    inputSchema: z.object({ ticket: z.string(), agentId: z.string() }),
   },
   collect: {
     description:
