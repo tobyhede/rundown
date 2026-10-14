@@ -474,6 +474,23 @@ describe('findConfigFile', () => {
 
     expect(result).toBe(configPath);
   });
+
+  it('reads only the project root: a nested .rundown/ without config.yaml shadows an outer config', async () => {
+    // The project root is the nearest .rundown/ (resolveProjectRoot); the
+    // config is that project's, never an outer project's.
+    await fs.mkdir(path.join(tmpDir, '.git'));
+    const outerRundownDir = path.join(tmpDir, RUNDOWN_DIR);
+    await fs.mkdir(outerRundownDir, { recursive: true });
+    await fs.writeFile(path.join(outerRundownDir, 'config.yaml'), 'outer: true');
+    const inner = path.join(tmpDir, 'inner');
+    await fs.mkdir(path.join(inner, RUNDOWN_DIR), { recursive: true });
+    const sub = path.join(inner, 'sub');
+    await fs.mkdir(sub);
+
+    const result = await findConfigFile(sub);
+
+    expect(result).toBeNull();
+  });
 });
 
 describe('discoverVariables', () => {
