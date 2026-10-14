@@ -47,6 +47,7 @@ import {
 import type { RunbookEvent, RunProgressionMachineFeedback } from './compiler.js';
 import { findStepOrThrow } from './execution-units.js';
 import type { ExecutionUnitEntry } from './execution-unit-entry.js';
+import { ArtifactInputRequiredError } from './artifact-input-required.js';
 import { InvalidRunbookStateError } from './persisted-state-guards.js';
 import type { OwnedRun } from './run-authority.js';
 import {
@@ -1117,6 +1118,24 @@ async function driveRun(
       // retry addresses that.
       if (intent.cause instanceof InvalidRunbookStateError) {
         throw intent.cause;
+      }
+      // `{{ path Name }}` over a value an earlier step bound to a non-artifact:
+      // the typed refusal the launch check gives a launch value (spec §9.3).
+      // Re-rendering cannot succeed while the binding stands, so it is not
+      // retryable; nothing was committed and the run keeps its cursor.
+      if (intent.cause instanceof ArtifactInputRequiredError) {
+        sink.emit({
+          type: 'ERROR_OCCURRED',
+          payload: { message: intent.cause.message, code: intent.cause.code },
+        });
+        return {
+          kind: 'refused',
+          runId,
+          reason: intent.reason,
+          code: intent.cause.code,
+          message: intent.cause.message,
+          recovery: 'permanent',
+        };
       }
       // Nothing was committed, so re-activation re-renders (retryable, RD-504).
       const error = Errors.runProgressionEntryFailed(runId, intent.message);

@@ -1,6 +1,7 @@
 import { TEMPLATE_VAR_PATTERN } from '@rundown-org/parser';
 import { z } from 'zod';
 import { FOR_RESOLUTION_FAILURE_CODES } from './actors/for-iterate-actor.js';
+import { ARTIFACT_INPUT_REQUIRED } from './artifact-input-required.js';
 import type { LastAction } from './types.js';
 
 const LastActionOriginSchema = z.enum(['direct', 'aggregation']);
@@ -41,6 +42,7 @@ export const LastActionSchema: z.ZodType<LastAction> = z.discriminatedUnion('typ
   LastActionBaseSchema.extend({
     type: z.literal('ARTIFACT_RESOLUTION_FAILED'),
     message: z.string(),
+    code: z.literal(ARTIFACT_INPUT_REQUIRED).optional(),
   }),
   LastActionBaseSchema.extend({
     type: z.literal('FOR_RESOLUTION_FAILED'),

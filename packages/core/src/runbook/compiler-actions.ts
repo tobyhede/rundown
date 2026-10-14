@@ -2,6 +2,7 @@ import type { OutputDeclaration } from '@rundown-org/parser';
 import type { RunbookContext, RunbookEvent } from './compiler.js';
 import type { TrustedArtifactValue, VariableValue } from './effective-vars.js';
 import type { EvaluateOutputOptions } from './output-evaluator.js';
+import type { ARTIFACT_INPUT_REQUIRED } from './artifact-input-required.js';
 import type { LastAction } from './types.js';
 import type { ForIterateOutput, ForResolutionFailureCode } from './actors/for-iterate-actor.js';
 
@@ -24,7 +25,11 @@ export interface ActionDefs {
   readonly setLastAction: { action: LastAction; msg?: string };
   readonly storeCapturedVariables: { variables: Readonly<Record<string, VariableValue>> };
   readonly setOutputCaptureFailed: { message: string };
-  readonly setArtifactResolutionFailed: { message: string };
+  readonly setArtifactResolutionFailed: {
+    message: string;
+    /** Present when the resolver refused a non-artifact value (`ARTIFACT_INPUT_REQUIRED`). */
+    code?: typeof ARTIFACT_INPUT_REQUIRED;
+  };
   readonly setPolicyDenied: { message: string };
   readonly setCommandExecutionFailed: { message: string };
   readonly storeReadyIteration: { output: ForIterateOutput };

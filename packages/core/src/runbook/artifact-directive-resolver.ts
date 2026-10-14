@@ -48,6 +48,10 @@ import {
   type SelectorArtifactRef,
 } from './artifact-uri.js';
 import { parseJsonArtifactUriArrayTransport } from './artifact-inputs.js';
+import {
+  ArtifactInputRequiredError,
+  classifyArtifactAssertionValue,
+} from './artifact-input-required.js';
 import type { RunbookRef } from './runbook-ref.js';
 import type { RunId } from './run-id.js';
 import { substituteText } from './template-renderer.js';
@@ -642,7 +646,10 @@ function resolveSelector(
  * @param options - Resolver options carrying `scopeVars` and manifest context
  * @param readManifest - Lazy manifest loader, called only when URI rehydration is needed
  * @returns Validated/rehydrated artifact value
- * @throws {Error} With a named reason: `unbound`, `not-an-artifact`, `unresolvable-uri`, or `partial-resolve`
+ * @throws {ArtifactInputRequiredError} When the bound value is not artifact-shaped
+ *   (`not-an-artifact`, or a URI form whose string does not parse)
+ * @throws {Error} With a named reason: `unbound`, `not-an-artifact` (unverified record),
+ *   `unresolvable-uri`, or `partial-resolve` for artifact-shaped values that do not resolve
  */
 async function resolveNakedDeclaration(
   name: string,
@@ -677,6 +684,18 @@ async function resolveNakedDeclaration(
     throw new Error(
       `not-an-artifact: ARTIFACTS naked declaration "${name}" carries an unverified artifact-shaped value; pass an artifact URI so Rundown can resolve it.`,
     );
+  }
+
+  // A value no §10.1.2 shape admits — a plain path, a number, an empty or
+  // malformed URI array — is refused with the typed ARTIFACT_INPUT_REQUIRED,
+  // by the same rule launch preparation applies to launch values. Only
+  // artifact-shaped values reach manifest resolution below.
+  const shape = classifyArtifactAssertionValue(value);
+  if (shape.kind === 'not-artifact') {
+    throw new ArtifactInputRequiredError(name, value, {
+      kind: 'artifacts-assertion',
+      reason: shape.reason,
+    });
   }
 
   // URI string or JSON URI[] string transport — resolve via manifest.

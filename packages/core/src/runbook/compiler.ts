@@ -48,6 +48,7 @@ import {
   type ForResolutionFailureCode,
 } from './actors/for-iterate-actor.js';
 import { outputCaptureActor } from './actors/output-capture-actor.js';
+import { ARTIFACT_INPUT_REQUIRED, ArtifactInputRequiredError } from './artifact-input-required.js';
 import {
   commandExecActor,
   type CommandExecutionCompletedOutput,
@@ -309,6 +310,7 @@ const baseRunbookSetup = setup({
         makeDirectLastAction({
           type: 'ARTIFACT_RESOLUTION_FAILED' as const,
           message: params.message,
+          ...(params.code !== undefined ? { code: params.code } : {}),
         }),
     }),
     /** Mark command policy denial before routing to STOPPED. */
@@ -3991,8 +3993,17 @@ export function compileRunbookToMachine(
     target: STOPPED_STATE_REF,
     actions: {
       type: 'setArtifactResolutionFailed' as const,
-      params: ({ event }: { event: { error: unknown } }) => ({
+      params: ({
+        event,
+      }: {
+        event: { error: unknown };
+      }): ActionDefs['setArtifactResolutionFailed'] => ({
         message: getErrorMessage(event.error),
+        // A non-artifact value under a naked assertion keeps its public code
+        // through the stop path (spec §10.1.2); other failures carry none.
+        ...(event.error instanceof ArtifactInputRequiredError
+          ? { code: ARTIFACT_INPUT_REQUIRED }
+          : {}),
       }),
     },
   };

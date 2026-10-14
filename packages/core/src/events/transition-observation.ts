@@ -10,6 +10,7 @@ import { buildStepPosition, derivePositionAt } from '../runbook/targeting.js';
 import {
   deriveStoppedReason,
   deriveTransitionMessage,
+  extractInternalFailureCode,
   extractInternalFailureMessage,
   extractLastAction,
   extractLastMessage,
@@ -208,10 +209,12 @@ export function deriveTransitionObservation(
     if (isInternalFailureLastAction(lastAction)) {
       const internalMessage = extractInternalFailureMessage(lastAction);
       if (internalMessage !== undefined) {
+        const code = extractInternalFailureCode(lastAction);
         events.push({
           type: 'ERROR_OCCURRED',
           payload: {
             message: internalMessage,
+            ...(code !== undefined ? { code } : {}),
           },
         });
       }
