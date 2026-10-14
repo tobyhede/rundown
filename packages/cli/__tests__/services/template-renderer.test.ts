@@ -2348,6 +2348,11 @@ const ARTIFACT_HELPER_OPTIONS: TemplateRenderOptions = {
     runId: ARTIFACT_RUN_ID,
   },
 };
+/** The same render, judging `{{ path … }}` as the entry of a unit does. */
+const STEP_ENTRY_RENDER_OPTIONS: TemplateRenderOptions = {
+  ...ARTIFACT_HELPER_OPTIONS,
+  artifactJudgement: { kind: 'step-entry', stepBoundNames: new Set() },
+};
 
 describe('substituteText with ArtifactRecord values', () => {
   it('renders {{ PlanPath }} as the local path when value is an ArtifactRecord', () => {
@@ -2510,7 +2515,7 @@ describe('substituteText with artifact helper', () => {
         '{{ path PlanPath }}',
         { PlanPath: 'not-a-record', WorkPath: '.rundown/work' },
         undefined,
-        ARTIFACT_HELPER_OPTIONS,
+        STEP_ENTRY_RENDER_OPTIONS,
       ),
     ).toThrow(ArtifactInputRequiredError);
   });
@@ -2599,7 +2604,7 @@ describe('isArtifactRecordArray rejects mixed-element arrays', () => {
         '{{ path Reviews }}',
         { Reviews: [PLAN, 'string'], WorkPath: '.rundown/work' },
         undefined,
-        ARTIFACT_HELPER_OPTIONS,
+        STEP_ENTRY_RENDER_OPTIONS,
       ),
     ).toThrow(ArtifactInputRequiredError);
   });

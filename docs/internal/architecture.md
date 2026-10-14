@@ -240,8 +240,10 @@ silent mapping.
 Two further children serve the machine-selected Run Progression turn:
 `__progression-waiting-input` emits the typed `waiting` intent and
 `__progression-enter-unit` invokes `runProgressionEntryActor` to render the
-unit's entry (`entered`), or emits the retryable `entry_render_failed` refusal
-when that render throws. Both route back to `idle`.
+unit's entry (`entered`), or emits a refusal when that render throws: the typed
+`artifact_input_required` for an `ArtifactInputRequiredError` (a `{{ path … }}`
+over a non-artifact, which no retry clears), and the retryable
+`entry_render_failed` for anything else. Both route back to `idle`.
 
 The leaf also invokes `commandExecActor` directly to execute the step's command;
 that actor's completion produces the `COMMAND_RESULT` event the capture flow

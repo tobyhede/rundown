@@ -47,6 +47,7 @@ import {
 } from './artifact-uri.js';
 import {
   ArtifactInputRequiredError,
+  stepEntryRefusalContext,
   classifyArtifactAssertionValue,
   type ParsedArtifactUriString,
 } from './artifact-input-required.js';
@@ -83,6 +84,12 @@ export interface ResolveArtifactDeclarationsOptions extends ArtifactPathOptions 
    * `unbound` error.
    */
   readonly scopeVars?: ArtifactScopeVars;
+  /**
+   * Names a step of the run's runbook binds ({@link collectStepBoundNames}).
+   * A refusal of a naked assertion or a `{{ path … }}` in a token reads it to
+   * name the recovery: fix the step that binds the name, or start a new run.
+   */
+  readonly stepBoundNames: ReadonlySet<string>;
   /**
    * Additional roots searched for relative file references after `cwd`.
    *
@@ -330,6 +337,8 @@ function expandArtifactToken(
       contextId: options.contextId,
       runId: options.runId,
     },
+    // A token is rendered at the entry of the unit that declares it.
+    artifactJudgement: { kind: 'step-entry', stepBoundNames: options.stepBoundNames },
   });
 }
 
@@ -673,7 +682,7 @@ async function resolveNakedDeclaration(
       name,
       value,
       { kind: 'artifacts-assertion', reason: shape.reason },
-      { kind: 'step-entry' },
+      stepEntryRefusalContext(options.stepBoundNames, name),
     );
   }
 

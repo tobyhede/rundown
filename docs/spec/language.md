@@ -520,8 +520,12 @@ local filesystem path for the quoted key under the current `WorkPath`,
 `ContextId`, and `RunId` — it does not require an artifact binding. The
 variable-reference form over a value that is not an artifact is refused with
 `ARTIFACT_INPUT_REQUIRED` (§10.1.2), at launch for a launch value no step can
-rebind first and at render otherwise. Launch defers the same names the naked
-assertion check defers (§10.1.2): the render is left for step entry.
+rebind first and otherwise at the entry render of the unit that holds it. Launch
+defers the same names the naked assertion check defers (§10.1.2): the render is
+left for step entry. Only those two renders judge the reference: a whole-runbook
+render of a persisted run, which reaches steps no one is entering, MUST NOT
+refuse it and leaves it unrendered for that unit's entry. The refusal names the
+variable that binds the value — `plan` for `{{ path plan.file }}`.
 
 `{{ artifact ArtifactName }}` renders artifact URI values with the same scalar
 or array cardinality as direct alias rendering: a single URI for
@@ -719,8 +723,13 @@ The refusal names the variable and the kind of value it holds, never the value,
 which may be a secret. Its guidance follows where it happens: a root launch
 names `--artifacts`; child preparation says the value came from the parent and
 must be an artifact there; a step-entry assertion stops the run; and a
-step-entry `{{ path … }}` render keeps the run's position for its owner to
-`rundown goto` or `rundown stop`.
+step-entry `{{ path … }}` render keeps the run's position. At step entry the
+recovery depends on whether a step of the runbook binds the name (an `OUTPUTS`
+name, a name-binding `ARTIFACTS` alias, or a `FOR` loop variable): when one
+does, that step must bind an artifact (for a render, the owner may
+`rundown goto` a step that rebinds it, or `rundown stop`); when none does, the
+value is the one the run was given, and the guidance names a new run supplied
+through `--artifacts`.
 
 The naked form is intended for consumer runbooks (e.g. a reviewer asserting that
 `Plan` was inherited from the parent's delegation chain) where the variable is

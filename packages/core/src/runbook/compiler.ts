@@ -48,7 +48,11 @@ import {
   type ForResolutionFailureCode,
 } from './actors/for-iterate-actor.js';
 import { outputCaptureActor } from './actors/output-capture-actor.js';
-import { ARTIFACT_INPUT_REQUIRED, ArtifactInputRequiredError } from './artifact-input-required.js';
+import {
+  ARTIFACT_INPUT_REQUIRED,
+  ArtifactInputRequiredError,
+  collectStepBoundNames,
+} from './artifact-input-required.js';
 import {
   commandExecActor,
   type CommandExecutionCompletedOutput,
@@ -199,6 +203,16 @@ export type RunProgressionMachineIntent =
       readonly message: string;
       /** Transient cause retained so invalid persisted state keeps RD-309. */
       readonly cause: unknown;
+    }
+  | {
+      readonly kind: 'refused';
+      /**
+       * The entry render refused a `{{ path Name }}` over a non-artifact value
+       * (spec §9.3). Nothing was committed, but re-rendering cannot succeed
+       * while the binding stands: the owner must act.
+       */
+      readonly reason: 'artifact_input_required';
+      readonly refusal: ArtifactInputRequiredError;
     };
 
 /** Typed intent emitted by a progression decision state. */
@@ -264,12 +278,15 @@ function emitEntryProgressionFailureIntent(): EntryProgressionFailureEmitAction 
     RunProgressionMachineIntentEvent
   >(({ event }) => ({
     type: 'RUN_PROGRESSION_INTENT',
-    intent: {
-      kind: 'refused',
-      reason: 'entry_render_failed',
-      message: getErrorMessage(event.error),
-      cause: event.error,
-    },
+    intent:
+      event.error instanceof ArtifactInputRequiredError
+        ? { kind: 'refused', reason: 'artifact_input_required', refusal: event.error }
+        : {
+            kind: 'refused',
+            reason: 'entry_render_failed',
+            message: getErrorMessage(event.error),
+            cause: event.error,
+          },
   }));
 }
 
@@ -633,6 +650,7 @@ function buildArtifactResolveInput(
   substepId: string | undefined,
   context: RunbookContext,
   evaluationOptions: EvaluateOutputOptions | undefined,
+  stepBoundNames: ReadonlySet<string>,
 ): ArtifactResolveInput {
   const scopeVars = {
     ...mergeEffectiveVars({ templateVars: context.templateVars, variables: context.variables }),
@@ -646,6 +664,7 @@ function buildArtifactResolveInput(
     runId: assertRunId(requireStringTemplateVar(context.templateVars, 'RunId')),
     runbook: requireRunbookRef(context.templateVars),
     scopeVars,
+    stepBoundNames,
     fileArtifactSearchRoots: evaluationOptions?.fileArtifactSearchRoots,
     allowFileArtifactRead: evaluationOptions?.allowFileArtifactRead,
   };
@@ -3985,6 +4004,9 @@ export function compileRunbookToMachine(
   // (JsonArrayStream) fail closed inside resolveFromJsonArrayStream when cwd
   // is missing, while in-memory JsonArray sources need no cwd at all.
   const sourceResolutionCwd = evaluationOptions?.cwd;
+  // Parser-derived, so bound at compile time: a step-entry ARTIFACT_INPUT_REQUIRED
+  // refusal reads it to name the step that binds the name, or a new run.
+  const stepBoundNames = collectStepBoundNames(steps);
   const states: Record<string, RunbookStateConfig> = {};
   const clearCurrentEntryArtifacts = runbookSetup.assign({
     enteredArtifacts: () => undefined,
@@ -4027,7 +4049,14 @@ export function compileRunbookToMachine(
   ): NonNullable<RunbookStateConfig['invoke']> => ({
     src: 'artifactResolveActor' as const,
     input: ({ context }: { context: RunbookContext }) =>
-      buildArtifactResolveInput(declarations, stepName, substepId, context, evaluationOptions),
+      buildArtifactResolveInput(
+        declarations,
+        stepName,
+        substepId,
+        context,
+        evaluationOptions,
+        stepBoundNames,
+      ),
     onDone: {
       target,
       actions: {
@@ -4860,7 +4889,9 @@ export function compileRunbookToMachine(
             // Without this an `enterExecutionUnit` throw escapes the actor
             // unhandled and reaches the operator as RD-999 "Unknown error",
             // which carries no recovery. Nothing was committed on this path,
-            // so the refusal is the retryable `entry_render_failed` (RD-504).
+            // so the refusal is the retryable `entry_render_failed` (RD-504) —
+            // except a typed `ARTIFACT_INPUT_REQUIRED`, which no retry clears
+            // and which is refused as itself (`artifact_input_required`).
             onError: {
               target: 'idle',
               actions: emitEntryProgressionFailureIntent(),

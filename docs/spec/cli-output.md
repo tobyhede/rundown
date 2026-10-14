@@ -1767,23 +1767,37 @@ way to supply an artifact at launch; `--input` never carries one.
   not an artifact. Its message says the value came from the parent and must be
   an artifact there; it does not name `--artifacts`, which the child's command
   cannot take.
-- **At step entry.** A value an earlier step binds is refused when the asserting
-  step is entered: an `error_occurred` event with `code` set, then
-  `runbook_stopped` with reason `artifact_resolution_failed`. The message says
-  the run stops and that the step binding the name must bind an artifact before
-  a new run. A `{{ path Name }}` render over such a value is an `error_occurred`
-  with this code; nothing is committed and the run keeps its position, so the
-  message names the owner's recovery: `rundown goto` a step that rebinds the
-  name, or `rundown stop`. Run Progression reports it with
-  `recovery: "permanent"` — a re-render cannot succeed, and the owner must act.
+- **At step entry.** A value the launch left to step entry is refused when the
+  asserting step is entered: an `error_occurred` event with `code` set, then
+  `runbook_stopped` with reason `artifact_resolution_failed`. A
+  `{{ path Name }}` render over such a value is an `error_occurred` with this
+  code; nothing is committed and the run keeps its position. Run Progression
+  reports it with reason `artifact_input_required` and `recovery: "permanent"` —
+  unlike the retryable `entry_render_failed` (RD-504), a re-render cannot
+  succeed, and the owner must act. Only the entry of the unit holding the
+  reference judges it: the whole-runbook reload every command performs judges
+  none, so `status`, `stop`, `prune` and `release` still load such a run. The
+  message names the owner's recovery by whether a step of the runbook binds the
+  name (an `OUTPUTS` name, a name-binding `ARTIFACTS` alias, or a `FOR` loop
+  variable):
+  - **A step binds it.** An assertion says the run stops and that step must bind
+    an artifact before a new run; a render says to `rundown goto` a step that
+    rebinds the name, or `rundown stop`.
+  - **No step binds it.** The value is the one the run was given (or one a
+    composed child's `outputs:` forwarded), so the message says to start a new
+    run with `--artifacts Name=<rd:// URI>` — after `rundown stop` for a render,
+    whose run keeps its position.
 
 The message never contains the bound value, which may be a secret supplied
 through `--input KEY` or `RD_INPUT_*`. It names the variable and the value's
-kind, such as "a plain string that is not an rd:// URI", "a number", or "a JSON
-array string with an entry that is not an rd:// URI". For an assertion it begins
-with the §10.1.2 failure name: `unresolvable-uri` for a string that is not a
-URI, `partial-resolve` for a URI[] or JSON URI[] string with an entry that is
-not one, and `not-an-artifact` for anything else, including an artifact-shaped
+kind, such as "a plain string that is not an rd:// URI", "a number", "a JSON
+array string with an entry that is not an rd:// URI", or "a JSON array string of
+rd:// URIs that have not been resolved to artifacts". For a dotted
+`{{ path plan.file }}` the variable is the one that binds the value (`plan`),
+and the message quotes the reference as written. For an assertion it begins with
+the §10.1.2 failure name: `unresolvable-uri` for a string that is not a URI,
+`partial-resolve` for a URI[] or JSON URI[] string with an entry that is not
+one, and `not-an-artifact` for anything else, including an artifact-shaped
 record that did not come through the artifact channel.
 
 **JSON:**

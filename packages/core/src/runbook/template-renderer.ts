@@ -58,7 +58,8 @@ import {
 import {
   ArtifactInputRequiredError,
   defersAtLaunch,
-  type LaunchArtifactDeferral,
+  type PathArtifactJudgement,
+  stepEntryRefusalContext,
 } from './artifact-input-required.js';
 import { artifactUriToPath } from './artifact-uri.js';
 import { parseTemplateExpression, tokenizeTemplate, type TemplateToken } from '@rundown-org/parser';
@@ -118,13 +119,12 @@ export interface TemplateRenderOptions {
   readonly context?: TemplateRenderContext;
   readonly helpers?: TemplateHelperRegistry;
   /**
-   * Set only by whole-runbook renders — launch preparation and the reload of a
-   * persisted run — never by a step-entry render. A `{{ path Name }}` over a
-   * non-artifact value is left unrendered, for step entry to judge, when a
-   * step may rebind `Name` first (spec §8.2) — the same deferral the naked
-   * `ARTIFACTS` launch check applies.
+   * Which render judges `{{ path Name }}` over a non-artifact value: launch
+   * preparation or the entry of one unit (spec §9.3). Without one — the
+   * whole-runbook reload of a persisted run — such a reference is left
+   * unrendered for the entry of the unit that holds it to judge.
    */
-  readonly launchArtifactDeferral?: LaunchArtifactDeferral;
+  readonly artifactJudgement?: PathArtifactJudgement;
 }
 
 type TemplateHelperOptions = TemplateRenderOptions;
@@ -350,8 +350,24 @@ function resolveTemplatePathRaw(
   path: string,
   variables: Readonly<Record<string, unknown>>,
 ): unknown {
+  return resolveTemplatePathBinding(path, variables)?.value;
+}
+
+/**
+ * Resolve a template path together with the variable that binds it: the whole
+ * path when it is itself a key (`context.parent.vars.Doc`), otherwise the
+ * prefix whose value the remaining segments walk (`plan` for `plan.file`).
+ *
+ * @param path - Template path, possibly dotted
+ * @param variables - Render-frame variables
+ * @returns The binding variable and resolved value, or `undefined` when unresolved
+ */
+function resolveTemplatePathBinding(
+  path: string,
+  variables: Readonly<Record<string, unknown>>,
+): { readonly name: string; readonly value: unknown } | undefined {
   if (Object.hasOwn(variables, path) && variables[path] !== undefined) {
-    return variables[path];
+    return { name: path, value: variables[path] };
   }
   if (!path.includes('.')) return undefined;
   const segments = path.split('.');
@@ -360,7 +376,7 @@ function resolveTemplatePathRaw(
     if (!Object.hasOwn(variables, prefix)) continue;
     const remainder = segments.slice(i).join('.');
     const resolved = resolveDottedPath(variables[prefix], remainder);
-    if (resolved !== undefined) return resolved;
+    if (resolved !== undefined) return { name: prefix, value: resolved };
   }
   return undefined;
 }
@@ -914,7 +930,8 @@ function getRenderContext(
  * @param helperOptions - Filesystem options (`cwd`); render-only
  * @param original - Original match text returned when `helperOptions` is unavailable (AST-walk path)
  * @returns Rendered string
- * @throws {ArtifactInputRequiredError} When the variable reference resolves to a non-artifact value
+ * @throws {ArtifactInputRequiredError} When `helperOptions` carries an artifact judgement and the
+ *   variable reference resolves to a non-artifact value it does not defer
  * @throws {Error} When `WorkPath` is missing
  */
 function resolvePathHelperCall(
@@ -937,8 +954,9 @@ function resolvePathHelperCall(
   }
   if (varRef === undefined) return original;
 
-  const value = resolveTemplatePathRaw(varRef, variables);
-  if (value === undefined) return original;
+  const binding = resolveTemplatePathBinding(varRef, variables);
+  if (binding === undefined) return original;
+  const { value } = binding;
   // Accept empty arrays explicitly here (the structural `isArtifactRecordArray`
   // guard rejects them to avoid false positives in Pass 4 — see its TSDoc).
   // In a helper call site the user has explicitly opted into artifact
@@ -946,16 +964,32 @@ function resolvePathHelperCall(
   // wildcard with zero matches and renders as `[]`.
   const isEmptyArray = Array.isArray(value) && value.length === 0;
   if (!isArtifactRecord(value) && !isArtifactRecordArray(value) && !isEmptyArray) {
-    const deferral = helperOptions?.launchArtifactDeferral;
-    // A dotted reference (`plan.file`) is rebound through its root name.
-    const rootName = varRef.split('.')[0] ?? varRef;
-    if (deferral !== undefined && defersAtLaunch(deferral, rootName)) return original;
-    throw ArtifactInputRequiredError.forValue(
-      varRef,
-      value,
-      { kind: 'path-helper' },
-      { kind: 'step-entry' },
-    );
+    // The refusal names the variable that binds the value — `plan` for
+    // `plan.file` — which is also the name a step rebinds and launch defers.
+    const judgement = helperOptions?.artifactJudgement;
+    switch (judgement?.kind) {
+      case undefined:
+        return original;
+      case 'launch':
+        if (defersAtLaunch(judgement.deferral, binding.name)) return original;
+        throw ArtifactInputRequiredError.forValue(
+          binding.name,
+          value,
+          { kind: 'path-helper', reference: varRef },
+          judgement.origin,
+        );
+      case 'step-entry':
+        throw ArtifactInputRequiredError.forValue(
+          binding.name,
+          value,
+          { kind: 'path-helper', reference: varRef },
+          stepEntryRefusalContext(judgement.stepBoundNames, binding.name),
+        );
+      default: {
+        const _exhaustive: never = judgement;
+        return _exhaustive;
+      }
+    }
   }
   const artifactValue = value as ArtifactVarValue;
   return renderArtifactPathValue(artifactValue, {

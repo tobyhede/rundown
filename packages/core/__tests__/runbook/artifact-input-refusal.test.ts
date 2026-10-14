@@ -399,3 +399,95 @@ describe('one classification for forged artifact records (A6)', () => {
     expect(result.error).toContain('an unverified artifact-shaped record');
   });
 });
+
+describe('a FOR step asserting its own loop variable at step level (B5)', () => {
+  // A step's ARTIFACTS precede its FOR clause and resolve on entering the
+  // step, before any iteration binds the loop variable: the value the
+  // assertion judges is the launch value, so launch can refuse it.
+  const forStep = `---
+inputs:
+  - plans
+  - plan
+---
+# Loop
+
+## 1. Loop
+- ARTIFACTS
+  - plan
+- FOR plan IN {{ plans }}
+
+### 1.1 Use
+- PASS CONTINUE
+
+Use it.
+`;
+
+  it('judges a step-level assertion on the loop variable against the launch value', () => {
+    const result = prepare(forStep, {
+      templateVars: { plans: [SKILL_URI], plan: 'notes.md' },
+      providedKeys: new Set(['plans', 'plan']),
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'ARTIFACT_INPUT_REQUIRED',
+      details: { variable: 'plan', step: '1' },
+    });
+  });
+});
+
+describe('a {{ path X.Y }} refusal names the variable that binds the value (B3)', () => {
+  it('reports the root binding, not the dotted reference, as the variable to supply', () => {
+    const result = prepare(
+      `---
+inputs:
+  - plan
+---
+# Dotted
+
+## 1. Read
+- PASS COMPLETE
+
+Read {{ path plan.file }}.
+`,
+      { templateVars: { plan: { file: 'notes.md' } }, providedKeys: new Set(['plan']) },
+    );
+
+    expect(result).toMatchObject({
+      ok: false,
+      code: 'ARTIFACT_INPUT_REQUIRED',
+      details: { variable: 'plan' },
+    });
+    if (result.ok) return;
+    expect(result.error).toContain('--artifacts plan=<rd:// URI>');
+    expect(result.error).not.toContain('--artifacts plan.file=');
+    // The message still quotes the reference as the runbook wrote it.
+    expect(result.error).toContain('{{ path plan.file }}');
+  });
+});
+
+describe('a JSON URI[] string under {{ path X }} is described as unresolved (B1)', () => {
+  it('names a JSON array string of valid rd:// URIs as unresolved, not as holding a non-URI entry', () => {
+    const result = prepare(
+      `---
+inputs:
+  - plans
+---
+# Plans
+
+## 1. Read
+- PASS COMPLETE
+
+Read {{ path plans }}.
+`,
+      { templateVars: { plans: JSON.stringify([SKILL_URI]) }, providedKeys: new Set(['plans']) },
+    );
+
+    expect(result).toMatchObject({ ok: false, code: 'ARTIFACT_INPUT_REQUIRED' });
+    if (result.ok) return;
+    expect(result.error).toContain(
+      'a JSON array string of rd:// URIs that have not been resolved to artifacts',
+    );
+    expect(result.error).not.toContain('an entry that is not an rd:// URI');
+  });
+});

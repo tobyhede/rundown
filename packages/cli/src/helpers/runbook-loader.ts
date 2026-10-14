@@ -20,7 +20,6 @@
 
 import { parseRunbookDocument, type ResolvedStep } from '@rundown-org/parser';
 import {
-  deriveLaunchArtifactDeferral,
   mergeEffectiveVars,
   resolveForBounds,
   substituteRunbookVariables,
@@ -93,11 +92,11 @@ export function getRunbookFromState(state: RunbookState, cwd: string): readonly 
   const substituted = substituteRunbookVariables(resolved, effectiveVars, {
     helpers: getHelperRegistry(),
     context: buildRunnableRenderContext({ runId: state.id, cwd, vars: effectiveVars }),
-    // This whole-runbook render reaches steps that are not being entered, so
-    // it applies launch's deferral: a `{{ path Name }}` a step may rebind is
-    // left for that step's entry render to judge against the value it then
-    // holds, never judged here against a value no step has rebound yet.
-    launchArtifactDeferral: deriveLaunchArtifactDeferral(runbook.steps),
+    // No `artifactJudgement`: this whole-runbook render reaches steps nobody
+    // is entering, so it judges no `{{ path Name }}`. Each is left for the
+    // entry render of the unit holding it, against the value it then holds —
+    // a refusal here would stop `status` and `stop`, the commands that
+    // recover such a run, from loading it at all.
   });
   return substituted.steps;
 }

@@ -1,5 +1,4 @@
-import type { ArtifactDeclaration, Step } from '@rundown-org/parser';
-import { parseJsonArtifactUriArrayTransport } from './artifact-inputs.js';
+import type { ArtifactDeclaration, ResolvedStep, Step } from '@rundown-org/parser';
 import { isArtifactRecord } from './artifact-schema.js';
 import { type ArtifactRef, parseArtifactUri } from './artifact-uri.js';
 import { isTrustedArtifactValue, type TrustedArtifactValue } from './effective-vars.js';
@@ -20,6 +19,8 @@ export const ARTIFACT_INPUT_REQUIRED = 'ARTIFACT_INPUT_REQUIRED';
  *   when it is known (launch analysis knows it; the step-entry resolver
  *   reports on the entered unit's own events).
  * - `path-helper` — `{{ path Name }}` over a value that is not an artifact.
+ *   `reference` is the template path as written (`plan.file`); the refusal's
+ *   `variable` is the name that binds the value (`plan`).
  */
 export type ArtifactInputRequiredSite =
   | {
@@ -27,7 +28,7 @@ export type ArtifactInputRequiredSite =
       readonly reason: ArtifactAssertionShapeFailure;
       readonly step?: string;
     }
-  | { readonly kind: 'path-helper' };
+  | { readonly kind: 'path-helper'; readonly reference: string };
 
 /**
  * Which preparation is judging launch values: a root launch (`rundown run`,
@@ -39,6 +40,18 @@ export type ArtifactInputRefusalOrigin =
   | { readonly kind: 'child-preparation' };
 
 /**
+ * Whether a step of the run's own runbook binds the refused name — an
+ * `OUTPUTS` name, a name-binding `ARTIFACTS` alias, or a `FOR` loop variable.
+ *
+ * - `runbook-step` — a step sets it, so the recovery is that step: bind the
+ *   name to an artifact there.
+ * - `no-runbook-step` — no step does, so the value is the one the run was
+ *   given (or one a composed child's `outputs:` forwarded); the recovery is a
+ *   new run supplied through the artifact channel, `--artifacts`.
+ */
+export type StepEntryBinder = 'runbook-step' | 'no-runbook-step';
+
+/**
  * When the refusal happened, which decides the recovery its message names.
  *
  * - `launch` — before any run exists; the caller can relaunch with
@@ -47,11 +60,12 @@ export type ArtifactInputRefusalOrigin =
  *   artifact URI; no flag on the child's command can supply it.
  * - `step-entry` — a run exists and its owner recovers it: a naked assertion
  *   stops the run, while a `{{ path … }}` render keeps its position for a
- *   `rundown goto` or `rundown stop`.
+ *   `rundown goto` or `rundown stop`. `binder` says whether a step of the
+ *   runbook binds the name, which decides what the owner must change.
  */
 export type ArtifactInputRefusalContext =
   | ArtifactInputRefusalOrigin
-  | { readonly kind: 'step-entry' };
+  | { readonly kind: 'step-entry'; readonly binder: StepEntryBinder };
 
 /** Spec §10.1.2 failure names that mean "this value is not artifact-shaped". */
 export type ArtifactAssertionShapeFailure =
@@ -100,6 +114,7 @@ export type NonArtifactValueKind =
   | 'plain-string'
   | 'unresolved-uri-string'
   | 'empty-json-array-string'
+  | 'unresolved-uri-json-array-string'
   | 'json-array-string-with-non-uri-entry'
   | 'empty-array'
   | 'string-array-with-non-uri-entry'
@@ -172,32 +187,37 @@ export class ArtifactInputRequiredError extends Error {
   ): ArtifactInputRequiredError {
     return new ArtifactInputRequiredError(variable, describeNonArtifactValue(value), site, context);
   }
+}
 
-  /**
-   * Re-issue this refusal for another context, keeping the variable, site and
-   * the value's kind. The shared renderer throws `{{ path … }}` refusals as
-   * `step-entry`; launch preparation re-issues them for its own origin.
-   *
-   * @param context - The context the refusal happened in
-   * @returns An equivalent refusal whose message names that context's recovery
-   */
-  inContext(context: ArtifactInputRefusalContext): ArtifactInputRequiredError {
-    return new ArtifactInputRequiredError(this.variable, this.found, this.site, context);
+function parsedUri(text: string): ParsedArtifactUriString | null {
+  try {
+    return { text, ref: parseArtifactUri(text) };
+  } catch {
+    return null;
   }
 }
 
 function isArtifactUriString(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  try {
-    parseArtifactUri(value);
-    return true;
-  } catch {
-    return false;
-  }
+  return typeof value === 'string' && parsedUri(value) !== null;
+}
+
+/**
+ * Whether an entry claims to be an artifact URI, whether or not it parses.
+ *
+ * @param entry - A decoded JSON array entry
+ * @returns `true` when the entry is a string beginning `rd://`
+ */
+function isRdPrefixedString(entry: unknown): boolean {
+  return typeof entry === 'string' && entry.startsWith('rd://');
 }
 
 /**
  * Decode a string that is a JSON array, whatever its entries.
+ *
+ * The one decoder for the JSON `URI[]` transport (§10.1.2): the shape rule
+ * and the value description both dispatch on its entries. A string counts as
+ * that transport only when the array holds at least one `rd://` entry; any
+ * other JSON array string is an ordinary string.
  *
  * @param value - Candidate string
  * @returns The decoded entries, or `null` when the string is not a JSON array
@@ -228,10 +248,12 @@ function isUnverifiedArtifactRecord(value: unknown): boolean {
 export function describeNonArtifactValue(value: unknown): NonArtifactValueKind {
   if (isUnverifiedArtifactRecord(value)) return 'unverified-artifact-record';
   if (typeof value === 'string') {
-    const decoded = decodeJsonArrayString(value);
-    if (decoded !== null && decoded.length === 0) return 'empty-json-array-string';
-    if (decoded?.some((entry) => typeof entry === 'string' && entry.startsWith('rd://'))) {
-      return 'json-array-string-with-non-uri-entry';
+    const entries = decodeJsonArrayString(value);
+    if (entries !== null && entries.length === 0) return 'empty-json-array-string';
+    if (entries?.some(isRdPrefixedString)) {
+      return entries.every(isArtifactUriString)
+        ? 'unresolved-uri-json-array-string'
+        : 'json-array-string-with-non-uri-entry';
     }
     return isArtifactUriString(value) ? 'unresolved-uri-string' : 'plain-string';
   }
@@ -268,6 +290,8 @@ function nonArtifactValueText(found: NonArtifactValueKind): string {
       return 'an rd:// URI string that has not been resolved to an artifact';
     case 'empty-json-array-string':
       return 'an empty JSON array string';
+    case 'unresolved-uri-json-array-string':
+      return 'a JSON array string of rd:// URIs that have not been resolved to artifacts';
     case 'json-array-string-with-non-uri-entry':
       return 'a JSON array string with an entry that is not an rd:// URI';
     case 'empty-array':
@@ -316,13 +340,38 @@ function recoveryGuidance(
         'to an artifact (an ARTIFACTS alias or an rd:// artifact URI) before this child is launched or claimed.'
       );
     case 'step-entry':
+      return stepEntryGuidance(variable, site, context.binder);
+    default: {
+      const _exhaustive: never = context;
+      return _exhaustive;
+    }
+  }
+}
+
+function stepEntryGuidance(
+  variable: string,
+  site: ArtifactInputRequiredSite,
+  binder: StepEntryBinder,
+): string {
+  const relaunch =
+    `start a new run that supplies it with --artifacts ${variable}=<rd:// URI> ` +
+    `(or --artifacts-json ${variable}='["<rd:// URI>", …]').`;
+  const unbound =
+    `No step of this runbook binds "${variable}", so its value is the one the run was given ` +
+    "(or one a composed child's outputs forwarded)";
+  switch (binder) {
+    case 'runbook-step':
       return site.kind === 'artifacts-assertion'
         ? `The run stops. Bind "${variable}" to an artifact in the step that sets it (an ARTIFACTS alias, ` +
             'or an rd:// URI written to its OUTPUTS), then start a new run.'
         : 'The run keeps its position. Recover with `rundown goto` to an earlier step that rebinds ' +
             `"${variable}" to an artifact, or end the run with \`rundown stop\`.`;
+    case 'no-runbook-step':
+      return site.kind === 'artifacts-assertion'
+        ? `The run stops. ${unbound}: ${relaunch}`
+        : `The run keeps its position. ${unbound}: end it with \`rundown stop\` and ${relaunch}`;
     default: {
-      const _exhaustive: never = context;
+      const _exhaustive: never = binder;
       return _exhaustive;
     }
   }
@@ -352,21 +401,13 @@ function formatArtifactInputRequiredMessage(
     }
     case 'path-helper':
       return (
-        `{{ path ${variable} }} requires an artifact, but "${variable}" is bound to ${described}. ` +
-        `${recovery} To render the plain value, use {{ ${variable} }}.`
+        `{{ path ${site.reference} }} requires an artifact, but "${variable}" is bound to ${described}. ` +
+        `${recovery} To render the plain value, use {{ ${site.reference} }}.`
       );
     default: {
       const _exhaustive: never = site;
       return _exhaustive;
     }
-  }
-}
-
-function parsedUri(text: string): ParsedArtifactUriString | null {
-  try {
-    return { text, ref: parseArtifactUri(text) };
-  } catch {
-    return null;
   }
 }
 
@@ -390,10 +431,10 @@ function classifyUriArray(entries: readonly unknown[]): ArtifactAssertionShape {
  * - a trusted (branded) artifact value is admitted;
  * - an unbranded artifact-shaped record or record array is `not-an-artifact`
  *   (it did not come through the artifact channel);
- * - a JSON array string is decoded as a URI[] only when every entry is an
- *   `rd://` string, and admitted when non-empty and every entry parses. An
- *   empty one is `not-an-artifact`; one that holds at least one `rd://` entry
- *   beside an entry that is not a parseable URI is `partial-resolve`;
+ * - a JSON array string is decoded once: an empty one is `not-an-artifact`;
+ *   one holding at least one `rd://` entry is a URI[] transport, admitted
+ *   when every entry parses and `partial-resolve` otherwise; any other JSON
+ *   array string is an ordinary string;
  * - any other string is admitted iff it parses as an `rd://` URI
  *   (`unresolvable-uri` otherwise);
  * - a non-empty string array is admitted iff every entry parses
@@ -410,14 +451,11 @@ export function classifyArtifactAssertionValue(value: unknown): ArtifactAssertio
   }
   if (isUnverifiedArtifactRecord(value)) return { kind: 'not-artifact', reason: 'not-an-artifact' };
   if (typeof value === 'string') {
-    const transport = parseJsonArtifactUriArrayTransport(value);
-    if (transport !== null) {
-      if (transport.length === 0) return { kind: 'not-artifact', reason: 'not-an-artifact' };
-      return classifyUriArray(transport);
+    const entries = decodeJsonArrayString(value);
+    if (entries !== null && entries.length === 0) {
+      return { kind: 'not-artifact', reason: 'not-an-artifact' };
     }
-    if (describeNonArtifactValue(value) === 'json-array-string-with-non-uri-entry') {
-      return { kind: 'not-artifact', reason: 'partial-resolve' };
-    }
+    if (entries?.some(isRdPrefixedString)) return classifyUriArray(entries);
     const uri = parsedUri(value);
     return uri === null
       ? { kind: 'not-artifact', reason: 'unresolvable-uri' }
@@ -490,6 +528,65 @@ export function defersAtLaunch(deferral: LaunchArtifactDeferral, name: string): 
   }
 }
 
+/**
+ * How a render treats `{{ path Name }}` over a value that is not an artifact.
+ *
+ * Only the render of the unit being judged refuses: a launch's whole-runbook
+ * render (for a name no step can rebind first) and the render of the unit
+ * being entered. A render that carries no judgement — the whole-runbook
+ * reload every command performs — judges nothing: it leaves such a reference
+ * unrendered, because the steps it reaches are not being entered and the
+ * value they will see is decided at their entry.
+ *
+ * - `launch` — refuse a name `deferral` does not defer, as `origin`.
+ * - `step-entry` — refuse every name; `stepBoundNames` (see
+ *   {@link collectStepBoundNames}) decides the refusal's recovery.
+ */
+export type PathArtifactJudgement =
+  | {
+      readonly kind: 'launch';
+      readonly origin: ArtifactInputRefusalOrigin;
+      readonly deferral: LaunchArtifactDeferral;
+    }
+  | { readonly kind: 'step-entry'; readonly stepBoundNames: ReadonlySet<string> };
+
+/**
+ * Names a step of the runbook binds: the §8.2 produced set plus every `FOR`
+ * loop variable. A step-entry refusal of any other name has no step to fix,
+ * only a new run.
+ *
+ * @param steps - Parsed or resolved runbook steps
+ * @returns The names some step binds
+ */
+export function collectStepBoundNames(
+  steps: readonly (Step | ResolvedStep)[],
+): ReadonlySet<string> {
+  const names = collectProducedNames(steps);
+  for (const step of steps) {
+    if (step.kind === 'for' && step.forClause.variable !== undefined) {
+      names.add(step.forClause.variable);
+    }
+  }
+  return names;
+}
+
+/**
+ * The step-entry refusal context for a name.
+ *
+ * @param stepBoundNames - Names a step of the runbook binds
+ * @param variable - The refused name
+ * @returns The `step-entry` context whose `binder` says whether a step binds it
+ */
+export function stepEntryRefusalContext(
+  stepBoundNames: ReadonlySet<string>,
+  variable: string,
+): Extract<ArtifactInputRefusalContext, { kind: 'step-entry' }> {
+  return {
+    kind: 'step-entry',
+    binder: stepBoundNames.has(variable) ? 'runbook-step' : 'no-runbook-step',
+  };
+}
+
 function nakedNames(declarations: readonly ArtifactDeclaration[] | undefined): string[] {
   return (declarations ?? []).filter((d) => d.rawToken === null).map((d) => d.name);
 }
@@ -502,17 +599,21 @@ function nakedNames(declarations: readonly ArtifactDeclaration[] | undefined): s
  * A name {@link deriveLaunchArtifactDeferral} defers can be rebound before the
  * assertion runs, so it is excluded: only step entry can judge it. An
  * assertion inside a `FOR` step's substeps on the loop variable's own name is
- * excluded for the same reason — the iteration binds it. (On parsed steps a
- * FOR whose bounds will not resolve is still a `for` step; it is demoted to
- * `prompted-for` only when its bounds are resolved, so this walk covers it.)
+ * excluded for the same reason — the iteration binds it. A FOR step's own
+ * step-level assertion is not: its `ARTIFACTS` resolve on entering the step,
+ * before any iteration binds the loop variable, so the value it judges is the
+ * launch value. (On parsed steps a FOR whose bounds will not resolve is still
+ * a `for` step; it is demoted to `prompted-for` only when its bounds are
+ * resolved, so this walk covers it.)
  *
  * @param steps - Parsed runbook steps
+ * @param deferral - The runbook's launch deferral ({@link deriveLaunchArtifactDeferral})
  * @returns Launch-decidable asserted names, each with its first asserting unit
  */
 export function collectLaunchDecidableArtifactAssertions(
   steps: readonly Step[],
+  deferral: LaunchArtifactDeferral,
 ): ReadonlyMap<string, string> {
-  const deferral = deriveLaunchArtifactDeferral(steps);
   const asserted = new Map<string, string>();
   const add = (name: string, unit: string): void => {
     if (!defersAtLaunch(deferral, name) && !asserted.has(name)) asserted.set(name, unit);
@@ -541,14 +642,17 @@ export function collectLaunchDecidableArtifactAssertions(
  * @param steps - Parsed runbook steps
  * @param launchVars - Effective variables at launch (template and runtime vars merged)
  * @param origin - Which preparation is judging the values
+ * @param deferral - The runbook's launch deferral, shared with the launch
+ *   `{{ path … }}` judgement so the two checks defer the same names
  * @returns The refusal for the first offending name, or `null` when none
  */
 export function findArtifactInputRefusal(
   steps: readonly Step[],
   launchVars: Readonly<Record<string, unknown>>,
   origin: ArtifactInputRefusalOrigin,
+  deferral: LaunchArtifactDeferral,
 ): ArtifactInputRequiredError | null {
-  for (const [name, unit] of collectLaunchDecidableArtifactAssertions(steps)) {
+  for (const [name, unit] of collectLaunchDecidableArtifactAssertions(steps, deferral)) {
     if (!Object.hasOwn(launchVars, name)) continue;
     const value = launchVars[name];
     const shape = classifyArtifactAssertionValue(value);

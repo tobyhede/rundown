@@ -47,7 +47,6 @@ import {
 import type { RunbookEvent, RunProgressionMachineFeedback } from './compiler.js';
 import { findStepOrThrow } from './execution-units.js';
 import type { ExecutionUnitEntry } from './execution-unit-entry.js';
-import { ArtifactInputRequiredError } from './artifact-input-required.js';
 import { InvalidRunbookStateError } from './persisted-state-guards.js';
 import type { OwnedRun } from './run-authority.js';
 import {
@@ -142,6 +141,11 @@ export type RunProgressionWaitReason = 'awaiting_input' | 'collected';
  *   the owner decides explicitly. Code `EXECUTION_INTERRUPTED`.
  * - `entry_render_failed` — rendering the selected unit's entry threw; nothing
  *   was committed and re-activation re-renders.
+ * - `artifact_input_required` — rendering the selected unit's entry refused a
+ *   `{{ path Name }}` over a value that is not an artifact (spec §9.3). Nothing
+ *   was committed and the run keeps its position, but no re-activation clears
+ *   it while the binding stands: `permanent`, code `ARTIFACT_INPUT_REQUIRED`,
+ *   and the message names the owner's recovery.
  * - `inline_child_launch_failed` — the Inline Child an inline substep reserved
  *   could not be launched: its runbook did not prepare, composes in a form
  *   this build does not run, nests deeper than {@link MAX_INLINE_CHILD_DEPTH}, or another
@@ -161,6 +165,7 @@ export type RunProgressionRefusalReason =
   | 'execution_interrupted'
   | 'command_outcome_unknown'
   | 'entry_render_failed'
+  | 'artifact_input_required'
   | 'inline_child_launch_failed'
   | 'claim_tickets_not_issued';
 
@@ -1113,32 +1118,33 @@ async function driveRun(
       return { kind: 'waiting', runId, reason: intent.reason };
     }
 
+    if (intent.kind === 'refused' && intent.reason === 'artifact_input_required') {
+      // `{{ path Name }}` over a value that is not an artifact: the typed
+      // refusal the launch check gives a launch value (spec §9.3).
+      // Re-rendering cannot succeed while the binding stands, so it is
+      // `permanent` — the owner must act. Nothing was committed and the run
+      // keeps its cursor; the message (a step-entry refusal) names the action.
+      const { refusal } = intent;
+      sink.emit({
+        type: 'ERROR_OCCURRED',
+        payload: { message: refusal.message, code: refusal.code },
+      });
+      return {
+        kind: 'refused',
+        runId,
+        reason: intent.reason,
+        code: refusal.code,
+        message: refusal.message,
+        recovery: 'permanent',
+      };
+    }
+
     if (intent.kind === 'refused') {
       // A malformed persisted run keeps the repository-wide RD-309 recovery;
       // it outranks the refusal because the run cannot be loaded at all and no
       // retry addresses that.
       if (intent.cause instanceof InvalidRunbookStateError) {
         throw intent.cause;
-      }
-      // `{{ path Name }}` over a value an earlier step bound to a non-artifact:
-      // the typed refusal the launch check gives a launch value (spec §9.3).
-      // Re-rendering cannot succeed while the binding stands, so it is
-      // `permanent` — the owner must act. Nothing was committed and the run
-      // keeps its cursor, so the message (a step-entry refusal) names that
-      // action: `rundown goto` a step that rebinds the name, or `rundown stop`.
-      if (intent.cause instanceof ArtifactInputRequiredError) {
-        sink.emit({
-          type: 'ERROR_OCCURRED',
-          payload: { message: intent.cause.message, code: intent.cause.code },
-        });
-        return {
-          kind: 'refused',
-          runId,
-          reason: intent.reason,
-          code: intent.cause.code,
-          message: intent.cause.message,
-          recovery: 'permanent',
-        };
       }
       // Nothing was committed, so re-activation re-renders (retryable, RD-504).
       const error = Errors.runProgressionEntryFailed(runId, intent.message);

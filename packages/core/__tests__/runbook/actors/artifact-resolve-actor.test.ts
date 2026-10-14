@@ -50,6 +50,7 @@ describe('artifactResolveActor', () => {
     const cwd = await tempCwd();
     const actor = createActor(artifactResolveActor, {
       input: {
+        stepBoundNames: new Set<string>(),
         declarations: [declaration('PlanPath', 'plan.json')],
         cwd,
         workPath: WORK_PATH,
@@ -77,6 +78,7 @@ describe('artifactResolveActor', () => {
     const cwd = await tempCwd();
     const actor = createActor(artifactResolveActor, {
       input: {
+        stepBoundNames: new Set<string>(),
         declarations: [],
         cwd,
         workPath: WORK_PATH,
@@ -96,6 +98,7 @@ describe('artifactResolveActor', () => {
     const cwd = await tempCwd();
     const actor = createActor(artifactResolveActor, {
       input: {
+        stepBoundNames: new Set<string>(),
         declarations: [declaration('PlanPath', null)],
         cwd,
         workPath: WORK_PATH,
@@ -136,6 +139,7 @@ describe('artifactResolveActor', () => {
 
     const actor = createActor(artifactResolveActor, {
       input: {
+        stepBoundNames: new Set<string>(),
         declarations: [declaration('PlanPath', null)],
         cwd,
         workPath: WORK_PATH,
@@ -202,6 +206,7 @@ describe('artifactResolveActor', () => {
     const selectorUri = `rd://artifacts/${CONTEXT_ID}/*/plan.json`;
     const actor = createActor(artifactResolveActor, {
       input: {
+        stepBoundNames: new Set<string>(),
         declarations: [declaration('Plans', selectorUri)],
         cwd,
         workPath: WORK_PATH,
@@ -251,6 +256,7 @@ describe('artifactResolveActor', () => {
 
     const actor = createActor(artifactResolveActor, {
       input: {
+        stepBoundNames: new Set<string>(),
         declarations: [declaration('PlanPath', uri)],
         cwd,
         workPath: WORK_PATH,
@@ -277,6 +283,7 @@ describe('artifactResolveActor', () => {
 
     const actor = createActor(artifactResolveActor, {
       input: {
+        stepBoundNames: new Set<string>(),
         declarations: [declaration('Missing', uri)],
         cwd,
         workPath: WORK_PATH,
@@ -306,6 +313,7 @@ describe('artifactResolveActor', () => {
 
     const actor = createActor(artifactResolveActor, {
       input: {
+        stepBoundNames: new Set<string>(),
         declarations: [declaration('PlanPath', 'plan.json')],
         cwd,
         workPath: WORK_PATH,
@@ -335,6 +343,7 @@ describe('artifactResolveActor', () => {
     const selectorUri = `rd://artifacts/${CONTEXT_ID}/*/plan.json`;
     const actor = createActor(artifactResolveActor, {
       input: {
+        stepBoundNames: new Set<string>(),
         declarations: [declaration('PlanPath', selectorUri)],
         cwd,
         workPath: WORK_PATH,

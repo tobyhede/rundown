@@ -1054,11 +1054,14 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
   // Refuse, before any run exists, a launch value a naked ARTIFACTS assertion
   // can never accept (spec §10.1.2). Names a step can rebind — the produced
   // set, or every name when the runbook composes a child — are left to step
-  // entry, mirroring FOR-source deferral (§8.2).
+  // entry, mirroring FOR-source deferral (§8.2). The `{{ path … }}`
+  // judgement below shares this one deferral, so the two cannot disagree.
+  const artifactDeferral = deriveLaunchArtifactDeferral(input.rawRunbook.steps);
   const artifactRefusal = findArtifactInputRefusal(
     input.rawRunbook.steps,
     substitutionVars,
     input.origin,
+    artifactDeferral,
   );
   if (artifactRefusal !== null) {
     return {
@@ -1096,17 +1099,16 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
       context: renderContext,
       // The same deferral as the naked-assertion check above: a name a step
       // can rebind is rendered at step entry, not judged here.
-      launchArtifactDeferral: deriveLaunchArtifactDeferral(input.rawRunbook.steps),
+      artifactJudgement: { kind: 'launch', origin: input.origin, deferral: artifactDeferral },
     });
   } catch (error) {
     // `{{ path Name }}` over a launch value that is not an artifact.
     if (error instanceof ArtifactInputRequiredError) {
-      const refusal = error.inContext(input.origin);
       return {
         ok: false,
-        error: refusal.message,
+        error: error.message,
         code: ARTIFACT_INPUT_REQUIRED,
-        details: artifactInputRequiredDetails(refusal),
+        details: artifactInputRequiredDetails(error),
         templateVars,
         warnings,
         diagnostics: input.diagnostics,

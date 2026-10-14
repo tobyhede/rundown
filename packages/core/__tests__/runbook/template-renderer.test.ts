@@ -2478,6 +2478,11 @@ const ARTIFACT_HELPER_OPTIONS: TemplateRenderOptions = {
     runId: ARTIFACT_RUN_ID,
   },
 };
+/** The same render, judging `{{ path … }}` as the entry of a unit does. */
+const STEP_ENTRY_RENDER_OPTIONS: TemplateRenderOptions = {
+  ...ARTIFACT_HELPER_OPTIONS,
+  artifactJudgement: { kind: 'step-entry', stepBoundNames: new Set(['PlanPath']) },
+};
 const ARTIFACT_PLAN_PATH = path.join(
   '/tmp/project',
   '.rundown/work',
@@ -2703,13 +2708,26 @@ describe('substituteText with artifact helper', () => {
         '{{ path PlanPath }}',
         { PlanPath: 'not-a-record', WorkPath: '.rundown/work' },
         undefined,
-        ARTIFACT_HELPER_OPTIONS,
+        STEP_ENTRY_RENDER_OPTIONS,
       );
     expect(render).toThrow(ArtifactInputRequiredError);
-    // A render outside launch preparation is a step-entry render: the run's
-    // owner recovers it, and the bound value is never echoed.
+    // A step-entry render of a name a step binds: the run's owner recovers
+    // it, and the bound value is never echoed.
     expect(render).toThrow(/rundown goto.*rundown stop/s);
     expect(render).not.toThrow(/not-a-record/);
+  });
+
+  it('leaves {{ path Var }} over a non-artifact value unrendered when the render judges nothing', () => {
+    // A whole-runbook reload carries no judgement: only the entry of the unit
+    // holding the reference judges it.
+    expect(
+      substituteText(
+        'Read {{ path PlanPath }}.',
+        { PlanPath: 'not-a-record', WorkPath: '.rundown/work' },
+        undefined,
+        ARTIFACT_HELPER_OPTIONS,
+      ),
+    ).toBe('Read {{ path PlanPath }}.');
   });
 
   it('throws when {{ artifact Var }} variable is not an ArtifactRecord/ArtifactRecord[]', () => {
@@ -2796,7 +2814,7 @@ describe('isArtifactRecordArray rejects mixed-element arrays', () => {
         '{{ path Reviews }}',
         { Reviews: [PLAN, 'string'], WorkPath: '.rundown/work' },
         undefined,
-        ARTIFACT_HELPER_OPTIONS,
+        STEP_ENTRY_RENDER_OPTIONS,
       ),
     ).toThrow(ArtifactInputRequiredError);
   });

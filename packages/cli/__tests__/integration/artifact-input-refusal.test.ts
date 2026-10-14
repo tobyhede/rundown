@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { appendArtifactManifestRecordSync, assertRunId } from '@rundown-org/core';
+import { patchPersistedRunState } from '@rundown-org/core/testing/run-fixtures';
 import {
   createTestWorkspace,
   getAllRunbookStates,
@@ -290,6 +291,54 @@ describe('artifact-asserted input refusal (integration)', () => {
     expect(entered?.prompt).toMatch(/Read \S*\.rundown\/work\/\S*plan\.md\./);
   });
 
+  it('reloading a run never judges {{ path X }}: status and stop work while a later step holds one', async () => {
+    // Only the render of the unit being entered judges a `{{ path X }}`. The
+    // whole-runbook reload that every command performs reaches steps nobody
+    // is entering, so a non-artifact value there must not refuse it — or
+    // `status` and `stop`, the commands that recover such a run, cannot run.
+    await writeFile(
+      join(workspace.cwd, 'later.runbook.md'),
+      [
+        '# Later',
+        '## 1. Prepare',
+        '- PASS CONTINUE',
+        '- FAIL STOP',
+        '',
+        'Prepare.',
+        '',
+        '## 2. Read it',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Read {{ path Doc }}.',
+        '',
+      ].join('\n'),
+    );
+    const started = await runCliInProcess(['run', 'later.runbook.md'], workspace);
+    expect(started.exitCode).toBe(0);
+    const token = requireOwnerToken(started.stdout);
+    const states = await getAllRunbookStates(workspace);
+    expect(states).toHaveLength(1);
+    const [state] = states;
+    // A value no step of this runbook binds, present when the run reloads
+    // (the deferral covers only names a step can rebind).
+    await patchPersistedRunState(workspace.cwd, state.id, (current) => ({
+      ...current,
+      variables: { ...(current.variables as Record<string, unknown>), Doc: 'notes.md' },
+    }));
+
+    const status = await runCliInProcess(['status', '--run', state.id], workspace);
+    expect(status.stdout).not.toContain('ARTIFACT_INPUT_REQUIRED');
+    expect(status.exitCode).toBe(0);
+    expect(JSON.parse(status.stdout)).toMatchObject({ step: { name: '1' } });
+
+    const stopped = await runCliInProcess(['stop', '--token', token], workspace);
+    expect(stopped.stdout).not.toContain('ARTIFACT_INPUT_REQUIRED');
+    expect(parseConcatenatedJson(stopped.stdout)).toContainEqual(
+      expect.objectContaining({ kind: 'action', action: 'stop', stopped: true }),
+    );
+  });
+
   it('a launch refusal never echoes the value, which may be a secret', async () => {
     const { stdout, exitCode } = await runCliInProcess(
       ['run', 'convert-skill.runbook.md', '--input', `SkillPath=${SECRET}`],
@@ -348,6 +397,90 @@ describe('artifact-asserted input refusal (integration)', () => {
 
     expect(stdout).not.toContain('ARTIFACT_INPUT_REQUIRED');
     expect(exitCode).toBe(0);
+  });
+
+  describe('a step-entry refusal of a name no step binds names a new run with --artifacts (B2)', () => {
+    // Composing a child defers every name at launch, so a plain launch value
+    // reaches step entry although no step of the runbook ever binds it. The
+    // only recovery is a new run supplied through the artifact channel.
+    const composing = (use: string[]): string =>
+      [
+        '---',
+        'inputs:',
+        '  - plan',
+        '---',
+        '# Composing',
+        ...use,
+        '## 2. Compose',
+        '- PASS ALL COMPLETE',
+        '- FAIL ANY STOP',
+        '',
+        '- planner.runbook.md',
+        '',
+      ].join('\n');
+
+    beforeEach(async () => {
+      await writeFile(
+        join(workspace.cwd, 'planner.runbook.md'),
+        ['# Planner', '## 1. Plan', '- PASS COMPLETE', '', 'Plan.', ''].join('\n'),
+      );
+    });
+
+    it('a naked assertion says to start a new run with --artifacts, not to fix a step', async () => {
+      await writeFile(
+        join(workspace.cwd, 'asserting.runbook.md'),
+        composing([
+          '## 1. Use the plan',
+          '- ARTIFACTS',
+          '  - plan',
+          '- PASS CONTINUE',
+          '- FAIL STOP',
+          '',
+          'Use it.',
+          '',
+        ]),
+      );
+
+      const { stdout } = await runCliInProcess(
+        ['run', 'asserting.runbook.md', '--input', 'plan=./plan.md'],
+        workspace,
+      );
+
+      const error = parseJsonEvents(stdout).find((event) => event.type === 'error_occurred');
+      expect(error).toMatchObject({ code: 'ARTIFACT_INPUT_REQUIRED' });
+      const message = String(error?.message);
+      expect(message).toContain('The run stops');
+      expect(message).toContain('No step of this runbook binds "plan"');
+      expect(message).toContain('--artifacts plan=<rd:// URI>');
+      expect(message).not.toContain('in the step that sets it');
+    });
+
+    it('a {{ path X }} render says to stop and start a new run with --artifacts, not to goto', async () => {
+      await writeFile(
+        join(workspace.cwd, 'rendering.runbook.md'),
+        composing([
+          '## 1. Read the plan',
+          '- PASS CONTINUE',
+          '- FAIL STOP',
+          '',
+          'Read {{ path plan }}.',
+          '',
+        ]),
+      );
+
+      const { stdout } = await runCliInProcess(
+        ['run', 'rendering.runbook.md', '--input', 'plan=./plan.md'],
+        workspace,
+      );
+
+      const error = parseJsonEvents(stdout).find((event) => event.type === 'error_occurred');
+      expect(error).toMatchObject({ code: 'ARTIFACT_INPUT_REQUIRED' });
+      const message = String(error?.message);
+      expect(message).toContain('The run keeps its position');
+      expect(message).toContain('rundown stop');
+      expect(message).toContain('--artifacts plan=<rd:// URI>');
+      expect(message).not.toContain('rundown goto');
+    });
   });
 
   it("a child's refusal says the value came from the parent, not a launch flag", async () => {
