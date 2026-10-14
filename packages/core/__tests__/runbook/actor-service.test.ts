@@ -127,6 +127,7 @@ async function createLifecycleHarness(
     mockRunbookDef,
     {
       ownerTokenHash: freshOwnerTokenHash(),
+      launchDir: '.',
       runbookPath: 'lifecycle-test.md',
       frontmatterOutputs: [],
     },
@@ -234,6 +235,7 @@ npm test
     it('creates and starts actor from persisted state', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const actor = await actorService.createActor(state.id, mockSteps);
@@ -246,6 +248,7 @@ npm test
       // machine-issued credential to the first entry.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const frameKey = buildFrameKey('1');
@@ -269,6 +272,7 @@ npm test
     it('does not overlay persisted frame-entry coordinates onto a rehydrated snapshot', async () => {
       const created = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const first = await actorService.createActor(created.id, mockSteps);
@@ -301,6 +305,7 @@ npm test
     it('extracts substep ID from flattened machine state (step::N::M)', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -316,6 +321,7 @@ npm test
     it('extracts step number from simple machine state (step::N)', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -337,6 +343,7 @@ npm test
     it('rejects legacy persisted state IDs instead of adapting them', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -357,6 +364,7 @@ npm test
     it('rejects persisted state IDs that no longer exist in the runbook', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -380,6 +388,7 @@ npm test
       // corrupted mid-flight; the only recovery is prune + restart.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -400,6 +409,7 @@ npm test
       // the length guard this input takes seconds; with it, the regex never runs.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -418,6 +428,7 @@ npm test
       // being short-circuited by the guard — this is the off-by-one pin.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const value = `step::${'x'.repeat(994)}`;
@@ -432,6 +443,7 @@ npm test
     it('rejects a persisted stateValue one character past the length guard', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const value = `step::${'x'.repeat(995)}`;
@@ -461,6 +473,7 @@ exit 1
       };
       const state = await manager.create({ source: 'project', path: 'test.md' }, runbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const channelPath = join(testDir, 'Foo');
@@ -520,6 +533,7 @@ exit 1
     it('creates actor and syncs state without sending event', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const result = await actorService.initializeState(state.id, mockSteps);
@@ -551,6 +565,7 @@ exit 1
       };
       const state = await manager.create({ source: 'project', path: 'substeps.md' }, runbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'substeps.md',
         frontmatterOutputs: [],
       });
@@ -595,6 +610,7 @@ exit 1
       };
       const state = await manager.create({ source: 'project', path: 'for.md' }, runbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'for.md',
         frontmatterOutputs: [],
       });
@@ -637,6 +653,7 @@ exit 1
         { title: 'Substep reload', description: 'Fast path coverage', steps },
         {
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'substeps-initialized.md',
           frontmatterOutputs: [],
         },
@@ -684,6 +701,7 @@ exit 1
       const runbook = { title: 'Hydrate substep', description: '', steps };
       const state = await manager.create({ source: 'project', path: 'test.md' }, runbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -715,6 +733,7 @@ exit 1
     it('sends event, syncs state, and returns state + snapshot', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const result = await sendPreparedForTest(actorService, manager, state.id, mockSteps, {
@@ -746,6 +765,7 @@ exit 1
         { title: 'PASS result', description: '', steps },
         {
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'pass-result.md',
           frontmatterOutputs: [],
         },
@@ -770,6 +790,7 @@ exit 1
         { title: 'FAIL result', description: '', steps },
         {
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'fail-result.md',
           frontmatterOutputs: [],
         },
@@ -803,6 +824,7 @@ echo ok
         { title: 'Command result', description: '', steps },
         {
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'command-result.md',
           frontmatterOutputs: [],
         },
@@ -830,6 +852,7 @@ echo ok
         {
           runId,
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -873,6 +896,7 @@ echo ok
         {
           runId,
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -937,6 +961,7 @@ echo ok
           {
             runId: assertRunId(runId),
             ownerTokenHash: freshOwnerTokenHash(),
+            launchDir: '.',
             runbookPath: 'workflow.runbook.md',
             frontmatterOutputs: [],
             templateVars: commandTemplateVars(assertRunId(runId)),
@@ -986,6 +1011,7 @@ echo ok
         {
           runId,
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1018,6 +1044,7 @@ echo ok
         {
           runId,
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1060,6 +1087,7 @@ echo ok
         {
           runId,
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1099,6 +1127,7 @@ echo ok
         {
           runId,
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1157,6 +1186,7 @@ echo ok
         {
           runId,
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1207,6 +1237,7 @@ echo ok
         {
           runId,
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: templateVarsWithoutWorkPath,
@@ -1233,6 +1264,7 @@ echo ok
         {
           runId,
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1259,6 +1291,7 @@ echo ok
           {
             runId: assertRunId(runId),
             ownerTokenHash: freshOwnerTokenHash(),
+            launchDir: '.',
             runbookPath: 'workflow.runbook.md',
             frontmatterOutputs: [],
             templateVars: commandTemplateVars(runId),
@@ -1350,6 +1383,7 @@ echo ok
           {
             runId: assertRunId(runId),
             ownerTokenHash: freshOwnerTokenHash(),
+            launchDir: '.',
             runbookPath: 'workflow.runbook.md',
             frontmatterOutputs: [],
             templateVars: commandTemplateVars(runId),
@@ -1372,6 +1406,7 @@ echo ok
         {
           runId,
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1408,6 +1443,7 @@ echo ok
         {
           runId,
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1465,6 +1501,7 @@ echo ok
         {
           runId,
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1499,6 +1536,7 @@ echo ok
         { title: 'Parent', description: '', steps },
         {
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'parent.runbook.md',
           frontmatterOutputs: [],
         },
@@ -1541,6 +1579,7 @@ echo ok
         {
           runId,
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'workflow.runbook.md',
           frontmatterOutputs: [],
           templateVars: commandTemplateVars(runId),
@@ -1567,6 +1606,7 @@ echo ok
         { title: 'GOTO clear', description: '', steps },
         {
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'goto-clear.md',
           frontmatterOutputs: [],
         },
@@ -1608,6 +1648,7 @@ echo hi
       };
       const state = await manager.create({ source: 'project', path: 'test.md' }, runbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const channelPath = join(testDir, 'Foo');
@@ -1633,6 +1674,7 @@ echo hi
     it('syncs FOR context fields from actor snapshot', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
 
@@ -1675,6 +1717,7 @@ echo hi
     it('clears FOR fields when runbook completes', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
 
@@ -1718,6 +1761,7 @@ echo hi
     it('mirrors terminal internal-failure lastAction onto persisted runbook state', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -1753,6 +1797,7 @@ echo hi
     it('iterationResults not persisted for implicit loops', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -1782,6 +1827,7 @@ echo hi
     it('explicit ForContext entries are persisted normally', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -1812,6 +1858,7 @@ echo hi
     it('iterationResults preserved after explicit FOR loop exits (empty forStack)', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const actor = mockActor({
@@ -1844,6 +1891,7 @@ echo hi
     it('persists forStack with variable source through actor update and reload', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
 
@@ -1891,6 +1939,7 @@ echo hi
     it('persists forStack with variable source and snapshot through actor update and reload', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
 
@@ -1959,6 +2008,7 @@ echo hi
       // Create with templateVars containing arrays
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         templateVars: templateVars,
       });
@@ -2009,6 +2059,7 @@ echo hi
     it('seeds compiler context.frontmatterOutputs from RunbookState.frontmatterOutputs', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [{ name: 'SomeVar' }],
       });
@@ -2025,6 +2076,7 @@ echo hi
     it('defaults context.frontmatterOutputs to [] when no outputs declared at run time', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
 
@@ -2039,6 +2091,7 @@ echo hi
     it('throws for stale run state missing frontmatterOutputs field', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -2055,6 +2108,7 @@ echo hi
     it('validates stale run state without creating an actor', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -2070,6 +2124,7 @@ echo hi
     it('throws for an unrecognized snapshot.value shape', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -2085,6 +2140,7 @@ echo hi
     it('rejects persisted pending-effect __capture snapshots as invalid state', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -2103,6 +2159,7 @@ echo hi
     it('throws for a malformed legacy state ID in snapshot.value', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -2118,6 +2175,7 @@ echo hi
     it('throws when snapshot references a step no longer in the runbook', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -2133,6 +2191,7 @@ echo hi
     it('seeds compiler context.templateVars from RunbookState.templateVars (flattened)', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         templateVars: { SomeVar: 'hello', Items: ['a', 'b'] },
       });
@@ -2161,6 +2220,7 @@ echo hi
       const stream = createJsonArrayStream(join(canonicalTestDir, 'data.jsonl'));
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         templateVars: {
           Region: 'us-east-1',
@@ -2329,6 +2389,7 @@ echo hi
     it('persists context.finalVars to RunbookState.finalVars on STOPPED snapshot', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [{ name: 'Result' }],
         templateVars: { Result: 'failed-value' },
@@ -2347,6 +2408,7 @@ echo hi
     it('persists context.finalVars to RunbookState.finalVars on COMPLETE snapshot', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [{ name: 'Result' }],
         templateVars: { Result: 'passed-value' },
@@ -2362,6 +2424,7 @@ echo hi
     it('leaves RunbookState.finalVars undefined when no frontmatter outputs are declared', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [],
         // No frontmatterOutputs declared → context.finalVars stays {}
@@ -2376,6 +2439,7 @@ echo hi
     it('leaves RunbookState.finalVars undefined when context.finalVars is empty on COMPLETE', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [], // No frontmatterOutputs declared → context.finalVars stays {}
       });
@@ -2389,6 +2453,7 @@ echo hi
     it('persists finalVars and terminal metadata for FORCE_STOP', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [{ name: 'Result' }],
         templateVars: { Result: 'forced-stop-value' },
@@ -2413,6 +2478,7 @@ echo hi
     it('clears stale lastResult when FORCE_STOP persists a terminal state', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -2433,6 +2499,7 @@ echo hi
     it('persists finalVars and terminal metadata for FORCE_COMPLETE without moving the cursor', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [{ name: 'Result' }],
         templateVars: { Result: 'forced-complete-value' },
@@ -2460,6 +2527,7 @@ echo hi
       const helperActorService = new RunbookActorService(manager, { helpers });
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [{ name: 'Published', value: '{{ upper Result }}' }],
         templateVars: { Result: 'prod' },
@@ -2480,6 +2548,7 @@ echo hi
       // state and bypass `isPersistableLastAction`.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -2501,6 +2570,7 @@ echo hi
     it('drops FOR_RESOLUTION_FAILED missing the required code discriminant', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -2526,6 +2596,7 @@ echo hi
     it('drops FOR_RESOLUTION_FAILED with an unrecognized code value', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -2552,6 +2623,7 @@ echo hi
     it('persists FOR_RESOLUTION_FAILED with a well-formed code and message', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -2583,6 +2655,7 @@ echo hi
     it('persists FOR_RESOLUTION_FAILED with drift-detected code', async () => {
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
         frontmatterOutputs: [],
       });
@@ -2633,6 +2706,7 @@ echo hi
       // invariant directly by spying on XState's Actor.prototype.start.
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       const xstate = await import('xstate');
@@ -2662,6 +2736,7 @@ echo hi
 
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       await manager.update(state.id, {
@@ -2693,6 +2768,7 @@ echo hi
 
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       await manager.update(state.id, {
@@ -2727,6 +2803,7 @@ echo hi
 
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       await manager.update(state.id, { substepStates });
@@ -2760,6 +2837,7 @@ echo hi
 
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       await manager.update(state.id, { activeFrameKey: staleFrameKey });
@@ -2798,6 +2876,7 @@ echo hi
 
       const state = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       await manager.update(state.id, { activeFrameKey: frameKey });
@@ -2827,6 +2906,7 @@ echo hi
       { title: 'Artifacts', description: 'Artifacts test', steps },
       {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: options.runbookPath,
         frontmatterOutputs: [],
         templateVars: brandInitialTemplateVarsForTest({
@@ -2857,6 +2937,7 @@ echo hi
         { title: 'Review', description: 'Review imported plan', steps },
         {
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'review.md',
           frontmatterOutputs: [],
           templateVars: brandInitialTemplateVarsForTest({
@@ -2890,6 +2971,7 @@ echo hi
         { steps, title: 'Artifacts' },
         {
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'artifacts.md',
           frontmatterOutputs: [],
           templateVars: brandInitialTemplateVarsForTest({
@@ -3053,6 +3135,7 @@ echo hi
         { title: 'Frame entry', description: 'Frame entry', steps: twoStepStructure },
         {
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'frame-entry.md',
           frontmatterOutputs: [],
         },
@@ -3110,6 +3193,7 @@ echo hi
       // representable and the patch must read through it rather than assume it.
       const created = await manager.create({ source: 'project', path: 'test.md' }, mockRunbook, {
         ownerTokenHash: freshOwnerTokenHash(),
+        launchDir: '.',
         runbookPath: 'test.md',
       });
       await manager.update(created.id, {
@@ -3146,6 +3230,7 @@ echo hi
         { title: 'Self goto', description: 'Self goto', steps: selfGotoSteps },
         {
           ownerTokenHash: freshOwnerTokenHash(),
+          launchDir: '.',
           runbookPath: 'self-goto.md',
           frontmatterOutputs: [],
         },

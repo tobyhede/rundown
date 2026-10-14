@@ -74,7 +74,8 @@ Policy options:
   --sandbox-strict              Fail if sandbox is unavailable (default;
                                 explicit affirmation of fail-closed)
   --helpers <paths>             Helper module paths to load (comma-separated,
-                                relative to project root)
+                                relative to the current directory; must be
+                                inside the project root)
 
 Commands:
   run [options] [file]          Start a runbook

@@ -171,6 +171,7 @@ describe('persisted context hygiene properties', () => {
     ]);
     const machine = compileRunbookToMachine(steps, {
       evaluationOptions: { cwd },
+      commandWorkingDir: process.cwd(),
       commandServices: {
         runExternalCommand: async () => ({ success: true, exitCode: 0 }),
       },

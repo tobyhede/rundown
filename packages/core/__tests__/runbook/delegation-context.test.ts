@@ -43,6 +43,7 @@ function ancestorRunId(index: number): RunId {
 function makeMinimalState(overrides: Partial<RunbookState> = {}): RunbookState {
   return {
     prompted: false,
+    launchDir: '.',
     templateVars: brandInitialTemplateVarsForTest({}),
     id: RUN_ID,
     runbook: { source: 'project', path: 'parent.md' },

@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { getStepTotal, getCwd, findRunbookFile } from '../../src/helpers/context.js';
+import { resolveProjectRoot } from '@rundown-org/core';
+import {
+  getStepTotal,
+  getInvocationDir,
+  getProjectRoot,
+  findRunbookFile,
+} from '../../src/helpers/context.js';
 
 describe('context helpers', () => {
   let tempDir: string;
@@ -15,9 +21,15 @@ describe('context helpers', () => {
     await fs.rm(tempDir, { recursive: true, force: true });
   });
 
-  describe('getCwd', () => {
-    it('returns current working directory', () => {
-      expect(getCwd()).toBe(process.cwd());
+  describe('getInvocationDir', () => {
+    it('returns the process working directory', () => {
+      expect(getInvocationDir()).toBe(process.cwd());
+    });
+  });
+
+  describe('getProjectRoot', () => {
+    it('is the project root of the process working directory', () => {
+      expect(getProjectRoot()).toBe(resolveProjectRoot(process.cwd()));
     });
   });
 

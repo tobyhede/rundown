@@ -75,15 +75,42 @@ shadows it (shell aliases beat `PATH`), so **`rd` is unreliable** — prefer
 # Using an absolute path
 rundown run /path/to/project/.rundown/runbooks/simple.runbook.md
 
-# Or from the project root, with runbook in the standard location
+# Or from anywhere in the project, with runbook in the standard location
 rundown run simple.runbook.md
 ```
+
+<a id="project-root"></a>
+
+**Project root.** Every command acts on one project: the nearest directory at or
+above the working directory that contains a `.rundown/` directory. The walk
+stops at a git boundary (a directory with a `.git` directory or file, after
+checking that directory's own `.rundown/`); with no `.rundown/` up to there, the
+git root is the project root, so the first `rundown run` from anywhere in a
+fresh repository creates `.rundown/` at its git root. The walk never climbs into
+a directory above your home directory, nor into home itself unless home is a git
+repository (a dotfiles repository in `~`, or a container with `HOME=/app`): a
+stray `~/.rundown/` is used only when you run from home itself, so it never
+captures the non-git directories below home. Outside git, with no match, the
+working directory itself is the project root, and `rundown run` creates
+`.rundown/` there. A nested `.rundown/` shadows an outer one. The run store,
+project runbooks, run outputs and artifacts, `prune`, `.rundown/config.yaml` and
+the policy `{repo}` root all use the project root, and step commands run from
+it. So `rundown claim`, `rundown status` or `rundown run` from a subdirectory
+see the same runs as from the root; you do not need to `cd` to the root first.
+
+Paths you type stay relative to where you typed them: a runbook path,
+`--input-file` paths, `file:` values in `--input` / `--input-json`, and
+`--helpers` paths resolve against the working directory (and input paths must
+still stay inside the project root). The policy-file search also starts at the
+working directory and walks upward, so a sub-package's stricter policy file wins
+over the root's.
 
 The CLI resolves runbook paths in this order:
 
 1. Absolute path (used as-is)
-2. Relative to current working directory
-3. By name via the discovery chain: project (`.rundown/runbooks/`), then plugin
+2. Under the project's `.rundown/runbooks/`, then the plugin's `runbooks/`
+3. Relative to the current working directory
+4. By name via the discovery chain: project (`.rundown/runbooks/`), then plugin
    (`$CLAUDE_PLUGIN_ROOT/runbooks/`), then bundled (CLI package
    `dist/runbooks/`) — see [Runbook Discovery](#runbook-discovery) below for the
    full priority table
@@ -97,11 +124,11 @@ needs it (see [Run Ownership](#run-ownership)).
 When a runbook is referenced by name (rather than an explicit path), the CLI
 searches multiple sources in priority order:
 
-| Priority    | Source  | Location                        |
-| ----------- | ------- | ------------------------------- |
-| 1 (highest) | Project | `.rundown/runbooks/`            |
-| 2           | Plugin  | `$CLAUDE_PLUGIN_ROOT/runbooks/` |
-| 3           | Bundled | CLI package `dist/runbooks/`    |
+| Priority    | Source  | Location                            |
+| ----------- | ------- | ----------------------------------- |
+| 1 (highest) | Project | `<project root>/.rundown/runbooks/` |
+| 2           | Plugin  | `$CLAUDE_PLUGIN_ROOT/runbooks/`     |
+| 3           | Bundled | CLI package `dist/runbooks/`        |
 
 Directories are scanned recursively, so nested layouts like
 `planning/write-plan.runbook.md` are supported.
@@ -154,22 +181,22 @@ enforcement, and the default write allowlist.
 
 ### Security Quick Reference
 
-| Flag                    | Effect                                                                                   |
-| ----------------------- | ---------------------------------------------------------------------------------------- |
-| `--allow-run <cmds>`    | Allow specific commands (comma-separated)                                                |
-| `--allow-read <paths>`  | Allow reading specific paths                                                             |
-| `--allow-write <paths>` | Allow writing to specific paths                                                          |
-| `--allow-env <vars>`    | Allow specific environment variables                                                     |
-| `--allow-all`           | Bypass all policy checks                                                                 |
-| `--deny-all`            | Block all operations not explicitly allowed                                              |
-| `-y, --yes`             | Auto-approve prompts                                                                     |
-| `--non-interactive`     | CI mode (auto-deny unlisted commands)                                                    |
-| `--policy <file>`       | Use custom policy file                                                                   |
-| `--trust-js-policy`     | Trust an explicitly selected JS policy file and helper modules declared by policy config |
-| `--helpers <paths>`     | Helper module paths to load (comma-separated, relative to project root)                  |
-| `--sandbox`             | Enable OS-level filesystem sandbox (default)                                             |
-| `--no-sandbox`          | Disable sandbox enforcement; a general sandbox opt-out                                   |
-| `--sandbox-strict`      | Fail if sandbox is unavailable (default; explicit affirmation of fail-closed)            |
+| Flag                    | Effect                                                                                                            |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `--allow-run <cmds>`    | Allow specific commands (comma-separated)                                                                         |
+| `--allow-read <paths>`  | Allow reading specific paths                                                                                      |
+| `--allow-write <paths>` | Allow writing to specific paths                                                                                   |
+| `--allow-env <vars>`    | Allow specific environment variables                                                                              |
+| `--allow-all`           | Bypass all policy checks                                                                                          |
+| `--deny-all`            | Block all operations not explicitly allowed                                                                       |
+| `-y, --yes`             | Auto-approve prompts                                                                                              |
+| `--non-interactive`     | CI mode (auto-deny unlisted commands)                                                                             |
+| `--policy <file>`       | Use custom policy file                                                                                            |
+| `--trust-js-policy`     | Trust an explicitly selected JS policy file and helper modules declared by policy config                          |
+| `--helpers <paths>`     | Helper module paths to load (comma-separated, relative to the current directory; must be inside the project root) |
+| `--sandbox`             | Enable OS-level filesystem sandbox (default)                                                                      |
+| `--no-sandbox`          | Disable sandbox enforcement; a general sandbox opt-out                                                            |
+| `--sandbox-strict`      | Fail if sandbox is unavailable (default; explicit affirmation of fail-closed)                                     |
 
 Policy discovery is data-only by default: `.rundownrc`, `.rundownrc.json`,
 `.rundownrc.yaml`, `.rundownrc.yml`, or the `rundown` field in `package.json`.
@@ -275,6 +302,12 @@ rundown run my-runbook.runbook.md --prompted --step 2.1  # Jump to step 2.1 afte
 rundown run my-runbook.runbook.md --prompted --step 2 --index 3  # Jump into FOR iteration 3 of step 2
 ```
 
+The directory `rundown run` is invoked from is the run's **launch directory**,
+recorded on the run: every step command of the run executes there, whoever
+continues it with `pass`, `fail`, `goto` or `collect` and wherever they run
+those from. Child runs, including a Delegation started by `rundown claim`,
+inherit it. See [Runtime § Command Execution](runtime.md#4-command-execution).
+
 **Flags:**
 
 - `--prompted` — Show commands without auto-executing.
@@ -283,9 +316,10 @@ rundown run my-runbook.runbook.md --prompted --step 2 --index 3  # Jump into FOR
 - `--input <key=value>` / `--input-json <key=json>` / `--input-file <path>` —
   Set template variables (all repeatable). `--input KEY` without `=value`
   inherits the environment variable `KEY`. `--input-json` carries JSON
-  array/object values. `--input-file` paths must be project-relative and must
-  remain inside the project directory after symlink resolution; absolute paths
-  and `..` traversal are rejected.
+  array/object values. `--input-file` paths, and `file:` values given through
+  `--input` or `--input-json`, are relative to the directory the command was run
+  from and must remain inside the project root after symlink resolution;
+  absolute `--input-file` paths and paths that leave the project are rejected.
 - `--artifacts <key=rd://uri>` / `--artifacts-json <key=json-array>` — Supply
   **input artifacts** (both repeatable; declared via frontmatter `artifacts:`).
   Values MUST be `rd://artifacts/...` URIs (or, for `--artifacts-json`, a JSON
@@ -465,6 +499,9 @@ unnamed claim records no agent. The stamp guards against agent confusion, not a
 malicious agent: one that deliberately builds an `--agent-id` the hook cannot
 see, or strips `CLAUDECODE` from its own environment, is outside that threat
 model and is not prevented.
+
+The child's step commands run in its parent run's launch directory, not the
+directory `claim` is run from.
 
 In one transaction, `claim` verifies the reservation is still a child its parent
 counts and the parent is running, and creates the child run under the reserved

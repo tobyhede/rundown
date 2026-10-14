@@ -9,7 +9,7 @@ import {
   RunbookStateManager,
   type CurrentChildStatus,
 } from '@rundown-org/core';
-import { getCwd } from '../helpers/context.js';
+import { getProjectRoot } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
@@ -46,7 +46,7 @@ export function registerStatusCommand(program: Command): void {
     .action(async (options: { run?: string; claimedBy?: string; text?: boolean }) => {
       await withErrorHandling(
         async () => {
-          const cwd = getCwd();
+          const cwd = getProjectRoot();
           const output = new OutputEmitter({ text: options.text, command: 'status' });
           const run = parseRunOption(options.run, output);
           if (!run.ok) return;

@@ -139,6 +139,9 @@ rundown release <child run id>                  # only when you cannot finish it
   `owner_token` and `parent: { runId, step }`, then runs it like `rundown run`
   (command steps execute; a `--prompted` parent's children are prompted too).
   The token is shown once.
+- Claim and drive from anywhere in the project: a subdirectory reaches the
+  same store as the project root, the nearest directory above holding
+  `.rundown/`.
 - Drive the child exactly like any run you own: `--step` names the child's step,
   from the child's latest `step_entered`.
 - Stop at the child's terminal. You never write the parent and never collect.

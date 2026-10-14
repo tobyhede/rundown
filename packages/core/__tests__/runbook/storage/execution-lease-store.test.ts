@@ -45,6 +45,7 @@ async function createdRun(): Promise<RunbookState> {
   const manager = new RunbookStateManager(path.join(dir, 'minting'));
   await fs.mkdir(path.join(dir, 'minting'), { recursive: true });
   const state = await manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
+    launchDir: '.',
     runbookPath: 'test.runbook.md',
     ownerTokenHash: hashRunSecret(generateOwnerToken()),
   });
@@ -193,6 +194,7 @@ describe('a write that is not the decision about the lease', () => {
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
       {
+        launchDir: '.',
         runbookPath: 'test.runbook.md',
         ownerTokenHash: hashRunSecret(generateOwnerToken()),
       },
@@ -226,6 +228,7 @@ describe('deleting a run at the version it was read at', () => {
       { source: 'project', path: 'test.runbook.md' },
       mockRunbook,
       {
+        launchDir: '.',
         runbookPath: 'test.runbook.md',
         ownerTokenHash: hashRunSecret(generateOwnerToken()),
       },
@@ -284,6 +287,7 @@ describe('deleting a run at the version it was read at', () => {
         mockRunbook,
         {
           runId: generateRunId(),
+          launchDir: '.',
           runbookPath: 'child.runbook.md',
           linkage: {
             kind: 'inline',
@@ -354,6 +358,7 @@ describe('listing runs with their leases', () => {
     const manager = new RunbookStateManager(cwd);
     const create = (): Promise<RunbookState> =>
       manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
+        launchDir: '.',
         runbookPath: 'test.runbook.md',
         ownerTokenHash: hashRunSecret(generateOwnerToken()),
       });

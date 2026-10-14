@@ -47,6 +47,14 @@ The same event carries the **run id** (`runbookId`, `rd_…`). The run id is for
 reading only — `rundown status --run <run_id>`. Mutating commands take `--token`
 alone; adding `--run` to them is refused `INVALID_SYNTAX`.
 
+## Where to Run
+
+Run `rundown` from anywhere in the project. Every command uses the project
+root — the nearest directory at or above yours that has `.rundown/` — for the run
+store, the project runbooks and step commands, so you need not `cd` back to the
+root after moving into a subdirectory. A relative runbook path you type is still
+read relative to where you are.
+
 ## The Loop
 
 1. **Start** the runbook and capture `owner_token` and `runbookId` from

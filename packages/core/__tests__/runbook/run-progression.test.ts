@@ -125,6 +125,7 @@ async function seedRun(
     {
       runId,
       runbookPath,
+      launchDir: '.',
       ownerTokenHash: hashRunSecret(generateOwnerToken()),
       frontmatterOutputs: [],
       templateVars: {

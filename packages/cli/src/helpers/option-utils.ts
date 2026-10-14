@@ -9,6 +9,7 @@
 
 import { InvalidArgumentError } from 'commander';
 import {
+  type InputFlagEntry,
   isValidVariableName,
   parseVarFlag,
   VALID_IDENTIFIER,
@@ -71,16 +72,12 @@ function rejectFlagShapedName(key: string, label: 'variable' | 'artifact'): void
  * Shared `key=value` flag parser for the variable and artifact channels.
  *
  * @param value - Raw flag value (`key=value` or, when allowed, a bare `KEY`)
- * @param previous - Previously accumulated entries
  * @param opts - Channel label and env-inherit policy
- * @returns Updated array with the new `key=value` entry
+ * @returns The entry, tagged `typed` for `key=value` and `environment` for a
+ *   bare `KEY` whose value was read from `process.env`
  * @throws {InvalidArgumentError} On invalid identifier, a flag-shaped name, or a bare `KEY` when env-inherit is disabled
  */
-function parseVarFlagOption(
-  value: string,
-  previous: string[],
-  opts: VarFlagParseOptions,
-): string[] {
+function parseVarFlagEntry(value: string, opts: VarFlagParseOptions): InputFlagEntry {
   const eqIndex = value.indexOf('=');
   if (eqIndex !== -1) {
     rejectFlagShapedName(value.slice(0, eqIndex), opts.label);
@@ -92,7 +89,7 @@ function parseVarFlagOption(
         : `Invalid ${opts.label}: "${value}" — key must match [a-zA-Z_][a-zA-Z0-9_]*`;
       throw new InvalidArgumentError(msg);
     }
-    return [...previous, value];
+    return { origin: 'typed', key: parsed.key, value: parsed.value };
   }
   if (!opts.allowEnvInherit) {
     throw new InvalidArgumentError(
@@ -112,7 +109,7 @@ function parseVarFlagOption(
       `Environment variable "${value}" is not set (use --input ${value}=<value>)`,
     );
   }
-  return [...previous, `${value}=${envValue}`];
+  return { origin: 'environment', key: value, value: envValue };
 }
 
 /**
@@ -153,18 +150,25 @@ function parseVarJsonOption(
 /**
  * Commander argParser for `--input` (env-inherit allowed).
  *
- * Supports two forms:
- * - `key=value`: validates identifier and accumulates
- * - `KEY` (no =): inherits value from process.env[KEY]
+ * Supports two forms, kept apart by the entry's `origin`:
+ * - `key=value`: validates the identifier; tagged `typed`
+ * - `KEY` (no =): inherits the value of process.env[KEY]; tagged `environment`
+ *
+ * The tag matters downstream: a `file:` path typed on the command line is
+ * relative to the directory it was typed in, while one inherited from the
+ * environment resolves against the project root, as `RD_INPUT_*` values do.
  *
  * @param value - Raw `key=value` or bare `KEY` (env-inherit) flag value
  * @param previous - Previously accumulated entries
  * @returns Updated array including the new entry
  * @throws {InvalidArgumentError} On invalid identifier or unset inherited env var
- * @see parseVarFlagOption
+ * @see parseVarFlagEntry
  */
-export function parseInputOption(value: string, previous: string[]): string[] {
-  return parseVarFlagOption(value, previous, { label: 'variable', allowEnvInherit: true });
+export function parseInputOption(
+  value: string,
+  previous: readonly InputFlagEntry[],
+): InputFlagEntry[] {
+  return [...previous, parseVarFlagEntry(value, { label: 'variable', allowEnvInherit: true })];
 }
 
 /**
@@ -178,14 +182,16 @@ export function parseInputOption(value: string, previous: string[]): string[] {
  * @param previous - Previously accumulated entries
  * @returns Updated array including the new entry
  * @throws {InvalidArgumentError} On invalid identifier or a bare `KEY` (env-inherit is rejected for artifacts)
- * @see parseVarFlagOption
+ * @see parseVarFlagEntry
  */
 export function parseArtifactOption(value: string, previous: string[]): string[] {
-  return parseVarFlagOption(value, previous, {
+  // Env-inherit is disabled, so the entry is always the typed `key=value`.
+  const entry = parseVarFlagEntry(value, {
     label: 'artifact',
     allowEnvInherit: false,
     valueHint: '<rd:// uri>',
   });
+  return [...previous, `${entry.key}=${entry.value}`];
 }
 
 /**

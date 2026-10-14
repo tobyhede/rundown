@@ -97,6 +97,9 @@ describe('end-to-end-test review-and-collate on Delegation (#904)', () => {
   beforeEach(async () => {
     tempDir = mkdtempSync(path.join(tmpdir(), 'rd-e2e-runtime-'));
     await mkdir(path.join(tempDir, '.claude', 'rundown', 'runs'), { recursive: true });
+    // Its own .rundown/ makes the workspace its own project root, so the
+    // project-root walk never reaches a .rundown/ above the temp directory.
+    await mkdir(path.join(tempDir, '.rundown'));
     previousPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
     process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
   });

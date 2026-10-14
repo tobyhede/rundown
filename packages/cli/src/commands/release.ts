@@ -8,7 +8,7 @@ import {
   type ReleaseDelegationOutcome,
 } from '@rundown-org/core';
 import { collectAgentId, resolveAgentIdOption } from '../helpers/agent-id-option.js';
-import { getCwd } from '../helpers/context.js';
+import { getProjectRoot } from '../helpers/context.js';
 import { parseRunId } from '../helpers/run-option.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -52,7 +52,7 @@ export function registerReleaseCommand(program: Command): void {
           if (runId === undefined) return;
           const agent = resolveAgentIdOption('release', options.agentId, output);
           if (agent === undefined) return;
-          const cwd = getCwd();
+          const cwd = getProjectRoot();
           const manager = new RunbookStateManager(cwd);
           const outcome = await releaseDelegation(
             {

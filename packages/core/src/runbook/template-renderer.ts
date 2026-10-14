@@ -8,6 +8,7 @@
  * @module
  */
 
+import * as path from 'node:path';
 import type {
   Runbook,
   Substep,
@@ -107,6 +108,22 @@ export type TemplateRenderContext =
       /** Current run identifier. */
       readonly runId: RunId;
     };
+
+/**
+ * The work directory a render context names, as an absolute path.
+ *
+ * `WorkPath` is persisted relative to the project root (`.rundown/work`). Step
+ * commands run in the run's launch directory rather than the root, so any work
+ * directory handed to one — `{{ WorkPath }}` in its text, `RD_WORK_PATH` in its
+ * environment — is resolved against the root here, at render time, and never
+ * in persisted state.
+ *
+ * @param context - Render context carrying the project root and work path
+ * @returns Absolute work directory under the project root
+ */
+export function resolveWorkDirectory(context: TemplateRenderContext): string {
+  return path.resolve(context.cwd, context.workPath);
+}
 
 /** Options for template rendering and helper invocation. */
 export interface TemplateRenderOptions {
@@ -1335,9 +1352,16 @@ function substituteRequiredCommand(
   variables: Record<string, unknown>,
   helperOptions?: TemplateHelperOptions,
 ): Command {
+  const context = getRenderContext(helperOptions);
+  // A step command runs in the run's launch directory, which may sit below the
+  // project root, so the work directory it is handed must not be relative to
+  // the root. `{{ WorkPath }}` in command text names it absolutely; every other
+  // field keeps the persisted, root-relative value.
+  const commandVariables =
+    context === undefined ? variables : { ...variables, WorkPath: resolveWorkDirectory(context) };
   return {
     ...command,
-    code: substituteText(command.code, variables, shellEscapeValue, helperOptions),
+    code: substituteText(command.code, commandVariables, shellEscapeValue, helperOptions),
   };
 }
 

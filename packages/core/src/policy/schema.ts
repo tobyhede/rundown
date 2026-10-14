@@ -124,7 +124,7 @@ export const PolicyConfigSchema = z.object({
   overrides: z.array(PolicyOverrideSchema).default([]),
   /** Persisted user grants */
   grants: z.array(PolicyGrantSchema).default([]),
-  /** Helper module paths to load (relative to project root) */
+  /** Helper module paths to load (relative to the policy file's directory; must be inside the project root) */
   helpers: z.array(z.string()).optional(),
 });
 /** Inferred type from {@link PolicyConfigSchema}: complete policy with defaults, overrides, and grants. */

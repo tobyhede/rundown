@@ -24,6 +24,7 @@ const createValidState = (overrides: Record<string, unknown> = {}) => ({
   id: VALID_RUN_ID,
   runbook: { source: 'project', path: 'test.md' },
   runbookPath: 'test.md',
+  launchDir: '.',
   step: '1',
   stepName: 'Test Step',
   retryCount: 0,

@@ -1,6 +1,11 @@
 // src/workflow/hooks/subagent-stop.ts
 import { existsSync } from 'node:fs';
-import { ClaimedDelegationsResponseSchema, dbPath } from '@rundown-org/core';
+import {
+  canonicalPath,
+  ClaimedDelegationsResponseSchema,
+  dbPath,
+  resolveProjectRoot,
+} from '@rundown-org/core';
 import type { z } from 'zod';
 import type { HookInput } from '../../shared/index.js';
 import { rundown } from './rundown.js';
@@ -44,22 +49,26 @@ export function finishOrReleaseInstruction(held: HeldDelegations): string {
 }
 
 /**
- * The directories whose Rundown store may hold a claim by the stopping agent.
+ * The project roots whose Rundown store may hold a claim by the stopping agent.
  *
- * First the session's project directory, `CLAUDE_PROJECT_DIR`: Claude Code
- * exports it to every command hook as the project root the session started
- * in, independent of later `cd`s. Then the hook input's `cwd`, which follows
- * the agent's `cd` — a run started in a subdirectory keeps its store there,
- * since the CLI stores runs under its own working directory. Both are read,
- * so a claim in either holds the agent.
+ * Two starting points: the session's project directory, `CLAUDE_PROJECT_DIR`,
+ * which Claude Code exports to every command hook as the directory the
+ * session started in, independent of later `cd`s; and the hook input's
+ * `cwd`, which follows the agent's `cd`. Each is mapped to its project root
+ * the way the CLI maps its own working directory (`resolveProjectRoot`: the
+ * nearest directory holding `.rundown/`, else the git root), so a claim made from a
+ * subdirectory is found in the root store it went to. Both are read, so a
+ * claim in either project holds the agent. Roots are compared by their real
+ * paths, so one store reached through two spellings is asked once.
  *
  * @param input - Hook event payload.
- * @returns The distinct directories to ask, project directory first.
+ * @returns The distinct project roots to ask, the project directory's first.
  */
 export function storeDirectories(input: HookInput): readonly string[] {
   const projectDir = process.env.CLAUDE_PROJECT_DIR;
-  const dirs = projectDir === undefined || projectDir === '' ? [] : [projectDir];
-  return dirs.includes(input.cwd) ? dirs : [...dirs, input.cwd];
+  const starts =
+    projectDir === undefined || projectDir === '' ? [input.cwd] : [projectDir, input.cwd];
+  return [...new Set(starts.map((start) => canonicalPath(resolveProjectRoot(start))))];
 }
 
 /**
@@ -74,11 +83,11 @@ export function storeDirectories(input: HookInput): readonly string[] {
  * ignores the instruction is blocked again on every stop until a person
  * interrupts it (accepted by the ADR).
  *
- * The question is asked in the session's project directory and in the hook's
- * `cwd` (see {@link storeDirectories}), so a sub-agent that moved into a
- * subdirectory is still held.
+ * The question is asked in the project roots of the session's project
+ * directory and of the hook's `cwd` (see {@link storeDirectories}), so a
+ * sub-agent that moved into a subdirectory is still held.
  *
- * A stop with no `agent_id`, or where neither directory has a Rundown store, holds
+ * A stop with no `agent_id`, or where neither project root has a Rundown store, holds
  * nothing: a claim with no agent id records none, so it holds no sub-agent,
  * and no claim exists before the store does. The store is never created here.
  *

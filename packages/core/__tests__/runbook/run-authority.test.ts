@@ -244,6 +244,7 @@ describe('run creation refuses a composing runbook', () => {
 
   it('throws a typed refusal naming every substep listing several runbooks and writes no run', async () => {
     const created = manager.create({ source: 'project', path: 'compose.runbook.md' }, composing, {
+      launchDir: '.',
       runbookPath: 'compose.runbook.md',
       ownerTokenHash: hashRunSecret(generateOwnerToken()),
     });

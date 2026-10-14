@@ -9851,6 +9851,7 @@ echo hi
 \`\`\`
 `);
       const machine = compileRunbookToMachine(steps, {
+        commandWorkingDir: process.cwd(),
         commandServices: COMMAND_SERVICES,
         evaluationOptions: { cwd: process.cwd() },
         templateVars: brandFlattenedTemplateVarsForTest({

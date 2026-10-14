@@ -633,6 +633,7 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
       const manager = new RunbookStateManager(scratch);
       const mint = () =>
         manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
+          launchDir: '.',
           runbookPath: 'test.runbook.md',
           ownerTokenHash: hashRunSecret(generateOwnerToken()),
         });

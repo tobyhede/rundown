@@ -11,7 +11,7 @@ import {
   type PublicArtifactRecord,
   type RunbookState,
 } from '@rundown-org/core';
-import { getCwd } from '../helpers/context.js';
+import { getProjectRoot } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { parseRunOption } from '../helpers/run-option.js';
@@ -47,7 +47,7 @@ interface ArtifactActionContext {
  * @returns The resolved run with its artifact path options, or why none was chosen
  */
 async function resolveArtifactState(runId: string | undefined): Promise<ActiveArtifactState> {
-  const cwd = getCwd();
+  const cwd = getProjectRoot();
   const manager = new RunbookStateManager(cwd);
   let state: RunbookState | null;
   if (runId !== undefined) {

@@ -92,6 +92,7 @@ describe('TrustedArtifactRecord brand under XState/persistence operations', () =
       id: RUN_ID,
       runbook: { source: 'project' as const, path: 'p.md' },
       runbookPath: 'p.md',
+      launchDir: '.',
       title: 't',
       step: '1',
       stepName: 's',

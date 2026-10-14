@@ -1,4 +1,5 @@
 import type { Command } from 'commander';
+import { getInvocationDir, getProjectRoot } from '../helpers/context.js';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -68,7 +69,7 @@ export function registerScenariosCommand(program: Command): void {
     .action(async (file: string, options: { text?: boolean }) => {
       const output = new OutputEmitter({ text: options.text, command: 'scenario ls' });
       try {
-        const result = await loadScenarios(file, process.cwd());
+        const result = await loadScenarios(file, getProjectRoot(), getInvocationDir());
         if (!result.ok) {
           emitLoadError(result, output);
         }
@@ -96,7 +97,7 @@ export function registerScenariosCommand(program: Command): void {
     .action(async (file: string, scenarioName: string, options: { text?: boolean }) => {
       const output = new OutputEmitter({ text: options.text, command: 'scenario show' });
       try {
-        const result = await loadScenarios(file, process.cwd());
+        const result = await loadScenarios(file, getProjectRoot(), getInvocationDir());
         if (!result.ok) {
           emitLoadError(result, output);
         }
@@ -142,7 +143,7 @@ export function registerScenariosCommand(program: Command): void {
       async (file: string, scenarioName: string, options: { quiet?: boolean; text?: boolean }) => {
         const output = new OutputEmitter({ text: options.text, command: 'scenario run' });
 
-        const result = await loadScenarios(file, process.cwd());
+        const result = await loadScenarios(file, getProjectRoot(), getInvocationDir());
         if (!result.ok) {
           emitLoadError(result, output);
         }

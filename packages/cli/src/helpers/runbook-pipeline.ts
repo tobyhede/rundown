@@ -78,7 +78,7 @@ export interface InputOptions {
   /** Paths to YAML files containing variable definitions (repeatable) */
   inputFile?: string[];
   /** Inline key=value variable overrides (repeatable) */
-  input?: string[];
+  input?: Parameters<typeof resolveVariables>[0]['input'];
   /** Inline key=json variable overrides with JSON values (repeatable) */
   inputJson?: string[];
   /** Inline key=rd:// artifact-channel overrides (repeatable) */
@@ -99,6 +99,11 @@ export interface RunPipelineContext {
   actorService: RunbookActorService;
   /** Current working directory for file resolution */
   cwd: string;
+  /**
+   * The run's launch directory, relative to `cwd` (`.` for the root): where
+   * `rundown run` was invoked, and where the run's step commands execute.
+   */
+  launchDir: string;
   /** Runtime-only routing for command subprocess stdout/stderr. */
   commandStreamOptions?: CommandExecutionStreamOptions;
 }
@@ -251,6 +256,13 @@ export interface PrepareRunbookOptions {
    * A child reference no search root holds is then tried beside it.
    */
   readonly composedFrom?: string;
+  /**
+   * Where the CLI was invoked. A relative runbook path given on the command
+   * line is tried against it, and `--input-file` paths and `file:` values in
+   * `--input` / `--input-json` resolve against it (still contained in the
+   * project root). Defaults to the project root.
+   */
+  readonly invocationDir?: string;
 }
 
 /** Success result from {@link prepareRunbook}. */
@@ -415,6 +427,19 @@ export interface ResolvedRunbookRequest {
 }
 
 /**
+ * The runbook resolution options carried by preparation options.
+ *
+ * @param options - Preparation options, if any
+ * @returns The `composedFrom` and `invocationDir` that are set
+ */
+function resolveOptionsFrom(options: PrepareRunbookOptions | undefined): ResolveRunbookFileOptions {
+  return {
+    ...(options?.composedFrom !== undefined ? { composedFrom: options.composedFrom } : {}),
+    ...(options?.invocationDir !== undefined ? { invocationDir: options.invocationDir } : {}),
+  };
+}
+
+/**
  * Resolve, load, and parse a runbook file.
  *
  * @param file - Runbook file path or namespace:name
@@ -435,7 +460,7 @@ export async function loadAndParseRunbook(
 
   let runbookRef: RunbookRef;
   try {
-    runbookRef = await buildRunbookRef(resolved);
+    runbookRef = buildRunbookRef(resolved);
   } catch (error: unknown) {
     return {
       ok: false,
@@ -467,7 +492,7 @@ export async function loadAndParseResolvedRunbook(
 
   let derivedRunbookRef: RunbookRef;
   try {
-    derivedRunbookRef = await buildRunbookRef({ path: filePath, source, sourceRoot });
+    derivedRunbookRef = buildRunbookRef({ path: filePath, source, sourceRoot });
   } catch (error: unknown) {
     return {
       ok: false,
@@ -553,7 +578,7 @@ export async function prepareRunbook(
   cwd: string,
   options?: PrepareRunbookOptions,
 ): Promise<PrepareResult> {
-  const parsed = await loadAndParseRunbook(file, cwd);
+  const parsed = await loadAndParseRunbook(file, cwd, resolveOptionsFrom(options));
   return prepareLoadedRunbook(parsed, file, inputOpts, cwd, { kind: 'prepared' }, options);
 }
 
@@ -577,11 +602,7 @@ export async function prepareRunnableRunbook(
   cwd: string,
   options?: PrepareRunbookOptions,
 ): Promise<RunnablePrepareResult> {
-  const parsed = await loadAndParseRunbook(
-    file,
-    cwd,
-    options?.composedFrom !== undefined ? { composedFrom: options.composedFrom } : {},
-  );
+  const parsed = await loadAndParseRunbook(file, cwd, resolveOptionsFrom(options));
   return prepareLoadedRunbook(
     parsed,
     file,
@@ -690,6 +711,7 @@ async function prepareLoadedRunbook(
         evaluator: getPolicyEvaluator(),
         prompter: getPolicyPrompter(),
       },
+      options?.invocationDir ?? cwd,
     );
     resolvedVariableMap = { ...resolvedVariables.vars };
     providedKeys = resolvedVariables.providedKeys;
@@ -864,7 +886,7 @@ async function launchRunbook(
     driveProgression: StartedRunProgression;
   },
 ): Promise<RunbookStartResult> {
-  const { output, manager, actorService, cwd } = ctx;
+  const { output, manager, actorService, cwd, launchDir } = ctx;
   const { filePath, rawContent, runbook, mergedVariables } = prepared;
 
   const runbookPath = path.relative(cwd, filePath);
@@ -884,6 +906,7 @@ async function launchRunbook(
       runId: prepared.runId,
       ownerTokenHash: hashRunSecret(ownerToken),
       runbookPath,
+      launchDir,
       prompted: options.prompted,
       runbookSrc: rawContent,
       templateVars: mergedVariables,

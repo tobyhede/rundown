@@ -45,12 +45,23 @@ const {
   hashRunSecret: realHashRunSecret,
   redactRunSecret: realRedactRunSecret,
   OwnerTokenSchema: realOwnerTokenSchema,
+  canonicalPath: realCanonicalPath,
 } = await import('@rundown-org/core');
 
 const RUN_ID_PATTERN = /^rd_[a-f0-9]{32}$/;
 const MOCK_RUN_ID = brandRunIdForTest(`rd_${'a'.repeat(32)}`);
 
+// policy-context imports helpers/context, whose real module needs core
+// exports this suite's core mock does not provide.
+jest.unstable_mockModule('../../src/helpers/context', () => ({
+  getInvocationDir: () => '/test',
+  getProjectRoot: () => '/test',
+  getStepTotal: jest.fn(),
+  findRunbookFile: jest.fn(),
+}));
+
 jest.unstable_mockModule('@rundown-org/core', () => ({
+  canonicalPath: realCanonicalPath,
   RunbookCompositionUnsupportedError: RealRunbookCompositionUnsupportedError,
   generateOwnerToken: realGenerateOwnerToken,
   hashRunSecret: realHashRunSecret,
@@ -1003,6 +1014,7 @@ describe('prepareRunbook', () => {
       }),
       '/test',
       expect.anything(),
+      '/test',
     );
     if (result.ok) {
       expect(result.prepared.mergedVariables).toMatchObject({
@@ -1453,7 +1465,7 @@ describe('prepareRunbook', () => {
       source: 'plugin' as const,
       sourceRoot: String.raw`C:\Users\agent\.claude\extensions\rundown-plugin\runbooks`,
     });
-    jest.mocked(buildRunbookRef).mockResolvedValue({
+    jest.mocked(buildRunbookRef).mockReturnValue({
       source: 'plugin',
       path: 'write-plan.runbook.md',
     });

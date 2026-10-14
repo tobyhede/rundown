@@ -288,6 +288,7 @@ async function start(
   const runbook = parse(markdown);
   await manager.create({ source: 'project', path: 'parent.runbook.md' }, runbook, {
     runId,
+    launchDir: '.',
     runbookPath: 'parent.runbook.md',
     ownerTokenHash: hashRunSecret(token),
     runbookSrc: markdown,

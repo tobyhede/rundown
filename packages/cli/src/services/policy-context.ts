@@ -16,6 +16,7 @@ import {
   PolicyPrompter as Prompter,
   getDefaultPolicy,
 } from '@rundown-org/core';
+import { getProjectRoot } from '../helpers/context.js';
 
 /**
  * CLI policy options from command line flags.
@@ -90,6 +91,21 @@ interface PolicyContext {
   cliOptions: PolicyCliOptions;
 }
 
+/**
+ * The two directories policy initialisation keys on. They differ whenever the
+ * CLI runs from a subdirectory of a project.
+ */
+export interface PolicyDirectories {
+  /**
+   * Where the policy-file search starts: the invocation directory. The search
+   * walks upward from here, so a stricter policy file between the invocation
+   * directory and the project root takes precedence over one at the root.
+   */
+  readonly searchFrom: string;
+  /** The evaluator's `{repo}` root: the project root. */
+  readonly repoRoot: string;
+}
+
 /** Global policy context storage */
 let policyContext: PolicyContext | null = null;
 
@@ -100,19 +116,19 @@ let policyContext: PolicyContext | null = null;
  * creates evaluator and prompter instances.
  *
  * @param options - CLI options for policy configuration
- * @param cwd - Current working directory (for config search and path resolution)
+ * @param dirs - Where the policy-file search starts and the evaluator's repo root
  * @returns Initialized policy context
  * @throws {PolicyCliOptionConflictError} When mutually exclusive policy flags are present
  */
 export async function initializePolicyContext(
-  options: PolicyCliOptions = {},
-  cwd: string = process.cwd(),
+  options: PolicyCliOptions,
+  dirs: PolicyDirectories,
 ): Promise<PolicyContext> {
   assertValidPolicyCliOptions(options);
 
   // Load policy from file or defaults
   const { policy, filepath, isDefault, warnings } = await loadPolicy({
-    cwd,
+    cwd: dirs.searchFrom,
     configPath: options.policyPath,
     trustJsPolicy: options.trustJsPolicy,
   });
@@ -126,7 +142,7 @@ export async function initializePolicyContext(
 
   // Create evaluator with CLI grants
   const evaluator = new Evaluator(policy, {
-    repoRoot: cwd,
+    repoRoot: dirs.repoRoot,
     cliGrants: {
       run: options.allowRun,
       read: options.allowRead,
@@ -160,7 +176,8 @@ export async function initializePolicyContext(
 /**
  * Get the current policy context.
  *
- * If not initialized, creates a default context with built-in policy.
+ * If not initialized, creates a default context with built-in policy, whose
+ * evaluator's repo root is the project root.
  *
  * @returns Current policy context
  */
@@ -169,7 +186,7 @@ export function getPolicyContext(): PolicyContext {
     // Create default context synchronously
     const defaultPolicy = getDefaultPolicy();
     const evaluator = new Evaluator(defaultPolicy, {
-      repoRoot: process.cwd(),
+      repoRoot: getProjectRoot(),
     });
     const prompter = new Prompter({
       nonInteractive: !process.stdin.isTTY,

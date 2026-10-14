@@ -847,6 +847,47 @@ checks, the no-migration rule — see
 [docs/reference/runtime.md § State Persistence](../reference/runtime.md#7-state-persistence).
 This section describes the implementation behind it.
 
+### Project root
+
+"The project" is one directory, resolved once per command by
+`resolveProjectRoot` (`packages/core/src/project-root.ts`): the nearest
+directory at or above the start that holds an existing `.rundown/`. The walk
+stops at a git boundary (a `.git` directory or file), after checking that
+directory's own `.rundown/`; a walk that reaches a git boundary without a match
+resolves to that git root, so the first `rundown run` from a subdirectory of a
+fresh repository creates `.rundown/` at the git root, where every later command
+in the repository finds it. Ancestors of the user's home directory end the walk
+unchecked (compared by realpath), and so does home itself unless it holds
+`.git`: a stray `~/.rundown/` cannot capture non-git directories below home and
+hand them its store, its config and a `{repo}` of the whole home, while a
+repository whose root is home (dotfiles in `~`, a container with `HOME=/app`) is
+found from its subdirectories like any other. A walk that starts at home or
+above it reads that directory's own `.rundown/`. Outside git — the walk reached
+the filesystem root or the home boundary without a match — the root falls back
+to the start. `resolveProjectRootWith(start, { homeDir })` injects home for
+tests. A `stat` that fails for any reason (EACCES, ELOOP, ENOTDIR) counts as
+absent, so the walk never throws. It only reads; `.rundown/` is created later,
+by the first state save. The same module exports `canonicalPath` (realpath, or
+the lexically resolved path when realpath fails), which the CLI and the plugin
+use wherever two spellings of one directory must compare equal.
+
+The CLI reads its working directory in one module,
+`packages/cli/src/helpers/context.ts`, through two functions. `getProjectRoot()`
+is what every command passes down as `cwd`: the store, runbook discovery and
+persisted `RunbookRef` source roots, outputs and artifacts, prune,
+`.rundown/config.yaml` (`findConfigFile` reads it at the root and does not
+walk), the policy evaluator's `{repo}` root, the helper containment boundary and
+the step-command working directory. `getInvocationDir()` is the base for paths
+the user typed: a relative runbook path given to `run`, `check`, `resolve` or
+`scenario`; `--input-file` paths and `file:` values in `--input` /
+`--input-json`; and `--helpers` paths. Input paths must still stay inside the
+project root, and a helper module outside it is skipped. The policy-file search
+also starts at the invocation directory and walks upward, so a sub-package's
+stricter policy file wins over the root's. The plugin's SubagentStop gate
+(`storeDirectories`) calls the same resolver, so no surface derives the root its
+own way. The MCP server spawns the CLI in its own working directory and inherits
+this resolution.
+
 ### One store, one opener
 
 `packages/core/src/runbook/storage/store-registry.ts` is the sole authoritative

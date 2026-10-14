@@ -1,5 +1,16 @@
+import { mkdtempSync, rmSync } from 'node:fs';
 import * as os from 'node:os';
-import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import * as path from 'node:path';
+import {
+  describe,
+  it,
+  expect,
+  jest,
+  beforeEach,
+  afterEach,
+  beforeAll,
+  afterAll,
+} from '@jest/globals';
 import { PolicyEvaluator } from '../../src/policy/evaluator.js';
 import { DEFAULT_POLICY, type PolicyConfig } from '../../src/policy/schema.js';
 import type { PolicyPrompter } from '../../src/policy/prompter.js';
@@ -136,6 +147,18 @@ describe('executeCommand', () => {
 });
 
 describe('executeCommandWithPolicy', () => {
+  // A sandboxed run creates the repo root's .rundown/ state directories
+  // (ensureStateDirs). Give the sandbox tests a throwaway repo root, so they
+  // never leave a .rundown/ in the package directory -- which the project-root
+  // walk would then treat as a project.
+  let sandboxRoot: string;
+  beforeAll(() => {
+    sandboxRoot = mkdtempSync(path.join(os.tmpdir(), 'rd-executor-sandbox-'));
+  });
+  afterAll(() => {
+    rmSync(sandboxRoot, { recursive: true, force: true });
+  });
+
   let consoleWarnSpy: jest.SpiedFunction<typeof console.warn>;
 
   beforeEach(() => {
@@ -251,20 +274,23 @@ describe('executeCommandWithPolicy', () => {
 
   it('returns policy denied when sandbox strict and unavailable', async () => {
     // This test simulates sandbox being unavailable
-    const evaluator = new PolicyEvaluator({
-      ...DEFAULT_POLICY,
-      default: {
-        ...DEFAULT_POLICY.default,
-        mode: 'execute',
-        network: 'allow',
-        run: { allow: ['*'], deny: [] },
+    const evaluator = new PolicyEvaluator(
+      {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          mode: 'execute',
+          network: 'allow',
+          run: { allow: ['*'], deny: [] },
+        },
       },
-    });
+      { repoRoot: sandboxRoot },
+    );
 
     // Mock isSandboxAvailable to return false
     // Since we can't easily mock the import, we test with sandbox disabled
     // This is more of a behavioral test on strict mode
-    const result = await executeCommandWithPolicy('node -e "process.exit(0)"', process.cwd(), {
+    const result = await executeCommandWithPolicy('node -e "process.exit(0)"', sandboxRoot, {
       evaluator,
       sandbox: true,
       sandboxStrict: true,
@@ -279,13 +305,16 @@ describe('executeCommandWithPolicy', () => {
   });
 
   it('fails closed by default (sandboxStrict omitted) when sandbox unavailable', async () => {
-    const evaluator = new PolicyEvaluator({
-      ...DEFAULT_POLICY,
-      default: { ...DEFAULT_POLICY.default, mode: 'execute', run: { allow: ['*'], deny: [] } },
-    });
+    const evaluator = new PolicyEvaluator(
+      {
+        ...DEFAULT_POLICY,
+        default: { ...DEFAULT_POLICY.default, mode: 'execute', run: { allow: ['*'], deny: [] } },
+      },
+      { repoRoot: sandboxRoot },
+    );
 
     // No sandboxStrict supplied — the default is now fail-closed.
-    const result = await executeCommandWithPolicy('node -e "process.exit(0)"', process.cwd(), {
+    const result = await executeCommandWithPolicy('node -e "process.exit(0)"', sandboxRoot, {
       evaluator,
       sandbox: true,
     });
@@ -300,17 +329,20 @@ describe('executeCommandWithPolicy', () => {
   });
 
   it('falls back to unsandboxed execution with warning when sandbox unavailable and not strict', async () => {
-    const evaluator = new PolicyEvaluator({
-      ...DEFAULT_POLICY,
-      default: {
-        ...DEFAULT_POLICY.default,
-        mode: 'execute',
-        network: 'allow',
-        run: { allow: ['*'], deny: [] },
+    const evaluator = new PolicyEvaluator(
+      {
+        ...DEFAULT_POLICY,
+        default: {
+          ...DEFAULT_POLICY.default,
+          mode: 'execute',
+          network: 'allow',
+          run: { allow: ['*'], deny: [] },
+        },
       },
-    });
+      { repoRoot: sandboxRoot },
+    );
 
-    const result = await executeCommandWithPolicy('node -e "process.exit(0)"', process.cwd(), {
+    const result = await executeCommandWithPolicy('node -e "process.exit(0)"', sandboxRoot, {
       evaluator,
       sandbox: true,
       sandboxStrict: false,

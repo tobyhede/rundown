@@ -298,6 +298,11 @@ export interface CreateOptions {
   /** Repo-relative resolved runbook file path recorded on the state. */
   readonly runbookPath: string;
   /**
+   * The run's launch directory, relative to the project root (`.` for the
+   * root): where its step commands execute. A child run passes its parent's.
+   */
+  readonly launchDir: string;
+  /**
    * Hash of the Owner Token minted for this run.
    *
    * The caller mints the token (`generateOwnerToken`), prints it once on
@@ -402,6 +407,7 @@ function initialRunState(
     id,
     runbook: runbookRef,
     runbookPath: options.runbookPath,
+    launchDir: options.launchDir,
     title: runbook.title,
     description: runbook.description,
     step: initialStep.name,
