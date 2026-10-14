@@ -106,10 +106,15 @@ export function buildRundownCommand(
     }
     case 'claim': {
       // The Claim Ticket is the claim's only authority (#904); the child's own
-      // Owner Token comes back on its `runbook_started`.
-      const cmd = ['claim', requireString(tool, input, 'ticket')];
-      if (typeof input.agentId === 'string') cmd.push('--agent-id', input.agentId);
-      return cmd;
+      // Owner Token comes back on its `runbook_started`. No hook stamps an MCP
+      // caller's agent id, so the caller must name one: an unstamped claim
+      // could be released by anyone who also omits it.
+      return [
+        'claim',
+        requireString(tool, input, 'ticket'),
+        '--agent-id',
+        requireString(tool, input, 'agentId'),
+      ];
     }
     case 'collect':
       return ['collect', '--token', requireString(tool, input, 'token')];
