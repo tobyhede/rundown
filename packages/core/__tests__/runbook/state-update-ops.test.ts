@@ -30,6 +30,7 @@ describe('RunbookStateManager.update() — per-field op semantics', () => {
 
   async function freshState() {
     return manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
+      launchDir: '.',
       runbookPath: 'test.runbook.md',
       ownerTokenHash: hashRunSecret(generateOwnerToken()),
     });
@@ -70,6 +71,7 @@ describe('RunbookStateManager.update() — per-field op semantics', () => {
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
         {
+          launchDir: '.',
           runbookPath: 'test.runbook.md',
           ownerTokenHash: hashRunSecret(generateOwnerToken()),
           templateVars: { x: '1', y: '2' },
@@ -86,6 +88,7 @@ describe('RunbookStateManager.update() — per-field op semantics', () => {
         { source: 'project', path: 'test.runbook.md' },
         mockRunbook,
         {
+          launchDir: '.',
           runbookPath: 'test.runbook.md',
           ownerTokenHash: hashRunSecret(generateOwnerToken()),
           templateVars: { x: '1', y: '2' },

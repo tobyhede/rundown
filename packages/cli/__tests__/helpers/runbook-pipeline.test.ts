@@ -45,6 +45,7 @@ const {
   hashRunSecret: realHashRunSecret,
   redactRunSecret: realRedactRunSecret,
   OwnerTokenSchema: realOwnerTokenSchema,
+  canonicalPath: realCanonicalPath,
 } = await import('@rundown-org/core');
 
 const RUN_ID_PATTERN = /^rd_[a-f0-9]{32}$/;
@@ -60,6 +61,7 @@ jest.unstable_mockModule('../../src/helpers/context', () => ({
 }));
 
 jest.unstable_mockModule('@rundown-org/core', () => ({
+  canonicalPath: realCanonicalPath,
   RunbookCompositionUnsupportedError: RealRunbookCompositionUnsupportedError,
   generateOwnerToken: realGenerateOwnerToken,
   hashRunSecret: realHashRunSecret,
@@ -1463,7 +1465,7 @@ describe('prepareRunbook', () => {
       source: 'plugin' as const,
       sourceRoot: String.raw`C:\Users\agent\.claude\extensions\rundown-plugin\runbooks`,
     });
-    jest.mocked(buildRunbookRef).mockResolvedValue({
+    jest.mocked(buildRunbookRef).mockReturnValue({
       source: 'plugin',
       path: 'write-plan.runbook.md',
     });

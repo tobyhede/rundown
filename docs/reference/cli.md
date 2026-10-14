@@ -84,16 +84,26 @@ rundown run simple.runbook.md
 **Project root.** Every command acts on one project: the nearest directory at or
 above the working directory that contains a `.rundown/` directory. The walk
 stops at a git boundary (a directory with a `.git` directory or file, after
-checking that directory's own `.rundown/`) and at the filesystem root. It also
-never climbs into your home directory or any directory above it: a `.rundown/`
-there is used only when you run from that directory itself, so a stray
-`~/.rundown/` never captures the directories below home. With no match, the
+checking that directory's own `.rundown/`); with no `.rundown/` up to there, the
+git root is the project root, so the first `rundown run` from anywhere in a
+fresh repository creates `.rundown/` at its git root. The walk never climbs into
+a directory above your home directory, nor into home itself unless home is a git
+repository (a dotfiles repository in `~`, or a container with `HOME=/app`): a
+stray `~/.rundown/` is used only when you run from home itself, so it never
+captures the non-git directories below home. Outside git, with no match, the
 working directory itself is the project root, and `rundown run` creates
 `.rundown/` there. A nested `.rundown/` shadows an outer one. The run store,
 project runbooks, run outputs and artifacts, `prune`, `.rundown/config.yaml` and
-policy discovery all use the project root, and step commands run from it. So
-`rundown claim`, `rundown status` or `rundown run` from a subdirectory see the
-same runs as from the root; you do not need to `cd` to the root first.
+the policy `{repo}` root all use the project root, and step commands run from
+it. So `rundown claim`, `rundown status` or `rundown run` from a subdirectory
+see the same runs as from the root; you do not need to `cd` to the root first.
+
+Paths you type stay relative to where you typed them: a runbook path,
+`--input-file` paths, `file:` values in `--input` / `--input-json`, and
+`--helpers` paths resolve against the working directory (and input paths must
+still stay inside the project root). The policy-file search also starts at the
+working directory and walks upward, so a sub-package's stricter policy file wins
+over the root's.
 
 The CLI resolves runbook paths in this order:
 
@@ -292,6 +302,12 @@ rundown run my-runbook.runbook.md --prompted --step 2.1  # Jump to step 2.1 afte
 rundown run my-runbook.runbook.md --prompted --step 2 --index 3  # Jump into FOR iteration 3 of step 2
 ```
 
+The directory `rundown run` is invoked from is the run's **launch directory**,
+recorded on the run: every step command of the run executes there, whoever
+continues it with `pass`, `fail`, `goto` or `collect` and wherever they run
+those from. Child runs, including a Delegation started by `rundown claim`,
+inherit it. See [Runtime § Command Execution](runtime.md#4-command-execution).
+
 **Flags:**
 
 - `--prompted` — Show commands without auto-executing.
@@ -483,6 +499,9 @@ unnamed claim records no agent. The stamp guards against agent confusion, not a
 malicious agent: one that deliberately builds an `--agent-id` the hook cannot
 see, or strips `CLAUDECODE` from its own environment, is outside that threat
 model and is not prevented.
+
+The child's step commands run in its parent run's launch directory, not the
+directory `claim` is run from.
 
 In one transaction, `claim` verifies the reservation is still a child its parent
 counts and the parent is running, and creates the child run under the reserved

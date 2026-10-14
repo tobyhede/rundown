@@ -345,6 +345,7 @@ async function start(markdown: string): Promise<{ root: RunbookState; token: Own
   const runbook = parse(markdown);
   await manager.create({ source: 'project', path: 'parent.runbook.md' }, runbook, {
     runId,
+    launchDir: '.',
     runbookPath: 'parent.runbook.md',
     ownerTokenHash: hashRunSecret(token),
     runbookSrc: markdown,
@@ -525,6 +526,7 @@ describe('Delegation reservation and Claim Tickets (#904)', () => {
     const runbook = parse(SINGLE_MANUAL);
     await manager.create({ source: 'project', path: 'parent.runbook.md' }, runbook, {
       runId,
+      launchDir: '.',
       runbookPath: 'parent.runbook.md',
       ownerTokenHash: hashRunSecret(token),
       runbookSrc: SINGLE_MANUAL,
@@ -601,6 +603,7 @@ describe('Delegation reservation and Claim Tickets (#904)', () => {
     // Another run in the project whose persisted state no longer validates.
     const other = await manager.create({ source: 'project', path: 'other.md' }, parse(SINGLE), {
       ownerTokenHash: hashRunSecret(generateOwnerToken()),
+      launchDir: '.',
       runbookPath: 'other.md',
     });
     const store = await getRunbookStore(dir);

@@ -596,6 +596,7 @@ describe('executeGoto', () => {
   function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
     return {
       templateVars: brandInitialTemplateVarsForTest({}),
+      launchDir: '.',
       id: DEFAULT_RUNBOOK_ID,
       runbook: { source: 'project', path: 'test.md' },
       runbookPath: 'test.md',

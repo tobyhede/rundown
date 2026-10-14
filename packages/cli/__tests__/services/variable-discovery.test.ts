@@ -11,6 +11,7 @@ import {
   routeExtraVars,
   collectCliFlags,
   setExecFileSyncImpl,
+  type InputFlagEntry,
 } from '../../src/services/variable-discovery.js';
 import { execFileSync as nodeExecFileSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
@@ -30,6 +31,12 @@ import {
 import type { ForContext, PolicyEvaluator, PolicyPrompter } from '@rundown-org/core';
 import { brandEffectiveVarsForTest } from '../helpers/brand-helpers.js';
 import { mockFn } from '../helpers/typed-mocks.js';
+
+/** A typed `--input KEY=value` entry, as `parseInputOption` produces it. */
+function typed(flag: string): InputFlagEntry {
+  const eq = flag.indexOf('=');
+  return { origin: 'typed', key: flag.slice(0, eq), value: flag.slice(eq + 1) };
+}
 
 // Narrowed mock surfaces: `resolveVariables` only invokes `checkPath` on
 // the evaluator and `requestPermission` on the prompter for these tests.
@@ -506,20 +513,20 @@ describe('resolveVariables', () => {
 
   describe('scalar routing', () => {
     it('routes --input scalar to vars only', async () => {
-      const result = await resolveVariables({ input: ['env=staging'] }, tmpDir);
+      const result = await resolveVariables({ input: [typed('env=staging')] }, tmpDir);
       expect(result.vars.env).toBe('staging');
     });
   });
 
   describe('reserved runtime keys', () => {
     it('rejects reserved keys with an error', async () => {
-      await expect(resolveVariables({ input: ['Step=shadow'] }, tmpDir)).rejects.toThrow(
+      await expect(resolveVariables({ input: [typed('Step=shadow')] }, tmpDir)).rejects.toThrow(
         /reserved runtime variable/i,
       );
     });
 
     it('rejects reserved keys case-insensitively', async () => {
-      await expect(resolveVariables({ input: ['INDEX=9'] }, tmpDir)).rejects.toThrow(
+      await expect(resolveVariables({ input: [typed('INDEX=9')] }, tmpDir)).rejects.toThrow(
         /reserved runtime variable/i,
       );
     });
@@ -527,9 +534,9 @@ describe('resolveVariables', () => {
     it.each(RESERVED_IDENTITY_KEY_VARIANTS)(
       'rejects runtime identity key "%s" from --input',
       async (name) => {
-        await expect(resolveVariables({ input: [`${name}=shadow`] }, tmpDir)).rejects.toThrow(
-          /reserved runtime variable/i,
-        );
+        await expect(
+          resolveVariables({ input: [typed(`${name}=shadow`)] }, tmpDir),
+        ).rejects.toThrow(/reserved runtime variable/i);
       },
     );
 
@@ -584,9 +591,10 @@ describe('resolveVariables', () => {
     );
 
     it('reports all reserved key violations in a single error', async () => {
-      const error = await resolveVariables({ input: ['Step=a', 'Index=b'] }, tmpDir).catch(
-        (e: unknown) => e,
-      );
+      const error = await resolveVariables(
+        { input: [typed('Step=a'), typed('Index=b')] },
+        tmpDir,
+      ).catch((e: unknown) => e);
       expect(isError(error)).toBe(true);
       if (!isError(error)) throw new Error('Expected an Error to be thrown');
       expect(error.message).toMatch(/reserved runtime variables/i);
@@ -596,12 +604,12 @@ describe('resolveVariables', () => {
 
     it('does not route non-reserved keys when layer contains a reserved violation', async () => {
       await expect(
-        resolveVariables({ input: ['safe=value', 'Step=shadow'] }, tmpDir),
+        resolveVariables({ input: [typed('safe=value'), typed('Step=shadow')] }, tmpDir),
       ).rejects.toThrow(/reserved runtime variable/i);
     });
 
     it('allows non-reserved variables', async () => {
-      const result = await resolveVariables({ input: ['env=staging'] }, tmpDir);
+      const result = await resolveVariables({ input: [typed('env=staging')] }, tmpDir);
       expect(result.vars.env).toBe('staging');
     });
   });
@@ -611,7 +619,7 @@ describe('resolveVariables', () => {
       const file = path.join(tmpDir, 'servers.json');
       await fs.writeFile(file, '{"host":"server-a","port":3000}');
 
-      const result = await resolveVariables({ input: [`servers=file:${file}`] }, tmpDir);
+      const result = await resolveVariables({ input: [typed(`servers=file:${file}`)] }, tmpDir);
       expect(result.vars.servers).toEqual({ host: 'server-a', port: 3000 });
     });
 
@@ -619,7 +627,7 @@ describe('resolveVariables', () => {
       const file = path.join(tmpDir, 'items.json');
       await fs.writeFile(file, '["a","b","c"]');
 
-      const result = await resolveVariables({ input: [`items=file:${file}`] }, tmpDir);
+      const result = await resolveVariables({ input: [typed(`items=file:${file}`)] }, tmpDir);
       expect(result.vars.items).toEqual(['a', 'b', 'c']);
     });
 
@@ -627,7 +635,7 @@ describe('resolveVariables', () => {
       const file = path.join(tmpDir, 'data.jsonl');
       await fs.writeFile(file, '{"a":1}\n');
 
-      const result = await resolveVariables({ input: [`data=file:${file}`] }, tmpDir);
+      const result = await resolveVariables({ input: [typed(`data=file:${file}`)] }, tmpDir);
       expect(isJsonArrayStream(result.vars.data)).toBe(true);
       expect(result.vars.data).toMatchObject({
         kind: 'json-array-stream',
@@ -639,7 +647,7 @@ describe('resolveVariables', () => {
       const file = path.join(tmpDir, 'hosts.json');
       await fs.writeFile(file, '["h1"]');
 
-      const result = await resolveVariables({ input: ['hosts=file:hosts.json'] }, tmpDir);
+      const result = await resolveVariables({ input: [typed('hosts=file:hosts.json')] }, tmpDir);
       expect(result.vars.hosts).toEqual(['h1']);
     });
 
@@ -647,9 +655,9 @@ describe('resolveVariables', () => {
       const file = path.join(tmpDir, 'data.txt');
       await fs.writeFile(file, 'content');
 
-      await expect(resolveVariables({ input: [`data=file:${file}`] }, tmpDir)).rejects.toThrow(
-        /Unsupported file extension/,
-      );
+      await expect(
+        resolveVariables({ input: [typed(`data=file:${file}`)] }, tmpDir),
+      ).rejects.toThrow(/Unsupported file extension/);
     });
   });
 
@@ -783,7 +791,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(varFile, `items: "file:${fileA}"\n`);
 
       const result = await resolveVariables(
-        { inputFile: ['vars.yaml'], input: [`items=file:${fileB}`] },
+        { inputFile: ['vars.yaml'], input: [typed(`items=file:${fileB}`)] },
         tmpDir,
       );
       expect(isJsonArrayStream(result.vars.items)).toBe(true);
@@ -807,7 +815,7 @@ describe('resolveVariables', () => {
     it('clean break: an rd:// URI via --input is a plain string (not rehydrated)', async () => {
       const row = appendManagedManifestRow();
 
-      const result = await resolveVariables({ input: [`Plan=${row.uri}`] }, tmpDir);
+      const result = await resolveVariables({ input: [typed(`Plan=${row.uri}`)] }, tmpDir);
 
       expect(result.vars.Plan).toBe(row.uri);
       expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(false);
@@ -880,7 +888,7 @@ describe('resolveVariables', () => {
       await fs.mkdir(configDir, { recursive: true });
       await fs.writeFile(path.join(configDir, 'config.yaml'), `Plan: ${row.uri}\n`);
 
-      const result = await resolveVariables({ input: ['Plan=plain-value'] }, tmpDir);
+      const result = await resolveVariables({ input: [typed('Plan=plain-value')] }, tmpDir);
 
       expect(result.vars.Plan).toBe('plain-value');
       expect(isTrustedArtifactRecord(result.vars.Plan)).toBe(false);
@@ -924,7 +932,7 @@ describe('resolveVariables', () => {
       // raw string proves the --input layer is tagged "variable" (clean break:
       // --input no longer rehydrates rd:// values).
       const row = appendManagedManifestRow('producer-context', 'PlanPath');
-      const resolved = await resolveVariables({ input: [`PlanPath=${row.uri}`] }, tmpDir);
+      const resolved = await resolveVariables({ input: [typed(`PlanPath=${row.uri}`)] }, tmpDir);
       expect(resolved.vars.PlanPath).toBe(row.uri);
       expect(isTrustedArtifactRecord(resolved.vars.PlanPath)).toBe(false);
     });
@@ -934,7 +942,10 @@ describe('resolveVariables', () => {
       // Cross-channel collision can only fire if the layers carry distinct channel
       // tags — a direct assertion that variable vs artifact layering is correct.
       await expect(
-        resolveVariables({ input: ['PlanPath=plain'], artifacts: [`PlanPath=${row.uri}`] }, tmpDir),
+        resolveVariables(
+          { input: [typed('PlanPath=plain')], artifacts: [`PlanPath=${row.uri}`] },
+          tmpDir,
+        ),
       ).rejects.toThrow(/both the variable and artifact channels/);
     });
 
@@ -966,7 +977,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(varFile, 'servers:\n  - alpha\n  - beta\n');
 
       const result = await resolveVariables(
-        { inputFile: ['vars.yaml'], input: ['servers=prod'] },
+        { inputFile: ['vars.yaml'], input: [typed('servers=prod')] },
         tmpDir,
       );
       expect(result.vars.servers).toBe('prod');
@@ -979,7 +990,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(varFile, 'items:\n  - x\n  - y\n');
 
       const result = await resolveVariables(
-        { inputFile: ['vars.yaml'], input: [`items=file:${dataFile}`] },
+        { inputFile: ['vars.yaml'], input: [typed(`items=file:${dataFile}`)] },
         tmpDir,
       );
       expect(isJsonArrayStream(result.vars.items)).toBe(true);
@@ -1018,7 +1029,7 @@ describe('resolveVariables', () => {
       await fs.writeFile(varFile, 'log: |\n  line1\n  line2\n');
 
       const result = await resolveVariables(
-        { inputFile: ['vars.yaml'], input: ['log=override'] },
+        { inputFile: ['vars.yaml'], input: [typed('log=override')] },
         tmpDir,
       );
       expect(result.vars.log).toBe('override');
@@ -1036,7 +1047,7 @@ describe('resolveVariables', () => {
       const siblingFile = path.join(siblingDir, 'data.txt');
       await fs.writeFile(siblingFile, 'evil\n');
 
-      const result = await resolveVariables({ input: [`data=file:${siblingFile}`] }, cwd);
+      const result = await resolveVariables({ input: [typed(`data=file:${siblingFile}`)] }, cwd);
       expect(result.vars).not.toHaveProperty('data');
       expect(result.warnings).toEqual(
         expect.arrayContaining([expect.stringContaining('path escapes project directory')]),
@@ -1049,7 +1060,7 @@ describe('resolveVariables', () => {
       const file = path.join(sub, 'data.json');
       await fs.writeFile(file, '["ok"]');
 
-      const result = await resolveVariables({ input: [`data=file:${file}`] }, tmpDir);
+      const result = await resolveVariables({ input: [typed(`data=file:${file}`)] }, tmpDir);
       expect(result.vars.data).toEqual(['ok']);
     });
 
@@ -1057,7 +1068,7 @@ describe('resolveVariables', () => {
       const nested = path.join(tmpDir, 'project');
       await fs.mkdir(nested, { recursive: true });
 
-      const result = await resolveVariables({ input: ['data=file:../escape.txt'] }, nested);
+      const result = await resolveVariables({ input: [typed('data=file:../escape.txt')] }, nested);
       expect(result.vars).not.toHaveProperty('data');
       expect(result.warnings).toEqual(
         expect.arrayContaining([expect.stringContaining('path escapes project directory')]),
@@ -1068,7 +1079,7 @@ describe('resolveVariables', () => {
       const nested = path.join(tmpDir, 'project');
       await fs.mkdir(nested, { recursive: true });
 
-      const result = await resolveVariables({ input: ['data=file:../escape.txt'] }, nested);
+      const result = await resolveVariables({ input: [typed('data=file:../escape.txt')] }, nested);
       expect(result.vars).not.toHaveProperty('data');
       expect(result.providedKeys.has('data')).toBe(false);
     });
@@ -1077,7 +1088,7 @@ describe('resolveVariables', () => {
       const nested = path.join(tmpDir, 'project');
       await fs.mkdir(nested, { recursive: true });
 
-      const result = await resolveVariables({ input: ['Date=file:../escape.txt'] }, nested);
+      const result = await resolveVariables({ input: [typed('Date=file:../escape.txt')] }, nested);
       expect(result.vars).toHaveProperty('Date');
       expect(result.providedKeys.has('Date')).toBe(false);
       expect(result.warnings).toEqual(
@@ -1089,7 +1100,7 @@ describe('resolveVariables', () => {
       const file = path.join(tmpDir, 'data.json');
       await fs.writeFile(file, '["ok"]');
 
-      const result = await resolveVariables({ input: [`data=file:${file}`] }, tmpDir);
+      const result = await resolveVariables({ input: [typed(`data=file:${file}`)] }, tmpDir);
       expect(result.vars.data).toEqual(['ok']);
       expect(result.providedKeys.has('data')).toBe(true);
     });
@@ -1100,7 +1111,7 @@ describe('resolveVariables', () => {
       const file = path.join(dotDir, 'data.json');
       await fs.writeFile(file, '["ok"]');
 
-      const result = await resolveVariables({ input: [`data=file:${file}`] }, tmpDir);
+      const result = await resolveVariables({ input: [typed(`data=file:${file}`)] }, tmpDir);
       expect(result.vars.data).toEqual(['ok']);
     });
 
@@ -1115,7 +1126,7 @@ describe('resolveVariables', () => {
         reason: 'Path blocked by policy',
       });
       await expect(
-        resolveVariables({ input: [`data=file:${file}`] }, tmpDir, {
+        resolveVariables({ input: [typed(`data=file:${file}`)] }, tmpDir, {
           evaluator: { checkPath } as unknown as PolicyEvaluator,
         }),
       ).rejects.toBeInstanceOf(FileSourcePolicyError);
@@ -1135,7 +1146,7 @@ describe('resolveVariables', () => {
       requestPermission.mockResolvedValue({ granted: true, persist: false });
       const prompter = { requestPermission };
 
-      const result = await resolveVariables({ input: [`data=file:${file}`] }, tmpDir, {
+      const result = await resolveVariables({ input: [typed(`data=file:${file}`)] }, tmpDir, {
         evaluator: evaluator as unknown as PolicyEvaluator,
         prompter: prompter as unknown as PolicyPrompter,
       });
@@ -1163,7 +1174,7 @@ describe('resolveVariables', () => {
         reason: 'Prompt before read',
       });
       await expect(
-        resolveVariables({ input: [`data=file:${file}`] }, tmpDir, {
+        resolveVariables({ input: [typed(`data=file:${file}`)] }, tmpDir, {
           evaluator: { checkPath } as unknown as PolicyEvaluator,
         }),
       ).rejects.toThrow('Prompt before read');
@@ -1302,7 +1313,7 @@ describe('resolveVariables', () => {
     it('--input flag overrides RD_INPUT_* for same key', async () => {
       process.env.RD_INPUT_message = 'from-env';
 
-      const result = await resolveVariables({ input: ['message=from-flag'] }, tmpDir);
+      const result = await resolveVariables({ input: [typed('message=from-flag')] }, tmpDir);
 
       expect(result.vars.message).toBe('from-flag');
     });
@@ -1362,7 +1373,7 @@ describe('resolveVariables', () => {
         const result = await resolveVariables(
           {
             inheritedVars: { inheritedProvided: 'from-parent' },
-            input: ['cliProvided=from-cli'],
+            input: [typed('cliProvided=from-cli')],
           },
           tmpDir,
         );
@@ -1417,7 +1428,7 @@ describe('resolveVariables', () => {
 
     it('--input-json overrides --input for same key', async () => {
       const result = await resolveVariables(
-        { input: ['count=10'], inputJson: ['count=99'] },
+        { input: [typed('count=10')], inputJson: ['count=99'] },
         tmpDir,
       );
 
@@ -1594,7 +1605,10 @@ describe('collectCliFlags', () => {
   });
 
   it('collects --input flags', async () => {
-    const result = await collectCliFlags({ input: ['env=staging', 'port=3000'] }, tmpDir);
+    const result = await collectCliFlags(
+      { input: [typed('env=staging'), typed('port=3000')] },
+      tmpDir,
+    );
     expect(result).toEqual({ env: 'staging', port: '3000' });
   });
 
@@ -1626,7 +1640,7 @@ describe('collectCliFlags', () => {
 
     try {
       await expect(collectCliFlags({ inputFile: [outsideFile] }, tmpDir)).rejects.toThrow(
-        /--input-file path must be relative to the project directory/,
+        /--input-file path must be relative to the directory the command was run from: /,
       );
     } finally {
       await fs.rm(outsideDir, { recursive: true, force: true });
@@ -1638,7 +1652,7 @@ describe('collectCliFlags', () => {
     await fs.writeFile(varFile, 'greeting: hello\n');
 
     await expect(collectCliFlags({ inputFile: [varFile] }, tmpDir)).rejects.toThrow(
-      /--input-file path must be relative to the project directory/,
+      /--input-file path must be relative to the directory the command was run from: /,
     );
   });
 
@@ -1683,10 +1697,31 @@ describe('collectCliFlags', () => {
     );
   });
 
-  it('rejects invalid --input entries that bypass option parsing', async () => {
-    await expect(collectCliFlags({ input: ['not-key-value'] }, tmpDir)).rejects.toThrow(
-      'Unexpected invalid --input entry: not-key-value',
+  it('anchors a typed file: value to the invocation directory but not an environment-inherited one', async () => {
+    const invocationDir = path.join(tmpDir, 'sub');
+
+    const result = await collectCliFlags(
+      {
+        input: [
+          { origin: 'typed', key: 'typedItems', value: 'file:items.json' },
+          { origin: 'environment', key: 'envItems', value: 'file:items.json' },
+        ],
+      },
+      tmpDir,
+      invocationDir,
     );
+
+    expect(result).toEqual({
+      typedItems: `file:${path.join(tmpDir, 'sub', 'items.json')}`,
+      // Left relative: core resolves it against the project root.
+      envItems: 'file:items.json',
+    });
+  });
+
+  it('rejects invalid --input keys that bypass option parsing', async () => {
+    await expect(
+      collectCliFlags({ input: [{ origin: 'typed', key: 'not-a-key', value: 'x' }] }, tmpDir),
+    ).rejects.toThrow('Unexpected invalid --input key: not-a-key');
   });
 
   it('rejects invalid --input-json keys that bypass option parsing', async () => {
@@ -1700,7 +1735,7 @@ describe('collectCliFlags', () => {
     await fs.writeFile(varFile, 'key: from-file\n');
 
     const result = await collectCliFlags(
-      { inputFile: ['vars.yaml'], input: ['key=from-var'], inputJson: ['key="from-json"'] },
+      { inputFile: ['vars.yaml'], input: [typed('key=from-var')], inputJson: ['key="from-json"'] },
       tmpDir,
     );
     expect(result.key).toBe('from-json');

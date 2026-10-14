@@ -55,8 +55,10 @@ export function createCliCommandServices(
       if (!isInternalRdCommand(command)) return null;
       return executeRdCommandInternal(command, cwd, rdInjected);
     },
-    runExternalCommand: async ({ command, cwd, runbookPath, rdInjected }) =>
-      executeCommandWithPolicyCheck(command, cwd, runbookPath, rdInjected, streamOptions),
+    // A spawned command runs in the run's launch directory; the internal
+    // runner above keeps the project root, whose store it reads.
+    runExternalCommand: async ({ command, workingDir, runbookPath, rdInjected }) =>
+      executeCommandWithPolicyCheck(command, workingDir, runbookPath, rdInjected, streamOptions),
   };
 }
 

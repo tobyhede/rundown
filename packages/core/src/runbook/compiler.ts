@@ -566,6 +566,13 @@ function requireCommandServices(
   return services;
 }
 
+function requireCommandWorkingDir(workingDir: string | undefined): string {
+  if (workingDir === undefined) {
+    throw new Error('Command execution requires compileRunbookToMachine options.commandWorkingDir');
+  }
+  return workingDir;
+}
+
 function requireCommandCwd(evaluationOptions: EvaluateOutputOptions | undefined): string {
   if (!evaluationOptions?.cwd) {
     throw new Error('Command execution requires compileRunbookToMachine evaluationOptions.cwd');
@@ -591,6 +598,8 @@ function requireCommandCwd(evaluationOptions: EvaluateOutputOptions | undefined)
  * @param context - Machine context at fire time
  * @param evaluationOptions - Compile-time evaluation options supplying `cwd`
  * @param commandServices - DI'd command execution callables
+ * @param commandWorkingDir - Compile-time-bound absolute launch directory the
+ *   command executes in, resolved from the run's persisted `launchDir`
  * @param stepName - Step owning this leaf state
  * @param substepId - Substep owning this leaf state, when it is a substep
  * @param nakedOutputs - Compile-time-resolved naked OUTPUTS for the unit
@@ -601,6 +610,7 @@ function buildCommandExecutionInput(
   context: RunbookContext,
   evaluationOptions: EvaluateOutputOptions | undefined,
   commandServices: CommandExecutionServices | undefined,
+  commandWorkingDir: string | undefined,
   stepName: string,
   substepId: string | undefined,
   nakedOutputs: readonly NakedOutput[],
@@ -610,6 +620,7 @@ function buildCommandExecutionInput(
     command: event.command,
     displayCommand: event.displayCommand,
     cwd: requireCommandCwd(evaluationOptions),
+    workingDir: requireCommandWorkingDir(commandWorkingDir),
     runId: assertRunId(requireStringTemplateVar(context.templateVars, 'RunId')),
     runbookPath: event.runbookPath,
     runbook: requireRunbookRef(context.templateVars),
@@ -3947,6 +3958,8 @@ function checkedStateInsert(
  * @param options.frameEntry - Seeds `RunbookContext.frameEntry` at machine bootstrap so the
  *   leaf entry action advances from the persisted coordinates instead of assuming the first entry.
  * @param options.commandServices - Runtime callables for machine-owned command execution.
+ * @param options.commandWorkingDir - Absolute directory step commands execute in: the run's
+ *   launch directory resolved under the project root. Required to execute a command.
  * @param options.executionObserver - Non-persisted observer for command actor output and failures.
  * @param options.runProgression - Runtime-only authority and callables for progression selection.
  * @param options.generateChildRunId - Mints the run id an inline substep's entry reserves for its
@@ -3969,6 +3982,7 @@ export function compileRunbookToMachine(
     substepStates?: readonly SubstepState[];
     frameEntry?: FrameEntryCoordinates;
     commandServices?: CommandExecutionServices;
+    commandWorkingDir?: string;
     executionObserver?: MachineExecutionObserver;
     runProgression?: RunProgressionMachineRuntime;
     generateChildRunId?: () => RunId;
@@ -4867,6 +4881,7 @@ export function compileRunbookToMachine(
                 context,
                 evaluationOptions,
                 options?.commandServices,
+                options?.commandWorkingDir,
                 config.stepName,
                 config.substepId,
                 unitNakedOutputs,

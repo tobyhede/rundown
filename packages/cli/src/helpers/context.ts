@@ -29,19 +29,42 @@ export function getInvocationDir(): string {
 /**
  * The Rundown project root for this invocation.
  *
- * The nearest directory at or above {@link getInvocationDir} that holds an
- * existing `.rundown/` (see `resolveProjectRoot` in core), or the invocation
- * directory itself when there is none. The run store, project runbooks, run
+ * Resolved by `resolveProjectRoot` in core from {@link getInvocationDir}: the
+ * nearest directory at or above it that holds an existing `.rundown/`. The
+ * walk stops at a git boundary (a `.git` entry) after checking that
+ * directory's own `.rundown/`, and without a match resolves to that git root.
+ * It never reads an ancestor of the home directory, and reads home itself only
+ * when home holds `.git`. Without a match and outside git, the root is the
+ * invocation directory itself. The run store, project runbooks, run
  * outputs and artifacts, prune, persisted runbook references, config
  * discovery, the policy evaluator's `{repo}` root and the helper containment
  * boundary all use it, so a command run from a subdirectory acts on
- * the same project as one run from the root. Commands resolve it once and
- * pass it down.
+ * the same project as one run from the root.
+ *
+ * Walked once per invocation: policy initialisation and the command action
+ * read the same answer, so the evaluator's `{repo}` and the store cannot name
+ * different projects. The memo is keyed on the invocation directory and
+ * cleared by {@link beginInvocation}, so an in-process host that runs the CLI
+ * again — from the same directory or another — walks afresh.
  *
  * @returns Absolute path of the project root
  */
 export function getProjectRoot(): string {
-  return resolveProjectRoot(getInvocationDir());
+  const invocationDir = getInvocationDir();
+  if (projectRootMemo?.invocationDir !== invocationDir) {
+    projectRootMemo = { invocationDir, projectRoot: resolveProjectRoot(invocationDir) };
+  }
+  return projectRootMemo.projectRoot;
+}
+
+let projectRootMemo: { readonly invocationDir: string; readonly projectRoot: string } | undefined;
+
+/**
+ * Start a CLI invocation: forget the project root a previous invocation in
+ * this process resolved. Called first in the `preSubcommand` hook.
+ */
+export function beginInvocation(): void {
+  projectRootMemo = undefined;
 }
 
 /**

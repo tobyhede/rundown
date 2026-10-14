@@ -15,6 +15,7 @@ import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import { execFileSync as nodeExecFileSync } from 'node:child_process';
 import {
+  canonicalPath,
   createBuiltinVariables,
   isRuntimeReservedVariable,
   isValidVariableName,
@@ -163,14 +164,6 @@ export function parseVarFlag(flag: string): { key: string; value: string } | nul
   return { key, value };
 }
 
-async function realpathOrResolved(filePath: string): Promise<string> {
-  try {
-    return await fs.realpath(filePath);
-  } catch {
-    return path.resolve(filePath);
-  }
-}
-
 /**
  * Resolve a user-typed `--input-file` path and check it stays in the project.
  *
@@ -183,17 +176,32 @@ async function realpathOrResolved(filePath: string): Promise<string> {
  * @returns The canonical path of the input file
  * @throws {Error} If the path is absolute or escapes the project root
  */
+/**
+ * One `--input` entry, tagged with where its value came from.
+ *
+ * `typed` is `--input KEY=value`: the user typed the value, so a relative
+ * `file:` path in it is relative to the directory they typed it in.
+ * `environment` is a bare `--input KEY`, whose value was read from the
+ * environment variable `KEY`; like an `RD_INPUT_*` value, a relative `file:`
+ * path in it resolves against the project root.
+ */
+export type InputFlagEntry =
+  | { readonly origin: 'typed'; readonly key: string; readonly value: string }
+  | { readonly origin: 'environment'; readonly key: string; readonly value: string };
+
 async function resolveContainedInputFilePath(
   rawPath: string,
   projectRoot: string,
   invocationDir: string,
 ): Promise<string> {
   if (path.isAbsolute(rawPath)) {
-    throw new Error(`--input-file path must be relative to the project directory: ${rawPath}`);
+    throw new Error(
+      `--input-file path must be relative to the directory the command was run from: ${rawPath}`,
+    );
   }
 
-  const canonicalRoot = await realpathOrResolved(projectRoot);
-  const resolved = path.resolve(await realpathOrResolved(invocationDir), rawPath);
+  const canonicalRoot = canonicalPath(projectRoot);
+  const resolved = path.resolve(canonicalPath(invocationDir), rawPath);
   let canonical = resolved;
   try {
     canonical = await fs.realpath(resolved);
@@ -243,17 +251,18 @@ function anchorFileSource(value: unknown, invocationDir: string): unknown {
  *
  * @param options - CLI flag arrays
  * @param options.inputFile - Array of paths to YAML files containing variable definitions (repeatable)
- * @param options.input - Array of key=value flag strings from CLI
+ * @param options.input - `--input` entries, each tagged typed or environment-inherited
  * @param options.inputJson - Array of key=json flag strings from CLI for structured values
  * @param projectRoot - Project root that `--input-file` paths must stay inside
  * @param invocationDir - Directory the command was run from; `--input-file`
- *   paths and `file:` values in `--input` / `--input-json` are relative to it.
- *   Defaults to the project root.
+ *   paths and typed `file:` values in `--input` / `--input-json` are relative
+ *   to it; a value inherited with a bare `--input KEY` is not. Defaults to the
+ *   project root.
  * @returns Merged variable record with raw types preserved
  * @throws {Error} If an `--input-file` path is absolute, escapes the project root, or is unreadable
  */
 export async function collectCliFlags(
-  options: { inputFile?: string[]; input?: string[]; inputJson?: string[] },
+  options: { inputFile?: string[]; input?: readonly InputFlagEntry[]; inputJson?: string[] },
   projectRoot: string,
   invocationDir: string = projectRoot,
 ): Promise<Record<string, unknown>> {
@@ -269,17 +278,15 @@ export async function collectCliFlags(
     Object.assign(result, fileVars);
   }
 
-  // --input flags
-  if (options.input) {
-    for (const flag of options.input) {
-      const parsed = parseVarFlag(flag);
-      if (!parsed) {
-        throw new Error(
-          `Unexpected invalid --input entry: ${flag} (parseInputOption should have rejected this)`,
-        );
-      }
-      result[parsed.key] = anchorFileSource(parsed.value, invocationDir);
+  // --input flags: only a typed value is anchored to the invocation directory
+  for (const entry of options.input ?? []) {
+    if (!isValidVariableName(entry.key)) {
+      throw new Error(
+        `Unexpected invalid --input key: ${entry.key} (parseInputOption should have rejected this)`,
+      );
     }
+    result[entry.key] =
+      entry.origin === 'typed' ? anchorFileSource(entry.value, invocationDir) : entry.value;
   }
 
   // --input-json values (processed after --input, so wins for same key)
@@ -508,7 +515,7 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
  *
  * @param options - Variable sources from CLI flags, input-file, and inherited vars
  * @param options.inputFile - Array of paths to YAML files containing variable definitions (repeatable)
- * @param options.input - Array of key=value flag strings from CLI
+ * @param options.input - `--input` entries, each tagged typed or environment-inherited
  * @param options.inputJson - Array of key=json flag strings from CLI for structured values
  * @param options.inheritedVars - Variables inherited from parent delegation
  * @param options.artifacts - Array of `key=rd://...` artifact-channel flag strings
@@ -521,7 +528,7 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
 async function collectRawLayers(
   options: {
     inputFile?: string[];
-    input?: string[];
+    input?: readonly InputFlagEntry[];
     inputJson?: string[];
     inheritedVars?: Record<string, VariableValue>;
     artifacts?: string[];
@@ -569,7 +576,7 @@ async function collectRawLayers(
  *
  * @param options - Variable sources from CLI flags, input-file, and inherited vars
  * @param options.inputFile - Array of paths to YAML files containing variable definitions (repeatable)
- * @param options.input - Array of key=value flag strings from CLI
+ * @param options.input - `--input` entries, each tagged typed or environment-inherited
  * @param options.inputJson - Array of key=json flag strings from CLI for structured values
  * @param options.inheritedVars - Variables inherited from parent delegation (overrides builtins)
  * @param options.artifacts - Array of `key=rd://...` artifact-channel flag strings
@@ -578,8 +585,8 @@ async function collectRawLayers(
  *   values resolve against it, and every file source must stay inside it
  * @param security - Optional security context for file source policy enforcement
  * @param invocationDir - Directory the command was run from. `--input-file`
- *   paths and `file:` values in `--input` / `--input-json` are relative to it.
- *   Defaults to `cwd`.
+ *   paths and typed `file:` values in `--input` / `--input-json` are relative
+ *   to it; a value inherited with a bare `--input KEY` is not. Defaults to `cwd`.
  * @returns ResolvedVariables with unified vars map and any warnings
  * @throws {FileSourcePolicyError} When a file-backed data source is blocked by security policy
  * @throws {Error} When a reserved runtime variable name is overridden by a non-builtin layer
@@ -587,7 +594,7 @@ async function collectRawLayers(
 export async function resolveVariables(
   options: {
     inputFile?: string[];
-    input?: string[];
+    input?: readonly InputFlagEntry[];
     inputJson?: string[];
     inheritedVars?: Record<string, VariableValue>;
     artifacts?: string[];

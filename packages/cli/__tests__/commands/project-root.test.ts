@@ -5,13 +5,12 @@
  * holds `.rundown/` (`resolveProjectRoot` in core). A sub-agent that `cd`s
  * into a subdirectory and runs `rundown claim` must find the Claim Ticket its
  * parent's run issued; a `rundown run` there must start a run the rest of the
- * project sees, from the project's runbooks. Only where no `.rundown/` exists
- * above does a run create one in its own directory, as before.
+ * project sees, from the project's runbooks. Where no `.rundown/` exists yet,
+ * see `../integration/project-root-fresh.test.ts`.
  */
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   createTestWorkspace,
@@ -144,35 +143,5 @@ describe('project root: commands from a subdirectory act on the project', () => 
     expect(envelopes(pass.stdout)[0]).toMatchObject({ action: 'complete', complete: true });
     const status = await runCliInProcess(['status', '--run', runId], workspace);
     expect(status.exitCode).toBe(0);
-  });
-});
-
-describe('project root: no .rundown/ above the working directory', () => {
-  let base: string;
-
-  beforeEach(async () => {
-    base = await realpath(await mkdtemp(join(tmpdir(), 'rd-fresh-')));
-    // A git boundary keeps the walk off whatever lies above the temp directory.
-    await writeFile(join(base, '.git'), 'gitdir: /dev/null\n');
-  });
-
-  afterEach(async () => {
-    await rm(base, { recursive: true, force: true });
-  });
-
-  it('run creates .rundown/ in the working directory', async () => {
-    const dir = join(base, 'fresh');
-    await mkdir(dir);
-    await writeFile(join(dir, 'manual.runbook.md'), MANUAL);
-    const workspace = {
-      cwd: dir,
-      binPath: () => join(base, 'bin'),
-    } as unknown as TestWorkspace;
-
-    const run = await runCliInProcess(['run', 'manual.runbook.md'], workspace);
-
-    expect(run.exitCode).toBe(0);
-    expect(existsSync(join(dir, '.rundown', 'rundown.db'))).toBe(true);
-    expect(existsSync(join(base, '.rundown'))).toBe(false);
   });
 });

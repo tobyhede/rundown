@@ -17,6 +17,7 @@ import { RunbookRefSchema } from './runbook/runbook-ref.js';
 import { ArtifactRecordSchema, type ArtifactRecord } from './runbook/artifact-schema.js';
 import { LastActionSchema } from './runbook/last-action.js';
 import { SecretHashSchema } from './runbook/run-secrets.js';
+import { isLaunchDir } from './runbook/launch-dir.js';
 
 /**
  * Zod schema that parses strings and brands them as {@link FrameKey}.
@@ -595,6 +596,10 @@ const RunbookStateObjectSchema = z
     id: RunIdSchema,
     runbook: RunbookRefSchema,
     runbookPath: z.string(),
+    // Where the run's step commands execute, relative to the project root.
+    // Required: `RunbookStateManager.create` always writes it, and a reader
+    // that defaulted it would silently move a run's commands.
+    launchDir: z.string().refine(isLaunchDir, { message: 'Invalid launch directory' }),
     title: z.string().optional(),
     description: z.string().optional(),
     step: RunbookStepSchema, // "1" or "ErrorHandler"

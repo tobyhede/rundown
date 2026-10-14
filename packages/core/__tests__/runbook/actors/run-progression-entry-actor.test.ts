@@ -30,6 +30,7 @@ const RUN_ID = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 function state(): RunbookState {
   return {
     prompted: false,
+    launchDir: '.',
     templateVars: brandInitialTemplateVarsForTest({}),
     id: RUN_ID,
     runbook: { source: 'project', path: 'entry-actor-test.md' },

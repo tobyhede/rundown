@@ -31,6 +31,7 @@ function validStateWithVariables(variables: Record<string, unknown>): Record<str
     id: RUN_ID,
     runbook: { source: 'project', path: 'r.md' },
     runbookPath: 'r.md',
+    launchDir: '.',
     title: 'r',
     step: '1',
     stepName: 's',

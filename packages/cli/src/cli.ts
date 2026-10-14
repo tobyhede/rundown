@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // packages/cli/src/cli.ts
 
-import { getInvocationDir, getProjectRoot } from './helpers/context.js';
+import { beginInvocation, getInvocationDir, getProjectRoot } from './helpers/context.js';
 import { Command, Option } from 'commander';
 import { registerRunCommand } from './commands/run.js';
 import { registerGotoCommand } from './commands/goto.js';
@@ -168,6 +168,8 @@ export function createProgram(deps: ProgramDependencies = {}): Command {
 
   // Initialize policy before subcommands
   program.hook('preSubcommand', async (thisCommand) => {
+    // One project-root walk per invocation, shared by policy and the command.
+    beginInvocation();
     const opts = thisCommand.opts();
     const policyOpts = parsePolicyCliOptions(opts);
     // Policy discovery starts at the invocation directory and walks upward,

@@ -7,7 +7,7 @@ import {
   parseInputOption,
   parseInputJsonOption,
 } from '../../src/helpers/option-utils.js';
-import { isValidVariableName } from '../../src/services/variable-discovery.js';
+import { isValidVariableName, type InputFlagEntry } from '../../src/services/variable-discovery.js';
 
 describe('collect', () => {
   it('accumulates values into array', () => {
@@ -33,26 +33,29 @@ describe('parseInputOption', () => {
     delete process.env.MY_VAR;
   });
 
-  it('accumulates key=value entries', () => {
-    let result: string[] = [];
+  it('accumulates key=value entries, tagged as typed', () => {
+    let result: InputFlagEntry[] = [];
     result = parseInputOption('foo=bar', result);
 
-    expect(result).toEqual(['foo=bar']);
+    expect(result).toEqual([{ origin: 'typed', key: 'foo', value: 'bar' }]);
   });
 
   it('handles values containing equals signs', () => {
-    let result: string[] = [];
+    let result: InputFlagEntry[] = [];
     result = parseInputOption('foo=a=b', result);
 
-    expect(result).toEqual(['foo=a=b']);
+    expect(result).toEqual([{ origin: 'typed', key: 'foo', value: 'a=b' }]);
   });
 
   it('accumulates multiple entries', () => {
-    let result: string[] = [];
+    let result: InputFlagEntry[] = [];
     result = parseInputOption('foo=bar', result);
     result = parseInputOption('baz=qux', result);
 
-    expect(result).toEqual(['foo=bar', 'baz=qux']);
+    expect(result).toEqual([
+      { origin: 'typed', key: 'foo', value: 'bar' },
+      { origin: 'typed', key: 'baz', value: 'qux' },
+    ]);
   });
 
   it('throws InvalidArgumentError for key starting with digit', () => {
@@ -76,12 +79,23 @@ describe('parseInputOption', () => {
     );
   });
 
-  it('inherits value from env var when no = present', () => {
+  it('inherits value from env var when no = present, tagged as environment', () => {
     process.env.MY_VAR = 'env-value';
 
     const result = parseInputOption('MY_VAR', []);
 
-    expect(result).toEqual(['MY_VAR=env-value']);
+    expect(result).toEqual([{ origin: 'environment', key: 'MY_VAR', value: 'env-value' }]);
+  });
+
+  it('keeps an inherited value distinct from the same value typed', () => {
+    process.env.MY_VAR = 'file:data.json';
+
+    const result = parseInputOption('MY_VAR=file:data.json', parseInputOption('MY_VAR', []));
+
+    expect(result).toEqual([
+      { origin: 'environment', key: 'MY_VAR', value: 'file:data.json' },
+      { origin: 'typed', key: 'MY_VAR', value: 'file:data.json' },
+    ]);
   });
 
   it('throws InvalidArgumentError when env var is not set', () => {

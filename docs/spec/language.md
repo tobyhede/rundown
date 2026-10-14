@@ -537,7 +537,9 @@ Executable shell blocks receive `RD_WORK_PATH`, `RD_CONTEXT_ID`, `RD_RUN_ID`,
 `RD_RUNBOOK_REF`, and `RD_RUNBOOK_SOURCE` from `WorkPath`, `ContextId`, `RunId`,
 `RunbookRef.path`, and `RunbookRef.source`. These variables are injected after
 policy environment filtering and use Rundown-wins semantics. The `RD_` prefix is
-reserved for Rundown-injected variables.
+reserved for Rundown-injected variables. `RD_WORK_PATH`, like `{{ WorkPath }}`
+in command text, is the work directory resolved to an absolute path under the
+project root, because commands run in the run's launch directory.
 
 ## 10. Context Passing
 

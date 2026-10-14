@@ -65,10 +65,21 @@ map one action into another to simplify execution.
 
 The runtime supports automatic and prompted execution.
 
-| Mode              | Trigger                                                                                | Runtime behavior                                                                                  |
-| ----------------- | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| Automatic command | Step or substep has `bash`, `sh`, or `shell` code block and execution is not prompted. | CLI executes the command from the project root; exit `0` signals `PASS`, non-zero signals `FAIL`. |
-| Prompted/manual   | `--prompted`, display-only code block, or no executable code block.                    | CLI surfaces the prompt and waits for `rundown pass` or `rundown fail`.                           |
+| Mode              | Trigger                                                                                | Runtime behavior                                                                                          |
+| ----------------- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Automatic command | Step or substep has `bash`, `sh`, or `shell` code block and execution is not prompted. | CLI executes the command in the run's launch directory; exit `0` signals `PASS`, non-zero signals `FAIL`. |
+| Prompted/manual   | `--prompted`, display-only code block, or no executable code block.                    | CLI surfaces the prompt and waits for `rundown pass` or `rundown fail`.                                   |
+
+Step commands run in the run's **launch directory**: the directory `rundown run`
+was invoked from. The run records it, relative to the project root (`launchDir`,
+§7.4), so every command of the run executes there whoever continues it and
+wherever they run `pass`, `fail`, `goto` or `collect` from. A run started in
+`packages/svc` runs `npm test` in `packages/svc` even when it is passed from the
+repository root. A child run inherits its parent's launch directory: an inline
+child's commands, and a Delegation's commands once `rundown claim` starts it,
+run where the parent's do, wherever the claim is made from. The project root
+(§7.1) owns the run's state, outputs and artifacts; it does not move step
+commands.
 
 Executable command blocks inherit the parent process environment after policy
 filtering and Rundown environment injection. A `prompt` code block is
@@ -340,6 +351,7 @@ Each SQLite run state row stores enough information to resume deterministically.
     "path": ".rundown/runbooks/my-runbook.runbook.md"
   },
   "runbookPath": ".rundown/runbooks/my-runbook.runbook.md",
+  "launchDir": "packages/svc",
   "title": "My Runbook",
   "description": "Runbook description",
   "step": "2",
@@ -374,6 +386,7 @@ Each SQLite run state row stores enough information to resume deterministically.
 | `id`                                                | Persisted run identifier generated at execution start.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `runbook`                                           | Canonical runbook identity object: `{ source, path }`, where `source` is `project`, `plugin`, `bundled`, or `external`. For `project`, `plugin`, and `bundled` sources, `path` is a source-root-relative Markdown path. For `external` sources, `path` is a normalized absolute filesystem path.                                                                                                                                                                                                                          |
 | `runbookPath`                                       | Display/execution file path relative to the current project when possible.                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `launchDir`                                         | The run's launch directory (§4) relative to the project root, `.` for the root. Required; written once at creation, and inherited by child runs. Step commands execute there.                                                                                                                                                                                                                                                                                                                                             |
 | `step`, `substep`                                   | Current structural position.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `stepName`                                          | Human-readable description of the current step.                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `steps`                                             | Per-step status records.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
@@ -647,7 +660,7 @@ environment filtering.
 
 | Environment variable   | Source variable                                                     |
 | ---------------------- | ------------------------------------------------------------------- |
-| `RD_WORK_PATH`         | `WorkPath`                                                          |
+| `RD_WORK_PATH`         | `WorkPath`, resolved to an absolute path under the project root     |
 | `RD_CONTEXT_ID`        | `ContextId`                                                         |
 | `RD_RUN_ID`            | `RunId`                                                             |
 | `RD_RUNBOOK_REF`       | `RunbookRef.path`                                                   |
@@ -656,6 +669,12 @@ environment filtering.
 
 Rundown-injected `RD_*` variables use Rundown-wins semantics: user-supplied
 environment variables MUST NOT block or override them.
+
+Commands run in the run's launch directory (§4), which may sit below the project
+root, so every Rundown-owned location a command receives is absolute:
+`RD_WORK_PATH`, `RD_OUTPUTS_<VarName>`, `{{ WorkPath }}` in command text, and
+the `{{ path "..." }}` projection. Outside command text — descriptions, prompts
+— `{{ WorkPath }}` renders the persisted, root-relative value.
 
 ### 8.8 Template Persistence
 

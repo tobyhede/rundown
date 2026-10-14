@@ -59,7 +59,7 @@ interface ResolveOptions {
   /** Paths to YAML input files (repeatable) */
   inputFile?: string[];
   /** CLI input assignments (key=value) */
-  input?: string[];
+  input?: ReturnType<typeof parseInputOption>;
   /** CLI input assignments with JSON values (key=json) */
   inputJson?: string[];
   /** Artifact-channel assignments (key=rd:// uri) */

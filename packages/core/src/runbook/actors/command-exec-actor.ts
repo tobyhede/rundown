@@ -16,8 +16,13 @@ export interface CommandRunnerInput {
   readonly command: string;
   /** Display-safe command string for observations. */
   readonly displayCommand: string;
-  /** Project working directory for command execution. */
+  /** Project root: the directory whose `.rundown/` holds the run. */
   readonly cwd: string;
+  /**
+   * Absolute directory the command executes in: the run's launch directory
+   * (`RunbookState.launchDir`) resolved under the project root.
+   */
+  readonly workingDir: string;
   /** Source runbook path, when known. */
   readonly runbookPath?: string;
   /** Resolved source reference for the current runbook. */
@@ -48,8 +53,10 @@ export interface CommandExecutionInput {
   readonly command: string;
   /** Display-safe command string for observations. */
   readonly displayCommand: string;
-  /** Project working directory. */
+  /** Project root; OUTPUTS channels are prepared under its `.rundown/`. */
   readonly cwd: string;
+  /** Absolute directory the command executes in: the run's launch directory. */
+  readonly workingDir: string;
   /** Current run identifier used for OUTPUTS channel paths. */
   readonly runId: RunId;
   /** Source runbook path, when known. */
@@ -130,6 +137,7 @@ async function runCommand(input: CommandExecutionInput): Promise<ExecutionResult
     command: input.command,
     displayCommand: input.displayCommand,
     cwd: input.cwd,
+    workingDir: input.workingDir,
     runbookPath: input.runbookPath,
     runbook: input.runbook,
     rdInjected: input.rdInjected,

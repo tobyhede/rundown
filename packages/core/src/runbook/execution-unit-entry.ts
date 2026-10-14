@@ -42,6 +42,7 @@ import { buildStepVariables } from './runtime-frame.js';
 import {
   expandLoopVariables,
   expandLoopVariablesForCommand,
+  resolveWorkDirectory,
   type TemplateRenderContext,
   type TemplateRenderOptions,
 } from './template-renderer.js';
@@ -258,6 +259,8 @@ function buildRunnableRenderContext(
  * `typeof === 'string'` check and silently dropped it. The context is validated
  * once, cannot be shadowed, and is the same value the entry's artifact paths are
  * projected against, so the env and the payload name one work directory.
+ * It is absolute ({@link resolveWorkDirectory}) because the command runs in the
+ * run's launch directory, not necessarily the project root it is relative to.
  *
  * The `RD_*` names are the published subprocess contract and are spelled
  * literally.
@@ -271,7 +274,7 @@ function buildRdInjectedEnv(
   context: Extract<TemplateRenderContext, { kind: 'runnable' }>,
 ): Readonly<Record<string, string>> {
   return {
-    RD_WORK_PATH: context.workPath,
+    RD_WORK_PATH: resolveWorkDirectory(context),
     RD_CONTEXT_ID: context.contextId,
     RD_RUN_ID: state.id,
     RD_RUNBOOK_REF: state.runbook.path,

@@ -78,7 +78,7 @@ export interface InputOptions {
   /** Paths to YAML files containing variable definitions (repeatable) */
   inputFile?: string[];
   /** Inline key=value variable overrides (repeatable) */
-  input?: string[];
+  input?: Parameters<typeof resolveVariables>[0]['input'];
   /** Inline key=json variable overrides with JSON values (repeatable) */
   inputJson?: string[];
   /** Inline key=rd:// artifact-channel overrides (repeatable) */
@@ -99,6 +99,11 @@ export interface RunPipelineContext {
   actorService: RunbookActorService;
   /** Current working directory for file resolution */
   cwd: string;
+  /**
+   * The run's launch directory, relative to `cwd` (`.` for the root): where
+   * `rundown run` was invoked, and where the run's step commands execute.
+   */
+  launchDir: string;
   /** Runtime-only routing for command subprocess stdout/stderr. */
   commandStreamOptions?: CommandExecutionStreamOptions;
 }
@@ -455,7 +460,7 @@ export async function loadAndParseRunbook(
 
   let runbookRef: RunbookRef;
   try {
-    runbookRef = await buildRunbookRef(resolved);
+    runbookRef = buildRunbookRef(resolved);
   } catch (error: unknown) {
     return {
       ok: false,
@@ -487,7 +492,7 @@ export async function loadAndParseResolvedRunbook(
 
   let derivedRunbookRef: RunbookRef;
   try {
-    derivedRunbookRef = await buildRunbookRef({ path: filePath, source, sourceRoot });
+    derivedRunbookRef = buildRunbookRef({ path: filePath, source, sourceRoot });
   } catch (error: unknown) {
     return {
       ok: false,
@@ -881,7 +886,7 @@ async function launchRunbook(
     driveProgression: StartedRunProgression;
   },
 ): Promise<RunbookStartResult> {
-  const { output, manager, actorService, cwd } = ctx;
+  const { output, manager, actorService, cwd, launchDir } = ctx;
   const { filePath, rawContent, runbook, mergedVariables } = prepared;
 
   const runbookPath = path.relative(cwd, filePath);
@@ -901,6 +906,7 @@ async function launchRunbook(
       runId: prepared.runId,
       ownerTokenHash: hashRunSecret(ownerToken),
       runbookPath,
+      launchDir,
       prompted: options.prompted,
       runbookSrc: rawContent,
       templateVars: mergedVariables,

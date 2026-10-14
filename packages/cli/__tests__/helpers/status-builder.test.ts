@@ -147,6 +147,7 @@ const { buildInactiveStatus, buildRunListStatus, buildRunStatus } = await import
 function makeState(overrides: Partial<RunbookState> = {}): RunbookState {
   const baseState: RunbookState = {
     prompted: false,
+    launchDir: '.',
     templateVars: brandInitialTemplateVarsForTest({}),
     id: DEFAULT_RUN_ID,
     runbook: { source: 'project', path: 'test.runbook.md' },

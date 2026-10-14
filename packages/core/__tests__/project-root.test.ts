@@ -45,22 +45,28 @@ describe('resolveProjectRoot', () => {
     expect(resolveProjectRoot(sub)).toBe(nested);
   });
 
-  it('falls back to the start directory when no .rundown/ is found', () => {
+  it('resolves to the git root when no .rundown/ lies between the start and it', () => {
+    // A fresh repository: .git at base, no .rundown/ anywhere. The first
+    // `rundown run` from a subdirectory must create the store at the git
+    // root, where a later command from the root (or any other
+    // subdirectory) finds it.
     const sub = join(base, 'a', 'b');
     mkdirSync(sub, { recursive: true });
 
-    expect(resolveProjectRoot(sub)).toBe(sub);
+    expect(resolveProjectRoot(sub)).toBe(base);
   });
 
   it('ignores a .rundown that is a file, not a directory', () => {
-    writeFileSync(join(base, '.rundown'), '');
-    const sub = join(base, 'a');
-    mkdirSync(sub);
+    const a = join(base, 'a');
+    const sub = join(a, 'b');
+    mkdirSync(sub, { recursive: true });
+    writeFileSync(join(a, '.rundown'), '');
 
-    expect(resolveProjectRoot(sub)).toBe(sub);
+    // Walks past a/ to the git root.
+    expect(resolveProjectRoot(sub)).toBe(base);
   });
 
-  it('stops at a git boundary: an outer .rundown/ does not capture a repository below it', () => {
+  it('stops at a git boundary: an outer .rundown/ does not capture a repository below it, whose root is the git root', () => {
     // base holds .rundown/ and a .git marker; the repository below it is a
     // separate project (a git worktree nested in a checkout, say).
     mkdirSync(join(base, '.rundown'));
@@ -70,7 +76,7 @@ describe('resolveProjectRoot', () => {
     const sub = join(repo, 'src');
     mkdirSync(sub);
 
-    expect(resolveProjectRoot(sub)).toBe(sub);
+    expect(resolveProjectRoot(sub)).toBe(repo);
   });
 
   it('finds .rundown/ at the git boundary directory itself', () => {
@@ -96,7 +102,8 @@ describe('resolveProjectRoot', () => {
     mkdirSync(sub, { recursive: true });
     symlinkSync('.rundown', join(a, '.rundown'));
 
-    expect(resolveProjectRoot(sub)).toBe(sub);
+    // Walks past a/ to the git root.
+    expect(resolveProjectRoot(sub)).toBe(base);
   });
 
   describe('home boundary', () => {
@@ -117,6 +124,33 @@ describe('resolveProjectRoot', () => {
       mkdirSync(sub, { recursive: true });
 
       expect(resolveProjectRootWith(sub, { homeDir: home })).toBe(sub);
+    });
+
+    it('outside git, falls back to the start directory when no .rundown/ is found', () => {
+      // The walk ends at outer, an ancestor of home, having passed no .git.
+      const sub = join(outer, 'elsewhere', 'x');
+      mkdirSync(sub, { recursive: true });
+
+      expect(resolveProjectRootWith(sub, { homeDir: home })).toBe(sub);
+    });
+
+    it('a home that is a git root is a project: its .rundown/ is found from below', () => {
+      // A dotfiles repository in ~, or a container with HOME=/app.
+      writeFileSync(join(home, '.git'), 'gitdir: /dev/null\n');
+      mkdirSync(join(home, '.rundown'));
+      const sub = join(home, 'src', 'x');
+      mkdirSync(sub, { recursive: true });
+
+      expect(resolveProjectRootWith(sub, { homeDir: home })).toBe(home);
+    });
+
+    it('a home that is a git root with no .rundown/ is the git root; its ancestors stay unread', () => {
+      writeFileSync(join(home, '.git'), 'gitdir: /dev/null\n');
+      mkdirSync(join(outer, '.rundown'));
+      const sub = join(home, 'src');
+      mkdirSync(sub);
+
+      expect(resolveProjectRootWith(sub, { homeDir: home })).toBe(home);
     });
 
     it("starting at home uses home's own .rundown/", () => {
