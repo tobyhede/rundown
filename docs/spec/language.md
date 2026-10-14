@@ -524,8 +524,12 @@ rebind first and otherwise at the entry render of the unit that holds it. Launch
 defers the same names the naked assertion check defers (§10.1.2): the render is
 left for step entry. Only those two renders judge the reference: a whole-runbook
 render of a persisted run, which reaches steps no one is entering, MUST NOT
-refuse it and leaves it unrendered for that unit's entry. The refusal names the
-variable that binds the value — `plan` for `{{ path plan.file }}`.
+refuse it and leaves it unrendered for that unit's entry. Inside a `FOR` step's
+substeps the loop variable is the iteration's value: a whole-runbook render
+(launch or reload) MUST leave a reference to it (`{{ path plan }}`,
+`{{ plan.file }}`) for the substep's entry render, never substituting or judging
+an outer binding of the same name. The refusal names the variable that binds the
+value — `plan` for `{{ path plan.file }}`.
 
 `{{ artifact ArtifactName }}` renders artifact URI values with the same scalar
 or array cardinality as direct alias rendering: a single URI for
@@ -722,14 +726,18 @@ is the artifact channel (`--artifacts`, §9.1).
 The refusal names the variable and the kind of value it holds, never the value,
 which may be a secret. Its guidance follows where it happens: a root launch
 names `--artifacts`; child preparation says the value came from the parent and
-must be an artifact there; a step-entry assertion stops the run; and a
-step-entry `{{ path … }}` render keeps the run's position. At step entry the
-recovery depends on whether a step of the runbook binds the name (an `OUTPUTS`
-name, a name-binding `ARTIFACTS` alias, or a `FOR` loop variable): when one
-does, that step must bind an artifact (for a render, the owner may
-`rundown goto` a step that rebinds it, or `rundown stop`); when none does, the
-value is the one the run was given, and the guidance names a new run supplied
-through `--artifacts`.
+must be an artifact there; at step entry it follows what the refusal does to the
+run. A refusal while the unit's `ARTIFACTS` resolve — a naked assertion, or a
+`{{ path … }}` inside a declaration's quoted token — stops the run; a
+`{{ path … }}` render of the unit's description, prompt or command keeps the
+run's position. At step entry the recovery also depends on whether a step of the
+runbook binds the name for the judging unit (an `OUTPUTS` name, a name-binding
+`ARTIFACTS` alias, or — only for a substep of its `FOR` step — a loop variable;
+a `FOR` step's own `ARTIFACTS` resolve before any iteration binds it): when one
+does, that step must bind an artifact (when the run keeps its position, the
+owner may `rundown goto` a step that rebinds it, or `rundown stop`); when none
+does, the value is the one the run was given, and the guidance names a new run
+supplied through `--artifacts`.
 
 The naked form is intended for consumer runbooks (e.g. a reviewer asserting that
 `Plan` was inherited from the parent's delegation chain) where the variable is

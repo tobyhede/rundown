@@ -52,20 +52,37 @@ export type ArtifactInputRefusalOrigin =
 export type StepEntryBinder = 'runbook-step' | 'no-runbook-step';
 
 /**
+ * What a step-entry refusal does to the run, which is fixed by the path the
+ * refusal takes rather than by what the runbook asked for.
+ *
+ * - `run-stops` — the refusal happened while the unit's `ARTIFACTS` resolved
+ *   (a naked assertion, or a `{{ path … }}` inside a declaration's token), and
+ *   the resolver's failure path stops the run.
+ * - `run-keeps-position` — the refusal happened while rendering the unit's
+ *   description, prompt or command; the run keeps its position for the owner's
+ *   `rundown goto` or `rundown stop`.
+ */
+export type StepEntryRefusalOutcome = 'run-stops' | 'run-keeps-position';
+
+/**
  * When the refusal happened, which decides the recovery its message names.
  *
  * - `launch` — before any run exists; the caller can relaunch with
  *   `--artifacts`.
  * - `child-preparation` — the value came from the parent, where it must be an
  *   artifact URI; no flag on the child's command can supply it.
- * - `step-entry` — a run exists and its owner recovers it: a naked assertion
- *   stops the run, while a `{{ path … }}` render keeps its position for a
- *   `rundown goto` or `rundown stop`. `binder` says whether a step of the
- *   runbook binds the name, which decides what the owner must change.
+ * - `step-entry` — a run exists and its owner recovers it. `outcome` says
+ *   whether the refusal stopped the run or left it at its position, and
+ *   `binder` whether a step of the runbook binds the name; together they
+ *   decide what the owner must change.
  */
 export type ArtifactInputRefusalContext =
   | ArtifactInputRefusalOrigin
-  | { readonly kind: 'step-entry'; readonly binder: StepEntryBinder };
+  | {
+      readonly kind: 'step-entry';
+      readonly binder: StepEntryBinder;
+      readonly outcome: StepEntryRefusalOutcome;
+    };
 
 /** Spec §10.1.2 failure names that mean "this value is not artifact-shaped". */
 export type ArtifactAssertionShapeFailure =
@@ -340,7 +357,7 @@ function recoveryGuidance(
         'to an artifact (an ARTIFACTS alias or an rd:// artifact URI) before this child is launched or claimed.'
       );
     case 'step-entry':
-      return stepEntryGuidance(variable, site, context.binder);
+      return stepEntryGuidance(variable, context.binder, context.outcome);
     default: {
       const _exhaustive: never = context;
       return _exhaustive;
@@ -350,8 +367,8 @@ function recoveryGuidance(
 
 function stepEntryGuidance(
   variable: string,
-  site: ArtifactInputRequiredSite,
   binder: StepEntryBinder,
+  outcome: StepEntryRefusalOutcome,
 ): string {
   const relaunch =
     `start a new run that supplies it with --artifacts ${variable}=<rd:// URI> ` +
@@ -361,13 +378,13 @@ function stepEntryGuidance(
     "(or one a composed child's outputs forwarded)";
   switch (binder) {
     case 'runbook-step':
-      return site.kind === 'artifacts-assertion'
+      return outcome === 'run-stops'
         ? `The run stops. Bind "${variable}" to an artifact in the step that sets it (an ARTIFACTS alias, ` +
             'or an rd:// URI written to its OUTPUTS), then start a new run.'
         : 'The run keeps its position. Recover with `rundown goto` to an earlier step that rebinds ' +
             `"${variable}" to an artifact, or end the run with \`rundown stop\`.`;
     case 'no-runbook-step':
-      return site.kind === 'artifacts-assertion'
+      return outcome === 'run-stops'
         ? `The run stops. ${unbound}: ${relaunch}`
         : `The run keeps its position. ${unbound}: end it with \`rundown stop\` and ${relaunch}`;
     default: {
@@ -540,7 +557,8 @@ export function defersAtLaunch(deferral: LaunchArtifactDeferral, name: string): 
  *
  * - `launch` — refuse a name `deferral` does not defer, as `origin`.
  * - `step-entry` — refuse every name; `stepBoundNames` (see
- *   {@link collectStepBoundNames}) decides the refusal's recovery.
+ *   {@link collectStepBoundNames}) and `outcome` (the path this render's
+ *   refusal takes) decide the refusal's recovery.
  */
 export type PathArtifactJudgement =
   | {
@@ -548,24 +566,44 @@ export type PathArtifactJudgement =
       readonly origin: ArtifactInputRefusalOrigin;
       readonly deferral: LaunchArtifactDeferral;
     }
-  | { readonly kind: 'step-entry'; readonly stepBoundNames: ReadonlySet<string> };
+  | {
+      readonly kind: 'step-entry';
+      readonly stepBoundNames: ReadonlySet<string>;
+      readonly outcome: StepEntryRefusalOutcome;
+    };
+
+/** The execution unit a step-entry judgement is made for: a step or one of its substeps. */
+export interface StepEntryUnit {
+  /** The step's name (`N`). */
+  readonly step: string;
+  /** The substep's id (`M` of `N.M`), when the unit is a substep. */
+  readonly substep?: string;
+}
 
 /**
- * Names a step of the runbook binds: the §8.2 produced set plus every `FOR`
- * loop variable. A step-entry refusal of any other name has no step to fix,
+ * Names a step of the runbook binds, as seen from one execution unit: the
+ * §8.2 produced set, plus the loop variable of the `FOR` step whose substep
+ * the unit is. A step-entry refusal of any other name has no step to fix,
  * only a new run.
  *
+ * A loop variable is bound only inside its loop's substeps. A `FOR` step's
+ * own `ARTIFACTS` precede its `FOR` and resolve on entering the step, before
+ * any iteration binds the variable, and every unit outside the loop runs
+ * without it; for those units the value of that name is one no step binds.
+ *
  * @param steps - Parsed or resolved runbook steps
- * @returns The names some step binds
+ * @param unit - The unit being entered
+ * @returns The names some step binds for `unit`
  */
 export function collectStepBoundNames(
   steps: readonly (Step | ResolvedStep)[],
+  unit: StepEntryUnit,
 ): ReadonlySet<string> {
   const names = collectProducedNames(steps);
-  for (const step of steps) {
-    if (step.kind === 'for' && step.forClause.variable !== undefined) {
-      names.add(step.forClause.variable);
-    }
+  if (unit.substep === undefined) return names;
+  const enclosing = steps.find((step) => step.name === unit.step);
+  if (enclosing?.kind === 'for' && enclosing.forClause.variable !== undefined) {
+    names.add(enclosing.forClause.variable);
   }
   return names;
 }
@@ -575,15 +613,18 @@ export function collectStepBoundNames(
  *
  * @param stepBoundNames - Names a step of the runbook binds
  * @param variable - The refused name
+ * @param outcome - What the refusal's path does to the run
  * @returns The `step-entry` context whose `binder` says whether a step binds it
  */
 export function stepEntryRefusalContext(
   stepBoundNames: ReadonlySet<string>,
   variable: string,
+  outcome: StepEntryRefusalOutcome,
 ): Extract<ArtifactInputRefusalContext, { kind: 'step-entry' }> {
   return {
     kind: 'step-entry',
     binder: stepBoundNames.has(variable) ? 'runbook-step' : 'no-runbook-step',
+    outcome,
   };
 }
 

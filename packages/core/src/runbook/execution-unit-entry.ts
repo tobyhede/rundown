@@ -348,7 +348,12 @@ export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): 
     context: buildRunnableRenderContext(state.id, input.cwd, effectiveVars),
     // The one render that judges `{{ path Name }}` against a run's values:
     // the unit's own, at its entry (spec §9.3).
-    artifactJudgement: { kind: 'step-entry', stepBoundNames: collectStepBoundNames(steps) },
+    // A refusal here keeps the run's position (`artifact_input_required`).
+    artifactJudgement: {
+      kind: 'step-entry',
+      stepBoundNames: collectStepBoundNames(steps, { step: state.step, substep: state.substep }),
+      outcome: 'run-keeps-position',
+    },
   } satisfies TemplateRenderOptions;
 
   // A prompted-FOR substep carries no prompt of its own; the step-level prompt

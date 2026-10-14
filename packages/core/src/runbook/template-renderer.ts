@@ -983,7 +983,7 @@ function resolvePathHelperCall(
           binding.name,
           value,
           { kind: 'path-helper', reference: varRef },
-          stepEntryRefusalContext(judgement.stepBoundNames, binding.name),
+          stepEntryRefusalContext(judgement.stepBoundNames, binding.name, judgement.outcome),
         );
       default: {
         const _exhaustive: never = judgement;
@@ -1429,13 +1429,7 @@ function substituteArtifacts(
   forVariable?: string,
 ): readonly ArtifactDeclaration[] | undefined {
   if (!artifacts || artifacts.length === 0) return artifacts;
-  const scopedVariables = forVariable
-    ? Object.fromEntries(
-        Object.entries(variables).filter(
-          ([name]) => !isForScoped(name, forVariable) && !FOR_LOOP_RUNTIME_VARIABLES.has(name),
-        ),
-      )
-    : variables;
+  const scopedVariables = forScopedFrame(variables, forVariable);
   // substituteText returns the same string instance when no placeholders
   // resolved; preserve declaration identity in that case so callers can
   // detect a no-op via reference equality.
@@ -1458,12 +1452,42 @@ function substituteArtifacts(
 }
 
 /**
+ * The substitution frame of a FOR step's substeps: the outer variables less
+ * every name the iteration binds.
+ *
+ * References scoped to the loop variable (`forVariable` itself or a dotted
+ * descendant) and the FOR loop runtime variables (`Index`, `index`,
+ * `context.current.index`) are dropped, so those placeholders survive this
+ * whole-runbook render for the substep's entry render, which binds them to the
+ * iteration's values. Without the drop, an outer binding of the same name is
+ * captured in their place — and a `{{ path Name }}` over the loop variable is
+ * judged against that outer value, never against the iteration value its
+ * substep sees (spec §9.3).
+ *
+ * @param variables - Variable map for substitution
+ * @param forVariable - FOR loop variable name, or undefined outside a FOR step
+ * @returns The frame to render a FOR step's substeps against
+ */
+function forScopedFrame(
+  variables: Record<string, unknown>,
+  forVariable: string | undefined,
+): Record<string, unknown> {
+  if (!forVariable) return variables;
+  return Object.fromEntries(
+    Object.entries(variables).filter(
+      ([name]) => !isForScoped(name, forVariable) && !FOR_LOOP_RUNTIME_VARIABLES.has(name),
+    ),
+  );
+}
+
+/**
  * Substitute template variables in a substep.
  *
  * @param substep - Parsed substep node
  * @param variables - Variable map for substitution
  * @param helperOptions - Filesystem options for artifact-producing helpers
- * @param forVariable - FOR loop variable name — runbook paths scoped to it are skipped
+ * @param forVariable - FOR loop variable name — references scoped to it are
+ *   left for the substep's entry render (see {@link forScopedFrame})
  * @returns Substep with all string fields expanded
  */
 function substituteSubstep(
@@ -1472,13 +1496,14 @@ function substituteSubstep(
   helperOptions?: TemplateHelperOptions,
   forVariable?: string,
 ): Substep {
+  const frame = forScopedFrame(variables, forVariable);
   return {
     ...substep,
-    description: substituteText(substep.description, variables, undefined, helperOptions),
+    description: substituteText(substep.description, frame, undefined, helperOptions),
     prompt: substep.prompt
-      ? substituteText(substep.prompt, variables, undefined, helperOptions)
+      ? substituteText(substep.prompt, frame, undefined, helperOptions)
       : substep.prompt,
-    command: substituteCommand(substep.command, variables, helperOptions),
+    command: substituteCommand(substep.command, frame, helperOptions),
     runbooks: substep.runbooks?.map((runbookPath) => {
       // Skip substitution for FOR-scoped runbook placeholders — they must remain
       // opaque until iteration time to prevent outer-scope variable capture

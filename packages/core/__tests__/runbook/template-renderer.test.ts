@@ -2481,7 +2481,11 @@ const ARTIFACT_HELPER_OPTIONS: TemplateRenderOptions = {
 /** The same render, judging `{{ path … }}` as the entry of a unit does. */
 const STEP_ENTRY_RENDER_OPTIONS: TemplateRenderOptions = {
   ...ARTIFACT_HELPER_OPTIONS,
-  artifactJudgement: { kind: 'step-entry', stepBoundNames: new Set(['PlanPath']) },
+  artifactJudgement: {
+    kind: 'step-entry',
+    stepBoundNames: new Set(['PlanPath']),
+    outcome: 'run-keeps-position',
+  },
 };
 const ARTIFACT_PLAN_PATH = path.join(
   '/tmp/project',

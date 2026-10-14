@@ -337,8 +337,14 @@ function expandArtifactToken(
       contextId: options.contextId,
       runId: options.runId,
     },
-    // A token is rendered at the entry of the unit that declares it.
-    artifactJudgement: { kind: 'step-entry', stepBoundNames: options.stepBoundNames },
+    // A token is rendered at the entry of the unit that declares it, while its
+    // ARTIFACTS resolve: a refusal here takes the resolver's path, which stops
+    // the run.
+    artifactJudgement: {
+      kind: 'step-entry',
+      stepBoundNames: options.stepBoundNames,
+      outcome: 'run-stops',
+    },
   });
 }
 
@@ -682,7 +688,7 @@ async function resolveNakedDeclaration(
       name,
       value,
       { kind: 'artifacts-assertion', reason: shape.reason },
-      stepEntryRefusalContext(options.stepBoundNames, name),
+      stepEntryRefusalContext(options.stepBoundNames, name, 'run-stops'),
     );
   }
 

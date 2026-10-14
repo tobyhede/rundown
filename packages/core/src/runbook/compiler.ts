@@ -52,6 +52,7 @@ import {
   ARTIFACT_INPUT_REQUIRED,
   ArtifactInputRequiredError,
   collectStepBoundNames,
+  type StepEntryUnit,
 } from './artifact-input-required.js';
 import {
   commandExecActor,
@@ -4004,9 +4005,6 @@ export function compileRunbookToMachine(
   // (JsonArrayStream) fail closed inside resolveFromJsonArrayStream when cwd
   // is missing, while in-memory JsonArray sources need no cwd at all.
   const sourceResolutionCwd = evaluationOptions?.cwd;
-  // Parser-derived, so bound at compile time: a step-entry ARTIFACT_INPUT_REQUIRED
-  // refusal reads it to name the step that binds the name, or a new run.
-  const stepBoundNames = collectStepBoundNames(steps);
   const states: Record<string, RunbookStateConfig> = {};
   const clearCurrentEntryArtifacts = runbookSetup.assign({
     enteredArtifacts: () => undefined,
@@ -4046,36 +4044,43 @@ export function compileRunbookToMachine(
     stepName: string,
     substepId: string | undefined,
     target: string,
-  ): NonNullable<RunbookStateConfig['invoke']> => ({
-    src: 'artifactResolveActor' as const,
-    input: ({ context }: { context: RunbookContext }) =>
-      buildArtifactResolveInput(
-        declarations,
-        stepName,
-        substepId,
-        context,
-        evaluationOptions,
-        stepBoundNames,
-      ),
-    onDone: {
-      target,
-      actions: {
-        type: 'storeResolvedArtifacts' as const,
-        params: ({
-          event,
-        }: {
-          // Track the actor's declared Output exactly so provenance survives
-          // the event.output boundary in the type system.
-          event: {
-            output: { variables: Record<string, TrustedArtifactValue> };
-          };
-        }) => ({
-          variables: event.output.variables,
-        }),
+    declaringUnit: StepEntryUnit,
+  ): NonNullable<RunbookStateConfig['invoke']> => {
+    // Parser-derived, so bound at compile time for the unit that declares the
+    // block: a step-entry ARTIFACT_INPUT_REQUIRED refusal reads it to name the
+    // step that binds the name, or a new run.
+    const stepBoundNames = collectStepBoundNames(steps, declaringUnit);
+    return {
+      src: 'artifactResolveActor' as const,
+      input: ({ context }: { context: RunbookContext }) =>
+        buildArtifactResolveInput(
+          declarations,
+          stepName,
+          substepId,
+          context,
+          evaluationOptions,
+          stepBoundNames,
+        ),
+      onDone: {
+        target,
+        actions: {
+          type: 'storeResolvedArtifacts' as const,
+          params: ({
+            event,
+          }: {
+            // Track the actor's declared Output exactly so provenance survives
+            // the event.output boundary in the type system.
+            event: {
+              output: { variables: Record<string, TrustedArtifactValue> };
+            };
+          }) => ({
+            variables: event.output.variables,
+          }),
+        },
       },
-    },
-    onError: artifactFailureTransition,
-  });
+      onError: artifactFailureTransition,
+    };
+  };
   const buildForIterateInvokeBlock = (
     readyTarget: string,
   ): NonNullable<RunbookStateConfig['invoke']> => ({
@@ -4485,6 +4490,9 @@ export function compileRunbookToMachine(
             step.name,
             substep.id,
             formatStateId(step.name, substep.id),
+            // Step-level declarations: resolved on entering the step, before
+            // a FOR iteration binds its loop variable.
+            { step: step.name },
           ),
         }),
       );
@@ -4614,6 +4622,7 @@ export function compileRunbookToMachine(
       config.stepName,
       config.substepId,
       restingEntry,
+      { step: config.stepName, substep: config.substepId },
     );
     const initialSubstate = needsIteration
       ? '__resolve-iteration'

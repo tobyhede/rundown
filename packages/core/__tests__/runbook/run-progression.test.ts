@@ -745,7 +745,7 @@ describe('activateRunProgression', () => {
       'Doc',
       'plain-string',
       { kind: 'path-helper', reference: 'Doc' },
-      { kind: 'step-entry', binder: 'runbook-step' },
+      { kind: 'step-entry', binder: 'runbook-step', outcome: 'run-keeps-position' },
     );
     jest.spyOn(actorService, 'enterExecutionUnit').mockRejectedValue(refusal);
 

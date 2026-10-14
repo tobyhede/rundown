@@ -2351,7 +2351,11 @@ const ARTIFACT_HELPER_OPTIONS: TemplateRenderOptions = {
 /** The same render, judging `{{ path … }}` as the entry of a unit does. */
 const STEP_ENTRY_RENDER_OPTIONS: TemplateRenderOptions = {
   ...ARTIFACT_HELPER_OPTIONS,
-  artifactJudgement: { kind: 'step-entry', stepBoundNames: new Set() },
+  artifactJudgement: {
+    kind: 'step-entry',
+    stepBoundNames: new Set(),
+    outcome: 'run-keeps-position',
+  },
 };
 
 describe('substituteText with ArtifactRecord values', () => {

@@ -226,6 +226,161 @@ describe('artifact-asserted input refusal (integration)', () => {
     expect(String(error?.message)).toContain('rundown stop');
   });
 
+  it('{{ path X }} inside an ARTIFACTS token stops the run, and its guidance says so (E2)', async () => {
+    // A token is rendered while the unit's ARTIFACTS resolve, and a refusal
+    // there takes the resolver's stop path. Its guidance must describe that
+    // outcome, not the position-keeping one of a prompt render.
+    await writeFile(
+      join(workspace.cwd, 'token.runbook.md'),
+      [
+        '# Token',
+        '## 1. Produce a plain path',
+        '- OUTPUTS',
+        '  - Doc',
+        '- PASS CONTINUE',
+        '- FAIL STOP',
+        '```sh',
+        `printf 'notes.md' > "$RD_OUTPUTS_Doc"`,
+        '```',
+        '',
+        '## 2. Reference it',
+        '- ARTIFACTS',
+        '  - Copy "{{ path Doc }}"',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Use the copy.',
+        '',
+      ].join('\n'),
+    );
+
+    const { stdout, exitCode } = await runCliInProcess(
+      ['run', '--allow-all', 'token.runbook.md'],
+      workspace,
+    );
+
+    expect(exitCode).toBe(1);
+    const events = parseJsonEvents(stdout);
+    expect(events.find((event) => event.type === 'runbook_stopped')).toBeDefined();
+    const error = events.find((event) => event.type === 'error_occurred');
+    expect(error).toMatchObject({ code: 'ARTIFACT_INPUT_REQUIRED' });
+    const message = String(error?.message);
+    expect(message).toContain('{{ path Doc }} requires an artifact');
+    expect(message).toContain('The run stops');
+    expect(message).toContain('in the step that sets it');
+    expect(message).not.toContain('keeps its position');
+    expect(message).not.toContain('rundown goto');
+  });
+
+  describe('{{ path X }} over a FOR loop variable judges the iteration value (E1)', () => {
+    // The iteration binds the loop variable before its substep is entered, so
+    // the value a substep's `{{ path plan }}` judges is the iteration value —
+    // never an outer `plan` the loop variable shadows. Only the substep's entry
+    // render can see it; a whole-runbook render (launch or reload) must leave
+    // the reference for that entry.
+    const iterating = [
+      '---',
+      'inputs:',
+      '  - plan',
+      '  - plans',
+      '---',
+      '# Iterating',
+      '## 1. Review each plan',
+      '- FOR plan IN {{ plans }}',
+      '- PASS ALL COMPLETE',
+      '- FAIL ANY STOP',
+      '',
+      '### 1.1 Read',
+      '- PASS CONTINUE',
+      '- FAIL STOP',
+      '',
+      'Read {{ path plan }}.',
+      '',
+    ].join('\n');
+
+    beforeEach(async () => {
+      await writeFile(join(workspace.cwd, 'iterating.runbook.md'), iterating);
+    });
+
+    function substepRefusal(stdout: string): string {
+      const events = parseJsonEvents(stdout);
+      // The refused unit is never entered, so no prompt shows the reference.
+      expect(events.find((event) => event.type === 'step_entered')).toBeUndefined();
+      const error = events.find((event) => event.type === 'error_occurred');
+      expect(error).toMatchObject({ code: 'ARTIFACT_INPUT_REQUIRED' });
+      return String(error?.message);
+    }
+
+    it('a plain iteration value is refused at the substep entry', async () => {
+      const { stdout, exitCode } = await runCliInProcess(
+        ['run', 'iterating.runbook.md', '--input-json', 'plans=["a.md","b.md"]'],
+        workspace,
+      );
+
+      expect(exitCode).toBe(1);
+      const message = substepRefusal(stdout);
+      expect(message).toContain('{{ path plan }} requires an artifact, but "plan"');
+      expect(message).toContain('The run keeps its position');
+    });
+
+    it('a plain iteration value is refused even when an outer artifact `plan` is shadowed', async () => {
+      const uri = await seedArtifact('ctx-src', 'outer.md');
+
+      const { stdout, exitCode } = await runCliInProcess(
+        [
+          'run',
+          'iterating.runbook.md',
+          '--artifacts',
+          `plan=${uri}`,
+          '--input-json',
+          'plans=["a.md","b.md"]',
+        ],
+        workspace,
+      );
+
+      // The outer artifact's path must not stand in for the iteration value.
+      expect(stdout).not.toContain('outer.md');
+      expect(exitCode).toBe(1);
+      const message = substepRefusal(stdout);
+      expect(message).toContain('{{ path plan }} requires an artifact, but "plan"');
+      expect(message).toContain('The run keeps its position');
+    });
+
+    it('an artifact iteration value renders even when an outer plain `plan` is shadowed', async () => {
+      const first = await seedArtifact('ctx-src', 'plan-a.md');
+      const second = await seedArtifact('ctx-src', 'plan-b.md');
+
+      const started = await runCliInProcess(
+        [
+          'run',
+          'iterating.runbook.md',
+          '--input',
+          'plan=draft',
+          '--artifacts-json',
+          `plans=${JSON.stringify([first, second])}`,
+        ],
+        workspace,
+      );
+
+      // The outer `plan` never reaches the substep, so launch does not judge it.
+      expect(started.stdout).not.toContain('ARTIFACT_INPUT_REQUIRED');
+      expect(started.exitCode).toBe(0);
+      const entered = parseJsonEvents(started.stdout).find(
+        (event) => event.type === 'step_entered',
+      );
+      expect(entered?.prompt).toMatch(/^Read \S*\.rundown\/work\/\.rd-ctx-src\/\S*\/plan-a\.md\.$/);
+
+      const token = requireOwnerToken(started.stdout);
+      const passed = await runCliInProcess(
+        ['pass', '--token', token, '--step', '1.1', '--index', '1'],
+        workspace,
+      );
+      expect(passed.stdout).not.toContain('ARTIFACT_INPUT_REQUIRED');
+      const next = parseJsonEvents(passed.stdout).find((event) => event.type === 'step_entered');
+      expect(next?.prompt).toMatch(/^Read \S*\.rundown\/work\/\.rd-ctx-src\/\S*\/plan-b\.md\.$/);
+    });
+  });
+
   it('a launch value a step rebinds stays deferred on every command after launch', async () => {
     // Launch defers `{{ path plan }}` because step 2 rebinds `plan`; the
     // commands that reload the run while step 1 is current must apply the
@@ -443,6 +598,63 @@ describe('artifact-asserted input refusal (integration)', () => {
 
       const { stdout } = await runCliInProcess(
         ['run', 'asserting.runbook.md', '--input', 'plan=./plan.md'],
+        workspace,
+      );
+
+      const error = parseJsonEvents(stdout).find((event) => event.type === 'error_occurred');
+      expect(error).toMatchObject({ code: 'ARTIFACT_INPUT_REQUIRED' });
+      const message = String(error?.message);
+      expect(message).toContain('The run stops');
+      expect(message).toContain('No step of this runbook binds "plan"');
+      expect(message).toContain('--artifacts plan=<rd:// URI>');
+      expect(message).not.toContain('in the step that sets it');
+    });
+
+    it("a FOR step's own assertion on its loop variable judges the launch value, so names a new run (E3)", async () => {
+      // ARTIFACTS precede FOR, so the step-level assertion resolves on entry,
+      // before any iteration binds `plan`: the value judged is the launch
+      // value, which no step rebinds. The loop variable binds only inside the
+      // loop's substeps.
+      await writeFile(
+        join(workspace.cwd, 'looping.runbook.md'),
+        [
+          '---',
+          'inputs:',
+          '  - plan',
+          '  - plans',
+          '---',
+          '# Composing',
+          '## 1. Review each plan',
+          '- ARTIFACTS',
+          '  - plan',
+          '- FOR plan IN {{ plans }}',
+          '- PASS ALL CONTINUE',
+          '- FAIL ANY STOP',
+          '',
+          '### 1.1 Read',
+          '- PASS CONTINUE',
+          '- FAIL STOP',
+          '',
+          'Read it.',
+          '',
+          '## 2. Compose',
+          '- PASS ALL COMPLETE',
+          '- FAIL ANY STOP',
+          '',
+          '- planner.runbook.md',
+          '',
+        ].join('\n'),
+      );
+
+      const { stdout } = await runCliInProcess(
+        [
+          'run',
+          'looping.runbook.md',
+          '--input',
+          'plan=./plan.md',
+          '--input-json',
+          'plans=["a.md"]',
+        ],
         workspace,
       );
 

@@ -2489,13 +2489,21 @@ describe('resolveArtifactDeclarations — naked refusal shares the launch rule',
 
     expect(error.message).not.toContain('--artifacts');
     expect(error.message).toContain('The run stops');
-    expect(error.context).toEqual({ kind: 'step-entry', binder: 'runbook-step' });
+    expect(error.context).toEqual({
+      kind: 'step-entry',
+      binder: 'runbook-step',
+      outcome: 'run-stops',
+    });
   });
 
   it('names a new run with --artifacts when no step of the runbook binds the name (B2)', async () => {
     const error = await refusal('plan.json', new Set());
 
-    expect(error.context).toEqual({ kind: 'step-entry', binder: 'no-runbook-step' });
+    expect(error.context).toEqual({
+      kind: 'step-entry',
+      binder: 'no-runbook-step',
+      outcome: 'run-stops',
+    });
     expect(error.message).toContain('The run stops');
     expect(error.message).toContain('--artifacts Plan=<rd:// URI>');
     expect(error.message).not.toContain('in the step that sets it');

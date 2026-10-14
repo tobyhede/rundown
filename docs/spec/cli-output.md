@@ -1770,23 +1770,29 @@ way to supply an artifact at launch; `--input` never carries one.
 - **At step entry.** A value the launch left to step entry is refused when the
   asserting step is entered: an `error_occurred` event with `code` set, then
   `runbook_stopped` with reason `artifact_resolution_failed`. A
-  `{{ path Name }}` render over such a value is an `error_occurred` with this
-  code; nothing is committed and the run keeps its position. Run Progression
-  reports it with reason `artifact_input_required` and `recovery: "permanent"` —
-  unlike the retryable `entry_render_failed` (RD-504), a re-render cannot
-  succeed, and the owner must act. Only the entry of the unit holding the
-  reference judges it: the whole-runbook reload every command performs judges
-  none, so `status`, `stop`, `prune` and `release` still load such a run. The
-  message names the owner's recovery by whether a step of the runbook binds the
-  name (an `OUTPUTS` name, a name-binding `ARTIFACTS` alias, or a `FOR` loop
-  variable):
-  - **A step binds it.** An assertion says the run stops and that step must bind
-    an artifact before a new run; a render says to `rundown goto` a step that
-    rebinds the name, or `rundown stop`.
+  `{{ path Name }}` inside an `ARTIFACTS` declaration's quoted token is refused
+  on the same path, and its message likewise says the run stops. A
+  `{{ path Name }}` render of the unit's description, prompt or command over
+  such a value is an `error_occurred` with this code; nothing is committed and
+  the run keeps its position. Inside a `FOR` step's substeps, the value judged
+  is the iteration's, never an outer binding the loop variable shadows. Run
+  Progression reports it with reason `artifact_input_required` and
+  `recovery: "permanent"` — unlike the retryable `entry_render_failed` (RD-504),
+  a re-render cannot succeed, and the owner must act. Only the entry of the unit
+  holding the reference judges it: the whole-runbook reload every command
+  performs judges none, so `status`, `stop`, `prune` and `release` still load
+  such a run. The message names the owner's recovery by whether the refusal
+  stopped the run and whether a step of the runbook binds the name (an `OUTPUTS`
+  name, a name-binding `ARTIFACTS` alias, or — for a substep of its `FOR` step
+  only — a loop variable; a `FOR` step's own `ARTIFACTS` resolve before any
+  iteration binds it):
+  - **A step binds it.** A refusal that stops the run says that step must bind
+    an artifact before a new run; one that keeps the run's position says to
+    `rundown goto` a step that rebinds the name, or `rundown stop`.
   - **No step binds it.** The value is the one the run was given (or one a
     composed child's `outputs:` forwarded), so the message says to start a new
-    run with `--artifacts Name=<rd:// URI>` — after `rundown stop` for a render,
-    whose run keeps its position.
+    run with `--artifacts Name=<rd:// URI>` — after `rundown stop` when the run
+    keeps its position.
 
 The message never contains the bound value, which may be a secret supplied
 through `--input KEY` or `RD_INPUT_*`. It names the variable and the value's

@@ -508,6 +508,8 @@ export {
   type ParsedArtifactUriString,
   type PathArtifactJudgement,
   type StepEntryBinder,
+  type StepEntryRefusalOutcome,
+  type StepEntryUnit,
 } from './artifact-input-required.js';
 export { extractFileArtifactReferences } from './artifact-reference-extractor.js';
 export {
