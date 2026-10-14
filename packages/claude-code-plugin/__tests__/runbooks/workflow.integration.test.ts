@@ -122,6 +122,9 @@ describe('Built-in Runbook Workflow Integration', () => {
   beforeEach(async () => {
     tempDir = mkdtempSync(join(tmpdir(), 'rd-plugin-test-'));
     await mkdir(join(tempDir, '.claude', 'rundown', 'runs'), { recursive: true });
+    // Its own .rundown/ makes the workspace its own project root, so the
+    // project-root walk never reaches a .rundown/ above the temp directory.
+    await mkdir(join(tempDir, '.rundown'));
   });
 
   afterEach(async () => {
