@@ -109,6 +109,7 @@ describe('parsed runbook preparation', () => {
       providedKeys: new Set(['env']),
       runbookRef: { source: 'project', path: 'workflow.runbook.md' },
       helperRegistry: new Map(),
+      origin: { kind: 'launch' },
     };
 
     const prepared = prepareParsedRunbook({ ...base, identity: { kind: 'prepared' } });
@@ -146,6 +147,7 @@ describe('parsed runbook preparation', () => {
       runbookRef: { source: 'project', path: 'workflow.runbook.md' },
       helperRegistry: new Map(),
       identity: { kind: 'prepared' },
+      origin: { kind: 'launch' },
     });
 
     expect(result).toMatchObject({
@@ -171,6 +173,7 @@ describe('parsed runbook preparation', () => {
       runbookRef: { source: 'project', path: 'workflow.runbook.md' },
       helperRegistry: new Map(),
       identity: { kind: 'prepared' },
+      origin: { kind: 'launch' },
     });
 
     expect(result.ok).toBe(false);
@@ -208,6 +211,7 @@ describe('parsed runbook preparation', () => {
       runbookRef: { source: 'project', path: 'workflow.runbook.md' },
       helperRegistry: new Map(),
       identity: { kind: 'prepared' },
+      origin: { kind: 'launch' },
     });
 
     expect(result.ok).toBe(true);
@@ -233,6 +237,7 @@ describe('parsed runbook preparation', () => {
       runbookRef: { source: 'project', path: 'workflow.runbook.md' },
       helperRegistry: new Map(),
       identity: { kind: 'prepared' },
+      origin: { kind: 'launch' },
     });
 
     expect(result.ok).toBe(true);
@@ -256,6 +261,7 @@ describe('parsed runbook preparation', () => {
       runbookRef: { source: 'project', path: 'workflow.runbook.md' },
       helperRegistry: new Map(),
       identity: { kind: 'prepared' },
+      origin: { kind: 'launch' },
     });
 
     expect(result.ok).toBe(false);
@@ -288,6 +294,7 @@ echo {{ upper env }}
       runbookRef: { source: 'project', path: 'workflow.runbook.md' },
       helperRegistry: new Map([['upper', (value: string) => value.toUpperCase()]]),
       identity: { kind: 'runnable', runId: assertRunId('rd_0123456789abcdef0123456789abcdef') },
+      origin: { kind: 'launch' },
     });
 
     expect(result.ok).toBe(true);
@@ -324,6 +331,7 @@ echo {{ upper env }}
       runbookRef: { source: 'project', path: 'workflow.runbook.md' },
       helperRegistry: new Map(),
       identity: { kind: 'prepared' },
+      origin: { kind: 'launch' },
     });
 
     expect(result.ok).toBe(true);

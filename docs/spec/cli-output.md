@@ -1754,26 +1754,43 @@ URI array. The artifact channel, `--artifacts <name>=<rd:// URI>`, is the only
 way to supply an artifact at launch; `--input` never carries one.
 
 - **At launch.** When the value comes from the launch inputs and no step can
-  rebind the name before the assertion (it is outside the produced set, §8.2),
-  `rundown run` refuses it with this error envelope and exit 1 before any run is
-  created. `details.variable` names the input; `details.step` names the first
-  asserting step or substep (absent for a `{{ path … }}` render). Child
-  preparation (claim, inline launch) reports the same code. `rundown resolve`
-  lists the message under `errors`.
+  rebind the name before the assertion or render reads it, `rundown run` refuses
+  it with this error envelope and exit 1 before any run is created. A name in
+  the produced set (§8.2) can be rebound, and so can every name in a runbook
+  that composes a child (an inline runbook-list entry or a `DELEGATE`), whose
+  frontmatter `outputs:` are forwarded into the parent (§10.3); those are left
+  to step entry. `details.variable` names the input; `details.step` names the
+  first asserting step or substep (absent for a `{{ path … }}` render).
+  `rundown resolve` lists the message under `errors`.
+- **At child preparation.** An inline child's launch or a `rundown claim`
+  reports the same code when the value the child inherited from its parent is
+  not an artifact. Its message says the value came from the parent and must be
+  an artifact there; it does not name `--artifacts`, which the child's command
+  cannot take.
 - **At step entry.** A value an earlier step binds is refused when the asserting
   step is entered: an `error_occurred` event with `code` set, then
-  `runbook_stopped` with reason `artifact_resolution_failed`. A
-  `{{ path Name }}` render over such a value is an `error_occurred` with this
-  code; nothing is committed and the run keeps its position.
+  `runbook_stopped` with reason `artifact_resolution_failed`. The message says
+  the run stops and that the step binding the name must bind an artifact before
+  a new run. A `{{ path Name }}` render over such a value is an `error_occurred`
+  with this code; nothing is committed and the run keeps its position, so the
+  message names the owner's recovery: `rundown goto` a step that rebinds the
+  name, or `rundown stop`. Run Progression reports it with
+  `recovery: "permanent"` — a re-render cannot succeed, and the owner must act.
 
-The message begins with the §10.1.2 failure name (`unresolvable-uri`,
-`not-an-artifact`, or `partial-resolve`) for an assertion.
+The message never contains the bound value, which may be a secret supplied
+through `--input KEY` or `RD_INPUT_*`. It names the variable and the value's
+kind, such as "a plain string that is not an rd:// URI", "a number", or "a JSON
+array string with an entry that is not an rd:// URI". For an assertion it begins
+with the §10.1.2 failure name: `unresolvable-uri` for a string that is not a
+URI, `partial-resolve` for a URI[] or JSON URI[] string with an entry that is
+not one, and `not-an-artifact` for anything else, including an artifact-shaped
+record that did not come through the artifact channel.
 
 **JSON:**
 
 ```json
 {
-  "error": "unresolvable-uri: ARTIFACTS naked declaration \"SkillPath\" at step 2 requires an artifact, but its value \"some/file.md\" is not an artifact URI (expected rd://artifacts/…). Supply it with --artifacts SkillPath=<rd:// URI> (or --artifacts-json SkillPath='[\"<rd:// URI>\", …]'); `rundown artifact ls --run <producer_run_id>` lists the producing run's artifacts, each with its `uri`.",
+  "error": "unresolvable-uri: ARTIFACTS naked declaration \"SkillPath\" at step 2 requires an artifact, but it is bound to a plain string that is not an rd:// URI. Supply it with --artifacts SkillPath=<rd:// URI> (or --artifacts-json SkillPath='[\"<rd:// URI>\", …]'); `rundown artifact ls --run <producer_run_id>` lists the producing run's artifacts, each with its `uri`.",
   "kind": "error",
   "code": "ARTIFACT_INPUT_REQUIRED",
   "command": "run",

@@ -103,7 +103,8 @@ export const CONCURRENT_MODIFICATION_CODE = 'CONCURRENT_MODIFICATION';
  * - `retryable` — the condition is transient; repeating the same gesture can
  *   succeed (a refused save, a broken reporting channel, a failed render).
  * - `permanent` — no retry of the same gesture can succeed; recovery is a
- *   different explicit action (finish, stop, prune, or restart the run).
+ *   different explicit action by the owner (goto, finish, stop, prune, or
+ *   restart the run).
  */
 export type RunProgressionRecovery = 'retryable' | 'permanent';
 
@@ -1121,8 +1122,10 @@ async function driveRun(
       }
       // `{{ path Name }}` over a value an earlier step bound to a non-artifact:
       // the typed refusal the launch check gives a launch value (spec §9.3).
-      // Re-rendering cannot succeed while the binding stands, so it is not
-      // retryable; nothing was committed and the run keeps its cursor.
+      // Re-rendering cannot succeed while the binding stands, so it is
+      // `permanent` — the owner must act. Nothing was committed and the run
+      // keeps its cursor, so the message (a step-entry refusal) names that
+      // action: `rundown goto` a step that rebinds the name, or `rundown stop`.
       if (intent.cause instanceof ArtifactInputRequiredError) {
         sink.emit({
           type: 'ERROR_OCCURRED',

@@ -6,6 +6,9 @@ import { pathToFileURL } from 'node:url';
 import { type ArtifactDeclaration, parseRunbookDocument } from '@rundown-org/parser';
 import {
   appendArtifactManifestRecord,
+  ArtifactInputRequiredError,
+  classifyArtifactAssertionValue,
+  prepareParsedRunbook,
   readArtifactManifest,
   resolveArtifactDeclarations,
 } from '../../src/runbook/index.js';
@@ -2147,7 +2150,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plan: 'not-a-uri' },
       }),
-    ).rejects.toThrow(/unresolvable-uri.*Plan.*not-a-uri.*is not an artifact URI/s);
+    ).rejects.toThrow(/unresolvable-uri.*Plan.*a plain string that is not an rd:\/\/ URI/s);
   });
 
   it('fails clearly for naked ARTIFACTS when scope contains an unresolved URI string', async () => {
@@ -2231,7 +2234,94 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plans: JSON.stringify([`rd://artifacts/${CONTEXT_ID}/*/plan.json`, 42]) },
       }),
-    ).rejects.toThrow(/unresolvable-uri/);
+    ).rejects.toThrow(/^partial-resolve:/);
+  });
+});
+
+describe('resolveArtifactDeclarations — naked refusal shares the launch rule', () => {
+  const SECRET = 'sk-live-0123456789abcdefSECRET';
+
+  async function refusal(value: unknown): Promise<ArtifactInputRequiredError> {
+    const cwd = await tempCwd();
+    const error: unknown = await resolveArtifactDeclarations([decl('Plan', null)], {
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Plan: value },
+    }).then(
+      () => undefined,
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(ArtifactInputRequiredError);
+    return error as ArtifactInputRequiredError;
+  }
+
+  function launchRefusal(value: unknown): string {
+    const parsed = parseRunbookDocument(
+      '# R\n\n## 1. Use\n- ARTIFACTS\n  - Plan\n- PASS COMPLETE\n\nUse it.\n',
+      'r.runbook.md',
+    );
+    const result = prepareParsedRunbook({
+      rawRunbook: parsed.runbook,
+      frontmatter: parsed.frontmatter,
+      diagnostics: parsed.diagnostics,
+      cwd: '/tmp/project',
+      templateVars: { ContextId: CONTEXT_ID, WorkPath: WORK_PATH, Plan: value as never },
+      providedKeys: new Set(['Plan']),
+      runbookRef: RUNBOOK,
+      helperRegistry: new Map(),
+      identity: { kind: 'prepared' },
+      origin: { kind: 'launch' },
+    });
+    if (result.ok) throw new Error('expected a launch refusal');
+    return result.error;
+  }
+
+  it('never echoes the bound value in a step-entry refusal (A9)', async () => {
+    const error = await refusal(SECRET);
+
+    expect(error.message).not.toContain('SECRET');
+    expect(error.message).toContain('a plain string that is not an rd:// URI');
+  });
+
+  it('classifies a JSON URI[] string with a non-URI entry as partial-resolve (A5)', async () => {
+    const value = JSON.stringify([`rd://artifacts/${CONTEXT_ID}/*/plan.json`, 'plan.json']);
+
+    expect(classifyArtifactAssertionValue(value)).toEqual({
+      kind: 'not-artifact',
+      reason: 'partial-resolve',
+    });
+    const error = await refusal(value);
+    expect(error.site).toEqual({ kind: 'artifacts-assertion', reason: 'partial-resolve' });
+    expect(error.message).toMatch(/^partial-resolve:/);
+  });
+
+  it.each([
+    ['an unbranded artifact-shaped record', record({ runId: CURRENT_RUN, runbook: RUNBOOK })],
+    [
+      'an unbranded artifact-shaped array',
+      [record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' })],
+    ],
+  ])('refuses %s with the classification and message launch gives it (A6)', async (_l, value) => {
+    const error = await refusal(value);
+    const launch = launchRefusal(value);
+
+    expect(error.code).toBe('ARTIFACT_INPUT_REQUIRED');
+    const describe = (message: string): string | undefined =>
+      /requires an artifact, but (.*?)\./.exec(message)?.[1];
+    expect(describe(error.message)).toBeDefined();
+    expect(describe(error.message)).toBe(describe(launch));
+    expect(error.message).toMatch(/^not-an-artifact:/);
+    expect(launch).toMatch(/^not-an-artifact:/);
+  });
+
+  it('tells the owner the run stopped instead of naming a launch flag (A3)', async () => {
+    const error = await refusal('plan.json');
+
+    expect(error.message).not.toContain('--artifacts');
+    expect(error.message).toContain('The run stops');
   });
 });
 

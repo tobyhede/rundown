@@ -21,6 +21,7 @@ import {
   type OwnerToken,
   ErrorCodes,
   getErrorMessage,
+  type ArtifactInputRefusalOrigin,
   type IterationBinding,
   type TemplateVarValue,
   type VariableValue,
@@ -244,6 +245,13 @@ export interface PrepareRunbookOptions {
    * it into the child gated on the child's declared `inputs`.
    */
   readonly iterationBinding?: IterationBinding;
+  /**
+   * Which preparation this is. Absent means a root launch (`rundown run`,
+   * `rundown resolve`); the Child Run preparer passes `child-preparation`, so
+   * an `ARTIFACT_INPUT_REQUIRED` refusal points at the parent's binding rather
+   * than a launch flag the child's command cannot take.
+   */
+  readonly origin?: ArtifactInputRefusalOrigin;
   /** Optional execution identity supplied by a parent inline launch intent. */
   readonly runId?: RunId;
   /**
@@ -314,6 +322,16 @@ export type PrepareFailure =
         readonly step?: string;
       };
     });
+
+/**
+ * The arm-specific half of a {@link PrepareFailure}: its `code` and the
+ * `details` that code carries, kept paired by distributing over the union.
+ */
+type PrepareRefusal = PrepareFailure extends infer Arm
+  ? Arm extends PrepareFailure
+    ? Pick<Arm, 'code' | 'details'>
+    : never
+  : never;
 
 /** Discriminated union result of {@link prepareRunbook}. */
 export type PrepareResult = PrepareSuccess | PrepareFailure;
@@ -758,6 +776,7 @@ async function prepareLoadedRunbook(
     providedKeys,
     inheritedContextVars: contextPartitions.templateVars,
     iterationBinding: options?.iterationBinding,
+    origin: options?.origin ?? { kind: 'launch' },
     runbookRef,
     helperRegistry: getHelperRegistry(),
     identity:
@@ -769,47 +788,40 @@ async function prepareLoadedRunbook(
   allWarnings.push(...parsedPreparation.warnings);
 
   if (!parsedPreparation.ok) {
+    // Every core preparation refusal shares one envelope; only `code` and
+    // `details` vary by arm, so the shared fields (and the warnings rule)
+    // live in one place and cannot drift between arms.
+    const { error, templateVars: refusedVariables } = parsedPreparation;
+    const refuse = (refusal: PrepareRefusal): PrepareFailure => ({
+      ok: false,
+      error,
+      ...refusal,
+      variables: refusedVariables,
+      stats,
+      diagnostics,
+      warnings: allWarnings.length > 0 ? allWarnings : undefined,
+    });
+
     if (parsedPreparation.code === 'MISSING_REQUIRED_VARS') {
       const missing = Array.isArray(parsedPreparation.details.missing)
         ? parsedPreparation.details.missing.filter(
             (name): name is string => typeof name === 'string',
           )
         : [];
-      return {
-        ok: false,
-        error: parsedPreparation.error,
+      return refuse({
         code: 'MISSING_REQUIRED_VARS',
         details: { runbook: displayName, missing },
-        variables: parsedPreparation.templateVars,
-        stats,
-        diagnostics,
-        warnings: allWarnings.length > 0 ? allWarnings : undefined,
-      };
+      });
     }
 
     if (parsedPreparation.code === 'ARTIFACT_INPUT_REQUIRED') {
-      return {
-        ok: false,
-        error: parsedPreparation.error,
+      return refuse({
         code: parsedPreparation.code,
         details: { runbook: displayName, ...parsedPreparation.details },
-        variables: parsedPreparation.templateVars,
-        stats,
-        diagnostics,
-        warnings: allWarnings.length > 0 ? allWarnings : undefined,
-      };
+      });
     }
 
-    return {
-      ok: false,
-      error: parsedPreparation.error,
-      code: 'VALIDATION_ERROR',
-      details: { runbook: displayName },
-      variables: parsedPreparation.templateVars,
-      stats,
-      diagnostics,
-      warnings: allWarnings.length > 0 ? allWarnings : undefined,
-    };
+    return refuse({ code: 'VALIDATION_ERROR', details: { runbook: displayName } });
   }
 
   const runbook = parsedPreparation.runbook;

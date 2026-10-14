@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { appendArtifactManifestRecordSync, assertRunId } from '@rundown-org/core';
 import {
   createTestWorkspace,
+  getAllRunbookStates,
   listRunbookStates,
   parseConcatenatedJson,
   parseJsonEvents,
@@ -44,6 +45,9 @@ Invoke the skill.
 
 Read the source skill at {{ path SkillPath }}.
 `;
+
+// A value supplied through env inheritance may be a secret.
+const SECRET = 'sk-live-0123456789abcdefSECRET';
 
 describe('artifact-asserted input refusal (integration)', () => {
   let workspace: TestWorkspace;
@@ -144,7 +148,7 @@ describe('artifact-asserted input refusal (integration)', () => {
         '- PASS CONTINUE',
         '- FAIL STOP',
         '```sh',
-        `printf 'plan.json' > "$RD_OUTPUTS_Plan"`,
+        `printf '${SECRET}' > "$RD_OUTPUTS_Plan"`,
         '```',
         '',
         '## 2. Assert the plan',
@@ -167,10 +171,21 @@ describe('artifact-asserted input refusal (integration)', () => {
     const events = parseJsonEvents(stdout);
     const error = events.find((event) => event.type === 'error_occurred');
     expect(error).toMatchObject({ code: 'ARTIFACT_INPUT_REQUIRED' });
-    expect(String(error?.message)).toContain('--artifacts Plan=<rd:// URI>');
+    // A step-entry refusal names the owner's recovery, not a launch flag.
+    expect(String(error?.message)).not.toContain('--artifacts');
+    expect(String(error?.message)).toContain('The run stops');
     expect(events.find((event) => event.type === 'runbook_stopped')).toMatchObject({
       reason: 'artifact_resolution_failed',
     });
+    // The bound value may be a secret: neither the event nor the persisted
+    // lastAction echoes it. (The runbook's own command text holds it here,
+    // which the runbook author wrote; only the refusal is under test.)
+    expect(String(error?.message)).not.toContain(SECRET);
+    const states = await getAllRunbookStates(workspace);
+    expect(states).toHaveLength(1);
+    const lastAction = states[0]?.lastAction;
+    expect(lastAction).toMatchObject({ code: 'ARTIFACT_INPUT_REQUIRED' });
+    expect(JSON.stringify(lastAction)).not.toContain(SECRET);
   });
 
   it('{{ path X }} over a value an earlier step binds is refused at step entry with the same code', async () => {
@@ -204,6 +219,183 @@ describe('artifact-asserted input refusal (integration)', () => {
     expect(exitCode).toBe(1);
     const error = parseJsonEvents(stdout).find((event) => event.type === 'error_occurred');
     expect(error).toMatchObject({ code: 'ARTIFACT_INPUT_REQUIRED' });
-    expect(String(error?.message)).toContain('--artifacts Doc=<rd:// URI>');
+    // The run keeps its position: recovery is the owner's goto or stop.
+    expect(String(error?.message)).not.toContain('--artifacts');
+    expect(String(error?.message)).toContain('rundown goto');
+    expect(String(error?.message)).toContain('rundown stop');
+  });
+
+  it('a launch value a step rebinds stays deferred on every command after launch', async () => {
+    // Launch defers `{{ path plan }}` because step 2 rebinds `plan`; the
+    // commands that reload the run while step 1 is current must apply the
+    // same deferral, or the still-plain launch value is judged before step 2
+    // has rebound it.
+    await writeFile(
+      join(workspace.cwd, 'rebinding.runbook.md'),
+      [
+        '---',
+        'inputs:',
+        '  - plan',
+        '---',
+        '# Rebinding',
+        '## 1. Prepare',
+        '- PASS CONTINUE',
+        '- FAIL STOP',
+        '',
+        'Prepare.',
+        '',
+        '## 2. Write the plan',
+        '- ARTIFACTS',
+        '  - plan "plan.md"',
+        '- PASS CONTINUE',
+        '- FAIL STOP',
+        '',
+        'Write the plan.',
+        '',
+        '## 3. Read the plan',
+        '- PASS COMPLETE',
+        '- FAIL STOP',
+        '',
+        'Read {{ path plan }}.',
+        '',
+      ].join('\n'),
+    );
+
+    const started = await runCliInProcess(
+      ['run', 'rebinding.runbook.md', '--input', 'plan=draft'],
+      workspace,
+    );
+    expect(started.stdout).not.toContain('ARTIFACT_INPUT_REQUIRED');
+    expect(started.exitCode).toBe(0);
+    const token = requireOwnerToken(started.stdout);
+
+    const status = await runCliInProcess(['status'], workspace);
+    expect(status.stdout).not.toContain('ARTIFACT_INPUT_REQUIRED');
+    expect(status.exitCode).toBe(0);
+
+    const first = await runCliInProcess(['pass', '--token', token, '--step', '1'], workspace);
+    expect(first.stdout).not.toContain('ARTIFACT_INPUT_REQUIRED');
+    expect(first.exitCode).toBe(0);
+
+    const passed = await runCliInProcess(['pass', '--token', token, '--step', '2'], workspace);
+    expect(passed.stdout).not.toContain('ARTIFACT_INPUT_REQUIRED');
+    expect(passed.exitCode).toBe(0);
+    const entered = parseConcatenatedJson(passed.stdout).find(
+      (value): value is Record<string, unknown> =>
+        typeof value === 'object' &&
+        value !== null &&
+        (value as { type?: unknown }).type === 'step_entered',
+    );
+    expect(entered).toMatchObject({ stepName: '3' });
+    expect(entered?.prompt).toMatch(/Read \S*\.rundown\/work\/\S*plan\.md\./);
+  });
+
+  it('a launch refusal never echoes the value, which may be a secret', async () => {
+    const { stdout, exitCode } = await runCliInProcess(
+      ['run', 'convert-skill.runbook.md', '--input', `SkillPath=${SECRET}`],
+      workspace,
+    );
+
+    expect(exitCode).toBe(1);
+    expect(JSON.parse(stdout)).toMatchObject({ code: 'ARTIFACT_INPUT_REQUIRED' });
+    expect(stdout).not.toContain(SECRET);
+  });
+
+  it('rundown run is not refused when a composed child may rebind the asserted name', async () => {
+    await writeFile(
+      join(workspace.cwd, 'planner.runbook.md'),
+      [
+        '---',
+        'outputs:',
+        '  - plan',
+        '---',
+        '# Planner',
+        '## 1. Plan',
+        '- PASS COMPLETE',
+        '',
+        'Plan.',
+        '',
+      ].join('\n'),
+    );
+    await writeFile(
+      join(workspace.cwd, 'composing.runbook.md'),
+      [
+        '---',
+        'inputs:',
+        '  - plan',
+        '---',
+        '# Composing',
+        '## 1. Plan',
+        '- PASS ALL CONTINUE',
+        '- FAIL ANY STOP',
+        '',
+        '- planner.runbook.md',
+        '',
+        '## 2. Use the plan',
+        '- ARTIFACTS',
+        '  - plan',
+        '- PASS COMPLETE',
+        '',
+        'Use it.',
+        '',
+      ].join('\n'),
+    );
+
+    const { stdout, exitCode } = await runCliInProcess(
+      ['run', 'composing.runbook.md', '--input', 'plan=plan.json'],
+      workspace,
+    );
+
+    expect(stdout).not.toContain('ARTIFACT_INPUT_REQUIRED');
+    expect(exitCode).toBe(0);
+  });
+
+  it("a child's refusal says the value came from the parent, not a launch flag", async () => {
+    await writeFile(
+      join(workspace.cwd, 'reader.runbook.md'),
+      [
+        '---',
+        'inputs:',
+        '  - Doc',
+        '---',
+        '# Reader',
+        '## 1. Read',
+        '- ARTIFACTS',
+        '  - Doc',
+        '- PASS COMPLETE',
+        '',
+        'Read it.',
+        '',
+      ].join('\n'),
+    );
+    await writeFile(
+      join(workspace.cwd, 'parent.runbook.md'),
+      [
+        '---',
+        'inputs:',
+        '  - Doc',
+        '---',
+        '# Parent',
+        '## 1. Read through a child',
+        '- PASS ALL COMPLETE',
+        '- FAIL ANY STOP',
+        '',
+        '- reader.runbook.md',
+        '',
+      ].join('\n'),
+    );
+
+    const { stdout } = await runCliInProcess(
+      ['run', 'parent.runbook.md', '--input', 'Doc=notes.md'],
+      workspace,
+    );
+
+    expect(stdout).toContain('ARTIFACT_INPUT_REQUIRED');
+    const message = parseConcatenatedJson(stdout)
+      .map((value) => JSON.stringify(value))
+      .find((text) => text.includes('ARTIFACT_INPUT_REQUIRED'));
+    expect(message).toBeDefined();
+    expect(message).not.toContain('--artifacts');
+    expect(message).toContain('parent');
   });
 });

@@ -491,10 +491,19 @@ export {
   ArtifactInputRequiredError,
   classifyArtifactAssertionValue,
   collectLaunchDecidableArtifactAssertions,
+  defersAtLaunch,
+  deriveLaunchArtifactDeferral,
+  describeNonArtifactValue,
   findArtifactInputRefusal,
+  type AdmittedArtifactValue,
   type ArtifactAssertionShape,
   type ArtifactAssertionShapeFailure,
+  type ArtifactInputRefusalContext,
+  type ArtifactInputRefusalOrigin,
   type ArtifactInputRequiredSite,
+  type LaunchArtifactDeferral,
+  type NonArtifactValueKind,
+  type ParsedArtifactUriString,
 } from './artifact-input-required.js';
 export { extractFileArtifactReferences } from './artifact-reference-extractor.js';
 export {

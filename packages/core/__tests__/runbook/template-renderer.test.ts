@@ -2706,7 +2706,10 @@ describe('substituteText with artifact helper', () => {
         ARTIFACT_HELPER_OPTIONS,
       );
     expect(render).toThrow(ArtifactInputRequiredError);
-    expect(render).toThrow(/--artifacts PlanPath=<rd:\/\/ URI>/);
+    // A render outside launch preparation is a step-entry render: the run's
+    // owner recovers it, and the bound value is never echoed.
+    expect(render).toThrow(/rundown goto.*rundown stop/s);
+    expect(render).not.toThrow(/not-a-record/);
   });
 
   it('throws when {{ artifact Var }} variable is not an ArtifactRecord/ArtifactRecord[]', () => {

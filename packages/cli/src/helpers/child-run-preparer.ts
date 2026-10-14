@@ -42,6 +42,7 @@ export function createChildRunPreparer(cwd: string, output: OutputEmitter): Prep
     const parentFile = await resolveRunbookRef(cwd, parent.runbook);
     const prepared = await prepareRunnableRunbook(reservation.runbook, {}, cwd, {
       runId: reservation.runId,
+      origin: { kind: 'child-preparation' },
       ...(parentFile.ok ? { composedFrom: parentFile.resolved.path } : {}),
       inheritedContextVars: reconstituteContextVars(snapshot),
       inheritedUserVars: extractInheritedUserVars(snapshot),

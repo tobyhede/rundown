@@ -55,7 +55,11 @@ import {
   renderArtifactValue,
   renderLiteralArtifactPath,
 } from './renderer/artifact-helper.js';
-import { ArtifactInputRequiredError } from './artifact-input-required.js';
+import {
+  ArtifactInputRequiredError,
+  defersAtLaunch,
+  type LaunchArtifactDeferral,
+} from './artifact-input-required.js';
 import { artifactUriToPath } from './artifact-uri.js';
 import { parseTemplateExpression, tokenizeTemplate, type TemplateToken } from '@rundown-org/parser';
 import type { StepVariables } from './runtime-frame.js';
@@ -113,6 +117,14 @@ export type TemplateRenderContext =
 export interface TemplateRenderOptions {
   readonly context?: TemplateRenderContext;
   readonly helpers?: TemplateHelperRegistry;
+  /**
+   * Set only by whole-runbook renders — launch preparation and the reload of a
+   * persisted run — never by a step-entry render. A `{{ path Name }}` over a
+   * non-artifact value is left unrendered, for step entry to judge, when a
+   * step may rebind `Name` first (spec §8.2) — the same deferral the naked
+   * `ARTIFACTS` launch check applies.
+   */
+  readonly launchArtifactDeferral?: LaunchArtifactDeferral;
 }
 
 type TemplateHelperOptions = TemplateRenderOptions;
@@ -934,7 +946,16 @@ function resolvePathHelperCall(
   // wildcard with zero matches and renders as `[]`.
   const isEmptyArray = Array.isArray(value) && value.length === 0;
   if (!isArtifactRecord(value) && !isArtifactRecordArray(value) && !isEmptyArray) {
-    throw new ArtifactInputRequiredError(varRef, value, { kind: 'path-helper' });
+    const deferral = helperOptions?.launchArtifactDeferral;
+    // A dotted reference (`plan.file`) is rebound through its root name.
+    const rootName = varRef.split('.')[0] ?? varRef;
+    if (deferral !== undefined && defersAtLaunch(deferral, rootName)) return original;
+    throw ArtifactInputRequiredError.forValue(
+      varRef,
+      value,
+      { kind: 'path-helper' },
+      { kind: 'step-entry' },
+    );
   }
   const artifactValue = value as ArtifactVarValue;
   return renderArtifactPathValue(artifactValue, {

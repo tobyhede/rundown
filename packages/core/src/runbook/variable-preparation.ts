@@ -32,7 +32,9 @@ import type { RunbookRef } from './runbook-ref.js';
 import {
   ARTIFACT_INPUT_REQUIRED,
   ArtifactInputRequiredError,
+  deriveLaunchArtifactDeferral,
   findArtifactInputRefusal,
+  type ArtifactInputRefusalOrigin,
 } from './artifact-input-required.js';
 import { surfaceIterationBinding } from './delegation-context.js';
 import { buildContextVars, validateForVariables } from './runtime-frame.js';
@@ -795,6 +797,12 @@ export interface PrepareParsedRunbookInput {
   readonly runbookRef: RunbookRef;
   readonly helperRegistry: TemplateHelperRegistry;
   readonly identity: PrepareParsedRunbookIdentity;
+  /**
+   * Which preparation this is: a root launch, or a Child Run whose values come
+   * from its parent. Picks the recovery an `ARTIFACT_INPUT_REQUIRED` refusal
+   * names.
+   */
+  readonly origin: ArtifactInputRefusalOrigin;
 }
 
 /** Result of parsed runbook preparation. */
@@ -1044,9 +1052,14 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
   }
 
   // Refuse, before any run exists, a launch value a naked ARTIFACTS assertion
-  // can never accept (spec §10.1.2). Names an earlier step can rebind are left
-  // to step entry, mirroring FOR-source deferral (§8.2).
-  const artifactRefusal = findArtifactInputRefusal(input.rawRunbook.steps, substitutionVars);
+  // can never accept (spec §10.1.2). Names a step can rebind — the produced
+  // set, or every name when the runbook composes a child — are left to step
+  // entry, mirroring FOR-source deferral (§8.2).
+  const artifactRefusal = findArtifactInputRefusal(
+    input.rawRunbook.steps,
+    substitutionVars,
+    input.origin,
+  );
   if (artifactRefusal !== null) {
     return {
       ok: false,
@@ -1081,15 +1094,19 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
     runbook = substituteRunbookVariables(resolvedRunbook, substitutionVars, {
       helpers: input.helperRegistry,
       context: renderContext,
+      // The same deferral as the naked-assertion check above: a name a step
+      // can rebind is rendered at step entry, not judged here.
+      launchArtifactDeferral: deriveLaunchArtifactDeferral(input.rawRunbook.steps),
     });
   } catch (error) {
     // `{{ path Name }}` over a launch value that is not an artifact.
     if (error instanceof ArtifactInputRequiredError) {
+      const refusal = error.inContext(input.origin);
       return {
         ok: false,
-        error: error.message,
+        error: refusal.message,
         code: ARTIFACT_INPUT_REQUIRED,
-        details: artifactInputRequiredDetails(error),
+        details: artifactInputRequiredDetails(refusal),
         templateVars,
         warnings,
         diagnostics: input.diagnostics,
