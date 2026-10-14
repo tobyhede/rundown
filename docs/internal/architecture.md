@@ -853,16 +853,23 @@ This section describes the implementation behind it.
 `resolveProjectRoot` (`packages/core/src/project-root.ts`): the nearest
 directory at or above the start that holds an existing `.rundown/`, stopping at
 a git boundary (after checking that directory's own `.rundown/`) or the
-filesystem root, falling back to the start. It only reads; `.rundown/` is
-created later, by the first state save. The CLI reads its working directory in
-one module, `packages/cli/src/helpers/context.ts`: `getProjectRoot()` is what
-every command passes down as `cwd` (store, runbook discovery and persisted
-`RunbookRef` source roots, outputs and artifacts, prune, policy and helpers,
-step-command working directory), and `getInvocationDir()` is used only to try a
-relative runbook path typed on the command line. Config discovery
-(`findConfigFile`) and the plugin's SubagentStop gate (`storeDirectories`) call
-the same resolver, so no surface derives the root its own way. The MCP server
-spawns the CLI in its own working directory and inherits this resolution.
+filesystem root, falling back to the start. Above the start, the user's home
+directory and every ancestor of it end the walk unchecked (compared by
+realpath), so a stray `~/.rundown/` cannot capture non-git directories below
+home and hand them its store, its config and a `{repo}` of the whole home; only
+a walk that starts at such a directory reads its own `.rundown/`.
+`resolveProjectRootWith(start, { homeDir })` injects home for tests. A `stat`
+that fails for any reason (EACCES, ELOOP, ENOTDIR) counts as absent, so the walk
+never throws. It only reads; `.rundown/` is created later, by the first state
+save. The CLI reads its working directory in one module,
+`packages/cli/src/helpers/context.ts`: `getProjectRoot()` is what every command
+passes down as `cwd` (store, runbook discovery and persisted `RunbookRef` source
+roots, outputs and artifacts, prune, policy and helpers, step-command working
+directory), and `getInvocationDir()` is used only to try a relative runbook path
+typed on the command line. Config discovery (`findConfigFile`) and the plugin's
+SubagentStop gate (`storeDirectories`) call the same resolver, so no surface
+derives the root its own way. The MCP server spawns the CLI in its own working
+directory and inherits this resolution.
 
 ### One store, one opener
 

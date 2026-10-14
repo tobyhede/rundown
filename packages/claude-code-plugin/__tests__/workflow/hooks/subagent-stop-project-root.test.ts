@@ -13,7 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { getRundownCliPath } from '../../../src/workflow/hooks/rundown.js';
@@ -117,5 +117,27 @@ describe('SubagentStop gate from a subdirectory of the project', () => {
     });
 
     expect(result).toStrictEqual({});
+  });
+
+  it('lists each held child once when the project directory reaches the root through a symlink', async () => {
+    const ticket = ticketOf(cli(['run', 'parent.runbook.md'], root));
+    cli(['claim', ticket, '--agent-id', 'agent-sub'], root);
+    const links = await mkdtemp(join(tmpdir(), 'rd-stop-link-'));
+    try {
+      const linked = join(links, 'project');
+      await symlink(root, linked, 'dir');
+      process.env.CLAUDE_PROJECT_DIR = linked;
+
+      const result = await handleSubagentStop({
+        hook_event_name: 'SubagentStop',
+        cwd: sub,
+        agent_id: 'agent-sub',
+      });
+
+      const listed = (result.violation ?? '').split('\n').filter((line) => line.startsWith('- '));
+      expect(listed).toHaveLength(1);
+    } finally {
+      await rm(links, { recursive: true, force: true });
+    }
   });
 });

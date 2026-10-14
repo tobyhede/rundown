@@ -369,10 +369,12 @@ Rules:
 | Scope                   | Named loop variable is available in substeps as `{{var}}`.                                                                                                                                                                                                                                                            |
 | Delegation scope        | Within an iteration, `Index` is inherited by delegated children unconditionally; the loop variable is inherited only when the child declares it in `inputs`. See §10.4.                                                                                                                                               |
 
-Data sources are runtime arrays or file-backed JSON/JSONL sources. `file:` paths
-MUST remain inside the project root after symlink resolution. `.jsonl` sources
-are JSON Lines; `.json` sources are JSON arrays or objects, with arrays usable
-for iteration.
+Data sources are runtime arrays or file-backed JSON/JSONL sources. A `file:`
+path typed on the command line (`--input`, `--input-json`) is relative to the
+directory the command was run from; any other `file:` path is relative to the
+project root. Either way it MUST remain inside the project root after symlink
+resolution. `.jsonl` sources are JSON Lines; `.json` sources are JSON arrays or
+objects, with arrays usable for iteration.
 
 ### 8.1 Iteration-Level Transitions
 
@@ -442,7 +444,7 @@ Resolution builds five variable layers. Precedence, highest first:
    [runtime.md §8.1](../reference/runtime.md#81-variable-sources)).
 2. `RD_INPUT_*` environment variables, prefix stripped.
 3. Inherited delegation variables, including inherited step `OUTPUTS`.
-4. `.rundown/config.yaml`, discovered from cwd upward.
+4. `.rundown/config.yaml`, read from the project root.
 5. Built-in defaults.
 
 Inherited step `OUTPUTS` ride the inherited-delegation layer and override

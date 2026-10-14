@@ -252,8 +252,10 @@ export interface PrepareRunbookOptions {
    */
   readonly composedFrom?: string;
   /**
-   * Directory a relative runbook path given on the command line is tried
-   * against: where the CLI was invoked. Defaults to the project root.
+   * Where the CLI was invoked. A relative runbook path given on the command
+   * line is tried against it, and `--input-file` paths and `file:` values in
+   * `--input` / `--input-json` resolve against it (still contained in the
+   * project root). Defaults to the project root.
    */
   readonly invocationDir?: string;
 }
@@ -704,6 +706,7 @@ async function prepareLoadedRunbook(
         evaluator: getPolicyEvaluator(),
         prompter: getPolicyPrompter(),
       },
+      options?.invocationDir ?? cwd,
     );
     resolvedVariableMap = { ...resolvedVariables.vars };
     providedKeys = resolvedVariables.providedKeys;

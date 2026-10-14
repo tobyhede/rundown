@@ -279,8 +279,10 @@ value.
   `--input-file`. `file:` values are supported in `.rundown/config.yaml` and
   `--input-file` only. Frontmatter `inputs:` declares names only and does not
   carry values
-- File paths must stay within the project root (symlinks resolved, traversal
-  blocked)
+- `file:` and `--input-file` paths typed on the command line are relative to the
+  invocation directory; `file:` values from `.rundown/config.yaml`, an
+  `--input-file`, or `RD_INPUT_*` are relative to the project root. Either way
+  the path must stay within the project root (symlinks resolved)
 - `file:` values are routed into the internal variable store as typed values
   (`JsonArrayStream` for `.jsonl`, `JsonArray`/`JsonObject` for `.json`)
 

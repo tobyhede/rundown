@@ -1,5 +1,5 @@
 // src/workflow/hooks/subagent-stop.ts
-import { existsSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
 import { ClaimedDelegationsResponseSchema, dbPath, resolveProjectRoot } from '@rundown-org/core';
 import type { z } from 'zod';
 import type { HookInput } from '../../shared/index.js';
@@ -53,7 +53,8 @@ export function finishOrReleaseInstruction(held: HeldDelegations): string {
  * the way the CLI maps its own working directory (`resolveProjectRoot`: the
  * nearest directory holding `.rundown/`), so a claim made from a
  * subdirectory is found in the root store it went to. Both are read, so a
- * claim in either project holds the agent.
+ * claim in either project holds the agent. Roots are compared by their real
+ * paths, so one store reached through two spellings is asked once.
  *
  * @param input - Hook event payload.
  * @returns The distinct project roots to ask, the project directory's first.
@@ -62,7 +63,22 @@ export function storeDirectories(input: HookInput): readonly string[] {
   const projectDir = process.env.CLAUDE_PROJECT_DIR;
   const starts =
     projectDir === undefined || projectDir === '' ? [input.cwd] : [projectDir, input.cwd];
-  return [...new Set(starts.map(resolveProjectRoot))];
+  return [...new Set(starts.map((start) => canonical(resolveProjectRoot(start))))];
+}
+
+/**
+ * A path's canonical spelling, so two spellings of one project root (a
+ * symlink, or `/tmp` and `/private/tmp` on macOS) ask its store once.
+ *
+ * @param dir - A project root.
+ * @returns Its real path, or `dir` itself when it cannot be resolved.
+ */
+function canonical(dir: string): string {
+  try {
+    return realpathSync(dir);
+  } catch {
+    return dir;
+  }
 }
 
 /**

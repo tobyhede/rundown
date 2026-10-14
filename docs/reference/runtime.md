@@ -515,9 +515,15 @@ layer below it; the table lists them from lowest to highest precedence:
 Within the `cli` layer, `--input-json` overrides `--input`, which overrides
 `--input-file`. Input artifacts (`--artifacts`, `--artifacts-json`) are a
 separate boundary channel, not a variable layer; supplying the same name through
-both channels is an error. `--input-file` paths must be relative to the project
-root and must remain inside the project directory after symlink resolution;
-absolute paths and `..` traversal are rejected.
+both channels is an error.
+
+Paths typed on the command line are relative to the directory the command was
+run from, not the project root: `--input-file` paths, and `file:` values given
+through `--input` or `--input-json`. They must still remain inside the project
+root after symlink resolution, so `../shared.yaml` from a subdirectory is
+accepted and a path that leaves the project is rejected. Absolute `--input-file`
+paths are rejected. `file:` values read from `.rundown/config.yaml`, an
+`--input-file`, or an `RD_INPUT_*` variable are relative to the project root.
 
 Plugin variables are not a precedence layer. `CLAUDE_PLUGIN_ROOT` is injected
 post-resolution for plugin-sourced runbooks only, and only when the key is

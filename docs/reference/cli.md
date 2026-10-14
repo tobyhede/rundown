@@ -84,14 +84,16 @@ rundown run simple.runbook.md
 **Project root.** Every command acts on one project: the nearest directory at or
 above the working directory that contains a `.rundown/` directory. The walk
 stops at a git boundary (a directory with a `.git` directory or file, after
-checking that directory's own `.rundown/`) and at the filesystem root; with no
-match, the working directory itself is the project root, and `rundown run`
-creates `.rundown/` there. A nested `.rundown/` shadows an outer one. The run
-store, project runbooks, run outputs and artifacts, `prune`,
-`.rundown/config.yaml` and policy discovery all use the project root, and step
-commands run from it. So `rundown claim`, `rundown status` or `rundown run` from
-a subdirectory see the same runs as from the root; you do not need to `cd` to
-the root first.
+checking that directory's own `.rundown/`) and at the filesystem root. It also
+never climbs into your home directory or any directory above it: a `.rundown/`
+there is used only when you run from that directory itself, so a stray
+`~/.rundown/` never captures the directories below home. With no match, the
+working directory itself is the project root, and `rundown run` creates
+`.rundown/` there. A nested `.rundown/` shadows an outer one. The run store,
+project runbooks, run outputs and artifacts, `prune`, `.rundown/config.yaml` and
+policy discovery all use the project root, and step commands run from it. So
+`rundown claim`, `rundown status` or `rundown run` from a subdirectory see the
+same runs as from the root; you do not need to `cd` to the root first.
 
 The CLI resolves runbook paths in this order:
 
@@ -169,22 +171,22 @@ enforcement, and the default write allowlist.
 
 ### Security Quick Reference
 
-| Flag                    | Effect                                                                                   |
-| ----------------------- | ---------------------------------------------------------------------------------------- |
-| `--allow-run <cmds>`    | Allow specific commands (comma-separated)                                                |
-| `--allow-read <paths>`  | Allow reading specific paths                                                             |
-| `--allow-write <paths>` | Allow writing to specific paths                                                          |
-| `--allow-env <vars>`    | Allow specific environment variables                                                     |
-| `--allow-all`           | Bypass all policy checks                                                                 |
-| `--deny-all`            | Block all operations not explicitly allowed                                              |
-| `-y, --yes`             | Auto-approve prompts                                                                     |
-| `--non-interactive`     | CI mode (auto-deny unlisted commands)                                                    |
-| `--policy <file>`       | Use custom policy file                                                                   |
-| `--trust-js-policy`     | Trust an explicitly selected JS policy file and helper modules declared by policy config |
-| `--helpers <paths>`     | Helper module paths to load (comma-separated, relative to project root)                  |
-| `--sandbox`             | Enable OS-level filesystem sandbox (default)                                             |
-| `--no-sandbox`          | Disable sandbox enforcement; a general sandbox opt-out                                   |
-| `--sandbox-strict`      | Fail if sandbox is unavailable (default; explicit affirmation of fail-closed)            |
+| Flag                    | Effect                                                                                                            |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `--allow-run <cmds>`    | Allow specific commands (comma-separated)                                                                         |
+| `--allow-read <paths>`  | Allow reading specific paths                                                                                      |
+| `--allow-write <paths>` | Allow writing to specific paths                                                                                   |
+| `--allow-env <vars>`    | Allow specific environment variables                                                                              |
+| `--allow-all`           | Bypass all policy checks                                                                                          |
+| `--deny-all`            | Block all operations not explicitly allowed                                                                       |
+| `-y, --yes`             | Auto-approve prompts                                                                                              |
+| `--non-interactive`     | CI mode (auto-deny unlisted commands)                                                                             |
+| `--policy <file>`       | Use custom policy file                                                                                            |
+| `--trust-js-policy`     | Trust an explicitly selected JS policy file and helper modules declared by policy config                          |
+| `--helpers <paths>`     | Helper module paths to load (comma-separated, relative to the current directory; must be inside the project root) |
+| `--sandbox`             | Enable OS-level filesystem sandbox (default)                                                                      |
+| `--no-sandbox`          | Disable sandbox enforcement; a general sandbox opt-out                                                            |
+| `--sandbox-strict`      | Fail if sandbox is unavailable (default; explicit affirmation of fail-closed)                                     |
 
 Policy discovery is data-only by default: `.rundownrc`, `.rundownrc.json`,
 `.rundownrc.yaml`, `.rundownrc.yml`, or the `rundown` field in `package.json`.
@@ -298,9 +300,10 @@ rundown run my-runbook.runbook.md --prompted --step 2 --index 3  # Jump into FOR
 - `--input <key=value>` / `--input-json <key=json>` / `--input-file <path>` —
   Set template variables (all repeatable). `--input KEY` without `=value`
   inherits the environment variable `KEY`. `--input-json` carries JSON
-  array/object values. `--input-file` paths must be project-relative and must
-  remain inside the project directory after symlink resolution; absolute paths
-  and `..` traversal are rejected.
+  array/object values. `--input-file` paths, and `file:` values given through
+  `--input` or `--input-json`, are relative to the directory the command was run
+  from and must remain inside the project root after symlink resolution;
+  absolute `--input-file` paths and paths that leave the project are rejected.
 - `--artifacts <key=rd://uri>` / `--artifacts-json <key=json-array>` — Supply
   **input artifacts** (both repeatable; declared via frontmatter `artifacts:`).
   Values MUST be `rd://artifacts/...` URIs (or, for `--artifacts-json`, a JSON

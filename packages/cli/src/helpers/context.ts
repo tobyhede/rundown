@@ -15,8 +15,10 @@ import { resolveRunbookFile, resolveRunbookRef } from './resolve-runbook.js';
  *
  * The one place the CLI reads it (a Category A read). Only user-typed
  * relative paths — a runbook path given to `run`, `check`, `resolve` or
- * `scenario` — resolve against it; everything Rundown owns lives under
- * {@link getProjectRoot}.
+ * `scenario`, a `--helpers` path, and `--input-file` paths and `file:` values
+ * in `--input` / `--input-json` — resolve against it, and the policy-file
+ * search starts here so a sub-package's stricter policy wins over the root's.
+ * Everything Rundown owns lives under {@link getProjectRoot}.
  *
  * @returns The process working directory
  */
@@ -30,8 +32,9 @@ export function getInvocationDir(): string {
  * The nearest directory at or above {@link getInvocationDir} that holds an
  * existing `.rundown/` (see `resolveProjectRoot` in core), or the invocation
  * directory itself when there is none. The run store, project runbooks, run
- * outputs and artifacts, prune, persisted runbook references, config and
- * policy discovery all use it, so a command run from a subdirectory acts on
+ * outputs and artifacts, prune, persisted runbook references, config
+ * discovery, the policy evaluator's `{repo}` root and the helper containment
+ * boundary all use it, so a command run from a subdirectory acts on
  * the same project as one run from the root. Commands resolve it once and
  * pass it down.
  *

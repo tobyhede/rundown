@@ -418,76 +418,28 @@ describe('findConfigFile', () => {
     expect(result).toBeNull();
   });
 
-  it('should find config in parent directory', async () => {
+  it('reads the config of the root it is given, without walking to a parent', async () => {
+    // Callers resolve the project root once (getProjectRoot); a directory
+    // below a project is not a root, so no config is found there.
     const rundownDir = path.join(tmpDir, RUNDOWN_DIR);
     await fs.mkdir(rundownDir, { recursive: true });
-    const configPath = path.join(rundownDir, 'config.yaml');
-    await fs.writeFile(configPath, 'key: value');
-
+    await fs.writeFile(path.join(rundownDir, 'config.yaml'), 'key: value');
     const nested = path.join(tmpDir, 'nested', 'deep');
     await fs.mkdir(nested, { recursive: true });
 
     const result = await findConfigFile(nested);
 
-    expect(result).toBe(configPath);
-  });
-
-  it('should stop at git root and return null', async () => {
-    await fs.mkdir(path.join(tmpDir, '.git'));
-
-    const nested = path.join(tmpDir, 'nested', 'deep');
-    await fs.mkdir(nested, { recursive: true });
-
-    const result = await findConfigFile(nested);
     expect(result).toBeNull();
   });
 
-  it('should not find config above git root', async () => {
-    // Parent has config
-    const parentRundownDir = path.join(tmpDir, RUNDOWN_DIR);
-    await fs.mkdir(parentRundownDir, { recursive: true });
-    await fs.writeFile(path.join(parentRundownDir, 'config.yaml'), 'should_not_find: true');
-
-    // Repo has .git
-    const repoDir = path.join(tmpDir, 'repo');
-    await fs.mkdir(path.join(repoDir, '.git'), { recursive: true });
-
-    const subdir = path.join(repoDir, 'subdir');
-    await fs.mkdir(subdir, { recursive: true });
-
-    const result = await findConfigFile(subdir);
-    expect(result).toBeNull();
-  });
-
-  it('should find config at git root level', async () => {
-    // Git root with config
-    await fs.mkdir(path.join(tmpDir, '.git'));
-    const rundownDir = path.join(tmpDir, RUNDOWN_DIR);
-    await fs.mkdir(rundownDir, { recursive: true });
-    const configPath = path.join(rundownDir, 'config.yaml');
-    await fs.writeFile(configPath, 'key: value');
-
-    const nested = path.join(tmpDir, 'nested');
-    await fs.mkdir(nested, { recursive: true });
-
-    const result = await findConfigFile(nested);
-
-    expect(result).toBe(configPath);
-  });
-
-  it('reads only the project root: a nested .rundown/ without config.yaml shadows an outer config', async () => {
-    // The project root is the nearest .rundown/ (resolveProjectRoot); the
-    // config is that project's, never an outer project's.
-    await fs.mkdir(path.join(tmpDir, '.git'));
+  it('reads only the given root: a nested project without config.yaml has no config', async () => {
     const outerRundownDir = path.join(tmpDir, RUNDOWN_DIR);
     await fs.mkdir(outerRundownDir, { recursive: true });
     await fs.writeFile(path.join(outerRundownDir, 'config.yaml'), 'outer: true');
     const inner = path.join(tmpDir, 'inner');
     await fs.mkdir(path.join(inner, RUNDOWN_DIR), { recursive: true });
-    const sub = path.join(inner, 'sub');
-    await fs.mkdir(sub);
 
-    const result = await findConfigFile(sub);
+    const result = await findConfigFile(inner);
 
     expect(result).toBeNull();
   });
@@ -522,44 +474,6 @@ describe('discoverVariables', () => {
 
   it('should return empty object when no config found', async () => {
     const result = await discoverVariables(tmpDir);
-    expect(result).toEqual({});
-  });
-
-  it('should stop discovery at git root', async () => {
-    // Create .git in tmpDir (marks as root)
-    await fs.mkdir(path.join(tmpDir, '.git'));
-
-    // Create nested directory
-    const nested = path.join(tmpDir, 'nested', 'deep');
-    await fs.mkdir(nested, { recursive: true });
-
-    // Config in parent of git root should not be found
-    const result = await discoverVariables(nested);
-    expect(result).toEqual({});
-  });
-
-  it('should not discover config.yaml above git root', async () => {
-    // Create structure:
-    // /parent/.rundown/config.yaml  <- should NOT be found
-    // /parent/repo/.git/            <- git root
-    // /parent/repo/subdir/          <- cwd
-
-    // Create parent dir with .rundown/config.yaml
-    const parentDir = tmpDir;
-    const parentRundownDir = path.join(parentDir, RUNDOWN_DIR);
-    await fs.mkdir(parentRundownDir, { recursive: true });
-    await fs.writeFile(path.join(parentRundownDir, 'config.yaml'), 'should_not_find: this value');
-
-    // Create repo subdirectory with .git (marks git root)
-    const repoDir = path.join(parentDir, 'repo');
-    await fs.mkdir(path.join(repoDir, '.git'), { recursive: true });
-
-    // Create subdirectory below git root
-    const subdir = path.join(repoDir, 'subdir');
-    await fs.mkdir(subdir, { recursive: true });
-
-    // Run discovery from subdir - should stop at git root, not find parent config
-    const result = await discoverVariables(subdir);
     expect(result).toEqual({});
   });
 });

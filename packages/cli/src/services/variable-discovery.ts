@@ -4,9 +4,9 @@
  * Discovers and loads template variables from .rundown/config.yaml
  * with support for CLI flag overrides.
  *
- * Note: The config is the project root's (see `resolveProjectRoot` in core),
- * which stops at a git root or the filesystem root, so variables are never
- * loaded from an unrelated parent directory.
+ * Note: Only the project root's config is read. Callers pass the root
+ * (`getProjectRoot`, which uses core's `resolveProjectRoot` and stops at a git
+ * root), so variables are never loaded from an unrelated parent directory.
  *
  * @module
  */
@@ -18,7 +18,6 @@ import {
   createBuiltinVariables,
   isRuntimeReservedVariable,
   isValidVariableName,
-  resolveProjectRoot,
   loadYaml,
   resolveVariableLayers,
   type ResolvedVariables,
@@ -172,31 +171,38 @@ async function realpathOrResolved(filePath: string): Promise<string> {
   }
 }
 
-async function resolveContainedInputFilePath(rawPath: string, cwd: string): Promise<string> {
+/**
+ * Resolve a user-typed `--input-file` path and check it stays in the project.
+ *
+ * The path is the user's, so it is resolved against the directory they typed
+ * it in; containment (symlinks resolved) is checked against the project root.
+ *
+ * @param rawPath - The path as typed on the command line
+ * @param projectRoot - The project root the file must stay inside
+ * @param invocationDir - The directory the path is relative to
+ * @returns The canonical path of the input file
+ * @throws {Error} If the path is absolute or escapes the project root
+ */
+async function resolveContainedInputFilePath(
+  rawPath: string,
+  projectRoot: string,
+  invocationDir: string,
+): Promise<string> {
   if (path.isAbsolute(rawPath)) {
     throw new Error(`--input-file path must be relative to the project directory: ${rawPath}`);
   }
-  const normalized = path.normalize(rawPath);
-  if (normalized === '..' || normalized.startsWith(`..${path.sep}`)) {
-    throw new Error(`--input-file path escapes project directory: ${rawPath}`);
-  }
-  const segments = normalized.split(path.sep);
-  if (segments.some((segment) => segment === '..')) {
-    throw new Error(`--input-file path escapes project directory: ${rawPath}`);
-  }
 
-  const canonicalRoot = await realpathOrResolved(cwd);
-  const resolved = path.resolve(cwd, rawPath);
+  const canonicalRoot = await realpathOrResolved(projectRoot);
+  const resolved = path.resolve(await realpathOrResolved(invocationDir), rawPath);
   let canonical = resolved;
   try {
     canonical = await fs.realpath(resolved);
   } catch {
-    const resolvedDir = path.dirname(resolved);
     try {
-      const canonicalDir = await fs.realpath(resolvedDir);
+      const canonicalDir = await fs.realpath(path.dirname(resolved));
       canonical = path.join(canonicalDir, path.basename(resolved));
     } catch {
-      canonical = path.join(canonicalRoot, normalized);
+      // Neither the file nor its directory exists: the lexical path is checked.
     }
   }
 
@@ -210,6 +216,25 @@ async function resolveContainedInputFilePath(rawPath: string, cwd: string): Prom
 }
 
 /**
+ * Anchor a user-typed `file:` value to the directory it was typed in.
+ *
+ * Core resolves a relative `file:` path against the project root, which is
+ * right for `.rundown/config.yaml`; a path typed on the command line is the
+ * user's and is relative to where they typed it. Containment against the
+ * project root is still checked by core.
+ *
+ * @param value - The raw command-line value
+ * @param invocationDir - The directory the command was run from
+ * @returns The value, with a relative `file:` path made absolute
+ */
+function anchorFileSource(value: unknown, invocationDir: string): unknown {
+  if (typeof value !== 'string' || !value.startsWith('file:')) return value;
+  const rawPath = value.slice('file:'.length);
+  if (path.isAbsolute(rawPath)) return value;
+  return `file:${path.resolve(invocationDir, rawPath)}`;
+}
+
+/**
  * Collect CLI flag variables (--input-file, --input, --input-json) into a single dict.
  *
  * Merges in internal precedence order: input-file < input < input-json.
@@ -220,18 +245,23 @@ async function resolveContainedInputFilePath(rawPath: string, cwd: string): Prom
  * @param options.inputFile - Array of paths to YAML files containing variable definitions (repeatable)
  * @param options.input - Array of key=value flag strings from CLI
  * @param options.inputJson - Array of key=json flag strings from CLI for structured values
- * @param cwd - Current working directory for resolving relative input-file paths
+ * @param projectRoot - Project root that `--input-file` paths must stay inside
+ * @param invocationDir - Directory the command was run from; `--input-file`
+ *   paths and `file:` values in `--input` / `--input-json` are relative to it.
+ *   Defaults to the project root.
  * @returns Merged variable record with raw types preserved
+ * @throws {Error} If an `--input-file` path is absolute, escapes the project root, or is unreadable
  */
 export async function collectCliFlags(
   options: { inputFile?: string[]; input?: string[]; inputJson?: string[] },
-  cwd: string,
+  projectRoot: string,
+  invocationDir: string = projectRoot,
 ): Promise<Record<string, unknown>> {
   const result: Record<string, unknown> = {};
 
   // input-file(s) — repeatable, later overrides earlier
   for (const vf of options.inputFile ?? []) {
-    const varFilePath = await resolveContainedInputFilePath(vf, cwd);
+    const varFilePath = await resolveContainedInputFilePath(vf, projectRoot, invocationDir);
     const fileVars = await loadVariablesFromFile(varFilePath, {
       normalize: false,
       optional: false,
@@ -248,7 +278,7 @@ export async function collectCliFlags(
           `Unexpected invalid --input entry: ${flag} (parseInputOption should have rejected this)`,
         );
       }
-      result[parsed.key] = parsed.value;
+      result[parsed.key] = anchorFileSource(parsed.value, invocationDir);
     }
   }
 
@@ -263,7 +293,7 @@ export async function collectCliFlags(
         );
       }
       const jsonValue = flag.slice(eqIndex + 1);
-      result[key] = JSON.parse(jsonValue);
+      result[key] = anchorFileSource(JSON.parse(jsonValue), invocationDir);
     }
   }
 
@@ -375,17 +405,16 @@ export async function loadVariablesFromFile(
 /**
  * Find the project's `.rundown/config.yaml`.
  *
- * The config belongs to the project root that {@link resolveProjectRoot}
- * finds from `cwd`: the nearest directory holding `.rundown/`, stopping at a
- * git boundary. Only that project's config is read, so a nested `.rundown/`
- * without a config shadows an outer project's config, and nothing above a git
- * root is loaded.
+ * Reads only the config of the project root it is given; it does not walk.
+ * Callers resolve the root once (`getProjectRoot`, which uses core's
+ * `resolveProjectRoot`), so a nested `.rundown/` without a config shadows an
+ * outer project's config and nothing above a git root is loaded.
  *
- * @param cwd - Starting directory for the search (normally the project root)
+ * @param projectRoot - The project root
  * @returns Absolute path to the config file, or null if the project has none
  */
-export async function findConfigFile(cwd: string): Promise<string | null> {
-  const configPath = path.join(resolveProjectRoot(cwd), CONFIG_FILE);
+export async function findConfigFile(projectRoot: string): Promise<string | null> {
+  const configPath = path.join(projectRoot, CONFIG_FILE);
   try {
     await fs.access(configPath);
     return configPath;
@@ -395,16 +424,13 @@ export async function findConfigFile(cwd: string): Promise<string | null> {
 }
 
 /**
- * Discover variables from .rundown/config.yaml in the project.
+ * Discover variables from the project root's `.rundown/config.yaml`.
  *
- * Searches upward from cwd for a .rundown directory containing config.yaml.
- * Stops at git root or filesystem root to prevent loading from unrelated directories.
- *
- * @param cwd - Starting directory for search
- * @returns Discovered variables, or empty object if not found
+ * @param projectRoot - The project root whose config is read
+ * @returns Discovered variables, or empty object if the project has no config
  */
-export async function discoverVariables(cwd: string): Promise<Record<string, string>> {
-  const configPath = await findConfigFile(cwd);
+export async function discoverVariables(projectRoot: string): Promise<Record<string, string>> {
+  const configPath = await findConfigFile(projectRoot);
   if (configPath) {
     return await loadVariablesFromFile(configPath);
   }
@@ -412,16 +438,14 @@ export async function discoverVariables(cwd: string): Promise<Record<string, str
 }
 
 /**
- * Discover raw (pre-normalization) variables from .rundown/config.yaml.
+ * Discover raw (pre-normalization) variables from the project root's
+ * `.rundown/config.yaml`.
  *
- * Searches upward from cwd for a .rundown directory containing config.yaml.
- * Stops at git root or filesystem root to prevent loading from unrelated directories.
- *
- * @param cwd - Starting directory for search
- * @returns Discovered variables with raw types preserved, or empty object if not found
+ * @param projectRoot - The project root whose config is read
+ * @returns Discovered variables with raw types preserved, or empty object if the project has no config
  */
-async function discoverRawVariables(cwd: string): Promise<Record<string, unknown>> {
-  const configPath = await findConfigFile(cwd);
+async function discoverRawVariables(projectRoot: string): Promise<Record<string, unknown>> {
+  const configPath = await findConfigFile(projectRoot);
   if (configPath) {
     return await loadVariablesFromFile(configPath, { normalize: false });
   }
@@ -489,7 +513,8 @@ function collectEnvBridgeVars(warnings?: string[]): Record<string, unknown> {
  * @param options.inheritedVars - Variables inherited from parent delegation
  * @param options.artifacts - Array of `key=rd://...` artifact-channel flag strings
  * @param options.artifactsJson - Array of `key=<json array of rd:// uris>` artifact-channel flag strings
- * @param cwd - Current working directory for resolving relative paths
+ * @param projectRoot - Project root: its config is read, and paths must stay inside it
+ * @param invocationDir - Directory command-line paths are relative to
  * @param warnings - Optional array to collect discovery warnings
  * @returns Array of variable layers in precedence order
  */
@@ -502,15 +527,20 @@ async function collectRawLayers(
     artifacts?: string[];
     artifactsJson?: string[];
   },
-  cwd: string,
+  projectRoot: string,
+  invocationDir: string,
   warnings?: string[],
 ): Promise<VariableLayer[]> {
   return [
     { kind: 'builtins', channel: 'variable', values: getBuiltinVariables() },
-    { kind: 'config', channel: 'variable', values: await discoverRawVariables(cwd) },
+    { kind: 'config', channel: 'variable', values: await discoverRawVariables(projectRoot) },
     { kind: 'inherited', channel: 'variable', values: options.inheritedVars ?? {} },
     { kind: 'env', channel: 'variable', values: collectEnvBridgeVars(warnings) },
-    { kind: 'cli', channel: 'variable', values: await collectCliFlags(options, cwd) },
+    {
+      kind: 'cli',
+      channel: 'variable',
+      values: await collectCliFlags(options, projectRoot, invocationDir),
+    },
     { kind: 'artifact-cli', channel: 'artifact', values: collectArtifactFlags(options) },
   ];
 }
@@ -544,8 +574,12 @@ async function collectRawLayers(
  * @param options.inheritedVars - Variables inherited from parent delegation (overrides builtins)
  * @param options.artifacts - Array of `key=rd://...` artifact-channel flag strings
  * @param options.artifactsJson - Array of `key=<json array of rd:// uris>` artifact-channel flag strings
- * @param cwd - Current working directory for resolving relative paths
+ * @param cwd - Project root: its `.rundown/config.yaml` is read, its `file:`
+ *   values resolve against it, and every file source must stay inside it
  * @param security - Optional security context for file source policy enforcement
+ * @param invocationDir - Directory the command was run from. `--input-file`
+ *   paths and `file:` values in `--input` / `--input-json` are relative to it.
+ *   Defaults to `cwd`.
  * @returns ResolvedVariables with unified vars map and any warnings
  * @throws {FileSourcePolicyError} When a file-backed data source is blocked by security policy
  * @throws {Error} When a reserved runtime variable name is overridden by a non-builtin layer
@@ -561,9 +595,10 @@ export async function resolveVariables(
   },
   cwd: string,
   security?: VariableSecurityContext,
+  invocationDir: string = cwd,
 ): Promise<ResolvedVariables> {
   const warnings: string[] = [];
-  const layers = await collectRawLayers(options, cwd, warnings);
+  const layers = await collectRawLayers(options, cwd, invocationDir, warnings);
   const resolved = await resolveVariableLayers(layers, { cwd, security });
   return {
     vars: resolved.vars,

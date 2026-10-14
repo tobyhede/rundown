@@ -13,6 +13,18 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
   ...mockErrorHelpers,
 }));
 
+// The CLI reads its working directory only in helpers/context.ts. Mocking it
+// here keeps that module's own core imports out of this suite's core mock and
+// lets the tests tell the project root apart from the process cwd.
+const PROJECT_ROOT = '/project-root';
+jest.unstable_mockModule('../../src/helpers/context.js', () => ({
+  getProjectRoot: () => PROJECT_ROOT,
+  getInvocationDir: () => '/project-root/sub',
+}));
+
+/** Directories for tests that do not care where policy is searched. */
+const DIRS = { searchFrom: '/invoked/here', repoRoot: PROJECT_ROOT };
+
 // Dynamic imports are needed after mocking
 const core = await import('@rundown-org/core');
 const {
@@ -146,6 +158,14 @@ describe('policy context service', () => {
       expect(context.policy).toBeDefined();
     });
 
+    it('roots the default evaluator at the project root, not the process cwd', () => {
+      getPolicyContext();
+      expect(core.PolicyEvaluator).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ repoRoot: PROJECT_ROOT }),
+      );
+    });
+
     it('returns same instance on subsequent calls', () => {
       const c1 = getPolicyContext();
       const c2 = getPolicyContext();
@@ -164,12 +184,26 @@ describe('policy context service', () => {
         }),
       );
 
-      const context = await initializePolicyContext({ allowAll: true });
+      const context = await initializePolicyContext({ allowAll: true }, DIRS);
 
       expect(core.loadPolicy).toHaveBeenCalled();
       expect(context.isDefault).toBe(false);
       expect(context.cliOptions.allowAll).toBe(true);
       expect(context.configPath).toBe('/path/to/policy.yml');
+    });
+
+    it('searches for policy from searchFrom and roots the evaluator at repoRoot', async () => {
+      jest
+        .mocked(core.loadPolicy)
+        .mockResolvedValue(asLoadPolicyResult({ policy: {}, isDefault: true }));
+
+      await initializePolicyContext({}, { searchFrom: '/a/b/sub', repoRoot: '/a' });
+
+      expect(core.loadPolicy).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/a/b/sub' }));
+      expect(core.PolicyEvaluator).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ repoRoot: '/a' }),
+      );
     });
 
     it('forwards trustJsPolicy to the loader', async () => {
@@ -182,7 +216,7 @@ describe('policy context service', () => {
         }),
       );
 
-      await initializePolicyContext({ trustJsPolicy: true });
+      await initializePolicyContext({ trustJsPolicy: true }, DIRS);
 
       expect(core.loadPolicy).toHaveBeenCalledWith(
         expect.objectContaining({ trustJsPolicy: true }),
@@ -199,7 +233,7 @@ describe('policy context service', () => {
         }),
       );
 
-      await initializePolicyContext({});
+      await initializePolicyContext({}, DIRS);
       expect(consoleSpy).toHaveBeenCalledWith('Warning: Warning 1');
       consoleSpy.mockRestore();
     });
@@ -219,7 +253,7 @@ describe('policy context service', () => {
           warnings: [],
         }),
       );
-      await initializePolicyContext({ allowAll: true });
+      await initializePolicyContext({ allowAll: true }, DIRS);
       expect(isPolicyEnforced()).toBe(false);
     });
   });
@@ -243,7 +277,7 @@ describe('policy context service', () => {
       jest
         .mocked(core.loadPolicy)
         .mockResolvedValue(asLoadPolicyResult({ policy: {}, isDefault: true }));
-      await initializePolicyContext(parsePolicyCliOptions({}));
+      await initializePolicyContext(parsePolicyCliOptions({}), DIRS);
       const opts = getSandboxOptions();
       expect(opts.sandbox).toBe(true);
       expect(opts.sandboxStrict).toBe(true);
@@ -253,7 +287,7 @@ describe('policy context service', () => {
       jest
         .mocked(core.loadPolicy)
         .mockResolvedValue(asLoadPolicyResult({ policy: {}, isDefault: true }));
-      await initializePolicyContext({}); // No flags
+      await initializePolicyContext({}, DIRS); // No flags
       const opts = getSandboxOptions();
       expect(opts.sandbox).toBe(true);
     });
@@ -262,7 +296,7 @@ describe('policy context service', () => {
       jest
         .mocked(core.loadPolicy)
         .mockResolvedValue(asLoadPolicyResult({ policy: {}, isDefault: true }));
-      await initializePolicyContext({ noSandbox: true });
+      await initializePolicyContext({ noSandbox: true }, DIRS);
       const opts = getSandboxOptions();
       expect(opts.sandbox).toBe(false);
       // The explicit opt-out also clears strict so it does not fail closed.
@@ -273,7 +307,7 @@ describe('policy context service', () => {
       jest
         .mocked(core.loadPolicy)
         .mockResolvedValue(asLoadPolicyResult({ policy: {}, isDefault: true }));
-      await initializePolicyContext({ allowAll: true });
+      await initializePolicyContext({ allowAll: true }, DIRS);
       const opts = getSandboxOptions();
       expect(opts.sandbox).toBe(false);
       expect(opts.sandboxStrict).toBe(false);
@@ -283,7 +317,7 @@ describe('policy context service', () => {
       jest
         .mocked(core.loadPolicy)
         .mockResolvedValue(asLoadPolicyResult({ policy: {}, isDefault: true }));
-      await initializePolicyContext({ sandboxStrict: true });
+      await initializePolicyContext({ sandboxStrict: true }, DIRS);
       const opts = getSandboxOptions();
       expect(opts.sandboxStrict).toBe(true);
     });

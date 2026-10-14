@@ -1,7 +1,25 @@
 // packages/core/src/project-root.ts
-import { statSync } from 'node:fs';
+import { realpathSync, type Stats, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import * as path from 'node:path';
 import { RUNDOWN_DIR } from './paths.js';
+
+/**
+ * Stat `target`, treating any failure as absence. `throwIfNoEntry: false`
+ * only suppresses ENOENT; EACCES, ELOOP (a self-referential link),
+ * ENAMETOOLONG and ENOTDIR still throw, and a project-root walk that throws
+ * takes every command down with it. Never throws.
+ *
+ * @param target - Path to stat
+ * @returns The stats, or undefined when `target` cannot be stat-ed
+ */
+function statOrAbsent(target: string): Stats | undefined {
+  try {
+    return statSync(target, { throwIfNoEntry: false });
+  } catch {
+    return undefined;
+  }
+}
 
 /**
  * Whether `target` exists and is a directory. Never throws.
@@ -10,17 +28,45 @@ import { RUNDOWN_DIR } from './paths.js';
  * @returns True when `target` is an existing directory
  */
 function isDirectory(target: string): boolean {
-  return statSync(target, { throwIfNoEntry: false })?.isDirectory() ?? false;
+  return statOrAbsent(target)?.isDirectory() ?? false;
 }
 
 /**
- * Whether `target` exists, as anything: a directory, a file, a link.
+ * Whether `target` exists, as anything: a directory, a file, a link. Never
+ * throws.
  *
  * @param target - Path to test
- * @returns True when something exists at `target`
+ * @returns True when something can be stat-ed at `target`
  */
 function exists(target: string): boolean {
-  return statSync(target, { throwIfNoEntry: false }) !== undefined;
+  return statOrAbsent(target) !== undefined;
+}
+
+/**
+ * Canonical form of `target`: its realpath, or the lexically resolved path
+ * when realpath fails. Never throws.
+ *
+ * @param target - Path to canonicalise
+ * @returns Absolute canonical path
+ */
+function canonical(target: string): string {
+  try {
+    return realpathSync.native(target);
+  } catch {
+    return path.resolve(target);
+  }
+}
+
+/**
+ * Whether `dir` is `home` or one of its ancestors. Both are canonical.
+ *
+ * @param dir - Canonical directory to test
+ * @param home - Canonical home directory
+ * @returns True when `home` lies at or below `dir`
+ */
+function isHomeOrAncestor(dir: string, home: string): boolean {
+  const rel = path.relative(dir, home);
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${path.sep}`) && !path.isAbsolute(rel));
 }
 
 /**
@@ -39,7 +85,12 @@ function exists(target: string): boolean {
  * a `.git` entry, a directory for a checkout or a file for a worktree or
  * submodule — after checking that directory's own `.rundown/`, so an outer
  * project never captures a separate repository below it. It also stops at the
- * filesystem root. Without a match the root is `start` itself: a command run
+ * filesystem root, and it never reaches the user's home directory or any
+ * ancestor of it: above `start`, such a directory ends the walk unchecked, so
+ * a stray `~/.rundown/` cannot capture every non-git directory below home
+ * (and hand them its store, its config and a `{repo}` of the whole home).
+ * Only a walk that starts at home, or above it, reads that directory's own
+ * `.rundown/`. Without a match the root is `start` itself: a command run
  * where no project exists keeps working in its own directory, and `rundown
  * run` creates `.rundown/` there.
  *
@@ -50,9 +101,35 @@ function exists(target: string): boolean {
  * @returns Absolute path of the project root
  */
 export function resolveProjectRoot(start: string): string {
+  return resolveProjectRootWith(start, {});
+}
+
+/** Options for {@link resolveProjectRootWith}. */
+export interface ProjectRootOptions {
+  /**
+   * The user's home directory, which bounds the walk; defaults to
+   * `os.homedir()`. A value that is not an absolute path imposes no bound.
+   */
+  readonly homeDir?: string;
+}
+
+/**
+ * {@link resolveProjectRoot} with an injectable home directory.
+ *
+ * @param start - Directory to start from
+ * @param options - Resolution options
+ * @returns Absolute path of the project root
+ */
+export function resolveProjectRootWith(start: string, options: ProjectRootOptions): string {
   const origin = path.resolve(start);
+  // An empty or relative home (an unset HOME on some hosts) names no
+  // directory; resolving it would make the working directory "home".
+  const homeDir = options.homeDir ?? homedir();
+  const home = path.isAbsolute(homeDir) ? canonical(homeDir) : undefined;
   let dir = origin;
   for (;;) {
+    if (dir !== origin && home !== undefined && isHomeOrAncestor(canonical(dir), home))
+      return origin;
     if (isDirectory(path.join(dir, RUNDOWN_DIR))) return dir;
     if (exists(path.join(dir, '.git'))) return origin;
     const parent = path.dirname(dir);
