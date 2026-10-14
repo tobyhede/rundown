@@ -37,13 +37,13 @@ export type ArtifactAssertionShapeFailure =
 /**
  * Shape verdict for a value bound to a naked-asserted name.
  *
- * `assertable` means the value is one of the §10.1.2 shapes — it may still
+ * `admitted` means the value is one of the §10.1.2 shapes — it may still
  * fail to resolve against the manifest at step entry (`unresolvable-uri` for a
  * well-formed URI that matches no row), but no non-artifact value is
- * `assertable`.
+ * `admitted`.
  */
 export type ArtifactAssertionShape =
-  | { readonly kind: 'assertable' }
+  | { readonly kind: 'admitted' }
   | { readonly kind: 'not-artifact'; readonly reason: ArtifactAssertionShapeFailure };
 
 /**
@@ -150,12 +150,12 @@ function isArtifactUriString(value: string): boolean {
  * step-entry resolver, so the two cannot disagree about which values are
  * refused `ARTIFACT_INPUT_REQUIRED`. It mirrors the §10.1.2 dispatch:
  *
- * - a trusted (branded) artifact value is assertable;
- * - a JSON URI[] string is assertable when non-empty and every entry parses;
+ * - a trusted (branded) artifact value is admitted;
+ * - a JSON URI[] string is admitted when non-empty and every entry parses;
  *   an empty one is `not-an-artifact`, a malformed entry `partial-resolve`;
- * - any other string is assertable iff it parses as an `rd://` URI
+ * - any other string is admitted iff it parses as an `rd://` URI
  *   (`unresolvable-uri` otherwise);
- * - a non-empty string array is assertable iff every entry parses
+ * - a non-empty string array is admitted iff every entry parses
  *   (`partial-resolve` otherwise);
  * - everything else is `not-an-artifact`.
  *
@@ -163,20 +163,20 @@ function isArtifactUriString(value: string): boolean {
  * here; the resolver reports those with its own provenance message first.
  *
  * @param value - The value bound to the asserted name
- * @returns `assertable`, or the §10.1.2 failure the value maps to
+ * @returns `admitted`, or the §10.1.2 failure the value maps to
  */
 export function classifyArtifactAssertionValue(value: unknown): ArtifactAssertionShape {
-  if (isTrustedArtifactValue(value)) return { kind: 'assertable' };
+  if (isTrustedArtifactValue(value)) return { kind: 'admitted' };
   if (typeof value === 'string') {
     const transport = parseJsonArtifactUriArrayTransport(value);
     if (transport !== null) {
       if (transport.length === 0) return { kind: 'not-artifact', reason: 'not-an-artifact' };
       return transport.every(isArtifactUriString)
-        ? { kind: 'assertable' }
+        ? { kind: 'admitted' }
         : { kind: 'not-artifact', reason: 'partial-resolve' };
     }
     return isArtifactUriString(value)
-      ? { kind: 'assertable' }
+      ? { kind: 'admitted' }
       : { kind: 'not-artifact', reason: 'unresolvable-uri' };
   }
   if (
@@ -185,7 +185,7 @@ export function classifyArtifactAssertionValue(value: unknown): ArtifactAssertio
     value.every((entry): entry is string => typeof entry === 'string')
   ) {
     return value.every(isArtifactUriString)
-      ? { kind: 'assertable' }
+      ? { kind: 'admitted' }
       : { kind: 'not-artifact', reason: 'partial-resolve' };
   }
   return { kind: 'not-artifact', reason: 'not-an-artifact' };
