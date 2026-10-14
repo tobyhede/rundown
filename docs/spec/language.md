@@ -517,7 +517,10 @@ direct alias rendering. Managed `rd://artifacts/...` records render under
 path. For an `ArtifactRecord[]`, it renders a JSON array of contained local
 filesystem paths. The **literal-key form** `{{ path "key" }}` renders a single
 local filesystem path for the quoted key under the current `WorkPath`,
-`ContextId`, and `RunId` — it does not require an artifact binding.
+`ContextId`, and `RunId` — it does not require an artifact binding. The
+variable-reference form over a value that is not an artifact is refused with
+`ARTIFACT_INPUT_REQUIRED` (§10.1.2), at launch for a launch value and at render
+for a value a step bound.
 
 `{{ artifact ArtifactName }}` renders artifact URI values with the same scalar
 or array cardinality as direct alias rendering: a single URI for
@@ -693,6 +696,17 @@ Resolution MUST be all-or-nothing. The directive MUST error at evaluation when:
 | `not-an-artifact`  | The bound value is not one of the supported shapes above.                                              |
 | `unresolvable-uri` | A URI string does not parse, or parses but matches no manifest row.                                    |
 | `partial-resolve`  | A `URI[]` or JSON string `URI[]` contains at least one URI that fails resolution. No partial emission. |
+
+A bound value that no shape above admits — `not-an-artifact`, or a URI form
+whose string does not parse as an `rd://` URI — is a non-artifact value,
+reported with the public code `ARTIFACT_INPUT_REQUIRED`. Its timing follows
+§8.2: when the value comes from launch inputs and the name is not in the
+produced set, launch (`rundown run`, `rundown resolve`, child preparation) MUST
+refuse it before the run is created, since the value in scope at the assertion
+is the launch value; a name in the produced set MUST be deferred to step entry.
+A well-formed URI is never refused at launch — only step entry can tell whether
+it names a row. The way to supply an artifact at launch is the artifact channel
+(`--artifacts`, §9.1).
 
 The naked form is intended for consumer runbooks (e.g. a reviewer asserting that
 `Plan` was inherited from the parent's delegation chain) where the variable is

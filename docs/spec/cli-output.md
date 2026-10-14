@@ -1745,6 +1745,46 @@ Code: RUNBOOK_COMPOSITION_UNSUPPORTED
 }
 ```
 
+### Artifact input required
+
+A name the runbook requires to be an artifact — asserted by a naked `ARTIFACTS`
+declaration (language spec §10.1.2), or rendered with `{{ path Name }}` — is
+bound to a value that is not one: a plain path, a number, an empty or malformed
+URI array. The artifact channel, `--artifacts <name>=<rd:// URI>`, is the only
+way to supply an artifact at launch; `--input` never carries one.
+
+- **At launch.** When the value comes from the launch inputs and no step can
+  rebind the name before the assertion (it is outside the produced set, §8.2),
+  `rundown run` refuses it with this error envelope and exit 1 before any run is
+  created. `details.variable` names the input; `details.step` names the first
+  asserting step or substep (absent for a `{{ path … }}` render). Child
+  preparation (claim, inline launch) reports the same code. `rundown resolve`
+  lists the message under `errors`.
+- **At step entry.** A value an earlier step binds is refused when the asserting
+  step is entered: an `error_occurred` event with `code` set, then
+  `runbook_stopped` with reason `artifact_resolution_failed`. A
+  `{{ path Name }}` render over such a value is an `error_occurred` with this
+  code; nothing is committed and the run keeps its position.
+
+The message begins with the §10.1.2 failure name (`unresolvable-uri`,
+`not-an-artifact`, or `partial-resolve`) for an assertion.
+
+**JSON:**
+
+```json
+{
+  "error": "unresolvable-uri: ARTIFACTS naked declaration \"SkillPath\" at step 2 requires an artifact, but its value \"some/file.md\" is not an artifact URI (expected rd://artifacts/…). Supply it with --artifacts SkillPath=<rd:// URI> (or --artifacts-json SkillPath='[\"<rd:// URI>\", …]'); `rundown artifact ls --run <producer_run_id>` lists the producing run's artifacts, each with its `uri`.",
+  "kind": "error",
+  "code": "ARTIFACT_INPUT_REQUIRED",
+  "command": "run",
+  "details": {
+    "runbook": "convert-skill.runbook.md",
+    "variable": "SkillPath",
+    "step": "2"
+  }
+}
+```
+
 ### Delegation refusals
 
 Delegation and its recovery have eight refusals. Each writes nothing, exits 1

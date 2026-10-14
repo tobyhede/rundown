@@ -131,6 +131,13 @@ rundown run <runbook> --input-json key=json
 rundown run <runbook> --input-file <path>
 ```
 
+An input the runbook asserts as an artifact (a naked `ARTIFACTS` declaration
+such as `- PlanPath`) takes an `rd://` artifact URI through the artifact
+channel, never `--input`. If `rundown run` refuses with
+`ARTIFACT_INPUT_REQUIRED`, start again with
+`rundown run <runbook> --artifacts key=<rd:// URI>`; the URI is the `uri` of the
+artifact in `rundown artifact ls --run <run_id>` of the run that produced it.
+
 Outputs declared by steps become available to later steps automatically. When a
 later step references `{{ PlanPath }}`, trust that Rundown carried the value
 forward; copy values by hand only when a step tells you to.
