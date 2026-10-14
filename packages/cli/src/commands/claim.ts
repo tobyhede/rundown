@@ -9,7 +9,7 @@ import {
   type ClaimTicket,
 } from '@rundown-org/core';
 import { collectAgentId, resolveAgentIdOption } from '../helpers/agent-id-option.js';
-import { getCwd } from '../helpers/context.js';
+import { getProjectRoot } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
@@ -78,7 +78,7 @@ export function registerClaimCommand(program: Command): void {
           const agent = resolveAgentIdOption('claim', options.agentId, output);
           if (agent === undefined) return;
 
-          const cwd = getCwd();
+          const cwd = getProjectRoot();
           const manager = new RunbookStateManager(cwd);
           const commandStreamOptions = commandStreamOptionsForOutputMode(options.text);
           const outcome = await claimDelegation(

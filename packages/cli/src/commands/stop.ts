@@ -1,7 +1,7 @@
 // packages/cli/src/commands/stop.ts
 
 import type { Command } from 'commander';
-import { getCwd } from '../helpers/context.js';
+import { getProjectRoot } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { TOKEN_OPTION_DESCRIPTION, parseTokenOption } from '../helpers/token-option.js';
@@ -49,7 +49,7 @@ export function registerStopCommand(program: Command, human: HumanConfirmation =
             if (options.run !== undefined && options.token === undefined) {
               const runId = parseRunId(options.run, output);
               if (runId === undefined) return;
-              const exitError = await runEscapeHatchStop(output, getCwd(), {
+              const exitError = await runEscapeHatchStop(output, getProjectRoot(), {
                 runId,
                 human: humanAt(command, human),
                 ...(message !== undefined ? { message } : {}),
@@ -59,7 +59,7 @@ export function registerStopCommand(program: Command, human: HumanConfirmation =
             }
             const token = parseTokenOption(options, 'stop', output);
             if (token === undefined) return;
-            const { exitError } = await runSeamTerminal(output, getCwd(), 'stop', {
+            const { exitError } = await runSeamTerminal(output, getProjectRoot(), 'stop', {
               token,
               ...(message !== undefined ? { message } : {}),
             });

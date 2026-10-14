@@ -2,15 +2,43 @@
 
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { parseRunbook, countNumberedSteps, type RunbookRef } from '@rundown-org/core';
+import {
+  parseRunbook,
+  countNumberedSteps,
+  resolveProjectRoot,
+  type RunbookRef,
+} from '@rundown-org/core';
 import { resolveRunbookFile, resolveRunbookRef } from './resolve-runbook.js';
 
 /**
- * Get current working directory.
- * @returns The current working directory path
+ * The directory the CLI was invoked from: the process working directory.
+ *
+ * The one place the CLI reads it (a Category A read). Only user-typed
+ * relative paths — a runbook path given to `run`, `check`, `resolve` or
+ * `scenario` — resolve against it; everything Rundown owns lives under
+ * {@link getProjectRoot}.
+ *
+ * @returns The process working directory
  */
-export function getCwd(): string {
+export function getInvocationDir(): string {
   return process.cwd();
+}
+
+/**
+ * The Rundown project root for this invocation.
+ *
+ * The nearest directory at or above {@link getInvocationDir} that holds an
+ * existing `.rundown/` (see `resolveProjectRoot` in core), or the invocation
+ * directory itself when there is none. The run store, project runbooks, run
+ * outputs and artifacts, prune, persisted runbook references, config and
+ * policy discovery all use it, so a command run from a subdirectory acts on
+ * the same project as one run from the root. Commands resolve it once and
+ * pass it down.
+ *
+ * @returns Absolute path of the project root
+ */
+export function getProjectRoot(): string {
+  return resolveProjectRoot(getInvocationDir());
 }
 
 /**

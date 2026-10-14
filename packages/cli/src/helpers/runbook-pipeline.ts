@@ -251,6 +251,11 @@ export interface PrepareRunbookOptions {
    * A child reference no search root holds is then tried beside it.
    */
   readonly composedFrom?: string;
+  /**
+   * Directory a relative runbook path given on the command line is tried
+   * against: where the CLI was invoked. Defaults to the project root.
+   */
+  readonly invocationDir?: string;
 }
 
 /** Success result from {@link prepareRunbook}. */
@@ -415,6 +420,19 @@ export interface ResolvedRunbookRequest {
 }
 
 /**
+ * The runbook resolution options carried by preparation options.
+ *
+ * @param options - Preparation options, if any
+ * @returns The `composedFrom` and `invocationDir` that are set
+ */
+function resolveOptionsFrom(options: PrepareRunbookOptions | undefined): ResolveRunbookFileOptions {
+  return {
+    ...(options?.composedFrom !== undefined ? { composedFrom: options.composedFrom } : {}),
+    ...(options?.invocationDir !== undefined ? { invocationDir: options.invocationDir } : {}),
+  };
+}
+
+/**
  * Resolve, load, and parse a runbook file.
  *
  * @param file - Runbook file path or namespace:name
@@ -553,7 +571,7 @@ export async function prepareRunbook(
   cwd: string,
   options?: PrepareRunbookOptions,
 ): Promise<PrepareResult> {
-  const parsed = await loadAndParseRunbook(file, cwd);
+  const parsed = await loadAndParseRunbook(file, cwd, resolveOptionsFrom(options));
   return prepareLoadedRunbook(parsed, file, inputOpts, cwd, { kind: 'prepared' }, options);
 }
 
@@ -577,11 +595,7 @@ export async function prepareRunnableRunbook(
   cwd: string,
   options?: PrepareRunbookOptions,
 ): Promise<RunnablePrepareResult> {
-  const parsed = await loadAndParseRunbook(
-    file,
-    cwd,
-    options?.composedFrom !== undefined ? { composedFrom: options.composedFrom } : {},
-  );
+  const parsed = await loadAndParseRunbook(file, cwd, resolveOptionsFrom(options));
   return prepareLoadedRunbook(
     parsed,
     file,

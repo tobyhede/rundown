@@ -1,7 +1,7 @@
 // packages/cli/src/commands/goto.ts
 
 import type { Command } from 'commander';
-import { getCwd } from '../helpers/context.js';
+import { getProjectRoot } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
@@ -34,7 +34,7 @@ export function registerGotoCommand(program: Command): void {
         await withErrorHandling(
           async () => {
             const output = new OutputEmitter({ text: options.text, command: 'goto' });
-            const cwd = getCwd();
+            const cwd = getProjectRoot();
 
             const token = parseTokenOption(options, 'goto', output);
             if (token === undefined) return;

@@ -302,6 +302,11 @@ export interface ResolveRunbookFileOptions {
    * tried relative to this file's directory, last.
    */
   readonly composedFrom?: string;
+  /**
+   * Directory a relative runbook path is tried against after the project and
+   * plugin runbooks: where the user typed it. Defaults to the project root.
+   */
+  readonly invocationDir?: string;
 }
 
 /**
@@ -344,7 +349,7 @@ async function resolveBesideComposer(
  * Search order for path mode:
  * 1. .rundown/runbooks/ (project-local)
  * 2. $CLAUDE_PLUGIN_ROOT/runbooks/ (plugin directory)
- * 3. Relative to cwd
+ * 3. Relative to `options.invocationDir` (default: the project root)
  * 4. Bundled runbooks
  *
  * Search order for name mode (no namespace):
@@ -358,9 +363,10 @@ async function resolveBesideComposer(
  * Namespace mode (e.g., rundown:write-plan):
  * - Searches only in the specified source (plugin for 'rundown' namespace)
  *
- * @param cwd - Current working directory
+ * @param cwd - Project root: the project runbooks and persisted references live under it
  * @param identifier - Runbook filename, name, or namespaced name to find
- * @param options - Resolution options; `composedFrom` names the composing runbook
+ * @param options - Resolution options; `composedFrom` names the composing runbook,
+ *   `invocationDir` the directory a relative path is tried against
  * @returns Resolved runbook with path and source, or null if not found
  * @throws {Error} May throw filesystem errors if directory access fails unexpectedly
  */
@@ -387,7 +393,7 @@ export async function resolveRunbookFile(
     return resolveAbsolutePath(cwd, name);
   }
 
-  const located = await locateRunbook(runtimeSearchRoots(cwd), name);
+  const located = await locateRunbook(runtimeSearchRoots(cwd, options.invocationDir), name);
   if (!located) {
     return options.composedFrom !== undefined && isPathIdentifier(name)
       ? resolveBesideComposer(cwd, options.composedFrom, name)

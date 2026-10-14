@@ -10,7 +10,7 @@ import {
   type HumanConfirmationAudit,
   type RunDeletion,
 } from '@rundown-org/core';
-import { getCwd } from '../helpers/context.js';
+import { getProjectRoot } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { getStatus } from '../helpers/status.js';
@@ -135,7 +135,7 @@ export function registerPruneCommand(program: Command, human: HumanConfirmation 
     .action(async (options: PruneOptions, command: Command) => {
       await withErrorHandling(
         async () => {
-          const cwd = getCwd();
+          const cwd = getProjectRoot();
           const output = new OutputEmitter({ text: options.text, command: 'prune' });
 
           const parsedToken = parseOptionalTokenOption(options, 'prune', output);

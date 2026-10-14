@@ -23,6 +23,7 @@ import {
   parseInputJsonOption,
   collect,
 } from '../helpers/option-utils.js';
+import { getInvocationDir, getProjectRoot } from '../helpers/context.js';
 import { prepareRunbook } from '../helpers/runbook-pipeline.js';
 
 /**
@@ -114,7 +115,7 @@ export function registerResolveCommand(program: Command): void {
     .option('--text', 'Output as human-readable text')
     .action(async (file: string, options: ResolveOptions) => {
       const output = new OutputEmitter({ text: options.text, command: 'resolve' });
-      const cwd = process.cwd();
+      const cwd = getProjectRoot();
 
       const result = await prepareRunbook(
         file,
@@ -126,6 +127,7 @@ export function registerResolveCommand(program: Command): void {
           artifactsJson: options.artifactsJson,
         },
         cwd,
+        { invocationDir: getInvocationDir() },
       );
 
       if (!result.ok) {

@@ -10,7 +10,7 @@ import {
   redactRunSecret,
 } from '@rundown-org/core';
 import { createCliRunbookActorService } from '../helpers/actor-service-factory.js';
-import { getCwd } from '../helpers/context.js';
+import { getInvocationDir, getProjectRoot } from '../helpers/context.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
   parseArtifactJsonOption,
@@ -106,7 +106,7 @@ export function registerRunCommand(program: Command): void {
         }
 
         try {
-          const cwd = getCwd();
+          const cwd = getProjectRoot();
           const manager = new RunbookStateManager(cwd);
           const actorService = createCliRunbookActorService(manager);
 
@@ -149,7 +149,9 @@ export function registerRunCommand(program: Command): void {
             artifactsJson: options.artifactsJson,
           };
 
-          const prepResult = await prepareRunnableRunbook(file, inputOpts, cwd);
+          const prepResult = await prepareRunnableRunbook(file, inputOpts, cwd, {
+            invocationDir: getInvocationDir(),
+          });
           if (!prepResult.ok) {
             output.error(prepResult.error, prepResult.code, prepResult.details);
             output.flush();

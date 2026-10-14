@@ -2,7 +2,7 @@
 
 import type { Command } from 'commander';
 import { CONCURRENT_MODIFICATION_CODE, type LifecycleRetryOutcome } from '@rundown-org/core';
-import { getCwd } from '../helpers/context.js';
+import { getProjectRoot } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
@@ -69,7 +69,7 @@ export function registerRetryCommand(program: Command): void {
               process.exitCode = 1;
               return;
             }
-            const cwd = getCwd();
+            const cwd = getProjectRoot();
             const { manager, seam } = buildLifecycleSeam(cwd);
             const resolution = await resolveCommandTarget(
               {

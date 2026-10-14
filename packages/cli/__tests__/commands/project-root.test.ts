@@ -112,7 +112,7 @@ describe('project root: commands from a subdirectory act on the project', () => 
     );
 
     expect(status.exitCode).toBe(0);
-    expect(envelopes(status.stdout)[0]).toMatchObject({ runbookId: runId });
+    expect(envelopes(status.stdout)[0]).toMatchObject({ runId });
   });
 
   it('run from a subdirectory uses the root store and the project runbooks', async () => {
@@ -125,7 +125,7 @@ describe('project root: commands from a subdirectory act on the project', () => 
     expect(existsSync(join(sub, '.rundown'))).toBe(false);
     const status = await runCliInProcess(['status', '--run', runId], workspace);
     expect(status.exitCode).toBe(0);
-    expect(envelopes(status.stdout)[0]).toMatchObject({ runbookId: runId });
+    expect(envelopes(status.stdout)[0]).toMatchObject({ runId });
   });
 
   it('run of a path relative to the subdirectory resolves there and is driven from the root', async () => {
@@ -141,7 +141,7 @@ describe('project root: commands from a subdirectory act on the project', () => 
     // is driven from the root as well as from where it started.
     const pass = await runCliInProcess(['pass', '--token', token, '--step', '1'], workspace);
     expect(pass.exitCode).toBe(0);
-    expect(envelopes(pass.stdout).some((e) => e.type === 'runbook_completed')).toBe(true);
+    expect(envelopes(pass.stdout)[0]).toMatchObject({ action: 'complete', complete: true });
     const status = await runCliInProcess(['status', '--run', runId], workspace);
     expect(status.exitCode).toBe(0);
   });

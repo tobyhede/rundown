@@ -2,7 +2,7 @@
 
 import type { Command } from 'commander';
 import { getErrorMessage } from '@rundown-org/core';
-import { getCwd } from '../helpers/context.js';
+import { getProjectRoot } from '../helpers/context.js';
 import { DEFAULT_RESULT_SEQUENCE, executeEchoLogic } from '../helpers/echo-command.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { collect } from '../helpers/option-utils.js';
@@ -27,7 +27,7 @@ export function registerEchoCommand(program: Command): void {
         const output = new OutputEmitter({ text: options.text, command: 'echo' });
 
         try {
-          const cwd = getCwd();
+          const cwd = getProjectRoot();
           const sequence = options.result.length > 0 ? options.result : DEFAULT_RESULT_SEQUENCE;
           const commandArgs = command ?? [];
 

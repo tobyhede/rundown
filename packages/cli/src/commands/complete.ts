@@ -1,7 +1,7 @@
 // packages/cli/src/commands/complete.ts
 
 import type { Command } from 'commander';
-import { getCwd } from '../helpers/context.js';
+import { getProjectRoot } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { parseTokenOption, withTokenOption } from '../helpers/token-option.js';
@@ -43,7 +43,7 @@ export function registerCompleteCommand(program: Command): void {
             const output = new OutputEmitter({ text: options.text, command: 'complete' });
             const token = parseTokenOption(options, 'complete', output);
             if (token === undefined) return;
-            const { exitError } = await runSeamTerminal(output, getCwd(), 'complete', {
+            const { exitError } = await runSeamTerminal(output, getProjectRoot(), 'complete', {
               token,
               ...(message !== undefined ? { message } : {}),
             });

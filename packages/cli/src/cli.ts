@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // packages/cli/src/cli.ts
 
+import { getProjectRoot } from './helpers/context.js';
 import { Command, Option } from 'commander';
 import { registerRunCommand } from './commands/run.js';
 import { registerGotoCommand } from './commands/goto.js';
@@ -168,7 +169,9 @@ export function createProgram(deps: ProgramDependencies = {}): Command {
   program.hook('preSubcommand', async (thisCommand) => {
     const opts = thisCommand.opts();
     const policyOpts = parsePolicyCliOptions(opts);
-    const cwd = process.cwd();
+    // Policy discovery, the evaluator's repo root and helper paths all key on
+    // the project root, like the store (see getProjectRoot).
+    const cwd = getProjectRoot();
     await initializePolicyContext(policyOpts, cwd);
     const configHelpers = getPolicyContext().policy.helpers ?? [];
     const cliHelpers = policyOpts.helpers ?? [];
