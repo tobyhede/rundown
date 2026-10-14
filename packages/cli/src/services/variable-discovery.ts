@@ -4,8 +4,9 @@
  * Discovers and loads template variables from .rundown/config.yaml
  * with support for CLI flag overrides.
  *
- * Note: Config discovery stops at git root or filesystem root to prevent
- * accidentally loading variables from unrelated parent directories.
+ * Note: The config is the project root's (see `resolveProjectRoot` in core),
+ * which stops at a git root or the filesystem root, so variables are never
+ * loaded from an unrelated parent directory.
  *
  * @module
  */
@@ -17,6 +18,7 @@ import {
   createBuiltinVariables,
   isRuntimeReservedVariable,
   isValidVariableName,
+  resolveProjectRoot,
   loadYaml,
   resolveVariableLayers,
   type ResolvedVariables,
@@ -371,46 +373,19 @@ export async function loadVariablesFromFile(
 }
 
 /**
- * Find the .rundown/config.yaml file by walking upward from cwd.
+ * Find the project's `.rundown/config.yaml`.
  *
- * Searches upward from the given directory for a .rundown directory
- * containing config.yaml. Stops at git root or filesystem root to
- * prevent loading from unrelated parent directories.
+ * The config belongs to the project root that {@link resolveProjectRoot}
+ * finds from `cwd`: the nearest directory holding `.rundown/`, stopping at a
+ * git boundary. Only that project's config is read, so a nested `.rundown/`
+ * without a config shadows an outer project's config, and nothing above a git
+ * root is loaded.
  *
- * @param cwd - Starting directory for search
- * @returns Absolute path to the config file, or null if not found
+ * @param cwd - Starting directory for the search (normally the project root)
+ * @returns Absolute path to the config file, or null if the project has none
  */
 export async function findConfigFile(cwd: string): Promise<string | null> {
-  let dir = cwd;
-  let parent = path.dirname(dir);
-
-  // Continue while we haven't reached filesystem root
-  while (parent !== dir) {
-    const configPath = path.join(dir, CONFIG_FILE);
-
-    try {
-      await fs.access(configPath);
-      return configPath;
-    } catch {
-      // File doesn't exist, continue searching
-    }
-
-    // Check if we've reached git root
-    const gitPath = path.join(dir, '.git');
-    try {
-      await fs.access(gitPath);
-      // Found git root, stop searching
-      return null;
-    } catch {
-      // Not git root, continue
-    }
-
-    dir = parent;
-    parent = path.dirname(dir);
-  }
-
-  // Check the filesystem root as well
-  const configPath = path.join(dir, CONFIG_FILE);
+  const configPath = path.join(resolveProjectRoot(cwd), CONFIG_FILE);
   try {
     await fs.access(configPath);
     return configPath;
