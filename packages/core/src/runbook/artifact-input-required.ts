@@ -82,9 +82,13 @@ function describeValue(value: unknown): string {
   let text: string;
   if (typeof value === 'string') {
     text = JSON.stringify(value);
+  } else if (value === undefined || typeof value === 'function' || typeof value === 'symbol') {
+    // `JSON.stringify` returns undefined for these, though its declared
+    // return type is `string`.
+    text = typeof value;
   } else {
     try {
-      text = JSON.stringify(value) ?? typeof value;
+      text = JSON.stringify(value);
     } catch {
       text = typeof value;
     }
