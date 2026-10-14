@@ -98,6 +98,10 @@ export const CLISymbolicErrorCodeValues = [
   'UNSUPPORTED_OPTION',
   'ARTIFACT_CHANNEL_COLLISION',
   'INVALID_ARTIFACT_INPUT',
+  // A non-artifact value bound to a name the runbook requires as an artifact
+  // (a naked ARTIFACTS assertion, or `{{ path Name }}`): refused at launch by
+  // `rundown run` / `resolve` / child preparation, or at step entry.
+  'ARTIFACT_INPUT_REQUIRED',
   'CONFLICTING_INDEX',
   'ENGINE_INIT_FAILED',
   'INVALID_AT_TARGET',

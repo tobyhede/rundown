@@ -55,6 +55,7 @@ import {
   renderArtifactValue,
   renderLiteralArtifactPath,
 } from './renderer/artifact-helper.js';
+import { ArtifactInputRequiredError } from './artifact-input-required.js';
 import { artifactUriToPath } from './artifact-uri.js';
 import { parseTemplateExpression, tokenizeTemplate, type TemplateToken } from '@rundown-org/parser';
 import type { StepVariables } from './runtime-frame.js';
@@ -901,7 +902,8 @@ function getRenderContext(
  * @param helperOptions - Filesystem options (`cwd`); render-only
  * @param original - Original match text returned when `helperOptions` is unavailable (AST-walk path)
  * @returns Rendered string
- * @throws {Error} When the variable reference resolves to a non-artifact value, or when `WorkPath` is missing
+ * @throws {ArtifactInputRequiredError} When the variable reference resolves to a non-artifact value
+ * @throws {Error} When `WorkPath` is missing
  */
 function resolvePathHelperCall(
   literalKey: string | undefined,
@@ -932,9 +934,7 @@ function resolvePathHelperCall(
   // wildcard with zero matches and renders as `[]`.
   const isEmptyArray = Array.isArray(value) && value.length === 0;
   if (!isArtifactRecord(value) && !isArtifactRecordArray(value) && !isEmptyArray) {
-    throw new Error(
-      `path helper expects an ArtifactRecord or ArtifactRecord[] for "${varRef}", got ${typeof value}`,
-    );
+    throw new ArtifactInputRequiredError(varRef, value, { kind: 'path-helper' });
   }
   const artifactValue = value as ArtifactVarValue;
   return renderArtifactPathValue(artifactValue, {

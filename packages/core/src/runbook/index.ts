@@ -486,6 +486,16 @@ export {
   resolveArtifactDeclarations,
   type ResolveArtifactDeclarationsOptions,
 } from './artifact-directive-resolver.js';
+export {
+  ARTIFACT_INPUT_REQUIRED,
+  ArtifactInputRequiredError,
+  classifyArtifactAssertionValue,
+  collectLaunchDecidableArtifactAssertions,
+  findArtifactInputRefusal,
+  type ArtifactAssertionShape,
+  type ArtifactAssertionShapeFailure,
+  type ArtifactInputRequiredSite,
+} from './artifact-input-required.js';
 export { extractFileArtifactReferences } from './artifact-reference-extractor.js';
 export {
   applyRunArtifactHelper,
@@ -523,6 +533,7 @@ export {
   partitionVariables,
   withPreparedVariables,
   withRunnableVariables,
+  type ArtifactInputRequiredDetails,
   type CreateBuiltinVariablesInput,
   type PrepareParsedRunbookIdentity,
   type PrepareParsedRunbookInput,

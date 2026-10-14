@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import {
+  ArtifactInputRequiredError,
   BUILTIN_RENDER_HELPERS,
   createJsonArrayStream,
   assertRunId,
@@ -2696,15 +2697,16 @@ describe('substituteText with artifact helper', () => {
     ).toThrow(/literal key/);
   });
 
-  it('throws when {{ path Var }} variable is not an ArtifactRecord/ArtifactRecord[]', () => {
-    expect(() =>
+  it('refuses {{ path Var }} over a non-artifact value with the typed ARTIFACT_INPUT_REQUIRED error', () => {
+    const render = () =>
       substituteText(
         '{{ path PlanPath }}',
         { PlanPath: 'not-a-record', WorkPath: '.rundown/work' },
         undefined,
         ARTIFACT_HELPER_OPTIONS,
-      ),
-    ).toThrow(/ArtifactRecord/);
+      );
+    expect(render).toThrow(ArtifactInputRequiredError);
+    expect(render).toThrow(/--artifacts PlanPath=<rd:\/\/ URI>/);
   });
 
   it('throws when {{ artifact Var }} variable is not an ArtifactRecord/ArtifactRecord[]', () => {
@@ -2793,7 +2795,7 @@ describe('isArtifactRecordArray rejects mixed-element arrays', () => {
         undefined,
         ARTIFACT_HELPER_OPTIONS,
       ),
-    ).toThrow(/ArtifactRecord/);
+    ).toThrow(ArtifactInputRequiredError);
   });
 });
 

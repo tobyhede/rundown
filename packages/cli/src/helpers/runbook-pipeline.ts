@@ -304,6 +304,15 @@ export type PrepareFailure =
   | (PrepareFailureBase & {
       readonly code: 'ARTIFACT_CHANNEL_COLLISION' | 'INVALID_ARTIFACT_INPUT';
       readonly details: { readonly runbook: string; readonly variable: string };
+    })
+  | (PrepareFailureBase & {
+      /** Core refused a non-artifact value bound to a name the runbook requires as an artifact. */
+      readonly code: 'ARTIFACT_INPUT_REQUIRED';
+      readonly details: {
+        readonly runbook: string;
+        readonly variable: string;
+        readonly step?: string;
+      };
     });
 
 /** Discriminated union result of {@link prepareRunbook}. */
@@ -771,6 +780,19 @@ async function prepareLoadedRunbook(
         error: parsedPreparation.error,
         code: 'MISSING_REQUIRED_VARS',
         details: { runbook: displayName, missing },
+        variables: parsedPreparation.templateVars,
+        stats,
+        diagnostics,
+        warnings: allWarnings.length > 0 ? allWarnings : undefined,
+      };
+    }
+
+    if (parsedPreparation.code === 'ARTIFACT_INPUT_REQUIRED') {
+      return {
+        ok: false,
+        error: parsedPreparation.error,
+        code: parsedPreparation.code,
+        details: { runbook: displayName, ...parsedPreparation.details },
         variables: parsedPreparation.templateVars,
         stats,
         diagnostics,

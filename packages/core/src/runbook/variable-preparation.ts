@@ -29,6 +29,11 @@ import {
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { RunId } from './run-id.js';
 import type { RunbookRef } from './runbook-ref.js';
+import {
+  ARTIFACT_INPUT_REQUIRED,
+  ArtifactInputRequiredError,
+  findArtifactInputRefusal,
+} from './artifact-input-required.js';
 import { surfaceIterationBinding } from './delegation-context.js';
 import { buildContextVars, validateForVariables } from './runtime-frame.js';
 import {
@@ -821,7 +826,37 @@ export type PrepareParsedRunbookResult =
       readonly templateVars: Readonly<Record<string, TemplateVarValue>>;
       readonly warnings: readonly string[];
       readonly diagnostics: readonly ValidationDiagnostic[];
+    }
+  | {
+      readonly ok: false;
+      readonly error: string;
+      /**
+       * A launch value bound to a name the runbook requires to be an artifact
+       * (a naked `ARTIFACTS` assertion no step can rebind, or a
+       * `{{ path Name }}` render) is not one. No run exists yet.
+       */
+      readonly code: typeof ARTIFACT_INPUT_REQUIRED;
+      readonly details: ArtifactInputRequiredDetails;
+      readonly templateVars: Readonly<Record<string, TemplateVarValue>>;
+      readonly warnings: readonly string[];
+      readonly diagnostics: readonly ValidationDiagnostic[];
     };
+
+/** Details of an `ARTIFACT_INPUT_REQUIRED` preparation refusal. */
+export interface ArtifactInputRequiredDetails {
+  /** The variable bound to a non-artifact value. */
+  readonly variable: string;
+  /** The unit (`N` or `N.M`) whose naked `ARTIFACTS` assertion requires it, when one does. */
+  readonly step?: string;
+}
+
+function artifactInputRequiredDetails(
+  error: ArtifactInputRequiredError,
+): ArtifactInputRequiredDetails {
+  return error.site.kind === 'artifacts-assertion' && error.site.step !== undefined
+    ? { variable: error.variable, step: error.site.step }
+    : { variable: error.variable };
+}
 
 /**
  * Merge local and inherited variables and expose `context.vars.*` aliases.
@@ -883,6 +918,9 @@ export function withRunnableVariables(
  *
  * @param input - Parsed runbook, variables, helper registry, and identity mode
  * @returns Prepared runbook or structured preparation failure
+ * @throws {Error} When template substitution fails for a reason other than a
+ *   non-artifact value under `{{ path Name }}` (that one is returned as
+ *   `ARTIFACT_INPUT_REQUIRED`)
  */
 export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareParsedRunbookResult {
   const warnings: string[] = [];
@@ -1005,6 +1043,22 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
     }
   }
 
+  // Refuse, before any run exists, a launch value a naked ARTIFACTS assertion
+  // can never accept (spec §10.1.2). Names an earlier step can rebind are left
+  // to step entry, mirroring FOR-source deferral (§8.2).
+  const artifactRefusal = findArtifactInputRefusal(input.rawRunbook.steps, substitutionVars);
+  if (artifactRefusal !== null) {
+    return {
+      ok: false,
+      error: artifactRefusal.message,
+      code: ARTIFACT_INPUT_REQUIRED,
+      details: artifactInputRequiredDetails(artifactRefusal),
+      templateVars,
+      warnings,
+      diagnostics: input.diagnostics,
+    };
+  }
+
   let resolvedRunbook: ResolvedRunbook;
   try {
     const result = resolveForBounds(input.rawRunbook, substitutionVars);
@@ -1022,10 +1076,27 @@ export function prepareParsedRunbook(input: PrepareParsedRunbookInput): PrepareP
     };
   }
 
-  const runbook = substituteRunbookVariables(resolvedRunbook, substitutionVars, {
-    helpers: input.helperRegistry,
-    context: renderContext,
-  });
+  let runbook: ResolvedRunbook;
+  try {
+    runbook = substituteRunbookVariables(resolvedRunbook, substitutionVars, {
+      helpers: input.helperRegistry,
+      context: renderContext,
+    });
+  } catch (error) {
+    // `{{ path Name }}` over a launch value that is not an artifact.
+    if (error instanceof ArtifactInputRequiredError) {
+      return {
+        ok: false,
+        error: error.message,
+        code: ARTIFACT_INPUT_REQUIRED,
+        details: artifactInputRequiredDetails(error),
+        templateVars,
+        warnings,
+        diagnostics: input.diagnostics,
+      };
+    }
+    throw error;
+  }
   const unresolved = [...collectUnresolvedRunbookVariables(runbook)];
 
   try {
