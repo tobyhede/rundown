@@ -97,7 +97,7 @@ function describeValue(value: unknown): string {
 function supplyGuidance(variable: string): string {
   return (
     `Supply it with --artifacts ${variable}=<rd:// URI> (or --artifacts-json ${variable}='["<rd:// URI>", …]'); ` +
-    "list existing artifacts with `rundown artifact ls` and print one's URI with `rundown artifact uri <alias>`."
+    "`rundown artifact ls --run <producer_run_id>` lists the producing run's artifacts, each with its `uri`."
   );
 }
 
