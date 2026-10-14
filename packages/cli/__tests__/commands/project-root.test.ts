@@ -83,7 +83,7 @@ describe('project root: commands from a subdirectory act on the project', () => 
     expect(result.exitCode).toBe(0);
     const entered = envelopes(result.stdout).filter((event) => event.type === 'step_entered');
     const [child] = (entered.at(-1)?.children ?? []) as Envelope[];
-    return { runId: requireRunId(result.stdout), ticket: String(child?.ticket) };
+    return { runId: requireRunId(result.stdout), ticket: String(child.ticket) };
   }
 
   it('claim from a subdirectory finds the ticket in the root store', async () => {
