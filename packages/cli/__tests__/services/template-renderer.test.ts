@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import {
+  ArtifactInputRequiredError,
   createJsonArrayStream,
   assertRunId,
   parseRunbookDocument,
@@ -2503,7 +2504,7 @@ describe('substituteText with artifact helper', () => {
     ).toThrow(/literal key/);
   });
 
-  it('throws when {{ path Var }} variable is not an ArtifactRecord/ArtifactRecord[]', () => {
+  it('refuses {{ path Var }} over a non-artifact value with the typed ARTIFACT_INPUT_REQUIRED error', () => {
     expect(() =>
       substituteText(
         '{{ path PlanPath }}',
@@ -2511,7 +2512,7 @@ describe('substituteText with artifact helper', () => {
         undefined,
         ARTIFACT_HELPER_OPTIONS,
       ),
-    ).toThrow(/ArtifactRecord/);
+    ).toThrow(ArtifactInputRequiredError);
   });
 
   it('throws when {{ artifact Var }} variable is not an ArtifactRecord/ArtifactRecord[]', () => {
@@ -2600,7 +2601,7 @@ describe('isArtifactRecordArray rejects mixed-element arrays', () => {
         undefined,
         ARTIFACT_HELPER_OPTIONS,
       ),
-    ).toThrow(/ArtifactRecord/);
+    ).toThrow(ArtifactInputRequiredError);
   });
 });
 
