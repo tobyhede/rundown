@@ -1,6 +1,7 @@
 import { evaluateFailCondition, evaluatePassCondition } from './transition-handler.js';
 import type { InternalFailureLastAction, LastAction, Step, ResolvedStep } from './types.js';
 import { isLastAction } from './last-action.js';
+import type { ARTIFACT_INPUT_REQUIRED } from './artifact-input-required.js';
 
 /**
  * Public stopped-reason codes attached to terminal `RUNBOOK_STOPPED` events.
@@ -295,6 +296,22 @@ export function deriveStoppedReason(lastAction: LastAction | undefined): Stopped
   }
   if (lastAction?.type === 'FOR_RESOLUTION_FAILED') return 'for_resolution_failed';
   return 'fail_transition';
+}
+
+/**
+ * Extract the public code a typed internal failure carries, if any.
+ *
+ * Only an ARTIFACTS resolution failure that refused a non-artifact value
+ * carries one today (`ARTIFACT_INPUT_REQUIRED`, spec §10.1.2).
+ *
+ * @param lastAction - Last action extracted from the terminal snapshot
+ * @returns The public error code, otherwise undefined
+ */
+export function extractInternalFailureCode(
+  lastAction: LastAction | undefined,
+): typeof ARTIFACT_INPUT_REQUIRED | undefined {
+  if (lastAction?.type === 'ARTIFACT_RESOLUTION_FAILED') return lastAction.code;
+  return undefined;
 }
 
 /**

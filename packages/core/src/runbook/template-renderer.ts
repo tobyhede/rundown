@@ -55,6 +55,12 @@ import {
   renderArtifactValue,
   renderLiteralArtifactPath,
 } from './renderer/artifact-helper.js';
+import {
+  ArtifactInputRequiredError,
+  defersAtLaunch,
+  type PathArtifactJudgement,
+  stepEntryRefusalContext,
+} from './artifact-input-required.js';
 import { artifactUriToPath } from './artifact-uri.js';
 import { parseTemplateExpression, tokenizeTemplate, type TemplateToken } from '@rundown-org/parser';
 import type { StepVariables } from './runtime-frame.js';
@@ -112,6 +118,13 @@ export type TemplateRenderContext =
 export interface TemplateRenderOptions {
   readonly context?: TemplateRenderContext;
   readonly helpers?: TemplateHelperRegistry;
+  /**
+   * Which render judges `{{ path Name }}` over a non-artifact value: launch
+   * preparation or the entry of one unit (spec §9.3). Without one — the
+   * whole-runbook reload of a persisted run — such a reference is left
+   * unrendered for the entry of the unit that holds it to judge.
+   */
+  readonly artifactJudgement?: PathArtifactJudgement;
 }
 
 type TemplateHelperOptions = TemplateRenderOptions;
@@ -337,8 +350,24 @@ function resolveTemplatePathRaw(
   path: string,
   variables: Readonly<Record<string, unknown>>,
 ): unknown {
+  return resolveTemplatePathBinding(path, variables)?.value;
+}
+
+/**
+ * Resolve a template path together with the variable that binds it: the whole
+ * path when it is itself a key (`context.parent.vars.Doc`), otherwise the
+ * prefix whose value the remaining segments walk (`plan` for `plan.file`).
+ *
+ * @param path - Template path, possibly dotted
+ * @param variables - Render-frame variables
+ * @returns The binding variable and resolved value, or `undefined` when unresolved
+ */
+function resolveTemplatePathBinding(
+  path: string,
+  variables: Readonly<Record<string, unknown>>,
+): { readonly name: string; readonly value: unknown } | undefined {
   if (Object.hasOwn(variables, path) && variables[path] !== undefined) {
-    return variables[path];
+    return { name: path, value: variables[path] };
   }
   if (!path.includes('.')) return undefined;
   const segments = path.split('.');
@@ -347,7 +376,7 @@ function resolveTemplatePathRaw(
     if (!Object.hasOwn(variables, prefix)) continue;
     const remainder = segments.slice(i).join('.');
     const resolved = resolveDottedPath(variables[prefix], remainder);
-    if (resolved !== undefined) return resolved;
+    if (resolved !== undefined) return { name: prefix, value: resolved };
   }
   return undefined;
 }
@@ -901,7 +930,9 @@ function getRenderContext(
  * @param helperOptions - Filesystem options (`cwd`); render-only
  * @param original - Original match text returned when `helperOptions` is unavailable (AST-walk path)
  * @returns Rendered string
- * @throws {Error} When the variable reference resolves to a non-artifact value, or when `WorkPath` is missing
+ * @throws {ArtifactInputRequiredError} When `helperOptions` carries an artifact judgement and the
+ *   variable reference resolves to a non-artifact value it does not defer
+ * @throws {Error} When `WorkPath` is missing
  */
 function resolvePathHelperCall(
   literalKey: string | undefined,
@@ -923,8 +954,9 @@ function resolvePathHelperCall(
   }
   if (varRef === undefined) return original;
 
-  const value = resolveTemplatePathRaw(varRef, variables);
-  if (value === undefined) return original;
+  const binding = resolveTemplatePathBinding(varRef, variables);
+  if (binding === undefined) return original;
+  const { value } = binding;
   // Accept empty arrays explicitly here (the structural `isArtifactRecordArray`
   // guard rejects them to avoid false positives in Pass 4 — see its TSDoc).
   // In a helper call site the user has explicitly opted into artifact
@@ -932,9 +964,32 @@ function resolvePathHelperCall(
   // wildcard with zero matches and renders as `[]`.
   const isEmptyArray = Array.isArray(value) && value.length === 0;
   if (!isArtifactRecord(value) && !isArtifactRecordArray(value) && !isEmptyArray) {
-    throw new Error(
-      `path helper expects an ArtifactRecord or ArtifactRecord[] for "${varRef}", got ${typeof value}`,
-    );
+    // The refusal names the variable that binds the value — `plan` for
+    // `plan.file` — which is also the name a step rebinds and launch defers.
+    const judgement = helperOptions?.artifactJudgement;
+    switch (judgement?.kind) {
+      case undefined:
+        return original;
+      case 'launch':
+        if (defersAtLaunch(judgement.deferral, binding.name)) return original;
+        throw ArtifactInputRequiredError.forValue(
+          binding.name,
+          value,
+          { kind: 'path-helper', reference: varRef },
+          judgement.origin,
+        );
+      case 'step-entry':
+        throw ArtifactInputRequiredError.forValue(
+          binding.name,
+          value,
+          { kind: 'path-helper', reference: varRef },
+          stepEntryRefusalContext(judgement.stepBoundNames, binding.name, judgement.outcome),
+        );
+      default: {
+        const _exhaustive: never = judgement;
+        return _exhaustive;
+      }
+    }
   }
   const artifactValue = value as ArtifactVarValue;
   return renderArtifactPathValue(artifactValue, {
@@ -1374,13 +1429,7 @@ function substituteArtifacts(
   forVariable?: string,
 ): readonly ArtifactDeclaration[] | undefined {
   if (!artifacts || artifacts.length === 0) return artifacts;
-  const scopedVariables = forVariable
-    ? Object.fromEntries(
-        Object.entries(variables).filter(
-          ([name]) => !isForScoped(name, forVariable) && !FOR_LOOP_RUNTIME_VARIABLES.has(name),
-        ),
-      )
-    : variables;
+  const scopedVariables = forScopedFrame(variables, forVariable);
   // substituteText returns the same string instance when no placeholders
   // resolved; preserve declaration identity in that case so callers can
   // detect a no-op via reference equality.
@@ -1403,12 +1452,42 @@ function substituteArtifacts(
 }
 
 /**
+ * The substitution frame of a FOR step's substeps: the outer variables less
+ * every name the iteration binds.
+ *
+ * References scoped to the loop variable (`forVariable` itself or a dotted
+ * descendant) and the FOR loop runtime variables (`Index`, `index`,
+ * `context.current.index`) are dropped, so those placeholders survive this
+ * whole-runbook render for the substep's entry render, which binds them to the
+ * iteration's values. Without the drop, an outer binding of the same name is
+ * captured in their place — and a `{{ path Name }}` over the loop variable is
+ * judged against that outer value, never against the iteration value its
+ * substep sees (spec §9.3).
+ *
+ * @param variables - Variable map for substitution
+ * @param forVariable - FOR loop variable name, or undefined outside a FOR step
+ * @returns The frame to render a FOR step's substeps against
+ */
+function forScopedFrame(
+  variables: Record<string, unknown>,
+  forVariable: string | undefined,
+): Record<string, unknown> {
+  if (!forVariable) return variables;
+  return Object.fromEntries(
+    Object.entries(variables).filter(
+      ([name]) => !isForScoped(name, forVariable) && !FOR_LOOP_RUNTIME_VARIABLES.has(name),
+    ),
+  );
+}
+
+/**
  * Substitute template variables in a substep.
  *
  * @param substep - Parsed substep node
  * @param variables - Variable map for substitution
  * @param helperOptions - Filesystem options for artifact-producing helpers
- * @param forVariable - FOR loop variable name — runbook paths scoped to it are skipped
+ * @param forVariable - FOR loop variable name — references scoped to it are
+ *   left for the substep's entry render (see {@link forScopedFrame})
  * @returns Substep with all string fields expanded
  */
 function substituteSubstep(
@@ -1417,13 +1496,14 @@ function substituteSubstep(
   helperOptions?: TemplateHelperOptions,
   forVariable?: string,
 ): Substep {
+  const frame = forScopedFrame(variables, forVariable);
   return {
     ...substep,
-    description: substituteText(substep.description, variables, undefined, helperOptions),
+    description: substituteText(substep.description, frame, undefined, helperOptions),
     prompt: substep.prompt
-      ? substituteText(substep.prompt, variables, undefined, helperOptions)
+      ? substituteText(substep.prompt, frame, undefined, helperOptions)
       : substep.prompt,
-    command: substituteCommand(substep.command, variables, helperOptions),
+    command: substituteCommand(substep.command, frame, helperOptions),
     runbooks: substep.runbooks?.map((runbookPath) => {
       // Skip substitution for FOR-scoped runbook placeholders — they must remain
       // opaque until iteration time to prevent outer-scope variable capture

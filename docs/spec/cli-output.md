@@ -1745,6 +1745,83 @@ Code: RUNBOOK_COMPOSITION_UNSUPPORTED
 }
 ```
 
+### Artifact input required
+
+A name the runbook requires to be an artifact — asserted by a naked `ARTIFACTS`
+declaration (language spec §10.1.2), or rendered with `{{ path Name }}` — is
+bound to a value that is not one: a plain path, a number, an empty or malformed
+URI array. The artifact channel, `--artifacts <name>=<rd:// URI>`, is the only
+way to supply an artifact at launch; `--input` never carries one.
+
+- **At launch.** When the value comes from the launch inputs and no step can
+  rebind the name before the assertion or render reads it, `rundown run` refuses
+  it with this error envelope and exit 1 before any run is created. A name in
+  the produced set (§8.2) can be rebound, and so can every name in a runbook
+  that composes a child (an inline runbook-list entry or a `DELEGATE`), whose
+  frontmatter `outputs:` are forwarded into the parent (§10.3); those are left
+  to step entry. `details.variable` names the input; `details.step` names the
+  first asserting step or substep (absent for a `{{ path … }}` render).
+  `rundown resolve` lists the message under `errors`.
+- **At child preparation.** An inline child's launch or a `rundown claim`
+  reports the same code when the value the child inherited from its parent is
+  not an artifact. Its message says the value came from the parent and must be
+  an artifact there; it does not name `--artifacts`, which the child's command
+  cannot take.
+- **At step entry.** A value the launch left to step entry is refused when the
+  asserting step is entered: an `error_occurred` event with `code` set, then
+  `runbook_stopped` with reason `artifact_resolution_failed`. A
+  `{{ path Name }}` inside an `ARTIFACTS` declaration's quoted token is refused
+  on the same path, and its message likewise says the run stops. A
+  `{{ path Name }}` render of the unit's description, prompt or command over
+  such a value is an `error_occurred` with this code; nothing is committed and
+  the run keeps its position. Inside a `FOR` step's substeps, the value judged
+  is the iteration's, never an outer binding the loop variable shadows. Run
+  Progression reports it with reason `artifact_input_required` and
+  `recovery: "permanent"` — unlike the retryable `entry_render_failed` (RD-504),
+  a re-render cannot succeed, and the owner must act. Only the entry of the unit
+  holding the reference judges it: the whole-runbook reload every command
+  performs judges none, so `status`, `stop`, `prune` and `release` still load
+  such a run. The message names the owner's recovery by whether the refusal
+  stopped the run and whether a step of the runbook binds the name (an `OUTPUTS`
+  name, a name-binding `ARTIFACTS` alias, or — for a substep of its `FOR` step
+  only — a loop variable; a `FOR` step's own `ARTIFACTS` resolve before any
+  iteration binds it):
+  - **A step binds it.** A refusal that stops the run says that step must bind
+    an artifact before a new run; one that keeps the run's position says to
+    `rundown goto` a step that rebinds the name, or `rundown stop`.
+  - **No step binds it.** The value is the one the run was given (or one a
+    composed child's `outputs:` forwarded), so the message says to start a new
+    run with `--artifacts Name=<rd:// URI>` — after `rundown stop` when the run
+    keeps its position.
+
+The message never contains the bound value, which may be a secret supplied
+through `--input KEY` or `RD_INPUT_*`. It names the variable and the value's
+kind, such as "a plain string that is not an rd:// URI", "a number", "a JSON
+array string with an entry that is not an rd:// URI", or "a JSON array string of
+rd:// URIs that have not been resolved to artifacts". For a dotted
+`{{ path plan.file }}` the variable is the one that binds the value (`plan`),
+and the message quotes the reference as written. For an assertion it begins with
+the §10.1.2 failure name: `unresolvable-uri` for a string that is not a URI,
+`partial-resolve` for a URI[] or JSON URI[] string with an entry that is not
+one, and `not-an-artifact` for anything else, including an artifact-shaped
+record that did not come through the artifact channel.
+
+**JSON:**
+
+```json
+{
+  "error": "unresolvable-uri: ARTIFACTS naked declaration \"SkillPath\" at step 2 requires an artifact, but it is bound to a plain string that is not an rd:// URI. Supply it with --artifacts SkillPath=<rd:// URI> (or --artifacts-json SkillPath='[\"<rd:// URI>\", …]'); `rundown artifact ls --run <producer_run_id>` lists the producing run's artifacts, each with its `uri`.",
+  "kind": "error",
+  "code": "ARTIFACT_INPUT_REQUIRED",
+  "command": "run",
+  "details": {
+    "runbook": "convert-skill.runbook.md",
+    "variable": "SkillPath",
+    "step": "2"
+  }
+}
+```
+
 ### Delegation refusals
 
 Delegation and its recovery have eight refusals. Each writes nothing, exits 1

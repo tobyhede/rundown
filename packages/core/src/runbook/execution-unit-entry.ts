@@ -38,6 +38,7 @@ import { countNumberedSteps } from './step-utils.js';
 import { extractDisplayCommand } from '../cli/command-utils.js';
 import { findStepOrThrow, resolveCurrentExecutionUnit } from './execution-units.js';
 import { mergeEffectiveVars } from './effective-vars.js';
+import { collectStepBoundNames } from './artifact-input-required.js';
 import { buildStepVariables } from './runtime-frame.js';
 import {
   expandLoopVariables,
@@ -345,6 +346,14 @@ export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): 
   const renderOptions = {
     helpers: input.helpers,
     context: buildRunnableRenderContext(state.id, input.cwd, effectiveVars),
+    // The one render that judges `{{ path Name }}` against a run's values:
+    // the unit's own, at its entry (spec §9.3).
+    // A refusal here keeps the run's position (`artifact_input_required`).
+    artifactJudgement: {
+      kind: 'step-entry',
+      stepBoundNames: collectStepBoundNames(steps, { step: state.step, substep: state.substep }),
+      outcome: 'run-keeps-position',
+    },
   } satisfies TemplateRenderOptions;
 
   // A prompted-FOR substep carries no prompt of its own; the step-level prompt

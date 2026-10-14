@@ -19,6 +19,7 @@ import { createRunbook } from './fixtures.js';
 import { mintRunProgressionAuthority } from '../../src/runbook/run-progression-authority.js';
 import { generateOwnerToken, hashRunSecret } from '../../src/runbook/run-secrets.js';
 import { InvalidRunbookStateError } from '../../src/runbook/persisted-state-guards.js';
+import { ArtifactInputRequiredError } from '../../src/runbook/artifact-input-required.js';
 import { createProcessIdentity } from '../../src/runbook/process-identity.js';
 import {
   EXECUTION_IN_PROGRESS_CODE,
@@ -728,6 +729,45 @@ describe('activateRunProgression', () => {
       }),
     );
     expect(events.map((event) => event.type)).not.toContain('STEP_ENTERED');
+    expect((await manager.loadWithVersion(state.id))?.stateVersion).toBe(before?.stateVersion);
+  });
+
+  it('refuses a {{ path X }} entry refusal as itself, permanent, not the retryable entry_render_failed', async () => {
+    // `entry_render_failed` promises that a re-activation re-renders. A
+    // non-artifact under `{{ path X }}` re-renders to the same refusal while
+    // the binding stands, so it carries its own reason and recovery.
+    const steps = createRunbook(SUBSTEP_RUNBOOK);
+    const actorService = actorServiceWith(succeedingCommandServices());
+    const state = await seedRun(steps, actorService, 'entry-path-refusal.runbook.md');
+    const { emitter, events } = recordingSink(state);
+    const before = await manager.loadWithVersion(state.id);
+    const refusal = new ArtifactInputRequiredError(
+      'Doc',
+      'plain-string',
+      { kind: 'path-helper', reference: 'Doc' },
+      { kind: 'step-entry', binder: 'runbook-step', outcome: 'run-keeps-position' },
+    );
+    jest.spyOn(actorService, 'enterExecutionUnit').mockRejectedValue(refusal);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter),
+    );
+
+    expect(outcome).toEqual({
+      kind: 'refused',
+      runId: state.id,
+      reason: 'artifact_input_required',
+      code: 'ARTIFACT_INPUT_REQUIRED',
+      recovery: 'permanent',
+      message: refusal.message,
+    });
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'ERROR_OCCURRED',
+        payload: expect.objectContaining({ code: 'ARTIFACT_INPUT_REQUIRED' }),
+      }),
+    );
     expect((await manager.loadWithVersion(state.id))?.stateVersion).toBe(before?.stateVersion);
   });
 

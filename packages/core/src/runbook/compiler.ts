@@ -49,6 +49,12 @@ import {
 } from './actors/for-iterate-actor.js';
 import { outputCaptureActor } from './actors/output-capture-actor.js';
 import {
+  ARTIFACT_INPUT_REQUIRED,
+  ArtifactInputRequiredError,
+  collectStepBoundNames,
+  type StepEntryUnit,
+} from './artifact-input-required.js';
+import {
   commandExecActor,
   type CommandExecutionCompletedOutput,
   type CommandExecutionInput,
@@ -198,6 +204,16 @@ export type RunProgressionMachineIntent =
       readonly message: string;
       /** Transient cause retained so invalid persisted state keeps RD-309. */
       readonly cause: unknown;
+    }
+  | {
+      readonly kind: 'refused';
+      /**
+       * The entry render refused a `{{ path Name }}` over a non-artifact value
+       * (spec §9.3). Nothing was committed, but re-rendering cannot succeed
+       * while the binding stands: the owner must act.
+       */
+      readonly reason: 'artifact_input_required';
+      readonly refusal: ArtifactInputRequiredError;
     };
 
 /** Typed intent emitted by a progression decision state. */
@@ -263,12 +279,15 @@ function emitEntryProgressionFailureIntent(): EntryProgressionFailureEmitAction 
     RunProgressionMachineIntentEvent
   >(({ event }) => ({
     type: 'RUN_PROGRESSION_INTENT',
-    intent: {
-      kind: 'refused',
-      reason: 'entry_render_failed',
-      message: getErrorMessage(event.error),
-      cause: event.error,
-    },
+    intent:
+      event.error instanceof ArtifactInputRequiredError
+        ? { kind: 'refused', reason: 'artifact_input_required', refusal: event.error }
+        : {
+            kind: 'refused',
+            reason: 'entry_render_failed',
+            message: getErrorMessage(event.error),
+            cause: event.error,
+          },
   }));
 }
 
@@ -309,6 +328,7 @@ const baseRunbookSetup = setup({
         makeDirectLastAction({
           type: 'ARTIFACT_RESOLUTION_FAILED' as const,
           message: params.message,
+          ...(params.code !== undefined ? { code: params.code } : {}),
         }),
     }),
     /** Mark command policy denial before routing to STOPPED. */
@@ -631,6 +651,7 @@ function buildArtifactResolveInput(
   substepId: string | undefined,
   context: RunbookContext,
   evaluationOptions: EvaluateOutputOptions | undefined,
+  stepBoundNames: ReadonlySet<string>,
 ): ArtifactResolveInput {
   const scopeVars = {
     ...mergeEffectiveVars({ templateVars: context.templateVars, variables: context.variables }),
@@ -644,6 +665,7 @@ function buildArtifactResolveInput(
     runId: assertRunId(requireStringTemplateVar(context.templateVars, 'RunId')),
     runbook: requireRunbookRef(context.templateVars),
     scopeVars,
+    stepBoundNames,
     fileArtifactSearchRoots: evaluationOptions?.fileArtifactSearchRoots,
     allowFileArtifactRead: evaluationOptions?.allowFileArtifactRead,
   };
@@ -3991,8 +4013,17 @@ export function compileRunbookToMachine(
     target: STOPPED_STATE_REF,
     actions: {
       type: 'setArtifactResolutionFailed' as const,
-      params: ({ event }: { event: { error: unknown } }) => ({
+      params: ({
+        event,
+      }: {
+        event: { error: unknown };
+      }): ActionDefs['setArtifactResolutionFailed'] => ({
         message: getErrorMessage(event.error),
+        // A non-artifact value under a naked assertion keeps its public code
+        // through the stop path (spec §10.1.2); other failures carry none.
+        ...(event.error instanceof ArtifactInputRequiredError
+          ? { code: ARTIFACT_INPUT_REQUIRED }
+          : {}),
       }),
     },
   };
@@ -4013,29 +4044,43 @@ export function compileRunbookToMachine(
     stepName: string,
     substepId: string | undefined,
     target: string,
-  ): NonNullable<RunbookStateConfig['invoke']> => ({
-    src: 'artifactResolveActor' as const,
-    input: ({ context }: { context: RunbookContext }) =>
-      buildArtifactResolveInput(declarations, stepName, substepId, context, evaluationOptions),
-    onDone: {
-      target,
-      actions: {
-        type: 'storeResolvedArtifacts' as const,
-        params: ({
-          event,
-        }: {
-          // Track the actor's declared Output exactly so provenance survives
-          // the event.output boundary in the type system.
-          event: {
-            output: { variables: Record<string, TrustedArtifactValue> };
-          };
-        }) => ({
-          variables: event.output.variables,
-        }),
+    declaringUnit: StepEntryUnit,
+  ): NonNullable<RunbookStateConfig['invoke']> => {
+    // Parser-derived, so bound at compile time for the unit that declares the
+    // block: a step-entry ARTIFACT_INPUT_REQUIRED refusal reads it to name the
+    // step that binds the name, or a new run.
+    const stepBoundNames = collectStepBoundNames(steps, declaringUnit);
+    return {
+      src: 'artifactResolveActor' as const,
+      input: ({ context }: { context: RunbookContext }) =>
+        buildArtifactResolveInput(
+          declarations,
+          stepName,
+          substepId,
+          context,
+          evaluationOptions,
+          stepBoundNames,
+        ),
+      onDone: {
+        target,
+        actions: {
+          type: 'storeResolvedArtifacts' as const,
+          params: ({
+            event,
+          }: {
+            // Track the actor's declared Output exactly so provenance survives
+            // the event.output boundary in the type system.
+            event: {
+              output: { variables: Record<string, TrustedArtifactValue> };
+            };
+          }) => ({
+            variables: event.output.variables,
+          }),
+        },
       },
-    },
-    onError: artifactFailureTransition,
-  });
+      onError: artifactFailureTransition,
+    };
+  };
   const buildForIterateInvokeBlock = (
     readyTarget: string,
   ): NonNullable<RunbookStateConfig['invoke']> => ({
@@ -4445,6 +4490,9 @@ export function compileRunbookToMachine(
             step.name,
             substep.id,
             formatStateId(step.name, substep.id),
+            // Step-level declarations: resolved on entering the step, before
+            // a FOR iteration binds its loop variable.
+            { step: step.name },
           ),
         }),
       );
@@ -4574,6 +4622,7 @@ export function compileRunbookToMachine(
       config.stepName,
       config.substepId,
       restingEntry,
+      { step: config.stepName, substep: config.substepId },
     );
     const initialSubstate = needsIteration
       ? '__resolve-iteration'
@@ -4849,7 +4898,9 @@ export function compileRunbookToMachine(
             // Without this an `enterExecutionUnit` throw escapes the actor
             // unhandled and reaches the operator as RD-999 "Unknown error",
             // which carries no recovery. Nothing was committed on this path,
-            // so the refusal is the retryable `entry_render_failed` (RD-504).
+            // so the refusal is the retryable `entry_render_failed` (RD-504) —
+            // except a typed `ARTIFACT_INPUT_REQUIRED`, which no retry clears
+            // and which is refused as itself (`artifact_input_required`).
             onError: {
               target: 'idle',
               actions: emitEntryProgressionFailureIntent(),

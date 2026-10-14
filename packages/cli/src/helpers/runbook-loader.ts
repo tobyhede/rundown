@@ -92,6 +92,11 @@ export function getRunbookFromState(state: RunbookState, cwd: string): readonly 
   const substituted = substituteRunbookVariables(resolved, effectiveVars, {
     helpers: getHelperRegistry(),
     context: buildRunnableRenderContext({ runId: state.id, cwd, vars: effectiveVars }),
+    // No `artifactJudgement`: this whole-runbook render reaches steps nobody
+    // is entering, so it judges no `{{ path Name }}`. Each is left for the
+    // entry render of the unit holding it, against the value it then holds —
+    // a refusal here would stop `status` and `stop`, the commands that
+    // recover such a run, from loading it at all.
   });
   return substituted.steps;
 }

@@ -2,6 +2,7 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
 import { isArtifactRecord, type ArtifactRecord } from './artifact-schema.js';
 import type { ForResolutionFailureCode } from './actors/for-iterate-actor.js';
+import type { ARTIFACT_INPUT_REQUIRED } from './artifact-input-required.js';
 import type {
   EffectiveVars,
   InitialTemplateVars,
@@ -455,6 +456,13 @@ export interface ArtifactResolutionFailedLastAction extends LastActionBase {
   readonly type: 'ARTIFACT_RESOLUTION_FAILED';
   /** Human-readable resolver failure message. */
   readonly message: string;
+  /**
+   * Public code, present when the failure is a non-artifact value bound to a
+   * naked-asserted name (`ARTIFACT_INPUT_REQUIRED`, spec §10.1.2). Other
+   * resolution failures (an unresolvable URI, a corrupt manifest, a missing
+   * file reference) carry none.
+   */
+  readonly code?: typeof ARTIFACT_INPUT_REQUIRED;
 }
 
 /**

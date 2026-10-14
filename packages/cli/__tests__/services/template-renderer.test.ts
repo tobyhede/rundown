@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 import {
+  ArtifactInputRequiredError,
   createJsonArrayStream,
   assertRunId,
   parseRunbookDocument,
@@ -2347,6 +2348,15 @@ const ARTIFACT_HELPER_OPTIONS: TemplateRenderOptions = {
     runId: ARTIFACT_RUN_ID,
   },
 };
+/** The same render, judging `{{ path … }}` as the entry of a unit does. */
+const STEP_ENTRY_RENDER_OPTIONS: TemplateRenderOptions = {
+  ...ARTIFACT_HELPER_OPTIONS,
+  artifactJudgement: {
+    kind: 'step-entry',
+    stepBoundNames: new Set(),
+    outcome: 'run-keeps-position',
+  },
+};
 
 describe('substituteText with ArtifactRecord values', () => {
   it('renders {{ PlanPath }} as the local path when value is an ArtifactRecord', () => {
@@ -2503,15 +2513,15 @@ describe('substituteText with artifact helper', () => {
     ).toThrow(/literal key/);
   });
 
-  it('throws when {{ path Var }} variable is not an ArtifactRecord/ArtifactRecord[]', () => {
+  it('refuses {{ path Var }} over a non-artifact value with the typed ARTIFACT_INPUT_REQUIRED error', () => {
     expect(() =>
       substituteText(
         '{{ path PlanPath }}',
         { PlanPath: 'not-a-record', WorkPath: '.rundown/work' },
         undefined,
-        ARTIFACT_HELPER_OPTIONS,
+        STEP_ENTRY_RENDER_OPTIONS,
       ),
-    ).toThrow(/ArtifactRecord/);
+    ).toThrow(ArtifactInputRequiredError);
   });
 
   it('throws when {{ artifact Var }} variable is not an ArtifactRecord/ArtifactRecord[]', () => {
@@ -2598,9 +2608,9 @@ describe('isArtifactRecordArray rejects mixed-element arrays', () => {
         '{{ path Reviews }}',
         { Reviews: [PLAN, 'string'], WorkPath: '.rundown/work' },
         undefined,
-        ARTIFACT_HELPER_OPTIONS,
+        STEP_ENTRY_RENDER_OPTIONS,
       ),
-    ).toThrow(/ArtifactRecord/);
+    ).toThrow(ArtifactInputRequiredError);
   });
 });
 

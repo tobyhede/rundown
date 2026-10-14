@@ -98,6 +98,10 @@ export const CLISymbolicErrorCodeValues = [
   'UNSUPPORTED_OPTION',
   'ARTIFACT_CHANNEL_COLLISION',
   'INVALID_ARTIFACT_INPUT',
+  // A non-artifact value bound to a name the runbook requires as an artifact
+  // (a naked ARTIFACTS assertion, or `{{ path Name }}`): refused at launch by
+  // `rundown run` / `resolve` / child preparation, or at step entry.
+  'ARTIFACT_INPUT_REQUIRED',
   'CONFLICTING_INDEX',
   'ENGINE_INIT_FAILED',
   'INVALID_AT_TARGET',
@@ -106,9 +110,9 @@ export const CLISymbolicErrorCodeValues = [
   // Every remaining `PrepareFailure['code']` arm. These reach an envelope
   // verbatim from `prepareRunbook`, through `rundown run` (`run.ts` emits
   // `prepResult.code` directly) and `rundown resolve` — so this is not one
-  // command's gap. `RUNBOOK_NOT_FOUND`,
-  // `VALIDATION_ERROR`, `ARTIFACT_CHANNEL_COLLISION` and `INVALID_ARTIFACT_INPUT`
-  // are the four arms that were already registered above (#834).
+  // command's gap. An arm already registered above (for example
+  // `RUNBOOK_NOT_FOUND` or `VALIDATION_ERROR`) is not repeated here, so this
+  // block lists only the arms no earlier entry covers (#834).
   'PARSE_ERROR',
   'RUNBOOK_REF_RESOLUTION_ERROR',
   'VARIABLE_RESOLUTION_ERROR',

@@ -6,6 +6,9 @@ import { pathToFileURL } from 'node:url';
 import { type ArtifactDeclaration, parseRunbookDocument } from '@rundown-org/parser';
 import {
   appendArtifactManifestRecord,
+  ArtifactInputRequiredError,
+  classifyArtifactAssertionValue,
+  prepareParsedRunbook,
   readArtifactManifest,
   resolveArtifactDeclarations,
 } from '../../src/runbook/index.js';
@@ -85,6 +88,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     const result = await resolveArtifactDeclarations(
       [decl('ReviewSchemaPath', 'schemas/review.schema.json')],
       {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -111,6 +115,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('ReviewSchemaPath', 'schemas/missing.schema.json')], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -131,6 +136,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     const result = await resolveArtifactDeclarations(
       [decl('ReviewSchemaPath', 'schemas/review.schema.json')],
       {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -163,6 +169,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     const result = await resolveArtifactDeclarations(
       [decl('ReviewSchemaPath', 'schemas/review.schema.json')],
       {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -183,6 +190,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     const cwd = await tempCwd();
 
     const result = await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -203,6 +211,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     const cwd = await tempCwd();
 
     const result = await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -217,6 +226,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     const cwd = await tempCwd();
 
     await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -240,6 +250,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     const cwd = await tempCwd();
 
     await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -257,6 +268,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('PlanPath', 'plans/plan.json')], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -273,6 +285,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     const canonicalAbsolute = await fsp.realpath(absolute);
 
     const result = await resolveArtifactDeclarations([decl('Schema', absolute)], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -289,6 +302,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Schema', absolute)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -307,6 +321,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     const cwd = await tempCwd();
 
     await resolveArtifactDeclarations([decl('PlanA', 'plan.json'), decl('PlanB', 'plan.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -332,6 +347,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     await fsp.writeFile(path.join(cwd, 'plan.json'), '{}');
 
     const result = await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -357,6 +373,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, canonical);
 
     const result = await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -373,6 +390,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     const cwd = await tempCwd();
 
     const result = await resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -391,6 +409,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     const cwd = await tempCwd();
 
     const result = await resolveArtifactDeclarations([decl('PlanPath', '{{PlanKey}}')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -409,6 +428,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     const cwd = await tempCwd();
 
     const result = await resolveArtifactDeclarations([decl('Plan', '{{PlanUri}}')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -433,6 +453,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     await touchArtifact(cwd, row);
 
     const result = await resolveArtifactDeclarations([decl('Reviews', '{{ReviewGlob}}')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -452,6 +473,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     const canonicalSchemaPath = await fsp.realpath(schemaPath);
 
     const result = await resolveArtifactDeclarations([decl('Schema', '{{SchemaPath}}')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -479,6 +501,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plan', windowsToken)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -498,6 +521,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plan', 'rd://{{Missing}}/file.yaml')], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -511,6 +535,7 @@ describe('resolveArtifactDeclarations — bare key (producer form)', () => {
     const cwd = await tempCwd();
 
     const result = await resolveArtifactDeclarations([decl('PlanPath', '{{item.key}}')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -551,6 +576,7 @@ describe('resolveArtifactDeclarations — symlink and traversal containment', ()
 
     await expect(
       resolveArtifactDeclarations([decl('Escape', 'links/escape')], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -569,6 +595,7 @@ describe('resolveArtifactDeclarations — symlink and traversal containment', ()
 
     await expect(
       resolveArtifactDeclarations([decl('Esc', '../../etc/passwd')], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -592,6 +619,7 @@ describe('resolveArtifactDeclarations — symlink and traversal containment', ()
 
     await expect(
       resolveArtifactDeclarations([decl('Abs', target)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -613,6 +641,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     await Promise.all([a, b].map((r) => touchArtifact(cwd, r)));
 
     const result = await resolveArtifactDeclarations([decl('Reviews', 'review-*.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -630,6 +659,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     await touchArtifact(cwd, row);
 
     const result = await resolveArtifactDeclarations([decl('Reviews', 'review-plan-*.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -655,6 +685,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     await Promise.all([current, child, otherContext].map((r) => touchArtifact(cwd, r)));
 
     const result = await resolveArtifactDeclarations([decl('Reviews', 'review-*.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -673,6 +704,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     const cwd = await tempCwd();
 
     const result = await resolveArtifactDeclarations([decl('Reviews', 'review-*.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -689,6 +721,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     expect(before).toHaveLength(0);
 
     await resolveArtifactDeclarations([decl('Reviews', 'review-*.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -705,6 +738,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
 
     await expect(
       resolveArtifactDeclarations([decl('Reviews', '**')], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -719,6 +753,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
 
     await expect(
       resolveArtifactDeclarations([decl('Reviews', 'dir/*.json')], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -747,6 +782,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     await Promise.all([current, completedChild, otherContext].map((r) => touchArtifact(cwd, r)));
 
     const result = await resolveArtifactDeclarations([decl('Reviews', '*/review-plan-*.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -766,6 +802,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     await touchArtifact(cwd, hidden);
 
     const result = await resolveArtifactDeclarations([decl('Reviews', '*.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -789,6 +826,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     await Promise.all([matching, nonmatching].map((r) => touchArtifact(cwd, r)));
 
     const result = await resolveArtifactDeclarations([decl('Reviews', 'review-plan-*.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -823,6 +861,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     }
 
     const result = await resolveArtifactDeclarations([decl('Reviews', 'review-plan-*.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -845,6 +884,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     const result = await resolveArtifactDeclarations(
       [decl('Out', 'plan*'), decl('Out', 'review*')],
       {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -872,6 +912,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     const result = await resolveArtifactDeclarations(
       [decl('PlanProd', 'plan.json'), decl('PlanSel', 'plan*')],
       {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -895,6 +936,7 @@ describe('resolveArtifactDeclarations — bare key with glob (selector form)', (
     const cwd = await tempCwd();
 
     const result = await resolveArtifactDeclarations([], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -925,7 +967,14 @@ describe('resolveArtifactDeclarations — cross-run shorthand (*/key)', () => {
 
     const result = await resolveArtifactDeclarations(
       [decl('Reviews', '*/end-to-end-test-review.json')],
-      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+      {
+        stepBoundNames: new Set<string>(),
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      },
     );
 
     expect(result.Reviews).toEqual(
@@ -955,6 +1004,7 @@ describe('resolveArtifactDeclarations — cross-run shorthand (*/key)', () => {
       contextId: CONTEXT_ID,
       runId: CURRENT_RUN,
       runbook: RUNBOOK,
+      stepBoundNames: new Set<string>(),
     };
     const shorthand = await resolveArtifactDeclarations(
       [decl('Reviews', '*/end-to-end-test-review.json')],
@@ -974,6 +1024,7 @@ describe('resolveArtifactDeclarations — cross-run shorthand (*/key)', () => {
     expect(before).toHaveLength(0);
 
     await resolveArtifactDeclarations([decl('Reviews', '*/review.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -994,6 +1045,7 @@ describe('resolveArtifactDeclarations — cross-run shorthand (*/key)', () => {
     await Promise.all([a, b].map((r) => touchArtifact(cwd, r)));
 
     const result = await resolveArtifactDeclarations([decl('Reviews', '*/review-*.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -1031,6 +1083,7 @@ describe('resolveArtifactDeclarations — cross-run shorthand (*/key)', () => {
     ]);
 
     const result = await resolveArtifactDeclarations(declarations ?? [], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -1113,6 +1166,7 @@ describe('resolveArtifactDeclarations — file-reference manifest audit identity
     }
 
     await resolveArtifactDeclarations([decl('X1', 'dir/x.md')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -1120,6 +1174,7 @@ describe('resolveArtifactDeclarations — file-reference manifest audit identity
       runbook: RUNBOOK,
     });
     await resolveArtifactDeclarations([decl('X2', 'dir/link.md')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -1168,6 +1223,7 @@ describe('resolveArtifactDeclarations — selector excludes file records', () =>
     // Selector `review*` would textually match `review.schema.json` if file
     // records were included in selector matching.
     const result = await resolveArtifactDeclarations([decl('Schemas', 'review*')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -1195,6 +1251,7 @@ describe('resolveArtifactDeclarations — selector excludes file records', () =>
     await appendArtifactManifestRecord({ cwd, workPath: WORK_PATH }, fileRow);
 
     const result = await resolveArtifactDeclarations([decl('Mixed', '*')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -1215,6 +1272,7 @@ describe('resolveArtifactDeclarations — URI literal', () => {
     const result = await resolveArtifactDeclarations(
       [decl('Plan', `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`)],
       {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -1248,6 +1306,7 @@ describe('resolveArtifactDeclarations — URI literal', () => {
     const result = await resolveArtifactDeclarations(
       [decl('Plan', `rd://artifacts/${CONTEXT_ID}/${CHILD_RUN}/plan.json`)],
       {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -1286,6 +1345,7 @@ describe('resolveArtifactDeclarations — URI literal', () => {
       resolveArtifactDeclarations(
         [decl('Plan', `rd://artifacts/${CONTEXT_ID}/${CHILD_RUN}/plan.json`)],
         {
+          stepBoundNames: new Set<string>(),
           cwd,
           workPath: WORK_PATH,
           contextId: CONTEXT_ID,
@@ -1315,6 +1375,7 @@ describe('resolveArtifactDeclarations — URI literal', () => {
       resolveArtifactDeclarations(
         [decl('Plan', `rd://artifacts/${CONTEXT_ID}/${CHILD_RUN}/plan.json`)],
         {
+          stepBoundNames: new Set<string>(),
           cwd,
           workPath: WORK_PATH,
           contextId: CONTEXT_ID,
@@ -1332,6 +1393,7 @@ describe('resolveArtifactDeclarations — URI literal', () => {
       resolveArtifactDeclarations(
         [decl('Plan', `rd://artifacts/${CONTEXT_ID}/${CHILD_RUN}/plan.json`)],
         {
+          stepBoundNames: new Set<string>(),
           cwd,
           workPath: WORK_PATH,
           contextId: CONTEXT_ID,
@@ -1354,6 +1416,7 @@ describe('resolveArtifactDeclarations — URI literal', () => {
     const result = await resolveArtifactDeclarations(
       [decl('Plan', `rd://artifacts/${CONTEXT_ID}/*/plan.json`)],
       {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -1374,6 +1437,7 @@ describe('resolveArtifactDeclarations — URI literal', () => {
     await resolveArtifactDeclarations(
       [decl('Plan', `rd://artifacts/${CONTEXT_ID}/${CURRENT_RUN}/plan.json`)],
       {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -1392,6 +1456,7 @@ describe('resolveArtifactDeclarations — URI literal', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plan', 'rd://artifacts/other-ctx/*/plan.json')], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -1426,7 +1491,14 @@ describe('resolveArtifactDeclarations — selector URI query params', () => {
           `rd://artifacts/${CONTEXT_ID}/*/review-plan.json?runbook=${encodeURIComponent(RUNBOOK.path)}`,
         ),
       ],
-      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+      {
+        stepBoundNames: new Set<string>(),
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      },
     );
 
     expect(result.Review).toEqual(matching);
@@ -1450,7 +1522,14 @@ describe('resolveArtifactDeclarations — selector URI query params', () => {
 
     const result = await resolveArtifactDeclarations(
       [decl('Review', `rd://artifacts/${CONTEXT_ID}/*/review.json?source=external`)],
-      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+      {
+        stepBoundNames: new Set<string>(),
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      },
     );
 
     expect(result.Review).toEqual(externalReview);
@@ -1468,7 +1547,14 @@ describe('resolveArtifactDeclarations — selector URI query params', () => {
 
     const result = await resolveArtifactDeclarations(
       [decl('Reviews', `rd://artifacts/${CONTEXT_ID}/*/review-plan.json?source=plugin`)],
-      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+      {
+        stepBoundNames: new Set<string>(),
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      },
     );
 
     expect(isTrustedArtifactArray(result.Reviews)).toBe(true);
@@ -1506,7 +1592,14 @@ describe('resolveArtifactDeclarations — selector URI query params', () => {
           `rd://artifacts/${CONTEXT_ID}/*/review-*.json?runbook=${encodeURIComponent('planning/review.runbook.md')}&runbook=${encodeURIComponent('ops/deploy.runbook.md')}&source=plugin&source=project`,
         ),
       ],
-      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+      {
+        stepBoundNames: new Set<string>(),
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      },
     );
 
     expect(result.Reviews).toEqual(
@@ -1557,7 +1650,14 @@ describe('resolveArtifactDeclarations — selector URI query params', () => {
           `rd://artifacts/${CONTEXT_ID}/*/review-*.json?createdAfter=${encodeURIComponent('2026-06-13T01:00:00.000Z')}&createdBefore=${encodeURIComponent('2026-06-13T02:00:00.000Z')}`,
         ),
       ],
-      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+      {
+        stepBoundNames: new Set<string>(),
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      },
     );
 
     expect(result.Reviews).toEqual(insideWindow);
@@ -1596,7 +1696,14 @@ describe('resolveArtifactDeclarations — selector URI query params', () => {
           `rd://artifacts/${CONTEXT_ID}/*/review.json?createdAfter=${encodeURIComponent('2026-06-13T01:00:00.000Z')}&createdBefore=${encodeURIComponent('2026-06-13T02:00:00.000Z')}`,
         ),
       ],
-      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+      {
+        stepBoundNames: new Set<string>(),
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      },
     );
 
     expect(result.Review).toEqual(insideByTimestamp);
@@ -1649,7 +1756,14 @@ describe('resolveArtifactDeclarations — selector URI query params', () => {
           `rd://artifacts/${CONTEXT_ID}/*/review-*.json?modifiedAfter=${encodeURIComponent('2026-06-13T01:00:00.000Z')}`,
         ),
       ],
-      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+      {
+        stepBoundNames: new Set<string>(),
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      },
     );
 
     // The on-bound record is excluded by the strict `>`; only the record one
@@ -1724,7 +1838,14 @@ describe('resolveArtifactDeclarations — selector URI query params', () => {
           `rd://artifacts/${CONTEXT_ID}/*/review.json?modifiedAfter=${encodeURIComponent('2026-06-13T01:00:00.000Z')}&modifiedBefore=${encodeURIComponent('2026-06-13T02:00:00.000Z')}&latest=true`,
         ),
       ],
-      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+      {
+        stepBoundNames: new Set<string>(),
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      },
     );
 
     expect(result.Review).toEqual(newerModified);
@@ -1759,7 +1880,14 @@ describe('resolveArtifactDeclarations — selector URI query params', () => {
 
     const result = await resolveArtifactDeclarations(
       [decl('Reviews', `rd://artifacts/${CONTEXT_ID}/*/review.json?latest=true`)],
-      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+      {
+        stepBoundNames: new Set<string>(),
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      },
     );
 
     expect(result.Reviews).toEqual(
@@ -1791,7 +1919,14 @@ describe('resolveArtifactDeclarations — selector URI query params', () => {
 
     const result = await resolveArtifactDeclarations(
       [decl('Reviews', `rd://artifacts/${CONTEXT_ID}/*/review.json?latest=true`)],
-      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+      {
+        stepBoundNames: new Set<string>(),
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      },
     );
 
     expect(result.Reviews).toEqual(higherUri);
@@ -1801,6 +1936,7 @@ describe('resolveArtifactDeclarations — selector URI query params', () => {
     const cwd = await tempCwd();
     await fsp.writeFile(path.join(cwd, 'review.json'), '{}');
     await resolveArtifactDeclarations([decl('ReviewFile', 'review.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -1815,7 +1951,14 @@ describe('resolveArtifactDeclarations — selector URI query params', () => {
           `rd://artifacts/${CONTEXT_ID}/*/review.json?runbook=${encodeURIComponent(RUNBOOK.path)}&source=project`,
         ),
       ],
-      { cwd, workPath: WORK_PATH, contextId: CONTEXT_ID, runId: CURRENT_RUN, runbook: RUNBOOK },
+      {
+        stepBoundNames: new Set<string>(),
+        cwd,
+        workPath: WORK_PATH,
+        contextId: CONTEXT_ID,
+        runId: CURRENT_RUN,
+        runbook: RUNBOOK,
+      },
     );
 
     expect(result.Reviews).toEqual([]);
@@ -1838,6 +1981,7 @@ describe('resolveArtifactDeclarations — selector URI query params', () => {
     await Promise.all([matching, nonmatching].map((row) => touchArtifact(cwd, row)));
 
     const result = await resolveArtifactDeclarations([decl('Review', null)], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -1858,6 +2002,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     const trustedPlanRecord = brandTrustedArtifactRecordForTest(planRecord);
 
     const result = await resolveArtifactDeclarations([decl('Plan', null)], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -1879,6 +2024,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     const trustedPlanRecord = brandTrustedArtifactRecordForTest(planRecord);
 
     const result = await resolveArtifactDeclarations([decl('Plan', null)], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -1897,6 +2043,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     const trustedRecords = brandTrustedArtifactArrayForTest([a, b]);
 
     const result = await resolveArtifactDeclarations([decl('Plans', null)], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -1919,6 +2066,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     const trustedRecords = brandTrustedArtifactArrayForTest([a, b]);
 
     const result = await resolveArtifactDeclarations([decl('Plans', null)], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -1937,6 +2085,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     await touchArtifact(cwd, row);
 
     const result = await resolveArtifactDeclarations([decl('Plan', null)], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -1957,6 +2106,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     await Promise.all([a, b].map((r) => touchArtifact(cwd, r)));
 
     const result = await resolveArtifactDeclarations([decl('Plans', null)], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -1977,6 +2127,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     await Promise.all([a, b].map((r) => touchArtifact(cwd, r)));
 
     const result = await resolveArtifactDeclarations([decl('Plans', null)], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -1994,6 +2145,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plan', null)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -2011,6 +2163,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plans', null)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -2030,6 +2183,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     await Promise.all([a, b].map((r) => touchArtifact(cwd, r)));
 
     const result = await resolveArtifactDeclarations([decl('Reviews', null)], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -2047,6 +2201,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plan', null)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -2064,6 +2219,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
     await touchArtifact(cwd, row);
 
     const result = await resolveArtifactDeclarations([decl('Review', null)], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -2081,6 +2237,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plans', null)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -2096,6 +2253,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plan', null)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -2111,6 +2269,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plan', null)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -2125,6 +2284,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plan', null)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -2140,6 +2300,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plan', null)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -2147,7 +2308,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plan: 'not-a-uri' },
       }),
-    ).rejects.toThrow(/unresolvable-uri.*Plan.*not-a-uri.*is not an artifact URI/s);
+    ).rejects.toThrow(/unresolvable-uri.*Plan.*a plain string that is not an rd:\/\/ URI/s);
   });
 
   it('fails clearly for naked ARTIFACTS when scope contains an unresolved URI string', async () => {
@@ -2156,6 +2317,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plan', null)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -2171,6 +2333,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plan', null)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -2189,6 +2352,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plans', null)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -2207,6 +2371,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plans', null)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -2224,6 +2389,7 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Plans', null)], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -2231,7 +2397,116 @@ describe('resolveArtifactDeclarations — naked assertion form', () => {
         runbook: RUNBOOK,
         scopeVars: { Plans: JSON.stringify([`rd://artifacts/${CONTEXT_ID}/*/plan.json`, 42]) },
       }),
-    ).rejects.toThrow(/unresolvable-uri/);
+    ).rejects.toThrow(/^partial-resolve:/);
+  });
+});
+
+describe('resolveArtifactDeclarations — naked refusal shares the launch rule', () => {
+  const SECRET = 'sk-live-0123456789abcdefSECRET';
+
+  async function refusal(
+    value: unknown,
+    stepBoundNames: ReadonlySet<string> = new Set(['Plan']),
+  ): Promise<ArtifactInputRequiredError> {
+    const cwd = await tempCwd();
+    const error: unknown = await resolveArtifactDeclarations([decl('Plan', null)], {
+      stepBoundNames,
+      cwd,
+      workPath: WORK_PATH,
+      contextId: CONTEXT_ID,
+      runId: CURRENT_RUN,
+      runbook: RUNBOOK,
+      scopeVars: { Plan: value },
+    }).then(
+      () => undefined,
+      (thrown: unknown) => thrown,
+    );
+    expect(error).toBeInstanceOf(ArtifactInputRequiredError);
+    return error as ArtifactInputRequiredError;
+  }
+
+  function launchRefusal(value: unknown): string {
+    const parsed = parseRunbookDocument(
+      '# R\n\n## 1. Use\n- ARTIFACTS\n  - Plan\n- PASS COMPLETE\n\nUse it.\n',
+      'r.runbook.md',
+    );
+    const result = prepareParsedRunbook({
+      rawRunbook: parsed.runbook,
+      frontmatter: parsed.frontmatter,
+      diagnostics: parsed.diagnostics,
+      cwd: '/tmp/project',
+      templateVars: { ContextId: CONTEXT_ID, WorkPath: WORK_PATH, Plan: value as never },
+      providedKeys: new Set(['Plan']),
+      runbookRef: RUNBOOK,
+      helperRegistry: new Map(),
+      identity: { kind: 'prepared' },
+      origin: { kind: 'launch' },
+    });
+    if (result.ok) throw new Error('expected a launch refusal');
+    return result.error;
+  }
+
+  it('never echoes the bound value in a step-entry refusal (A9)', async () => {
+    const error = await refusal(SECRET);
+
+    expect(error.message).not.toContain('SECRET');
+    expect(error.message).toContain('a plain string that is not an rd:// URI');
+  });
+
+  it('classifies a JSON URI[] string with a non-URI entry as partial-resolve (A5)', async () => {
+    const value = JSON.stringify([`rd://artifacts/${CONTEXT_ID}/*/plan.json`, 'plan.json']);
+
+    expect(classifyArtifactAssertionValue(value)).toEqual({
+      kind: 'not-artifact',
+      reason: 'partial-resolve',
+    });
+    const error = await refusal(value);
+    expect(error.site).toEqual({ kind: 'artifacts-assertion', reason: 'partial-resolve' });
+    expect(error.message).toMatch(/^partial-resolve:/);
+  });
+
+  it.each([
+    ['an unbranded artifact-shaped record', record({ runId: CURRENT_RUN, runbook: RUNBOOK })],
+    [
+      'an unbranded artifact-shaped array',
+      [record({ runId: CURRENT_RUN, runbook: RUNBOOK, key: 'a.json' })],
+    ],
+  ])('refuses %s with the classification and message launch gives it (A6)', async (_l, value) => {
+    const error = await refusal(value);
+    const launch = launchRefusal(value);
+
+    expect(error.code).toBe('ARTIFACT_INPUT_REQUIRED');
+    const describe = (message: string): string | undefined =>
+      /requires an artifact, but (.*?)\./.exec(message)?.[1];
+    expect(describe(error.message)).toBeDefined();
+    expect(describe(error.message)).toBe(describe(launch));
+    expect(error.message).toMatch(/^not-an-artifact:/);
+    expect(launch).toMatch(/^not-an-artifact:/);
+  });
+
+  it('tells the owner the run stopped instead of naming a launch flag (A3)', async () => {
+    const error = await refusal('plan.json');
+
+    expect(error.message).not.toContain('--artifacts');
+    expect(error.message).toContain('The run stops');
+    expect(error.context).toEqual({
+      kind: 'step-entry',
+      binder: 'runbook-step',
+      outcome: 'run-stops',
+    });
+  });
+
+  it('names a new run with --artifacts when no step of the runbook binds the name (B2)', async () => {
+    const error = await refusal('plan.json', new Set());
+
+    expect(error.context).toEqual({
+      kind: 'step-entry',
+      binder: 'no-runbook-step',
+      outcome: 'run-stops',
+    });
+    expect(error.message).toContain('The run stops');
+    expect(error.message).toContain('--artifacts Plan=<rd:// URI>');
+    expect(error.message).not.toContain('in the step that sets it');
   });
 });
 
@@ -2241,6 +2516,7 @@ describe('resolveArtifactDeclarations — bare-key glob validation', () => {
 
     await expect(
       resolveArtifactDeclarations([decl('Reviews', '../foo*.json')], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,
@@ -2257,6 +2533,7 @@ describe('resolveArtifactDeclarations — bare-key glob validation', () => {
     await touchArtifact(cwd, row);
 
     const result = await resolveArtifactDeclarations([decl('Reviews', 'review-?.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -2274,6 +2551,7 @@ describe('resolveArtifactDeclarations — bare-key glob validation', () => {
     await touchArtifact(cwd, row);
 
     const result = await resolveArtifactDeclarations([decl('Reviews', 'review-*.json')], {
+      stepBoundNames: new Set<string>(),
       cwd,
       workPath: WORK_PATH,
       contextId: CONTEXT_ID,
@@ -2298,6 +2576,7 @@ describe('resolveArtifactDeclarations — parent dir creation error propagation'
 
     await expect(
       resolveArtifactDeclarations([decl('PlanPath', 'plan.json')], {
+        stepBoundNames: new Set<string>(),
         cwd,
         workPath: WORK_PATH,
         contextId: CONTEXT_ID,

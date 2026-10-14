@@ -503,10 +503,12 @@ Then start it: `rundown run <runbook-name>`
 ```
 
 Use the `namespace:name` form (e.g. `rundown:planning`) when the runbook ships
-with the plugin. If the runbook needs inputs, include them on the command (e.g.
-`rundown run rundown:convert-skill --input SkillPath=<path>`). Do **not**
-restate the runbook's steps in the skill — the runbook owns the sequence; the
-skill names the intent and points at the craft skills.
+with the plugin. If the runbook needs inputs, include them on the command:
+`--input Name=<value>` for a plain input, `--artifacts Name=<rd:// URI>` for one
+the runbook asserts as an artifact (naked `ARTIFACTS`, or `{{ path Name }}`) —
+e.g. `rundown run rundown:execute-plan --artifacts PlanPath=<rd:// URI>`. Do
+**not** restate the runbook's steps in the skill — the runbook owns the
+sequence; the skill names the intent and points at the craft skills.
 
 ### Sibling-skill heuristics
 
