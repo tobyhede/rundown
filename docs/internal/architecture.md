@@ -847,6 +847,23 @@ checks, the no-migration rule — see
 [docs/reference/runtime.md § State Persistence](../reference/runtime.md#7-state-persistence).
 This section describes the implementation behind it.
 
+### Project root
+
+"The project" is one directory, resolved once per command by
+`resolveProjectRoot` (`packages/core/src/project-root.ts`): the nearest
+directory at or above the start that holds an existing `.rundown/`, stopping at
+a git boundary (after checking that directory's own `.rundown/`) or the
+filesystem root, falling back to the start. It only reads; `.rundown/` is
+created later, by the first state save. The CLI reads its working directory in
+one module, `packages/cli/src/helpers/context.ts`: `getProjectRoot()` is what
+every command passes down as `cwd` (store, runbook discovery and persisted
+`RunbookRef` source roots, outputs and artifacts, prune, policy and helpers,
+step-command working directory), and `getInvocationDir()` is used only to try a
+relative runbook path typed on the command line. Config discovery
+(`findConfigFile`) and the plugin's SubagentStop gate (`storeDirectories`) call
+the same resolver, so no surface derives the root its own way. The MCP server
+spawns the CLI in its own working directory and inherits this resolution.
+
 ### One store, one opener
 
 `packages/core/src/runbook/storage/store-registry.ts` is the sole authoritative

@@ -212,6 +212,14 @@ Runtime state persists across process exits and context clears.
 
 ### 7.1 Storage Locations
 
+All paths are relative to the **project root**: the nearest directory at or
+above the working directory that contains a `.rundown/` directory, stopping at a
+git boundary (`.git` directory or file) or the filesystem root. With no match
+the working directory is the project root, and the first `rundown run` creates
+`.rundown/` there. A nested `.rundown/` shadows an outer one. Every command
+resolves the root the same way, so a command run from a subdirectory reads and
+writes the same store as one run from the root.
+
 | Path                              | Purpose                                 |
 | --------------------------------- | --------------------------------------- |
 | `.rundown/rundown.db`             | Run records.                            |
@@ -500,16 +508,16 @@ layer below it; the table lists them from lowest to highest precedence:
 | Layer               | Source                             | Rule                                                                              |
 | ------------------- | ---------------------------------- | --------------------------------------------------------------------------------- |
 | `builtins` (lowest) | Built-in defaults                  | Runtime-provided static built-ins (`Date`, `Branch`, `WorkPath`, `ContextId`, …). |
-| `config`            | `.rundown/config.yaml`             | Auto-discovered from cwd upward.                                                  |
+| `config`            | `.rundown/config.yaml`             | Read from the project root (§8.2).                                                |
 | `env`               | `RD_INPUT_*` environment variables | Prefix stripped.                                                                  |
 | `cli` (highest)     | Explicit invocation inputs         | `--input`, `--input-json`, and `--input-file`.                                    |
 
 Within the `cli` layer, `--input-json` overrides `--input`, which overrides
 `--input-file`. Input artifacts (`--artifacts`, `--artifacts-json`) are a
 separate boundary channel, not a variable layer; supplying the same name through
-both channels is an error. `--input-file` paths must be project-relative and
-must remain inside the project directory after symlink resolution; absolute
-paths and `..` traversal are rejected.
+both channels is an error. `--input-file` paths must be relative to the project
+root and must remain inside the project directory after symlink resolution;
+absolute paths and `..` traversal are rejected.
 
 Plugin variables are not a precedence layer. `CLAUDE_PLUGIN_ROOT` is injected
 post-resolution for plugin-sourced runbooks only, and only when the key is
@@ -519,9 +527,10 @@ Frontmatter `inputs` declares accepted names only. It is not a value layer.
 
 ### 8.2 Config Auto-Discovery
 
-The runtime searches for `.rundown/config.yaml` from the current working
-directory upward. Search stops at the first config file found, the git
-repository root, or the filesystem root.
+The runtime reads `.rundown/config.yaml` from the project root (see
+[§7.1](#71-storage-locations)) and nowhere else: a nested `.rundown/` without a
+`config.yaml` shadows an outer project's config, and nothing above a git
+repository root is read.
 
 Arrays in config or input files become both comma-joined template values and
 array data sources. `file:` values become file-backed data sources. Scalars

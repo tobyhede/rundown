@@ -75,15 +75,30 @@ shadows it (shell aliases beat `PATH`), so **`rd` is unreliable** — prefer
 # Using an absolute path
 rundown run /path/to/project/.rundown/runbooks/simple.runbook.md
 
-# Or from the project root, with runbook in the standard location
+# Or from anywhere in the project, with runbook in the standard location
 rundown run simple.runbook.md
 ```
+
+<a id="project-root"></a>
+
+**Project root.** Every command acts on one project: the nearest directory at or
+above the working directory that contains a `.rundown/` directory. The walk
+stops at a git boundary (a directory with a `.git` directory or file, after
+checking that directory's own `.rundown/`) and at the filesystem root; with no
+match, the working directory itself is the project root, and `rundown run`
+creates `.rundown/` there. A nested `.rundown/` shadows an outer one. The run
+store, project runbooks, run outputs and artifacts, `prune`,
+`.rundown/config.yaml` and policy discovery all use the project root, and step
+commands run from it. So `rundown claim`, `rundown status` or `rundown run` from
+a subdirectory see the same runs as from the root; you do not need to `cd` to
+the root first.
 
 The CLI resolves runbook paths in this order:
 
 1. Absolute path (used as-is)
-2. Relative to current working directory
-3. By name via the discovery chain: project (`.rundown/runbooks/`), then plugin
+2. Under the project's `.rundown/runbooks/`, then the plugin's `runbooks/`
+3. Relative to the current working directory
+4. By name via the discovery chain: project (`.rundown/runbooks/`), then plugin
    (`$CLAUDE_PLUGIN_ROOT/runbooks/`), then bundled (CLI package
    `dist/runbooks/`) — see [Runbook Discovery](#runbook-discovery) below for the
    full priority table
@@ -97,11 +112,11 @@ needs it (see [Run Ownership](#run-ownership)).
 When a runbook is referenced by name (rather than an explicit path), the CLI
 searches multiple sources in priority order:
 
-| Priority    | Source  | Location                        |
-| ----------- | ------- | ------------------------------- |
-| 1 (highest) | Project | `.rundown/runbooks/`            |
-| 2           | Plugin  | `$CLAUDE_PLUGIN_ROOT/runbooks/` |
-| 3           | Bundled | CLI package `dist/runbooks/`    |
+| Priority    | Source  | Location                            |
+| ----------- | ------- | ----------------------------------- |
+| 1 (highest) | Project | `<project root>/.rundown/runbooks/` |
+| 2           | Plugin  | `$CLAUDE_PLUGIN_ROOT/runbooks/`     |
+| 3           | Bundled | CLI package `dist/runbooks/`        |
 
 Directories are scanned recursively, so nested layouts like
 `planning/write-plan.runbook.md` are supported.

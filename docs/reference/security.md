@@ -135,8 +135,11 @@ specify such deny-paths.
 `--policy <file>` is supplied, Rundown MUST load that file directly. Explicit
 policy loading MUST NOT search other policy locations first.
 
-When `--policy` is not supplied, Rundown MUST search for policy configuration in
-this order:
+When `--policy` is not supplied, Rundown MUST search for policy configuration
+starting at the project root (the nearest directory at or above the working
+directory that contains `.rundown/`; see
+[cli.md § Project root](cli.md#project-root)) and walking upward, trying these
+names in each directory in this order:
 
 1. `.rundownrc`
 2. `.rundownrc.json`
@@ -205,7 +208,7 @@ Path patterns MAY use these placeholders:
 
 | Placeholder | Resolves To                                            |
 | ----------- | ------------------------------------------------------ |
-| `{repo}`    | Repository root, defaulting to `process.cwd()`         |
+| `{repo}`    | Project root (see [cli.md](cli.md#project-root))       |
 | `{tmp}`     | System temporary directory, such as `/tmp` or `%TEMP%` |
 
 Command `run` patterns match executable names. File `read` and `write` patterns
