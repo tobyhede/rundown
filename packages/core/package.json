@@ -75,7 +75,7 @@
     "shell-quote": "^1.10.0",
     "sql.js": "^1.14.2",
     "xstate": "^5.32.5",
-    "zod": "^4.4.3"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@jest/globals": "^30.4.1",
