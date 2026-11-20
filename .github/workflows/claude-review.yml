@@ -36,10 +36,12 @@ jobs:
       && contains(github.event.comment.body, 'orb')
       )
     # The shared workflow's jobs can hold no more than this. Only its reaction job uses it, to add 👀 to a comment
-    # command; its other jobs hold no permissions.
+    # command; its other jobs hold no permissions. GitHub documents the reaction as needing only `issues: write`, but on a
+    # pull request's comment it refused a token without `pull-requests: write` (HTTP 403, run 44680389935).
     permissions:
       issues: write
-    uses: tobyhede/workflows/.github/workflows/claude-review.yml@c0bb47bc09afffcecf0c5dd62a6d8d1cd0ac84aa # personal-tagging-rule
+      pull-requests: write
+    uses: tobyhede/workflows/.github/workflows/claude-review.yml@d3fc76a58a59431f56b76312afcb0171c1984d74 # personal-v2
     with:
       routine-trigger-id: ${{ vars.CLAUDE_ROUTINE_TRIGGER_ID }}
     secrets:
