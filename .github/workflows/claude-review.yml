@@ -1,0 +1,46 @@
+# Asks Claude for a code review of a pull request, using the shared workflow in tobyhede/workflows.
+#
+# Reviews a non-draft pull request when it is opened or reopened, or when a draft is marked ready for review, if its
+# author is the owner of the repository. The owner can also ask for a review, on drafts too, by commenting on a pull
+# request with a first line starting `> orb ponder`; the rest of the comment is passed on as instructions, and the
+# comment gets a 👀 reaction once the request is sent. The rules live in the shared workflow, pinned below by commit.
+#
+# Comments run this file from the default branch, so the comment command works only once this file is merged there.
+#
+# Needs, as repository settings:
+#   secret CLAUDE_ROUTINE_TOKEN         the code-review routine's bearer token
+#   variable CLAUDE_ROUTINE_TRIGGER_ID  the routine's trigger id (`trig_…`)
+name: Claude review
+
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review]
+  # zizmor flags issue_comment because anyone who can comment can start this workflow. Accepted: the shared
+  # workflow acts only on a comment command from the repository's owner, checked by its decide job, and never runs
+  # code from the pull request.
+  issue_comment: # zizmor: ignore[dangerous-triggers] only the owner's comment command is acted on
+    types: [created]
+
+permissions: {}
+
+jobs:
+  review:
+    # Saves starting runners for comments that cannot be a comment command: only comments on pull requests that start
+    # with `>` and contain `orb` (both checks ignore case) go on. The shared workflow still checks every rule itself.
+    # The shared workflow's owner check is the gate, and this is the only filter on comments. pull_request events are
+    # not filtered.
+    if: >-
+      github.event_name != 'issue_comment' || (
+      github.event.issue.pull_request
+      && startsWith(github.event.comment.body, '>')
+      && contains(github.event.comment.body, 'orb')
+      )
+    # The shared workflow's jobs can hold no more than this. Only its reaction job uses it, to add 👀 to a comment
+    # command; its other jobs hold no permissions.
+    permissions:
+      issues: write
+    uses: tobyhede/workflows/.github/workflows/claude-review.yml@c0bb47bc09afffcecf0c5dd62a6d8d1cd0ac84aa # personal-tagging-rule
+    with:
+      routine-trigger-id: ${{ vars.CLAUDE_ROUTINE_TRIGGER_ID }}
+    secrets:
+      CLAUDE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_TOKEN }}
