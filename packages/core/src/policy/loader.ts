@@ -93,6 +93,23 @@ export interface PolicyLoadResult {
 }
 
 /**
+ * Build the lilconfig `stopDir` option for an optional caller-supplied boundary.
+ *
+ * lilconfig spreads caller options over its own defaults, so an explicit
+ * `stopDir: undefined` replaces its home-directory default instead of
+ * deferring to it. On lilconfig 3.1.3 that silently let the upward search run
+ * to the filesystem root; from 3.1.4 the option is passed to `path.resolve`,
+ * which throws on `undefined` before any search happens. Omitting the key is
+ * the only way to ask for the default.
+ *
+ * @param stopDir - Directory at which the upward search stops, if the caller named one
+ * @returns `{ stopDir }` when a boundary was named, otherwise no key at all
+ */
+function searchBoundary(stopDir: string | undefined): { stopDir?: string } {
+  return stopDir === undefined ? {} : { stopDir };
+}
+
+/**
  * Options for loading policy configuration.
  */
 export interface PolicyLoadOptions {
@@ -153,7 +170,7 @@ export async function loadPolicy(options: PolicyLoadOptions = {}): Promise<Polic
       '.yml': yamlLoader,
       noExt: yamlLoader, // .rundownrc without extension
     },
-    stopDir,
+    ...searchBoundary(stopDir),
   });
 
   let result: LilconfigResult;
@@ -294,7 +311,7 @@ export function loadPolicySync(options: PolicyLoadOptions = {}): PolicyLoadResul
         );
       },
     },
-    stopDir,
+    ...searchBoundary(stopDir),
   });
 
   let result: ReturnType<typeof explorer.search>;
