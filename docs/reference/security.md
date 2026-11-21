@@ -145,6 +145,10 @@ upward, trying these names in each directory in this order:
 4. `.rundownrc.yml`
 5. `package.json` `rundown` field
 
+The upward walk MUST stop at the user's home directory: a policy file above home
+is not discovered. A working directory outside home is searched up to the
+filesystem root.
+
 The search starts at the working directory, not the project root (see
 [cli.md § Project root](cli.md#project-root)), so a policy file between the two
 takes precedence: in a monorepo with `.rundown/` at the root, a command run from

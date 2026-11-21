@@ -6,34 +6,34 @@ scenarios:
     description: Welcome to rundown
     commands:
       - rd run --prompted this-is-rundown.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
+      - rd pass --token ${TOKEN} --step 3
+      - rd pass --token ${TOKEN} --step 4
+      - rd pass --token ${TOKEN} --step 5
+      - rd pass --token ${TOKEN} --step 6
     result: COMPLETE
   retry:
     description: Welcome to rundown handling failure with grace and aplomb
     commands:
       - rd run --prompted this-is-rundown.runbook.md
-      - rd pass
-      - rd pass
-      - rd fail
-      - rd pass
-      - rd fail
-      - rd fail
-      - rd pass
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
+      - rd fail --token ${TOKEN} --step 3
+      - rd pass --token ${TOKEN} --step RECOVER
+      - rd fail --token ${TOKEN} --step 4
+      - rd fail --token ${TOKEN} --step 4
+      - rd pass --token ${TOKEN} --step RECOVER
+      - rd pass --token ${TOKEN} --step 4
+      - rd pass --token ${TOKEN} --step 5
+      - rd pass --token ${TOKEN} --step 6
     result: COMPLETE
   start:
     description: Jump straight to the end
     commands:
       - rd run --prompted this-is-rundown.runbook.md
-      - rd goto 6
-      - rd pass
+      - rd goto 6 --token ${TOKEN}
+      - rd pass --token ${TOKEN} --step 6
     result: COMPLETE
 ---
 

@@ -112,10 +112,7 @@ describe('RunbookStateManager', () => {
       throw new Error(`Expected ConcurrentStateModificationError, received: ${String(error)}`);
     }
     expect(error.runId).toBe(runId);
-    // `retryable` is the discriminant, not the class name: it is what separates
-    // this from the refusals sharing the same throwing seam.
-    expect(error.retryable).toBe(true);
-    // The name is not the discriminant, but it is what a stack trace and any
+    // The name is not what the guard narrows on, but it is what a stack trace and any
     // structured log label the failure with, so it is pinned like its sibling
     // InvalidRunIdError rather than left free to drift.
     expect(error.name).toBe('ConcurrentStateModificationError');

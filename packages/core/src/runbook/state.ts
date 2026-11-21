@@ -111,11 +111,6 @@ function assertTrustedArtifactValues(
  * caller's behalf: a second command landing silently behind the first is the
  * confusion the refusal exists to make visible. The CLI reports it as RD-308 /
  * `CONCURRENT_MODIFICATION`.
- *
- * {@link retryable} is `true` as a literal type because the persisted state is
- * consistent and the same command, re-issued by the operator after reading the
- * refusal, is expected to succeed. That is a statement about the state, not an
- * instruction to any caller to loop.
  */
 export class ConcurrentStateModificationError extends Error {
   /**
@@ -124,14 +119,6 @@ export class ConcurrentStateModificationError extends Error {
    * The run id is not recoverable from the message without parsing it.
    */
   readonly runId: string;
-
-  /**
-   * Always `true`, as a literal type.
-   *
-   * The discriminant that separates this from the refusals that share its
-   * throwing seam (a missing run), where re-issuing the command is pointless.
-   */
-  readonly retryable = true as const;
 
   /**
    * Create a new ConcurrentStateModificationError.

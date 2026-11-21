@@ -70,9 +70,10 @@ describe('parseInputOption', () => {
 
   it('explicitly rejects a flag-shaped variable name as an injection attempt', () => {
     // The shared parser guards the input channel too: a flag-shaped key such as
-    // --claim-id (key=value form or bare env-inherit form) is an injection shape.
-    expect(() => parseInputOption('--claim-id=rdclm_x', [])).toThrow(
-      /must not be CLI flags or internal identifiers/,
+    // --token (key=value form or bare env-inherit form) is an injection shape.
+    // The message names the authority flag that exists, not a deleted one.
+    expect(() => parseInputOption('--token=rdo_x', [])).toThrow(
+      /must not be CLI flags or internal identifiers \(a flag such as --token sitting in a value slot/,
     );
     expect(() => parseInputOption('--run', [])).toThrow(
       /must not be CLI flags or internal identifiers/,
@@ -238,10 +239,10 @@ describe('parseArtifactOption', () => {
 
   it.each([
     // The subprocess-boundary smuggle lands a CLI flag in the artifact value
-    // slot; the key then parses as `--claim-id` (etc.). Reject flag-shaped names
+    // slot; the key then parses as `--token` (etc.). Reject flag-shaped names
     // explicitly, naming the injection class rather than a generic identifier
     // failure. Covers the authority flag and its target-selector siblings.
-    ['--claim-id=rdclm_x'],
+    ['--token=rdo_x'],
     ['--run=rd_x'],
     ['--step=1.1'],
     ['--index=0'],
@@ -276,7 +277,7 @@ describe('parseArtifactJsonOption', () => {
   });
 
   it('explicitly rejects a flag-shaped artifact name as an injection attempt', () => {
-    expect(() => parseArtifactJsonOption('--claim-id=["rd://a"]', [])).toThrow(
+    expect(() => parseArtifactJsonOption('--token=["rd://a"]', [])).toThrow(
       /must not be CLI flags or internal identifiers/,
     );
   });

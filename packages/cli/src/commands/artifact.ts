@@ -14,7 +14,7 @@ import {
 import { getProjectRoot } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
-import { parseRunOption } from '../helpers/run-option.js';
+import { parseRunSelector } from '../helpers/run-option.js';
 
 /** A resolved artifact projection: an alias entry (scalar or array) or a bare record. */
 type ArtifactProjection = ArtifactAliasListEntry | PublicArtifactRecord;
@@ -39,11 +39,15 @@ interface ArtifactActionContext {
 /**
  * Locate the run whose artifacts are inspected.
  *
- * `--run <id>` names it. Without `--run`, the single running run in the
- * project is used; with several, the caller is asked to name one, because
- * under one writer per run no run is implicitly "active".
+ * `--run <id>` names it. Without `--run`, the run named by `RD_RUN_ID` is
+ * used: core injects that variable into every step command, so an artifact
+ * command inside a step reads its own run. With neither, the single running
+ * run in the project is used; with several, the caller is asked to name one,
+ * because under one writer per run no run is implicitly "active". A selector
+ * naming a run that does not exist is `unknown_run`, whichever source it came
+ * from; it never falls back to the single running run.
  *
- * @param runId - Validated `--run` selector, when supplied
+ * @param runId - Validated run selector (`--run`, else `RD_RUN_ID`), when supplied
  * @returns The resolved run with its artifact path options, or why none was chosen
  */
 async function resolveArtifactState(runId: string | undefined): Promise<ActiveArtifactState> {
@@ -72,7 +76,7 @@ async function runArtifactAction(
   await withErrorHandling(
     async () => {
       const output = new OutputEmitter({ text: options.text, command });
-      const run = parseRunOption(options.run, output);
+      const run = parseRunSelector(options.run, output);
       if (!run.ok) return;
       const active = await resolveArtifactState(run.runId);
       switch (active.kind) {
