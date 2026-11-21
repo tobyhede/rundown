@@ -358,4 +358,34 @@ test.describe('RunbookRunner', () => {
     // 7. Verify terminal output contains expected text
     await expect(page.locator('.xterm-rows')).toContainText('Runbook:  COMPLETE');
   });
+
+  test('substitutes the owner token into a pattern runbook\'s scenario commands', async ({ page }) => {
+    // Every prompted scenario under `runbooks/` writes its mutating commands as
+    // `rd pass --token ${TOKEN} --step <id>`: the token is minted by that
+    // scenario's own `rd run`, so the runner has to carry it from the run's
+    // output into the commands that follow. Sent literally, `${TOKEN}` is
+    // refused as a malformed token and the run never leaves step 1.
+    await page.goto('/explore/code-blocks');
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    // `completed` is the first scenario, so it is already selected, and
+    // autoStart has prefired its `rd run`. Reset so the walk-through starts from
+    // command 0 and the click count below is the scenario's command count:
+    // rd run --prompted, then one `rd pass --token ${TOKEN} --step N` per step.
+    await page.getByRole('button', { name: 'Reset' }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+    await expect(page.locator(FOOTER_STEP)).toContainText('—/3');
+
+    const action = page.getByRole('button', { name: /^(Next|Complete)$/ });
+    for (let click = 0; click < 4; click++) {
+      await action.click();
+      if (click < 3) {
+        await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+      }
+    }
+
+    await expect(page.locator(FOOTER_RESULT)).toContainText('COMPLETE', { timeout: 60000 });
+    await expect(page.locator(FOOTER_STEP)).toContainText('3/3');
+    await expect(page.locator('.xterm-rows')).not.toContainText('Invalid --token');
+  });
 });
