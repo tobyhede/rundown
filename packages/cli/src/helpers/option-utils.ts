@@ -44,15 +44,14 @@ interface VarFlagParseOptions {
 /**
  * Reject a variable/artifact name shaped like a CLI flag (leading `-`).
  *
- * A flag-shaped name — `--claim-id`, `--run`, `--step`, … — is never a
- * legitimate variable or artifact name; it can only arise when a CLI flag token
- * lands in a `key=value` slot. That is precisely the option-injection shape a
- * subprocess front end would use to smuggle authority (`--claim-id`) or a target
- * selector through an artifact/input value slot, so reject it explicitly with a
+ * A flag-shaped name — `--token`, `--run`, `--step`, … — is never a legitimate
+ * variable or artifact name; it can only arise when a CLI flag token lands in a
+ * `key=value` slot. That is precisely the option-injection shape a subprocess
+ * front end would use to smuggle authority (`--token`) or a target selector
+ * through an artifact/input value slot, so reject it explicitly with a
  * security-clear message rather than letting the generic identifier check
- * swallow it. The subprocess mutation boundary (`subprocess-mutation-boundary`)
- * is the primary defense against that smuggle; this is defense in depth at the
- * value-parsing seam and applies to every channel that shares this parser.
+ * swallow it. The guard sits at the value-parsing seam, so it applies to every
+ * channel that shares this parser.
  *
  * @param key - Candidate variable/artifact name (the part before `=`).
  * @param label - Channel label ("variable" or "artifact") for diagnostics.
@@ -62,7 +61,7 @@ function rejectFlagShapedName(key: string, label: 'variable' | 'artifact'): void
   if (key.startsWith('-')) {
     throw new InvalidArgumentError(
       `Invalid ${label} name: "${key}" — names must not be CLI flags or internal identifiers ` +
-        `(a flag such as --claim-id sitting in a value slot is an injection attempt).`,
+        `(a flag such as --token sitting in a value slot is an injection attempt).`,
     );
   }
 }

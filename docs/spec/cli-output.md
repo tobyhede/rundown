@@ -731,13 +731,16 @@ of them. The text form prints one line per standing —
 ## `rundown artifact`
 
 `rundown artifact ls`, `inspect`, `path`, and `uri` expose core artifact
-projections for one run. They are read-only: `--run <rd_…>` selects the run, and
-without it they use the single running run (several running runs are refused
-`INVALID_SYNTAX`; none is the `NO_ACTIVE_RUNBOOK` warning). JSON output is
-schema-backed and full-record by default for agents. These commands do not read
-or write artifact file contents; they only list, inspect, or project artifact
-aliases and URIs. `rundown artifact path --text` and
-`rundown artifact uri --text` are the only concise projection outputs.
+projections for one run. They are read-only: `--run <rd_…>` selects the run;
+without it they use the run named by the `RD_RUN_ID` environment variable (set
+in every step command), validated as `--run` is (`INVALID_RUN_ID` when
+malformed, `RUN_TARGET_UNAVAILABLE` when no such run exists); with neither they
+use the single running run (several running runs are refused `INVALID_SYNTAX`;
+none is the `NO_ACTIVE_RUNBOOK` warning). JSON output is schema-backed and
+full-record by default for agents. These commands do not read or write artifact
+file contents; they only list, inspect, or project artifact aliases and URIs.
+`rundown artifact path --text` and `rundown artifact uri --text` are the only
+concise projection outputs.
 
 Non-list artifact responses (`path`, `uri`, `inspect`) carry a `kind`
 discriminant: scalar entries reuse the record's own `kind` (`artifact-record` /

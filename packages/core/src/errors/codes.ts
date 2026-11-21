@@ -157,8 +157,9 @@ export const ErrorCodes = {
   },
   // The THROWN face of the same condition the CLI renders as the symbolic
   // `CONCURRENT_MODIFICATION` code. The two are not duplicates and must not be
-  // collapsed: a command that receives `StateMutationResult` narrows the
-  // `concurrent_modification` arm and renders it itself (symbolic code), whereas
+  // collapsed: a command that receives a typed outcome from the lifecycle
+  // command service or run progression narrows its `concurrent_modification`
+  // arm and renders it itself (symbolic code), whereas
   // `RunbookStateManager`'s throwing seam escapes to the top-level CLI error
   // wrapper, which only speaks RD-NNN. Before this code that escape was RD-999
   // "Unknown error" — the one surface where the condition was undiagnosable.

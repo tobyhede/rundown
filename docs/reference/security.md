@@ -145,6 +145,11 @@ this order:
 4. `.rundownrc.yml`
 5. `package.json` `rundown` field
 
+The search starts in the working directory and walks upward through its
+ancestors. It MUST stop at the user's home directory: a policy file above home
+is not discovered. A working directory outside home is searched up to the
+filesystem root.
+
 When no policy configuration is found, Rundown MUST use the built-in default
 policy.
 
