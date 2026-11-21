@@ -8,6 +8,8 @@ import { snapshot } from '@webcontainer/snapshot';
 import { pruneNonRuntimeFiles } from './prune-non-runtime.mjs';
 import { pruneSqlJsDist } from './prune-sqljs.mjs';
 import { SNAPSHOT_BUDGET_BYTES, assertSnapshotWithinBudget } from './snapshot-budget.mjs';
+import { assertLockfileMatchesManifest } from './lockfile-specifiers.mjs';
+import { parse as parseYaml } from 'yaml';
 import { execSync } from 'child_process';
 import {
   mkdtempSync,
@@ -18,6 +20,7 @@ import {
   rmSync,
   renameSync,
   readdirSync,
+  readFileSync,
   lstatSync,
   readlinkSync,
   unlinkSync,
@@ -76,6 +79,12 @@ function resolveAllBinSymlinks(nodeModulesDir: string) {
  *
  * `pnpm deploy` installs from the lockfile and applies both. The flags:
  * - `--frozen-lockfile`: fail rather than re-resolve when the lockfile is stale.
+ *   In pnpm 11.7.0 deploy does not compare the CLI's dependency specifiers with
+ *   its `packages/cli` importer, so a manifest bumped without `pnpm install`
+ *   deploys the old locked version and exits 0. `pnpm install --frozen-lockfile`
+ *   would catch it, but this script skips its install when dist/ outputs
+ *   already exist, so {@link assertLockfileMatchesManifest} checks the
+ *   specifiers itself before deploying.
  * - `--ignore-scripts`: core's prepack guard (scripts/assert-native.mjs)
  *   requires the Linux rd-landlock binaries, which are never built in the site
  *   path and are unusable inside WebContainer anyway (the sandbox fails closed
@@ -89,8 +98,16 @@ function resolveAllBinSymlinks(nodeModulesDir: string) {
  * `node_modules/@rundown-org/cli`, the path `src/lib/webcontainer.ts` runs.
  *
  * @param tempDir - Empty directory that becomes the snapshot root
+ * @throws {Error} When `packages/cli/package.json` disagrees with its importer
+ *   in `pnpm-lock.yaml`; the message names each mismatch.
  */
 function deployFromWorkspaceLockfile(tempDir: string) {
+  assertLockfileMatchesManifest({
+    manifest: JSON.parse(readFileSync(join(projectRoot, 'packages/cli/package.json'), 'utf8')),
+    lockfile: parseYaml(readFileSync(join(projectRoot, 'pnpm-lock.yaml'), 'utf8')),
+    importer: 'packages/cli',
+  });
+
   const deployDir = join(tempDir, 'deploy');
   console.log('Deploying @rundown-org/cli from pnpm-lock.yaml...');
   execSync(
