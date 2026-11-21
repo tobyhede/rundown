@@ -21,6 +21,7 @@ import {
   FOREIGN_SCHEMA_VERSION,
   patchPersistedRunState,
   readPersistedRunState,
+  writeRawRunJson,
 } from '@rundown-org/core/testing/run-fixtures';
 import { Command } from 'commander';
 // Stryker static-import linkage (mutation testing): links this test file into
@@ -219,6 +220,22 @@ describe('pass command', () => {
         schemaVersion?: unknown;
       } | null;
       expect(reloaded?.schemaVersion).toBe(FOREIGN_SCHEMA_VERSION);
+    });
+
+    // The token lookup is a row reader too: unparseable `state_json` reached
+    // through `--token` is invalid persisted state (RD-309, with the prune
+    // recovery), not a bare SyntaxError rendered as RD-999 "Unknown error".
+    it('refuses unparseable state_json as RD-309 unparseable_json, not RD-999', async () => {
+      await writeRawRunJson(workspace.cwd, runId, '{ not valid json');
+
+      const result = await pass('1');
+
+      expect(result.exitCode).toBe(1);
+      const envelope = errorEnvelope(result.stdout);
+      expect(envelope?.code).toBe('RD-309');
+      expect(envelope?.details).toMatchObject({
+        context: { runId, reason: 'unparseable_json' },
+      });
     });
   });
 

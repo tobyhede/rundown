@@ -193,6 +193,26 @@ test.describe('Landing Page', () => {
     await expect(page.locator(FOOTER_RESULT)).toHaveCount(0);
   });
 
+  test('JSON mode: the owner token from runbook_started authorises the next command', async ({ page }) => {
+    await page.getByRole('button', { name: /Happy path/ }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    await page.getByRole('tab', { name: 'JSON' }).click();
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    // Click 1 — `rd run --prompted` prints the Owner Token on runbook_started.
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.locator('.xterm-rows')).toContainText('"type":"runbook_started"', { timeout: 60000 });
+    await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
+
+    // Click 2 — `rd pass --token ${TOKEN} --step 1`. The token is only in the
+    // JSON event stream in this mode, so an action record (rather than a
+    // TOKEN_REQUIRED / INVALID_SYNTAX refusal) proves it was read from there.
+    await page.getByRole('button', { name: 'Next', exact: true }).click();
+    await expect(page.locator('.xterm-rows')).toContainText('"stepResult":"PASS"', { timeout: 60000 });
+    await expect(page.locator('.xterm-rows')).not.toContainText('"kind": "error"');
+  });
+
   test('Tab switch back to Text resets state', async ({ page }) => {
     await page.getByRole('button', { name: /Happy path/ }).click();
     await expect(page.getByText('Ready', { exact: true })).toBeVisible({ timeout: 60000 });
