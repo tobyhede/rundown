@@ -568,11 +568,14 @@ rundown artifact ls --run <run_id>          # Inspect a specific run
 
 Artifact commands are read-only inspection/projection tools. They do not read or
 write artifact file contents. `--run <rd_…>` selects the run; without it they
-use the single running run. Several running runs are refused `INVALID_SYNTAX`
-(name one with `--run`); no running run is the `NO_ACTIVE_RUNBOOK` warning (exit
-0). JSON output is optimized for agents and includes both `uri` and `path`; use
-`--text` on `path` or `uri` only when a shell-friendly single projection is
-needed.
+use the run named by `RD_RUN_ID`, which Rundown sets in every step command, so
+an artifact command inside a step reads its own run. With neither they use the
+single running run. A malformed `RD_RUN_ID` is refused `INVALID_RUN_ID` and one
+naming no run `RUN_TARGET_UNAVAILABLE`, exactly as a bad `--run` is. Several
+running runs are refused `INVALID_SYNTAX` (name one with `--run`); no running
+run is the `NO_ACTIVE_RUNBOOK` warning (exit 0). JSON output is optimized for
+agents and includes both `uri` and `path`; use `--text` on `path` or `uri` only
+when a shell-friendly single projection is needed.
 
 ### Validation
 

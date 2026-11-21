@@ -5,12 +5,12 @@
 
 import { RunbookStateManager, type ExecutionResult } from '@rundown-org/core';
 import { isValidResult } from '../services/execution.js';
+import { RUN_ID_ENV } from './run-id-env.js';
+
+export { RUN_ID_ENV };
 
 /** Result sequence used when the caller supplies none. */
 export const DEFAULT_RESULT_SEQUENCE: string[] = ['pass'];
-
-/** Environment variable through which a step's command learns its run. */
-export const RUN_ID_ENV = 'RD_RUN_ID';
 
 /** Outcome of {@link executeEchoLogic}. */
 export interface EchoCommandResult {
