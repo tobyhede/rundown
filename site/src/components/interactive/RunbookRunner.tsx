@@ -20,6 +20,11 @@ import {
   runRdCommand,
   cleanRundownState,
 } from '../../lib/webcontainer';
+import {
+  capturePlaceholders,
+  createCapturedPlaceholders,
+  substitutePlaceholders,
+} from '../../lib/scenario-placeholders';
 import type { WebContainer } from '@webcontainer/api';
 
 interface Scenario {
@@ -147,6 +152,11 @@ export function RunbookRunner({
   }, []);
 
   const hasAutoStarted = useRef(false);
+  // Owner Tokens and run ids printed by the commands run so far in this
+  // walk-through; later commands name them as `${TOKEN}` / `${RUN_ID}`. A ref,
+  // not state: nothing renders from it, and it must be cleared in step with
+  // the `.rundown/` state the tokens belong to.
+  const capturedPlaceholders = useRef(createCapturedPlaceholders());
   const statusRef = useRef<Status>('idle');
 
   const [runbookStep, setRunbookStep] = useState<string>('—');
@@ -208,6 +218,7 @@ export function RunbookRunner({
     setRunbookStep('—');
     setRunbookResult(null);
     setCurrentStep(0);
+    capturedPlaceholders.current = createCapturedPlaceholders();
     // Only recover from `error` to `ready` when the WebContainer environment
     // actually exists. Bootstrap failures (getWebContainer / setupRundown /
     // mountRunbook) leave `container === null`, in which case clearing the
@@ -229,6 +240,7 @@ export function RunbookRunner({
     setRunbookStep('—');
     setRunbookResult(null);
     setCurrentStep(0);
+    capturedPlaceholders.current = createCapturedPlaceholders();
     setSelectedScenario(Object.keys(scenarios)[0] || '');
     hasAutoStarted.current = false;
   }, [runbookPath, runbookContent, scenarios]);
@@ -277,15 +289,22 @@ export function RunbookRunner({
     if (!scenario || currentStep >= scenario.commands.length) return;
 
     const command = scenario.commands[currentStep];
-    const args = parseRdArgs(command);
+    if (command === undefined) return;
 
     setStatus('running');
 
+    // Echo the command as the runbook writes it — `${TOKEN}` and all — so the
+    // terminal matches the source pane beside it. The token itself is on
+    // screen already, in the output of the `rd run` that minted it.
     term.writeln('');
     term.writeln(`\x1b[36;1m$ ${command}\x1b[0m`);
     term.writeln('');
 
     try {
+      // Inside the try: a placeholder with nothing captured for it throws, and
+      // that belongs in the terminal like any other failed command.
+      const args = parseRdArgs(substitutePlaceholders(command, capturedPlaceholders.current));
+
       // Footer parsing is text-only — `At: <stepId>` / `Runbook: STATUS`
       // lines appear only in `--text` output. In JSON mode the footer stays
       // at placeholder values for the entire walk-through (V1 simplicity).
@@ -316,7 +335,11 @@ export function RunbookRunner({
         }
       };
 
-      await runRdCommand(container, args, processChunk, mode);
+      const { output } = await runRdCommand(container, args, processChunk, mode);
+
+      // Read from the complete output rather than the stream so a token split
+      // across chunks cannot be missed.
+      capturePlaceholders(capturedPlaceholders.current, stripAnsi(output));
 
       // Flush any trailing partial line — the CLI's last write may not end
       // in a newline if the stream closed mid-line.
