@@ -22,7 +22,11 @@ import { getErrorMessage } from '../../errors.js';
 import type { RunbookState, Lifecycle } from '../types.js';
 import { type RunId, assertRunId } from '../run-id.js';
 import type { SecretHash } from '../run-secrets.js';
-import { assertLoadablePersistedRun, parsePersistedRunState } from '../persisted-state-guards.js';
+import {
+  assertLoadablePersistedRun,
+  InvalidRunbookStateError,
+  parsePersistedRunState,
+} from '../persisted-state-guards.js';
 import type { SqlDriver, SqlTransaction, SqlReadTransaction, SyncWork } from './sql-driver.js';
 import { type StateVersion, assertStateVersion } from './mutation-result.js';
 
@@ -350,15 +354,14 @@ export class RunbookStore {
   }
 
   /**
-   * Reassemble a run's persisted JSON without validating it.
+   * Reassemble a run's persisted JSON without validating its shape.
    *
-   * Exposed for the state manager, which reframes an unparseable `state_json` as
-   * its own `unparseable_json` refusal and must therefore reach the row before
-   * anything validates it — a parsed value would already have been refused on
-   * its behalf, under a reason it did not choose.
+   * For test fixtures that round-trip state the gates would refuse. The JSON
+   * itself must parse: unparseable `state_json` is refused here as everywhere.
    *
    * @param runId - Run to read.
    * @returns The assembled state object, or null when absent.
+   * @throws {InvalidRunbookStateError} When `state_json` is not valid JSON.
    */
   readRunJson(runId: RunId): Promise<Record<string, unknown> | null> {
     return this.driver.read((tx) => readRunRaw(tx, runId));
@@ -433,7 +436,7 @@ export class RunbookStore {
   private validateVersionedRow(row: VersionedRunRow): VersionedRunState {
     const runId = assertRunId(row.id);
     return {
-      state: this.validateRaw(assembleRaw(row), runId),
+      state: this.validateRaw(assembleRaw(row, runId), runId),
       stateVersion: assertStateVersion(row.state_version),
     };
   }
@@ -577,19 +580,38 @@ function readRunRaw(tx: SqlReadTransaction, runId: RunId): Record<string, unknow
   const row = tx
     .prepare('SELECT lifecycle, state_json FROM runs WHERE id = :id')
     .get<PersistedRunRow>({ id: runId });
-  return row === undefined ? null : assembleRaw(row);
+  return row === undefined ? null : assembleRaw(row, runId);
 }
 
 /**
  * Reassemble a run's full state object from its row, unvalidated: `state_json`
  * plus the `lifecycle` column, whose home is outside the JSON.
  *
+ * Every reader of a row comes through here, so unparseable `state_json` is
+ * refused once, in the persisted-state taxonomy (RD-309), rather than escaping
+ * one reader as a bare `SyntaxError` that a frontend can only render as an
+ * internal error.
+ *
  * @param row - The row's state columns.
+ * @param runId - Run the row belongs to, named by the refusal.
  * @returns The assembled object.
+ * @throws {InvalidRunbookStateError} When `state_json` is not valid JSON
+ *   (`unparseable_json`).
  * @throws {Error} When the lifecycle column holds an unknown value.
  */
-function assembleRaw(row: PersistedRunRow): Record<string, unknown> {
-  const raw = JSON.parse(row.state_json) as Record<string, unknown>;
+function assembleRaw(row: PersistedRunRow, runId: RunId): Record<string, unknown> {
+  let raw: Record<string, unknown>;
+  try {
+    raw = JSON.parse(row.state_json) as Record<string, unknown>;
+  } catch (error: unknown) {
+    if (error instanceof SyntaxError) {
+      throw new InvalidRunbookStateError(
+        `Invalid runbook state for "${runId}": persisted state is not valid JSON.`,
+        { runId, reason: 'unparseable_json' },
+      );
+    }
+    throw error;
+  }
   raw.lifecycle = assertLifecycle(row.lifecycle);
   return raw;
 }

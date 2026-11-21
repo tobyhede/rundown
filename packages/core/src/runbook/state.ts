@@ -22,8 +22,7 @@ import {
 import type { RunbookRef } from './runbook-ref.js';
 import type { SecretHash } from './run-secrets.js';
 import { findUnsupportedComposition, RunbookCompositionUnsupportedError } from './run-authority.js';
-import { makeRunbookStateSchema } from '../schemas.js';
-import { isError, isNodeError } from '../errors.js';
+import { isNodeError } from '../errors.js';
 import { logger } from '../logger.js';
 import {
   brandInitialTemplateVars,
@@ -40,8 +39,6 @@ import type { StateVersion } from './storage/mutation-result.js';
 import type { OpenRunbookDriverOptions } from './storage/driver-factory.js';
 import {
   assertCurrentSchemaVersion,
-  assertLoadablePersistedRun,
-  parsePersistedRunState,
   CURRENT_SCHEMA_VERSION,
   InvalidRunbookStateError,
   LegacySnapshotError,
@@ -443,32 +440,11 @@ export class RunbookStateManager {
     if (runId === null) {
       return null; // Not a run identifier — genuinely missing.
     }
+    // The store's row assembly and gates are the one validation every reader
+    // shares: unparseable JSON, legacy snapshots, foreign schema versions, the
+    // required fields no reader may default, and the structural parse.
     const store = await this.store();
-    // Unparseable `state_json` is invalid persisted state, not an unknown internal
-    // fault: surface it in this method's own taxonomy rather than letting a bare
-    // SyntaxError escape and surface to users as RD-999 / "Unknown error".
-    let raw: Record<string, unknown> | null;
-    try {
-      raw = await store.readRunJson(runId);
-    } catch (error) {
-      if (isError(error) && error.name === 'SyntaxError') {
-        throw new InvalidRunbookStateError(
-          `Invalid runbook state for "${id}": persisted state is not valid JSON.`,
-          { runId, reason: 'unparseable_json' },
-        );
-      }
-      throw error;
-    }
-    if (raw === null) {
-      return null;
-    }
-
-    // Legacy dynamic-step snapshots, foreign schema versions, and the two
-    // required fields no reader may default, in that order. Shared with
-    // `RunbookStore.readRun` so both readers refuse the same shapes with the
-    // same message.
-    assertLoadablePersistedRun(raw, id);
-    return parsePersistedRunState(raw, id, makeRunbookStateSchema(this.cwd));
+    return store.loadRun(runId);
   }
 
   /**
