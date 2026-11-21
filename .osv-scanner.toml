@@ -7,14 +7,13 @@
 # do not extend a date without re-checking whether the fix has become available.
 # See docs/internal/dependency-overrides.md.
 #
-# The list is currently EMPTY, which is the goal state. Nothing is being accepted.
-# The file stays because the blocking OSV workflow passes --config=.osv-scanner.toml
-# and errors if it is missing.
+# The goal state is an EMPTY list. The file stays even then, because the blocking
+# OSV workflow passes --config=.osv-scanner.toml and errors if it is missing.
 #
 # Watch for `osv-scanner` printing ".osv-scanner.toml has unused ignores". An
 # acceptance stops matching precisely when the fix becomes reachable, so that
 # warning is the earliest notice that an entry below can be retired. It is what
-# surfaced the one entry this file used to carry:
+# surfaced the one entry this file carried before 2026-11-20:
 #
 #   GHSA-frvp-7c67-39w9 — @hono/node-server serveStatic path traversal (CVSS 5.9),
 #   accepted 2026-07-23 because the fix (2.0.5) was a MAJOR that
@@ -24,3 +23,44 @@
 #   finding is genuinely fixed rather than accepted. Note the SDK bump ALONE did not
 #   do it — 1.19.14 still satisfies the widened range, so pnpm had no reason to move
 #   it. That is the same silent no-op an override with a stale floor produces.
+
+# The two entries below were added 2026-11-20. Both advisories are fixed only by a
+# new MAJOR (glob 14, minimatch 11) that the latest releases of the dev tools
+# holding the vulnerable copies still forbid, and neither package is in any
+# workspace package's production dependency graph (`pnpm why -r --prod glob
+# minimatch` prints nothing). The copies this repo controls were fixed instead of
+# accepted: the root devDependency glob moved to ^14.0.2, and the unused minimatch
+# dependency of @rundown-org/cli — the only production path — was removed.
+
+[[IgnoredVulns]]
+id = "GHSA-3g3m-2fjr-6pw4"
+ignoreUntil = 2027-02-01
+# glob: an aborted async walk keeps reading directories after the AbortSignal
+# fires (MODERATE). Affects 9.0.0 up to the fix in 14.0.2; no backport to 10.x or
+# 13.x exists. The remaining copy is glob@10.5.0 under jest 30.4 (@jest/reporters,
+# jest-config, jest-runtime declare ^10.5.0). The newest jest (30.5.2) declares
+# glob ^13.0.6, which is still inside the affected range, so no jest upgrade
+# reaches the fix and an override would force a cross-major the parent forbids
+# into the test runner. Reachable only when a caller passes `signal` to an async
+# glob over untrusted input; jest globs this repo's own files for coverage and
+# config discovery, in development and CI only. Remove this entry when jest
+# declares glob >=14.0.2 or glob backports the fix.
+reason = "Fix requires a major (glob 14.0.2) that jest forbids — even jest 30.5.2 declares ^13.0.6. Dev-only test tooling, not shipped: no production dependency path (pnpm why -r --prod glob, verified 2026-11-20). Re-review when jest moves to glob >=14.0.2."
+
+[[IgnoredVulns]]
+id = "GHSA-g3hv-75wg-m249"
+ignoreUntil = 2027-02-01
+# minimatch: an attacker-supplied glob pattern amplifies during preprocessing and
+# exhausts CPU and memory (MODERATE). Affects 7.0.0 up to the fix in 11.0.1; no
+# backport to 9.x or 10.x exists. The remaining copies are minimatch@9.0.9 under
+# jest's glob@10.5.0, and minimatch@10.2.6 under @stryker-mutator/core, eslint,
+# @eslint/config-array and @typescript-eslint/typescript-estree.
+# @stryker-mutator/core declares ~10.2.4 even at its newest release (10.1.1), and
+# jest's glob cannot move (see the entry above), so no upgrade clears the
+# advisory. eslint 10.15.0 and typescript-eslint 8.73.0 do declare minimatch ^11;
+# taking them is a lint-toolchain upgrade that changes rule behaviour and belongs
+# in its own change — it would shrink this acceptance but not retire it. Every
+# pattern these tools match comes from this repo's own config files, never from
+# untrusted input. Remove this entry when @stryker-mutator/core and jest's glob
+# declare minimatch >=11.0.1.
+reason = "Fix requires a major (minimatch 11.0.1) that @stryker-mutator/core (~10.2.4 at its newest 10.1.1) and jest's glob 10 forbid. Dev-only lint, test and mutation tooling matching repo-authored patterns, not shipped: no production dependency path (pnpm why -r --prod minimatch, verified 2026-11-20). Re-review when stryker and jest move to minimatch >=11.0.1."
