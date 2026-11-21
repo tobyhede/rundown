@@ -96,6 +96,11 @@ The site runs Rundown in the browser using WebContainer API. Key architecture de
 - The `-wal`/`-shm` sidecars are covered too: core exports them as `DB_SIDECAR_SUFFIXES` (`packages/core/src/paths.ts`), and the site's mirror is compared against it element by element like any other constant. `DB_FILES` still derives its entries from that tuple, so `cleanRundownState` has no per-sidecar line to delete — deleting one by hand would leave the demo booting on the previous run's WAL.
 - The parity check compares **literal** types, and its `IsLiteral` conjunct is what keeps that true: `Same<string, string>` holds for any two values, so annotating a constant `: string` (or the suffix tuple `: readonly string[]`) on both sides would otherwise disarm the check while leaving it green. Widening either side is now itself the type error. Keep every constant in `rundown-paths.ts` on its inferred literal type.
 
+**Scenario placeholders:**
+- Scenario commands name their authority as `--token ${TOKEN}` (and `${RUN_ID}` for selectors); the value only exists once that scenario's `rd run` has printed it
+- `src/lib/scenario-placeholders.ts` captures it from each command's output — the `runbook_started` JSON event, or the `Owner token:` / `Run:` lines under `--text` — and substitutes it into later commands, mirroring `CAPTURE_PLACEHOLDERS` in `packages/cli/src/helpers/command-sequence.ts`
+- The terminal echoes the command as written; only the executed argv carries the token
+
 **Key files:**
 - `src/lib/webcontainer.ts` - WebContainer setup and snapshot mounting
 - `packages/cli/src/services/internal-commands.ts` - Command interception
