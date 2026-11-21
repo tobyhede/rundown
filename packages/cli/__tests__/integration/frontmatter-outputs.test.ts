@@ -9,6 +9,8 @@ import {
   getAllRunbookStates,
   parseJsonOutput,
   type TestWorkspace,
+  requireOwnerToken,
+  requireRunId,
 } from '../helpers/test-utils.js';
 
 /**
@@ -188,14 +190,17 @@ Waiting for manual pass.
     expect(startResult.exitCode).toBe(0);
 
     // Verify runbook is paused/waiting before issuing pass.
-    const statusResult = runCli('status', workspace);
+    const statusResult = runCli(`status --run ${requireRunId(startResult.stdout)}`, workspace);
     expect(statusResult.exitCode).toBe(0);
     const statusEvents = parseJsonOutput(statusResult.stdout);
     const statusOutput = statusEvents[0] as { active?: boolean };
     expect(statusOutput.active).toBe(true);
 
     // Manually pass to complete — this goes through the transitions.ts path.
-    const passResult = runCli('pass', workspace);
+    const passResult = runCli(
+      `pass --token ${requireOwnerToken(startResult.stdout)} --step 1`,
+      workspace,
+    );
     expect(passResult.exitCode).toBe(0);
 
     const states = await getAllRunbookStates(workspace);
@@ -233,7 +238,7 @@ Waiting for manual pass.
     expect(startResult.exitCode).toBe(0);
 
     // Check that rd status includes vars field with resolved inputs.
-    const statusResult = runCli('status', workspace);
+    const statusResult = runCli(`status --run ${requireRunId(startResult.stdout)}`, workspace);
     expect(statusResult.exitCode).toBe(0);
 
     const events = parseJsonOutput(statusResult.stdout);
@@ -243,7 +248,7 @@ Waiting for manual pass.
     expect((statusOutput.vars as Record<string, string>).environment).toBe('staging');
 
     // Cleanup: pass to complete the runbook.
-    runCli('pass', workspace);
+    runCli(`pass --token ${requireOwnerToken(startResult.stdout)} --step 1`, workspace);
   });
 });
 

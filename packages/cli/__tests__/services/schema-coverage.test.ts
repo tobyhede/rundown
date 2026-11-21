@@ -11,7 +11,6 @@ import { describe, it, expect } from '@jest/globals';
 import {
   ActionResponseSchema,
   COMMAND_SCHEMAS,
-  CollectResponseSchema,
   WarningResponseSchema,
 } from '../../src/schemas/output-schemas.js';
 import { JSON_OUTPUT_COMMANDS } from '../../src/services/schema-service.js';
@@ -45,7 +44,7 @@ describe('Schema Coverage', () => {
 
   it('should have expected minimum command count', () => {
     // Guard against accidental mass deletion
-    expect(JSON_OUTPUT_COMMANDS.length).toBeGreaterThanOrEqual(24);
+    expect(JSON_OUTPUT_COMMANDS.length).toBeGreaterThanOrEqual(20);
   });
 
   it('accepts warning responses for action commands that can run with no active runbook', () => {
@@ -56,66 +55,9 @@ describe('Schema Coverage', () => {
       command: 'pass',
     };
 
-    for (const command of [
-      'pass',
-      'fail',
-      'goto',
-      'complete',
-      'stop',
-      'stash',
-      'delegate',
-      'collect',
-    ]) {
+    for (const command of ['pass', 'fail', 'goto', 'complete', 'stop']) {
       expect(COMMAND_SCHEMAS[command].safeParse(warningResponse).success).toBe(true);
     }
-  });
-
-  it('registers collect with its response schema variants', () => {
-    const alreadyAggregated = {
-      kind: 'collect',
-      action: 'collect',
-      status: 'already-aggregated',
-      step: '1',
-      parentRunId: 'run-123',
-    };
-    const alreadyAggregatedWithCode = {
-      kind: 'collect',
-      action: 'collect',
-      status: 'already-aggregated',
-      step: '1',
-      parentRunId: 'run-123',
-      code: 'COLLECT_ALREADY_APPLIED',
-    };
-    const notActive = {
-      kind: 'collect',
-      action: 'collect',
-      status: 'not-active',
-      step: '1',
-      parentRunId: 'run-123',
-      frameKey: '1|99',
-      activeFrameKey: '1|',
-      unresolved: 1,
-    };
-    const applied = {
-      kind: 'collect',
-      action: 'collect',
-      status: 'applied',
-      parentRunId: 'run-123',
-      applied: 2,
-      unresolved: 0,
-      lifecycle: 'running',
-      reportedTerminalOutcome: false,
-    };
-
-    expect(JSON_OUTPUT_COMMANDS).toContain('collect');
-    expect(CollectResponseSchema.safeParse(alreadyAggregated).success).toBe(true);
-    expect(CollectResponseSchema.safeParse(alreadyAggregatedWithCode).success).toBe(true);
-    expect(CollectResponseSchema.safeParse(notActive).success).toBe(true);
-    expect(CollectResponseSchema.safeParse(applied).success).toBe(true);
-    expect(COMMAND_SCHEMAS.collect.safeParse(alreadyAggregated).success).toBe(true);
-    expect(COMMAND_SCHEMAS.collect.safeParse(alreadyAggregatedWithCode).success).toBe(true);
-    expect(COMMAND_SCHEMAS.collect.safeParse(notActive).success).toBe(true);
-    expect(COMMAND_SCHEMAS.collect.safeParse(applied).success).toBe(true);
   });
 
   it('keeps action commands accepting normal action responses', () => {
@@ -149,7 +91,7 @@ describe('Schema Coverage', () => {
  *
  * Registering a schema in COMMAND_SCHEMAS is not the same as proving the
  * command actually *emits* output conforming to it — the gap that let the
- * `delegate` `already-delegated` envelope drift from `DelegateResponseSchema`
+ * `delegate` `already-delegated` envelope (since removed) drift from its schema
  * undetected. This guard records, for every JSON-output command, the test that
  * validates its REAL emitted output, and fails if any command is unregistered.
  *
@@ -183,8 +125,6 @@ const EMITTED_OUTPUT_COVERAGE: Record<string, { kind: 'schema' | 'events'; valid
       kind: 'schema',
       validatedIn: 'commands/schema-validation.test.ts (action + RUNBOOK_NOT_RUNNING)',
     },
-    stash: { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
-    pop: { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
     check: { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
     resolve: { kind: 'schema', validatedIn: 'commands/resolve.test.ts' },
     echo: { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
@@ -196,16 +136,12 @@ const EMITTED_OUTPUT_COVERAGE: Record<string, { kind: 'schema' | 'events'; valid
     'artifact inspect': { kind: 'schema', validatedIn: 'commands/artifact.test.ts' },
     ls: { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
     prune: { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
-    collect: { kind: 'schema', validatedIn: 'commands/collect.test.ts' },
     'scenario ls': { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
     'scenario show': { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
     'scenario run': { kind: 'schema', validatedIn: 'commands/schema-validation.test.ts' },
-    abort: { kind: 'schema', validatedIn: 'commands/abort.test.ts' },
     'scenario-suite ls': { kind: 'schema', validatedIn: 'commands/scenario-suite.test.ts' },
     'scenario-suite show': { kind: 'schema', validatedIn: 'commands/scenario-suite.test.ts' },
     'scenario-suite run': { kind: 'schema', validatedIn: 'commands/scenario-suite.test.ts' },
-    delegate: { kind: 'schema', validatedIn: 'commands/delegate.test.ts (schema conformance)' },
-    claim: { kind: 'schema', validatedIn: 'commands/claim.test.ts' },
   };
 
 describe('Emitted-output validation coverage', () => {

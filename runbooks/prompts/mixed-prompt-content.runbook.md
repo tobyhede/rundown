@@ -10,7 +10,7 @@ scenarios:
     description: All prompt types pass successfully
     commands:
       - rd run --prompted mixed-prompt-content.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
     result: COMPLETE
 ---
 

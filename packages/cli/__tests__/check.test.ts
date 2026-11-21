@@ -296,4 +296,50 @@ Hello.
       }),
     );
   });
+
+  it('warns that `run` refuses a runbook that composes other runbooks', async () => {
+    // Composition is valid language, so the runbook still checks valid; the
+    // warning tells the author this build's `run` refuses it, naming the same
+    // substeps and wording as the RUNBOOK_COMPOSITION_UNSUPPORTED refusal.
+    const runbookPath = path.join(workspace.cwd, 'check-compose.runbook.md');
+    fs.writeFileSync(
+      runbookPath,
+      [
+        '# Check Compose',
+        '## 1. Fan out',
+        '- PASS ALL COMPLETE',
+        '- FAIL ANY STOP',
+        '',
+        '### 1.1 Local',
+        '- PASS CONTINUE',
+        '',
+        'do work',
+        '',
+        '### 1.2 Delegated',
+        '- DELEGATE',
+        '- child.runbook.md',
+        '',
+      ].join('\n'),
+    );
+
+    const res = await runCliInProcess(['check', runbookPath], workspace);
+    const json = JSON.parse(res.stdout);
+    expect(res.exitCode).toBe(0);
+    expect(json.valid).toBe(true);
+    expect(json.warnings).toContainEqual({
+      message:
+        'Runbook composes other runbooks at 1.2; this build runs standalone runbooks only, ' +
+        'so `rundown run` refuses it (RUNBOOK_COMPOSITION_UNSUPPORTED). ' +
+        'Inline composition returns in #903 and delegation in #904.',
+    });
+  });
+
+  it('does not warn about composition for a standalone runbook', async () => {
+    const runbookPath = path.join(workspace.cwd, 'check-standalone.runbook.md');
+    fs.writeFileSync(runbookPath, '# Standalone\n## 1. Only\n- PASS COMPLETE\n\nDo it.\n');
+
+    const res = await runCliInProcess(['check', runbookPath], workspace);
+    const json = JSON.parse(res.stdout);
+    expect(json.warnings).toEqual([]);
+  });
 });

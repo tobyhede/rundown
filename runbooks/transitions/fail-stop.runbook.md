@@ -9,13 +9,13 @@ scenarios:
     description: Step fails, runbook halts via explicit FAIL STOP
     commands:
       - rd run --prompted fail-stop.runbook.md
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1
     result: STOP
   completed:
     description: Step passes, runbook completes normally
     commands:
       - rd run --prompted fail-stop.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
     result: COMPLETE
 ---
 

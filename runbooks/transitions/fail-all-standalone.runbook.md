@@ -8,16 +8,16 @@ scenarios:
     description: One substep passes so PASS ANY continues
     commands:
       - rd run --prompted fail-all-standalone.runbook.md
-      - rd fail
-      - rd pass
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.2
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
   stopped:
     description: All substeps fail and FAIL ALL stops
     commands:
       - rd run --prompted fail-all-standalone.runbook.md
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1
+      - rd fail --token ${TOKEN} --step 1.2
     result: STOP
 ---
 

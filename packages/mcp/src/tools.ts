@@ -1,8 +1,3 @@
-import {
-  bareRoleSpecificMutation,
-  delegateClaimIdValidationError,
-  subprocessMutationWithheldMessage,
-} from '@rundown-org/core';
 import { buildRundownCommand } from './command-builder.js';
 import { createMcpTextResponse, formatToolError } from './response.js';
 import { RUNDOWN_TOOL_DEFINITIONS, RUNDOWN_TOOL_NAMES } from './tool-definitions.js';
@@ -25,6 +20,12 @@ export type {
 /**
  * Register all Rundown MCP tools against a server.
  *
+ * Each handler is schema-parse, then {@link buildRundownCommand}, then
+ * `runCli`. There is no MCP-side authority gate: the Owner Token carried as
+ * `--token` is the authority, and the CLI refuses a bare or unknown-token
+ * mutation itself (`TOKEN_REQUIRED`, `UNKNOWN_TOKEN`), so the refusal is
+ * rendered from one place and passed through to the MCP client unchanged.
+ *
  * @param server - MCP server or test double supporting `registerTool`.
  * @param runCli - CLI facade used by each tool handler.
  */
@@ -37,26 +38,7 @@ export function registerRundownTools(server: RundownToolRegistrar, runCli: RunCl
         // dispatch, but re-running it here keeps the contract independent of
         // SDK internals and gives a single, well-formatted error path.
         const parsed = definition.inputSchema.parse(args);
-        const command = buildRundownCommand(name, parsed);
-        const delegateValidation = delegateClaimIdValidationError(command);
-        if (delegateValidation !== undefined) {
-          return createMcpTextResponse({ error: delegateValidation.message });
-        }
-        // Subprocess trust boundary (defense-in-depth): the MCP server spawns
-        // the CLI, so typed caller evidence cannot cross the process boundary.
-        // Core itself is the primary gate — it refuses ambient direct-CLI
-        // trust on every delegation-exposed run — so this withhold only stops
-        // a bare `pass` / `fail` / `complete` / `stop` / `collect` / `delegate`
-        // from silently consuming the standalone-run convenience lane, and
-        // keeps the refusal front-end-rendered. Invocations carrying explicit
-        // bearer claim evidence pass through. `--run` is target selection only
-        // and is still withheld without `--claim-id`. See
-        // subprocess-mutation-boundary.ts.
-        const withheld = bareRoleSpecificMutation(command);
-        if (withheld !== undefined) {
-          return createMcpTextResponse({ error: subprocessMutationWithheldMessage(withheld) });
-        }
-        return createMcpTextResponse(await runCli(command));
+        return createMcpTextResponse(await runCli(buildRundownCommand(name, parsed)));
       } catch (error) {
         // Spec §6.2 requires exactly one JSON text-block envelope per call;
         // surface schema/build/transport throws as a structured error payload.

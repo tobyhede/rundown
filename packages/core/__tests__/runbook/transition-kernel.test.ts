@@ -549,21 +549,6 @@ describe('transition-kernel', () => {
         ),
       ).toBe('COMMAND_EXECUTION_FAILED');
     });
-
-    it('returns inline launch failure action type without silent mapping', () => {
-      const message = 'Automatic inline launch is not supported inside claimed child scopes.';
-      const action = {
-        type: 'INLINE_LAUNCH_FAILED',
-        origin: 'direct',
-        reason: 'inline_launch_forbidden',
-        message,
-      } as unknown as LastAction;
-
-      expect(parseActionType(action)).toBe('INLINE_LAUNCH_FAILED');
-      expect(isInternalFailureLastAction(action)).toBe(true);
-      expect(deriveStoppedReason(action)).toBe('inline_launch_forbidden');
-      expect(extractInternalFailureMessage(action)).toBe(message);
-    });
   });
 
   describe('deriveTransitionMessage', () => {
@@ -827,32 +812,6 @@ describe('transition-kernel', () => {
 
       expect(deriveStoppedReason(lastAction)).toBe('for_resolution_failed');
       expect(extractInternalFailureMessage(lastAction)).toBe('not iterable');
-    });
-  });
-
-  describe('RETRY_ERROR lastAction', () => {
-    it('extracts and classifies retry hook failures as internal failures', () => {
-      const snapshot = {
-        context: {
-          lastAction: {
-            type: 'RETRY_ERROR',
-            origin: 'direct',
-            code: 'RD-902',
-            message: 'retry hook failed',
-          },
-        },
-      };
-
-      const action = extractLastAction(snapshot);
-      expect(action).toEqual({
-        type: 'RETRY_ERROR',
-        origin: 'direct',
-        code: 'RD-902',
-        message: 'retry hook failed',
-      });
-      expect(isInternalFailureLastAction(action)).toBe(true);
-      expect(parseActionType(action)).toBe('RETRY_ERROR');
-      expect(deriveStoppedReason(action)).toBe('retry_error_failed');
     });
   });
 

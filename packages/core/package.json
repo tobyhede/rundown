@@ -10,25 +10,13 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
-    "./session-reader": {
-      "types": "./dist/runbook/session-reader.d.ts",
-      "import": "./dist/runbook/session-reader.js"
-    },
     "./testing/effective-vars": {
       "types": "./dist/testing/effective-vars.d.ts",
       "import": "./dist/testing/effective-vars.js"
     },
-    "./testing/claim-fixtures": {
-      "types": "./dist/testing/claim-fixtures.d.ts",
-      "import": "./dist/testing/claim-fixtures.js"
-    },
-    "./testing/delegation-fixtures": {
-      "types": "./dist/testing/delegation-fixtures.d.ts",
-      "import": "./dist/testing/delegation-fixtures.js"
-    },
-    "./testing/session-fixtures": {
-      "types": "./dist/testing/session-fixtures.d.ts",
-      "import": "./dist/testing/session-fixtures.js"
+    "./testing/run-fixtures": {
+      "types": "./dist/testing/run-fixtures.d.ts",
+      "import": "./dist/testing/run-fixtures.js"
     },
     "./testing/runbook-store": {
       "types": "./dist/testing/runbook-store.d.ts",

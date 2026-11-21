@@ -7,47 +7,70 @@ use_when: Driving a body of work from a spec through to merged implementation.
 # Planning
 
 <important>
-## Runbook-Orchestrated Skill
-Load the execution protocol *before* starting, so you can handle step 1 (a
-delegation) the moment it appears:
+## Runbook-Orchestrated Skill — pipeline not available in this build
+The `planning` runbook composes the `write-plan`, `review-plan`, and
+`execute-plan` runbooks, and this build runs standalone runbooks only:
+`rundown run rundown:planning` is refused with
+`RUNBOOK_COMPOSITION_UNSUPPORTED` and creates no run. `review-plan` and
+`execute-plan` compose other runbooks too and are refused the same way. Inline
+composition returns in #903 and delegation in #904.
+
+What runs today is stage 1 on its own, `write-plan`, a standalone runbook:
 
 1. `Skill(skill: "rundown:running-runbooks")`
-2. `Skill(skill: "rundown:delegating-runbooks")` — step 1 delegates
-3. Then start the runbook with exactly this command, no added flags: `rundown run rundown:planning`
+2. `rundown run rundown:write-plan`, then follow the running-runbooks protocol
+   (capture `owner_token` from `runbook_started`; report each step with
+   `--token` and `--step`).
 
-Capture the run claim from that command: `rundown run` emits it as `runbook_started.claim_id`. This pipeline delegates (step 1), so every orchestrator command you issue — `collect`, `pass`, `goto` — must carry `--claim-id <claim_id>`.
-
-JSON is the agent-facing default; `--text` is for humans/debugging only — do not add it here.
-</important>
-
+Tell the user the review and execute stages cannot run as runbooks yet before
+starting, so they can choose stage 1 alone. </important>
 
 ## Overview
 
-Take a body of work from idea to implementation through three gated stages: **write the plan**, **review the plan**, then **execute the plan**. This skill is the **entrypoint** that orchestrates the whole pipeline; the [`planning`](../../runbooks/planning/planning.runbook.md) runbook owns the *sequence* and the *gates*, and each stage's craft lives in its own sibling skill.
+Take a body of work from idea to implementation through three gated stages:
+**write the plan**, **review the plan**, then **execute the plan**. This skill
+is the **entrypoint** that orchestrates the whole pipeline; the
+[`planning`](../../runbooks/planning/planning.runbook.md) runbook owns the
+_sequence_ and the _gates_, and each stage's craft lives in its own sibling
+skill.
 
-Rundown orchestrates workflow; it does not store craft. This skill names the pipeline and points at the stages — it does not duplicate them.
+Rundown orchestrates workflow; it does not store craft. This skill names the
+pipeline and points at the stages — it does not duplicate them.
 
 ## The Three Stages
 
-1. **Write the plan** — produce a clean, complete implementation plan (delegated). Craft lives in [writing-plans](../writing-plans/SKILL.md); the leaf is the `write-plan` runbook. The stage stops the pipeline on failure.
-2. **Review the plan** — run the plan through structural, technical, build/runtime, and risk/safety reviewers, then collate. This stage composes the `review-plan` runbook inline. It stops the pipeline on failure.
-3. **Execute the plan** — implement the plan task-by-task behind review and verify gates. Craft lives in [executing-plans](../executing-plans/SKILL.md); the stage composes the `execute-plan` runbook inline and completes the pipeline on success.
+1. **Write the plan** — produce a clean, complete implementation plan. Craft
+   lives in [writing-plans](../writing-plans/SKILL.md); the leaf is the
+   `write-plan` runbook. The stage stops the pipeline on failure.
+2. **Review the plan** — run the plan through structural, technical,
+   build/runtime, and risk/safety reviewers, then collate. This stage composes
+   the `review-plan` runbook inline. It stops the pipeline on failure.
+3. **Execute the plan** — implement the plan task-by-task behind review and
+   verify gates. Craft lives in [executing-plans](../executing-plans/SKILL.md);
+   the stage composes the `execute-plan` runbook inline and completes the
+   pipeline on success.
 
-Every stage stops the pipeline on failure (`FAIL ANY STOP`); the final stage completes it (`PASS ALL COMPLETE`).
+Every stage stops the pipeline on failure (`FAIL ANY STOP`); the final stage
+completes it (`PASS ALL COMPLETE`).
 
 ## When to Use
 
-- Driving a body of work end to end: spec → plan → reviewed plan → implementation.
-- When you want the review and verify gates between planning and merging, not just stage 1.
+- Driving a body of work end to end: spec → plan → reviewed plan →
+  implementation.
+- When you want the review and verify gates between planning and merging, not
+  just stage 1.
 
 ## When NOT to Use
 
-- Only writing a plan with no review/execute follow-through — use [writing-plans](../writing-plans/SKILL.md) directly.
-- Only implementing an already-written, already-reviewed plan — use [executing-plans](../executing-plans/SKILL.md).
+- Only writing a plan with no review/execute follow-through — use
+  [writing-plans](../writing-plans/SKILL.md) directly.
+- Only implementing an already-written, already-reviewed plan — use
+  [executing-plans](../executing-plans/SKILL.md).
 
 ## Reference
 
 - [writing-plans](../writing-plans/SKILL.md) — stage 1 craft: authoring the plan
-- [executing-plans](../executing-plans/SKILL.md) — stage 3 craft: implementing the plan
-- [running-runbooks](../running-runbooks/SKILL.md) — executing the driving runbook
-- [delegating-runbooks](../delegating-runbooks/SKILL.md) — parent-side delegation (step 1 delegates)
+- [executing-plans](../executing-plans/SKILL.md) — stage 3 craft: implementing
+  the plan
+- [running-runbooks](../running-runbooks/SKILL.md) — executing the driving
+  runbook

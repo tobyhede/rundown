@@ -2,7 +2,6 @@
 import type { OutputDeclaration } from '@rundown-org/parser';
 import { isArtifactRecord, type ArtifactRecord } from './artifact-schema.js';
 import type { ForResolutionFailureCode } from './actors/for-iterate-actor.js';
-import type { DelegationCredentialDescriptor, DelegationTokenHash } from './delegation-token.js';
 import type {
   EffectiveVars,
   InitialTemplateVars,
@@ -164,15 +163,6 @@ export type JsonObject = { readonly [key: string]: JsonValue };
  * Items retain their original JSON types (not stringified).
  */
 export type JsonArray = readonly JsonValue[];
-
-/**
- * Outcome projected from a delegated run terminal state into its delegating run.
- *
- * The literals intentionally match step results (`pass` / `fail`), but this
- * alias marks the delegation lifecycle boundary so new APIs do not use generic
- * "result" language when they mean a reported delegation outcome.
- */
-export type DelegationOutcome = 'pass' | 'fail';
 
 // Unexported — only createJsonArrayStream in this module can set this property.
 // JSON.parse/stringify silently drops Symbol keys, so user-supplied --var-json
@@ -442,36 +432,6 @@ type LastActionBase = {
 };
 
 /**
- * LastAction variant written by the retry hook (parent aggregation or
- * iteration) when it fails during the retry transition. Carries a structured
- * diagnostic for the CLI orchestrator to surface via ERROR_OCCURRED. Routes
- * to STOPPED via a priority-0 guarded `always` entry on the parent state.
- *
- * Distinct from `STOP`: STOP is a pure domain action (authored STOP
- * transitions, `rd stop`). `RETRY_ERROR` is a machine-internal-failure
- * signal — the retry could not complete because `retryDelegation`
- * returned `{ status: 'error' }` (propagated from an inner
- * `createDelegation` variant) or an invariant (e.g. missing active
- * frame) was violated.
- *
- * @see parseActionType in `packages/core/src/runbook/transition-kernel.ts`
- *   — maps this variant to the `'RETRY_ERROR'` ActionType. The CLI layer
- *   suppresses `STEP_TRANSITIONED` emission for this variant (see
- *   `packages/cli/src/helpers/transition-orchestrator.ts`) because the
- *   failure is already surfaced via `ERROR_OCCURRED` + `RUNBOOK_STOPPED`.
- * @see The priority-0 `always` entry constructed in `buildParentStateConfig`
- *   (`packages/core/src/runbook/compiler.ts`) that routes this variant to
- *   the `STOPPED` terminal state.
- */
-export interface RetryErrorLastAction extends LastActionBase {
-  readonly type: 'RETRY_ERROR';
-  /** Structured error code (e.g. `RD-902`, `RD-904`). */
-  readonly code: string;
-  /** Human-readable message describing the hook failure. */
-  readonly message: string;
-}
-
-/**
  * Machine-internal failure variant emitted when the per-step `outputCaptureActor`
  * sibling state's `onError` branch fires.
  *
@@ -529,46 +489,6 @@ export interface CommandExecutionFailedLastAction extends LastActionBase {
 }
 
 /**
- * Machine-internal failure variant emitted when the per-leaf
- * `delegationIssueActor` cannot issue delegation tokens for a DELEGATE
- * frontier. Surfaced via the `__issue-delegations` leaf substate so the CLI
- * and other front ends can render the failure without re-implementing the
- * issuance logic.
- *
- * @see delegationIssueActor in packages/core/src/runbook/actors/delegation-issue-actor.ts
- */
-export interface DelegationIssuanceFailedLastAction extends LastActionBase {
-  readonly type: 'DELEGATION_ISSUANCE_FAILED';
-  /**
-   * Structured issuance failure category.
-   *
-   * - `delegation_resolution_failed` — a child runbook reference on a
-   *   delegated substep could not be resolved by the supplied
-   *   `ResolveDelegationRunbook`, or `createDelegation` rejected the target.
-   * - `nested_delegation_forbidden` — the parent runbook is itself a claimed
-   *   delegation child, so it cannot issue further delegations (RD-819).
-   */
-  readonly reason:
-    | 'actor_context_required'
-    | 'delegation_resolution_failed'
-    | 'nested_delegation_forbidden';
-  /** Human-readable failure message. */
-  readonly message: string;
-}
-
-/**
- * Machine-internal failure variant emitted when a non-DELEGATE inline child
- * runbook unit cannot produce or permit an inline launch intent.
- */
-export interface InlineLaunchFailedLastAction extends LastActionBase {
-  readonly type: 'INLINE_LAUNCH_FAILED';
-  /** Structured inline launch failure category. */
-  readonly reason: 'inline_launch_failed' | 'inline_launch_forbidden';
-  /** Human-readable failure message. */
-  readonly message: string;
-}
-
-/**
  * Union of machine-internal failure lastAction variants.
  *
  * These are emitted by the state machine when a machine-owned invoke or hook
@@ -576,13 +496,10 @@ export interface InlineLaunchFailedLastAction extends LastActionBase {
  * via {@link isInternalFailureLastAction} in `transition-kernel.ts`.
  */
 export type InternalFailureLastAction =
-  | RetryErrorLastAction
   | OutputCaptureFailedLastAction
   | ArtifactResolutionFailedLastAction
   | ForResolutionFailedLastAction
-  | CommandExecutionFailedLastAction
-  | DelegationIssuanceFailedLastAction
-  | InlineLaunchFailedLastAction;
+  | CommandExecutionFailedLastAction;
 
 /**
  * Discriminated union representing the last transition action taken by the state machine.
@@ -616,120 +533,6 @@ export interface SubstepState {
   readonly frameKey: FrameKey; // From buildFrameKey(step, iteration?) — scopes identity in FOR loops
   readonly status: 'pending' | 'running' | 'done';
   readonly result?: 'pass' | 'fail'; // Result when done
-  readonly delegation?: StepDelegation; // Delegation attached to this substep
-  readonly inline?: StepInlineChild; // Inline child launch metadata attached to this substep
-}
-
-/**
- * Deferred agent completion captured for a valid frontier target
- * that is not currently at the active cursor.
- */
-export interface ResolvedCompletion {
-  /** Identifier of the agent that produced this completion. */
-  readonly agentId: string;
-  /** Whether the completion passed or failed. */
-  readonly result: 'pass' | 'fail';
-  /** Step name this completion targets (e.g. "1", "ErrorHandler"). */
-  readonly targetStep: string;
-  /** Substep ID within the target step, if applicable. */
-  readonly targetSubstep?: string;
-  /** FOR loop iteration number this completion applies to. */
-  readonly targetIteration?: number;
-  /** Frame key identifying the step+iteration context (e.g. "1|", "1|2"). */
-  readonly targetFrameKey: FrameKey;
-  /** Monotonic entry counter within the frame, distinguishing repeated visits. */
-  readonly targetEntry: number;
-  /** Final output variables produced by a completed child runbook. */
-  readonly finalVars?: Readonly<Record<string, VariableValue>>;
-  /** ISO 8601 timestamp when the agent completed. */
-  readonly completedAt: string;
-}
-
-/** Delegation metadata attached to a parent step's substep state. */
-export interface StepDelegation {
-  /** Non-secret coordinates and issuer identity needed to reconstruct the credential. */
-  readonly credential: DelegationCredentialDescriptor;
-  readonly tokenHash: DelegationTokenHash;
-  readonly childRunbookPath: string;
-  readonly childRunbookRef: RunbookRef;
-  readonly contextSnapshot: ContextSnapshot;
-  readonly childRunId: RunId | null;
-  readonly createdAt: string;
-  readonly cancelledAt: string | null;
-  /**
-   * Caller-supplied extra variables captured at issuance time.
-   *
-   * Preserved separately from `contextSnapshot.vars` (which is the merged
-   * `templateVars + extraVars` snapshot used by the child for template
-   * expansion). Retry inherits this narrow map so re-issuance can rebuild
-   * a fresh `contextSnapshot` without reusing stale snapshot vars.
-   *
-   * Undefined when no overrides were passed at issuance.
-   */
-  readonly extraVars?: Readonly<Record<string, TemplateVarValue>>;
-}
-
-/**
- * Non-secret delegation frontier intent persisted in XState context.
- *
- * The public token-bearing frontier is derived from this intent only at an
- * authorized observation boundary. Keeping this shape in the runbook package
- * prevents persisted machine state from depending on a credential-delivery
- * event type.
- */
-export interface PersistedDelegateFrontierEntry {
-  /** Qualified step or substep coordinate exposed to the child launcher. */
-  readonly id: string;
-  /** Author-facing child runbook reference. */
-  readonly runbook: string;
-  /** Non-secret coordinates identifying the credential issuance. */
-  readonly credential: DelegationCredentialDescriptor;
-  /** Persisted verifier for the derived bearer token. */
-  readonly tokenHash: DelegationTokenHash;
-}
-
-/**
- * Durable "I am launching this child" record written by the inline-launch latch.
- *
- * The timestamp and the launching process's identity are ONE value because they
- * are written and cleared in one commit each — taken when the launch is latched,
- * released when the intent is consumed. Two nullable fields would make "started
- * at a time, owned by nobody" representable, and that state is exactly the one a
- * later observer cannot classify: it could not tell a launch whose owner is
- * still resolving the child runbook from a launch whose owner died.
- *
- * Only the owner is read. `at` is carried for the operator — it is what a
- * `started` record means to a human reading persisted state — and deliberately
- * never decides anything: reclamation is a liveness question, never an age one.
- *
- * The owner is recorded as a pid AND a start id because a pid alone is not an
- * identity — see `runbook/process-identity` for why a recycled pid otherwise
- * reads as a live owner, and why `null` here means "this host supplies no start
- * id" rather than "no owner".
- */
-export interface InlineLaunchStart {
-  /** ISO 8601 timestamp when the launch was latched. */
-  readonly at: string;
-  /** Pid of the process that latched the launch. */
-  readonly ownerPid: number;
-  /** Start id of that pid at latch time; null when the host supplies none. */
-  readonly ownerStartId: string | null;
-}
-
-/** Durable inline child launch metadata attached to a parent substep. */
-export interface StepInlineChild {
-  /** Resolved display/path string for the child runbook. */
-  readonly childRunbookPath: string;
-  /** Canonical resolved child runbook reference. */
-  readonly childRunbookRef: RunbookRef;
-  /** Parent context snapshot inherited by the inline child. */
-  readonly contextSnapshot: ContextSnapshot;
-  /** Preallocated child run ID used by the inline launch. */
-  readonly childRunId: RunId;
-  /** ISO 8601 timestamp when the inline launch intent was prepared. */
-  readonly createdAt: string;
-  /** The launch latch: who started this child and when, or null until launch begins. */
-  readonly started: InlineLaunchStart | null;
 }
 
 /**
@@ -792,82 +595,6 @@ export interface AncestorSnapshot {
   /** FOR loop iteration number at delegation time (1-based). */
   readonly index?: number;
 }
-
-/**
- * Fields shared by all parent-linkage variants (delegation and inline).
- *
- * Both {@link DelegationLinkage} and {@link InlineLinkage} carry the same
- * parent identification fields needed by core terminal propagation to propagate
- * a child's terminal result back to the parent substep (synchronously for
- * inline linkage, report-only for delegation linkage).
- *
- * WHAT each field names is shared and documented here; WHEN it is captured is
- * variant-specific and documented on the variants. Inline linkage reads the
- * parent's live frame at link time; delegation linkage replays the frame
- * stamped when the delegation was ISSUED, which is an earlier moment. A single
- * shared "at link time" claim on this base was therefore true of one variant
- * only — precisely the ambiguity that let the two sides of a delegation drift
- * apart on `parentEntry` (#738), so do not restore a timing claim here.
- */
-export interface ParentLinkageBase {
-  readonly parentRunId: RunId;
-  readonly parentStepId: string;
-  /** Parent's step name, read at link time on both variants (e.g., "1"). */
-  readonly parentStep: string;
-  /** Parent's frame key for completion key construction; see the variant for when it is captured. */
-  readonly parentFrameKey: FrameKey;
-  /** Parent's entry counter for completion key construction; see the variant for when it is captured. */
-  readonly parentEntry: number;
-}
-
-/**
- * Linkage data a child run carries to identify its parent delegation.
- *
- * `parentStep`, `parentFrameKey` and `parentEntry` are all ISSUANCE
- * coordinates, not link-time ones: each comes from the delegation row
- * `rd delegate` stamped on the parent substep — its step id, its frame key, and
- * its credential's entry — and none is re-read from the parent's live cursor
- * when the child claims. The claim's own delegation descriptor is written from
- * these same values, so the two sides agree by construction. That matters
- * because `grantAllows` compares all of them at the point of use: recomputing
- * one side against the parent's current entry produced a claim that passed
- * every gate on the way in and then silently declined to report the child's
- * result (#738).
- *
- * `parentStep` was the last coordinate to stop following the cursor. While it
- * read `freshParent.step`, core's own re-check in `claimRunbookInTransaction`
- * compared live state against a value derived from that same live state, so the
- * step arm of `classifyDelegationLiveness` could never fail and an advanced
- * cursor read `live` inside core. Any new coordinate added here must be read
- * from the delegation row, never from the cursor.
- */
-export interface DelegationLinkage extends ParentLinkageBase {
-  readonly kind: 'delegation';
-  readonly tokenHash: DelegationTokenHash;
-}
-
-/**
- * Linkage data for a child run created via `rd run --step` (inline execution).
- *
- * Unlike {@link DelegationLinkage}, no token is involved — the child executes
- * inline in the same agent process and the result auto-propagates on completion.
- * For the same reason every {@link ParentLinkageBase} coordinate here IS a
- * link-time read of the parent's live state: the child is launched from the
- * frame the parent currently occupies, so there is no issuance/link split to
- * reconcile.
- */
-export interface InlineLinkage extends ParentLinkageBase {
-  readonly kind: 'inline';
-}
-
-/**
- * Discriminated union of all parent linkage variants.
- *
- * A child run carries exactly one of these to identify how it was linked
- * to its parent: either via delegation token (`rd delegate`/`rd claim`)
- * or inline execution (`rd run --step`).
- */
-export type ParentLinkage = DelegationLinkage | InlineLinkage;
 
 /**
  * Step state within a runbook
@@ -1028,48 +755,13 @@ export function assertResolvedVariableForContext(
 }
 
 /**
- * Runbook lifecycle state. `'running'` covers the entire active lifetime (including
- * paused/stashed). Reaching a final state transitions to `'completed'` (COMPLETE)
- * or `'stopped'` (STOPPED). Replaces the previous lifecycle booleans inside
- * `state.variables`.
+ * Runbook lifecycle state. `'running'` covers the entire active lifetime.
+ * Reaching a final state transitions to `'completed'` (COMPLETE) or
+ * `'stopped'` (STOPPED). `'abandoned'` is written only by `rundown release` on
+ * a child's own row when its sub-agent cannot finish it (ADR 0005); a parent's
+ * Collect reads it as a fail.
  */
-export type Lifecycle = 'running' | 'completed' | 'stopped';
-
-/**
- * Closed cause for an interrupted-execution recovery.
- *
- * A closed literal union (never a freeform string) so consumers switch
- * exhaustively on the recovery cause.
- *
- * - `owner_dead`: the previous owner process died before recording an outcome.
- * - `effect_boundary_crossed`: an ambiguous failure occurred after the effect
- *   boundary; the owner may have crashed, or a live owner may have observed an
- *   uncertain commit outcome, so the external effect or state commit may or may
- *   not have completed.
- * - `stale_commit`: a commit arrived from an execution attempt no longer active.
- */
-export type ExecutionRecoveryReason = 'owner_dead' | 'effect_boundary_crossed' | 'stale_commit';
-
-/**
- * Machine event that jumps a run to the `recoveryRequired` state when its
- * execution outcome cannot be reconstructed.
- *
- * `epoch` is the ordering integer of the interrupted attempt (data, never the
- * secret execution token). It is typed as a plain `number` here — not the
- * storage-branded `ExecutionEpoch` — because the machine layer must not depend on
- * the storage layer (that would form an import cycle). The storage-aware recovery
- * service supplies a branded epoch, which widens to `number`.
- */
-export type ExecutionRecoveryEvent = {
-  /** Discriminant. */
-  readonly type: 'EXECUTION_OUTCOME_UNKNOWN';
-  /** Ordering integer of the interrupted attempt (data, never the token). */
-  readonly epoch: number;
-  /** Closed recovery cause. */
-  readonly reason: ExecutionRecoveryReason;
-  /** Step id captured at recovery entry so retry re-enters the exact step. */
-  readonly interruptedStepId: string;
-};
+export type Lifecycle = 'running' | 'completed' | 'stopped' | 'abandoned';
 
 /**
  * Runbook execution state (persisted)
@@ -1100,7 +792,6 @@ export interface RunbookState {
   readonly steps: readonly StepState[];
 
   // Orchestration fields
-  readonly resolvedCompletions?: Readonly<Record<string, ResolvedCompletion>>;
   /**
    * Monotonic per-frame entry counter, keyed by frame key (`step|iteration`).
    *
@@ -1118,14 +809,6 @@ export interface RunbookState {
 
   // Substep tracking
   readonly substepStates?: readonly SubstepState[];
-
-  /** Parent linkage identifying how this child was linked to its parent. */
-  readonly parentLinkage?: ParentLinkage;
-
-  readonly nested?: {
-    readonly runbook: string;
-    readonly instanceId: string;
-  };
 
   // FOR loop tracking
   readonly forStack?: readonly ForContext[];
@@ -1179,7 +862,7 @@ export interface RunbookState {
   /** Evaluated frontmatter outputs: values at runbook termination. Read by parent delegation completion. */
   readonly finalVars?: Readonly<Record<string, VariableValue>>;
 
-  /** Lifecycle state. 'running' during execution; 'completed' or 'stopped' once terminal. */
+  /** Lifecycle state. 'running' during execution; 'completed', 'stopped' or 'abandoned' once terminal. */
   readonly lifecycle?: Lifecycle;
 
   /** Persisted state schema version. Must equal `CURRENT_SCHEMA_VERSION`. */
@@ -1187,14 +870,12 @@ export interface RunbookState {
 }
 
 /**
- * Structural parent-state shape required to create delegation metadata.
+ * Structural parent-state shape required to build a context snapshot.
  *
  * A minimal subset of {@link RunbookState} fields needed by
- * {@link createDelegation}, {@link buildContextSnapshot}, and the
- * `delegationIssueActor`. The subset exists so machine-owned delegation
- * issuance can build metadata without requiring a fully persisted
- * `RunbookState` — during compiler leaf-state execution the state lives only
- * in `context`, and only these fields are needed to compute the frontier.
+ * `buildContextSnapshot` (`delegation-context.ts`). The subset exists so a
+ * snapshot can be built from machine context, where the state lives only in
+ * `context` rather than as a fully persisted `RunbookState`.
  *
  * All fields are structurally compatible with the corresponding
  * `RunbookState` fields, so any `RunbookState` value satisfies this
@@ -1215,8 +896,6 @@ export interface DelegationParentState {
   readonly activeEntry?: number;
   /** Last observed entry for every entered frame. */
   readonly frameEntryCounts?: Readonly<Record<FrameKey, number>>;
-  /** Parent linkage used to reject nested delegation. */
-  readonly parentLinkage?: RunbookState['parentLinkage'];
   /** Seeded template variables captured into the context snapshot. */
   readonly templateVars?: InitialTemplateVars;
   /** Accumulated output and artifact variables captured into the context snapshot. */

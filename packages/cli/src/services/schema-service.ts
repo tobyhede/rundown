@@ -26,8 +26,6 @@ export const JSON_OUTPUT_COMMANDS = [
   'goto',
   'complete',
   'stop',
-  'stash',
-  'pop',
   'check',
   'resolve',
   'echo',
@@ -39,16 +37,12 @@ export const JSON_OUTPUT_COMMANDS = [
   'artifact inspect',
   'ls',
   'prune',
-  'collect',
   'scenario ls',
   'scenario show',
   'scenario run',
-  'abort',
   'scenario-suite ls',
   'scenario-suite show',
   'scenario-suite run',
-  'delegate',
-  'claim',
 ] as const;
 
 /**

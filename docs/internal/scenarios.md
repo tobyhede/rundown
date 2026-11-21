@@ -22,7 +22,7 @@ Scenarios are defined in the `scenarios` block of runbook frontmatter (YAML):
 scenarios:
   test_name:
     description: "Description"
-    commands: ["rundown run doc.md", "rundown pass"]
+    commands: ["rundown run --prompted doc.md", "rundown pass --token ${TOKEN} --step 1"]
     result: COMPLETE
     tags: ["smoke", "deploy"]
 ```
@@ -80,7 +80,7 @@ cases:
     file: path/to/example.runbook.md
     commands:
       - rundown run --prompted example.runbook.md
-      - rundown pass
+      - rundown pass --token ${TOKEN} --step 1
     expect:
       result: COMPLETE
       steps:
@@ -131,9 +131,8 @@ runbooks/
   substeps/          # Static, named, mixed substep types
   named-steps/       # Named steps, mixed static+named
   prompts/           # Explicit/implicit prompts, YES/NO, prompt code blocks
-  composition/       # Runbook lists, substep runbook references
-  delegation/        # Delegate, claim, abort, token lifecycle
-  stash-pop/         # Stash/pop enforcement control
+  artifacts/         # ARTIFACTS declarations, resolution, artifact inputs
+  context-passing/   # OUTPUTS capture and frontmatter outputs/inputs
   variables/         # Template variables, built-ins, and context
   examples/          # Curated real-world runbooks (docs/explore reference)
 ```
@@ -171,7 +170,7 @@ scenarios:
     description: <what this scenario verifies>
     commands:
       - rundown run --prompted <name>.runbook.md
-      - rundown pass
+      - rundown pass --token ${TOKEN} --step 1
     expect:
       result: COMPLETE
 ---
@@ -209,21 +208,23 @@ tested. Express the workflow directly and visibly:
 
 ```yaml
 scenarios:
-  break-on-first:
-    description: BREAK exits loop on first FAIL
+  break-on-second:
+    description: Second iteration fails and breaks to step 2
     commands:
       - rundown run --prompted for-break-on-fail.runbook.md
-      - rundown fail
+      - rundown pass --token ${TOKEN} --step 1.1 --index 1
+      - rundown fail --token ${TOKEN} --step 1.1 --index 2
+      - rundown pass --token ${TOKEN} --step 2
     expect:
-      result: STOP
+      result: COMPLETE
 ```
 
 Do not hide workflow steps inside opaque shell wrappers such as `node -e`,
 `bash -c`, npm scripts, helper scripts, or shell pipelines that call `rd`
-internally. The scenario runner derives terminal state, step transitions,
-delegation tokens, and claim ids only from visible `rd`/`rundown` command
-entries. Hidden `rd` invocations obscure that state and make scenario assertions
-depend on shell behavior instead of the scenario runner's command model.
+internally. The scenario runner derives terminal state, step transitions, Owner
+Tokens, and run ids only from visible `rd`/`rundown` command entries. Hidden
+`rd` invocations obscure that state and make scenario assertions depend on shell
+behavior instead of the scenario runner's command model.
 
 Detailed payload assertions, ad hoc JSON checks, and state-file inspections
 belong in dedicated Jest integration or unit tests. Frontmatter scenarios should
@@ -258,9 +259,10 @@ unlisted violation. The predicates themselves are unit-tested in
 
 Commands output JSON by default. The scenario runner parses every `rd`/`rundown`
 command's stdout to collect terminal state, step transitions, entered-step
-events, delegation tokens, and claim ids. Use `--text` for human-readable
-terminal output in demo scenarios; `--text` output is not useful for
-`expect.steps`, `expect.entered`, token capture, or claim-id capture.
+events, Owner Tokens, and run ids. Use `--text` for human-readable terminal
+output in demo scenarios; `--text` output is not useful for `expect.steps`,
+`expect.entered`, or placeholder capture (see
+[Placeholder Capture](#placeholder-capture)).
 
 The runner executes plain `rd` and `rundown` commands directly through the
 current CLI entry point instead of through a shell. Leading command-scoped
@@ -268,13 +270,9 @@ environment assignments are supported:
 
 ```yaml
 commands:
-  - rundown claim ${TOKEN}
-  - rundown pass --claim-id ${CLAIM_ID}
+  - RD_INPUT_environment=staging rundown run --prompted deploy.runbook.md
+  - rundown pass --token ${TOKEN} --step 1
 ```
-
-Claim ids captured from `rundown claim` expand as `${CLAIM_ID}` for the first
-claim and `${CLAIM_ID_2}` for the second claim. Use claim-id placeholders when a
-scenario claims multiple delegated siblings.
 
 Shell operators in an `rd`/`rundown` command are rejected (`&&`, `||`, `|`,
 etc.). Split those into separate `commands` entries. Non-`rd` commands run
@@ -289,7 +287,7 @@ the expected outcome:
 ```yaml
 commands:
   - rundown run --prompted validation.runbook.md
-  - "! rundown claim rdtk_invalid"
+  - "! rundown pass --token ${TOKEN} --step 9"
 ```
 
 For `!` commands, exit code `0` is an error. The `!` token must be followed by a
@@ -313,18 +311,20 @@ Scenario names describe the execution path:
 - `rundown run --prompted <name>` -- Start in prompted mode (manual pass/fail)
 - `rundown run <name>` -- Start in auto-execution mode (commands determine
   outcome)
-- `rundown pass` -- Mark current step passed
-- `rundown fail` -- Mark current step failed
-- `rundown goto N` -- Jump to specific step
-- `rundown stop` / `rundown complete` -- Force terminal state
-- `rundown delegate <runbook> --step <id>` -- Delegate substep to child
-- `rundown claim ${TOKEN}` -- Claim delegation token (see Token Capture below)
-- `rundown abort ${TOKEN}` -- Cancel delegation token
+- `rundown pass --token ${TOKEN} --step <id> [--index <n>]` -- Mark the current
+  step passed; `--step` (and `--index` inside a FOR iteration) must name the
+  current position
+- `rundown fail --token ${TOKEN} --step <id> [--index <n>]` -- Mark the current
+  step failed
+- `rundown goto N --token ${TOKEN}` -- Jump to specific step
+- `rundown stop --token ${TOKEN}` / `rundown complete --token ${TOKEN}` -- Force
+  terminal state
+- `rundown status --run ${RUN_ID}` -- Read one run's state
 
 The command vocabulary is the source of truth for the runbook workflow under
 test. If a scenario needs `rundown run`, `rundown pass`, `rundown fail`,
-`rundown goto`, `rundown delegate`, `rundown claim`, or `rundown abort`, write
-that command as its own `commands:` entry.
+`rundown goto`, `rundown stop`, or `rundown complete`, write that command as its
+own `commands:` entry.
 
 ### Runbook Staging
 
@@ -341,49 +341,28 @@ authored child files. Staged child runbooks keep their relative layout under the
 scenario workspace, and static artifact files referenced by each staged runbook
 are copied alongside the runbook graph.
 
-### Token Capture
+### Placeholder Capture
 
-The scenario runner extracts delegation tokens from parsed JSON output. Tokens
-are captured in order from:
+The scenario runner captures values from the `runbook_started` events in parsed
+JSON output and substitutes them into later commands. The placeholder table is
+`CAPTURE_PLACEHOLDERS` in `packages/cli/src/helpers/command-sequence.ts`:
 
-- `rundown delegate` JSON responses with `action: "delegated"` and a string
-  `token`
-- `step_entered` events whose `delegateFrontier` array contains string `token`
-  values
+| Placeholder | Captured from                 | Use                                                     |
+| ----------- | ----------------------------- | ------------------------------------------------------- |
+| `${TOKEN}`  | `runbook_started.owner_token` | `--token` on `pass`, `fail`, `goto`, `stop`, `complete` |
+| `${RUN_ID}` | `runbook_started.runbookId`   | Read-only selectors such as `status --run ${RUN_ID}`    |
 
-Captured tokens are available for substitution in subsequent commands:
-
-- First token captured: `${TOKEN}`
-- Second token: `${TOKEN_2}`
-- Third token: `${TOKEN_3}`
-- And so on
-
-This enables delegation scenarios without shell variable capture:
+Values are captured in emission order: the first `runbook_started` supplies
+`${TOKEN}` / `${RUN_ID}`, the second `${TOKEN_2}` / `${RUN_ID_2}`, and so on. A
+placeholder that names a value not yet captured fails the command before it
+runs.
 
 ```yaml
 commands:
-  - rundown run delegate-basic.runbook.md
-  - rundown delegate child-task.runbook.md --step 1.1
-  - rundown claim ${TOKEN}
+  - rundown run --prompted goto-named-step.runbook.md
+  - rundown goto Process --token ${TOKEN}
+  - rundown status --run ${RUN_ID}
 ```
-
-The runner substitutes `${TOKEN}` with the actual captured token value. For
-multi-delegation scenarios:
-
-```yaml
-commands:
-  - rundown run delegate-hierarchy.runbook.md
-  - rundown delegate child-a.runbook.md --step 1.1
-  - rundown claim ${TOKEN}       # claims child-a token
-  - rundown delegate child-b.runbook.md --step 1.2
-  - rundown claim ${TOKEN_2}     # claims child-b token
-```
-
-For `DELEGATE`-annotated steps, `rundown run` can auto-issue frontier tokens as
-soon as the delegate step is entered. In that case, a later
-`rundown claim ${TOKEN}` can use the token captured from the
-`step_entered.delegateFrontier` event without an explicit `rundown delegate`
-command.
 
 ### Auto-Execution Scenarios
 
@@ -425,11 +404,8 @@ transition events. The runner evaluates these assertions into
 `enteredAssertions` in JSON output and an "Entered Assertions" block in text
 output.
 
-Use entered assertions for behavior where entry itself is the contract,
-especially inline runbook-list composition. A non-DELEGATE runbook-list substep
-emits a parent `step_entered` event with an `at` position such as `2.1` and a
-generated description such as `Runbook: child.runbook.md`; it may then launch
-the child inline without emitting a parent transition at that moment.
+Use entered assertions for behavior where entry itself is the contract, such as
+a prompt-only step that a scenario enters but never transitions.
 
 Supported fields:
 
@@ -492,7 +468,7 @@ expect:
   result: COMPLETE              # Terminal outcome (optional if top-level result: present)
 
   steps:                        # Transition assertions (optional, ordered)
-    - runbook: child.runbook.md  # Optional runbook filter for delegated/nested runs
+    - runbook: deploy.runbook.md # Optional runbook filter (suffix match)
       at: "1.1"
       from: "1"
       action: CONTINUE
@@ -502,9 +478,8 @@ expect:
       result: PASS
 
   entered:                      # Step-entry assertions (optional, ordered)
-    - runbook: parent.runbook.md
-      at: "1.1"
-      description: "Runbook: child.runbook.md"
+    - runbook: deploy.runbook.md
+      at: "2"
 ```
 
 All fields within `steps` entries are optional. Assert only what matters for the
@@ -535,8 +510,7 @@ Supported fields are `at`, `description`, and `runbook`; `runbook` is a suffix
 match against the event's canonical `runbook.path`. The runner reports results
 as `enteredAssertions` in JSON output and under "Entered Assertions" in text
 output. Use `expect.entered` for entry-only behavior that may not produce a
-transition, such as generated runbook-list substeps entering with description
-`Runbook: child.runbook.md`.
+transition.
 
 ### Matching Semantics
 
@@ -612,20 +586,6 @@ expect:
   steps:
     - action: GOTO
       at: ErrorHandler
-```
-
-**Delegated child transition:**
-
-```yaml
-expect:
-  result: COMPLETE
-  steps:
-    - runbook: child.runbook.md
-      from: "1"
-      action: COMPLETE
-      result: PASS
-    - runbook: parent.runbook.md
-      action: COMPLETE
 ```
 
 ## Artifact Capture

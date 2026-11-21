@@ -1,44 +1,37 @@
 import { describe, it, expect, jest } from '@jest/globals';
 import {
-  assertClaimId,
-  assertExecutionEpoch,
   assertRunId,
-  InvalidPersistedClaimError,
-  InvalidPersistedSessionError,
-  InvalidRunbookStateError,
-  parseClaimBearer,
-  redactClaimId,
+  CONCURRENT_MODIFICATION_CODE,
+  generateOwnerToken,
   type LifecycleTerminalOutcome,
+  type OwnedRunResolution,
   type RunbookState,
   type RunbookStateManager,
   type TransitionObservationEvent,
 } from '@rundown-org/core';
-import type { TerminalRunProgression } from '../../src/helpers/terminal-command.js';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
-import { takeExitCode } from './exit-code.js';
 
 // `runSeamTerminal` resolves the seam through this factory internally rather than
 // taking it as a parameter — the one dependency in this module that is not
-// injected. Mocking it is the only way to observe the seam input it builds, which
-// the claim-target coupling guard below asserts on. Every other export here takes
-// its `manager` as a parameter, so no existing test is affected by the mock.
+// injected. Mocking it is the only way to observe the seam input it builds.
+// Token resolution is likewise core's (`resolveOwnedRun`), mocked structurally.
 //
 // The module under test therefore has to be imported AFTER registration, which is
-// why the value import below is dynamic; the type-only import above is erased and
-// does not load the module.
+// why the value import below is dynamic.
 jest.unstable_mockModule('../../src/helpers/lifecycle-seam-factory', () => ({
-  buildNonDelegatingLifecycleSeam: jest.fn(),
+  buildLifecycleSeam: jest.fn(),
+}));
+const actualCore = await import('@rundown-org/core');
+const resolveOwnedRun = jest.fn<typeof actualCore.resolveOwnedRun>();
+jest.unstable_mockModule('@rundown-org/core', () => ({
+  ...actualCore,
+  resolveOwnedRun,
 }));
 
-const {
-  finalizeAppliedClaimTerminal,
-  handleTerminalRecovery,
-  renderTerminalOutcome,
-  runSeamTerminal,
-} = await import('../../src/helpers/terminal-command.js');
-const { buildNonDelegatingLifecycleSeam } = await import(
-  '../../src/helpers/lifecycle-seam-factory.js'
+const { renderTerminalOutcome, runSeamTerminal, ForceTerminalEventBridge } = await import(
+  '../../src/helpers/terminal-command.js'
 );
+const { buildLifecycleSeam } = await import('../../src/helpers/lifecycle-seam-factory.js');
 
 // Renderer contract coverage for the terminal (complete/stop) seam front end.
 // Each LifecycleTerminalOutcome kind must map to the correct CLI envelope / error
@@ -46,11 +39,7 @@ const { buildNonDelegatingLifecycleSeam } = await import(
 // the JSON-first path (CLAUDE.md): the emitter double records structured calls.
 
 const RUN_ID = assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
-const PARENT_ID = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
-const OTHER_RUN_ID = assertRunId('rd_cccccccccccccccccccccccccccccccc');
-const CLAIM_ID = assertClaimId(
-  'rdclm_11111111111111111111111111111111_abcdefghijklmnopqrstuvwxyzABCDE1234567890-_',
-);
+const TOKEN = generateOwnerToken();
 
 interface Recorded {
   readonly method: string;
@@ -86,6 +75,7 @@ function fakeRootState(id = RUN_ID): RunbookState {
     id,
     runbook: { source: 'project', path: 'root.md' },
     prompted: false,
+    lifecycle: 'running',
   } as unknown as RunbookState;
 }
 
@@ -98,7 +88,12 @@ const NO_MANAGER = managerReturning(null);
 
 async function render(
   outcome: LifecycleTerminalOutcome,
-  opts: { command?: 'complete' | 'stop'; json?: boolean; manager?: RunbookStateManager } = {},
+  opts: {
+    command?: 'complete' | 'stop';
+    json?: boolean;
+    manager?: RunbookStateManager;
+    message?: string;
+  } = {},
 ) {
   const { output, calls } = recordingEmitter(opts.json ?? true);
   const exitError = await renderTerminalOutcome(
@@ -106,6 +101,7 @@ async function render(
     opts.command ?? 'complete',
     opts.manager ?? NO_MANAGER,
     outcome,
+    opts.message,
   );
   return { exitError, calls };
 }
@@ -115,664 +111,220 @@ function codeOf(calls: Recorded[], method: string): string | undefined {
   return call?.args[1] as string | undefined;
 }
 
-// ACCEPTED MUTATION SURVIVORS in terminal-command.ts (#485).
-//
-//  - The `default:` arm of `renderTerminalOutcome`'s switch
-//    (`terminal-command.ts:240`), `ConditionalExpression` + `BlockStatement`.
-//    Unreachable by construction: it binds `const _exhaustive: never = outcome`,
-//    so reaching it is a compile error rather than a runtime state.
+function completedEvent(): TransitionObservationEvent {
+  return {
+    type: 'RUNBOOK_COMPLETED',
+    payload: { finalPosition: { current: '1', total: 1 } },
+  } as unknown as TransitionObservationEvent;
+}
 
-describe('runSeamTerminal claim-target coupling (#613)', () => {
-  /**
-   * Drive `runSeamTerminal` against a stub seam and return the input it built.
-   *
-   * The stub answers `actor_context_required`: with a claim target that skips the
-   * bare orphan-cleanup branch (guarded on `options.claimId === undefined`) and
-   * renders through a path that never touches `manager`, so this stays a test of
-   * input construction rather than of terminal rendering.
-   */
-  async function capturedSeamInput(
-    options: { claimId?: ReturnType<typeof assertClaimId> } = {},
-  ): Promise<Record<string, unknown>> {
-    const captured: unknown[] = [];
-    jest.mocked(buildNonDelegatingLifecycleSeam).mockReturnValue({
-      manager: {} as never,
-      sessionService: {} as never,
-      seam: {
-        runTerminal: async (input: unknown) => {
-          captured.push(input);
-          return { kind: 'actor_context_required' } as never;
-        },
-      } as never,
+function applied(
+  lifecycle: 'completed' | 'stopped',
+  events: readonly TransitionObservationEvent[] = [],
+): LifecycleTerminalOutcome {
+  return { kind: 'applied', runId: RUN_ID, lifecycle, events, progression: { kind: 'none' } };
+}
+
+function running(state: RunbookState = fakeRootState()): OwnedRunResolution {
+  return { kind: 'running', run: { state, stateVersion: 1 as never } };
+}
+
+describe('runSeamTerminal', () => {
+  it('resolves the owned run from the token and hands it to runTerminal with the command', async () => {
+    const runTerminal = jest.fn(async () => applied('completed'));
+    const manager = managerReturning(fakeRootState());
+    jest.mocked(buildLifecycleSeam).mockReturnValue({
+      manager,
+      seam: { runTerminal } as never,
     });
-    const { output } = recordingEmitter();
+    const state = fakeRootState();
+    resolveOwnedRun.mockResolvedValue(running(state));
+    const { output, calls } = recordingEmitter();
 
-    await runSeamTerminal(output, '/cwd', 'complete', options);
+    const result = await runSeamTerminal(output, '/cwd', 'complete', {
+      token: TOKEN,
+      message: 'done',
+    });
 
-    expect(captured).toHaveLength(1);
-    return captured[0] as Record<string, unknown>;
-  }
-
-  it('derives caller evidence and target selector from one --claim-id', async () => {
-    // `docs/reference/cli.md` and `docs/internal/architecture.md` both state that
-    // CLAIM_BEARER_MISMATCH is unreachable from the CLI. That rests entirely on
-    // this coupling, and complete/stop is where losing it costs most: a
-    // divergence would force AND release a run on the target's own authority.
-    // Nothing else fails if the two fields drift apart — the docs would just
-    // silently become false — so it is pinned here, where drift would originate.
-    const input = await capturedSeamInput({ claimId: CLAIM_ID });
-
-    expect(input.callerEvidence).toEqual({ kind: 'claim_bearer', claimId: CLAIM_ID });
-    expect(input.targetSelector).toEqual({ kind: 'claim', claimId: CLAIM_ID });
-    // Stated as the seam's own gate states it: the same id on both sides.
-    const evidence = input.callerEvidence as { claimId: unknown };
-    const selector = input.targetSelector as { claimId: unknown };
-    expect(evidence.claimId).toBe(selector.claimId);
+    expect(resolveOwnedRun).toHaveBeenCalledWith(manager, TOKEN);
+    expect(runTerminal).toHaveBeenCalledTimes(1);
+    const input = (runTerminal.mock.calls as unknown as [[Record<string, unknown>]])[0][0];
+    expect(input.command).toBe('complete');
+    expect(input.run).toEqual({ state, stateVersion: 1 });
+    expect(input.message).toBe('done');
+    expect(result.exitError).toBe(false);
+    expect(calls.find((c) => c.method === 'complete')?.args[0]).toBe('done');
+    expect(calls.at(-1)?.method).toBe('flush');
   });
 
-  it('presents no bearer without --claim-id, so the gate cannot fire', async () => {
-    // Anti-vacuity for the case above: if the construction always produced a
-    // claim-shaped pair the assertion would hold for the wrong reason.
-    const input = await capturedSeamInput();
+  it('renders UNKNOWN_TOKEN and never reaches the seam when no run carries the token', async () => {
+    const runTerminal = jest.fn();
+    jest.mocked(buildLifecycleSeam).mockReturnValue({
+      manager: NO_MANAGER,
+      seam: { runTerminal } as never,
+    });
+    resolveOwnedRun.mockResolvedValue({ kind: 'unknown_token' });
+    const { output, calls } = recordingEmitter();
 
-    expect(input.callerEvidence).toEqual({ kind: 'direct_cli' });
-    expect((input.targetSelector as { kind: string }).kind).not.toBe('claim');
+    const result = await runSeamTerminal(output, '/cwd', 'stop', { token: TOKEN });
+
+    expect(runTerminal).not.toHaveBeenCalled();
+    expect(result.exitError).toBe(true);
+    expect(codeOf(calls, 'error')).toBe('UNKNOWN_TOKEN');
+  });
+
+  it('renders RD-303 for a token whose run already completed, without reaching the seam', async () => {
+    const runTerminal = jest.fn();
+    jest.mocked(buildLifecycleSeam).mockReturnValue({
+      manager: NO_MANAGER,
+      seam: { runTerminal } as never,
+    });
+    resolveOwnedRun.mockResolvedValue({
+      kind: 'finished',
+      state: fakeRootState(),
+      lifecycle: 'completed',
+    });
+    const { output, calls } = recordingEmitter();
+
+    const result = await runSeamTerminal(output, '/cwd', 'stop', { token: TOKEN });
+
+    expect(runTerminal).not.toHaveBeenCalled();
+    expect(result.exitError).toBe(true);
+    const error = calls.find((c) => c.method === 'error');
+    expect(error?.args[1]).toBe('RD-303');
+    expect(error?.args[2]).toEqual({ runId: RUN_ID, lifecycle: 'completed' });
+    expect(String(error?.args[0])).not.toContain(TOKEN);
+  });
+
+  it('uses the complete display policy for complete and the always-false policy for stop', async () => {
+    const runTerminal = jest.fn(async () => applied('completed'));
+    jest.mocked(buildLifecycleSeam).mockReturnValue({
+      manager: managerReturning(fakeRootState()),
+      seam: { runTerminal } as never,
+    });
+    resolveOwnedRun.mockResolvedValue(running());
+
+    await runSeamTerminal(recordingEmitter().output, '/cwd', 'complete', { token: TOKEN });
+    await runSeamTerminal(recordingEmitter().output, '/cwd', 'stop', { token: TOKEN });
+
+    const calls = runTerminal.mock.calls as unknown as [
+      [{ computeActionResult: (t: string) => boolean }],
+      [{ computeActionResult: (t: string) => boolean }],
+    ];
+    expect(calls[0][0].computeActionResult('CONTINUE')).toBe(true);
+    expect(calls[0][0].computeActionResult('RETRY')).toBe(false);
+    expect(calls[0][0].computeActionResult('STOP')).toBe(false);
+    expect(calls[1][0].computeActionResult('CONTINUE')).toBe(false);
   });
 });
 
 describe('renderTerminalOutcome', () => {
-  it('renders none as noActiveRunbook and exits 0', async () => {
-    const { exitError, calls } = await render({ kind: 'none' });
-    expect(exitError).toBe(false);
-    expect(calls.some((c) => c.method === 'noActiveRunbook')).toBe(true);
-  });
-
-  it('renders a stale_claim outcome under the code core assigned it and exits non-zero', async () => {
+  it('renders run_finished as RD-303 for a completed run and exits non-zero', async () => {
     const { exitError, calls } = await render({
-      kind: 'stale_claim',
-      claimId: CLAIM_ID,
-      message: 'gone',
-      code: 'CLAIMED_RUNBOOK_UNAVAILABLE',
-    });
-    expect(exitError).toBe(true);
-    expect(codeOf(calls, 'error')).toBe('CLAIMED_RUNBOOK_UNAVAILABLE');
-  });
-
-  it('passes a superseded claim through as DELEGATION_SUPERSEDED, not the generic code', async () => {
-    // The seam must not flatten the refusal back to "unavailable": RD-825 is the
-    // no-retry signal, and complete/stop are reachable with a superseded bearer.
-    const { exitError, calls } = await render({
-      kind: 'stale_claim',
-      claimId: CLAIM_ID,
-      message: 'superseded',
-      code: 'DELEGATION_SUPERSEDED',
-    });
-    expect(exitError).toBe(true);
-    expect(codeOf(calls, 'error')).toBe('DELEGATION_SUPERSEDED');
-  });
-
-  // The single-run fenced-mutation refusals. Each carries its own symbolic code
-  // because an agent branches on them differently: STALE_CLAIM means re-claim,
-  // CONCURRENT_MODIFICATION means re-read and retry, RUN_TARGET_UNAVAILABLE means
-  // the target is gone. Folding them into one envelope would erase that.
-  it.each([
-    {
-      label: 'a superseded claim',
-      kind: 'claim_superseded' as const,
-      message: 'A newer claim controls this run.',
-      code: 'STALE_CLAIM',
-    },
-    {
-      label: 'a concurrent state change',
-      kind: 'concurrent_modification' as const,
-      message: 'The run changed while this command was deciding.',
-      code: 'CONCURRENT_MODIFICATION',
-    },
-    {
-      label: 'a vanished run target',
-      kind: 'missing' as const,
-      message: 'Run rd_… does not exist.',
-      code: 'RUN_TARGET_UNAVAILABLE',
-    },
-    {
-      label: 'an in-flight execution',
-      kind: 'execution_in_progress' as const,
-      message: 'Another actor owns this run.',
-      code: 'EXECUTION_IN_PROGRESS',
-    },
-    {
-      label: 'an interrupted execution',
-      kind: 'recovery_required' as const,
-      message: 'The execution outcome is unknown and requires recovery.',
-      code: 'RECOVERY_REQUIRED',
-    },
-  ])('renders $label as $code and exits non-zero', async ({ kind, message, code }) => {
-    const { exitError, calls } = await render({
-      kind,
+      kind: 'run_finished',
       runId: RUN_ID,
-      epoch: assertExecutionEpoch(4),
-      message,
-    });
-
-    expect(exitError).toBe(true);
-    const errorCall = calls.find((c) => c.method === 'error');
-    expect(errorCall?.args[0]).toBe(message);
-    expect(codeOf(calls, 'error')).toBe(code);
-  });
-
-  it('names every run needing recovery in an aggregate_recovery_required envelope', async () => {
-    // A multi-run force-terminal is the one command that can leave several runs
-    // recovery-pending at once, and the outcome already carries the exact
-    // (runId, epoch) set. Rendering only the generic message tells the operator
-    // that recovery is required while withholding the one fact they need to act
-    // on it — which runs. It is emitted under its own code, not the single-run
-    // one: only this envelope carries `details.runs`, so an agent routing on
-    // `code` must be able to tell the two shapes apart.
-    const { exitError, calls } = await render({
-      kind: 'aggregate_recovery_required',
-      attempts: [
-        { runId: RUN_ID, epoch: assertExecutionEpoch(4) },
-        { runId: OTHER_RUN_ID, epoch: assertExecutionEpoch(1) },
-      ],
-      message: 'The aggregate execution outcome is unknown and requires recovery.',
-    });
-
-    expect(exitError).toBe(true);
-    expect(codeOf(calls, 'error')).toBe('AGGREGATE_RECOVERY_REQUIRED');
-    const errorCall = calls.find((c) => c.method === 'error');
-    expect(errorCall?.args[2]).toEqual({
-      runs: [
-        { runId: RUN_ID, epoch: 4 },
-        { runId: OTHER_RUN_ID, epoch: 1 },
-      ],
-    });
-  });
-
-  it('renders actor_context_required as ACTOR_CONTEXT_REQUIRED and exits non-zero', async () => {
-    const { exitError, calls } = await render({
-      kind: 'actor_context_required',
-    });
-    expect(exitError).toBe(true);
-    expect(codeOf(calls, 'error')).toBe('ACTOR_CONTEXT_REQUIRED');
-    const errorCall = calls.find((c) => c.method === 'error');
-    // The remediation names the bearer-authority lane.
-    expect(errorCall?.args[0]).toContain('--claim-id');
-    // ...and the envelope carries NO details object and never echoes the
-    // target run id — that would hand the refused caller a copy-paste bypass
-    // of the accident barrier (decision 4).
-    expect(errorCall?.args[2]).toBeUndefined();
-    expect(JSON.stringify(errorCall?.args)).not.toContain(RUN_ID);
-  });
-
-  it('renders claim_bearer_mismatch as CLAIM_BEARER_MISMATCH and exits non-zero (#613)', async () => {
-    const { exitError, calls } = await render({
-      kind: 'claim_bearer_mismatch',
-    });
-    expect(exitError).toBe(true);
-    expect(codeOf(calls, 'error')).toBe('CLAIM_BEARER_MISMATCH');
-    const errorCall = calls.find((c) => c.method === 'error');
-    // A terminal is the highest-consequence divergence — forcing and releasing
-    // a run on the target's own authority. It must not reuse the bare-form
-    // advice, which would tell a caller that presented a claim to present one.
-    expect(errorCall?.args[0]).not.toContain('Pass `--claim-id');
-    expect(errorCall?.args[0]).toContain('Present the bearer');
-    expect(errorCall?.args[2]).toBeUndefined();
-    expect(JSON.stringify(errorCall?.args)).not.toContain(RUN_ID);
-  });
-
-  it('renders claim_grant_required as CLAIM_GRANT_REQUIRED and exits non-zero', async () => {
-    const { exitError, calls } = await render({
-      kind: 'claim_grant_required',
-      claimId: CLAIM_ID,
-      runId: RUN_ID,
-    });
-
-    expect(exitError).toBe(true);
-    expect(codeOf(calls, 'error')).toBe('CLAIM_GRANT_REQUIRED');
-  });
-
-  it('renders delegation_collection_pending via DELEGATION_COLLECTION_PENDING and exits non-zero', async () => {
-    const { exitError, calls } = await render({
-      kind: 'delegation_collection_pending',
-      parentRunId: PARENT_ID,
-      outcomeCompletionKeys: ['k1'],
-      message:
-        'A delegated claim has reported an outcome that must be collected by the orchestrator.',
-    });
-    expect(exitError).toBe(true);
-    expect(codeOf(calls, 'error')).toBe('DELEGATION_COLLECTION_PENDING');
-  });
-
-  it('renders terminal_claim_confirmed as an idempotent already-resolved JSON payload, exit 0', async () => {
-    const { exitError, calls } = await render({
-      kind: 'terminal_claim_confirmed',
-      claimId: CLAIM_ID,
-      lifecycle: 'completed',
-      command: 'complete',
-    });
-    expect(exitError).toBe(false);
-    const jsonCall = calls.find((c) => c.method === 'json');
-    // Identity is the non-secret lookup key, never the bearer (credential leak).
-    expect(jsonCall?.args[0]).toMatchObject({
-      kind: 'action',
-      action: 'complete',
-      status: 'already-resolved',
-      claimKey: redactClaimId(CLAIM_ID),
       lifecycle: 'completed',
     });
-    expect(JSON.stringify(jsonCall?.args[0])).not.toContain(parseClaimBearer(CLAIM_ID).secret);
-  });
-
-  it('renders terminal_claim_confirmed as a human message when not JSON, exit 0', async () => {
-    const { exitError, calls } = await render(
-      {
-        kind: 'terminal_claim_confirmed',
-        claimId: CLAIM_ID,
-        lifecycle: 'stopped',
-        command: 'stop',
-      },
-      { command: 'stop', json: false },
-    );
-    expect(exitError).toBe(false);
-    expect(calls.some((c) => c.method === 'message')).toBe(true);
-  });
-
-  it('renders terminal_claim_conflict as DELEGATION_RESULT_CONFLICT and exits non-zero', async () => {
-    const { exitError, calls } = await render({
-      kind: 'terminal_claim_conflict',
-      claimId: CLAIM_ID,
-      lifecycle: 'stopped',
-      expectedCommand: 'stop',
-      requestedCommand: 'complete',
-    });
     expect(exitError).toBe(true);
-    expect(codeOf(calls, 'error')).toBe('DELEGATION_RESULT_CONFLICT');
+    expect(codeOf(calls, 'error')).toBe('RD-303');
   });
 
-  it.each([['released'], ['not_attempted']] as const)(
-    'renders already_terminal (cleanup %s) as RUNBOOK_NOT_RUNNING and exits 0',
-    async (cleanupKind) => {
-      // A completed cleanup and a cleanup that was never attempted (unauthorized
-      // bearer) both leave the pre-existing outcome standing: the command asked
-      // about a run that is already terminal, which is not an error.
-      const { exitError, calls } = await render({
-        kind: 'already_terminal',
-        targetRunId: RUN_ID,
-        lifecycle: 'completed',
-        cleanup: { kind: cleanupKind },
-      });
-      expect(exitError).toBe(false);
-      // noActiveRunbook(command, 'RUNBOOK_NOT_RUNNING')
-      expect(codeOf(calls, 'noActiveRunbook')).toBe('RUNBOOK_NOT_RUNNING');
-      expect(calls.some((c) => c.method === 'error')).toBe(false);
-    },
-  );
-
-  it.each([
-    [
-      'claim_rotated',
-      'CLAIMED_RUNBOOK_UNAVAILABLE',
-      { kind: 'claim_rotated', claimKey: redactClaimId(CLAIM_ID) } as const,
-    ],
-    [
-      'determination_lost',
-      'RUN_TARGET_UNAVAILABLE',
-      { kind: 'determination_lost', runId: RUN_ID } as const,
-    ],
-  ] as const)(
-    'renders a refused already_terminal cleanup (%s) as %s and exits non-zero',
-    async (_label, code, refusal) => {
-      // A refused fence means NOTHING was released — the chain is still targeted
-      // and its claims are still live. Rendered at exit 0 that is indistinguishable
-      // from a clean teardown, so the refusal gets its own error envelope. Both
-      // codes are no-retry: neither a rotated claim nor a lost determination can
-      // succeed on a repeat under the same presentation.
-      const { exitError, calls } = await render({
-        kind: 'already_terminal',
-        targetRunId: RUN_ID,
-        lifecycle: 'completed',
-        cleanup: { kind: 'refused', refusal },
-      });
-      expect(exitError).toBe(true);
-      expect(codeOf(calls, 'error')).toBe(code);
-      expect(calls.some((c) => c.method === 'noActiveRunbook')).toBe(false);
-    },
-  );
-
-  it.each([
-    ['missing-inline-parent', 'INLINE_PARENT_UNAVAILABLE'],
-    ['inline-cycle', 'INLINE_PARENT_CYCLE'],
-    ['root-unavailable', 'RUNBOOK_STATE_CHANGED'],
-  ] as const)(
-    'renders inline_plan_unavailable (%s) with code %s and exits non-zero',
-    async (reason, code) => {
-      const { exitError, calls } = await render({
-        kind: 'inline_plan_unavailable',
-        reason,
-        message: 'boom',
-        code,
-      });
-      expect(exitError).toBe(true);
-      expect(codeOf(calls, 'error')).toBe(code);
-    },
-  );
-
-  it('renders applied_claim completed → metadata + complete, exit 0', async () => {
-    const events: TransitionObservationEvent[] = [];
-    const { exitError, calls } = await render(
-      { kind: 'applied_claim', runId: RUN_ID, status: 'completed', events, reported: 'recorded' },
-      { manager: managerReturning(fakeRootState()) },
-    );
-    expect(exitError).toBe(false);
-    expect(calls.some((c) => c.method === 'metadata')).toBe(true);
-    expect(calls.some((c) => c.method === 'complete')).toBe(true);
-  });
-
-  it('streams applied_claim events attributed to the claimed child state', async () => {
-    // Exercises the applied_claim bridge path distinctly from applied_bare: the
-    // single forced run's events are stamped with the claimed child's own id.
-    const event = {
-      type: 'RUNBOOK_COMPLETED',
-      payload: { message: 'ok', position: undefined },
-    } as unknown as TransitionObservationEvent;
-    const { calls } = await render(
-      {
-        kind: 'applied_claim',
-        runId: RUN_ID,
-        status: 'completed',
-        events: [event],
-        reported: 'recorded',
-      },
-      { manager: managerReturning(fakeRootState()) },
-    );
-    const executionEventCall = calls.find((c) => c.method === 'executionEvent');
-    expect(executionEventCall?.args[0]).toMatchObject({ runbookId: RUN_ID });
-  });
-
-  it('renders applied_claim stopped → exit 0 (report-only delegated close)', async () => {
-    // A claim-path stop reports the child fail to the parent as data, but the
-    // command itself succeeds — only a bare stop is a failure terminal.
-    const { exitError, calls } = await render(
-      {
-        kind: 'applied_claim',
-        runId: RUN_ID,
-        status: 'stopped',
-        events: [],
-        reported: 'recorded',
-      },
-      { command: 'stop', manager: managerReturning(fakeRootState()) },
-    );
-    expect(exitError).toBe(false);
-    expect(calls.some((c) => c.method === 'stopped')).toBe(true);
-  });
-
-  it('renders applied_claim when the root fails to reload → complete, no metadata/events', async () => {
-    // The root fails to reload (manager returns null): the `if (rootState)` guards
-    // skip metadata AND the event bridge, but the terminal envelope still renders.
-    const event = {
-      type: 'RUNBOOK_COMPLETED',
-      payload: { message: 'ok', position: undefined },
-    } as unknown as TransitionObservationEvent;
-    const { exitError, calls } = await render(
-      {
-        kind: 'applied_claim',
-        runId: RUN_ID,
-        status: 'completed',
-        events: [event],
-        reported: 'recorded',
-      },
-      { manager: NO_MANAGER },
-    );
-    expect(exitError).toBe(false);
-    expect(calls.some((c) => c.method === 'metadata')).toBe(false);
-    expect(calls.some((c) => c.method === 'executionEvent')).toBe(false);
-    expect(calls.some((c) => c.method === 'complete')).toBe(true);
-  });
-
-  it('renders applied_bare stopped → exit non-zero and streams attributed events through the bridge', async () => {
-    const event = {
-      type: 'RUNBOOK_STOPPED',
-      payload: { message: 'Runbook stopped', position: undefined },
-    } as unknown as TransitionObservationEvent;
-    const { exitError, calls } = await render(
-      {
-        kind: 'applied_bare',
-        rootRunId: RUN_ID,
-        status: 'stopped',
-        events: [{ runId: RUN_ID, runbook: { source: 'project', path: 'root.md' }, event }],
-        forcedRunIds: [RUN_ID],
-        reported: 'not-applicable',
-      },
-      { command: 'stop', manager: managerReturning(fakeRootState()) },
-    );
-    expect(exitError).toBe(true);
-    expect(calls.some((c) => c.method === 'metadata')).toBe(true);
-    expect(calls.some((c) => c.method === 'executionEvent')).toBe(true);
-    expect(calls.some((c) => c.method === 'stopped')).toBe(true);
-  });
-});
-
-describe('finalizeAppliedClaimTerminal', () => {
-  const APPLIED_STOP = {
-    kind: 'applied_claim' as const,
-    runId: RUN_ID,
-    status: 'stopped' as const,
-    events: [],
-    reported: 'not-applicable' as const,
-  };
-  const APPLIED_COMPLETE = { ...APPLIED_STOP, status: 'completed' as const };
-
-  /** Root state carrying an inline parent linkage (drives the propagate branch). */
-  function inlineChildState(): RunbookState {
-    return { ...fakeRootState(), parentLinkage: { kind: 'inline' } } as unknown as RunbookState;
-  }
-
-  /** Manager double counting loads and returning the supplied state. */
-  function countingManager(state: RunbookState | null): {
-    manager: RunbookStateManager;
-    loads: () => number;
-  } {
-    let loads = 0;
-    const manager = {
-      load: async () => {
-        loads++;
-        return state;
-      },
-    } as unknown as RunbookStateManager;
-    return { manager, loads: () => loads };
-  }
-
-  it('surfaces an error and non-zero exit when the terminated child fails to reload', async () => {
-    const { output, calls } = recordingEmitter(true);
-    let propagateCalled = false;
-    const propagate: TerminalRunProgression = async () => {
-      propagateCalled = true;
-      return { kind: 'waiting', runId: RUN_ID, reason: 'awaiting_input' };
-    };
-
-    const exitError = await finalizeAppliedClaimTerminal(
-      output,
-      'stop',
-      NO_MANAGER,
-      APPLIED_STOP,
-      '/cwd',
-      undefined,
-      propagate,
-    );
-
-    expect(exitError).toBe(true);
-    expect(codeOf(calls, 'error')).toBe('RUN_TARGET_UNAVAILABLE');
-    // Must NOT silently render a success envelope or propagate when the run vanished.
-    expect(propagateCalled).toBe(false);
-    expect(calls.some((c) => c.method === 'complete' || c.method === 'stopped')).toBe(false);
-  });
-
-  it('renders the child terminal before propagating to the inline parent', async () => {
-    const { output, calls } = recordingEmitter(true);
-    let childRenderedBeforePropagate = false;
-    const propagate: TerminalRunProgression = async () => {
-      childRenderedBeforePropagate = calls.some(
-        (c) => c.method === 'stopped' || c.method === 'complete',
+  it.each(['stopped', 'abandoned'] as const)(
+    'renders run_finished as RD-304 for a %s run and exits non-zero',
+    async (lifecycle) => {
+      const { exitError, calls } = await render(
+        { kind: 'run_finished', runId: RUN_ID, lifecycle },
+        { command: 'stop' },
       );
-      return { kind: 'waiting', runId: RUN_ID, reason: 'awaiting_input' };
-    };
+      expect(exitError).toBe(true);
+      const error = calls.find((c) => c.method === 'error');
+      expect(error?.args[1]).toBe('RD-304');
+      expect(String(error?.args[0])).toContain('rundown stop');
+      expect(error?.args[2]).toEqual({ runId: RUN_ID, lifecycle });
+    },
+  );
 
-    await finalizeAppliedClaimTerminal(
-      output,
-      'stop',
-      managerReturning(inlineChildState()),
-      APPLIED_STOP,
-      '/cwd',
-      undefined,
-      propagate,
-    );
-
-    expect(childRenderedBeforePropagate).toBe(true);
-  });
-
-  it('reloads the terminated child exactly once for both render and propagation', async () => {
-    const { output } = recordingEmitter(true);
-    const { manager, loads } = countingManager(inlineChildState());
-    const propagate: TerminalRunProgression = async () => ({
-      kind: 'waiting',
+  it('renders concurrent_modification as CONCURRENT_MODIFICATION with the run id and exits non-zero', async () => {
+    const { exitError, calls } = await render({
+      kind: 'concurrent_modification',
       runId: RUN_ID,
-      reason: 'awaiting_input',
+      message: 'row moved',
     });
-
-    await finalizeAppliedClaimTerminal(
-      output,
-      'complete',
-      manager,
-      APPLIED_COMPLETE,
-      '/cwd',
-      undefined,
-      propagate,
-    );
-
-    expect(loads()).toBe(1);
+    expect(exitError).toBe(true);
+    const error = calls.find((c) => c.method === 'error');
+    expect(error?.args[0]).toBe('row moved');
+    expect(error?.args[1]).toBe(CONCURRENT_MODIFICATION_CODE);
+    expect(error?.args[2]).toEqual({ runId: RUN_ID });
   });
 
-  it('propagates a stopped inline parent into a non-zero exit', async () => {
-    const { output } = recordingEmitter(true);
-    const propagate: TerminalRunProgression = async () => ({ kind: 'stopped', runId: PARENT_ID });
-
-    const exitError = await finalizeAppliedClaimTerminal(
-      output,
-      'complete',
-      managerReturning(inlineChildState()),
-      APPLIED_COMPLETE,
-      '/cwd',
-      undefined,
-      propagate,
-    );
-
-    expect(exitError).toBe(true);
+  it('renders applied completed → metadata + complete, exit 0', async () => {
+    const { exitError, calls } = await render(applied('completed'), {
+      manager: managerReturning(fakeRootState()),
+    });
+    expect(exitError).toBe(false);
+    expect(calls.map((c) => c.method)).toEqual(['metadata', 'complete']);
+    expect(calls[0].args[0]).toMatchObject({ file: 'root.md', runId: RUN_ID });
+    expect(calls[1].args[0]).toBe('Runbook completed successfully');
   });
 
-  it('propagates a BLOCKED inline parent into a non-zero exit (#602)', async () => {
-    // 'blocked' is the seam's fail-closed disposition — it is what a tripped
-    // linkage guard ('linkage-cycle') collapses to at this adapter, and what a
-    // command-infrastructure failure already collapsed to before #602. Exiting 0
-    // here would print INLINE_PARENT_CYCLE on a SUCCESS exit: the diagnostic says
-    // "corrupt state, prune the run" while the process says "all good". The
-    // execution path already fails closed on 'blocked' (execution.ts:417); this
-    // path must agree.
-    const { output } = recordingEmitter(true);
-    const propagate: TerminalRunProgression = async () => ({
-      kind: 'refused',
-      runId: RUN_ID,
-      reason: 'inline_flow_back_refused',
-      message: 'Inline parent progression refused',
-      recovery: 'permanent',
+  it('renders applied stopped → metadata + stopped, exit non-zero (No silent mapping)', async () => {
+    const { exitError, calls } = await render(applied('stopped'), {
+      command: 'stop',
+      manager: managerReturning(fakeRootState()),
+      message: 'aborted by operator',
     });
-
-    const exitError = await finalizeAppliedClaimTerminal(
-      output,
-      'complete',
-      managerReturning(inlineChildState()),
-      APPLIED_COMPLETE,
-      '/cwd',
-      undefined,
-      propagate,
-    );
-
     expect(exitError).toBe(true);
+    expect(calls.map((c) => c.method)).toEqual(['metadata', 'stopped']);
+    expect(calls[1].args[0]).toBe('aborted by operator');
+  });
+
+  it('streams applied events through one bridge attributed to the run, with monotonic seq', async () => {
+    const { exitError, calls } = await render(
+      applied('completed', [completedEvent(), completedEvent()]),
+      { manager: managerReturning(fakeRootState()) },
+    );
+    expect(exitError).toBe(false);
+    const streamed = calls.filter((c) => c.method === 'executionEvent');
+    expect(streamed).toHaveLength(2);
+    expect(streamed.map((c) => (c.args[0] as { seq: number }).seq)).toEqual([1, 2]);
+    for (const call of streamed) {
+      expect(call.args[0]).toMatchObject({
+        v: '1',
+        type: 'RUNBOOK_COMPLETED',
+        runbookId: RUN_ID,
+        runbook: { source: 'project', path: 'root.md' },
+      });
+    }
+  });
+
+  it('renders applied without metadata or events when the run cannot be reloaded', async () => {
+    const { exitError, calls } = await render(applied('completed', [completedEvent()]));
+    expect(exitError).toBe(false);
+    expect(calls.map((c) => c.method)).toEqual(['complete']);
   });
 });
 
-describe('handleTerminalRecovery', () => {
-  it('redacts the claim bearer in the complete recovery message (never leaks the secret)', async () => {
+describe('ForceTerminalEventBridge', () => {
+  it('stamps a v1 envelope with the attribution and a counter that never restarts', () => {
     const { output, calls } = recordingEmitter();
-
-    await handleTerminalRecovery(
-      'complete',
-      new InvalidRunbookStateError('snapshot incompatible'),
-      output,
-      '/test',
-      { claimId: CLAIM_ID },
-    );
-
-    const errorCall = calls.find((c) => c.method === 'error');
-    expect(errorCall?.args[1]).toBe('CLAIMED_RUNBOOK_UNAVAILABLE');
-
-    // The recovery message must name only the non-secret lookup key, never the
-    // raw bearer whose 43-char secret would otherwise land in JSON output/logs.
-    const message = String(errorCall?.args[0]);
-    expect(message).toContain(redactClaimId(CLAIM_ID));
-    expect(message).not.toContain(parseClaimBearer(CLAIM_ID).secret);
-    // Defense in depth: nothing the recovery path emits carries the secret.
-    expect(JSON.stringify(calls)).not.toContain(parseClaimBearer(CLAIM_ID).secret);
-
-    // Recovery signals failure through `process.exitCode` rather than `process.exit`.
-    // Assert it, and consume it so the value cannot leak into the next test file.
-    expect(takeExitCode()).toBe(1);
-  });
-
-  it.each([
-    {
-      label: 'claim row',
-      error: new InvalidPersistedClaimError(
-        { claimKey: 'rdclm_11111111111111111111111111111111', reason: 'malformed_claim_field' },
-        'claim row is unreadable',
-      ),
-    },
-    {
-      label: 'reconstructed session',
-      error: new InvalidPersistedSessionError('session failed its schema'),
-    },
-  ])('rethrows a corrupt $label rather than blaming the named run', async ({ error }) => {
-    // Both classes come from claim and session reads — never from the run row.
-    // Reporting them as `Run <id> has unusable persisted state` under
-    // RUN_TARGET_UNAVAILABLE misdiagnoses a corrupt claims table as a corrupt
-    // run, implies a remedy (prune that run) that cannot fix it, and hides the
-    // RD-310 envelope `toRundownError` carries for exactly this condition.
-    // Rethrowing is what routes them to `withErrorHandling`.
-    const { output, calls } = recordingEmitter();
-
-    await expect(
-      handleTerminalRecovery('stop', error, output, '/test', { runId: RUN_ID }),
-    ).rejects.toBe(error);
-
-    expect(calls).toEqual([]);
-    expect(takeExitCode()).toBeUndefined();
-  });
-
-  it('still reports a corrupt run row against the named run', async () => {
-    // The other half of the narrowing: an actual run-state failure must keep
-    // reporting RUN_TARGET_UNAVAILABLE against the run the operator named.
-    const { output, calls } = recordingEmitter();
-
-    await handleTerminalRecovery(
-      'complete',
-      new InvalidRunbookStateError('snapshot incompatible'),
-      output,
-      '/test',
-      { runId: RUN_ID },
-    );
-
-    const errorCall = calls.find((c) => c.method === 'error');
-    expect(errorCall?.args[1]).toBe('RUN_TARGET_UNAVAILABLE');
-    expect(String(errorCall?.args[0])).toContain(RUN_ID);
-    expect(takeExitCode()).toBe(1);
+    const bridge = new ForceTerminalEventBridge(output);
+    const other = assertRunId('rd_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb');
+    bridge.emit({ id: RUN_ID, runbook: { source: 'project', path: 'a.md' } }, completedEvent());
+    bridge.emit({ id: other, runbook: { source: 'project', path: 'b.md' } }, completedEvent());
+    expect(calls.map((c) => c.args[0])).toEqual([
+      expect.objectContaining({
+        seq: 1,
+        runbookId: RUN_ID,
+        runbook: { source: 'project', path: 'a.md' },
+      }),
+      expect.objectContaining({
+        seq: 2,
+        runbookId: other,
+        runbook: { source: 'project', path: 'b.md' },
+      }),
+    ]);
+    for (const call of calls) {
+      expect(typeof (call.args[0] as { ts: unknown }).ts).toBe('string');
+    }
   });
 });

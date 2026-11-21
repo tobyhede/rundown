@@ -8,9 +8,9 @@ scenarios:
     description: FOR iterates with substeps
     commands:
       - rd run --prompted for-basic-substep.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1 --index 1
+      - rd pass --token ${TOKEN} --step 1.1 --index 2
+      - rd pass --token ${TOKEN} --step 1.1 --index 3
     result: COMPLETE
 ---
 

@@ -7,9 +7,9 @@ scenarios:
     description: All named substeps pass
     commands:
       - rd run --prompted named-substeps.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.2
+      - rd pass --token ${TOKEN} --step 1.Cleanup
     result: COMPLETE
 tags:
   - named-steps

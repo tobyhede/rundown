@@ -37,13 +37,21 @@ describe('setExecSync', () => {
     const mockExec = mockExecFileSync('ok');
     setExecSync(mockExec);
 
-    // Claim-evidence form: carries independent claim evidence, so it survives the
-    // subprocess trust boundary and is spawned normally.
-    rundown(['pass', '--claim-id', 'abc123'], '/project/path');
+    rundown(
+      ['pass', '--token', 'rdo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', '--step', '2'],
+      '/project/path',
+    );
 
     expect(mockExec).toHaveBeenCalledWith(
       'node',
-      [expect.stringContaining('cli'), 'pass', '--claim-id', 'abc123'],
+      [
+        expect.stringContaining('cli'),
+        'pass',
+        '--token',
+        'rdo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        '--step',
+        '2',
+      ],
       expect.objectContaining({
         cwd: '/project/path',
         stdio: 'pipe',
@@ -98,7 +106,7 @@ describe('rundown', () => {
       }),
     );
 
-    // Lock the claim-id migration: legacy delegation env vars must not leak through.
+    // Legacy delegation env vars must not leak through: authority is --token, never ambient.
     const lastCall = mockExec.mock.calls[mockExec.mock.calls.length - 1] as unknown as [
       string,
       readonly string[],
@@ -112,99 +120,75 @@ describe('rundown', () => {
     const mockExec = mockExecFileSync('ok');
     setExecSync(mockExec);
 
-    rundown(['fail', '--claim-id', 'abc-123', '--reason', 'Task incomplete'], '/test');
+    rundown(
+      [
+        'fail',
+        '--token',
+        'rdo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        '--step',
+        '1.2',
+        '--index',
+        '3',
+      ],
+      '/test',
+    );
 
     expect(mockExec).toHaveBeenCalledWith(
       'node',
-      [expect.any(String), 'fail', '--claim-id', 'abc-123', '--reason', 'Task incomplete'],
+      [
+        expect.any(String),
+        'fail',
+        '--token',
+        'rdo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        '--step',
+        '1.2',
+        '--index',
+        '3',
+      ],
       expect.any(Object),
     );
   });
 
-  describe('subprocess trust boundary', () => {
+  describe('no plugin-side authority gate', () => {
     afterEach(() => {
       setExecSync(mockExecFileSync(''));
     });
 
-    it.each([['pass'], ['fail'], ['delegate'], ['goto'], ['collect']])(
-      'withholds a bare %s mutation instead of spawning the CLI',
+    it.each([['pass'], ['fail'], ['goto'], ['complete'], ['stop'], ['yes'], ['ok'], ['no']])(
+      'spawns a bare %s unchanged; the CLI refuses it with TOKEN_REQUIRED',
       (command) => {
-        const mockExec = mockExecFileSync('should not run');
-        setExecSync(mockExec);
-
-        expect(() => rundown([command], '/test')).toThrow(/subprocess front end/);
-        expect(mockExec).not.toHaveBeenCalled();
-      },
-    );
-
-    it('withholds a --step-targeted bare mutation (still direct-CLI trust)', () => {
-      const mockExec = mockExecFileSync('should not run');
-      setExecSync(mockExec);
-
-      expect(() => rundown(['pass', '--step', '2.1'], '/test')).toThrow(/subprocess front end/);
-      expect(mockExec).not.toHaveBeenCalled();
-    });
-
-    it.each([['yes'], ['ok'], ['no']])(
-      'withholds the bare alias mutation %j (cannot bypass via alias)',
-      (command) => {
-        const mockExec = mockExecFileSync('should not run');
-        setExecSync(mockExec);
-
-        expect(() => rundown([command], '/test')).toThrow(/subprocess front end/);
-        expect(mockExec).not.toHaveBeenCalled();
-      },
-    );
-
-    it.each([[['yes', '--claim-id', 'claim-1']], [['no', '--claim-id=claim-1']]])(
-      'spawns the claim-evidence alias mutation %j',
-      (args) => {
+        // The subprocess trust boundary is gone with the multi-writer core. The
+        // Owner Token is the authority and the CLI is the only gate, so this
+        // helper must not withhold anything — a withhold here would be a second
+        // implementation of a refusal that core already owns.
         const mockExec = mockExecFileSync('ok');
         setExecSync(mockExec);
 
-        expect(() => rundown(args, '/test')).not.toThrow();
+        expect(() => rundown([command], '/test')).not.toThrow();
         expect(mockExec).toHaveBeenCalledWith(
           'node',
-          [expect.any(String), ...args],
+          [expect.any(String), command],
           expect.any(Object),
         );
       },
     );
 
-    it.each([
-      [['pass', '--claim-id', 'claim-1']],
-      [['fail', '--claim-id=claim-1']],
-      [['collect', '--claim-id', 'claim-1']],
-    ])('spawns the claim-evidence mutation %j', (args) => {
+    it('spawns a --token mutation with its argv intact', () => {
       const mockExec = mockExecFileSync('ok');
       setExecSync(mockExec);
+      const args = [
+        'pass',
+        '--token',
+        'rdo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+        '--step',
+        '2.1',
+      ];
 
-      expect(() => rundown(args, '/test')).not.toThrow();
+      rundown(args, '/test');
+
       expect(mockExec).toHaveBeenCalledWith(
         'node',
         [expect.any(String), ...args],
-        expect.any(Object),
-      );
-    });
-
-    it('withholds delegate when a claim-looking token is an input-file value', () => {
-      const mockExec = mockExecFileSync('should not run');
-      setExecSync(mockExec);
-
-      expect(() =>
-        rundown(['delegate', 'child.md', '--input-file', '--claim-id=foo'], '/test'),
-      ).toThrow(/subprocess front end/);
-      expect(mockExec).not.toHaveBeenCalled();
-    });
-
-    it('spawns delegate --claim-id claim evidence through the boundary', () => {
-      const mockExec = mockExecFileSync('ok');
-      setExecSync(mockExec);
-
-      expect(() => rundown(['delegate', '--claim-id=foo'], '/test')).not.toThrow();
-      expect(mockExec).toHaveBeenCalledWith(
-        'node',
-        [expect.any(String), 'delegate', '--claim-id=foo'],
         expect.any(Object),
       );
     });

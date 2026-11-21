@@ -9,14 +9,14 @@ scenarios:
     description: Step passes, runbook halts via PASS STOP
     commands:
       - rd run --prompted pass-stop.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
     result: STOP
 
   forced-stop-command:
     description: Public rd stop forces STOP from an active prompted run
     commands:
       - rd run --prompted pass-stop.runbook.md
-      - rd stop "operator stopped"
+      - rd stop --token ${TOKEN} "operator stopped"
     result: STOP
 ---
 

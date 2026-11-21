@@ -7,7 +7,7 @@ scenarios:
     description: ARTIFACTS resolves an existing project file as a file artifact record
     commands:
       - rd run --prompted artifacts-file-reference.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
     expect:
       result: COMPLETE
       artifacts:

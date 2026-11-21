@@ -2,66 +2,34 @@
 //
 // Shared front end for the terminal (`complete` / `stop`) commands. Routes both
 // through the core `RunbookLifecycleCommandService.runTerminal` seam and renders
-// its typed outcome. The seam owns target resolution, policy gating, the inline
-// FORCE cascade, record-before-release child propagation, and retained-tombstone
-// release; this module keeps only Category-A work: build typed caller evidence,
-// stream observation events, and set the exit code.
+// its typed outcome. The seam owns the FORCE dispatch and the conditional save;
+// this module keeps only Category-A work: resolve the Owner Token through
+// core, stream observation events, and set the exit code.
 
 import {
-  InvalidRunbookStateError,
-  RunbookStateManager,
-  SessionService,
-  getErrorMessage,
-  isError,
-  logger,
-  redactClaimId,
-  progressionDirectiveForTerminalRun,
-  type ClaimId,
-  type CommandTargetSelector,
+  CONCURRENT_MODIFICATION_CODE,
+  resolveOwnedRun,
   type LifecycleTerminalOutcome,
+  type OwnerToken,
   type RunbookEventInput,
   type RunbookEventV1,
   type RunbookRef,
-  type RunbookState,
+  type RunbookStateManager,
   type RunId,
-  type RunProgressionOutcome,
   type TerminalCommandName,
 } from '@rundown-org/core';
-import { buildNonDelegatingLifecycleSeam } from './lifecycle-seam-factory.js';
-import { readLifecycleCallerEvidence } from './caller-evidence.js';
-import { emitDelegationCollectionPendingError } from './transitions.js';
-import {
-  renderActorContextRequiredRefusal,
-  renderClaimBearerMismatchRefusal,
-  renderClaimGrantRequiredRefusal,
-  renderRefusedTerminalCleanup,
-  renderStaleClaimRefusal,
-  renderTerminalClaimConfirmed,
-  renderTerminalClaimConflict,
-} from './refusal-renderers.js';
-import {
-  cleanupOrphanedActiveStack,
-  isRecoverableActiveStackError,
-  isUnusableRunStateError,
-  type OrphanCleanupResult,
-} from './active-runbook-cleanup.js';
-import {
-  isSessionMutationRefusal,
-  renderSessionMutationRefusal,
-  renderTransactionalMutationRefusal,
-} from './session-mutation-result.js';
+import { buildLifecycleSeam } from './lifecycle-seam-factory.js';
 import { buildMetadata } from '../services/execution.js';
-import { getRunbookFromState } from './runbook-loader.js';
-import { driveRunProgression } from './run-progression-adapters.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
+import { renderOwnedRunRefusal, renderRunFinished } from './token-option.js';
 
 /**
  * Command-local bridge that streams force-terminal observation events.
  *
- * Preserves one monotonic `seq` across the whole forced chain while stamping
- * each event with the runbook id and runbook ref of the state that produced it.
- * Exactly one bridge must be created per terminal command — creating one per
- * state would restart `seq` or misattribute descendant events.
+ * Preserves one monotonic `seq` across the command while stamping each event
+ * with the runbook id and runbook ref of the state that produced it. Exactly
+ * one bridge must be created per terminal command — creating one per state
+ * would restart `seq`.
  */
 export class ForceTerminalEventBridge {
   private seq = 0;
@@ -100,34 +68,28 @@ export class ForceTerminalEventBridge {
 
 /** CLI options forwarded to a terminal seam command. */
 export interface SeamTerminalOptions {
-  /** Explicit claim-id bearer authority (`--claim-id`). */
-  readonly claimId?: ClaimId;
-  /** Explicit run target selector (`--run`), not authority by itself. */
-  readonly runId?: RunId;
+  /** The Owner Token naming the run (`--token`), already parsed. */
+  readonly token: OwnerToken;
   /** Optional terminal message forwarded to the machine. */
   readonly message?: string;
 }
 
 /**
- * Render a terminal seam outcome to the existing CLI envelopes and report whether
- * the outcome requests a non-zero exit code.
+ * Render a terminal seam outcome to the CLI envelopes and report whether the
+ * outcome requests a non-zero exit code.
  *
- * Switches exhaustively over {@link LifecycleTerminalOutcome} and reuses the
- * existing renderers / error codes — it invents no new codes. The applied
- * variants load the resolved root, emit metadata, stream the seam's observation
- * events through a single {@link ForceTerminalEventBridge}, then render the
- * complete/stopped envelope (a stopped terminal exits non-zero — No silent
- * mapping).
+ * Switches exhaustively over {@link LifecycleTerminalOutcome}. The applied
+ * variant loads the run for metadata, streams the seam's observation events
+ * through a single {@link ForceTerminalEventBridge}, then renders the
+ * complete/stopped envelope. A bare `rd stop` is the operator aborting their
+ * own run — a failure terminal that exits non-zero (No silent mapping).
  *
  * @param output - Output emitter for CLI output.
  * @param command - The terminal command being rendered (`complete` / `stop`).
- * @param manager - State manager used to reload the resolved root for rendering.
+ * @param manager - State manager used to reload the run for rendering.
  * @param outcome - Typed terminal outcome returned by the seam.
  * @param message - Optional operator-supplied terminal message for the applied
  *   complete/stopped summary; falls back to the default summary when absent.
- * @param preloadedRoot - Already-loaded resolved root for the `applied_claim`
- *   path; supplied by {@link finalizeAppliedClaimTerminal} so the run is not
- *   reloaded a second time in the same command.
  * @returns `true` when the outcome requests a non-zero exit code.
  */
 export async function renderTerminalOutcome(
@@ -136,111 +98,33 @@ export async function renderTerminalOutcome(
   manager: RunbookStateManager,
   outcome: LifecycleTerminalOutcome,
   message?: string,
-  preloadedRoot?: RunbookState,
 ): Promise<boolean> {
   switch (outcome.kind) {
-    case 'none':
-      output.noActiveRunbook(command);
-      return false;
-    case 'stale_claim':
-      return renderStaleClaimRefusal(output, outcome.message, outcome.code);
-    case 'actor_context_required':
-      return renderActorContextRequiredRefusal(output, command);
-    case 'claim_bearer_mismatch':
-      return renderClaimBearerMismatchRefusal(output, command);
-    case 'claim_grant_required':
-      return renderClaimGrantRequiredRefusal(output, command);
-    case 'delegation_collection_pending':
-      emitDelegationCollectionPendingError(
-        output,
-        command,
-        outcome.parentRunId,
-        outcome.outcomeCompletionKeys,
-        outcome.message,
-      );
+    case 'run_finished':
+      renderRunFinished(output, command, outcome.runId, outcome.lifecycle);
       return true;
-    case 'terminal_claim_confirmed':
-      return renderTerminalClaimConfirmed(output, command, outcome.claimId, outcome.lifecycle);
-    case 'terminal_claim_conflict':
-      return renderTerminalClaimConflict(
-        output,
-        outcome.claimId,
-        outcome.expectedCommand,
-        outcome.requestedCommand,
-      );
-    case 'already_terminal':
-      // The run was already terminal, so the ONLY thing this command owed was
-      // the chain cleanup. A refused fence committed nothing — the inline chain
-      // is still targeted and its descendant claims are still live — so
-      // rendering that at exit 0 would report a teardown that did not happen.
-      // `released` and `not_attempted` both leave a coherent pre-existing state
-      // and stay the idempotent no-op they have always been.
-      if (outcome.cleanup.kind === 'refused') {
-        return renderRefusedTerminalCleanup(output, outcome.targetRunId, outcome.cleanup.refusal);
-      }
-      output.noActiveRunbook(command, 'RUNBOOK_NOT_RUNNING');
-      return false;
-    case 'unknown_run':
-      output.error(outcome.message, 'RUN_TARGET_UNAVAILABLE');
+    case 'concurrent_modification':
+      output.error(outcome.message, CONCURRENT_MODIFICATION_CODE, { runId: outcome.runId });
       return true;
-    case 'inline_plan_unavailable':
-      // All three reasons (missing-inline-parent / inline-cycle / root-unavailable)
-      // exit non-zero; the core-attached code is rendered as a flat passthrough.
-      output.error(outcome.message, outcome.code);
-      return true;
-    case 'applied_claim': {
-      // Single forced run (the claimed child). Reuse the caller's already-loaded
-      // root when supplied (no second disk read), else load it for metadata +
-      // attribution, and stream its events stamped with the child's own id/ref.
-      const rootState = preloadedRoot ?? (await manager.load(outcome.runId));
-      if (rootState) output.metadata(buildMetadata(rootState));
-      if (outcome.events.length > 0 && rootState) {
+    case 'unknown_token':
+      // Pruned between token resolution and the save; see renderRefusal.
+      return renderOwnedRunRefusal(output, command, outcome);
+    case 'applied': {
+      const state = await manager.load(outcome.runId);
+      if (state) output.metadata(buildMetadata(state));
+      if (outcome.events.length > 0 && state) {
         const bridge = new ForceTerminalEventBridge(output);
         for (const event of outcome.events) {
-          bridge.emit({ id: rootState.id, runbook: rootState.runbook }, event);
+          bridge.emit({ id: state.id, runbook: state.runbook }, event);
         }
       }
-      if (outcome.status === 'stopped') {
-        // A claim-path `rd stop --claim-id` is a report-only delegated close: the
-        // child's `fail` is reported to the parent as data (via the seam's
-        // record-before-release), but the command itself succeeded, so it exits 0.
-        output.stopped(message ?? 'Runbook stopped');
-        return false;
-      }
-      output.complete(message ?? 'Runbook completed successfully');
-      return false;
-    }
-    case 'applied_bare': {
-      // Multi-run inline cascade: metadata from the root, but each event is
-      // streamed stamped with the id/ref of the descendant that produced it
-      // (per-descendant attribution across the forced chain).
-      const rootState = await manager.load(outcome.rootRunId);
-      if (rootState) output.metadata(buildMetadata(rootState));
-      if (outcome.events.length > 0) {
-        const bridge = new ForceTerminalEventBridge(output);
-        for (const { runId, runbook, event } of outcome.events) {
-          bridge.emit({ id: runId, runbook }, event);
-        }
-      }
-      if (outcome.status === 'stopped') {
-        // A bare `rd stop` is the operator aborting their own run — a failure
-        // terminal that exits non-zero (No silent mapping).
+      if (outcome.lifecycle === 'stopped') {
         output.stopped(message ?? 'Runbook stopped');
         return true;
       }
       output.complete(message ?? 'Runbook completed successfully');
       return false;
     }
-    case 'execution_in_progress':
-    case 'recovery_required':
-    case 'aggregate_recovery_required':
-    case 'claim_superseded':
-    case 'concurrent_modification':
-    case 'missing':
-      // The full six-member transactional union, rendered by the one module
-      // that owns the kind → code mapping. A local restatement is how the two
-      // aggregate renderings drifted (`Number(epoch)` versus bare `epoch`).
-      return renderTransactionalMutationRefusal(output, outcome);
     default: {
       const _exhaustive: never = outcome;
       return _exhaustive;
@@ -251,36 +135,34 @@ export async function renderTerminalOutcome(
 /**
  * Drive a complete/stop terminal command through the core lifecycle seam.
  *
- * Builds the seam over the same core services as `runSeamTransition`, maps the
- * parsed `--claim-id` to a target selector (bare → `default`), calls
- * `runTerminal` with typed caller evidence, and renders the outcome.
+ * Resolves the Owner Token through core, calls `runTerminal` on the owned
+ * run, and renders the outcome. Core's directive for a terminal run is
+ * `none` until composition returns (#903), so nothing is activated here.
  *
  * @param output - Output emitter for CLI output.
  * @param cwd - Current working directory.
  * @param command - The terminal command to run (`complete` / `stop`).
- * @param options - Parsed `--claim-id` target and optional message.
+ * @param options - Parsed `--token` and optional message.
  * @returns The bound state manager and whether the command requests a non-zero exit.
  */
 export async function runSeamTerminal(
   output: OutputEmitter,
   cwd: string,
   command: TerminalCommandName,
-  options: SeamTerminalOptions = {},
+  options: SeamTerminalOptions,
 ): Promise<{ readonly manager: RunbookStateManager; readonly exitError: boolean }> {
-  const { manager, sessionService, seam } = buildNonDelegatingLifecycleSeam(cwd);
+  const { manager, seam } = buildLifecycleSeam(cwd);
 
-  const targetSelector: CommandTargetSelector = options.claimId
-    ? { kind: 'claim', claimId: options.claimId }
-    : options.runId !== undefined
-      ? { kind: 'run', runId: options.runId }
-      : { kind: 'default' };
+  const resolution = await resolveOwnedRun(manager, options.token);
+  if (resolution.kind !== 'running') {
+    const exitError = renderOwnedRunRefusal(output, command, resolution);
+    output.flush();
+    return { manager, exitError };
+  }
 
   const outcome = await seam.runTerminal({
     command,
-    callerEvidence: readLifecycleCallerEvidence(
-      options.claimId !== undefined ? { claimId: options.claimId } : {},
-    ),
-    targetSelector,
+    run: resolution.run,
     ...(options.message !== undefined ? { message: options.message } : {}),
     computeActionResult:
       command === 'complete'
@@ -288,253 +170,7 @@ export async function runSeamTerminal(
         : () => false,
   });
 
-  // Bare path only: a `none` outcome can mean an orphaned active stack (the top
-  // entry's persisted run is missing) rather than a genuinely empty stack.
-  // Attempt Category-A orphan cleanup; a verified-unusable top is popped and
-  // reported as a removal (exit 0). An empty stack or a healthy top cleans
-  // nothing and falls through to the normal `no active runbook` rendering. No
-  // prior error exists here, so a guard failure may propagate normally.
-  if (outcome.kind === 'none' && options.claimId === undefined && options.runId === undefined) {
-    const cleanup = await cleanupOrphanedActiveStack(manager, sessionService);
-    if (cleanup.kind === 'removed') {
-      const removalMessage = 'Removed unusable runbook state from session';
-      if (command === 'complete') output.complete(removalMessage);
-      else output.stopped(removalMessage);
-      output.flush();
-      return { manager, exitError: false };
-    }
-    if (isSessionMutationRefusal(cleanup)) {
-      // The orphan was verified unusable but could not be removed from session
-      // targeting. Report the refusal rather than falling through to `no active
-      // runbook`, which would exit 0 and hide it.
-      renderSessionMutationRefusal(output, cleanup);
-      output.flush();
-      return { manager, exitError: true };
-    }
-  }
-
-  const exitError =
-    outcome.kind === 'applied_claim'
-      ? await finalizeAppliedClaimTerminal(output, command, manager, outcome, cwd, options.message)
-      : await renderTerminalOutcome(output, command, manager, outcome, options.message);
+  const exitError = await renderTerminalOutcome(output, command, manager, outcome, options.message);
   output.flush();
   return { manager, exitError };
-}
-
-/** The `applied_claim` variant of a terminal outcome (single forced child). */
-type AppliedClaimOutcome = Extract<LifecycleTerminalOutcome, { kind: 'applied_claim' }>;
-
-/**
- * Public terminal Run Progression driver, injectable at the frontend seam.
- *
- * `null` reports core's decision that the observed terminal owes composition
- * nothing further, which is distinct from any outcome an activation can close
- * with — it means no activation ran at all.
- */
-export type TerminalRunProgression = (
-  state: RunbookState,
-  cwd: string,
-  output: OutputEmitter,
-  manager: RunbookStateManager,
-) => Promise<RunProgressionOutcome | null>;
-
-const driveTerminalRunProgression: TerminalRunProgression = async (state, cwd, output, manager) => {
-  // Core decides both whether this terminal continues and where the activation
-  // starts; the frontend only executes the directive it is handed. The steps
-  // loader is deliberately lazy — a terminal that continues with nothing never
-  // parses its runbook, so a moved or unreadable child cannot throw after its
-  // terminal was already applied and rendered.
-  const directive = progressionDirectiveForTerminalRun(state, (terminal) =>
-    getRunbookFromState(terminal, cwd),
-  );
-  if (directive.kind === 'none') return null;
-  return await driveRunProgression(directive, { manager, cwd, output });
-};
-
-/**
- * Finalize an `applied_claim` terminal: render the claimed child's own outcome,
- * then propagate an inline-linked child's terminal to its parent.
- *
- * A single reload of the just-terminated child feeds both steps (the render
- * reuses it rather than re-reading disk). The child's own complete/stopped
- * output is emitted BEFORE the parent is advanced, so a streaming consumer never
- * sees the inline parent's continuation interleaved ahead of the child's
- * completion. A failed reload — after the seam already applied the terminal — is
- * surfaced as an error and non-zero exit rather than silently skipping
- * propagation and reporting success.
- *
- * @param output - Output emitter for CLI output.
- * @param command - The terminal command being finalized (`complete` / `stop`).
- * @param manager - State manager used to reload the just-terminated child.
- * @param outcome - The `applied_claim` outcome from the seam.
- * @param cwd - Current working directory (for inline parent propagation).
- * @param message - Optional operator-supplied terminal message.
- * @param progress - Public Run Progression driver (injected in tests). Returns
- *   `null` when core decided this terminal continues with nothing.
- * @returns `true` when the command requests a non-zero exit code.
- */
-export async function finalizeAppliedClaimTerminal(
-  output: OutputEmitter,
-  command: TerminalCommandName,
-  manager: RunbookStateManager,
-  outcome: AppliedClaimOutcome,
-  cwd: string,
-  message: string | undefined,
-  progress: TerminalRunProgression = driveTerminalRunProgression,
-): Promise<boolean> {
-  const terminal = await manager.load(outcome.runId);
-  if (!terminal) {
-    // The seam just applied a terminal to this run, so a failed reload signals
-    // unexpected state loss (prune race / on-disk corruption). Surface it instead
-    // of silently skipping inline propagation and rendering command success.
-    output.error(
-      `Claimed run ${outcome.runId} could not be reloaded after its terminal was applied`,
-      'RUN_TARGET_UNAVAILABLE',
-    );
-    return true;
-  }
-
-  // Render the child's own terminal outcome BEFORE propagating to the inline
-  // parent (ordering: the child completes on stream before the parent advances).
-  const renderRequestedExit = await renderTerminalOutcome(
-    output,
-    command,
-    manager,
-    outcome,
-    message,
-    terminal,
-  );
-
-  const progression = await progress(terminal, cwd, output, manager);
-  if (progression === null) return renderRequestedExit;
-  // The claimed child's own stopped lifecycle was already rendered above as a
-  // successful report-only close. Only a refusal or delivery failure while
-  // continuing composition changes that command result.
-  return (
-    renderRequestedExit ||
-    progression.kind === 'refused' ||
-    progression.kind === 'failed' ||
-    (progression.kind === 'stopped' && progression.runId !== terminal.id)
-  );
-}
-
-/** Explicit target the failed terminal command was invoked with. */
-export interface TerminalRecoveryTarget {
-  /** Explicit claim bearer when the command targeted a claimed child (`--claim-id`). */
-  readonly claimId?: ClaimId;
-  /** Explicit run id when the command named its target (`--run`). */
-  readonly runId?: RunId;
-}
-
-/**
- * Recover from an unusable persisted snapshot surfaced by a terminal command.
- *
- * The only CLI-owned logic that survives a terminal command (Category A): when
- * the machine fails to rehydrate inside the seam, the bare path attempts orphan
- * cleanup and reports a clean removal, while the claim path maps the same
- * failure per command — `complete` to a `CLAIMED_RUNBOOK_UNAVAILABLE` error
- * (exit 1), `stop` to "no active runbook" (a claimed child that is no longer
- * usable is nothing to stop). Any other error is rethrown for the outer
- * `withErrorHandling` to render.
- *
- * @param command - The terminal command that failed (`complete` / `stop`).
- * @param error - The error thrown by the seam.
- * @param output - Output emitter for the recovery message.
- * @param cwd - Current working directory (used to build the cleanup manager).
- * @param target - Explicit `--claim-id` target the command carried.
- * @throws {unknown} Rethrows any error that is not a recoverable snapshot failure.
- */
-export async function handleTerminalRecovery(
-  command: TerminalCommandName,
-  error: unknown,
-  output: OutputEmitter,
-  cwd: string,
-  target: TerminalRecoveryTarget = {},
-): Promise<void> {
-  // Claim path: orphan cleanup (a bare-command recovery) never applies to a
-  // claim target, so an unusable snapshot maps to the command's claim outcome.
-  if (target.claimId !== undefined) {
-    if (error instanceof InvalidRunbookStateError) {
-      if (command === 'complete') {
-        output.error(
-          `Claimed runbook ${redactClaimId(target.claimId)} is unavailable`,
-          'CLAIMED_RUNBOOK_UNAVAILABLE',
-        );
-        output.flush();
-        process.exitCode = 1;
-      } else {
-        output.noActiveRunbook('stop');
-        output.flush();
-      }
-      return;
-    }
-    throw error;
-  }
-
-  // Run-targeted path: the operator NAMED the failing run, so default-stack
-  // orphan cleanup must never run — the default top may be a different run,
-  // and popping it would exit 0 without terminating the named run. Surface
-  // the failure against the named run instead (echoing only the id the caller
-  // themselves supplied).
-  //
-  // Narrower than the cleanup predicate on purpose: this arm ATTRIBUTES the
-  // failure to `target.runId`, so it must only accept failures that came from
-  // that run's own row. A corrupt claim row or session reconstruction reaches
-  // here too, and reporting either as "Run <id> has unusable persisted state"
-  // names the wrong thing, implies a remedy (prune that run) that cannot fix
-  // it, and hides the RD-310 envelope that exists for exactly that condition.
-  // Those propagate to `withErrorHandling` instead.
-  if (target.runId !== undefined) {
-    if (isError(error) && isUnusableRunStateError(error)) {
-      output.error(
-        `Run ${target.runId} has unusable persisted state; cannot ${command} it.`,
-        'RUN_TARGET_UNAVAILABLE',
-      );
-      output.flush();
-      process.exitCode = 1;
-      return;
-    }
-    throw error;
-  }
-
-  if (
-    error instanceof InvalidRunbookStateError ||
-    (isError(error) && isRecoverableActiveStackError(error))
-  ) {
-    // Orphan cleanup needs only a manager + session service — not the full seam
-    // (building it in this failure path would touch policy/helper singletons the
-    // recovery has no business reading).
-    const manager = new RunbookStateManager(cwd);
-    const sessionService = new SessionService(manager);
-    let cleanup: OrphanCleanupResult;
-    try {
-      cleanup = await cleanupOrphanedActiveStack(manager, sessionService);
-    } catch (cleanupError) {
-      void logger.warn(
-        `terminal recovery: orphan-cleanup probe failed: ${getErrorMessage(cleanupError)}`,
-      );
-      // Rethrow the ORIGINAL error with the probe failure attached — the probe
-      // failure is never surfaced in place of the operator's original diagnostic.
-      if (isError(error) && error.cause === undefined) {
-        (error as Error & { cause?: unknown }).cause = cleanupError;
-      }
-      throw error;
-    }
-    if (cleanup.kind === 'removed') {
-      const removalMessage = 'Removed unusable runbook state from session';
-      if (command === 'complete') output.complete(removalMessage);
-      else output.stopped(removalMessage);
-      output.flush();
-      return;
-    }
-    if (isSessionMutationRefusal(cleanup)) {
-      renderSessionMutationRefusal(output, cleanup);
-      output.flush();
-      process.exitCode = 1;
-      return;
-    }
-    // empty-stack / healthy-top: the failure did not come from an orphaned top —
-    // fall through and surface the original error rather than swallowing it.
-  }
-  throw error;
 }

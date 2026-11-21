@@ -7,14 +7,14 @@ scenarios:
     description: Setup passes, runbook completes (skips ErrorHandler)
     commands:
       - rd run --prompted named-step-named-substeps.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
     result: COMPLETE
   error-handler-failure-at-prepare:
     description: Error handler fails at prepare, runbook stops
     commands:
       - rd run --prompted named-step-named-substeps.runbook.md
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step ErrorHandler.Prepare
     result: STOP
 tags:
   - named-steps

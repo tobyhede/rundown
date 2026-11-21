@@ -9,27 +9,27 @@ scenarios:
     description: Complete installation and verification
     commands:
       - rd run --prompted install.runbook.md
-      - rd pass  # 1.1 Verify Node.js
-      - rd pass  # 2.1 Install globally
-      - rd pass  # 2.2 Verify installation
-      - rd yes   # 3 Getting Started
-      - rd pass  # 3.2 Run first runbook
+      - rd pass --token ${TOKEN} --step 1.1  # 1.1 Verify Node.js
+      - rd pass --token ${TOKEN} --step 2.1  # 2.1 Install globally
+      - rd pass --token ${TOKEN} --step 2.2  # 2.2 Verify installation
+      - rd yes --token ${TOKEN} --step 3.1   # 3 Getting Started
+      - rd pass --token ${TOKEN} --step 3.2  # 3.2 Run first runbook
     result: COMPLETE
   minimal-install:
     description: Full installation with getting started
     commands:
       - rd run --prompted install.runbook.md
-      - rd pass  # 1.1 Verify Node.js
-      - rd pass  # 2.1 Install globally
-      - rd pass  # 2.2 Verify installation
-      - rd pass  # 3.1 Create first runbook
-      - rd pass  # 3.2 Run first runbook
+      - rd pass --token ${TOKEN} --step 1.1  # 1.1 Verify Node.js
+      - rd pass --token ${TOKEN} --step 2.1  # 2.1 Install globally
+      - rd pass --token ${TOKEN} --step 2.2  # 2.2 Verify installation
+      - rd pass --token ${TOKEN} --step 3.1  # 3.1 Create first runbook
+      - rd pass --token ${TOKEN} --step 3.2  # 3.2 Run first runbook
     result: COMPLETE
   prerequisites-fail:
     description: Fail early if Node.js prerequisite not met
     commands:
       - rd run --prompted install.runbook.md
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1.1
     result: STOP
 ---
 

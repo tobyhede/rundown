@@ -182,14 +182,3 @@ export function makeResolvedStepWithPromptedFor(
     kind: 'prompted-for',
   };
 }
-
-// Re-exported, not redefined: these now live in `src/testing/delegation-fixtures`
-// so CLI tests can reach them too (a delegated-parent fixture needs the same
-// shapes, and hand-writing them there is what this promotion prevents). Core
-// tests keep importing them from here.
-export {
-  makeContextSnapshot,
-  makeDelegationCredentialDescriptor,
-  makeDelegatedSubstepState,
-  makeStepDelegation,
-} from '../../src/testing/delegation-fixtures.js';

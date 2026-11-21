@@ -9,15 +9,15 @@ scenarios:
     description: Fails twice, exhausts retry, runbook stops
     commands:
       - rd run --prompted retry-exhaustion-stop.runbook.md
-      - rd fail
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 1
     result: STOP
   recovered:
     description: Fails first, succeeds on retry
     commands:
       - rd run --prompted retry-exhaustion-stop.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 1
     result: COMPLETE
   auto-execution:
     description: Code block auto-executes - fails twice, runbook stops

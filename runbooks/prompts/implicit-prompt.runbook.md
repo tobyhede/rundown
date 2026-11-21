@@ -9,8 +9,8 @@ scenarios:
     description: Pass both implicit prompt steps
     commands:
       - rd run --prompted implicit-prompt.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

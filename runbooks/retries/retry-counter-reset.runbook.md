@@ -9,10 +9,10 @@ scenarios:
     description: Step 1 exhausts retry, GOTOs step 2 which succeeds
     commands:
       - rd run --prompted retry-counter-reset.runbook.md
-      - rd fail
-      - rd fail
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 2
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
   auto-execution:
     description: Auto-execute step 1 fails, GOTOs step 2 which retries

@@ -9,9 +9,9 @@ scenarios:
     description: Multiple code blocks are rendered correctly
     commands:
       - rd run --prompted code-blocks.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
+      - rd pass --token ${TOKEN} --step 3
     result: COMPLETE
   auto-execution:
     description: All three steps with bash code blocks pass immediately

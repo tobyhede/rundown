@@ -8,17 +8,17 @@ scenarios:
     description: Fail triggers BREAK — result not accumulated, parent sees empty → passes
     commands:
       - rd run --prompted for-iter-fail-break.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1.1 --index 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
   defer-fires:
     description: All pass — DEFER accumulates, parent sees passes → COMPLETE
     commands:
       - rd run --prompted for-iter-fail-break.runbook.md
-      - rd pass
-      - rd pass
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1 --index 1
+      - rd pass --token ${TOKEN} --step 1.1 --index 2
+      - rd pass --token ${TOKEN} --step 1.1 --index 3
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

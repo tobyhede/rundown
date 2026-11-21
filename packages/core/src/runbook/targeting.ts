@@ -1,15 +1,11 @@
 import type { StepPosition } from '../cli/types.js';
-import type { ForContext, ResolvedCompletion, RunbookState, SubstepState } from './types.js';
-import type { VariableValue } from './effective-vars.js';
-import type { DelegationTokenHash } from './delegation-token.js';
-import type { ClaimRecord } from './claim-id.js';
+import type { ForContext, RunbookState, SubstepState } from './types.js';
 
 /**
- * Sentinel entry value for pre-recorded completions targeting non-active frames.
+ * Sentinel entry value for a frame target that names no specific entry.
  *
- * Entry=0 means "matches any visit to this frame." The drain's exact-entry
- * matching is preserved for inline completions (re-entry isolation), while
- * pre-recorded completions use the sentinel for frame-only matching.
+ * Entry=0 means "matches any visit to this frame." Real entries start at 1
+ * (`advanceFrameEntry`), so the two ranges cannot collide.
  */
 export const SENTINEL_ENTRY = 0;
 
@@ -17,16 +13,16 @@ export const SENTINEL_ENTRY = 0;
  * Nominal string type for frame identity keys.
  *
  * Format: `<step>|<iteration-or-empty>` (e.g., `"1|"`, `"1|2"`).
- * Construct only via {@link buildFrameKey} or {@link parseCompletionKey}.
+ * Construct only via {@link buildFrameKey}.
  */
 export type FrameKey = string & { readonly __brand: 'FrameKey' };
 
 /**
- * Runtime frame target used when constructing completion identities.
+ * Runtime frame target.
  *
  * Active frames are the current cursor and active entry. Exact frames carry a
- * known historical/linkage entry that is not necessarily current. Inactive
- * frames carry only a frame key and persist with the sentinel entry.
+ * known historical entry that is not necessarily current. Inactive frames carry
+ * only a frame key and resolve to the sentinel entry.
  */
 export type Frame =
   | { readonly kind: 'active'; readonly frameKey: FrameKey; readonly entry: number }
@@ -37,7 +33,7 @@ export type Frame =
  * Validate that a frame entry is a positive integer.
  *
  * Entries must be >= 1; entry=0 is reserved for {@link SENTINEL_ENTRY}, and
- * negatives/NaN/non-integer values would produce invalid completion keys.
+ * negatives/NaN/non-integer values would produce invalid frame targets.
  *
  * @param entry - Entry value to validate
  * @param kind - Frame kind for error reporting
@@ -98,12 +94,12 @@ export function frameHasExactEntry(
 }
 
 /**
- * Resolve the completion entry used for persistence.
+ * Resolve the entry a frame target names.
  *
  * @param frame - Frame target
  * @returns Exact entry for active/exact frames, otherwise the sentinel entry
  */
-export function completionEntryForFrame(frame: Frame): number {
+export function entryForFrame(frame: Frame): number {
   return frameHasExactEntry(frame) ? frame.entry : SENTINEL_ENTRY;
 }
 
@@ -191,92 +187,6 @@ export function isFrameKey(value: string): value is FrameKey {
 }
 
 /**
- * Runtime completion identity key.
- *
- * Format: `<frameKey>|<entry>|<substep-or-empty>`
- *
- * @param frame - Frame target
- * @param substep - Optional substep identifier
- * @returns Pipe-delimited completion key
- */
-export function buildCompletionKey(frame: Frame, substep?: string): string {
-  return `${frame.frameKey}|${String(completionEntryForFrame(frame))}|${substep ?? ''}`;
-}
-
-/**
- * Parse a completion key into frame/entry/substep components.
- *
- * @param key - Pipe-delimited completion key to parse
- * @returns Parsed components, or null if the key format is invalid
- */
-export function parseCompletionKey(
-  key: string,
-): { frameKey: FrameKey; entry: number; substep?: string } | null {
-  const parts = key.split('|');
-  if (parts.length !== 4) return null;
-  const [step, iterationRaw, entryRaw, substepRaw] = parts;
-  if (!step || !entryRaw) return null;
-  if (!/^\d+$/.test(entryRaw)) return null;
-  const entry = Number(entryRaw);
-  const frameKey = `${step}|${iterationRaw}` as FrameKey;
-  return {
-    frameKey,
-    entry,
-    ...(substepRaw ? { substep: substepRaw } : {}),
-  };
-}
-
-/**
- * The frame coordinates a persisted completion row carries.
- *
- * Structural rather than nominal on purpose: `ResolvedCompletion` and the
- * delegation read model's `DelegationOutcomeReportedFact` both satisfy it
- * already, which is what lets one rule decide scope for both readers.
- */
-export interface CompletionFrameTarget {
-  /** Frame key the row was recorded against. */
-  readonly targetFrameKey: FrameKey;
-  /** Entry the row was recorded against, or {@link SENTINEL_ENTRY}. */
-  readonly targetEntry: number;
-}
-
-/**
- * Whether a persisted completion row falls inside a frame target.
- *
- * The SINGLE scope rule, shared by the resolved-completion drain and the
- * delegation collection-pending guard. They were two hand-written tests before
- * (#749): the drain matched `<frameKey>|<entry>|` and `<frameKey>|0|` key
- * prefixes while the guard matched on frame openness alone, so a row the drain
- * could never select was reported as awaiting collection forever — a run that
- * could neither advance nor collect. A gate weaker than the check it feeds is a
- * silent-failure generator; here it was a wedge.
- *
- * This restates the drain's key-prefix rule over the row's own fields, which is
- * equivalent because every write site derives the key and the fields from one
- * {@link Frame} ({@link buildCompletionKey} beside {@link buildResolvedCompletion}).
- *
- * A caller asking about the LIVE cursor passes the active frame from
- * {@link deriveActiveCompletionFrame} (in `frame-entry.ts`, which imports this
- * module — the pair is split by that import direction, not by concern).
- * Reachability is then permanent in both directions: entry
- * ordinals are run-global and monotonic (`advanceFrameEntry`), so a row named by
- * an entry the cursor has left is never matched again, whatever the cursor does
- * next.
- *
- * @param frame - Frame target being resolved against
- * @param target - Frame coordinates persisted on the completion row
- * @returns True when the row is in scope for that frame
- */
-export function completionTargetsFrame(frame: Frame, target: CompletionFrameTarget): boolean {
-  if (target.targetFrameKey !== frame.frameKey) return false;
-  if (target.targetEntry === completionEntryForFrame(frame)) return true;
-  // Only an active frame admits the sentinel: an exact/inactive frame names one
-  // specific entry, which is the drain's exact-prefix-only rule for a frame the
-  // cursor is not on.
-  return frame.kind === 'active' && target.targetEntry === SENTINEL_ENTRY;
-}
-
-/**
  * Get the active FOR context for the current step, if present.
  *
  * Implicit synthetic contexts are not exposed as loop scope.
@@ -301,9 +211,8 @@ export function getActiveForContext(
  * The single frame-key derivation. It replaces a family of subtly different
  * ones that agreed only by accident: `deriveActiveFrame` checked both
  * `implicit` and `stepId`, while `deriveActorStatePatch`,
- * `buildDelegationIssueInvokeBlock`, `buildInlineLaunchInvokeBlock`,
- * `buildSubstepGotoResetAssignValue` and `runRetryHook` filtered `implicit` but
- * never compared `stepId`. Once the machine's entry ordinal depends on the
+ * `buildSubstepGotoResetAssignValue` and the parent-retry assigns filtered
+ * `implicit` but never compared `stepId`. Once the machine's entry ordinal depends on the
  * frame key matching what committed-state readers compute, that accident
  * becomes load-bearing, so every cursor-keyed site routes here.
  *
@@ -425,43 +334,6 @@ export function buildStepPosition(
 }
 
 /**
- * Build a ResolvedCompletion with conditional optional fields and defaulted completedAt.
- *
- * @param fields - Completion fields; `targetSubstep`, `targetIteration`, and `completedAt` are optional
- * @param fields.agentId - Identifier of the agent that produced the completion
- * @param fields.result - Whether the completion passed or failed
- * @param fields.targetStep - Step name this completion targets
- * @param fields.targetSubstep - Optional substep ID within the target step
- * @param fields.targetIteration - Optional FOR loop iteration number
- * @param fields.targetFrame - Frame target identifying the completion scope
- * @param fields.finalVars - Optional final variables produced by a child runbook
- * @param fields.completedAt - ISO 8601 timestamp (defaults to current time)
- * @returns A fully-formed ResolvedCompletion
- */
-export function buildResolvedCompletion(fields: {
-  agentId: string;
-  result: 'pass' | 'fail';
-  targetStep: string;
-  targetSubstep?: string;
-  targetIteration?: number;
-  targetFrame: Frame;
-  finalVars?: Readonly<Record<string, VariableValue>>;
-  completedAt?: string;
-}): ResolvedCompletion {
-  return {
-    agentId: fields.agentId,
-    result: fields.result,
-    targetStep: fields.targetStep,
-    ...(fields.targetSubstep ? { targetSubstep: fields.targetSubstep } : {}),
-    ...(fields.targetIteration !== undefined ? { targetIteration: fields.targetIteration } : {}),
-    targetFrameKey: fields.targetFrame.frameKey,
-    targetEntry: completionEntryForFrame(fields.targetFrame),
-    ...(fields.finalVars ? { finalVars: fields.finalVars } : {}),
-    completedAt: fields.completedAt ?? new Date().toISOString(),
-  };
-}
-
-/**
  * Find a SubstepState by `(id, frameKey)`.
  *
  * Strict match: both `id` and `frameKey` must equal.
@@ -480,334 +352,13 @@ export function findSubstepState(
 }
 
 /**
- * The authority coordinates a delegation linkage and a claim's delegation
- * descriptor share, and the single place their comparison is written.
- *
- * `linkageMatchesClaim` and `linkageMatchesLinkage` compare the same six fields
- * for the same reason (see WHY ALL SIX below), and spelling that comparison out
- * twice is what let the field set drift apart before: the two predicates were
- * introduced together at three fields, `grantAllows` grew to seven, and neither
- * was widened (#738). One list means a coordinate cannot be added to the
- * descriptor and forgotten at one gate but not the other.
- */
-export interface DelegationAuthorityCoordinates {
-  readonly parentRunId: RunbookState['id'];
-  readonly parentStepId: string;
-  readonly parentStep: string;
-  readonly parentFrameKey: FrameKey;
-  readonly parentEntry: number;
-  readonly tokenHash: DelegationTokenHash;
-}
-
-const DELEGATION_AUTHORITY_COORDINATE_KEYS = [
-  'parentRunId',
-  'parentStepId',
-  'parentStep',
-  'parentFrameKey',
-  'parentEntry',
-  'tokenHash',
-] as const satisfies readonly (keyof DelegationAuthorityCoordinates)[];
-
-/**
- * True when two authority-bearing linkages agree on every shared coordinate.
- *
- * @param left - First authority-bearing linkage descriptor.
- * @param right - Second authority-bearing linkage descriptor.
- * @returns `true` only when all six shared authority coordinates are equal.
- */
-export function delegationAuthorityCoordinatesMatch(
-  left: DelegationAuthorityCoordinates,
-  right: DelegationAuthorityCoordinates,
-): boolean {
-  return DELEGATION_AUTHORITY_COORDINATE_KEYS.every((key) => left[key] === right[key]);
-}
-
-/**
- * True when `linkage` is a delegation linkage that matches every authority
- * coordinate in `claim`'s delegation descriptor.
- *
- * Equality on all six is a CONSISTENCY check, not a proof of provenance. The
- * child's `parentLinkage` is written at `manager.create` before any claim
- * exists, and the descriptor is later copied from a linkage, so neither can be
- * said to originate from the other and this predicate cannot establish that it
- * did. It answers only "do these two agree", which is what every call site
- * needs. Do not restate it as verifying that the linkage came from the claim —
- * that was the wording #738 called out, because it names a property three
- * fields plainly did not establish and six still do not.
- *
- * Lives here (a dependency-free leaf) so both `session-service.ts` and the
- * storage layer reuse the identical predicate without a store → session-service
- * import cycle.
- *
- * WHY ALL SIX. The field set is not a judgement call — it is dictated by
- * `grantAllows` (`claim-id.ts`), which decides at the point of USE whether this
- * claim may report the child's result, and compares seven: these six plus
- * `childRunId`. Anything this predicate skips is a coordinate on which the claim
- * and the child can diverge while every gate on the way in still passes, and
- * `grantAllows` then refuses silently — `shouldReport` false, no parent target,
- * the child closes `completed` with `reported: 'not-applicable'` and the parent
- * waits forever. That is #738, and it was reachable precisely because this
- * predicate compared three of the six. Widening a gate is never the whole fix
- * for a coordinate that should not have drifted — see
- * {@link classifyDelegationLiveness}, which rejects the drift at its source.
- *
- * POLARITY IS NOT UNIFORM ACROSS THE CALL SITES, so "which direction is
- * dangerous" has no single answer and must be read at the site that asked:
- *
- * - FAIL-CLOSED (three sites, all in `session-service.ts`:
- *   `getActiveForClaimId`, `stashForClaimId`, `unstashForClaimId`). `false` is
- *   a refusal — `child-linkage-mismatch` — and the caller stops. Here a
- *   predicate that is too WEAK is the silent-failure generator: it admits a
- *   claim/child pair that diverges on a coordinate `grantAllows` will compare
- *   later, and the divergence surfaces only as a report that never arrives.
- * - FAIL-OPEN (two sites: `SessionService.listOpenClaimsForParent` and
- *   `RunbookStore.openDelegatedChildrenFor`). `false` means `continue` — the
- *   claim is EXCLUDED from the set of children that must block the parent, so
- *   the parent is free to advance past it. Here the danger inverts: a predicate
- *   that is too STRICT drops a genuinely open child from the blocking set and
- *   lets the parent walk away from work still in flight, while a weaker one
- *   merely over-blocks.
- *
- * Both failures are silent and they are not the same failure. Any change to the
- * field set has to be judged against both directions, not against the
- * fail-closed reading alone.
- *
- * The seventh, `childRunId`, is absent from `ParentLinkage` and needs no
- * comparison here: callers obtain the child through `claim.controlledRunId`, and
- * claim validation requires that id to equal `claim.delegation.childRunId`.
- * "Claim validation" is two gates, and which one covers a given call site
- * depends on how it got the claim. `ClaimRecordSchema`'s refinement runs on a
- * record built in memory and on anything `RunbookStateManager.loadSession`
- * hands back, since that parses `SessionDataSchema` over the store's output.
- * It does NOT run on a claim taken straight off the store —
- * `RunbookStore.loadSession`, `loadClaim`, and the in-transaction `readSession`
- * behind `mutateSession`, which is how the storage-layer call site below gets
- * its claims. `assertClaimColumnsMirrorDelegation` (#755) is what covers those.
- *
- * @param linkage - Parent linkage stored on the child runbook state (any kind, including absent).
- * @param claim - Claim record whose six shared delegation coordinates must all match.
- * @returns `true` only when `linkage.kind === 'delegation'` and every shared field matches `claim`.
- */
-export function linkageMatchesClaim(
-  linkage: RunbookState['parentLinkage'],
-  claim: ClaimRecord,
-): boolean {
-  if (!claim.delegation) {
-    return false;
-  }
-  return (
-    linkage?.kind === 'delegation' && delegationAuthorityCoordinatesMatch(linkage, claim.delegation)
-  );
-}
-
-/**
- * The parent-side linkage a caller presents to a delegation-liveness decision.
- *
- * Structurally a `Pick` of the persisted delegation-claim linkage, declared here
- * rather than imported from `claim-id.ts` to keep `targeting.ts` free of a claim
- * import cycle. Both transaction paths (the claim-side refusal and the
- * parent-commit invalidation hook) pass exactly these fields, as does
- * `claimAndLaunch`'s pre-check, which builds one inline.
- *
- * Note it is the *presented* shape, not the read surface — unlike
- * {@link DelegationLivenessParent}, which is exactly what the classifier reads.
- * The set is the persisted linkage's, so a caller holding one passes it whole;
- * see {@link DelegationLivenessLinkage.parentEntry} for the field that is
- * carried but deliberately not decided on.
- */
-export interface DelegationLivenessLinkage {
-  /** Parent step name captured at delegation time (e.g. "1"). */
-  readonly parentStep: string;
-  /** Parent step/substep id where the delegation originated. */
-  readonly parentStepId: string;
-  /** Parent execution frame key at delegation time. */
-  readonly parentFrameKey: FrameKey;
-  /**
-   * Parent frame entry counter captured at delegation time.
-   *
-   * Part of the linkage, and compared by {@link linkageMatchesClaim} — but NOT
-   * read by {@link classifyDelegationLiveness}, which decides entry identity
-   * against the issuance entry on the substep's own credential. Keeping it in
-   * the shape lets a caller pass its persisted linkage unchanged; trusting it
-   * would reopen #738, where the entry a caller recomputed from live state was
-   * compared against live state. See the comment inside the classifier.
-   */
-  readonly parentEntry: number;
-  /** Hash of the delegation token that produced the child claim. */
-  readonly tokenHash: DelegationTokenHash;
-}
-
-/**
- * The parent-state fields {@link classifyDelegationLiveness} actually reads.
- *
- * Narrower than {@link RunbookState} on purpose, so a fixture supplying just
- * these fields satisfies the parameter outright instead of needing an
- * `as unknown as RunbookState` cast to suppress the ~30 required fields it does
- * not set. That cast suppressed checking of these six as well: a misspelled
- * `activeFrameKy` compiled, and the classifier then read `undefined` and the
- * test passed for the wrong reason. Under this type that is a `TS2561`.
- *
- * `Pick` preserves each selected field's source optionality: the five optional
- * fields remain optional, while `step` remains required. This buys name and
- * type checking without strengthening the source contract. Callers holding a
- * full `RunbookState` pass it unchanged.
- */
-export type DelegationLivenessParent = Pick<
-  RunbookState,
-  'lifecycle' | 'step' | 'substepStates' | 'activeFrameKey' | 'activeEntry' | 'frameEntryCounts'
->;
-
-/**
- * Whether a delegated child claim is still live against its parent state.
- *
- * `parent-unreadable` is a hard database-integrity signal — a delegated claim
- * naming a parent that cannot be read is invalid state, never a routine
- * closed outcome. Callers must not treat it as live or fall through.
- *
- * `cancelled` is a closed outcome like the rest, but its own arm rather than a
- * fifth reason string: it is the only one carrying a fact beyond its own name
- * (`cancelledAt`), and the only one that did not come from the parent moving
- * past the delegation. Folding it into `resolved` — which is what this union
- * did until #752 — told a claimer the parent had moved on when in fact someone
- * ran `rd abort`, and lost the timestamp that says when. A caller reading
- * `cancelledAt` must narrow on `reason` to reach it.
- */
-export type DelegationLiveness =
-  | { readonly kind: 'live'; readonly substep: SubstepState }
-  | {
-      readonly kind: 'closed';
-      readonly reason: 'parent-ended' | 'cursor-advanced' | 'resolved' | 'token-reissued';
-    }
-  | {
-      readonly kind: 'closed';
-      readonly reason: 'cancelled';
-      /** ISO timestamp `abortDelegation` stamped on the delegation. */
-      readonly cancelledAt: string;
-    }
-  | { readonly kind: 'parent-unreadable' };
-
-/**
- * Classify whether a delegated child claim is still live in the parent's
- * committed state. The single source of truth shared by the claim-side refusal
- * and the parent-commit invalidation hook.
- *
- * A delegation is live only when the parent exists and is non-terminal, its
- * cursor still sits on the delegating step, the matching substep exists and is
- * neither resolved nor cancelled, that substep still carries the same delegation
- * token, and — where the persisted frame records one — the frame's current entry
- * still equals the entry stamped on the substep's credential at issuance. Any
- * divergence is a closed outcome; this deliberately does NOT reduce to
- * `status !== 'done'`, which would miss the top-level cursor-advance path that
- * writes no `done` substep row.
- *
- * Entry identity is decided against the credential alone. `linkage.parentEntry`
- * is not consulted, so no caller can present a recomputed entry and have it
- * believed; see the comment at the entry comparison.
- *
- * @param parent - Parent run state read inside the deciding transaction, or null when absent.
- * @param linkage - Parent-side linkage presented by the caller. Every field but
- *   `parentEntry` participates in the decision.
- * @returns The three-way liveness classification.
- */
-export function classifyDelegationLiveness(
-  parent: DelegationLivenessParent | null,
-  linkage: DelegationLivenessLinkage,
-): DelegationLiveness {
-  if (parent === null) {
-    return { kind: 'parent-unreadable' };
-  }
-  if (parent.lifecycle === 'completed' || parent.lifecycle === 'stopped') {
-    return { kind: 'closed', reason: 'parent-ended' };
-  }
-  if (parent.step !== linkage.parentStep) {
-    return { kind: 'closed', reason: 'cursor-advanced' };
-  }
-  const substep = findSubstepState(
-    parent.substepStates ?? [],
-    linkage.parentStepId,
-    linkage.parentFrameKey,
-  );
-  if (substep === undefined) {
-    return { kind: 'closed', reason: 'cursor-advanced' };
-  }
-  if (substep.status === 'done') {
-    return { kind: 'closed', reason: 'resolved' };
-  }
-  const delegation = substep.delegation;
-  if (delegation === undefined) {
-    return { kind: 'closed', reason: 'token-reissued' };
-  }
-  if (delegation.tokenHash !== linkage.tokenHash) {
-    return { kind: 'closed', reason: 'token-reissued' };
-  }
-  // Reported as itself, not folded into `resolved` (#752). Both are terminal
-  // and neither is retryable, so the distinction is diagnostic — but it is the
-  // difference between "the parent moved past this delegation" and "someone
-  // aborted it", and only one of those is true. It sits after the `done` arm
-  // deliberately: `abortDelegation` leaves the substep's own status untouched,
-  // so a `done` row means the parent resolved the substep after the abort, and
-  // the later fact is the one to report.
-  if (delegation.cancelledAt !== null) {
-    return { kind: 'closed', reason: 'cancelled', cancelledAt: delegation.cancelledAt };
-  }
-  // Entry identity, decided against the ISSUANCE entry on the substep's
-  // credential — never against the caller's `linkage.parentEntry` (#738). The
-  // credential is written once when the delegation is issued and
-  // `resetReopenedSubsteps` preserves it across frame re-entry, so it is the
-  // only entry coordinate here that a caller cannot recompute. Comparing live
-  // state against a linkage the caller derived from that same live state was
-  // self-satisfying, and that is what let a claim mint authority naming entry 2
-  // for a child stamped at entry 1, whose report `grantAllows` then silently
-  // dropped.
-  //
-  // ONE comparison, live state against issuance, which is `classifyReplacementUse`'s
-  // `entry_superseded` rule (#701) stated for liveness. It is what the
-  // production path reaches now that `claimAndLaunch` reads the entry off the
-  // credential: the cursor has moved past the entry the child was stamped with.
-  //
-  // `linkage.parentEntry` is deliberately NOT read. Asserting it equals
-  // `issuedEntry` would be a check no production input can fail — the
-  // pre-check reads both off the same substep row, every other caller presents
-  // a persisted linkage minted from the credential, and a re-issue changes the
-  // `tokenHash`, which the arm above catches first — and it reported
-  // `cursor-advanced` for a condition in which no cursor had moved. Not reading
-  // the coordinate is the stronger form of the same invariant than asserting
-  // agreement with it: a caller cannot induce this classifier to trust a
-  // recomputed entry when there is no path by which a recomputed entry is
-  // consulted. State that could only reach that assertion — an older binary, a
-  // hand edit — is the persistence boundary's to refuse, not a pure
-  // classifier's to reinterpret.
-  //
-  // `inferFrameEntryFromState` computes almost this `currentEntry`, but the two
-  // are NOT the same expression and must not be unified: it ends `?? 1`, so it
-  // always yields a number, while this abstains (`undefined`) and the guard
-  // below skips the comparison. Abstention is correct here. A frame with no
-  // recorded entry is one this run's committed state never entered, and the
-  // entry ordinal is run-global monotonic, so a delegation's issuance entry is
-  // legitimately > 1; defaulting to 1 would manufacture a coordinate and close
-  // a live delegation `cursor-advanced` on the strength of an invented number.
-  const issuedEntry = delegation.credential.parentEntry;
-  const currentEntry =
-    parent.activeFrameKey === linkage.parentFrameKey && parent.activeEntry !== undefined
-      ? parent.activeEntry
-      : parent.frameEntryCounts?.[linkage.parentFrameKey];
-  if (currentEntry !== undefined && currentEntry !== issuedEntry) {
-    return { kind: 'closed', reason: 'cursor-advanced' };
-  }
-  return { kind: 'live', substep };
-}
-
-/**
  * Replace-or-append a whole substep entry into an array, keyed by `(id,
  * frameKey)`.
  *
  * Replaces the entry matching the supplied entry's `(id, frameKey)` pair, or
  * appends it when none matches. Pure; returns a new array and leaves every other
- * entry untouched. This is the merge primitive a locked read-modify-write uses
- * to commit one issued substep entry without clobbering concurrent writes to
- * sibling substeps (see `RunbookStateManager.updateWithState`). Distinct from
- * {@link upsertSubstepState}, which merges a field patch onto an entry; this
- * substitutes the entry wholesale.
+ * entry untouched. Distinct from {@link upsertSubstepState}, which merges a
+ * field patch onto an entry; this substitutes the entry wholesale.
  *
  * @param substepStates - Current substep states (the freshly-read array).
  * @param entry - The substep entry to replace-or-append by its `(id, frameKey)`.
@@ -826,7 +377,7 @@ export function replaceSubstepStateEntry(
   return substepStates.map((ss, i) => (i === index ? entry : ss));
 }
 
-type SubstepStatePatch = Partial<Pick<SubstepState, 'status' | 'delegation' | 'inline'>> & {
+type SubstepStatePatch = Partial<Pick<SubstepState, 'status'>> & {
   readonly result?: SubstepState['result'] | undefined;
 };
 

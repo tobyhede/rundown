@@ -48,6 +48,7 @@
     "format": "biome format --write .",
     "format:md": "prettier --write \"**/*.md\"",
     "check:format": "biome check --formatter-enabled=true --linter-enabled=false .",
+    "check:size": "node scripts/measure-size.mjs --text",
     "check:md": "prettier --check \"**/*.md\"",
     "check:spell": "cspell --no-progress --no-must-find-files .",
     "check:lint:fast": "biome lint .",

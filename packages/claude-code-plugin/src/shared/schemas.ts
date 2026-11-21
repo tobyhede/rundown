@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { isDelegationTokenHash } from '@rundown-org/core';
 import { getErrorMessage } from './errors.js';
 
 /**
@@ -63,10 +62,6 @@ export type HookInput = z.infer<typeof HookInputSchema>;
  */
 export type ParseResult<T> = { success: true; data: T } | { success: false; error: string };
 
-const DelegationTokenHashSchema = z.string().refine(isDelegationTokenHash, {
-  message: 'Expected canonical delegation token hash sha256:<64 lowercase hex characters>',
-});
-
 /**
  * Parse and validate HookInput from JSON string.
  * Performs both JSON parsing and Zod schema validation.
@@ -120,77 +115,11 @@ export const RunbookStepBodySchema = z
   })
   .loose();
 
-/**
- * Parent linkage schema — validates the `parentLinkage` field of `rundown status`.
- *
- * Mirrors the projection produced by `buildParentLinkage` in
- * `packages/cli/src/helpers/status-builder.ts`.
- *
- * Uses a discriminated union on `kind` so narrowing via the discriminant gives
- * callers the strongest possible type: the delegation variant carries a
- * required `tokenHash`; the inline variant omits it entirely. No type
- * assertions needed at the consumer.
- */
-export const ParentLinkageSchema = z.discriminatedUnion('kind', [
-  z
-    .object({
-      kind: z.literal('delegation'),
-      tokenHash: DelegationTokenHashSchema,
-      parentRunId: z.string(),
-      parentStepId: z.string(),
-      parentStep: z.string().optional(),
-    })
-    .loose(),
-  z
-    .object({
-      kind: z.literal('inline'),
-      parentRunId: z.string(),
-      parentStepId: z.string(),
-      parentStep: z.string().optional(),
-    })
-    .loose(),
-]);
-
 /** Validated runbook position body. */
 export type RunbookPositionBody = z.infer<typeof RunbookPositionBodySchema>;
 
 /** Validated runbook step body. */
 export type RunbookStepBody = z.infer<typeof RunbookStepBodySchema>;
-
-/** Validated parent linkage. */
-export type ParentLinkageBody = z.infer<typeof ParentLinkageSchema>;
-
-/** Plugin-local metadata for a delegation token assigned to a Claude Code agent. */
-export const DelegationActiveTokenMetadataSchema = z
-  .object({
-    kind: z.literal('delegation-active-token'),
-    agent_id: z.string().min(1),
-    session_id: z.string().min(1).optional(),
-    tokenHash: DelegationTokenHashSchema,
-    createdAt: z.string().min(1),
-  })
-  .strict();
-
-/** Metadata map keyed by Claude Code `agent_id` for active delegation tokens. */
-export const DelegationActiveTokensMetadataSchema = z
-  .record(z.string(), DelegationActiveTokenMetadataSchema)
-  .superRefine((map, ctx) => {
-    for (const [agentId, metadata] of Object.entries(map)) {
-      if (metadata.agent_id !== agentId) {
-        ctx.addIssue({
-          code: 'custom',
-          path: [agentId, 'agent_id'],
-          message: 'delegation_active_tokens key must match metadata.agent_id',
-        });
-      }
-    }
-  });
-
-/** Validated per-agent active delegation token metadata. */
-export type DelegationActiveTokenMetadata = z.infer<typeof DelegationActiveTokenMetadataSchema>;
-
-/** Validated map of active delegation token metadata keyed by agent id. */
-export type DelegationActiveTokensMetadata = z.infer<typeof DelegationActiveTokensMetadataSchema>;
 
 /**
  * Session State Schema - Runtime Validation for Persisted State

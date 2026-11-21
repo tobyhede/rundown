@@ -1,53 +1,41 @@
 import { describe, it, expect, jest, beforeEach } from '@jest/globals';
 import type {
   ExecutionEventEmitter,
-  SessionService,
-  InlineLaunchIntent,
   RunProgressionDeps,
   RunProgressionAuthority,
   RunProgressionDirective,
+  RunProgressionEntryBoundary,
   RunProgressionOutcome,
   RunbookStateManager,
 } from '@rundown-org/core';
-import type { InlineLaunchArgs } from '../../src/services/execution.js';
 import type { OutputEmitter } from '../../src/services/output-emitter.js';
 
-// Only two collaborators are substituted, and the real modules are spread back
-// so nothing else about the adapters changes shape: `activateRunProgression` is
-// the recursion this suite drives, and `launchInlineChildFromIntent` is the
-// launch span the inline-dispatch adapter wraps.
+// One collaborator is substituted, and the real module is spread back so
+// nothing else about the adapter changes shape: `activateRunProgression` is the
+// core activation this adapter wires its dependencies into.
 const actualCore = await import('@rundown-org/core');
 const activateRunProgression =
   jest.fn<
-    (authority: RunProgressionAuthority, deps: RunProgressionDeps) => Promise<RunProgressionOutcome>
+    (
+      authority: RunProgressionAuthority,
+      deps: RunProgressionDeps,
+      entryBoundary?: RunProgressionEntryBoundary,
+    ) => Promise<RunProgressionOutcome>
   >();
-// Also substituted so the propagation adapter's `activateParent` callback can
-// be captured and invoked directly: the real `propagateTerminalRun` reloads the
-// run and never reaches that callback without a full durable fixture, which
-// would test the flow-back rather than this module's wiring.
-const propagateTerminalRun = jest.fn<typeof actualCore.propagateTerminalRun>();
 jest.unstable_mockModule('@rundown-org/core', () => ({
   ...actualCore,
   activateRunProgression,
-  propagateTerminalRun,
-}));
-
-const actualExecution = await import('../../src/services/execution.js');
-const launchInlineChildFromIntent = jest.fn<(args: InlineLaunchArgs) => Promise<unknown>>();
-jest.unstable_mockModule('../../src/services/execution.js', () => ({
-  ...actualExecution,
-  launchInlineChildFromIntent,
 }));
 
 // The real factory resolves the plugin root, the bundled-runbook path, the
 // helper registry and the policy evaluator; none of that is under test here.
+const ACTOR_SERVICE = { kind: 'actor-service-double' };
 jest.unstable_mockModule('../../src/helpers/actor-service-factory', () => ({
-  createCliRunbookActorService: jest.fn(() => ({})),
+  createCliRunbookActorService: jest.fn(() => ACTOR_SERVICE),
 }));
 
-const { driveRunProgression, progressionFailedClosed } = await import(
-  '../../src/helpers/run-progression-adapters.js'
-);
+const { driveRunProgression, createCliRunProgressionDriver, progressionFailedClosed } =
+  await import('../../src/helpers/run-progression-adapters.js');
 
 const RUN_ID = actualCore.assertRunId('rd_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
 
@@ -56,19 +44,30 @@ const DELIVERY_FAILED: RunProgressionOutcome = {
   runId: RUN_ID,
   reason: 'observation_delivery_failed',
   message: 'the reporting channel is broken',
-  recovery: 'permanent',
+  recovery: 'retryable',
 };
 
-function recordingOutput(): { output: OutputEmitter; errors: readonly unknown[][] } {
+const WAITING: RunProgressionOutcome = { kind: 'waiting', runId: RUN_ID, reason: 'awaiting_input' };
+
+function recordingOutput(): {
+  output: OutputEmitter;
+  errors: readonly unknown[][];
+  events: readonly unknown[];
+  flushes: () => number;
+} {
   const errors: unknown[][] = [];
+  const events: unknown[] = [];
+  let flushes = 0;
   const output = {
     error: (...args: unknown[]) => errors.push(args),
-    flush: () => undefined,
-    executionEvent: () => undefined,
+    flush: () => {
+      flushes += 1;
+    },
+    executionEvent: (event: unknown) => events.push(event),
     message: () => undefined,
     isJson: () => true,
   } as unknown as OutputEmitter;
-  return { output, errors };
+  return { output, errors, events, flushes: () => flushes };
 }
 
 function activation(): Extract<RunProgressionDirective, { kind: 'activate' }> {
@@ -77,169 +76,126 @@ function activation(): Extract<RunProgressionDirective, { kind: 'activate' }> {
     authority: { runId: RUN_ID },
     runbook: { source: 'project', path: 'root.md' },
     steps: [],
-    entryBoundary: { kind: 'fresh' },
+    entryBoundary: { kind: 'resume' },
   } as unknown as Extract<RunProgressionDirective, { kind: 'activate' }>;
 }
+
+const MANAGER = { cwd: '/cwd' } as unknown as RunbookStateManager;
+
+describe('driveRunProgression dependency wiring', () => {
+  beforeEach(() => {
+    activateRunProgression.mockReset();
+  });
+
+  it('activates under the directive authority and entry boundary with the CLI actor service', async () => {
+    activateRunProgression.mockResolvedValue(WAITING);
+    const { output } = recordingOutput();
+    const sink = { emit: jest.fn(), subscribe: jest.fn() } as unknown as ExecutionEventEmitter;
+
+    const outcome = await driveRunProgression(activation(), {
+      manager: MANAGER,
+      cwd: '/cwd',
+      output,
+      sink,
+    });
+
+    expect(outcome).toBe(WAITING);
+    expect(activateRunProgression).toHaveBeenCalledTimes(1);
+    const [authority, deps, entryBoundary] = activateRunProgression.mock.calls[0];
+    expect(authority).toEqual({ runId: RUN_ID });
+    expect(deps.manager).toBe(MANAGER);
+    expect(deps.actorService).toBe(ACTOR_SERVICE);
+    expect(deps.sink).toBe(sink);
+    expect(typeof deps.loadSteps).toBe('function');
+    expect(entryBoundary).toEqual({ kind: 'resume' });
+    // The caller's sink is used as-is; the adapter never re-subscribes it.
+    // eslint-disable-next-line @typescript-eslint/unbound-method -- Jest inspects this structural mock without invoking it.
+    expect(sink.subscribe).not.toHaveBeenCalled();
+  });
+
+  it('builds a sink bridged to the command output when the caller supplies none', async () => {
+    activateRunProgression.mockImplementation(async (_authority, deps) => {
+      deps.sink.emit({
+        type: 'RUNBOOK_COMPLETED',
+        payload: { finalPosition: { current: '1', total: 1 } },
+      });
+      return { kind: 'completed', runId: RUN_ID };
+    });
+    const { output, events } = recordingOutput();
+
+    await driveRunProgression(activation(), { manager: MANAGER, cwd: '/cwd', output });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      type: 'RUNBOOK_COMPLETED',
+      runbookId: RUN_ID,
+      runbook: { source: 'project', path: 'root.md' },
+    });
+  });
+
+  it('createCliRunProgressionDriver forwards the per-activation sink onto the shared context', async () => {
+    activateRunProgression.mockResolvedValue(WAITING);
+    const { output } = recordingOutput();
+    const sink = { emit: jest.fn(), subscribe: jest.fn() } as unknown as ExecutionEventEmitter;
+    const drive = createCliRunProgressionDriver({ manager: MANAGER, cwd: '/cwd', output });
+
+    const outcome = await drive(activation(), sink);
+
+    expect(outcome).toBe(WAITING);
+    expect(activateRunProgression.mock.calls[0][1].sink).toBe(sink);
+  });
+});
 
 describe('driveRunProgression delivery-failure rendering', () => {
   beforeEach(() => {
     activateRunProgression.mockReset();
-    launchInlineChildFromIntent.mockReset();
   });
 
-  it('renders the OBSERVATION_DELIVERY_FAILED envelope once for a nested composition', async () => {
-    // Nested activations reuse this same function, and core folds a nested
-    // `failed` outcome back out unchanged — so an N-deep inline composition
-    // printed the identical envelope N times, one per level, for one broken
-    // reporting channel.
-    const depthLimit = 3;
-    let depth = 0;
-    activateRunProgression.mockImplementation(async (_authority, deps) => {
-      depth += 1;
-      if (depth >= depthLimit) return DELIVERY_FAILED;
-      const dispatched = (await deps.dispatchInlineChild({
-        // The adapter under test forwards the intent verbatim to the mocked
-        // launch span, so its contents are never read; the CONTRACT being
-        // checked is the shape of the call itself, which the typed mock above
-        // now enforces.
-        intent: {} as InlineLaunchIntent,
-        prompted: false,
-        steps: [],
-        sink: { emit: () => undefined },
-      })) as { readonly outcome: RunProgressionOutcome };
-      // Core folds the nested outcome back out unchanged.
-      return dispatched.outcome;
-    });
-    launchInlineChildFromIntent.mockImplementation(async (args) => ({
-      kind: 'composition_outcome',
-      outcome: await args.driveProgression(
-        activation(),
-        // Only `emit` is reached: the adapter hands this straight to the
-        // nested `driveRunProgression` as its sink.
-        { emit: () => undefined } as unknown as ExecutionEventEmitter,
-      ),
-    }));
-    const { output, errors } = recordingOutput();
+  it('renders the OBSERVATION_DELIVERY_FAILED envelope and flushes it ahead of the caller', async () => {
+    activateRunProgression.mockResolvedValue(DELIVERY_FAILED);
+    const { output, errors, flushes } = recordingOutput();
 
     const outcome = await driveRunProgression(activation(), {
-      manager: { cwd: '/test' } as unknown as RunbookStateManager,
-      cwd: '/test',
+      manager: MANAGER,
+      cwd: '/cwd',
       output,
     });
 
-    expect(outcome).toEqual(DELIVERY_FAILED);
-    expect(activateRunProgression).toHaveBeenCalledTimes(depthLimit);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]?.[1]).toBe(actualCore.CLIErrorCodes.OBSERVATION_DELIVERY_FAILED);
+    expect(outcome).toBe(DELIVERY_FAILED);
+    expect(errors).toEqual([[DELIVERY_FAILED.message, 'OBSERVATION_DELIVERY_FAILED']]);
+    expect(flushes()).toBe(1);
   });
 
-  it('still renders the envelope for a single activation', async () => {
-    // Anti-vacuity: rendering once must not become rendering never.
+  it('renders nothing for a non-failed outcome', async () => {
+    activateRunProgression.mockResolvedValue(WAITING);
+    const { output, errors, flushes } = recordingOutput();
+
+    await driveRunProgression(activation(), { manager: MANAGER, cwd: '/cwd', output });
+
+    expect(errors).toEqual([]);
+    expect(flushes()).toBe(0);
+  });
+
+  it('survives a reporting channel that throws while rendering the failure', async () => {
     activateRunProgression.mockResolvedValue(DELIVERY_FAILED);
-    const { output, errors } = recordingOutput();
+    const output = {
+      error: () => {
+        throw new Error('stdout is gone');
+      },
+      flush: () => undefined,
+      executionEvent: () => undefined,
+      isJson: () => true,
+    } as unknown as OutputEmitter;
 
-    await driveRunProgression(activation(), {
-      manager: { cwd: '/test' } as unknown as RunbookStateManager,
-      cwd: '/test',
-      output,
-    });
-
-    expect(errors).toHaveLength(1);
-    expect(errors[0]?.[1]).toBe(actualCore.CLIErrorCodes.OBSERVATION_DELIVERY_FAILED);
-  });
-});
-
-describe('driveRunProgression composition wiring', () => {
-  beforeEach(() => {
-    activateRunProgression.mockReset();
-    launchInlineChildFromIntent.mockReset();
-    propagateTerminalRun.mockReset();
-  });
-
-  it('hands the terminal propagation the SAME session service the activation resolved', async () => {
-    // `driveRunProgression` resolves one SessionService per composition —
-    // either the caller's injected instance or one it constructs. The inline
-    // dispatch adapter received it; the terminal propagation adapter did not,
-    // so the parent activation it drives built a FRESH default, silently
-    // swapping an injected service (and its injected clock) part-way up an
-    // inline chain.
-    const sessionService = { marker: 'the caller’s own' } as unknown as SessionService;
-    let dispatchService: unknown;
-    let propagationService: unknown;
-
-    propagateTerminalRun.mockImplementation(async (args) => {
-      // The captured callback re-enters `driveRunProgression` one level down,
-      // where this same activation mock observes the service it was given.
-      activateRunProgression.mockImplementationOnce(async (_nested, nestedDeps) => {
-        propagationService = nestedDeps.sessionService;
-        return { kind: 'waiting', runId: RUN_ID, reason: 'awaiting_input' };
-      });
-      await args.activateParent(activation());
-      return { kind: 'propagated' };
-    });
-
-    activateRunProgression.mockImplementation(async (_authority, deps) => {
-      dispatchService = deps.sessionService;
-      await deps.propagateTerminal({
-        runId: RUN_ID,
-        source: { kind: 'loop-inferred' },
-        sink: { emit: () => undefined },
-      } as unknown as Parameters<typeof deps.propagateTerminal>[0]);
-      return { kind: 'waiting', runId: RUN_ID, reason: 'awaiting_input' };
-    });
-
-    const { output } = recordingOutput();
-    await driveRunProgression(activation(), {
-      manager: { cwd: '/test' } as unknown as RunbookStateManager,
-      cwd: '/test',
-      output,
-      sessionService,
-    });
-
-    expect(dispatchService).toBe(sessionService);
-    expect(propagationService).toBe(sessionService);
-  });
-
-  it('keeps the gated output’s method identity stable across repeated reads', async () => {
-    // The `get` trap minted a fresh closure per read, so the same method read
-    // twice was two different functions — identity comparison, Map/Set keying,
-    // and a spy attached to one read all break on that.
-    let gated: OutputEmitter | undefined;
-    activateRunProgression.mockImplementation(async (_authority, deps) => {
-      await deps.dispatchInlineChild({
-        intent: {} as InlineLaunchIntent,
-        prompted: false,
-        steps: [],
-        sink: { emit: () => undefined },
-      });
-      return { kind: 'waiting', runId: RUN_ID, reason: 'awaiting_input' };
-    });
-    launchInlineChildFromIntent.mockImplementation(async (args) => {
-      gated = args.output;
-      return { kind: 'waiting' };
-    });
-
-    const { output } = recordingOutput();
-    await driveRunProgression(activation(), {
-      manager: { cwd: '/test' } as unknown as RunbookStateManager,
-      cwd: '/test',
-      output,
-    });
-
-    if (!gated) throw new Error('expected the launch span to receive the gated output');
-    /* eslint-disable @typescript-eslint/unbound-method -- identity is exactly what is under test; nothing is invoked */
-    expect(gated.flush).toBe(gated.flush);
-    // ...and still the WRAPPER, not the raw method: memoizing must not start
-    // handing back an ungated function.
-    expect(gated.flush).not.toBe(output.flush);
-    /* eslint-enable @typescript-eslint/unbound-method */
+    await expect(
+      driveRunProgression(activation(), { manager: MANAGER, cwd: '/cwd', output }),
+    ).resolves.toBe(DELIVERY_FAILED);
   });
 });
 
 describe('progressionFailedClosed', () => {
-  // The predicate every mutating command's exit code rests on: `run`, `claim`,
-  // `collect`, `goto` and the shared transition seam all ask it whether to exit
-  // non-zero. Nothing asserted the real implementation — `goto-workflow.test.ts`
+  // The predicate every mutating command's exit code rests on: `run`, `goto`
+  // and the shared transition seam all ask it whether to exit non-zero. Nothing asserted the real implementation — `goto-workflow.test.ts`
   // and `transitions.test.ts` each substitute a local mirror of the truth table
   // and test their own callers against that, so every arm of the production
   // function could be flipped without failing a test.
@@ -266,9 +222,9 @@ describe('progressionFailedClosed', () => {
       outcome: {
         kind: 'refused',
         runId: RUN_ID,
-        reason: 'recovery_required',
-        message: 'the run needs an explicit recovery before it can progress',
-        recovery: 'permanent',
+        reason: 'command_not_committed',
+        message: 'the command ran but its save was refused',
+        recovery: 'retryable',
       },
       failsClosed: true,
     },

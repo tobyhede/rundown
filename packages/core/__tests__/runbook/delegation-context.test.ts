@@ -28,7 +28,7 @@ import {
   brandStoredOutputsForTest,
 } from '../../src/testing/effective-vars.js';
 
-import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/index.js';
+import { CURRENT_SCHEMA_VERSION } from '../../src/runbook/state.js';
 
 const RUN_ID = brandRunIdForTest(`rd_${'8'.repeat(32)}`);
 const GRANDPARENT_RUN_ID = brandRunIdForTest(`rd_${'9'.repeat(32)}`);
@@ -683,7 +683,6 @@ function stateInForLoop(fc: ForContext): DelegationParentState {
     substep: '1',
     substepStates: [],
     activeFrameKey: buildFrameKey('2', 1),
-    parentLinkage: undefined,
     templateVars: brandInitialTemplateVarsForTest({ Tasks: [{ name: 'alpha' }, { name: 'beta' }] }),
     variables: {},
     forStack: [fc],

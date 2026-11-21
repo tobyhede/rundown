@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from '@jest/globals';
 import {
   RunbookStateManager,
-  SessionService,
   appendArtifactManifestRecord,
   assertRunId,
+  generateOwnerToken,
+  hashRunSecret,
   merge,
 } from '@rundown-org/core';
 import { parseRunbookDocument } from '@rundown-org/parser';
@@ -69,12 +70,12 @@ describe('artifact command', () => {
     ].join('\n');
     const { runbook } = parseRunbookDocument(markdown, 'workflow.runbook.md');
     const manager = new RunbookStateManager(workspace.cwd);
-    const session = new SessionService(manager);
     const state = await manager.create(
       { source: 'project', path: 'workflow.runbook.md' },
       runbook,
       {
         runbookPath: 'workflow.runbook.md',
+        ownerTokenHash: hashRunSecret(generateOwnerToken()),
         runId: RUN_ID,
         templateVars: {
           WorkPath: '.rundown/work',
@@ -84,7 +85,6 @@ describe('artifact command', () => {
         frontmatterOutputs: [],
       },
     );
-    await session.pushRunbook(state.id);
     const uri = `rd://artifacts/${CONTEXT_ID}/${RUN_ID}/plan.json`;
     await appendArtifactManifestRecord(
       { cwd: workspace.cwd, workPath: '.rundown/work' },
@@ -120,18 +120,17 @@ describe('artifact command', () => {
     );
     const { runbook } = parseRunbookDocument(markdown, 'workflow.runbook.md');
     const manager = new RunbookStateManager(workspace.cwd);
-    const session = new SessionService(manager);
     const state = await manager.create(
       { source: 'project', path: 'workflow.runbook.md' },
       runbook,
       {
         runbookPath: 'workflow.runbook.md',
+        ownerTokenHash: hashRunSecret(generateOwnerToken()),
         runId: RUN_ID,
         templateVars: { WorkPath: '.rundown/work', ContextId: CONTEXT_ID, RunId: RUN_ID },
         frontmatterOutputs: [],
       },
     );
-    await session.pushRunbook(state.id);
     const uris = [
       `rd://artifacts/${CONTEXT_ID}/${RUN_ID}/review-1.json`,
       `rd://artifacts/${CONTEXT_ID}/${RUN_ID}/review-2.json`,
@@ -154,11 +153,9 @@ describe('artifact command', () => {
     return uris;
   }
 
-  // stale_claim is intentionally not covered here: `resolveCommandTarget` only
-  // returns it when a claimId is supplied, and the artifact command never passes
-  // one (it calls `resolveCommandTarget(session, { allowStashed: true })`), so the
-  // stale_claim branch is unreachable through the CLI.
-  describe.each(['ls', 'path', 'uri', 'inspect'])('with no active runbook (%s)', (sub) => {
+  // Bare `rd artifact …` resolves the single running run; with none it emits
+  // the no-run warning, with several it asks for `--run`.
+  describe.each(['ls', 'path', 'uri', 'inspect'])('with no running run (%s)', (sub) => {
     it('emits the no-active-runbook warning and exits 0', async () => {
       const args = sub === 'ls' ? ['artifact', 'ls'] : ['artifact', sub, 'PlanPath'];
       const result = await runCliInProcess(args, workspace);
@@ -176,6 +173,145 @@ describe('artifact command', () => {
         valid: true,
         errors: [],
       });
+    });
+  });
+
+  it('selects the run named by --run', async () => {
+    const uri = await seedActiveArtifact();
+    const result = await runCliInProcess(['artifact', 'ls', '--run', RUN_ID], workspace);
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toContain(uri);
+  });
+
+  it('refuses an unknown --run with RUN_TARGET_UNAVAILABLE', async () => {
+    await seedActiveArtifact();
+    const result = await runCliInProcess(
+      ['artifact', 'ls', '--run', 'rd_00000000000000000000000000000000'],
+      workspace,
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toEqual(
+      expect.objectContaining({ kind: 'error', code: 'RUN_TARGET_UNAVAILABLE' }),
+    );
+  });
+
+  it('asks for --run when several runs are running', async () => {
+    await seedActiveArtifact();
+    const other = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+    expect(other.exitCode).toBe(0);
+
+    const result = await runCliInProcess(['artifact', 'ls'], workspace);
+
+    expect(result.exitCode).toBe(1);
+    const output = JSON.parse(result.stdout);
+    expect(output).toEqual(expect.objectContaining({ kind: 'error', code: 'INVALID_SYNTAX' }));
+    expect(String(output.error)).toContain('--run');
+  });
+
+  // A step's command runs with RD_RUN_ID naming its own run, so a bare
+  // `rundown artifact …` inside a step must resolve that run even while other
+  // runs are in progress. Precedence: --run > RD_RUN_ID > single running run.
+  describe('RD_RUN_ID selector', () => {
+    /** Start an alias-less run, then seed the artifact run; both are running. */
+    async function seedTwoRunningRuns(): Promise<{ uri: string; otherRunId: string }> {
+      const other = await runCliInProcess('run --prompted runbooks/simple.runbook.md', workspace);
+      expect(other.exitCode).toBe(0);
+      const uri = await seedActiveArtifact();
+      const ids = (await new RunbookStateManager(workspace.cwd).list()).map((s) => s.id);
+      const otherRunId = ids.find((id) => id !== RUN_ID);
+      expect(ids).toHaveLength(2);
+      if (otherRunId === undefined) throw new Error('expected a second running run');
+      return { uri, otherRunId };
+    }
+
+    it('selects the run named by RD_RUN_ID when several runs are running', async () => {
+      const { uri } = await seedTwoRunningRuns();
+
+      const result = await runCliInProcess(['artifact', 'ls'], workspace, {
+        env: { RD_RUN_ID: RUN_ID },
+      });
+
+      expect(result.exitCode).toBe(0);
+      const output = JSON.parse(result.stdout) as Array<{ alias: string; uri: string }>;
+      expect(output).toEqual([expect.objectContaining({ alias: 'PlanPath', uri })]);
+      expect(validateCommandOutput('artifact ls', output)).toEqual({ valid: true, errors: [] });
+    });
+
+    it('still asks for --run when several runs are running and RD_RUN_ID is absent', async () => {
+      await seedTwoRunningRuns();
+
+      const result = await runCliInProcess(['artifact', 'ls'], workspace, {
+        env: { RD_RUN_ID: undefined },
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toEqual(
+        expect.objectContaining({ kind: 'error', code: 'INVALID_SYNTAX' }),
+      );
+    });
+
+    it('lets an explicit --run win over RD_RUN_ID', async () => {
+      const { uri, otherRunId } = await seedTwoRunningRuns();
+
+      const named = await runCliInProcess(['artifact', 'ls', '--run', RUN_ID], workspace, {
+        env: { RD_RUN_ID: otherRunId },
+      });
+      expect(named.exitCode).toBe(0);
+      expect(JSON.parse(named.stdout)).toEqual([
+        expect.objectContaining({ alias: 'PlanPath', uri }),
+      ]);
+
+      // And the reverse: --run names the alias-less run, RD_RUN_ID the other.
+      const reversed = await runCliInProcess(['artifact', 'ls', '--run', otherRunId], workspace, {
+        env: { RD_RUN_ID: RUN_ID },
+      });
+      expect(reversed.exitCode).toBe(0);
+      expect(JSON.parse(reversed.stdout)).toEqual([]);
+    });
+
+    it('refuses a malformed RD_RUN_ID with INVALID_RUN_ID instead of falling through', async () => {
+      // One running run: the single-running-run rule would succeed if the bad
+      // environment value were silently ignored.
+      await seedActiveArtifact();
+
+      const result = await runCliInProcess(['artifact', 'ls'], workspace, {
+        env: { RD_RUN_ID: 'not-a-run-id' },
+      });
+
+      expect(result.exitCode).toBe(1);
+      const output = JSON.parse(result.stdout) as { kind: string; code: string; error: string };
+      expect(output).toEqual(expect.objectContaining({ kind: 'error', code: 'INVALID_RUN_ID' }));
+      expect(output.error).toContain('RD_RUN_ID');
+    });
+
+    it('refuses an unknown RD_RUN_ID with RUN_TARGET_UNAVAILABLE instead of falling through', async () => {
+      await seedActiveArtifact();
+
+      const result = await runCliInProcess(['artifact', 'ls'], workspace, {
+        env: { RD_RUN_ID: 'rd_00000000000000000000000000000000' },
+      });
+
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(result.stdout)).toEqual(
+        expect.objectContaining({
+          kind: 'error',
+          code: 'RUN_TARGET_UNAVAILABLE',
+          details: { runId: 'rd_00000000000000000000000000000000' },
+        }),
+      );
+    });
+
+    it('treats an empty RD_RUN_ID as absent', async () => {
+      const uri = await seedActiveArtifact();
+
+      const result = await runCliInProcess(['artifact', 'ls'], workspace, {
+        env: { RD_RUN_ID: '' },
+      });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain(uri);
     });
   });
 

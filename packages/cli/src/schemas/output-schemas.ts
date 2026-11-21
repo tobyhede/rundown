@@ -28,8 +28,6 @@ export {
   CheckResponseSchema,
   ResolveResponseSchema,
   EchoResponseSchema,
-  StashResponseSchema,
-  PopResponseSchema,
   ArtifactAliasEntrySchema,
   ArtifactAliasArrayEntrySchema,
   ArtifactLsResponseSchema,
@@ -53,19 +51,12 @@ export {
   ScenarioListSchema,
   ScenarioRunResponseSchema,
   ScenarioErrorResponseSchema,
-  // Delegation schemas
-  DelegationStatusEntrySchema,
-  // Abort schema
-  AbortResponseSchema,
   // Suite schemas
   ScenarioSuiteCaseEntrySchema,
   ScenarioSuiteListSchema,
   ScenarioSuiteCaseDetailSchema,
   ScenarioSuiteRunResponseSchema,
-  // Delegate/Claim schemas
-  DelegateResponseSchema,
-  ClaimResponseSchema,
-  // Prune schema (same format as ls output)
+  // Prune schema (ls entry shape plus `retained`)
   PruneResponseSchema,
   // Execution schemas
   ExecutionSummarySchema,
@@ -99,7 +90,7 @@ export const RunbookSchema = z
   .object({
     id: z.string().describe('Unique run identifier'),
     runbook: z.string().describe('Runbook filename'),
-    status: z.string().describe('Runbook status (active, stashed, completed, stale, or orphaned)'),
+    status: z.string().describe('Run lifecycle (running, complete, stopped, or abandoned)'),
     step: z.string().optional().describe('Current step number'),
     total: z.number().optional().describe('Total number of steps'),
     title: z.string().optional().describe('Runbook title from metadata'),
@@ -110,77 +101,6 @@ export const RunbookSchema = z
  * List of runbooks (ls output with status).
  */
 export const RunbookListSchema = z.array(RunbookSchema).describe('List of runbook state entries');
-
-const CollectAlreadyAggregatedResponseSchema = z.object({
-  /** Response type discriminant */
-  kind: z.literal('collect').describe('Response type discriminant'),
-  /** Command action that was performed */
-  action: z.literal('collect').describe('Command action that was performed'),
-  /** Collection status */
-  status: z.literal('already-aggregated').describe('Collection status'),
-  /** DELEGATE step scope that was collected */
-  step: z.string().describe('DELEGATE step scope'),
-  /** Parent runbook state identifier */
-  parentRunId: z.string().describe('Parent runbook state identifier'),
-  /** Optional non-error code annotating the idempotent no-op */
-  code: z.literal('COLLECT_ALREADY_APPLIED').optional().describe('Idempotent no-op code'),
-});
-
-const CollectAppliedResponseSchema = z.object({
-  /** Response type discriminant */
-  kind: z.literal('collect').describe('Response type discriminant'),
-  /** Command action that was performed */
-  action: z.literal('collect').describe('Command action that was performed'),
-  /** Collection status */
-  status: z.literal('applied').describe('Collection status'),
-  /** Target delegating run identifier */
-  parentRunId: z.string().describe('Target delegating run identifier'),
-  /** Number of delegation outcomes consumed */
-  applied: z.number().int().nonnegative().describe('Number of delegation outcomes consumed'),
-  /** Number of outcomes still unresolved after this collection */
-  unresolved: z
-    .number()
-    .int()
-    .nonnegative()
-    .describe('Number of unresolved outcomes after collection'),
-  /** Lifecycle of the target run after collection */
-  lifecycle: z.string().describe('Target run lifecycle after collection'),
-  /** True when collection reported this run's terminal outcome upward */
-  reportedTerminalOutcome: z.boolean().describe('Whether a terminal outcome was reported upward'),
-});
-
-const CollectNotActiveResponseSchema = z.object({
-  /** Response type discriminant */
-  kind: z.literal('collect').describe('Response type discriminant'),
-  /** Command action that was performed */
-  action: z.literal('collect').describe('Command action that was performed'),
-  /** Collection status */
-  status: z.literal('not-active').describe('Collection status'),
-  /** DELEGATE step scope that was collected */
-  step: z.string().describe('DELEGATE step scope'),
-  /** Parent runbook state identifier */
-  parentRunId: z.string().describe('Parent runbook state identifier'),
-  /** Requested DELEGATE frame key */
-  frameKey: z.string().describe('Requested DELEGATE frame key'),
-  /** Currently active parent frame key */
-  activeFrameKey: z.string().describe('Currently active parent frame key'),
-  /** Number of unresolved substeps */
-  unresolved: z.number().int().nonnegative().describe('Number of unresolved substeps'),
-});
-
-/**
- * Collect response schema.
- *
- * Covers the explicit JSON objects emitted by `rd collect` when delegation
- * completions have already been aggregated or the requested frame is inactive.
- */
-export const CollectResponseSchema = z
-  .discriminatedUnion('status', [
-    CollectAlreadyAggregatedResponseSchema,
-    CollectNotActiveResponseSchema,
-    CollectAppliedResponseSchema,
-  ])
-  .describe('Response from the collect command');
 
 /**
  * Validation error entry (alias for consistency with CLI naming).
@@ -203,13 +123,12 @@ export { ScenarioDetailSchema as ScenarioShowResponseSchema } from '@rundown-org
 
 import {
   StatusResponseSchema,
+  PruneResponseSchema,
   ActionResponseSchema,
   WarningResponseSchema,
   CheckResponseSchema,
   ResolveResponseSchema,
   EchoResponseSchema,
-  StashResponseSchema,
-  PopResponseSchema,
   ScenarioListSchema,
   ScenarioDetailSchema,
   ScenarioRunResponseSchema,
@@ -219,9 +138,6 @@ import {
   ExecutionSummarySchema,
   RunCommandResponseSchema,
   AvailableRunbooksListSchema,
-  AbortResponseSchema,
-  DelegateResponseSchema,
-  ClaimResponseSchema,
   ArtifactLsResponseSchema,
   ArtifactPathResponseSchema,
   ArtifactUriResponseSchema,
@@ -247,8 +163,6 @@ export const COMMAND_SCHEMAS: Record<string, z.ZodType> = {
   goto: withWarningResponse(ExecutionSummarySchema),
   complete: ActionOrWarningResponseSchema,
   stop: ActionOrWarningResponseSchema,
-  stash: withWarningResponse(StashResponseSchema),
-  pop: PopResponseSchema,
   check: CheckResponseSchema,
   resolve: ResolveResponseSchema,
   echo: EchoResponseSchema,
@@ -262,17 +176,13 @@ export const COMMAND_SCHEMAS: Record<string, z.ZodType> = {
   'artifact uri': withWarningResponse(ArtifactUriResponseSchema),
   'artifact inspect': withWarningResponse(ArtifactInspectResponseSchema),
   ls: z.union([RunbookListSchema, AvailableRunbooksListSchema]),
-  prune: RunbookListSchema,
-  collect: withWarningResponse(CollectResponseSchema),
+  prune: PruneResponseSchema,
   'scenario ls': ScenarioListSchema,
   'scenario show': ScenarioDetailSchema,
   'scenario run': ScenarioRunResponseSchema,
-  abort: AbortResponseSchema,
   'scenario-suite ls': ScenarioSuiteListSchema,
   'scenario-suite show': ScenarioSuiteCaseDetailSchema,
   // A single `scenario-suite run <case>` emits a per-case `scenario_run`
   // result; `--all` emits the aggregate `scenario_suite_run` result.
   'scenario-suite run': z.union([ScenarioRunResponseSchema, ScenarioSuiteRunResponseSchema]),
-  delegate: withWarningResponse(DelegateResponseSchema),
-  claim: ClaimResponseSchema,
 };

@@ -1,27 +1,22 @@
 // packages/cli/src/helpers/transition-command.ts
 
 import type { Command } from 'commander';
-import {
-  PASS_FAIL_VALUE_TAKING_OPTION_NAMES,
-  type PassFailValueTakingOptionName,
-} from '@rundown-org/core';
 import { getCwd } from './context.js';
 import { withErrorHandling } from './wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
 import { commandStreamOptionsForOutputMode } from '../services/execution.js';
 import { runSeamTransition, type TransitionConfig } from './transitions.js';
 import { validateIndexRequiresStep } from './index-option.js';
-import { parseTransitionTarget, transitionTargetFields } from './transition-target.js';
+import { parseTokenOption, withTokenOption } from './token-option.js';
 
 /**
  * Definition for a transition command (pass / fail).
  *
  * Both `rd pass` and `rd fail` share an identical end-to-end flow — option
- * parsing, dependency validation, transition-context construction, transition
- * execution, parent-propagation handling, and exit-code assignment. The only
- * differences are a handful of labels and the transition-config factory.
- * Capturing those differences in this struct lets the registration helper
- * own the shared body in one place.
+ * parsing, token resolution, transition execution, progression and exit-code
+ * assignment. The only differences are a handful of labels and the
+ * transition-config factory. Capturing those differences in this struct lets
+ * the registration helper own the shared body in one place.
  */
 export interface TransitionCommandDef {
   /** Command name as registered with commander ('pass' or 'fail'). */
@@ -32,71 +27,37 @@ export interface TransitionCommandDef {
   readonly description: string;
   /** Factory producing the transition config — invoked per action call. */
   readonly buildConfig: () => TransitionConfig;
-  /** Label passed to `output.noActiveRunbook` (typically the command name). */
-  readonly noActiveLabel: string;
 }
-
-/**
- * Per-option presentation metadata for the value-taking `pass` / `fail` options.
- *
- * Keyed by the canonical option long names owned by the core subprocess boundary
- * ({@link PassFailValueTakingOptionName}). The exhaustive `Record` type forces
- * this map to cover every boundary-known value-taking option exactly: adding a
- * new option to the core list is a compile error here until its placeholder and
- * help text are supplied, and a stale entry for a removed option likewise fails
- * to type-check. The CLI owns only presentation (value placeholder + help text);
- * the *membership* of the set lives in core.
- */
-const VALUE_TAKING_OPTION_PRESENTATION: Record<
-  PassFailValueTakingOptionName,
-  { readonly value: string; readonly description: string }
-> = {
-  '--step': { value: 'stepId', description: 'Target specific substep' },
-  '--index': { value: 'number', description: 'FOR loop iteration to target (requires --step)' },
-  '--claim-id': { value: 'claimId', description: 'Target a claimed delegated child runbook' },
-  '--run': {
-    value: 'runId',
-    description: 'Target a runbook by run id',
-  },
-};
 
 /**
  * Register a transition command (pass/fail) on the commander program.
  *
- * Both commands share the same flow: parse options, build the transition
- * context, execute the transition, and propagate the outcome to the parent if
- * this run is a delegated child. Only the transition factory and a few labels
- * differ; this helper centralizes everything else so behavior stays in lock-step.
+ * Options: `--token <token>` (required — the Owner Token from
+ * `runbook_started`), `--step <stepId>` (required by core; it must name the
+ * run's current position), `--index <number>` (the current FOR iteration) and
+ * `--text`. A bare `--run` is never accepted here: a run id is a read-only
+ * selector, not mutation authority.
  *
  * @param program - Commander program instance to register the command on
- * @param def - Per-command definition supplying name, aliases, description,
- *   transition-config factory, and the `noActiveRunbook` label
+ * @param def - Per-command definition supplying name, aliases, description
+ *   and the transition-config factory
  */
 export function registerTransitionCommand(program: Command, def: TransitionCommandDef): void {
-  const command = program
-    .command(def.name)
-    .aliases([...def.aliases])
-    .description(def.description);
-  // Single source of truth: the value-taking option NAMES come from the core
-  // subprocess boundary (PASS_FAIL_VALUE_TAKING_OPTION_NAMES), which is the same
-  // set the boundary scanner skips when reading claim evidence. Deriving the
-  // Commander `.option(...)` registrations from it makes the CLI surface and the
-  // security gate unable to drift: a new value-taking option must be added to the
-  // core list (which updates the scanner) and is then forced to supply
-  // presentation metadata here by the exhaustive Record type below. The CLI keeps
-  // only the value placeholder + help text (presentation), never the membership.
-  for (const name of PASS_FAIL_VALUE_TAKING_OPTION_NAMES) {
-    const { value, description } = VALUE_TAKING_OPTION_PRESENTATION[name];
-    command.option(`${name} <${value}>`, description);
-  }
-  command
+  withTokenOption(
+    program
+      .command(def.name)
+      .aliases([...def.aliases])
+      .description(def.description),
+  )
+    .option('--step <stepId>', 'Current step or substep position (required, e.g. 2 or 2.1)')
+    .option('--index <number>', 'Current FOR loop iteration (requires --step)')
     .option('--text', 'Output as human-readable text')
     .action(
       async (options: {
+        token?: string;
+        run?: string;
         step?: string;
         index?: string;
-        claimId?: string;
-        run?: string;
         text?: boolean;
       }) => {
         await withErrorHandling(
@@ -110,34 +71,28 @@ export function registerTransitionCommand(program: Command, def: TransitionComma
               process.exit(1);
             }
 
-            const cwd = getCwd();
-            const target = parseTransitionTarget(options, output);
-            if (!target) return;
-            const targetFields = transitionTargetFields(target);
+            const token = parseTokenOption(options, def.name, output);
+            if (token === undefined) return;
 
+            const cwd = getCwd();
             const config = def.buildConfig();
 
-            // The core lifecycle seam owns evidence mapping, target resolution,
-            // policy gating (refusals), completion recording or top-level send,
-            // inline-child reactivation, activation, and terminal propagation.
-            // The CLI keeps only Category-A parsing, rendering, and exit mapping.
+            // Core owns token resolution, the `--step` contract, the machine
+            // dispatch and the conditional save. The CLI keeps parsing,
+            // rendering and exit mapping.
             const commandStreamOptions = commandStreamOptionsForOutputMode(options.text);
             const { exitError } = await runSeamTransition(output, cwd, config, {
-              ...targetFields,
+              token,
               ...(options.step !== undefined ? { step: options.step } : {}),
               ...(options.index !== undefined ? { index: options.index } : {}),
               commandStreamOptions,
             });
 
-            // Core activation returns the composition's closed condition after
-            // any terminal flow-back. Refused/failed remain non-terminal
-            // semantically but still request a non-zero process exit.
             if (exitError) {
               process.exitCode = 1;
             } else {
-              // Clear any non-zero code set earlier in this command (e.g. by an
-              // inline child's own STOP) when the parent HANDLES that failure
-              // (FAIL ANY CONTINUE): a handled failure must exit 0.
+              // Clear any non-zero code set earlier in this command: a handled
+              // failure (FAIL ANY CONTINUE) must exit 0.
               process.exitCode = undefined;
             }
           },

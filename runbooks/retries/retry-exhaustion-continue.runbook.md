@@ -9,16 +9,16 @@ scenarios:
     description: Fails twice, exhausts retry, continues to cleanup step
     commands:
       - rd run --prompted retry-exhaustion-continue.runbook.md
-      - rd fail
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1
+      - rd fail --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
   recovered:
     description: Fails first, succeeds on retry without reaching cleanup
     commands:
       - rd run --prompted retry-exhaustion-continue.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 1
     result: COMPLETE
   auto-execution:
     description: Code block auto-executes - fails twice, continues to cleanup

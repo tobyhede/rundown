@@ -13,11 +13,11 @@ scenarios:
     description: Trailing CONTINUE substep fails but result is invisible to aggregation
     commands:
       - rd run --prompted for-substep-defer-continue.runbook.md
-      - rd pass
-      - rd fail
-      - rd pass
-      - rd fail
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1 --index 1
+      - rd fail --token ${TOKEN} --step 1.2 --index 1
+      - rd pass --token ${TOKEN} --step 1.1 --index 2
+      - rd fail --token ${TOKEN} --step 1.2 --index 2
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 

@@ -9,15 +9,15 @@ scenarios:
     description: At least one substep passes, PASS ANY fires
     commands:
       - rd run --prompted any-modifier.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.2
     result: COMPLETE
   mixed-completed:
     description: First fails, second passes, PASS ANY fires COMPLETE
     commands:
       - rd run --prompted any-modifier.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.2
     result: COMPLETE
   auto-execution:
     description: Substeps auto-execute, PASS ANY fires

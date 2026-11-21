@@ -9,14 +9,14 @@ scenarios:
     description: Step passes on first attempt
     commands:
       - rd run --prompted retry-success.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
     result: COMPLETE
   after-retry:
     description: Fails first, succeeds on retry
     commands:
       - rd run --prompted retry-success.runbook.md
-      - rd fail
-      - rd pass
+      - rd fail --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 1
     result: COMPLETE
   auto-execution:
     description: Code block auto-executes - fails once then passes on retry

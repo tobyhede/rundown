@@ -37,18 +37,11 @@ contain the protocol itself.
    bundled).
 
 2. **Load the execution protocol — before starting.** So you are ready to
-   interpret the first step's output (including a delegation) the moment it
-   appears, rather than scrambling for the protocol after `rundown run` has fired:
+   interpret the first step's output the moment it appears, rather than
+   scrambling for the protocol after `rundown run` has fired:
 
    ```text
    Skill(skill: "rundown:running-runbooks")
-   ```
-
-   If the runbook contains a `- DELEGATE` step, also load the delegation
-   protocol:
-
-   ```text
-   Skill(skill: "rundown:delegating-runbooks")
    ```
 
 3. **Start it.**
@@ -57,10 +50,9 @@ contain the protocol itself.
    rundown run <name>
    ```
 
-   Capture the run id when you start the runbook: `rundown run` prints it at
-   start and every subsequent event carries it as `runbookId`. You need it for
-   every mutating command you issue as the orchestrator of a delegation-exposed
-   run.
+   Capture `owner_token` from the `runbook_started` event it prints. It is shown
+   once and never again, and every `pass`, `fail`, `goto`, `stop`, and
+   `complete` on this run needs it as `--token <owner_token>`.
 
    Pass inputs if the runbook requires them:
 
@@ -68,15 +60,15 @@ contain the protocol itself.
    rundown run <name> --input key=value
    ```
 
-   If `rundown run` reports missing required inputs, supply them and re-run.
+   If `rundown run` reports missing required inputs, supply them and re-run. If
+   it refuses with `RUNBOOK_COMPOSITION_UNSUPPORTED`, the runbook composes other
+   runbooks, which this build cannot run (until #903 / #904): report that to the
+   user and stop.
 
 4. **Execute.** Follow the loaded
    [running-runbooks](../running-runbooks/SKILL.md) protocol: respond to each
-   step with `rundown pass` / `rundown fail` and trust Rundown for transitions.
-   On a delegation-exposed run (any runbook with a `- DELEGATE` step), these
-   become `rundown pass --claim-id <claim_id>` / `rundown fail --claim-id <claim_id>` — the bare
-   form is for standalone runs only and otherwise refuses with
-   `ACTOR_CONTEXT_REQUIRED`.
+   step with `rundown pass --token <owner_token> --step <position>` (or
+   `rundown fail`) and trust Rundown for transitions.
 
 ## Reference
 

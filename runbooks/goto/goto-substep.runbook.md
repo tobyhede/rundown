@@ -9,8 +9,8 @@ scenarios:
     description: Pass substep 1.1 (GOTO 1.3), pass substep 1.3
     commands:
       - rd run --prompted goto-substep.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1.1
+      - rd pass --token ${TOKEN} --step 1.3
     result: COMPLETE
 ---
 

@@ -9,14 +9,14 @@ scenarios:
     description: Step passes, runbook finishes via PASS COMPLETE
     commands:
       - rd run --prompted pass-complete.runbook.md
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
     result: COMPLETE
 
   forced-complete-command:
     description: Public rd complete forces COMPLETE from an active prompted run
     commands:
       - rd run --prompted pass-complete.runbook.md
-      - rd complete "enough evidence"
+      - rd complete --token ${TOKEN} "enough evidence"
     result: COMPLETE
 ---
 

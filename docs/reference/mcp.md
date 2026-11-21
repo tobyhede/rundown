@@ -32,15 +32,16 @@ shape of CLI command output. Those topics are defined in
 
 ## 2. Terminology
 
-| Term              | Meaning                                                                   |
-| ----------------- | ------------------------------------------------------------------------- |
-| MCP client        | Process that consumes the server over stdio (for example Claude Desktop). |
-| MCP server        | The `rundown-mcp` process exposing Rundown tools to a client.             |
-| Tool              | A named, schema-validated operation registered with the MCP server.       |
-| Content block     | An MCP response element of the form `{ "type": "text", "text": "..." }`.  |
-| Response envelope | The MCP response object containing one or more content blocks.            |
-| Active run        | The current top-level run as understood by the Rundown CLI session.       |
-| Tool invocation   | A single client-initiated call to one MCP tool.                           |
+| Term              | Meaning                                                                     |
+| ----------------- | --------------------------------------------------------------------------- |
+| MCP client        | Process that consumes the server over stdio (for example Claude Desktop).   |
+| MCP server        | The `rundown-mcp` process exposing Rundown tools to a client.               |
+| Tool              | A named, schema-validated operation registered with the MCP server.         |
+| Content block     | An MCP response element of the form `{ "type": "text", "text": "..." }`.    |
+| Response envelope | The MCP response object containing one or more content blocks.              |
+| Owner Token       | `rdo_…` secret printed once by `rundown run`; the run's mutation authority. |
+| Run id            | `rd_…` identifier of a run; a read-only selector.                           |
+| Tool invocation   | A single client-initiated call to one MCP tool.                             |
 
 ## 3. Server Identity
 
@@ -88,47 +89,39 @@ state semantics are inherited from the CLI process and are defined by
 
 ### 5.1 Tool Summary
 
-The MCP server mirrors the agent-facing CLI surface, mapping tools to CLI
-subcommands so that agent clients have broadly the same execution and
-coordination capabilities as a human at the terminal, EXCEPT that a subprocess
-mutation boundary withholds ambient lifecycle mutations that name no lane.
-Because the MCP server reaches the CLI by spawning a subprocess, typed caller
-evidence cannot cross the process boundary: a spawned `rundown pass` /
-`rundown fail` / `rundown delegate` arrives as an ordinary `argv`,
-indistinguishable from a human at the terminal, and a **bare** one would
-silently inherit direct-CLI trust over the active run. The boundary therefore
-requires spawned mutating calls to present bearer authority explicitly:
+The MCP server mirrors the agent-facing CLI surface: each tool maps to one CLI
+subcommand, and the CLI decides every outcome. Authority follows the CLI's run
+ownership model (see
+[docs/reference/cli.md Run Ownership](cli.md#run-ownership)):
 
-- **Claim lane** — a real `claimId`, mapped to `--claim-id <claim_id>` (the
-  bearer claim minted by `rundown run` or `rundown claim`; it carries the grants
-  that authorize the mutation, for standalone runs and delegated children
-  alike).
-- **Run selector** — a real `runId`, mapped to `--run <rd_…>`, names the target
-  run but is not authority by itself.
+- **Owner Token** — `rundown run` prints the run's Owner Token
+  (`rdo_<43 base64url characters>`) once, as `owner_token` on the
+  `runbook_started` event. Every mutating tool (`pass`, `fail`, `goto`,
+  `complete`, `stop`) REQUIRES it as `token`, forwarded as `--token <token>`.
+  The token both selects the run and proves ownership.
+- **Run selector** — `runId` (`rd_<32 hex>`), accepted only by `status` and
+  forwarded as `--run <runId>`, selects a run for reading. It is never mutation
+  authority, and no mutating tool accepts it.
 
-A call carrying `claimId` passes through on the shared mutating commands. A call
-carrying only `runId` is withheld in-process, because run ids are selectors, not
-bearer authority. `claimId` and `runId` are mutually exclusive; the server MUST
-reject a tool call carrying both before invoking the CLI. Tools that exist
-purely for local session management, destructive state operations, or authoring
-helpers are CLI-only (see [§5.14](#unsupported-cli-operations)).
+The server checks only that `token` is present and is a string; a call without
+it fails schema validation in-process. Resolving the token, and refusing a
+malformed, unknown, or finished-run token (`INVALID_SYNTAX`, `UNKNOWN_TOKEN`,
+`RD-303`, `RD-304`), is the CLI's job; the server passes those refusals through
+unchanged.
 
 The server MUST register exactly the following tools:
 
-| Tool                    | Required parameters | Optional parameters                                                                        | CLI mapping                                                                                                                                                                                                                   |
-| ----------------------- | ------------------- | ------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`validate`](#validate) | `file`              | —                                                                                          | `rundown check <file>`                                                                                                                                                                                                        |
-| [`list`](#list)         | —                   | `all`, `tags`                                                                              | `rundown ls [--all] [--tags <tags>]`                                                                                                                                                                                          |
-| [`status`](#status)     | —                   | `claimId`                                                                                  | `rundown status [--claim-id <id>]`                                                                                                                                                                                            |
-| [`run`](#run)           | —                   | `file`, `prompted`, `step`, `index`, `input`, `inputJson`, `inputFile`                     | `rundown run [<file>] [--prompted] [--step <id>] [--index <n>] [--input ...] [--input-json ...] [--input-file ...]`                                                                                                           |
-| [`pass`](#pass)         | —                   | `step`, `index`, `claimId`, `runId`                                                        | `rundown pass [--step <id>] [--index <n>]` authorized by `--claim-id <id>` (bearer authority); `--run <rd_…>` is a selector only — a bare or runId-only form is withheld in-process ([§5.6](#pass)); reject both flags        |
-| [`fail`](#fail)         | —                   | `step`, `index`, `claimId`, `runId`                                                        | `rundown fail [--step <id>] [--index <n>]` authorized by `--claim-id <id>` (bearer authority); `--run <rd_…>` is a selector only — a bare or runId-only form is withheld in-process ([§5.7](#fail)); reject both flags        |
-| [`goto`](#goto)         | `step`              | `index`, `claimId`, `runId`                                                                | `rundown goto <step> [--index <n>]` authorized by `--claim-id <id>` (bearer authority); `--run <rd_…>` is a selector only — a bare or runId-only form is withheld in-process ([§5.8](#goto)); reject both flags               |
-| [`complete`](#complete) | —                   | `message`, `claimId`, `runId`                                                              | `rundown complete [<message>]` authorized by `--claim-id <id>` (bearer authority); `--run <rd_…>` is a selector only — a bare or runId-only form is withheld in-process ([§5.9](#complete)); reject both flags                |
-| [`stop`](#stop)         | —                   | `message`, `claimId`, `runId`                                                              | `rundown stop [<message>]` authorized by `--claim-id <id>` (bearer authority); `--run <rd_…>` is a selector only — a bare or runId-only form is withheld in-process ([§5.10](#stop)); reject both flags                       |
-| [`delegate`](#delegate) | —                   | `runbook`, `step`, `index`, `retry`, `claimId`, `runId`, `input`, `inputJson`, `inputFile` | `rundown delegate …` authorized by `--claim-id <id>` (bearer authority); `--run <rd_…>` is a selector only — a bare or runId-only form is withheld in-process ([§5.11](#delegate)); reject both flags                         |
-| [`claim`](#claim)       | `token`             | `input`, `inputJson`, `inputFile`                                                          | `rundown claim <token> [--input ...] [--input-json ...] [--input-file ...]`                                                                                                                                                   |
-| [`collect`](#collect)   | —                   | `step`, `index`, `claimId`, `runId`                                                        | `rundown collect [--step <id>] [--index <n>]` authorized by `--claim-id <id>` (bearer authority); `--run <rd_…>` is a selector only — a bare or runId-only form is withheld in-process ([§5.13](#collect)); reject both flags |
+| Tool                    | Required parameters | Optional parameters                                                    | CLI mapping                                                                                                         |
+| ----------------------- | ------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| [`validate`](#validate) | `file`              | —                                                                      | `rundown check <file>`                                                                                              |
+| [`list`](#list)         | —                   | `all`, `tags`                                                          | `rundown ls [--all] [--tags <tags>]`                                                                                |
+| [`status`](#status)     | —                   | `runId`                                                                | `rundown status [--run <runId>]`                                                                                    |
+| [`run`](#run)           | —                   | `file`, `prompted`, `step`, `index`, `input`, `inputJson`, `inputFile` | `rundown run [<file>] [--prompted] [--step <id>] [--index <n>] [--input ...] [--input-json ...] [--input-file ...]` |
+| [`pass`](#pass)         | `token`, `step`     | `index`                                                                | `rundown pass --token <token> --step <id> [--index <n>]`                                                            |
+| [`fail`](#fail)         | `token`, `step`     | `index`                                                                | `rundown fail --token <token> --step <id> [--index <n>]`                                                            |
+| [`goto`](#goto)         | `token`, `step`     | `index`                                                                | `rundown goto <step> --token <token> [--index <n>]`                                                                 |
+| [`complete`](#complete) | `token`             | `message`                                                              | `rundown complete [<message>] --token <token>`                                                                      |
+| [`stop`](#stop)         | `token`             | `message`                                                              | `rundown stop [<message>] --token <token>`                                                                          |
 
 Parameter types are defined per tool below. The server MUST validate tool inputs
 against the declared schema and reject inputs that fail validation without
@@ -152,7 +145,7 @@ Check runbook syntax without execution.
 
 ### 5.3 `list`
 
-List active or available runbooks.
+List persisted runs, or available runbook files when `all` is true.
 
 | Parameter | Type    | Required | Behavior                                                       |
 | --------- | ------- | -------- | -------------------------------------------------------------- |
@@ -166,74 +159,70 @@ defines that semantics.
 
 ### 5.4 `status`
 
-Return current runbook state.
+Return run state: every run when `runId` is absent, or one run in detail. No
+status response carries an Owner Token.
 
-| Parameter | Type   | Required | Behavior                                                                                                                               |
-| --------- | ------ | -------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` — the bearer claim (from `rundown run` or `rundown claim`) identifying the run to inspect. |
+| Parameter | Type   | Required | Behavior                                                                                       |
+| --------- | ------ | -------- | ---------------------------------------------------------------------------------------------- |
+| `runId`   | string | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) to select one run. Read-only selection. |
 
 <a id="run"></a>
 
 ### 5.5 `run`
 
-Start or resume a runbook.
+Start a runbook. The CLI's `runbook_started` event carries `owner_token`, the
+only place the token is ever printed; the client MUST keep it to call any
+mutating tool on that run. The response is the full event stream
+([§6.5](#65-multi-payload-stdout)), so it includes that event and the
+`step_entered` naming the first position.
 
-| Parameter   | Type        | Required | Behavior                                                                                                     |
-| ----------- | ----------- | -------- | ------------------------------------------------------------------------------------------------------------ |
-| `file`      | string      | No       | When set, forwarded as the positional runbook argument to `rundown run`.                                     |
-| `prompted`  | boolean     | No       | When true, the server MUST forward `--prompted`.                                                             |
-| `step`      | string      | No       | When set, forwarded as `--step <value>` to link a child to a parent substep or to jump to a step on entry.   |
-| `index`     | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`.                    |
-| `input`     | string[]    | No       | Each element forwarded as a separate `--input <value>` argument (`key=value`, or `key` to inherit from env). |
-| `inputJson` | string[]    | No       | Each element forwarded as a separate `--input-json <value>` argument (`key=<json>`).                         |
-| `inputFile` | string[]    | No       | Each element forwarded as a separate `--input-file <path>` argument.                                         |
+| Parameter   | Type        | Required | Behavior                                                                                                                                     |
+| ----------- | ----------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `file`      | string      | No       | When set, forwarded as the positional runbook argument to `rundown run`.                                                                     |
+| `prompted`  | boolean     | No       | When true, the server MUST forward `--prompted`.                                                                                             |
+| `step`      | string      | No       | When set, forwarded as `--step <value>` to jump to that step after starting. The CLI refuses it without `prompted: true` (`INVALID_SYNTAX`). |
+| `index`     | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`; the server rejects `index` without `step`.         |
+| `input`     | string[]    | No       | Each element forwarded as a separate `--input <value>` argument (`key=value`, or `key` to inherit from env).                                 |
+| `inputJson` | string[]    | No       | Each element forwarded as a separate `--input-json <value>` argument (`key=<json>`).                                                         |
+| `inputFile` | string[]    | No       | Each element forwarded as a separate `--input-file <path>` argument.                                                                         |
 
 Variable resolution semantics — precedence, env bridging via `RD_INPUT_*`,
-delegation inheritance, reserved names — are defined by
+reserved names — are defined by
 [docs/reference/runtime.md §Variable Resolution](runtime.md#template-variables)
 and apply unchanged when variables are supplied through MCP.
+
+A runbook whose steps compose other runbooks (runbook-list or `DELEGATE`
+substeps) is refused by the CLI with `RUNBOOK_COMPOSITION_UNSUPPORTED`; inline
+composition returns in #903 and delegation in #904.
 
 <a id="pass"></a>
 
 ### 5.6 `pass`
 
-Mark a step as passed.
+Mark the current step passed.
 
-| Parameter | Type        | Required | Behavior                                                                                                                                    |
-| --------- | ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `step`    | string      | No       | When set, forwarded as `--step <value>` to target a specific substep.                                                                       |
-| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`.                                                   |
-| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` — the bearer claim (from `rundown run` or `rundown claim`) whose grants authorize the mutation. |
-| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection. Not authority by itself.                                       |
+| Parameter | Type        | Required | Behavior                                                                                            |
+| --------- | ----------- | -------- | --------------------------------------------------------------------------------------------------- |
+| `token`   | string      | Yes      | Owner Token from `runbook_started`, forwarded as `--token <value>`.                                 |
+| `step`    | string      | Yes      | The run's current position (for example `"2"` or `"2.1"`), forwarded as `--step <value>`.           |
+| `index`   | integer ≥ 0 | No       | Forwarded as `--index <value>`. Required by the CLI inside a FOR iteration and refused outside one. |
 
-Over MCP, `pass` REQUIRES bearer authority: a `pass` without a real `claimId` is
-classified as a subprocess lifecycle mutation and withheld in-process — the
-server MUST return a withheld-mutation `error` payload WITHOUT invoking the CLI.
-A spawned bare `rundown pass` would be a mutation without bearer proof. `runId`
-by itself is target selection, not authority. Supplying both `claimId` and
-`runId` is rejected before the CLI is invoked. To mark a non-delegated
-standalone step passed, run `rundown pass` directly in a trusted terminal.
+`step` and `index` confirm the run's current position; they do not select a
+different step. A position that does not match is refused by the CLI with
+`INVALID_STEP` before anything is written.
 
 <a id="fail"></a>
 
 ### 5.7 `fail`
 
-Mark a step as failed.
+Mark the current step failed. Parameters and position rules are identical to
+[`pass`](#pass).
 
-| Parameter | Type        | Required | Behavior                                                                                                                                    |
-| --------- | ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `step`    | string      | No       | When set, forwarded as `--step <value>` to target a specific substep.                                                                       |
-| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration. Requires `step`.                                                   |
-| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` — the bearer claim (from `rundown run` or `rundown claim`) whose grants authorize the mutation. |
-| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection. Not authority by itself.                                       |
-
-Over MCP, `fail` REQUIRES explicit targeting, exactly as [`pass`](#pass): a bare
-`fail` without a real `claimId` is classified as a subprocess lifecycle mutation
-and withheld in-process — the server MUST return a withheld-mutation `error`
-payload WITHOUT invoking the CLI. A real `claimId` is forwarded to the CLI;
-`runId` alone is not authority, and `claimId` cannot be combined with `runId`.
-To mark a non-delegated standalone step failed, run `rundown fail` directly in a
-trusted terminal.
+| Parameter | Type        | Required | Behavior                                                                                            |
+| --------- | ----------- | -------- | --------------------------------------------------------------------------------------------------- |
+| `token`   | string      | Yes      | Owner Token from `runbook_started`, forwarded as `--token <value>`.                                 |
+| `step`    | string      | Yes      | The run's current position (for example `"2"` or `"2.1"`), forwarded as `--step <value>`.           |
+| `index`   | integer ≥ 0 | No       | Forwarded as `--index <value>`. Required by the CLI inside a FOR iteration and refused outside one. |
 
 <a id="goto"></a>
 
@@ -241,143 +230,61 @@ trusted terminal.
 
 Jump to a step.
 
-| Parameter | Type        | Required | Behavior                                                                                                                                    |
-| --------- | ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `step`    | string      | Yes      | Target step (for example `"3"` or `"2.1"`), forwarded verbatim to `rundown goto`.                                                           |
-| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration.                                                                    |
-| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` — the bearer claim (from `rundown run` or `rundown claim`) whose grants authorize the mutation. |
-| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself.                                  |
-
-Over MCP, `goto` follows the same two-lane rule as [`pass`](#pass): a bare jump
-(no `claimId`) on a delegation-exposed run is withheld in-process; name the
-claim bearer (`claimId`). `runId` alone is withheld, and `claimId` cannot be
-combined with `runId`.
+| Parameter | Type        | Required | Behavior                                                                          |
+| --------- | ----------- | -------- | --------------------------------------------------------------------------------- |
+| `token`   | string      | Yes      | Owner Token from `runbook_started`, forwarded as `--token <value>`.               |
+| `step`    | string      | Yes      | Target step (for example `"3"` or `"2.1"`), forwarded verbatim to `rundown goto`. |
+| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` to target a FOR-loop iteration.          |
 
 <a id="complete"></a>
 
 ### 5.9 `complete`
 
-Force early completion of the active runbook.
+Force early completion of the run.
 
-| Parameter | Type   | Required | Behavior                                                                                                                                    |
-| --------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `message` | string | No       | When set, forwarded as the positional message argument to `rundown complete`.                                                               |
-| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` — the bearer claim (from `rundown run` or `rundown claim`) whose grants authorize the mutation. |
-| `runId`   | string | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself.                                  |
+| Parameter | Type   | Required | Behavior                                                                      |
+| --------- | ------ | -------- | ----------------------------------------------------------------------------- |
+| `token`   | string | Yes      | Owner Token from `runbook_started`, forwarded as `--token <value>`.           |
+| `message` | string | No       | When set, forwarded as the positional message argument to `rundown complete`. |
 
-Without `claimId` or `runId`, this mirrors bare `rundown complete`, which is
-withheld at the boundary (and, since R1, refused by core on any
-delegation-exposed run with `ACTOR_CONTEXT_REQUIRED`). Supply the claim lane
-(`claimId`) to forward the call. `runId` alone is withheld, and `claimId` cannot
-be combined with `runId`. When forwarded, `rundown complete` inside inline
-composition targets the outermost contiguous-inline ancestor. See
-[docs/reference/cli.md](cli.md#force-terminal-targeting) for force-terminal
-targeting semantics.
+See [docs/reference/cli.md](cli.md#force-terminal-targeting) for force-terminal
+semantics.
 
 <a id="stop"></a>
 
 ### 5.10 `stop`
 
-Abort the active runbook.
+Abort the run.
 
-| Parameter | Type   | Required | Behavior                                                                                                                                    |
-| --------- | ------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `message` | string | No       | When set, forwarded as the positional message argument to `rundown stop`.                                                                   |
-| `claimId` | string | No       | When set, forwarded as `--claim-id <value>` — the bearer claim (from `rundown run` or `rundown claim`) whose grants authorize the mutation. |
-| `runId`   | string | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself.                                  |
+| Parameter | Type   | Required | Behavior                                                                  |
+| --------- | ------ | -------- | ------------------------------------------------------------------------- |
+| `token`   | string | Yes      | Owner Token from `runbook_started`, forwarded as `--token <value>`.       |
+| `message` | string | No       | When set, forwarded as the positional message argument to `rundown stop`. |
 
-Without `claimId` or `runId`, this mirrors bare `rundown stop`, which is
-withheld at the boundary (and, since R1, refused by core on any
-delegation-exposed run with `ACTOR_CONTEXT_REQUIRED`). Supply the claim lane
-(`claimId`) to forward the call. `runId` alone is withheld, and `claimId` cannot
-be combined with `runId`. When forwarded, `rundown stop` is a failure terminal
-that exits non-zero, and inside inline composition it targets the outermost
-contiguous-inline ancestor. See
+`rundown stop` is a failure terminal that exits non-zero after stopping the run;
+its final action object is still returned as the payload (see
+[§6.4](#response-format)). See
 [docs/reference/cli.md](cli.md#force-terminal-targeting) for force-terminal
-targeting semantics.
-
-<a id="delegate"></a>
-
-### 5.11 `delegate`
-
-**Available WITH `claimId`; the bare form is withheld.** A `delegate` call that
-presents the orchestrator bearer (`claimId`, mapped to `--claim-id <id>`) is
-forwarded to the CLI. A **bare** `delegate` (no `claimId`) is withheld: the
-server MUST return a withheld-mutation `error` payload WITHOUT spawning the CLI,
-because a subprocess-spawned bare `delegate` would mutate without bearer
-authority. `runId` is target selection only and cannot exempt the withhold.
-Supplying both `claimId` and `runId` is rejected before the CLI is invoked.
-
-| Parameter   | Type        | Required | Behavior                                                                                                    |
-| ----------- | ----------- | -------- | ----------------------------------------------------------------------------------------------------------- |
-| `runbook`   | string      | No       | Positional runbook argument forwarded to `rundown delegate`.                                                |
-| `step`      | string      | No       | Substep being delegated, forwarded as `--step <value>`.                                                     |
-| `index`     | integer ≥ 0 | No       | FOR-loop targeting, forwarded as `--index <value>`. Requires `step`.                                        |
-| `retry`     | boolean     | No       | Retry an existing delegation, forwarded as `--retry`.                                                       |
-| `claimId`   | string      | No       | Bearer claim returned by `rundown run`, forwarded as `--claim-id <value>`. Required to exempt the withhold. |
-| `runId`     | string      | No       | Optional run selector (`rd_<32 hex>`), mutually exclusive with `claimId`.                                   |
-| `input`     | string[]    | No       | `--input <value>` arguments.                                                                                |
-| `inputJson` | string[]    | No       | `--input-json <value>` arguments.                                                                           |
-| `inputFile` | string[]    | No       | `--input-file <path>` arguments.                                                                            |
-
-To delegate or retry from a plain terminal instead, run `rundown delegate`
-directly. Delegation semantics — token issuance, claim lifecycle, abort,
-collection — are defined by
-[docs/reference/cli.md Delegation Commands](cli.md#delegation-commands).
-
-<a id="claim"></a>
-
-### 5.12 `claim`
-
-Claim a delegation token and launch the child runbook.
-
-| Parameter   | Type     | Required | Behavior                                                                   |
-| ----------- | -------- | -------- | -------------------------------------------------------------------------- |
-| `token`     | string   | Yes      | Delegation token, forwarded as the positional argument to `rundown claim`. |
-| `input`     | string[] | No       | Each element forwarded as a separate `--input <value>` argument.           |
-| `inputJson` | string[] | No       | Each element forwarded as a separate `--input-json <value>` argument.      |
-| `inputFile` | string[] | No       | Each element forwarded as a separate `--input-file <path>` argument.       |
-
-<a id="collect"></a>
-
-### 5.13 `collect`
-
-Aggregate a delegated step and advance the parent runbook through core.
-
-| Parameter | Type        | Required | Behavior                                                                                                                                    |
-| --------- | ----------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `step`    | string      | No       | When set, forwarded as `--step <value>` to scope the collection to a specific substep.                                                      |
-| `index`   | integer ≥ 0 | No       | When set, forwarded as `--index <value>` for FOR-loop targeting. Requires `step`.                                                           |
-| `claimId` | string      | No       | When set, forwarded as `--claim-id <value>` — the bearer claim (from `rundown run` or `rundown claim`) whose grants authorize the mutation. |
-| `runId`   | string      | No       | When set, forwarded as `--run <value>` (`rd_<32 hex>`) for target selection only. Not authority by itself.                                  |
-
-Over MCP, `collect` REQUIRES bearer authority: a `collect` without a real
-`claimId` is classified as a subprocess lifecycle mutation and withheld
-in-process — the server MUST return a withheld-mutation `error` payload WITHOUT
-invoking the CLI. A spawned bare `rundown collect` would be parent aggregation
-without bearer proof. A `collect` carrying a real `claimId` presents bearer
-evidence; `runId` alone is withheld. Collection still requires an actor
-controlling the target delegating run, and `claimId` cannot be combined with
-`runId`: collecting into an ancestor the caller does not control remains refused
-by core policy (`CLAIM_GRANT_REQUIRED`). To aggregate a delegated step on the
-parent from a plain terminal, run `rundown collect` directly.
+semantics.
 
 <a id="unsupported-cli-operations"></a>
 
-### 5.14 Unsupported CLI Operations
+### 5.11 Unsupported CLI Operations
 
 The MCP server MUST NOT expose the following CLI capabilities. Clients requiring
 these capabilities MUST drive the CLI directly.
 
-| CLI capability                                                                          | Reason for exclusion                                                              |
-| --------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `stash`, `pop`                                                                          | Local session state management.                                                   |
-| `abort`                                                                                 | Destructive operation on a token a peer may still be holding; CLI-only by policy. |
-| `prune`                                                                                 | Destructive state operation.                                                      |
-| `scenario`, `scenario-suite`                                                            | Authoring and testing surfaces.                                                   |
-| `prompt`, `echo`                                                                        | Authoring helpers.                                                                |
-| `--schema`                                                                              | JSON Schema introspection is a CLI inspection feature.                            |
-| Policy flags (`--allow-*`, `--deny-all`, `--policy`, `--sandbox*`, `--trust-js-policy`) | Policy is inherited from CLI invocation context.                                  |
+| CLI capability                                                                          | Reason for exclusion                                   |
+| --------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `prune`                                                                                 | Destructive state operation.                           |
+| `artifact`                                                                              | Artifact inspection is a CLI inspection feature.       |
+| `resolve`                                                                               | Authoring helper.                                      |
+| `scenario`, `scenario-suite`                                                            | Authoring and testing surfaces.                        |
+| `prompt`, `echo`                                                                        | Authoring helpers.                                     |
+| `run --artifacts`, `run --artifacts-json`                                               | Input artifacts are supplied through the CLI only.     |
+| `--schema`                                                                              | JSON Schema introspection is a CLI inspection feature. |
+| `--text`                                                                                | The MCP surface is JSON only.                          |
+| Policy flags (`--allow-*`, `--deny-all`, `--policy`, `--sandbox*`, `--trust-js-policy`) | Policy is inherited from CLI invocation context.       |
 
 <a id="response-format"></a>
 
@@ -386,12 +293,9 @@ these capabilities MUST drive the CLI directly.
 ### 6.1 Tool Input
 
 Tool inputs MUST conform to the schema declared in [§5](#mcp-tools-reference).
-Unknown properties MAY be ignored, EXCEPT for [`delegate`](#delegate), whose
-schema is strict — unknown keys are rejected. Because a claim-evidenced
-`delegate` is forwarded to the CLI (see [§5.11](#delegate)), this strictness
-bounds the argv the server will construct on the caller's behalf. Type-incorrect
-properties MUST cause the server to reject the invocation without spawning the
-CLI.
+Unknown properties MAY be ignored; they are never forwarded to the CLI.
+Type-incorrect or missing required properties MUST cause the server to reject
+the invocation without spawning the CLI.
 
 ### 6.2 Response Envelope
 
@@ -419,43 +323,45 @@ When the CLI exits with status zero and produces empty stdout, the serialized
 response payload MUST represent the absence of data. The exact JSON shape is
 implementation-defined but MUST NOT include an `error` field.
 
-### 6.4 Error Payload
+### 6.4 Non-Zero Exit Payload
 
-When the CLI exits with non-zero status, the serialized response payload MUST
-include an `error` field carrying a human-readable message. Error provenance
-MUST follow this order:
+When the CLI exits with non-zero status, the serialized response payload MUST be
+taken from the first of these sources that yields content:
 
-1. JSON parsed from CLI stdout, if any.
-2. JSON parsed from CLI stderr, if any.
-3. Trimmed raw stderr or stdout text.
-4. The transport-layer error message.
+1. JSON parsed from CLI stdout, if it parses to an object or array.
+2. JSON parsed from CLI stderr, if it parses to an object or array.
+3. `{ "error": <text> }`, where `<text>` is the trimmed raw stderr, or failing
+   that the trimmed raw stdout.
+4. `{ "error": <message> }`, carrying the transport-layer error message.
 
-The first source that yields content MUST be used. The server MUST NOT retry the
-CLI on error.
+A CLI refusal is a JSON error envelope
+(`{ "kind": "error", "error": …, "code": … }`; see
+[docs/spec/cli-output.md § Error Output](../spec/cli-output.md#error-output-all-commands)),
+so it reaches the client with its `code` intact. A command that exits non-zero
+by design — `stop` — returns its final action object, which carries no `error`
+field. The server MUST NOT retry the CLI on error.
 
-Not every `error` payload originates from the CLI. Some errors are generated
-**in-process** and never involve a CLI invocation, yet MUST be returned in the
-same `{ "error": ... }` envelope shape:
-
-- **Withheld-mutation errors** — a `pass` / `fail` / `delegate` without claim
-  evidence (see [§5.6](#pass), [§5.7](#fail), [§5.11](#delegate)) is refused by
-  the subprocess mutation boundary before the CLI is spawned. Presenting a valid
-  `--claim-id` bearer exempts the call: `delegate` now accepts `--claim-id` as
-  bearer authority on a delegation-exposed run.
-- **Schema-validation and argv-build failures** — inputs that fail the tool's
-  declared schema, or that cannot be mapped to a valid CLI `argv`, are formatted
-  in-process without invoking the CLI.
-
-The stdout-then-stderr-then-raw provenance order above applies only to errors
-that DO reach the CLI.
+Some errors are generated **in-process** and never involve a CLI invocation:
+inputs that fail the tool's declared schema, or that cannot be mapped to a valid
+CLI `argv`, are formatted as `{ "error": "<path>: <message>; ..." }` without
+invoking the CLI. The provenance order above applies only to calls that reach
+the CLI.
 
 ### 6.5 Multi-Payload Stdout
 
-The CLI MAY emit multiple JSON payloads on stdout (for example interleaved event
-lines and a terminal command result). When more than one JSON value is present,
-the server MUST prefer the last value whose object representation contains a
-`command` key, or (for legacy payloads) an `action` key. If no such value
-exists, the server MUST surface all parsed values as an array.
+Streaming commands emit newline-delimited JSON (see
+[docs/spec/cli-output.md § Response Type Detection](../spec/cli-output.md#response-type-detection)).
+When the output is not a single JSON value, the server parses each line that
+begins with `{` and ignores the rest. If exactly one object parses, it is the
+payload. Otherwise the payload MUST be the array of every parsed object, in
+emission order. The server does not choose a line: the events a client needs
+next are spread across the stream — `runbook_started` carries the one-time
+`owner_token`, and `step_entered` names the position the next `pass` / `fail`
+must confirm.
+
+On a non-zero exit whose payload is such an array, the response's error message
+is the `error` field of the last object that has one
+([§6.4](#64-non-zero-exit-payload)).
 
 ### 6.6 Streaming
 
@@ -465,10 +371,10 @@ invocation MUST resolve to exactly one response envelope.
 ## 7. Variables and Inputs
 
 The MCP tool surface exposes Rundown variable configuration through the
-repeatable `input`, `inputJson`, and `inputFile` parameters on `run`,
-`delegate`, and `claim` (see [§5](#mcp-tools-reference)). Semantics —
-precedence, file-path scoping, JSON parsing, env bridging through `RD_INPUT_*`,
-delegation inheritance, dynamic built-ins, and reserved names — are defined by
+repeatable `input`, `inputJson`, and `inputFile` parameters on `run` (see
+[§5.5](#run)). Semantics — precedence, file-path scoping, JSON parsing, env
+bridging through `RD_INPUT_*`, dynamic built-ins, and reserved names — are
+defined by
 [docs/reference/runtime.md §Variable Resolution](runtime.md#template-variables)
 and apply unchanged when variables are supplied through MCP.
 
@@ -476,41 +382,20 @@ and apply unchanged when variables are supplied through MCP.
 environment MUST also flow to the CLI unchanged through normal environment
 inheritance.
 
-<a id="delegation"></a>
-
-## 8. Delegation
-
-The MCP server exposes the delegation lifecycle through the
-[`delegate`](#delegate), [`claim`](#claim), and [`collect`](#collect) tools.
-Issuing a delegation via [`delegate`](#delegate) requires bearer authority: a
-`delegate` call presenting a real `claimId` is forwarded to the CLI, while a
-bare or `runId`-only `delegate` is withheld in-process by the subprocess
-mutation boundary (see [§5.11](#delegate)), because a subprocess-spawned bare
-`delegate` would silently inherit direct-CLI trust over the active run. `runId`
-is target selection only and never exempts the withhold. To issue or retry a
-delegation without a bearer claim, run `rundown delegate` directly in a trusted
-terminal. For the claim tool, claim lifecycle is inherited unchanged from the
-CLI; the MCP server adds no policy or state of its own. A bare `collect` (no
-`claimId`) is likewise withheld in-process by the subprocess mutation boundary
-([§5.13](#collect)) — a claim-evidenced `collect` carrying a real `claimId` is
-unaffected, and its result aggregation is inherited unchanged from the CLI.
-Token abort likewise remains CLI-only (see
-[§5.14](#unsupported-cli-operations)). See
-[docs/reference/cli.md Delegation Commands](cli.md#delegation-commands) and
-[docs/reference/runtime.md State Persistence](runtime.md#state-persistence).
-
 <a id="security-and-state"></a>
 
-## 9. Security and Runtime Inheritance
+## 8. Security and Runtime Inheritance
 
-The MCP server MUST NOT define independent policy, sandbox, or state semantics.
+The MCP server MUST NOT define independent policy, sandbox, authority, or state
+semantics.
 
 | Concern                                                     | Source of truth                                                                                                        |
 | ----------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | Command, file, and environment policy                       | [docs/reference/security.md](security.md).                                                                             |
 | Sandbox enforcement                                         | [docs/reference/security.md §Filesystem Sandbox](security.md#sandbox-usage).                                           |
 | Policy modes (`prompted`, `execute`, `deny`) and CLI grants | [docs/reference/security.md](security.md).                                                                             |
-| Runtime state, sessions, claims, stash semantics            | [docs/reference/runtime.md §State Persistence](runtime.md#state-persistence).                                          |
+| Run ownership and the Owner Token                           | [docs/reference/cli.md §Run Ownership](cli.md#run-ownership).                                                          |
+| Persisted run state                                         | [docs/reference/runtime.md §State Persistence](runtime.md#state-persistence).                                          |
 | Invalid persisted state and no-migration rule               | [docs/reference/runtime.md §Invalid Persisted State / No Migration](runtime.md#invalid-persisted-state--no-migration). |
 | Variable resolution                                         | [docs/reference/runtime.md §Variable Resolution](runtime.md#template-variables).                                       |
 
@@ -519,7 +404,7 @@ server MUST surface the CLI's error verbatim through the response envelope. The
 MCP server MUST NOT shim, retry, migrate, rewrite, or otherwise mask such
 errors.
 
-## 10. Conformance
+## 9. Conformance
 
 A conforming Rundown MCP server MUST satisfy the following requirements:
 
@@ -538,13 +423,13 @@ A conforming Rundown MCP server MUST satisfy the following requirements:
    pretty-printed JSON payload.
 8. On success with empty stdout, return a payload that does not include an
    `error` field.
-9. On CLI failure, populate `error` using the stdout-then-stderr-then-raw
-   provenance order defined in [§6.4](#response-format).
+9. On non-zero CLI exit, select the payload using the
+   stdout-then-stderr-then-raw provenance order defined in
+   [§6.4](#response-format).
 10. When CLI stdout contains multiple JSON values, return the last `command`- or
-    `action`-keyed payload, or all parsed payloads as an array if none is
-    present.
+    `action`-keyed object, or all parsed objects as an array if none is present.
 11. Refuse to expose unsupported CLI capabilities listed in
-    [§5.14](#unsupported-cli-operations).
+    [§5.11](#unsupported-cli-operations).
 12. Inherit policy and runtime semantics from the CLI process without
     modification, retry, or migration.
 
@@ -652,12 +537,27 @@ Start a runbook in prompted mode:
 }
 ```
 
+Mark the current step passed, using the `owner_token` from `runbook_started`:
+
+```json
+{
+  "tool": "pass",
+  "arguments": {
+    "token": "rdo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "step": "2"
+  }
+}
+```
+
 Jump to a substep:
 
 ```json
 {
   "tool": "goto",
-  "arguments": { "step": "2.1" }
+  "arguments": {
+    "token": "rdo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "step": "2.1"
+  }
 }
 ```
 
@@ -681,7 +581,7 @@ Sample error response:
   "content": [
     {
       "type": "text",
-      "text": "{\n  \"error\": \"No active runbook\"\n}"
+      "text": "{\n  \"kind\": \"error\",\n  \"error\": \"...\",\n  \"code\": \"UNKNOWN_TOKEN\"\n}"
     }
   ]
 }
@@ -694,7 +594,9 @@ Sample error response:
 | Symptom                      | Likely cause                                                                           | Resolution                                                                                                                                                                    |
 | ---------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `command not found: rundown` | CLI not installed or not on `PATH`.                                                    | `npm install -g @rundown-org/cli`.                                                                                                                                            |
-| `No active runbook`          | No run is active.                                                                      | Start one with the `run` tool.                                                                                                                                                |
+| `token: …` schema error      | A mutating tool was called without `token`.                                            | Pass `token`, the `owner_token` from the `runbook_started` event of the run.                                                                                                  |
+| `UNKNOWN_TOKEN`              | The token names no run (mistyped, or its run was pruned).                              | Use the `owner_token` of the run you mean to drive. A lost token cannot be recovered; start a new run with the `run` tool.                                                    |
+| `INVALID_STEP`               | `pass` / `fail` `step` or `index` does not match the run's current position.           | Read the current position with `status` and pass it as `step` (and `index` inside a FOR iteration).                                                                           |
 | Timeout after 30 seconds     | CLI invocation hung (interactive prompt, blocked policy decision, missing dependency). | Run the equivalent CLI command directly. Confirm `--non-interactive` semantics in the host environment.                                                                       |
 | Empty response               | CLI produced no stdout.                                                                | Check stderr in MCP host logs and run the CLI directly.                                                                                                                       |
 | Invalid-state error surfaced | CLI refused to resume an incompatible persisted run.                                   | Finish or close the run, or prune the affected state and restart. See [runtime.md §Invalid Persisted State / No Migration](runtime.md#invalid-persisted-state--no-migration). |

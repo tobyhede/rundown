@@ -41,9 +41,7 @@ import {
 } from '../../../src/runbook/storage/driver-factory.js';
 import { RunbookStore } from '../../../src/runbook/storage/runbook-store.js';
 import { RunbookStateManager } from '../../../src/runbook/state.js';
-import { makeClaimRecord } from '../../../src/testing/claim-fixtures.js';
-import { assertClaimGeneration } from '../../../src/runbook/storage/mutation-result.js';
-import { assertClaimLookupKey } from '../../../src/runbook/claim-id.js';
+import { generateOwnerToken, hashRunSecret } from '../../../src/runbook/run-secrets.js';
 import { makeBaseStep } from '../../helpers/step-factories.js';
 import type { Runbook, Step } from '../../../src/runbook/types.js';
 
@@ -520,9 +518,8 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
   });
 
   it('enforces foreign keys on write', async () => {
-    // The schema's referential invariants (claims → runs, and the deferred
-    // runs → execution_attempts identity link) are only real if BOTH adapters
-    // enforce them. SQLite defaults `foreign_keys` OFF, so this is a per-adapter
+    // The schema's referential invariant (a child's `parent_run_id` → runs) is
+    // only real if BOTH adapters enforce it. SQLite defaults `foreign_keys` OFF, so this is a per-adapter
     // configuration property, not something the DDL can guarantee on its own.
     await using driver = await adapter.open();
     await driver.immediate((tx) => {
@@ -539,9 +536,10 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
   });
 
   it('enforces a deferred foreign key at commit', async () => {
-    // The runs → execution_attempts link is DEFERRABLE INITIALLY DEFERRED, so
-    // the violation surfaces from COMMIT rather than from the statement. An
-    // adapter that never reaches a real COMMIT would silently accept it.
+    // A deferred constraint surfaces its violation from COMMIT rather than from
+    // the statement. An adapter that never reaches a real COMMIT would silently
+    // accept it, so the property is pinned on both even though the current DDL
+    // declares no deferred key.
     await using driver = await adapter.open();
     await driver.immediate((tx) => {
       tx.exec('CREATE TABLE parent (id INTEGER PRIMARY KEY)');
@@ -582,32 +580,35 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
     ).rejects.toBeInstanceOf(IncompatibleSchemaError);
   });
 
-  it('cascades claim rows when their controlled run is deleted', async () => {
+  it('clears child linkage when the parent run is deleted', async () => {
     await using driver = await adapter.open();
     const now = '2026-07-20T00:00:00.000Z';
 
     await driver.immediate((tx) => {
       ensureSchema(tx);
       tx.prepare(
-        `INSERT INTO runs (id, state_version, claim_generation, lifecycle,
-           state_json, created_at, updated_at)
-         VALUES (:id, 1, 1, 'running', '{}', :now, :now)`,
-      ).run({ id: 'rd_cascade', now });
+        `INSERT INTO runs (id, lifecycle, owner_token_hash, state_json, created_at, updated_at)
+         VALUES (:id, 'running', :hash, '{}', :now, :now)`,
+      ).run({ id: 'rd_parent', hash: 'a'.repeat(64), now });
       tx.prepare(
-        `INSERT INTO claims (key, controlled_run, secret_hash, issued_generation,
-           status, grants_json, issued_at, updated_at, last_seen_at)
-         VALUES (:key, :run, 'hash', 1, 'active', '{}', :now, :now, :now)`,
-      ).run({ key: 'rdclk_cascade', run: 'rd_cascade', now });
+        `INSERT INTO runs (id, lifecycle, owner_token_hash, parent_run_id, parent_step,
+           parent_frame_key, parent_entry, parent_kind, state_json, created_at, updated_at)
+         VALUES (:id, 'running', :hash, 'rd_parent', '1', '1|', 1, 'delegation', '{}', :now, :now)`,
+      ).run({ id: 'rd_child', hash: 'b'.repeat(64), now });
     });
 
     await driver.immediate((tx) => {
-      tx.prepare('DELETE FROM runs WHERE id = :id').run({ id: 'rd_cascade' });
+      tx.prepare('DELETE FROM runs WHERE id = :id').run({ id: 'rd_parent' });
     });
 
-    const remaining = await driver.read((tx) =>
-      tx.prepare('SELECT COUNT(*) AS n FROM claims').get<{ readonly n: number }>(),
+    const child = await driver.read((tx) =>
+      tx
+        .prepare('SELECT parent_run_id, parent_kind FROM runs WHERE id = :id')
+        .get<{ readonly parent_run_id: string | null; readonly parent_kind: string | null }>({
+          id: 'rd_child',
+        }),
     );
-    expect(remaining?.n).toBe(0);
+    expect(child).toEqual({ parent_run_id: null, parent_kind: null });
   });
 
   it('reports foreign_keys as enabled', async () => {
@@ -618,41 +619,46 @@ describe.each(ADAPTERS)('SqlDriver contract [$name]', (adapter) => {
     expect(pragma?.foreign_keys).toBe(1);
   });
 
-  it('cascades claim cleanup through the production RunbookStore.deleteRun path', async () => {
+  it('clears child linkage through the production RunbookStore.deleteRun path', async () => {
     await using driver = await adapter.open();
     await driver.immediate((tx) => {
       ensureSchema(tx);
     });
     const store = new RunbookStore(driver, dir);
 
-    // Mint a schema-valid run state via a throwaway manager on a separate dir,
+    // Mint schema-valid run states via a throwaway manager on a separate dir,
     // so its own storage cannot collide with the adapter driver under test.
     const scratch = await fs.mkdtemp(path.join(os.tmpdir(), 'rd-scratch-'));
     try {
       const manager = new RunbookStateManager(scratch);
-      const state = await manager.create(
-        { source: 'project', path: 'test.runbook.md' },
-        mockRunbook,
-        { runbookPath: 'test.runbook.md' },
-      );
+      const mint = () =>
+        manager.create({ source: 'project', path: 'test.runbook.md' }, mockRunbook, {
+          runbookPath: 'test.runbook.md',
+          ownerTokenHash: hashRunSecret(generateOwnerToken()),
+        });
+      const parent = await mint();
+      const child = await mint();
 
-      await store.createRun(state);
+      await store.createRun(parent, hashRunSecret(generateOwnerToken()));
+      await store.createRun(child, hashRunSecret(generateOwnerToken()));
       await store.transaction((txn) => {
-        txn.insertClaim(
-          makeClaimRecord({
-            claimKey: assertClaimLookupKey(`rdclk_${'c'.repeat(32)}`),
-            controlledRunId: state.id,
-          }),
-          assertClaimGeneration(0),
-        );
+        txn.tx
+          .prepare(
+            `UPDATE runs SET parent_run_id = :parent, parent_step = '1', parent_frame_key = '1|',
+               parent_entry = 1, parent_kind = 'inline' WHERE id = :id`,
+          )
+          .run({ parent: parent.id, id: child.id });
       });
 
-      await store.deleteRun(state.id);
+      await store.deleteRun(parent.id);
 
-      const remaining = await driver.read((tx) =>
-        tx.prepare('SELECT COUNT(*) AS n FROM claims').get<{ readonly n: number }>(),
+      const linkage = await driver.read((tx) =>
+        tx
+          .prepare('SELECT parent_run_id FROM runs WHERE id = :id')
+          .get<{ readonly parent_run_id: string | null }>({ id: child.id }),
       );
-      expect(remaining?.n).toBe(0);
+      expect(linkage).toEqual({ parent_run_id: null });
+      expect(await store.loadRun(child.id)).toEqual(child);
     } finally {
       await fs.rm(scratch, { recursive: true, force: true });
     }

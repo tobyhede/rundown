@@ -9,14 +9,14 @@ scenarios:
     description: Both steps pass with implicit transitions
     commands:
       - rd run --prompted default-implicit.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
   stopped:
     description: First step fails, runbook stops due to implicit FAIL to STOP
     commands:
       - rd run --prompted default-implicit.runbook.md
-      - rd fail
+      - rd fail --token ${TOKEN} --step 1
     result: STOP
   auto-execution:
     description: Both steps pass with implicit default transitions

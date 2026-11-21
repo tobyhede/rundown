@@ -1,8 +1,6 @@
 import type {
   CommandCompletedPayload,
   CommandStartedPayload,
-  DelegateFrontierEntry,
-  InlineLaunchIntent,
   PolicyDeniedPayload,
   StepEnteredPayload,
   StepPosition,
@@ -19,9 +17,6 @@ import {
 } from '../runbook/artifact-schema.js';
 import type { ArtifactPathOptions } from '../runbook/artifact-uri.js';
 import type { ArtifactVarValue } from '../runbook/types.js';
-import type { PersistedDelegateFrontierEntry } from '../runbook/types.js';
-import type { DelegationTokenDeriver } from '../runbook/delegation-credential.js';
-import { hashDelegationToken } from '../runbook/delegation-token.js';
 
 /** Execution lifecycle events projected from machine-owned execution effects. */
 export type ExecutionObservationEvent =
@@ -132,36 +127,6 @@ export interface StepEntryMetadata {
   readonly isSubstep: boolean;
   /** Whether command execution is prompted rather than automatic. */
   readonly prompted: boolean;
-  /** Delegation tokens surfaced when entering a DELEGATE frontier. */
-  readonly delegateFrontier?: ReadonlyArray<DelegateFrontierEntry>;
-  /** Inline launch intent surfaced when entering an inline child-runbook unit. */
-  readonly inlineLaunch?: InlineLaunchIntent;
-}
-
-/**
- * Project non-secret persisted frontier intents into public credential entries.
- *
- * The token deriver is an in-memory verified-authority capability. This is the
- * only conversion from machine-persisted frontier data to the public
- * token-bearing event shape, and it verifies the reconstructed credential
- * against the persisted hash before disclosure.
- *
- * @param frontier - Descriptor-bearing intents read from committed machine state.
- * @param deriveToken - Verified runtime capability for the exact issuing claim.
- * @returns Public delegation frontier entries carrying reconstructed bearer tokens.
- * @throws {Error} When a reconstructed token does not match its persisted verifier.
- */
-export function projectDelegateFrontier(
-  frontier: readonly PersistedDelegateFrontierEntry[],
-  deriveToken: DelegationTokenDeriver,
-): readonly DelegateFrontierEntry[] {
-  return frontier.map((entry) => {
-    const token = deriveToken(entry.credential);
-    if (hashDelegationToken(token) !== entry.tokenHash) {
-      throw new Error(`Derived delegation credential does not match frontier ${entry.id}`);
-    }
-    return { id: entry.id, runbook: entry.runbook, token };
-  });
 }
 
 function isArtifactVarEntry(value: unknown): value is ArtifactVarValue {
@@ -230,8 +195,6 @@ export function deriveStepEnteredEffect(
         isSubstep: input.entry.isSubstep,
         prompted: input.entry.prompted,
         artifacts: extractSnapshotEnteredArtifacts(input.snapshot, input.artifactPathOptions),
-        delegateFrontier: input.entry.delegateFrontier,
-        inlineLaunch: input.entry.inlineLaunch,
       },
     },
   };

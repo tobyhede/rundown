@@ -11,6 +11,7 @@ import {
   runbookStoreKey,
 } from '../../../src/runbook/storage/store-registry.js';
 import { RunbookStateManager } from '../../../src/runbook/state.js';
+import { generateOwnerToken, hashRunSecret } from '../../../src/runbook/run-secrets.js';
 import type { Runbook } from '../../../src/runbook/types.js';
 import { makeBaseStep } from '../../helpers/step-factories.js';
 
@@ -77,7 +78,7 @@ describe('runbook store registry', () => {
   it('locks the database and its WAL/SHM sidecars to owner-only (0o600)', async () => {
     const cwd = await newRoot();
     await getRunbookStore(cwd, { runtime: 'native' });
-    // The store holds run state and hashed claim secrets, so it inherits the
+    // The store holds run state and hashed owner tokens, so it inherits the
     // owner-only mode the per-run JSON state files carried before it. The native
     // driver opens in WAL mode, so the -wal/-shm sidecars exist on disk beside
     // the db while the shared connection is held open — all three must be 0o600,
@@ -129,19 +130,14 @@ describe('runbook store registry', () => {
         description: '',
         steps: [makeBaseStep({ name: '1', description: 'Initial step' })],
       } satisfies Runbook,
-      { runbookPath: 'inert-json.runbook.md' },
+      {
+        runbookPath: 'inert-json.runbook.md',
+        ownerTokenHash: hashRunSecret(generateOwnerToken()),
+      },
     );
-    await manager.saveSession({ defaultStack: [run.id], claims: {} });
-    await expect(manager.loadSession()).resolves.toEqual({
-      defaultStack: [run.id],
-      claims: {},
-    });
+    await manager.update(run.id, { stepName: 'written' });
     await closeRunbookStore(cwd);
-    await expect(manager.load(run.id)).resolves.toMatchObject({ id: run.id });
-    await expect(manager.loadSession()).resolves.toEqual({
-      defaultStack: [run.id],
-      claims: {},
-    });
+    await expect(manager.load(run.id)).resolves.toMatchObject({ id: run.id, stepName: 'written' });
 
     expect(warning).not.toHaveBeenCalled();
     await expect(fs.readFile(output, 'utf8')).resolves.toBe('captured output');

@@ -7,7 +7,7 @@ scenarios:
     description: A produced artifact variable stays in scope across steps and the runbook completes.
     commands:
       - rd run artifact-status-vars.runbook.md --allow-all
-      - rd complete
+      - rd complete --token ${TOKEN}
     expect:
       result: COMPLETE
 ---

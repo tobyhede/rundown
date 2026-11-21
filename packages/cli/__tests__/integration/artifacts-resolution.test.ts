@@ -2,7 +2,12 @@ import { describe, expect, it } from '@jest/globals';
 import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createTestWorkspace, getAllRunbookStates, runCli } from '../helpers/test-utils.js';
+import {
+  createTestWorkspace,
+  getAllRunbookStates,
+  requireOwnerToken,
+  runCli,
+} from '../helpers/test-utils.js';
 
 describe('ARTIFACTS resolution integration', () => {
   it('emits file artifact references and renders them through the path helper', async () => {
@@ -257,7 +262,7 @@ echo ok
 
       const run = runCli(['run', 'parent.runbook.md', '--prompted'], workspace);
       expect(run.exitCode).toBe(0);
-      const goto = runCli(['goto', '2.2'], workspace);
+      const goto = runCli(['goto', '2.2', '--token', requireOwnerToken(run.stdout)], workspace);
       expect(goto.exitCode).toBe(0);
       const entered = goto.stdout
         .trim()

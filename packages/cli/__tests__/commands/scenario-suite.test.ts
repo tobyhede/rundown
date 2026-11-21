@@ -73,8 +73,8 @@ cases:
     file: suite-test.runbook.md
     commands:
       - rd run --prompted suite-test.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token \${TOKEN} --step 1
+      - rd pass --token \${TOKEN} --step 2
     result: COMPLETE
     tags:
       - happy
@@ -83,14 +83,14 @@ cases:
     file: suite-test.runbook.md
     commands:
       - rd run --prompted suite-test.runbook.md
-      - rd fail
+      - rd fail --token \${TOKEN} --step 1
     result: STOP
   wrong-expectation:
     description: Expects COMPLETE but stops
     file: suite-test.runbook.md
     commands:
       - rd run --prompted suite-test.runbook.md
-      - rd fail
+      - rd fail --token \${TOKEN} --step 1
     result: COMPLETE
 `;
 
@@ -101,8 +101,8 @@ cases:
     file: suite-test.runbook.md
     commands:
       - rd run --prompted suite-test.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token \${TOKEN} --step 1
+      - rd pass --token \${TOKEN} --step 2
     expect:
       result: COMPLETE
 `;
@@ -484,11 +484,11 @@ cases:
   missing-token:
     file: suite-test.runbook.md
     commands:
-      - "! rd claim rdtk_ABCDABCDABCDABCDABCDABCDABCDABCD"
+      - "! rd pass --step 1"
     expect:
       errors:
-        - code: TOKEN_NOT_FOUND
-          command: claim
+        - code: TOKEN_REQUIRED
+          command: pass
 `;
       await writeFile(
         join(workspace.cwd, 'error-assertion.scenario-suite.yaml'),
@@ -507,7 +507,7 @@ cases:
       expect(parsed.errorAssertions).toEqual([
         expect.objectContaining({
           matched: true,
-          assertion: expect.objectContaining({ code: 'TOKEN_NOT_FOUND', command: 'claim' }),
+          assertion: expect.objectContaining({ code: 'TOKEN_REQUIRED', command: 'pass' }),
         }),
       ]);
     }, 30000);
@@ -516,11 +516,11 @@ cases:
       const suiteWithUnassertedWarning = `version: 1
 name: Warning Suite
 cases:
-  trailing-pass:
+  trailing-artifact:
     file: suite-test.runbook.md
     commands:
       - rd run suite-test.runbook.md
-      - rd pass
+      - rd artifact ls
     result: COMPLETE
 `;
       await writeFile(
@@ -529,7 +529,7 @@ cases:
       );
 
       const result = await runCliInProcess(
-        'scenario-suite run unasserted-warning.scenario-suite.yaml trailing-pass',
+        'scenario-suite run unasserted-warning.scenario-suite.yaml trailing-artifact',
         workspace,
       );
 
@@ -537,7 +537,7 @@ cases:
       const parsed = JSON.parse(result.stdout.trim().split(/\n(?=\{)/)[0]);
       expect(parsed.result).toBe(false);
       expect(parsed.unassertedWarnings).toEqual([
-        { code: 'NO_ACTIVE_RUNBOOK', command: 'pass', message: 'No active runbook' },
+        { code: 'NO_ACTIVE_RUNBOOK', command: 'artifact', message: 'No active runbook' },
       ]);
     }, 30000);
 
@@ -548,11 +548,11 @@ cases:
   no-active-runbook:
     file: suite-test.runbook.md
     commands:
-      - rd pass
+      - rd artifact ls
     expect:
       warnings:
         - code: NO_ACTIVE_RUNBOOK
-          command: pass
+          command: artifact
 `;
       await writeFile(
         join(workspace.cwd, 'warning-assertion.scenario-suite.yaml'),
@@ -567,7 +567,7 @@ cases:
 
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain('Warning Assertions:');
-      expect(result.stdout).toContain('warning code=NO_ACTIVE_RUNBOOK command=pass: matched');
+      expect(result.stdout).toContain('warning code=NO_ACTIVE_RUNBOOK command=artifact: matched');
     }, 30000);
 
     it('prints unasserted warnings in text mode', async () => {
@@ -577,7 +577,7 @@ cases:
   no-active-runbook:
     file: suite-test.runbook.md
     commands:
-      - rd pass
+      - rd artifact ls
     result: COMPLETE
 `;
       await writeFile(
@@ -594,7 +594,7 @@ cases:
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toContain('Unasserted Warnings:');
       expect(result.stdout).toContain(
-        'unasserted warning code=NO_ACTIVE_RUNBOOK command=pass message=No active runbook',
+        'unasserted warning code=NO_ACTIVE_RUNBOOK command=artifact message=No active runbook',
       );
     }, 30000);
 
@@ -605,11 +605,11 @@ cases:
   no-active-runbook:
     file: suite-test.runbook.md
     commands:
-      - rd pass
+      - rd artifact ls
     expect:
       warnings:
         - code: NO_ACTIVE_RUNBOOK
-          command: pass
+          command: artifact
 `;
       await writeFile(
         join(workspace.cwd, 'warning-assertion-all.scenario-suite.yaml'),
@@ -634,10 +634,10 @@ cases:
       expect(parsed.cases[0].warningAssertions).toEqual([
         expect.objectContaining({
           matched: true,
-          assertion: expect.objectContaining({ code: 'NO_ACTIVE_RUNBOOK', command: 'pass' }),
+          assertion: expect.objectContaining({ code: 'NO_ACTIVE_RUNBOOK', command: 'artifact' }),
           matchedWarning: expect.objectContaining({
             code: 'NO_ACTIVE_RUNBOOK',
-            command: 'pass',
+            command: 'artifact',
           }),
         }),
       ]);

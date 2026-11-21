@@ -19,11 +19,7 @@ import type {
   ResolvedStepHavingSubsteps,
   Lifecycle,
   SubstepState,
-  InlineLaunchStart,
   TemplateVarValue,
-  RunId,
-  ExecutionRecoveryReason,
-  ExecutionRecoveryEvent,
   RunbookState,
 } from './types.js';
 import { isResolvedVariableForContext } from './types.js';
@@ -35,7 +31,6 @@ import {
 } from './effective-vars.js';
 import type { VariableValue } from './effective-vars.js';
 import type { StepId } from './step-id.js';
-import type { DelegationTokenHash } from './delegation-token.js';
 import type { ArtifactDeclaration, ForClause, OutputDeclaration } from '@rundown-org/parser';
 import { MAX_FOR_BOUND } from '@rundown-org/parser';
 import { deriveOutputScope, partitionOutputDeclarations } from './output-channels.js';
@@ -52,16 +47,6 @@ import {
   type ForResolutionFailureCode,
 } from './actors/for-iterate-actor.js';
 import { outputCaptureActor } from './actors/output-capture-actor.js';
-import {
-  delegationIssueActor,
-  type DelegationIssueOutput,
-} from './actors/delegation-issue-actor.js';
-import {
-  inlineLaunchIntentActor,
-  type InlineLaunchIntentOutput,
-  type InlineLaunchIntentWithoutParentEntry,
-  type ResolveInlineRunbook,
-} from './actors/inline-launch-intent-actor.js';
 import {
   commandExecActor,
   type CommandExecutionCompletedOutput,
@@ -92,52 +77,27 @@ import type { MachineExecutionObserver } from '../events/execution-observation.j
 import {
   buildFrameKey,
   deriveExecutionAt,
-  findSubstepState,
   frameKeyForCursor,
   getActiveForContext,
-  type FrameKey,
 } from './targeting.js';
-import { runRetryHook } from './retry-hook.js';
-import { asTemplateVars } from './template-vars.js';
 import { resetReopenedSubsteps } from './substep-reset.js';
 import { getErrorMessage } from '../errors.js';
 import { assertRunId } from './run-id.js';
-import {
-  advanceFrameEntry,
-  inferFrameEntryFromState,
-  type FrameEntryCoordinates,
-} from './frame-entry.js';
-import { generateRunId } from './state.js';
-import type { DelegationCredentialIssuer } from './delegation-credential.js';
+import { advanceFrameEntry, type FrameEntryCoordinates } from './frame-entry.js';
 import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
 import { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
-import type { ParentLinkage, PersistedDelegateFrontierEntry } from './types.js';
-import type { ResolveDelegationRunbook } from './delegation-inference.js';
-import {
-  hasApplicableRunProgressionCompletion,
-  type CurrentCursorResolvedCompletion,
-} from './completion-service.js';
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import {
   clearAggregationRetryOnExhaustion,
   makeAggregationLastAction,
   makeDirectLastAction,
 } from './last-action.js';
-import { isSameInlineLaunchStart } from './inline-launch-start.js';
 import {
   runProgressionEntryActor,
-  runProgressionFrontierActor,
   type EnterRunProgressionUnit,
-  type ProjectRunProgressionFrontier,
   type RunProgressionEntryActorOutput,
 } from './actors/run-progression-entry-actor.js';
 import type { ExecutionUnitEntry } from './execution-unit-entry.js';
-import type { FencedReEntryProjection } from './re-entry-frontier.js';
-import {
-  FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
-  FRONTIER_CONSUME_FAILED_MESSAGE,
-  hasCurrentReEntryFrontier,
-} from './re-entry-frontier.js';
 import type { RunProgressionAuthority } from './run-progression-authority.js';
 
 export { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
@@ -166,19 +126,6 @@ export const PENDING_MACHINE_EFFECT_TAG = 'pending-machine-effect' as const;
 export const PENDING_COMMAND_EXECUTION_TAG = 'pending-command-execution' as const;
 
 /**
- * Tag carried by the non-final `recoveryRequired` state.
- *
- * Every "is this run recovering?" query MUST be the typed
- * `snapshot.hasTag(RECOVERY_TAG)`, never an untyped
- * `state.matches('recoveryRequired')` boolean. The state persists with lifecycle
- * `running` — it is open-but-blocked, awaiting a typed reconcile/retry/stop.
- */
-export const RECOVERY_TAG = 'recovery' as const;
-
-/** Name of the top-level non-final recoveryRequired state. */
-export const RECOVERY_REQUIRED_STATE_NAME = 'recoveryRequired' as const;
-
-/**
  * Module-level XState setup with typed context, events, and named actions.
  *
  * Extracted to module scope so `runbookSetup.assign()` provides
@@ -198,63 +145,40 @@ export interface RunbookMachineOutput {
 /**
  * Result of the immediately preceding mechanically-executed progression turn.
  *
- * `completion_*` feedback closes the machine-owned completion decision.
- * `awaiting_input` closes a non-runnable execution-unit entry into the
- * machine's typed waiting intent.
+ * `activation` opens the first selection of an activation; `awaiting_input`
+ * closes a non-runnable execution-unit entry into the machine's typed waiting
+ * intent.
  */
 export type RunProgressionMachineFeedback =
   | { readonly kind: 'activation' }
-  | { readonly kind: 'awaiting_input' }
-  | { readonly kind: 'completion_not_committed'; readonly message: string }
-  | {
-      readonly kind: 'completion_target_mismatch';
-      readonly message: string;
-    };
+  | { readonly kind: 'awaiting_input' };
 
-/** Closed next action selected by the compiled machine for one progression turn. */
+/**
+ * Closed next action selected by the compiled machine for one progression turn.
+ *
+ * Two arms survive the one-writer rebuild (ADR 0005): the machine still decides
+ * whether the cursor waits for input or enters its execution unit, because that
+ * decision reads the leaf the run is parked in. Completion application, frontier
+ * projection and contention/recovery refusals were multi-writer turns and are
+ * gone with the mailbox they served.
+ */
 export type RunProgressionMachineIntent =
-  | { readonly kind: 'apply_completion' }
   | {
       readonly kind: 'waiting';
       readonly reason: 'awaiting_input';
     }
   | {
-      readonly kind: 'refused';
-      readonly reason: 'completion_target_mismatch' | 'completion_not_committed';
-      readonly message: string;
-    }
-  | {
-      /** Durable state changed between machine selection and fenced capture. */
-      readonly kind: 'reselect';
-      readonly state: RunbookState;
-    }
-  | {
       readonly kind: 'entered';
       readonly state: RunbookState;
       readonly entered: ExecutionUnitEntry;
-      readonly frontier: 'none' | 'projected';
-    }
-  | {
-      readonly kind: 'refused';
-      readonly reason:
-        | 'actor_context_required'
-        | 'projection_refused'
-        | 'consume_failed'
-        | 'claim_superseded'
-        | 'recovery_required'
-        | 'aggregate_recovery_required'
-        | 'run_missing';
-      readonly message: string;
     }
   | {
       readonly kind: 'refused';
       /**
-       * Which entry state's render threw. `frontier_disclosure_failed` is the
-       * post-consume arm (the bearers are unrecoverable); `entry_render_failed`
-       * is the pre-consume arm (nothing committed, so a re-activation
-       * re-renders). One reason per condition — see RD-833 vs RD-504.
+       * The entry state's render threw. Nothing was committed, so a
+       * re-activation re-renders (RD-504).
        */
-      readonly reason: 'frontier_disclosure_failed' | 'entry_render_failed';
+      readonly reason: 'entry_render_failed';
       readonly message: string;
       /** Transient cause retained so invalid persisted state keeps RD-309. */
       readonly cause: unknown;
@@ -272,24 +196,12 @@ export interface RunProgressionMachineRuntime {
   readonly state: RunbookState;
   /** The single core-minted authority for every selected turn. */
   readonly authority: RunProgressionAuthority;
-  /** Fenced frontier operation invoked only after XState selects it. */
-  readonly projectFrontier: ProjectRunProgressionFrontier;
   /** Ordinary entry operation invoked only after XState selects it. */
   readonly enterUnit: EnterRunProgressionUnit;
 }
 
-type FrontierDoneEvent = DoneActorEvent<FencedReEntryProjection>;
 type EntryDoneEvent = DoneActorEvent<RunProgressionEntryActorOutput>;
 type EntryErrorEvent = ErrorActorEvent;
-type FrontierProgressionEmitAction = ReturnType<
-  typeof emitEvent<
-    RunbookContext,
-    FrontierDoneEvent,
-    undefined,
-    RunbookEvent,
-    RunProgressionMachineIntentEvent
-  >
->;
 type EntryProgressionEmitAction = ReturnType<
   typeof emitEvent<
     RunbookContext,
@@ -309,29 +221,7 @@ type EntryProgressionFailureEmitAction = ReturnType<
   >
 >;
 
-function frontierOutputFromInvokeEvent(event: unknown): FencedReEntryProjection {
-  if (typeof event !== 'object' || event === null || !('output' in event)) {
-    throw new Error('Frontier entry state was not entered by the frontier actor');
-  }
-  return (event as { readonly output: FencedReEntryProjection }).output;
-}
-
-function emitFrontierProgressionIntent(
-  build: (output: FencedReEntryProjection) => RunProgressionMachineIntent,
-): FrontierProgressionEmitAction {
-  return emitEvent<
-    RunbookContext,
-    FrontierDoneEvent,
-    undefined,
-    RunbookEvent,
-    RunProgressionMachineIntentEvent
-  >(({ event }) => ({
-    type: 'RUN_PROGRESSION_INTENT',
-    intent: build(event.output),
-  }));
-}
-
-function emitEntryProgressionIntent(frontier: 'none' | 'projected'): EntryProgressionEmitAction {
+function emitEntryProgressionIntent(): EntryProgressionEmitAction {
   return emitEvent<
     RunbookContext,
     EntryDoneEvent,
@@ -344,14 +234,11 @@ function emitEntryProgressionIntent(frontier: 'none' | 'projected'): EntryProgre
       kind: 'entered',
       state: event.output.state,
       entered: event.output.entered,
-      frontier,
     },
   }));
 }
 
-function emitEntryProgressionFailureIntent(
-  reason: 'frontier_disclosure_failed' | 'entry_render_failed',
-): EntryProgressionFailureEmitAction {
+function emitEntryProgressionFailureIntent(): EntryProgressionFailureEmitAction {
   return emitEvent<
     RunbookContext,
     EntryErrorEvent,
@@ -362,295 +249,11 @@ function emitEntryProgressionFailureIntent(
     type: 'RUN_PROGRESSION_INTENT',
     intent: {
       kind: 'refused',
-      reason,
+      reason: 'entry_render_failed',
       message: getErrorMessage(event.error),
       cause: event.error,
     },
   }));
-}
-
-interface StoreInlineLaunchIntentParams {
-  readonly intent: InlineLaunchIntentWithoutParentEntry;
-  readonly substepStates: readonly SubstepState[];
-}
-
-interface SetInlineLaunchFailedParams {
-  readonly reason: 'inline_launch_failed' | 'inline_launch_forbidden';
-  readonly message: string;
-}
-
-type InlineChildStartedEvent = Extract<RunbookEvent, { type: 'INLINE_CHILD_STARTED' }>;
-type InlineLaunchAbandonedEvent = Extract<RunbookEvent, { type: 'INLINE_LAUNCH_ABANDONED' }>;
-type DelegationChildLinkedEvent = Extract<RunbookEvent, { type: 'DELEGATION_CHILD_LINKED' }>;
-type DelegationChildUnlinkedEvent = Extract<RunbookEvent, { type: 'DELEGATION_CHILD_UNLINKED' }>;
-/**
- * Stable refusal classes a delegated-child link derivation can raise.
- *
- * The two are distinct facts and must never collapse into one another:
- *
- * - `delegation_superseded` — the coordinate no longer names this delegation.
- * - `already_linked` — the delegation is permanently occupied by a different
- *   child. Re-reading cannot change it, so the caller must refuse rather than
- *   retry.
- *
- * There is deliberately no `concurrent_modification` class here. Both
- * derivations are pure functions of one captured `substepStates` array: they
- * see no row version, so they cannot observe a version race, and every refusal
- * they raise is permanent against the state they were handed. The race belongs
- * to the commit — `SessionService.claimAndInitialLink` and
- * `rollbackInitialLink` return `concurrent_modification` from their own
- * compare-and-swap, and the CLI's re-derive loop retries *that*. Adding the
- * class back here would re-admit a state neither derivation can produce.
- */
-export type DelegationChildLinkRefusalReason = DelegationChildLinkRefusal['reason'];
-
-/**
- * A delegated-child link refusal, carrying the facts that refusal is about.
- *
- * Only `already_linked` carries anything beyond its class, and it must: the
- * refusal is permanent *because another child holds the coordinate*, so the
- * caller reporting it to a user has to name that child rather than the one it
- * failed to link — which, on the fresh-launch path, is a run its own launch
- * cleanup is about to delete.
- */
-export type DelegationChildLinkRefusal =
-  | { readonly reason: 'delegation_superseded' }
-  | {
-      readonly reason: 'already_linked';
-      /** The child that already holds the delegation; never the rejected one. */
-      readonly occupyingChildRunId: RunId;
-    };
-
-/** Typed refusal raised while deriving an exact delegated-child link transition. */
-export class DelegationChildLinkPreparationError extends Error {
-  /**
-   * Create a typed preparation refusal.
-   *
-   * @param refusal - Stable refusal class plus the facts it carries.
-   * @param message - Diagnostic text.
-   */
-  constructor(
-    readonly refusal: DelegationChildLinkRefusal,
-    message: string,
-  ) {
-    super(message);
-    this.name = 'DelegationChildLinkPreparationError';
-  }
-}
-
-/**
- * Derive the delegated child link for one exact step/frame/entry/token coordinate.
- *
- * @param substepStates - Current machine-owned substep state.
- * @param event - Typed link event.
- * @returns Updated substep state, or the original array for an idempotent replay.
- * @throws {DelegationChildLinkPreparationError} `delegation_superseded` when the coordinate or token no longer names this delegation; `already_linked` when a different child already holds it.
- */
-export function deriveDelegationChildLinkedSubsteps(
-  substepStates: readonly SubstepState[] | undefined,
-  event: DelegationChildLinkedEvent,
-): readonly SubstepState[] | undefined {
-  if (substepStates === undefined) {
-    throw new DelegationChildLinkPreparationError(
-      { reason: 'delegation_superseded' },
-      `Delegation ${event.parentStepId} no longer names the captured frame entry`,
-    );
-  }
-
-  const target = findSubstepState(substepStates, event.parentStepId, event.parentFrameKey);
-  if (target?.delegation?.tokenHash !== event.tokenHash) {
-    throw new DelegationChildLinkPreparationError(
-      { reason: 'delegation_superseded' },
-      `Delegation ${event.parentStepId} no longer matches the presented token`,
-    );
-  }
-  if (target.delegation.childRunId !== null) {
-    if (target.delegation.childRunId === event.childRunId) return substepStates;
-    // Occupancy by another child is permanent, not a version race: this
-    // delegation names one child for the life of the entry, so no amount of
-    // re-reading frees it. Classifying it `concurrent_modification` told the
-    // caller to retry a link that can never succeed.
-    throw new DelegationChildLinkPreparationError(
-      { reason: 'already_linked', occupyingChildRunId: target.delegation.childRunId },
-      `Delegation ${event.parentStepId} is already linked to another child`,
-    );
-  }
-  const delegation = target.delegation;
-
-  return substepStates.map((substepState) =>
-    substepState === target
-      ? {
-          ...substepState,
-          delegation: { ...delegation, childRunId: event.childRunId },
-        }
-      : substepState,
-  );
-}
-
-/**
- * Derive removal of an exact delegated-child link from machine-owned substep state.
- *
- * @param substepStates - Current machine-owned substep state.
- * @param event - Typed unlink event.
- * @returns Updated substep state, or the original array for an idempotent replay.
- * @throws {DelegationChildLinkPreparationError} `delegation_superseded` when the coordinate or token no longer names this delegation; `already_linked` when a different child holds it.
- */
-export function deriveDelegationChildUnlinkedSubsteps(
-  substepStates: readonly SubstepState[] | undefined,
-  event: DelegationChildUnlinkedEvent,
-): readonly SubstepState[] | undefined {
-  if (substepStates === undefined) {
-    throw new DelegationChildLinkPreparationError(
-      { reason: 'delegation_superseded' },
-      `Delegation ${event.parentStepId} no longer names the captured frame entry`,
-    );
-  }
-  const target = findSubstepState(substepStates, event.parentStepId, event.parentFrameKey);
-  const delegation = target?.delegation;
-  if (delegation?.tokenHash !== event.tokenHash) {
-    throw new DelegationChildLinkPreparationError(
-      { reason: 'delegation_superseded' },
-      `Delegation ${event.parentStepId} no longer matches the rollback token`,
-    );
-  }
-  if (delegation.childRunId === null) return substepStates;
-  if (delegation.childRunId !== event.childRunId) {
-    // Same permanent fact as the link path's occupancy refusal, reached from
-    // the other side: the delegation names one child for the life of the
-    // entry, so re-reading can never make it name the child this rollback is
-    // for. Classifying it `concurrent_modification` modelled it as a version
-    // race a retry could clear, which no retry can.
-    throw new DelegationChildLinkPreparationError(
-      { reason: 'already_linked', occupyingChildRunId: delegation.childRunId },
-      `Delegation ${event.parentStepId} is linked to a newer child`,
-    );
-  }
-  return substepStates.map((substepState) =>
-    substepState === target
-      ? {
-          ...substepState,
-          delegation: { ...delegation, childRunId: null },
-        }
-      : substepState,
-  );
-}
-
-/**
- * Release the launch latch the consumed intent belongs to.
- *
- * The latch is held for exactly the launch span — written by
- * `INLINE_CHILD_STARTED` before the child run is created, released here when the
- * front end reports the launch consumed — which is the lifetime the file lock
- * this mechanism replaced had, and the reason a latch left behind means a launch
- * that did not finish.
- *
- * Holding it any longer would make every later visit to the frame read a
- * completed launch as one in progress: a re-entry in the SAME process would find
- * its own live pid on the latch and stand down forever, and one in a later
- * process would "reclaim" a launch nobody crashed out of.
- *
- * Only the exact substep the intent names is touched, and only while it still
- * records this launch — a row that has moved on belongs to a different launch
- * and is not this event's to clear.
- *
- * @param substepStates - Current substep rows, if any.
- * @param intent - The intent being consumed, or undefined when none is pending.
- * @returns The rows with this launch's latch cleared; the input when nothing matches.
- */
-function releaseInlineLatch(
-  substepStates: readonly SubstepState[] | undefined,
-  intent: InlineLaunchIntentWithoutParentEntry | undefined,
-): readonly SubstepState[] | undefined {
-  if (!substepStates || !intent) return substepStates;
-  // The persisted intent carries `parentFrameKey` as a plain string — it is
-  // reconstructed from a snapshot, where the brand does not survive — so the
-  // lookup takes it back as one rather than asserting a brand nothing verified.
-  const target = findSubstepState(
-    substepStates,
-    intent.parentStepId,
-    intent.parentFrameKey as FrameKey,
-  );
-  const inline = target?.inline;
-  if (!target || !inline) return substepStates;
-  if (inline.childRunId !== intent.childRunId || inline.started === null) return substepStates;
-  return substepStates.map((substepState) =>
-    substepState === target
-      ? { ...substepState, inline: { ...inline, started: null } }
-      : substepState,
-  );
-}
-
-/**
- * Release a launch latch, but only while the releaser still holds it.
- *
- * The owner-gated form of {@link releaseInlineLatch}, for the abandonment event.
- * Both find the same row the same way; this one adds the question the consume
- * path does not have to ask, because the two events reach the machine from
- * different kinds of caller. A consume is sent by the launch span itself, in its
- * own control flow, having just succeeded. An abandonment is sent from a
- * DISPOSER — best-effort, fire-and-forget, running after an arbitrary failure —
- * which is exactly the shape of a sender that may have fallen behind the state
- * it is acting on. So the abandoning sender names the record it wrote, and the
- * release applies only while the row still holds that record.
- *
- * Without the gate the machine would be relying on a caller-side invariant it
- * cannot see: that only the process which won the latch ever abandons it. The
- * CLI does satisfy it — the scope is built by, and carried only on, the `won`
- * arm — but "the one caller today gets this right" is not a property of the
- * runbook program, and a second front end (MCP, the plugin, a later recovery
- * path) would have to rediscover it. Here it is checked where the write happens.
- *
- * @param substepStates - Current substep rows, if any.
- * @param intent - The intent whose launch is being abandoned, if one is pending.
- * @param owner - The latch record the releaser wrote when it won the launch.
- * @returns The rows with this launch's latch cleared; the input when the row
- *   holds a different latch, or nothing matches.
- */
-function releaseInlineLatchHeldBy(
-  substepStates: readonly SubstepState[] | undefined,
-  intent: InlineLaunchIntentWithoutParentEntry | undefined,
-  owner: InlineLaunchStart,
-): readonly SubstepState[] | undefined {
-  if (!substepStates || !intent) return substepStates;
-  const held = findSubstepState(
-    substepStates,
-    intent.parentStepId,
-    intent.parentFrameKey as FrameKey,
-  )?.inline?.started;
-  if (!held || !isSameInlineLaunchStart(held, owner)) return substepStates;
-  // Delegated rather than inlined, so the two events cannot drift over which
-  // row they touch or what they leave behind on it.
-  return releaseInlineLatch(substepStates, intent);
-}
-
-function updateInlineStarted(
-  substepStates: readonly SubstepState[] | undefined,
-  event: InlineChildStartedEvent,
-): readonly SubstepState[] | undefined {
-  if (!substepStates) {
-    return substepStates;
-  }
-
-  const target = findSubstepState(substepStates, event.parentStepId, event.parentFrameKey);
-  if (!target?.inline) {
-    return substepStates;
-  }
-  const inline = target.inline;
-  if (inline.childRunId !== event.childRunId) {
-    throw new Error(`Inline child run mismatch for ${event.parentStepId}`);
-  }
-
-  return substepStates.map((substepState) =>
-    substepState === target
-      ? {
-          ...substepState,
-          inline: {
-            ...inline,
-            started: event.started,
-          },
-        }
-      : substepState,
-  );
 }
 
 const baseRunbookSetup = setup({
@@ -659,10 +262,7 @@ const baseRunbookSetup = setup({
     events: {} as RunbookEvent,
     output: {} as RunbookMachineOutput,
     emitted: {} as RunProgressionMachineIntentEvent,
-    tags: {} as
-      | typeof PENDING_MACHINE_EFFECT_TAG
-      | typeof PENDING_COMMAND_EXECUTION_TAG
-      | typeof RECOVERY_TAG,
+    tags: {} as typeof PENDING_MACHINE_EFFECT_TAG | typeof PENDING_COMMAND_EXECUTION_TAG,
   },
   actions: {
     /** Set lastAction and optional lastMessage. */
@@ -761,90 +361,6 @@ const baseRunbookSetup = setup({
           message: params.message,
         }),
     }),
-    /** Mark delegation issuance failure before routing to STOPPED. */
-    setDelegationIssuanceFailed: assign({
-      lifecycle: () => 'stopped' as const,
-      lastAction: (_, params: ActionDefs['setDelegationIssuanceFailed']) =>
-        makeDirectLastAction({
-          type: 'DELEGATION_ISSUANCE_FAILED' as const,
-          reason: params.reason,
-          message: params.message,
-        }),
-    }),
-    /** Store issued delegation frontier and updated substep state. */
-    storeDelegateFrontier: assign({
-      delegateFrontier: (_, params: ActionDefs['storeDelegateFrontier']) => params.frontier,
-      substepStates: (_, params: ActionDefs['storeDelegateFrontier']) => params.substepStates,
-    }),
-    /** Store prepared inline launch intent and updated substep state. */
-    storeInlineLaunchIntent: assign({
-      inlineLaunchIntent: (_, params: StoreInlineLaunchIntentParams) => params.intent,
-      substepStates: (_, params: StoreInlineLaunchIntentParams) => params.substepStates,
-    }),
-    /**
-     * Clear the one-shot inline launch intent after a front end consumes it,
-     * releasing the launch latch in the same commit.
-     *
-     * The two belong together: the intent surviving is what makes a launch
-     * re-observable, and the latch is what makes it exactly-once while it runs.
-     * A launch that reaches here has finished, so it holds neither.
-     */
-    clearInlineLaunchIntent: assign({
-      inlineLaunchIntent: () => undefined,
-      substepStates: ({ context }) =>
-        releaseInlineLatch(context.substepStates, context.inlineLaunchIntent),
-    }),
-    /**
-     * Release the launch latch of a launch span that failed, keeping the intent.
-     *
-     * The mirror of {@link clearInlineLaunchIntent}, and the asymmetry is the
-     * point. That action is for a launch that FINISHED, so it drops both: the
-     * latch, because nothing is running, and the intent, because the launch is
-     * done. This one is for a span that took the latch and then failed out of
-     * it — a ref that would not resolve, a preparation error, a consume that
-     * threw — where the launch is not done and must stay re-observable. So the
-     * latch goes and the intent stays, and the next observer reads `unlatched`
-     * with the intent still naming its child, wins, and finishes it.
-     *
-     * Without this, every post-`won` failure exit left the latch held by a LIVE
-     * pid. `classifyInlineLaunchOwnership` has no self-pid exemption — by
-     * design, since a nested observer inside a live span is also "self" and must
-     * stand down — so a long-lived host that latched and failed stood down
-     * against its own pid on every later attempt, permanently.
-     *
-     * Gated on the sender still holding the latch it names, which is what makes
-     * the exactly-once launch a property of the machine rather than of the CLI's
-     * scope discipline — see {@link releaseInlineLatchHeldBy}.
-     */
-    releaseInlineLaunchLatch: assign({
-      substepStates: ({ context }, params: InlineLaunchAbandonedEvent) =>
-        releaseInlineLatchHeldBy(context.substepStates, context.inlineLaunchIntent, params.started),
-    }),
-    /** Mark an inline child run as started on the matching substep state. */
-    storeInlineChildStarted: assign({
-      substepStates: ({ context }, params: InlineChildStartedEvent) =>
-        updateInlineStarted(context.substepStates, params),
-    }),
-    /** Link a claimed delegated child on the exact authored substep/frame. */
-    storeDelegationChildLinked: assign({
-      substepStates: ({ context }, params: DelegationChildLinkedEvent) =>
-        deriveDelegationChildLinkedSubsteps(context.substepStates, params),
-    }),
-    /** Clear the exact delegated child link during launch rollback. */
-    storeDelegationChildUnlinked: assign({
-      substepStates: ({ context }, params: DelegationChildUnlinkedEvent) =>
-        deriveDelegationChildUnlinkedSubsteps(context.substepStates, params),
-    }),
-    /** Mark inline launch preparation failure before routing to STOPPED. */
-    setInlineLaunchFailed: assign({
-      lifecycle: () => 'stopped' as const,
-      lastAction: (_, params: SetInlineLaunchFailedParams) =>
-        makeDirectLastAction({
-          type: 'INLINE_LAUNCH_FAILED' as const,
-          reason: params.reason,
-          message: params.message,
-        }),
-    }),
     /** Merge variables resolved by artifactResolveActor into live context variables. */
     storeResolvedArtifacts: assign({
       variables: ({ context }, params: ActionDefs['storeResolvedArtifacts']) => ({
@@ -924,10 +440,7 @@ const baseRunbookSetup = setup({
     outputCaptureActor,
     artifactResolveActor,
     forIterateActor,
-    delegationIssueActor,
-    inlineLaunchIntentActor,
     commandExecActor,
-    runProgressionFrontierActor,
     runProgressionEntryActor,
   },
 });
@@ -1198,16 +711,8 @@ export const LEAF_SUBSTATES = [
   '__execute-command',
   '__resolve-artifacts',
   '__resolve-iteration',
-  '__issue-delegations',
-  '__prepare-inline-launch',
-  '__progression-apply-completion',
   '__progression-waiting-input',
-  '__progression-refused-completion',
-  '__progression-refused-contention',
-  '__progression-project-frontier',
   '__progression-enter-unit',
-  '__progression-enter-after-projected-frontier',
-  '__progression-refused',
 ] as const;
 
 /** Child state names owned by a compiled execution-unit leaf. */
@@ -1295,9 +800,9 @@ export interface RunbookContext {
   /** Machine-owned lifecycle flag. 'running' during execution; 'completed' or 'stopped' on final entry. */
   readonly lifecycle: Lifecycle;
   /**
-   * Mirror of RunbookState.substepStates so the retry hook (running inside
-   * an XState assign) can inspect delegation records and write back updates.
-   * Populated at actor bootstrap (Task 4) and updated by the retry hook.
+   * Mirror of RunbookState.substepStates so the RETRY and intra-frame GOTO
+   * assigns can reset the re-opened rows. Populated at actor bootstrap and
+   * mirrored back by `deriveActorStatePatch`.
    */
   readonly substepStates?: readonly SubstepState[];
   /**
@@ -1328,25 +833,6 @@ export interface RunbookContext {
    * followed in the same macrostep by the leaf entry that consumes it.
    */
   readonly frameReentry?: { readonly cause: 'GOTO' | 'RETRY' };
-  /** Non-secret frontier intents awaiting authorized credential delivery. */
-  readonly delegateFrontier?: ReadonlyArray<PersistedDelegateFrontierEntry>;
-  /** One-shot machine-owned intent for launching a non-DELEGATE child runbook inline. */
-  readonly inlineLaunchIntent?: InlineLaunchIntentWithoutParentEntry;
-  /** Parent linkage data used by machine-owned delegation issuance. */
-  readonly parentLinkage?: ParentLinkage;
-  /**
-   * Ordering epoch of the interrupted attempt, captured on entry to
-   * `recoveryRequired`. Data only — never the secret execution token. Undefined
-   * unless the run is recovering.
-   */
-  readonly interruptedEpoch?: number;
-  /** Closed recovery cause captured on entry to `recoveryRequired`. */
-  readonly interruptedReason?: ExecutionRecoveryReason;
-  /**
-   * Step id captured on entry to `recoveryRequired` so a typed retry re-enters
-   * the exact interrupted step rather than the runbook's first step.
-   */
-  readonly interruptedStepId?: string;
 }
 
 /**
@@ -1359,34 +845,22 @@ export interface RunbookContext {
  * - FORCE_STOP: User-forced stop command intent routed through the machine
  * - FORCE_COMPLETE: User-forced complete command intent routed through the machine
  * - SET_VARIABLES: Merge variables into context.variables without changing step.
- *   Available as a general-purpose variable-merge primitive; delegation
- *   completion now flows through APPLY_CURRENT_RESOLVED_COMPLETION below, which
- *   merges `finalVars` atomically with the pass/fail raise. OUTPUTS capture
- *   uses COMMAND_RESULT below.
- * - DELEGATE_FRONTIER_CONSUMED: Clear the one-shot delegation frontier after
- *   a frontend emits the plain claim tokens.
- * - APPLY_CURRENT_RESOLVED_COMPLETION: Apply a core-validated resolved completion
- *   at the current cursor, merging child finalVars before raising PASS/FAIL
+ *   A general-purpose variable-merge primitive; OUTPUTS capture uses
+ *   COMMAND_RESULT below.
+ * - SELECT_RUN_PROGRESSION: Ask the machine which progression turn comes next
+ *   (wait for input, or enter the current execution unit). Answered by an
+ *   emitted `RUN_PROGRESSION_INTENT`.
+ * - EXECUTE_COMMAND: Run the rendered command of the current unit through
+ *   `commandExecActor`; its completion raises COMMAND_RESULT.
  * - COMMAND_RESULT: Result of a CLI-driven command execution. Carries captured
  *   channels. Unconditionally transitions the leaf to its `__capture` child,
  *   which invokes `outputCaptureActor`. Channels may be empty; the actor
  *   resolves with an empty `variables` record and still fires the result-driven
  *   `PASS` or `FAIL` event.
  *
- * The three inline-launch events are one mechanism and are documented together,
- * because each is only correct in terms of the other two. They span one launch:
- *
- * - INLINE_CHILD_STARTED: Take the launch latch, BEFORE the child run is
- *   created. Committing first is what makes the launch exactly-once, and is why
- *   the record names its owner — a process that dies inside the span leaves a
- *   latch that `classifyInlineLaunchOwnership` reclaims on proof of death.
- * - INLINE_LAUNCH_CONSUMED: The launch FINISHED. Drops the latch and the
- *   one-shot intent in one commit, because there is nothing left to re-observe.
- * - INLINE_LAUNCH_ABANDONED: The launch span FAILED past the latch. Drops the
- *   latch and KEEPS the intent, because the launch is not over and the
- *   surviving intent is what lets the next observer win it and finish. Applies
- *   only while the row still holds the latch record the sender names, so a
- *   stale sender cannot release a reclaimer's launch.
+ * A substep's PASS/FAIL — including a DELEGATE or runbook-list substep's — is
+ * sent directly by the lifecycle seam after `--step` validation; there is no
+ * mailbox and no completion-application event (ADR 0005).
  */
 export type RunbookEvent =
   | { type: 'PASS' }
@@ -1402,49 +876,6 @@ export type RunbookEvent =
       /** Result of the prior selected turn, or the initial activation marker. */
       feedback: RunProgressionMachineFeedback;
     }
-  | { type: 'DELEGATE_FRONTIER_CONSUMED' }
-  | { type: 'INLINE_LAUNCH_CONSUMED' }
-  | {
-      type: 'INLINE_LAUNCH_ABANDONED';
-      /**
-       * The latch record the abandoning sender wrote when it won the launch.
-       *
-       * Required, and the only payload: the release applies only while the
-       * substep row still holds this exact record, so a sender that has fallen
-       * behind cannot clear a latch another owner has since reclaimed. The
-       * launch coordinates are NOT repeated here — the row is found through the
-       * surviving intent, exactly as `INLINE_LAUNCH_CONSUMED` finds it, so the
-       * two events cannot disagree about which launch they refer to.
-       */
-      started: InlineLaunchStart;
-    }
-  | {
-      type: 'INLINE_CHILD_STARTED';
-      parentStepId: string;
-      parentFrameKey: FrameKey;
-      childRunId: RunId;
-      /** The latch: the instant AND the process that owns this launch. */
-      started: InlineLaunchStart;
-    }
-  | {
-      type: 'DELEGATION_CHILD_LINKED';
-      parentStepId: string;
-      parentFrameKey: FrameKey;
-      tokenHash: DelegationTokenHash;
-      childRunId: RunId;
-    }
-  | {
-      type: 'DELEGATION_CHILD_UNLINKED';
-      parentStepId: string;
-      parentFrameKey: FrameKey;
-      tokenHash: DelegationTokenHash;
-      childRunId: RunId;
-    }
-  | {
-      type: 'APPLY_CURRENT_RESOLVED_COMPLETION';
-      completionKey: string;
-      completion: CurrentCursorResolvedCompletion;
-    }
   | {
       type: 'EXECUTE_COMMAND';
       command: string;
@@ -1456,8 +887,7 @@ export type RunbookEvent =
       type: 'COMMAND_RESULT';
       result: 'pass' | 'fail';
       channels: readonly PreparedChannel[];
-    }
-  | ExecutionRecoveryEvent;
+    };
 
 /**
  * Object-form XState transition entry — the `{ target?, actions?, guard? }` variant.
@@ -1571,7 +1001,7 @@ function routeThroughParentArtifactsIfNeeded(
  * exited (every active node strictly below the domain leaves) and re-entered
  * (`addDescendantStatesToEnter` walks the target's `initial` chain
  * unconditionally), which is why a self-targeting GOTO/RETRY re-fires the
- * leaf's `__resolve-artifacts` / `__issue-delegations` children while silently
+ * leaf's `__resolve-artifacts` / `__resolve-iteration` children while silently
  * skipping the leaf's own entry actions.
  *
  * That asymmetry is wrong for frame entry. A GOTO or RETRY that lands on the
@@ -2018,50 +1448,6 @@ function leafNeedsIterationResolution(step: ResolvedStep): boolean {
 }
 
 /**
- * True when this leaf is the first auto-delegated substep of its parent step.
- *
- * @param stepName - Parent step name for the leaf.
- * @param substepId - Substep id for the leaf, if any.
- * @param steps - Resolved runbook steps.
- * @returns True when this leaf should invoke machine-owned delegation issuance.
- */
-function leafIssuesDelegations(
-  stepName: string,
-  substepId: string | undefined,
-  steps: readonly ResolvedStep[],
-): boolean {
-  if (!substepId) return false;
-  const step = steps.find((candidate) => candidate.name === stepName);
-  if (!step || !resolvedStepHasSubsteps(step)) return false;
-  return step.substeps.some((substep) => substep.id === substepId && substep.delegate === true);
-}
-
-/**
- * True when this leaf is a non-DELEGATE substep that references a child runbook.
- *
- * @param stepName - Parent step name for the leaf.
- * @param substepId - Substep id for the leaf, if any.
- * @param steps - Resolved runbook steps.
- * @returns True when this leaf should prepare inline child launch intent.
- */
-function leafPreparesInlineLaunch(
-  stepName: string,
-  substepId: string | undefined,
-  steps: readonly ResolvedStep[],
-): boolean {
-  if (!substepId) return false;
-  const step = steps.find((candidate) => candidate.name === stepName);
-  if (!step || !resolvedStepHasSubsteps(step)) return false;
-  return step.substeps.some(
-    (substep) =>
-      substep.id === substepId &&
-      substep.delegate !== true &&
-      Array.isArray(substep.runbooks) &&
-      substep.runbooks.length > 0,
-  );
-}
-
-/**
  * Check if a state represents ANY substep of a step with substeps.
  *
  * @param stateId - The state ID to check (e.g., "step::3::2")
@@ -2433,14 +1819,12 @@ function buildParentExitAssign(
  * @param config - The parent state config (discriminated by isParentState=true)
  * @param steps - The full steps array
  * @param evaluationOptions - Filesystem options threaded through to OUTPUTS evaluation
- * @param issueDelegationCredential - Verified runtime issuer for delegation retry transitions
  * @returns XState state config with `always` transitions
  */
 function buildParentStateConfig(
   config: ParentStateConfig,
   steps: readonly ResolvedStep[],
   evaluationOptions: EvaluateOutputOptions | undefined,
-  issueDelegationCredential: DelegationCredentialIssuer | undefined,
 ): RunbookStateConfig {
   const parentStep = config.parentStep;
   const stepName = config.stepName;
@@ -2499,52 +1883,17 @@ function buildParentStateConfig(
       {
         guard: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) =>
           branchGuard({ context, event }) && context.parentRetryCount < transition.retry,
-        // Target the parent state itself (self re-enter). On success a
-        // sibling priority-0 always entry observes lastAction.type === 'RETRY'
-        // (aggregated) and routes to firstSubstepStateId; on error the
-        // priority-0 RETRY_ERROR always entry routes to STOPPED. Routing
-        // via always-entries ensures the error-path never enters the substep
-        // state (whose PASS/FAIL transitions would overwrite the
-        // RETRY_ERROR lastAction before the priority-0 guard could fire).
+        // Target the parent state itself (self re-enter). A sibling priority-0
+        // always entry observes lastAction.type === 'RETRY' (aggregated) and
+        // routes to firstSubstepStateId.
         target: formatStateId(stepName),
         actions: runbookSetup.assign(({ context }: { context: RunbookContext }) => {
-          // `runRetryHook` runs as a TRANSITION action, so the leaf
+          // This assign runs as a TRANSITION action, so the leaf
           // `syncFrameEntry` that follows cannot make the entry current for it.
-          // Advance here, hand the hook the advanced coordinates, and do NOT set
-          // `frameReentry` — the entry action would otherwise score this bump a
-          // second time.
-          const frameEntry = advanceFrameEntry(
-            context.frameEntry ?? {},
-            frameKeyForCursor(parentStep.name, context.forStack),
-            true,
-          );
-          // Run the retry hook: iterate every delegated substep in the active
-          // frame, re-issue their delegations, collect new tokens into a
-          // frontier. Uniform re-delegation (docs/spec/language.md §4.2, §5). Never throws.
-          const hook = runRetryHook(
-            { ...context, frameEntry },
-            parentStep,
-            steps,
-            issueDelegationCredential,
-          );
-          if (hook.status === 'error') {
-            // RETRY_ERROR variant: structurally distinct LastAction type. The
-            // priority-0 always entry routes to STOPPED on this discriminant
-            // — no counter increments, no frontier population, no substep
-            // reset. Aggregation origin mirrors the sibling RETRY emission:
-            // both sit on the parent-aggregation retry path.
-            //
-            // RETRY_ERROR routes to STOPPED and re-enters no frame, so the
-            // advance is discarded with the rest of the retry.
-            return {
-              lastAction: makeAggregationLastAction({
-                type: 'RETRY_ERROR' as const,
-                code: hook.code,
-                message: hook.message,
-              }),
-              substepStates: hook.substepStates,
-            };
-          }
+          // Advance here and do NOT set `frameReentry` — the entry action would
+          // otherwise score this bump a second time.
+          const activeFrameKey = frameKeyForCursor(parentStep.name, context.forStack);
+          const frameEntry = advanceFrameEntry(context.frameEntry ?? {}, activeFrameKey, true);
           return {
             frameEntry,
             // Aggregation origin marks this RETRY as aggregation-driven (spec §3.5).
@@ -2570,8 +1919,17 @@ function buildParentStateConfig(
             iterationRetryCount: 0,
             lastMessage: undefined,
             substep: firstSubstep?.id,
-            substepStates: hook.substepStates,
-            delegateFrontier: hook.frontier.length > 0 ? hook.frontier : undefined,
+            // RETRY re-walks every substep of the parent from the first, so the
+            // persisted projection is reset to match that forward walk.
+            substepStates:
+              firstSubstep === undefined
+                ? context.substepStates
+                : resetReopenedSubsteps(
+                    parentStep,
+                    activeFrameKey,
+                    firstSubstep.id,
+                    context.substepStates ?? [],
+                  ),
           };
         }),
       },
@@ -2642,52 +2000,18 @@ function buildParentStateConfig(
               selected.result === kind && context.iterationRetryCount < selected.transition.retry
             );
           },
-          // Target parent self so post-assign always entries route based
-          // on the resulting lastAction variant (RETRY → firstSubstep,
-          // RETRY_ERROR → STOPPED). Targeting the substep directly would
-          // let its PASS/FAIL transitions overwrite lastAction before the
-          // priority-0 RETRY_ERROR guard could fire.
+          // Target parent self so the post-assign priority-0 always entry
+          // routes on the aggregated RETRY lastAction to the first substep.
           target: formatStateId(stepName),
           actions: runbookSetup.assign(({ context }: { context: RunbookContext }) => {
-            // `runRetryHook` runs as a TRANSITION action, so the leaf
+            // This assign runs as a TRANSITION action, so the leaf
             // `syncFrameEntry` that follows cannot make the entry current for
-            // it. Advance here, hand the hook the advanced coordinates, and do
-            // NOT set `frameReentry` — the entry action would otherwise score
-            // this bump a second time. This site does not reset `forStack`, so
-            // the frame key is the current iteration's and the advance is a
-            // same-frame re-entry.
-            const frameEntry = advanceFrameEntry(
-              context.frameEntry ?? {},
-              frameKeyForCursor(parentStep.name, context.forStack),
-              true,
-            );
-            // Run the retry hook: iterate every delegated substep in the
-            // current iteration frame, re-issue their delegations, collect new
-            // tokens into a frontier. Uniform re-delegation within the frame
-            // (docs/spec/language.md §4.2, §5). activeFrameKey scopes the hook to this
-            // iteration — other iterations' substep states remain untouched.
-            const hook = runRetryHook(
-              { ...context, frameEntry },
-              parentStep,
-              steps,
-              issueDelegationCredential,
-            );
-            if (hook.status === 'error') {
-              // RETRY_ERROR variant: structurally distinct LastAction type.
-              // The sibling priority-0 always entry on the parent state
-              // routes to STOPPED on this discriminant. Counters are not
-              // incremented (retry was never actually taken); no frontier
-              // is populated; no substep reset. Aggregation origin mirrors
-              // the iteration RETRY emission below.
-              return {
-                lastAction: makeAggregationLastAction({
-                  type: 'RETRY_ERROR' as const,
-                  code: hook.code,
-                  message: hook.message,
-                }),
-                substepStates: hook.substepStates,
-              };
-            }
+            // it. Advance here and do NOT set `frameReentry` — the entry action
+            // would otherwise score this bump a second time. This site does not
+            // reset `forStack`, so the frame key is the current iteration's and
+            // the advance is a same-frame re-entry.
+            const activeFrameKey = frameKeyForCursor(parentStep.name, context.forStack);
+            const frameEntry = advanceFrameEntry(context.frameEntry ?? {}, activeFrameKey, true);
             return {
               frameEntry,
               iterationRetryCount: context.iterationRetryCount + 1,
@@ -2705,8 +2029,17 @@ function buildParentStateConfig(
               substepCompletedCount: 0,
               deferredResults: EMPTY_RESULTS,
               substep: firstSubstep?.id,
-              substepStates: hook.substepStates,
-              delegateFrontier: hook.frontier.length > 0 ? hook.frontier : undefined,
+              // The iteration frame is re-walked from its first substep; only
+              // this iteration's rows are reset, other iterations' rows stay.
+              substepStates:
+                firstSubstep === undefined
+                  ? context.substepStates
+                  : resetReopenedSubsteps(
+                      parentStep,
+                      activeFrameKey,
+                      firstSubstep.id,
+                      context.substepStates ?? [],
+                    ),
             };
           }),
         });
@@ -3142,7 +2475,7 @@ function buildParentStateConfig(
     // other GOTO-assigning site does. These branches build their own `assign`
     // rather than routing through `buildSimpleGotoAssign`, so without this the
     // marker is never set and a parent whose PASS/FAIL action GOTOs its own step
-    // re-enters its frame — substep rows reset, `__issue-delegations` re-fired —
+    // re-enters its frame — substep rows reset, entry children re-fired —
     // while `advanceFrameEntry` sees no frame switch and no marker, and carries
     // the old entry through unchanged. Only GOTO can land back in the frame the
     // exit left; CONTINUE/NEXT/BREAK move on and STOP/COMPLETE are terminal, and
@@ -3268,18 +2601,14 @@ function buildParentStateConfig(
     }
   }
 
-  // Priority-0 (terminal) always entries, in reverse-insert order so that
-  // after two `unshift` calls the RETRY_ERROR guard lands at position 0 and
-  // the RETRY (aggregated) router at position 1 — both ahead of the retry
-  // and exhaustion branches below.
+  // Priority-0 always entry, `unshift`ed so it lands ahead of the retry and
+  // exhaustion branches below.
   //
-  // (1) RETRY (aggregated, success): the retry-hook `assign` completed
-  //     without error. Routes to firstSubstepStateId to re-enter the
-  //     substep chain with fresh delegation tokens. Must precede the retry
-  //     branches so a re-evaluation of the aggregation path cannot re-run
-  //     the hook that just succeeded. Guarded on aggregation origin to
-  //     avoid matching non-retry RETRY actions (none exist today, but the
-  //     marker narrows intent).
+  // RETRY (aggregated): a retry-transition `assign` just ran. Routes to
+  // firstSubstepStateId to re-enter the substep chain. Must precede the retry
+  // branches so a re-evaluation of the aggregation path cannot take the retry
+  // twice. Guarded on aggregation origin to avoid matching non-retry RETRY
+  // actions (none exist today, but the marker narrows intent).
   if (firstSubstep !== undefined) {
     always.unshift({
       guard: ({ context }: { context: RunbookContext }) =>
@@ -3287,20 +2616,6 @@ function buildParentStateConfig(
       target: firstSubstepStateId,
     });
   }
-
-  // (2) RETRY_ERROR: fires when a retry-transition assign wrote a
-  // RetryErrorLastAction onto lastAction (parent or iteration retry-hook
-  // failure). The type discriminant is structurally unique — no other code
-  // path writes this variant. The payload is already on lastAction; no
-  // action needed, which preserves code/message verbatim into STOPPED.
-  // Must precede every other always entry so a re-evaluation of the
-  // aggregation branch cannot re-run the broken hook. Counters are
-  // preserved (the retry was never actually taken); the STOPPED.entry
-  // action assigns lifecycle='stopped' on arrival.
-  always.unshift({
-    guard: ({ context }: { context: RunbookContext }) => context.lastAction?.type === 'RETRY_ERROR',
-    target: STOPPED_STATE_NAME,
-  });
 
   return {
     always: always.map((transition) =>
@@ -3333,150 +2648,6 @@ function buildIterationExhaustedStateConfig(steps: readonly ResolvedStep[]): Run
     }));
 
   return { id: ITERATION_EXHAUSTED_STATE_NAME, always } satisfies RunbookStateConfig;
-}
-
-/**
- * Build the GOTO reconcile/retry transitions that leave `recoveryRequired`.
- *
- * Reuses the GOTO machinery keyed off the captured step id: one guarded
- * transition per distinct step, matching the incoming GOTO's target step and
- * re-entering that step's first state. A typed retry sends
- * `GOTO { target: { step: interruptedStepId } }`, re-entering the exact
- * interrupted step rather than the runbook's first step. Entry into the target
- * clears the recovery context and resets the step retry counter.
- *
- * @param allStates - Flat list of all compiled states.
- * @param steps - Resolved steps (for artifact routing).
- * @returns Guarded GOTO transitions leaving `recoveryRequired`.
- */
-function buildRecoveryReconcileTransitions(
-  allStates: readonly StateConfig[],
-  steps: readonly ResolvedStep[],
-): readonly RunbookAlwaysEntry[] {
-  const firstByStep = new Map<string, StateConfig>();
-  for (const state of allStates) {
-    if (state.isParentState) continue;
-    if (!firstByStep.has(state.stepName)) {
-      firstByStep.set(state.stepName, state);
-    }
-  }
-  return [...firstByStep.values()].map((first) => {
-    // The two targets need opposite repairs, so the same lookup selects both.
-    //
-    // A target WITH substeps has its FOR frame rebuilt by the leaf entry assign
-    // (initForStack/initIterationResults), which preserves a live same-step frame
-    // so the interrupted iteration replays exactly once — assigning the frame here
-    // too would fight that. What it does NOT do is rewrite the mirrored substep
-    // rows, so the cursor would rewind while the rows still claim outcomes.
-    //
-    // A target WITHOUT substeps has no entry assign and no rows to rewind, so the
-    // uncleared FOR frame is the whole problem: left alone it survives the
-    // reconcile and derives a bogus activeFrameKey for the rest of the run.
-    const substepTarget = getStepForSubstep(first.id, steps)?.step;
-    const targetPatch =
-      substepTarget === undefined
-        ? { forStack: EMPTY_FOR_STACK, iterationResults: undefined }
-        : {
-            substepStates: buildSubstepGotoResetAssignValue(
-              substepTarget,
-              first.stepName,
-              first.substepId,
-            ),
-          };
-    return {
-      guard: ({ event }: { event: RunbookEvent }) =>
-        event.type === 'GOTO' && event.target.step === first.stepName,
-      target: routeThroughParentArtifactsIfNeeded(first.id, steps),
-      actions: runbookSetup.assign({
-        interruptedEpoch: undefined,
-        interruptedReason: undefined,
-        interruptedStepId: undefined,
-        // RESET SITE: a reconcile is a canonical GOTO, and every canonical GOTO
-        // zeroes the retry budget, the loop budget, the iteration budget and the
-        // displayed max — one that kept them would reopen the unit pre-spent.
-        retryCount: 0,
-        selfGotoCount: 0,
-        iterationRetryCount: 0,
-        retryMax: undefined,
-        substep: first.substepId,
-        substepCompletedCount: 0,
-        deferredResults: EMPTY_RESULTS,
-        ...targetPatch,
-        lastAction: buildGotoLastActionFromEvent(first.substepId),
-        frameReentry: FRAME_REENTRY_GOTO,
-      }),
-    };
-  });
-}
-
-/**
- * Build the non-final `recoveryRequired` state.
- *
- * The state persists with lifecycle `running` (it is open-but-blocked), carries
- * the `RECOVERY_TAG`, and exposes GOTO reconcile/retry transitions. Stop is
- * covered by the bubbling root `FORCE_STOP` handler, so it is not duplicated
- * here.
- *
- * @param allStates - Flat list of all compiled states.
- * @param steps - Resolved steps (for artifact routing).
- * @returns The `recoveryRequired` state config.
- */
-function buildRecoveryRequiredStateConfig(
-  allStates: readonly StateConfig[],
-  steps: readonly ResolvedStep[],
-): RunbookStateConfig {
-  return {
-    id: RECOVERY_REQUIRED_STATE_NAME,
-    tags: [RECOVERY_TAG],
-    on: {
-      GOTO: buildRecoveryReconcileTransitions(allStates, steps),
-      // A run parked here has no next progression turn, and no repeat of the
-      // same gesture can produce one — only an explicit GOTO reconcile/retry
-      // leaves this state. The machine answers the selection with its own
-      // typed refusal; without this arm the activation observes no emitted
-      // intent and can only report an untyped defect for a condition the
-      // storage layer already classifies. Action-only, so asking the question
-      // does not move the run off the state it is blocked on.
-      SELECT_RUN_PROGRESSION: {
-        actions: runbookSetup.emit(({ context }) => ({
-          type: 'RUN_PROGRESSION_INTENT' as const,
-          intent: {
-            kind: 'refused' as const,
-            reason: 'recovery_required' as const,
-            message: recoveryRequiredProgressionMessage(context),
-          },
-        })),
-      },
-    },
-  } satisfies RunbookStateConfig;
-}
-
-/**
- * Compose the operator-facing refusal for a progression activation over a run
- * parked in `recoveryRequired`.
- *
- * Says only what the call graph supports, exactly as the store's own
- * `recovery_required` refusal does: nothing was written, no recovery was
- * started by asking, and the remedy is the explicit reconcile/retry that
- * leaves this state.
- *
- * @param context - The parked machine's context, carrying the interrupted attempt.
- * @returns The refusal message reported on the closed progression outcome.
- */
-function recoveryRequiredProgressionMessage(context: RunbookContext): string {
-  const epoch = context.interruptedEpoch;
-  const reason = context.interruptedReason;
-  const attempt = [
-    epoch === undefined ? undefined : `epoch ${String(epoch)}`,
-    reason === undefined ? undefined : `reason ${reason}`,
-  ]
-    .filter((part) => part !== undefined)
-    .join(', ');
-  return (
-    `This run's last execution attempt ended with an unknown outcome${attempt === '' ? '' : ` (${attempt})`} ` +
-    `and its recovery has not completed. Run Progression cannot select a turn while the run is ` +
-    `blocked; reconcile or retry the interrupted step before continuing.`
-  );
 }
 
 /**
@@ -4491,15 +3662,11 @@ interface SideEffectLeafSubstatePolicy {
  * declared. Keyed by the COMPLETE {@link LeafSubstate} union so a substate
  * cannot be left out: a non-invoking one is declared `null` — "invokes
  * nothing", said out loud — while omission used to say it silently, which is
- * how `__progression-project-frontier` shipped with no `onError` at all (#880).
+ * how a progression substate once shipped with no `onError` at all (#880).
  */
 const SIDE_EFFECT_LEAF_SUBSTATE_POLICIES = {
   idle: null,
-  '__progression-apply-completion': null,
   '__progression-waiting-input': null,
-  '__progression-refused-completion': null,
-  '__progression-refused-contention': null,
-  '__progression-refused': null,
   __capture: { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'terminal' },
   // Command execution carries its own pending tag: it must never be subject to
   // the machine-effect wait budget (#536), but progression still needs a tag to
@@ -4507,14 +3674,7 @@ const SIDE_EFFECT_LEAF_SUBSTATE_POLICIES = {
   '__execute-command': { tag: PENDING_COMMAND_EXECUTION_TAG, onError: 'terminal' },
   '__resolve-artifacts': { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'terminal' },
   '__resolve-iteration': { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'terminal' },
-  '__issue-delegations': { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'terminal' },
-  '__prepare-inline-launch': { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'terminal' },
-  '__progression-project-frontier': { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'refusal' },
   '__progression-enter-unit': { tag: PENDING_MACHINE_EFFECT_TAG, onError: 'refusal' },
-  '__progression-enter-after-projected-frontier': {
-    tag: PENDING_MACHINE_EFFECT_TAG,
-    onError: 'refusal',
-  },
 } as const satisfies Readonly<Record<LeafSubstate, SideEffectLeafSubstatePolicy | null>>;
 
 /**
@@ -4534,11 +3694,11 @@ function sideEffectLeafSubstatePolicy(value: LeafSubstate): SideEffectLeafSubsta
 /**
  * Resolve a side-effect child's transition target against the generated graph.
  *
- * Three forms are legal, and the third is what the Run Progression frontier
- * state needs: `#STOPPED` (absolute top-level), `idle` / `.idle` (a sibling by
- * bare or relative name), and `#step::1.__progression-enter-unit` (a child
- * named through its parent's absolute id, which is how a nested state reaches
- * a sibling across the compound boundary).
+ * Three forms are legal: `#STOPPED` (absolute top-level), `idle` / `.idle` (a
+ * sibling by bare or relative name), and `#step::1.__progression-enter-unit` (a
+ * child named through its parent's absolute id, which is how a nested state
+ * reaches a sibling across the compound boundary — the form `idle.on` uses to
+ * select a progression substate).
  *
  * @param target - Raw transition target string
  * @param states - The whole generated states record
@@ -4634,17 +3794,10 @@ function checkedStateInsert(
  *   that omit the option receive an empty array default.
  * @param options.helpers - Template helpers available to machine-owned OUTPUTS evaluation.
  * @param options.substepStates - Seeds `RunbookContext.substepStates` at machine bootstrap. Used
- *   by the actor service to hydrate substep delegation state from persisted state in a single
+ *   by the actor service to hydrate substep rows from persisted state in a single
  *   `createActor` call.
- * @param options.frameEntry - Seeds `RunbookContext.frameEntry` at machine bootstrap so
- *   machine-owned delegation issuance can resolve a credential's parent entry through the shared
- *   frame-entry inference helper instead of assuming the first entry.
- * @param options.parentLinkage - Seeds parent linkage data for machine-owned delegation issuance.
- * @param options.resolveDelegationRunbook - Runtime resolver for machine-owned delegation issuance.
- * @param options.issueDelegationCredential - Verified runtime capability for machine-owned credential issuance.
- * @param options.resolveInlineRunbook - Runtime resolver for machine-owned inline launch intent preparation.
- * @param options.generateChildRunId - Runtime ID generator for machine-owned child run launches.
- * @param options.now - Runtime clock for machine-owned timestamps.
+ * @param options.frameEntry - Seeds `RunbookContext.frameEntry` at machine bootstrap so the
+ *   leaf entry action advances from the persisted coordinates instead of assuming the first entry.
  * @param options.commandServices - Runtime callables for machine-owned command execution.
  * @param options.executionObserver - Non-persisted observer for command actor output and failures.
  * @param options.runProgression - Runtime-only authority and callables for progression selection.
@@ -4665,12 +3818,6 @@ export function compileRunbookToMachine(
     helpers?: TemplateHelperRegistry;
     substepStates?: readonly SubstepState[];
     frameEntry?: FrameEntryCoordinates;
-    parentLinkage?: ParentLinkage;
-    resolveDelegationRunbook?: ResolveDelegationRunbook;
-    issueDelegationCredential?: DelegationCredentialIssuer;
-    resolveInlineRunbook?: ResolveInlineRunbook;
-    generateChildRunId?: () => RunId;
-    now?: () => string;
     commandServices?: CommandExecutionServices;
     executionObserver?: MachineExecutionObserver;
     runProgression?: RunProgressionMachineRuntime;
@@ -4793,8 +3940,8 @@ export function compileRunbookToMachine(
    * Appended AFTER the leaf's existing entry actions so it runs after
    * `initForStack` has made the FOR iteration current — that is what makes a
    * loop-back register as a frame switch with no extra wiring. It runs before
-   * the leaf's initial child's `invoke` input factory is read, so
-   * `__issue-delegations` and `__prepare-inline-launch` see the advanced value.
+   * the leaf's initial child's `invoke` input factory is read, so any
+   * side-effect child that reads `context.frameEntry` sees the advanced value.
    *
    * @param stepName - The step this leaf belongs to.
    * @returns The XState assign action.
@@ -4809,183 +3956,6 @@ export function compileRunbookToMachine(
         ),
       frameReentry: undefined,
     });
-  const buildDelegationIssueInvokeBlock = (
-    stepName: string,
-    substepId: string | undefined,
-  ): NonNullable<RunbookStateConfig['invoke']> => ({
-    src: 'delegationIssueActor' as const,
-    input: ({ context }: { context: RunbookContext }) => {
-      const frameKey = frameKeyForCursor(stepName, context.forStack);
-      const runIdValue = context.templateVars.RunId;
-      return {
-        state: {
-          id: assertRunId(typeof runIdValue === 'string' ? runIdValue : ''),
-          step: stepName,
-          ...(substepId ? { substep: substepId } : {}),
-          substepStates: context.substepStates,
-          activeFrameKey: frameKey,
-          // Resolve the issuing frame's entry through the shared helper against
-          // the persisted coordinates, then hand `createDelegation` a state
-          // whose active frame *is* the issuing frame, so its own call to the
-          // same helper reproduces this answer. Passing the mirror's raw
-          // `activeEntry` alongside `activeFrameKey: frameKey` would attribute
-          // another frame's entry to this one.
-          activeEntry: inferFrameEntryFromState(context.frameEntry ?? {}, frameKey),
-          frameEntryCounts: context.frameEntry?.frameEntryCounts,
-          parentLinkage: context.parentLinkage,
-          templateVars: brandInitialTemplateVars(asTemplateVars(context.templateVars)),
-          variables: context.variables,
-          forStack: context.forStack,
-        },
-        steps,
-        frameKey,
-        resolveRunbook: options?.resolveDelegationRunbook ?? (() => Promise.resolve(null)),
-        issueCredential: options?.issueDelegationCredential,
-      };
-    },
-    onDone: [
-      {
-        guard: ({ event }: { event: { output: DelegationIssueOutput } }) =>
-          event.output.status === 'issued',
-        target: 'idle',
-        actions: {
-          type: 'storeDelegateFrontier' as const,
-          params: ({ event }: { event: { output: DelegationIssueOutput } }) => {
-            if (event.output.status !== 'issued') {
-              return { frontier: undefined, substepStates: [] };
-            }
-            return {
-              frontier: event.output.frontier,
-              substepStates: event.output.substepStates,
-            };
-          },
-        },
-      },
-      {
-        guard: ({ event }: { event: { output: DelegationIssueOutput } }) =>
-          event.output.status === 'skipped',
-        target: 'idle',
-      },
-      {
-        target: STOPPED_STATE_REF,
-        actions: {
-          type: 'setDelegationIssuanceFailed' as const,
-          params: ({ event }: { event: { output: DelegationIssueOutput } }) => {
-            if (event.output.status === 'failed') {
-              return { reason: event.output.reason, message: event.output.message };
-            }
-            return {
-              reason: 'delegation_resolution_failed' as const,
-              message: 'Delegation issuance failed',
-            };
-          },
-        },
-      },
-    ],
-    onError: {
-      target: STOPPED_STATE_REF,
-      actions: {
-        type: 'setDelegationIssuanceFailed' as const,
-        params: ({ event }: { event: { error: unknown } }) => ({
-          reason: 'delegation_resolution_failed' as const,
-          message: getErrorMessage(event.error),
-        }),
-      },
-    },
-  });
-  const buildInlineLaunchInvokeBlock = (
-    stepName: string,
-    substepId: string | undefined,
-  ): NonNullable<RunbookStateConfig['invoke']> => ({
-    src: 'inlineLaunchIntentActor' as const,
-    input: ({ context }: { context: RunbookContext }) => {
-      if (!substepId) {
-        throw new Error('inlineLaunchIntentActor invoked without substep id');
-      }
-      // Same derivation as the sibling `buildDelegationIssueInvokeBlock` and as
-      // the leaf's own `syncFrameEntry`: a launch intent and a delegation
-      // issued from one leaf entry must name the same frame, and the entry
-      // ordinal they are compared against is keyed on this helper's answer.
-      const frameKey = frameKeyForCursor(stepName, context.forStack);
-      return {
-        state: {
-          id: context.templateVars.RunId,
-          step: stepName,
-          substep: substepId,
-          substepStates: context.substepStates,
-          activeFrameKey: frameKey,
-          parentLinkage: context.parentLinkage,
-          templateVars: brandInitialTemplateVars(asTemplateVars(context.templateVars)),
-          variables: context.variables,
-          forStack: context.forStack,
-        },
-        steps,
-        substepId,
-        frameKey,
-        resolveRunbook:
-          options?.resolveInlineRunbook ??
-          (() => {
-            throw new Error('Inline child runbook resolver is not configured');
-          }),
-        generateChildRunId: options?.generateChildRunId ?? generateRunId,
-        now: options?.now ?? (() => new Date().toISOString()),
-      };
-    },
-    onDone: [
-      {
-        guard: ({ event }: { event: { output: InlineLaunchIntentOutput } }) =>
-          event.output.status === 'prepared',
-        target: 'idle',
-        actions: {
-          type: 'storeInlineLaunchIntent' as const,
-          params: ({ event }: { event: { output: InlineLaunchIntentOutput } }) => {
-            if (event.output.status !== 'prepared') {
-              throw new Error('Expected prepared inline launch output');
-            }
-            return {
-              intent: event.output.intent,
-              substepStates: event.output.substepStates,
-            };
-          },
-        },
-      },
-      {
-        guard: ({ event }: { event: { output: InlineLaunchIntentOutput } }) =>
-          event.output.status === 'skipped',
-        target: 'idle',
-      },
-      {
-        guard: ({ event }: { event: { output: InlineLaunchIntentOutput } }) =>
-          event.output.status === 'failed',
-        target: STOPPED_STATE_REF,
-        actions: {
-          type: 'setInlineLaunchFailed' as const,
-          params: ({ event }: { event: { output: InlineLaunchIntentOutput } }) => {
-            if (event.output.status !== 'failed') {
-              return {
-                reason: 'inline_launch_failed' as const,
-                message: 'Inline launch preparation failed',
-              };
-            }
-            return {
-              reason: event.output.reason,
-              message: event.output.message,
-            };
-          },
-        },
-      },
-    ],
-    onError: {
-      target: STOPPED_STATE_REF,
-      actions: {
-        type: 'setInlineLaunchFailed' as const,
-        params: ({ event }: { event: { error: unknown } }) => ({
-          reason: 'inline_launch_failed' as const,
-          message: getErrorMessage(event.error),
-        }),
-      },
-    },
-  });
 
   // Build a flat list of all states to generate GOTO transitions
   const allStates: StateConfig[] = [];
@@ -5117,12 +4087,6 @@ export function compileRunbookToMachine(
       : {};
     const artifactDeclarations = config.artifacts ?? [];
     const hasArtifactDeclarations = artifactDeclarations.length > 0;
-    const shouldIssueDelegations = leafIssuesDelegations(config.stepName, config.substepId, steps);
-    const shouldPrepareInlineLaunch = leafPreparesInlineLaunch(
-      config.stepName,
-      config.substepId,
-      steps,
-    );
     const hasParentArtifactDeclarations =
       config.substepId !== undefined &&
       steps.some(
@@ -5151,53 +4115,22 @@ export function compileRunbookToMachine(
     const { naked: unitNakedOutputs } = partitionOutputDeclarations(
       owningStep === undefined ? [] : extractUnitOutputs(owningStep, config.substepId),
     );
-    const afterArtifactsTarget = shouldIssueDelegations
-      ? '__issue-delegations'
-      : shouldPrepareInlineLaunch
-        ? '__prepare-inline-launch'
-        : 'idle';
+    // A DELEGATE or runbook-list substep compiles to the same leaf as any other
+    // (ADR 0005 / #901): after iteration and ARTIFACTS resolution it rests in
+    // `idle` and its PASS/FAIL arrives directly. Child reservation on entry is
+    // #903/#904's substate, not a shadow of the deleted issuance states.
     const artifactResolveInvokeBlock = buildArtifactResolveInvokeBlock(
       artifactDeclarations,
       config.stepName,
       config.substepId,
-      afterArtifactsTarget,
+      'idle',
     );
     const initialSubstate = needsIteration
       ? '__resolve-iteration'
       : hasArtifactDeclarations
         ? '__resolve-artifacts'
-        : afterArtifactsTarget;
-    const iterationReadyTarget = hasArtifactDeclarations
-      ? '__resolve-artifacts'
-      : afterArtifactsTarget;
-    const applyCurrentResolvedCompletionTransitions = [
-      {
-        guard: ({ event }: { event: RunbookEvent }) => {
-          assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
-          return event.completion.result === 'pass';
-        },
-        actions: [
-          runbookSetup.assign({
-            variables: ({ context, event }) => {
-              assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
-              return { ...context.variables, ...(event.completion.finalVars ?? {}) };
-            },
-          }),
-          { type: 'raisePass' as const },
-        ],
-      },
-      {
-        actions: [
-          runbookSetup.assign({
-            variables: ({ context, event }) => {
-              assertEvent(event, 'APPLY_CURRENT_RESOLVED_COMPLETION');
-              return { ...context.variables, ...(event.completion.finalVars ?? {}) };
-            },
-          }),
-          { type: 'raiseFail' as const },
-        ],
-      },
-    ];
+        : 'idle';
+    const iterationReadyTarget = hasArtifactDeclarations ? '__resolve-artifacts' : 'idle';
 
     // RETRY re-enters this very leaf whenever the step declares no parent
     // ARTIFACTS to route through, so it needs the same external-transition
@@ -5395,74 +4328,15 @@ export function compileRunbookToMachine(
               },
             }
           : {}),
-        ...(shouldIssueDelegations
-          ? {
-              '__issue-delegations': {
-                tags: [PENDING_MACHINE_EFFECT_TAG],
-                invoke: buildDelegationIssueInvokeBlock(config.stepName, config.substepId),
-              },
-            }
-          : {}),
-        ...(shouldPrepareInlineLaunch
-          ? {
-              '__prepare-inline-launch': {
-                tags: [PENDING_MACHINE_EFFECT_TAG],
-                invoke: buildInlineLaunchInvokeBlock(config.stepName, config.substepId),
-              },
-            }
-          : {}),
         idle: {
           on: {
             SELECT_RUN_PROGRESSION: [
               {
                 guard: ({ event }) => {
                   assertEvent(event, 'SELECT_RUN_PROGRESSION');
-                  return event.feedback.kind === 'completion_target_mismatch';
-                },
-                target: `#${config.id}.__progression-refused-completion`,
-              },
-              {
-                guard: ({ event }) => {
-                  assertEvent(event, 'SELECT_RUN_PROGRESSION');
-                  return event.feedback.kind === 'completion_not_committed';
-                },
-                target: `#${config.id}.__progression-refused-contention`,
-              },
-              {
-                guard: ({ event }) => {
-                  assertEvent(event, 'SELECT_RUN_PROGRESSION');
                   return event.feedback.kind === 'awaiting_input';
                 },
                 target: `#${config.id}.__progression-waiting-input`,
-              },
-              {
-                guard: ({ event }) => {
-                  assertEvent(event, 'SELECT_RUN_PROGRESSION');
-                  const runtime = options?.runProgression;
-                  return (
-                    runtime !== undefined &&
-                    hasApplicableRunProgressionCompletion(runtime.state, steps)
-                  );
-                },
-                target: `#${config.id}.__progression-apply-completion`,
-              },
-              {
-                guard: () => {
-                  const runtime = options?.runProgression;
-                  return (
-                    runtime !== undefined &&
-                    hasCurrentReEntryFrontier(runtime.state, steps) &&
-                    runtime.authority.delegationRuntime === undefined
-                  );
-                },
-                target: `#${config.id}.__progression-refused`,
-              },
-              {
-                guard: () => {
-                  const runtime = options?.runProgression;
-                  return runtime !== undefined && hasCurrentReEntryFrontier(runtime.state, steps);
-                },
-                target: `#${config.id}.__progression-project-frontier`,
               },
               { target: `#${config.id}.__progression-enter-unit` },
             ],
@@ -5475,15 +4349,7 @@ export function compileRunbookToMachine(
             EXECUTE_COMMAND: {
               target: `#${config.id}.__execute-command`,
             },
-            APPLY_CURRENT_RESOLVED_COMPLETION: applyCurrentResolvedCompletionTransitions,
           },
-        },
-        '__progression-apply-completion': {
-          entry: runbookSetup.emit(() => ({
-            type: 'RUN_PROGRESSION_INTENT' as const,
-            intent: { kind: 'apply_completion' as const },
-          })),
-          always: { target: 'idle' },
         },
         '__progression-waiting-input': {
           entry: runbookSetup.emit(() => ({
@@ -5491,198 +4357,6 @@ export function compileRunbookToMachine(
             intent: { kind: 'waiting' as const, reason: 'awaiting_input' as const },
           })),
           always: { target: 'idle' },
-        },
-        '__progression-refused-completion': {
-          entry: runbookSetup.emit(({ event }) => {
-            assertEvent(event, 'SELECT_RUN_PROGRESSION');
-            if (event.feedback.kind !== 'completion_target_mismatch') {
-              throw new Error('Completion refusal state entered without mismatch feedback');
-            }
-            return {
-              type: 'RUN_PROGRESSION_INTENT' as const,
-              intent: {
-                kind: 'refused' as const,
-                reason: 'completion_target_mismatch' as const,
-                message: event.feedback.message,
-              },
-            };
-          }),
-          always: { target: 'idle' },
-        },
-        '__progression-refused-contention': {
-          entry: runbookSetup.emit(({ event }) => {
-            assertEvent(event, 'SELECT_RUN_PROGRESSION');
-            if (event.feedback.kind !== 'completion_not_committed') {
-              throw new Error('Completion contention state entered without contention feedback');
-            }
-            return {
-              type: 'RUN_PROGRESSION_INTENT' as const,
-              intent: {
-                kind: 'refused' as const,
-                reason: 'completion_not_committed' as const,
-                message: event.feedback.message,
-              },
-            };
-          }),
-          always: { target: 'idle' },
-        },
-        '__progression-refused': {
-          entry: runbookSetup.emit(() => ({
-            type: 'RUN_PROGRESSION_INTENT' as const,
-            intent: {
-              kind: 'refused' as const,
-              reason: 'actor_context_required' as const,
-              message: FRONTIER_AUTHORITY_REQUIRED_MESSAGE,
-            },
-          })),
-          always: { target: 'idle' },
-        },
-        '__progression-project-frontier': {
-          tags: [PENDING_MACHINE_EFFECT_TAG],
-          invoke: {
-            src: 'runProgressionFrontierActor',
-            input: () => {
-              const runtime = options?.runProgression;
-              if (runtime === undefined) {
-                throw new Error('Run Progression frontier selected without runtime wiring');
-              }
-              return { state: runtime.state, project: runtime.projectFrontier };
-            },
-            onDone: [
-              {
-                guard: ({ event }) => event.output.status === 'reselect',
-                target: 'idle',
-                actions: emitFrontierProgressionIntent((output) => {
-                  if (output.status !== 'reselect') {
-                    throw new Error('Frontier reselection transition received another result');
-                  }
-                  return { kind: 'reselect', state: output.state };
-                }),
-              },
-              {
-                guard: ({ event }) => event.output.status === 'projected',
-                target: `#${config.id}.__progression-enter-after-projected-frontier`,
-              },
-              {
-                guard: ({ event }) => event.output.status === 'projection_refused',
-                target: 'idle',
-                actions: emitFrontierProgressionIntent((output) => {
-                  if (output.status !== 'projection_refused') {
-                    throw new Error('Projection refusal transition received another result');
-                  }
-                  return {
-                    kind: 'refused',
-                    reason: 'projection_refused',
-                    message: output.message,
-                  };
-                }),
-              },
-              {
-                guard: ({ event }) => event.output.status === 'run_missing',
-                target: 'idle',
-                actions: emitFrontierProgressionIntent((output) => {
-                  if (output.status !== 'run_missing') {
-                    throw new Error('Missing-run transition received another result');
-                  }
-                  return {
-                    kind: 'refused',
-                    reason: 'run_missing',
-                    message: output.message,
-                  };
-                }),
-              },
-              {
-                guard: ({ event }) => event.output.status === 'claim_superseded',
-                target: 'idle',
-                actions: emitFrontierProgressionIntent((output) => {
-                  if (output.status !== 'claim_superseded') {
-                    throw new Error('Claim refusal transition received another result');
-                  }
-                  return {
-                    kind: 'refused',
-                    reason: 'claim_superseded',
-                    message: output.message,
-                  };
-                }),
-              },
-              {
-                guard: ({ event }) => event.output.status === 'recovery_required',
-                target: 'idle',
-                actions: emitFrontierProgressionIntent((output) => {
-                  if (output.status !== 'recovery_required') {
-                    throw new Error('Recovery refusal transition received another result');
-                  }
-                  return {
-                    kind: 'refused',
-                    reason: 'recovery_required',
-                    message: output.message,
-                  };
-                }),
-              },
-              {
-                guard: ({ event }) => event.output.status === 'aggregate_recovery_required',
-                target: 'idle',
-                actions: emitFrontierProgressionIntent((output) => {
-                  if (output.status !== 'aggregate_recovery_required') {
-                    throw new Error('Aggregate recovery transition received another result');
-                  }
-                  return {
-                    kind: 'refused',
-                    reason: 'aggregate_recovery_required',
-                    message: output.message,
-                  };
-                }),
-              },
-              {
-                // Deliberately unguarded so every frontier result has a
-                // transition (a guarded miss would leave the machine parked
-                // here and the selection promise unresolved); the builder
-                // refuses to relabel anything but `consume_failed`, so a new
-                // status fails loudly instead of being mapped to contention.
-                target: 'idle',
-                actions: emitFrontierProgressionIntent((output) => {
-                  if (output.status !== 'consume_failed') {
-                    throw new Error(
-                      `Frontier result "${output.status}" reached the consume-failure transition`,
-                    );
-                  }
-                  return {
-                    kind: 'refused',
-                    reason: 'consume_failed',
-                    message: FRONTIER_CONSUME_FAILED_MESSAGE,
-                  };
-                }),
-              },
-            ],
-            // The frontier turn is NOT total, and without this arm every way it
-            // can reject — a `waitForMachineEffects` timeout or an actor error
-            // inside `prepareActorMutation`, `readPersistedReEntryFrontier`
-            // throwing on the freshly captured row, a driver error in
-            // `commitOwnedRunSet` — escaped the actor unhandled and reached the
-            // operator as RD-999 "Unknown error", which carries no recovery.
-            // Both sibling entry states already carry the same arm for the same
-            // reason.
-            //
-            // `frontier_disclosure_failed` (permanent, RD-833) is a DELIBERATE
-            // CONSERVATIVE CLASSIFICATION, not a diagnosis. The split that
-            // separates it from `entry_render_failed` (retryable, RD-504) is
-            // whether the fenced consume had already committed, and this actor
-            // cannot observe that side: a thrown commit "may already be
-            // durable" — `CoreEffectfulMutationExecutor` says so in as many
-            // words and rethrows precisely because "distinguishing the two
-            // needs a lease outcome that reports the observed phase", which
-            // does not exist. So we fail closed to the permanent arm. Getting
-            // it wrong in this direction tells an operator a retryable
-            // condition is permanent; getting it wrong the other way tells them
-            // to retry a turn whose frontier is already consumed and whose
-            // bearers can never be re-derived, and the retry would then find no
-            // frontier and enter the unit having disclosed nothing. Revisit
-            // only when the fence reports its committed phase.
-            onError: {
-              target: 'idle',
-              actions: emitEntryProgressionFailureIntent('frontier_disclosure_failed'),
-            },
-          },
         },
         '__progression-enter-unit': {
           tags: [PENDING_MACHINE_EFFECT_TAG],
@@ -5697,46 +4371,15 @@ export function compileRunbookToMachine(
             },
             onDone: {
               target: 'idle',
-              actions: emitEntryProgressionIntent('none'),
+              actions: emitEntryProgressionIntent(),
             },
-            // The same render, so the same diagnosis: without this the
-            // identical `enterExecutionUnit` throw that the projected-frontier
-            // twin below reports as a typed refusal escapes the actor
+            // Without this an `enterExecutionUnit` throw escapes the actor
             // unhandled and reaches the operator as RD-999 "Unknown error",
-            // which carries no recovery. The reason differs from that twin's
-            // because nothing was consumed on this path.
+            // which carries no recovery. Nothing was committed on this path,
+            // so the refusal is the retryable `entry_render_failed` (RD-504).
             onError: {
               target: 'idle',
-              actions: emitEntryProgressionFailureIntent('entry_render_failed'),
-            },
-          },
-        },
-        '__progression-enter-after-projected-frontier': {
-          tags: [PENDING_MACHINE_EFFECT_TAG],
-          invoke: {
-            src: 'runProgressionEntryActor',
-            input: ({ event }) => {
-              const output = frontierOutputFromInvokeEvent(event);
-              if (output.status !== 'projected') {
-                throw new Error('Projected-frontier entry state received another result');
-              }
-              const runtime = options?.runProgression;
-              if (runtime === undefined) {
-                throw new Error('Run Progression entry selected without runtime wiring');
-              }
-              return {
-                state: output.state,
-                enter: runtime.enterUnit,
-                frontier: output.frontier,
-              };
-            },
-            onDone: {
-              target: 'idle',
-              actions: emitEntryProgressionIntent('projected'),
-            },
-            onError: {
-              target: 'idle',
-              actions: emitEntryProgressionFailureIntent('frontier_disclosure_failed'),
+              actions: emitEntryProgressionFailureIntent(),
             },
           },
         },
@@ -5877,14 +4520,7 @@ export function compileRunbookToMachine(
       checkedStateInsert(
         states,
         config.id,
-        runbookSetup.createStateConfig(
-          buildParentStateConfig(
-            config,
-            steps,
-            evaluationOptions,
-            options?.issueDelegationCredential,
-          ),
-        ),
+        runbookSetup.createStateConfig(buildParentStateConfig(config, steps, evaluationOptions)),
       );
       return;
     }
@@ -5934,15 +4570,6 @@ export function compileRunbookToMachine(
     runbookSetup.createStateConfig(buildIterationExhaustedStateConfig(steps)),
   );
 
-  // Non-final recoveryRequired state. Reachable only via the root-level
-  // EXECUTION_OUTCOME_UNKNOWN handler below (which validateGraph does not scan),
-  // so it is pinned by an explicit structural-snapshot assertion instead.
-  checkedStateInsert(
-    states,
-    RECOVERY_REQUIRED_STATE_NAME,
-    runbookSetup.createStateConfig(buildRecoveryRequiredStateConfig(allStates, steps)),
-  );
-
   // Phase 5: Runtime graph validation — catch dynamic errors types cannot prove
   const terminalStates = new Set(['COMPLETE', 'STOPPED']);
   const initialState =
@@ -5955,26 +4582,6 @@ export function compileRunbookToMachine(
     on: {
       FORCE_STOP: buildForceStopTransition(),
       FORCE_COMPLETE: buildForceCompleteTransition(),
-      // One root-level handler covers every leaf: XState bubbles the unhandled
-      // event to the root. Lifecycle stays 'running' (recoveryRequired is
-      // non-final); only the interrupted epoch/reason/step are captured as data.
-      EXECUTION_OUTCOME_UNKNOWN: {
-        target: `.${RECOVERY_REQUIRED_STATE_NAME}`,
-        actions: runbookSetup.assign({
-          interruptedEpoch: ({ event }) => {
-            assertEvent(event, 'EXECUTION_OUTCOME_UNKNOWN');
-            return event.epoch;
-          },
-          interruptedReason: ({ event }) => {
-            assertEvent(event, 'EXECUTION_OUTCOME_UNKNOWN');
-            return event.reason;
-          },
-          interruptedStepId: ({ event }) => {
-            assertEvent(event, 'EXECUTION_OUTCOME_UNKNOWN');
-            return event.interruptedStepId;
-          },
-        }),
-      },
       SET_VARIABLES: {
         actions: runbookSetup.assign({
           variables: ({ context, event }) => {
@@ -5982,38 +4589,6 @@ export function compileRunbookToMachine(
             return { ...context.variables, ...event.vars };
           },
         }),
-      },
-      DELEGATE_FRONTIER_CONSUMED: {
-        actions: runbookSetup.assign({
-          delegateFrontier: undefined,
-        }),
-      },
-      INLINE_LAUNCH_CONSUMED: {
-        actions: 'clearInlineLaunchIntent',
-      },
-      INLINE_LAUNCH_ABANDONED: {
-        actions: {
-          type: 'releaseInlineLaunchLatch',
-          params: ({ event }) => event,
-        },
-      },
-      INLINE_CHILD_STARTED: {
-        actions: {
-          type: 'storeInlineChildStarted',
-          params: ({ event }) => event,
-        },
-      },
-      DELEGATION_CHILD_LINKED: {
-        actions: {
-          type: 'storeDelegationChildLinked',
-          params: ({ event }) => event,
-        },
-      },
-      DELEGATION_CHILD_UNLINKED: {
-        actions: {
-          type: 'storeDelegationChildUnlinked',
-          params: ({ event }) => event,
-        },
       },
     },
     context: {
@@ -6041,12 +4616,6 @@ export function compileRunbookToMachine(
       lifecycle: 'running',
       substepStates: options?.substepStates,
       frameEntry: options?.frameEntry,
-      delegateFrontier: undefined,
-      inlineLaunchIntent: undefined,
-      parentLinkage: options?.parentLinkage,
-      interruptedEpoch: undefined,
-      interruptedReason: undefined,
-      interruptedStepId: undefined,
     },
     output: ({ context }) => ({
       finalVars: context.finalVars,

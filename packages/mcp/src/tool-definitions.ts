@@ -6,74 +6,23 @@ const repeatableInputShape = {
   inputJson: z.array(z.string()).optional(),
   inputFile: z.array(z.string()).optional(),
 } satisfies z.ZodRawShape;
-const claimIdShape = { claimId: z.string().optional() } satisfies z.ZodRawShape;
-// Explicit run targeting (`--run <rd_…>`): selects the run. It does not prove
-// subprocess authority; mutating MCP calls still need `claimId`.
-// MCP performs no validation beyond string-ness — the CLI validates format
-// (Category A stays in one place; malformed ids fail closed through isRunId).
-const runIdShape = { runId: z.string().optional() } satisfies z.ZodRawShape;
+// Owner Token (`rdo_…`) printed once on `runbook_started`. It is the sole
+// mutation authority: every mutating tool requires it and maps it to
+// `--token`. MCP checks string-ness only — the CLI resolves and refuses
+// (`TOKEN_REQUIRED`, `UNKNOWN_TOKEN`, run-finished) so the gate lives in one
+// place.
+const tokenShape = { token: z.string() } satisfies z.ZodRawShape;
 // Shared `index` validator so the step/index constraint stays consistent
-// between `stepIndexPair` and the `goto` schema.
+// between `run`, `pass`/`fail` and `goto`.
 const optionalIndex = z.number().int().nonnegative().optional();
-
-function rejectClaimIdRunIdPair(value: Record<string, unknown>, ctx: z.RefinementCtx): void {
-  if (typeof value.claimId === 'string' && typeof value.runId === 'string') {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['runId'],
-      message: 'runId cannot be combined with claimId',
-    });
-  }
-}
-
-/**
- * Build an input schema that pairs optional `step` with optional `index`, where
- * `index` is only valid when `step` is also present. The constraint is encoded
- * in the schema so the MCP SDK rejects malformed `tools/call` args before the
- * handler runs.
- *
- * @param extra - Additional Zod fields merged into the object shape.
- * @param options - Schema construction options.
- * @param options.strict - When `true`, reject unknown keys via `z.object(...).strict()`.
- * @returns Composite schema enforcing the step/index pairing.
- */
-function stepIndexPair(
-  extra: z.ZodRawShape,
-  options: { readonly strict?: boolean } = {},
-): z.ZodType<Record<string, unknown>> {
-  const schema = z.object({
-    step: z.string().optional(),
-    index: optionalIndex,
-    ...extra,
-  });
-  const objectSchema = options.strict === true ? schema.strict() : schema;
-  return objectSchema.superRefine((value, ctx) => {
-    if (value.index !== undefined && value.step === undefined) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['index'],
-        message: 'index requires step',
-      });
-    }
-    rejectClaimIdRunIdPair(value, ctx);
-  });
-}
-
-/**
- * Object schema over `extra` fields plus the shared claimId/runId shapes, with
- * the claimId/runId mutual-exclusion refinement applied. Mirrors
- * {@link stepIndexPair} for mutating commands that take `--claim-id`/`--run`
- * but no `--step`/`--index` pair (goto/complete/stop).
- *
- * @param extra - Additional tool-specific fields folded into the object schema.
- * @returns A schema that rejects a call carrying both `claimId` and `runId`.
- */
-function claimIdRunIdSchema(extra: z.ZodRawShape): z.ZodType<Record<string, unknown>> {
-  return z.object({ ...extra, ...claimIdShape, ...runIdShape }).superRefine(rejectClaimIdRunIdPair);
-}
 
 /**
  * Tool descriptions and input schemas for the CLI-facade MCP surface.
+ *
+ * Mutating tools (`pass`, `fail`, `goto`, `complete`, `stop`) take the Owner
+ * Token; `pass`/`fail` also require `step` (the current position) and accept
+ * `index` for a FOR iteration. Read-only tools stay bare; `status` narrows by
+ * `runId`. The delegation tools (`claim`, `collect`) return in #904.
  */
 export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefinition> = {
   validate: {
@@ -88,57 +37,50 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
     }),
   },
   status: {
-    description: 'Get current runbook state',
-    inputSchema: z.object({ ...claimIdShape }),
+    description: 'Get runbook state: every run, or one run selected by runId',
+    inputSchema: z.object({ runId: z.string().optional() }),
   },
   run: {
-    description: 'Start or enter a runbook',
-    inputSchema: stepIndexPair({
-      file: z.string().optional(),
-      prompted: z.boolean().optional(),
-      ...repeatableInputShape,
-    }),
+    description: 'Start a runbook. The response carries the owner token for later mutations.',
+    inputSchema: z
+      .object({
+        file: z.string().optional(),
+        prompted: z.boolean().optional(),
+        step: z.string().optional(),
+        index: optionalIndex,
+        ...repeatableInputShape,
+      })
+      .superRefine((value, ctx) => {
+        if (value.index !== undefined && value.step === undefined) {
+          ctx.addIssue({
+            code: 'custom',
+            path: ['index'],
+            message: 'index requires step',
+          });
+        }
+      }),
   },
   pass: {
-    description: 'Mark a step passed',
-    inputSchema: stepIndexPair({ ...claimIdShape, ...runIdShape }),
+    description:
+      'Mark the current step passed. Requires the owner token and the current step position; index for a FOR iteration.',
+    inputSchema: z.object({ ...tokenShape, step: z.string(), index: optionalIndex }),
   },
   fail: {
-    description: 'Mark a step failed',
-    inputSchema: stepIndexPair({ ...claimIdShape, ...runIdShape }),
+    description:
+      'Mark the current step failed. Requires the owner token and the current step position; index for a FOR iteration.',
+    inputSchema: z.object({ ...tokenShape, step: z.string(), index: optionalIndex }),
   },
   goto: {
-    description: 'Jump to a step',
-    inputSchema: claimIdRunIdSchema({ step: z.string(), index: optionalIndex }),
+    description: 'Jump to a step. Requires the owner token.',
+    inputSchema: z.object({ ...tokenShape, step: z.string(), index: optionalIndex }),
   },
   complete: {
-    description: 'Force current runbook completion',
-    inputSchema: claimIdRunIdSchema({ message: z.string().optional() }),
+    description: 'Force runbook completion. Requires the owner token.',
+    inputSchema: z.object({ ...tokenShape, message: z.string().optional() }),
   },
   stop: {
-    description: 'Stop current runbook',
-    inputSchema: claimIdRunIdSchema({ message: z.string().optional() }),
-  },
-  delegate: {
-    description: `Issue or retry a delegation with \`rundown delegate\` for the run you control. Subprocess-spawned mutations require bearer authority; use a claimId grant from \`rundown run\` or delegated work. runId is selector-only and cannot be combined with claimId. Bare or runId-only delegate calls are withheld before spawning the CLI.`,
-    inputSchema: stepIndexPair(
-      {
-        runbook: z.string().optional(),
-        retry: z.boolean().optional(),
-        ...repeatableInputShape,
-        ...claimIdShape,
-        ...runIdShape,
-      },
-      { strict: true },
-    ),
-  },
-  claim: {
-    description: 'Claim a delegation token and launch the child runbook',
-    inputSchema: z.object({ token: z.string(), ...repeatableInputShape }),
-  },
-  collect: {
-    description: 'Aggregate a delegated step and advance through core',
-    inputSchema: stepIndexPair({ ...claimIdShape, ...runIdShape }),
+    description: 'Stop the runbook. Requires the owner token.',
+    inputSchema: z.object({ ...tokenShape, message: z.string().optional() }),
   },
 };
 

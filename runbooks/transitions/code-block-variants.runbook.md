@@ -8,8 +8,8 @@ scenarios:
     description: sh block executes and json block is display-only
     commands:
       - rd run --prompted code-block-variants.runbook.md
-      - rd pass
-      - rd pass
+      - rd pass --token ${TOKEN} --step 1
+      - rd pass --token ${TOKEN} --step 2
     result: COMPLETE
 ---
 
