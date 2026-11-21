@@ -60,12 +60,21 @@ allowBuilds:
 #     admitted the vulnerable 4.3.1, the same defect the ^4.2.0 floor had.
 # Category B — fix is in-range but resolution picks a vulnerable version:
 #   fast-uri (GHSA-jqff-g426-hqxp, GHSA-fph4-wmhf-6fwf, GHSA-f65p-4m7j-42xc,
-#     GHSA-5jgf-p345-68v8 → 3.1.6). Under ajv 8.x's ^3.0.1.
+#     GHSA-5jgf-p345-68v8 → 3.1.6; GHSA-hrr3-gc8f-f4qj → 3.1.8;
+#     GHSA-333x-w4r6-6crp, GHSA-w74x-v6f9-j3xg, GHSA-wjr9-j795-jxcr and
+#     GHSA-xhq7-xmqj-769h → 3.1.9, raised from ^3.1.6 on 2026-11-20 because the
+#     old floor still admitted the vulnerable 3.1.7). Under ajv 8.x's ^3.0.1.
 #   hono (GHSA-crvj-82cr-hjcx, GHSA-g6gw-c38x-mqfc, GHSA-gqvv-2mrq-wpjv →
-#     4.13.5). Under @modelcontextprotocol/sdk's ^4.11.4.
+#     4.13.5; GHSA-5r4p-p66f-jhc7 → 4.13.11; GHSA-3gg2-335m-rxc6,
+#     GHSA-46wx-v44x-9hh2, GHSA-4h7h-rv7c-7m2v, GHSA-4m76-xfj5-7975 and
+#     GHSA-h7mg-cq63-vhpq → 4.13.16, raised from ^4.13.5 on 2026-11-20 because
+#     the old floor still admitted the vulnerable 4.13.7). Under
+#     @modelcontextprotocol/sdk's ^4.11.4.
 #   qs (GHSA-q8mj-m7cp-5q26 → 6.15.2; GHSA-x5fp-wj9c-mxmx and
 #     GHSA-4mjr-xmp4-gh2g → 6.16.0, raised from ^6.15.2 on 2026-09-09 because the
-#     old floor still admitted the vulnerable 6.15.3). The only pin still
+#     old floor still admitted the vulnerable 6.15.3; GHSA-6pq8-jhm2-2vcw →
+#     6.16.1, raised from ^6.16.0 on 2026-11-20 for the same reason — the old
+#     floor still admitted the vulnerable 6.16.0). The only pin still
 #     load-bearing under a from-scratch resolve, re-proven by the audit on
 #     2026-08-07.
 #
@@ -99,9 +108,9 @@ overrides:
   "read-yaml-file>js-yaml": "^4.3.2"
   "@istanbuljs/load-nyc-config>js-yaml": "^4.3.2"
   # Category B
-  qs: "^6.16.0"
-  fast-uri: "^3.1.6"
-  hono: "^4.13.5"
+  qs: "^6.16.1"
+  fast-uri: "^3.1.9"
+  hono: "^4.13.16"
 
 patchedDependencies:
   gray-matter@4.0.3: patches/gray-matter@4.0.3.patch

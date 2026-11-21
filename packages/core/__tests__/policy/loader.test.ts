@@ -1,4 +1,6 @@
+import { jest } from '@jest/globals';
 import * as fs from 'node:fs';
+import { createRequire } from 'node:module';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
@@ -467,6 +469,60 @@ describe('Policy Loader - error paths', () => {
       expect(() => loadPolicySync({ cwd: tempDir, useDefaults: false })).toThrow(
         'No policy configuration found',
       );
+    });
+
+    describe('search boundary when stopDir is omitted', () => {
+      // lilconfig stops its upward walk at the user's home directory unless
+      // told otherwise. Omitting `stopDir` must keep that default: a policy
+      // file above home belongs to no project the user owns, and forwarding an
+      // explicit `stopDir: undefined` both discards the boundary and is a
+      // TypeError on lilconfig >= 3.1.4, which path.resolve()s the option.
+      //
+      // lilconfig is CommonJS and reads the boundary through `require('os')`,
+      // so the spy goes on that same exports object; jest hands tests a copy
+      // of `process.env`, which makes setting HOME invisible to os.homedir().
+      const cjsOs = createRequire(import.meta.url)('node:os') as typeof os;
+      let outerDir: string;
+      let projectDir: string;
+      let homedirSpy: jest.SpiedFunction<typeof os.homedir>;
+
+      beforeEach(() => {
+        outerDir = fs.mkdtempSync(path.join(os.tmpdir(), 'rundown-home-boundary-'));
+        const homeDir = path.join(outerDir, 'home');
+        projectDir = path.join(homeDir, 'project');
+        fs.mkdirSync(projectDir, { recursive: true });
+        fs.writeFileSync(
+          path.join(outerDir, '.rundownrc.yaml'),
+          'version: 1\ndefault:\n  mode: deny\n',
+        );
+        homedirSpy = jest.spyOn(cjsOs, 'homedir').mockReturnValue(homeDir);
+      });
+
+      afterEach(() => {
+        homedirSpy.mockRestore();
+        fs.rmSync(outerDir, { recursive: true, force: true });
+      });
+
+      it('does not discover a policy file above the home directory', async () => {
+        const result = await loadPolicy({ cwd: projectDir });
+
+        expect(result.isDefault).toBe(true);
+        expect(result.filepath).toBeUndefined();
+      });
+
+      it('does not discover a policy file above the home directory (sync)', () => {
+        const result = loadPolicySync({ cwd: projectDir });
+
+        expect(result.isDefault).toBe(true);
+        expect(result.filepath).toBeUndefined();
+      });
+
+      it('still honours an explicit stopDir above home', async () => {
+        const result = await loadPolicy({ cwd: projectDir, stopDir: path.dirname(outerDir) });
+
+        expect(result.isDefault).toBe(false);
+        expect(result.filepath).toBe(path.join(outerDir, '.rundownrc.yaml'));
+      });
     });
 
     describe('platform-specific built-in default', () => {

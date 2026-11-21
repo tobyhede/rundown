@@ -29,33 +29,53 @@
       "reviewBy": "2026-11-01"
     },
     "qs": {
-      "override": "^6.16.0",
+      "override": "^6.16.1",
       "category": "B",
-      "ghsa": ["GHSA-q8mj-m7cp-5q26", "GHSA-x5fp-wj9c-mxmx", "GHSA-4mjr-xmp4-gh2g"],
-      "reason": "qs stringify DoS (fixed 6.15.2), array-limit bypass via bracket-key comma parsing and DoS via attacker-controlled isBuffer (both fixed 6.16.0; floor raised from ^6.15.2 on 2026-09-09 because the old floor still admitted the vulnerable 6.15.3, which is what OSV flagged from 2026-09-03). Without the pin, resolution picks the vulnerable 6.15.1 — re-proven 2026-08-07 by `node scripts/audit-overrides.mjs`, the only pin the audit rates LOAD-BEARING under a from-scratch resolve. That verdict is a claim about scanner visibility, not about necessity: it ranges only over the pins the audit tests, since LOAD-BEARING means removal makes OSV fail. The three `scannerInvisible` js-yaml pins are never tested (reported PROTECTED) and are just as required — each entry states its own reason. Dependency-reachable via packages/mcp -> @modelcontextprotocol/sdk -> express -> qs, but NOT code-reachable: packages/mcp/src/index.ts connects only StdioServerTransport, and the SDK's express/hono surface lives behind the server/streamableHttp.js and server/auth/** subpaths, which nothing in packages/*/src imports (verified 2026-08-07). Pinned anyway — the pin is free, and an HTTP transport would activate the path.",
+      "ghsa": [
+        "GHSA-q8mj-m7cp-5q26",
+        "GHSA-x5fp-wj9c-mxmx",
+        "GHSA-4mjr-xmp4-gh2g",
+        "GHSA-6pq8-jhm2-2vcw"
+      ],
+      "reason": "qs stringify DoS (fixed 6.15.2), array-limit bypass via bracket-key comma parsing and DoS via attacker-controlled isBuffer (both fixed 6.16.0; floor raised from ^6.15.2 on 2026-09-09 because the old floor still admitted the vulnerable 6.15.3, which is what OSV flagged from 2026-09-03), and an uncaught TypeError in stringify with arrayFormat 'comma' (fixed 6.16.1; floor raised from ^6.16.0 on 2026-11-20 because the old floor still admitted the vulnerable 6.16.0). Without the pin, resolution picks the vulnerable 6.15.1 — re-proven 2026-08-07 by `node scripts/audit-overrides.mjs`, the only pin the audit rates LOAD-BEARING under a from-scratch resolve. That verdict is a claim about scanner visibility, not about necessity: it ranges only over the pins the audit tests, since LOAD-BEARING means removal makes OSV fail. The three `scannerInvisible` js-yaml pins are never tested (reported PROTECTED) and are just as required — each entry states its own reason. Dependency-reachable via packages/mcp -> @modelcontextprotocol/sdk -> express -> qs, but NOT code-reachable: packages/mcp/src/index.ts connects only StdioServerTransport, and the SDK's express/hono surface lives behind the server/streamableHttp.js and server/auth/** subpaths, which nothing in packages/*/src imports (verified 2026-08-07). Pinned anyway — the pin is free, and an HTTP transport would activate the path.",
       "added": "2026-06-16",
-      "reviewBy": "2026-12-01"
+      "reviewBy": "2027-02-01"
     },
     "fast-uri": {
-      "override": "^3.1.6",
+      "override": "^3.1.9",
       "category": "B",
       "ghsa": [
         "GHSA-jqff-g426-hqxp",
         "GHSA-fph4-wmhf-6fwf",
         "GHSA-f65p-4m7j-42xc",
-        "GHSA-5jgf-p345-68v8"
+        "GHSA-5jgf-p345-68v8",
+        "GHSA-hrr3-gc8f-f4qj",
+        "GHSA-333x-w4r6-6crp",
+        "GHSA-w74x-v6f9-j3xg",
+        "GHSA-wjr9-j795-jxcr",
+        "GHSA-xhq7-xmqj-769h"
       ],
-      "reason": "fast-uri host confusion via percent-encoded scheme normalization, SSRF via repeated hostname percent-decoding, SSRF via malformed IPv6 normalization, and host confusion via skipped IDN canonicalization on scheme-relative references — all fixed 3.1.6. Re-pinned 2026-09-09 after the advisories landed 2026-09-03; the entry pruned on 2026-08-07 recorded the wrong cause. The sole parent, ajv 8.x, declares ^3.0.1, so the fix is in range — but `pnpm update fast-uri`, bare or pinned to ^3.1.7, leaves 3.1.5 in place, because ajv sits too deep for update to reach. In-range but unreachable by update is Category B, not staleness. Dependency-reachable via ajv under @stryker-mutator/core (dev) and @modelcontextprotocol/sdk (packages/mcp runtime); ajv passes only schema $ref/$id strings to it, never a network-controlled URI, so the SSRF paths are not code-reachable here.",
+      "reason": "fast-uri host confusion via percent-encoded scheme normalization, SSRF via repeated hostname percent-decoding, SSRF via malformed IPv6 normalization, and host confusion via skipped IDN canonicalization on scheme-relative references — all fixed 3.1.6. Floor raised from ^3.1.6 on 2026-11-20 for five more normalization advisories (inconsistent host case normalization, fixed 3.1.8; scheme injection via suffix references, scheme spoofing via percent-encoded scheme decoding, host confusion via unchecked WHATWG host canonicalization, and path equivalence in relative reference normalization, all fixed 3.1.9): the old floor still admitted the locked, vulnerable 3.1.7. Re-pinned 2026-09-09 after the advisories landed 2026-09-03; the entry pruned on 2026-08-07 recorded the wrong cause. The sole parent, ajv 8.x, declares ^3.0.1, so the fix is in range — but `pnpm update fast-uri`, bare or pinned to ^3.1.7, leaves 3.1.5 in place, because ajv sits too deep for update to reach. In-range but unreachable by update is Category B, not staleness. Dependency-reachable via ajv under @stryker-mutator/core (dev) and @modelcontextprotocol/sdk (packages/mcp runtime); ajv passes only schema $ref/$id strings to it, never a network-controlled URI, so the SSRF paths are not code-reachable here.",
       "added": "2026-09-09",
-      "reviewBy": "2026-12-01"
+      "reviewBy": "2027-02-01"
     },
     "hono": {
-      "override": "^4.13.5",
+      "override": "^4.13.16",
       "category": "B",
-      "ghsa": ["GHSA-crvj-82cr-hjcx", "GHSA-g6gw-c38x-mqfc", "GHSA-gqvv-2mrq-wpjv"],
-      "reason": "hono request-handling vulnerabilities fixed 4.13.5. Parent @modelcontextprotocol/sdk declares ^4.11.4 (and @hono/node-server declares ^4), so the fix is in range, but hono sits behind the SDK and `pnpm update hono` does not move it — Category B. Same reachability story as the qs pin: packages/mcp/src/index.ts connects only StdioServerTransport, and the SDK's hono surface lives behind server/streamableHttp.js and server/auth/**, which nothing in packages/*/src imports. Pinned anyway — the pin is free, and an HTTP transport would activate the path.",
+      "ghsa": [
+        "GHSA-crvj-82cr-hjcx",
+        "GHSA-g6gw-c38x-mqfc",
+        "GHSA-gqvv-2mrq-wpjv",
+        "GHSA-5r4p-p66f-jhc7",
+        "GHSA-3gg2-335m-rxc6",
+        "GHSA-46wx-v44x-9hh2",
+        "GHSA-4h7h-rv7c-7m2v",
+        "GHSA-4m76-xfj5-7975",
+        "GHSA-h7mg-cq63-vhpq"
+      ],
+      "reason": "hono request-handling vulnerabilities fixed 4.13.5. Floor raised from ^4.13.5 on 2026-11-20 for six more (serveStatic double-decoding middleware bypass, fixed 4.13.11; css helper HTML injection, csrf() skipping text/ping, validator('form') skipping multipart requests, mount() middleware bypass, and RegExpRouter skipping wildcard middleware, all fixed 4.13.16): the old floor still admitted the locked, vulnerable 4.13.7. Parent @modelcontextprotocol/sdk declares ^4.11.4 (and @hono/node-server declares ^4), so the fix is in range, but hono sits behind the SDK and `pnpm update hono` does not move it — Category B. Same reachability story as the qs pin: packages/mcp/src/index.ts connects only StdioServerTransport, and the SDK's hono surface lives behind server/streamableHttp.js and server/auth/**, which nothing in packages/*/src imports. Pinned anyway — the pin is free, and an HTTP transport would activate the path.",
       "added": "2026-09-09",
-      "reviewBy": "2026-12-01"
+      "reviewBy": "2027-02-01"
     }
   }
 }
