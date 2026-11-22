@@ -8,6 +8,8 @@ import { snapshot } from '@webcontainer/snapshot';
 import { pruneNonRuntimeFiles } from './prune-non-runtime.mjs';
 import { pruneSqlJsDist } from './prune-sqljs.mjs';
 import { SNAPSHOT_BUDGET_BYTES, assertSnapshotWithinBudget } from './snapshot-budget.mjs';
+import { assertLockfileMatchesManifest } from './lockfile-specifiers.mjs';
+import { parse as parseYaml } from 'yaml';
 import { execSync } from 'child_process';
 import {
   mkdtempSync,
@@ -16,7 +18,9 @@ import {
   existsSync,
   cpSync,
   rmSync,
+  renameSync,
   readdirSync,
+  readFileSync,
   lstatSync,
   readlinkSync,
   unlinkSync,
@@ -63,6 +67,78 @@ function resolveAllBinSymlinks(nodeModulesDir: string) {
   walkAndResolve(nodeModulesDir);
 }
 
+/**
+ * Install the local CLI and its production dependencies into `tempDir` at the
+ * versions pinned in the workspace `pnpm-lock.yaml`.
+ *
+ * The snapshot used to `npm install` packed tarballs, which re-resolved every
+ * range at build time and skipped the workspace's overrides and patches. A
+ * dependency release could then break the demo with no change in this repo:
+ * lilconfig 3.1.5 did exactly that, and the same path shipped gray-matter
+ * unpatched on a js-yaml 3.x the workspace overrides away.
+ *
+ * `pnpm deploy` installs from the lockfile and applies both. The flags:
+ * - `--frozen-lockfile`: fail rather than re-resolve when the lockfile is stale.
+ *   In pnpm 11.7.0 deploy does not compare the CLI's dependency specifiers with
+ *   its `packages/cli` importer, so a manifest bumped without `pnpm install`
+ *   deploys the old locked version and exits 0. `pnpm install --frozen-lockfile`
+ *   would catch it, but this script skips its install when dist/ outputs
+ *   already exist, so {@link assertLockfileMatchesManifest} checks the
+ *   specifiers itself before deploying.
+ * - `--ignore-scripts`: core's prepack guard (scripts/assert-native.mjs)
+ *   requires the Linux rd-landlock binaries, which are never built in the site
+ *   path and are unusable inside WebContainer anyway (the sandbox fails closed
+ *   to "unavailable" without them).
+ * - `node-linker=hoisted`: a flat npm-style tree. The snapshot tool cannot
+ *   serialize symlinks, and pnpm's isolated layout is built from them.
+ * - `inject-workspace-packages=true`: copy parser and core in as packages
+ *   (pnpm 10+ deploys only injected workspaces).
+ *
+ * Deploy writes the CLI package at the target root. It is moved under
+ * `node_modules/@rundown-org/cli`, the path `src/lib/webcontainer.ts` runs.
+ *
+ * @param tempDir - Empty directory that becomes the snapshot root
+ * @throws {Error} When `packages/cli/package.json` disagrees with its importer
+ *   in `pnpm-lock.yaml`; the message names each mismatch.
+ */
+function deployFromWorkspaceLockfile(tempDir: string) {
+  assertLockfileMatchesManifest({
+    manifest: JSON.parse(readFileSync(join(projectRoot, 'packages/cli/package.json'), 'utf8')),
+    lockfile: parseYaml(readFileSync(join(projectRoot, 'pnpm-lock.yaml'), 'utf8')),
+    importer: 'packages/cli',
+  });
+
+  const deployDir = join(tempDir, 'deploy');
+  console.log('Deploying @rundown-org/cli from pnpm-lock.yaml...');
+  execSync(
+    [
+      'pnpm --filter @rundown-org/cli deploy',
+      '--prod --frozen-lockfile --ignore-scripts',
+      '--config.node-linker=hoisted',
+      '--config.inject-workspace-packages=true',
+      JSON.stringify(deployDir),
+    ].join(' '),
+    { cwd: projectRoot, stdio: 'inherit' },
+  );
+
+  const nodeModulesDir = join(tempDir, 'node_modules');
+  renameSync(join(deployDir, 'node_modules'), nodeModulesDir);
+  // pnpm's own bookkeeping; nothing in the WebContainer reads it.
+  for (const name of ['.pnpm', '.modules.yaml']) {
+    rmSync(join(nodeModulesDir, name), { recursive: true, force: true });
+  }
+  for (const name of ['pnpm-lock.yaml', 'pnpm-workspace.yaml']) {
+    rmSync(join(deployDir, name), { force: true });
+  }
+  mkdirSync(join(nodeModulesDir, '@rundown-org'), { recursive: true });
+  renameSync(deployDir, join(nodeModulesDir, '@rundown-org', 'cli'));
+
+  writeFileSync(
+    join(tempDir, 'package.json'),
+    JSON.stringify({ name: 'rundown-demo', private: true, type: 'module' }, null, 2),
+  );
+}
+
 async function buildSnapshot() {
   console.log('Creating WebContainer snapshot with @rundown-org/cli...');
 
@@ -91,9 +167,7 @@ async function buildSnapshot() {
 
       if (!hasAllDistOutputs) {
         // Install + build the monorepo dev workspace (needed when building from the
-        // site directory). This is a dev-workspace operation, so it uses pnpm — the
-        // repo's package manager. (The tarball pack + tempDir install below stay on
-        // npm: that path simulates a consumer/WebContainer install.)
+        // site directory).
         console.log('Installing monorepo dependencies...');
         execSync('pnpm install', { cwd: projectRoot, stdio: 'inherit' });
 
@@ -110,50 +184,7 @@ async function buildSnapshot() {
       }
       console.log('✓ CLI entry point verified');
 
-      // Pack local packages
-      const packagesDir = join(projectRoot, 'packages');
-      const tarballs: string[] = [];
-
-      for (const pkg of ['parser', 'core', 'cli']) {
-        const pkgDir = join(packagesDir, pkg);
-        console.log(`Packing @rundown-org/${pkg}...`);
-        // --ignore-scripts: core's prepack guard (scripts/assert-native.mjs)
-        // requires the Linux rd-landlock binaries, which are never built in
-        // the site path and are unusable inside WebContainer anyway (the
-        // sandbox fails closed to "unavailable" without them). Publishing to
-        // npm still runs the guard.
-        const output = execSync('npm pack --json --ignore-scripts', {
-          cwd: pkgDir,
-          encoding: 'utf-8',
-        });
-        const [info] = JSON.parse(output);
-        const tarball = join(pkgDir, info.filename);
-        tarballs.push(tarball);
-      }
-
-      // Write package.json referencing local tarballs
-      const packageJson = {
-        name: 'rundown-demo',
-        type: 'module',
-        dependencies: {
-          '@rundown-org/parser': `file:${tarballs[0]}`,
-          '@rundown-org/core': `file:${tarballs[1]}`,
-          '@rundown-org/cli': `file:${tarballs[2]}`,
-        },
-      };
-      writeFileSync(
-        join(tempDir, 'package.json'),
-        JSON.stringify(packageJson, null, 2)
-      );
-
-      // Install from tarballs
-      console.log('Installing from local tarballs...');
-      execSync('npm install', { cwd: tempDir, stdio: 'inherit' });
-
-      // Clean up tarballs
-      for (const tarball of tarballs) {
-        rmSync(tarball, { force: true });
-      }
+      deployFromWorkspaceLockfile(tempDir);
     } else {
       // Use npm packages
       const packageJson = {

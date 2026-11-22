@@ -916,9 +916,13 @@ Every runtime dependency of `@rundown-org/cli` is therefore paid for twice: once
 as a real dependency, and again as static-asset weight against that hard ceiling
 (issue #639).
 
-`site/scripts/build-snapshot.ts` installs the packed `parser`/`core`/`cli`
-tarballs into a temp directory, prunes, snapshots the result, and asserts the
-size:
+`site/scripts/build-snapshot.ts` installs `@rundown-org/cli` and its production
+dependencies into a temp directory with `pnpm deploy`, prunes, snapshots the
+result, and asserts the size. The install reads the workspace `pnpm-lock.yaml`
+(`--frozen-lockfile`) and applies the workspace's overrides and patches, so the
+demo runs the same dependency versions as the repository's tests; a hoisted
+layout keeps the tree free of the symlinks the snapshot tool cannot serialize.
+Then:
 
 - **`prune-sqljs.mjs`** drops the sql.js build variants the driver never loads
   (asm.js fallbacks, debug builds, browser workers — ~17 MiB), keeping the
