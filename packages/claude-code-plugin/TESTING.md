@@ -74,6 +74,21 @@ pnpm --filter @rundown-org/claude-code-plugin test -- stamp-agent-id.test.ts
 pnpm run test:mutate:plugin
 ```
 
+### Plugin runbooks end to end
+
+`plugin.scenario-suite.yaml` drives the plugin runbooks through the CLI with
+simulated sub-agents: each claims its Claim Ticket with `--agent-id`, drives its
+child by the child's Owner Token, and the orchestrator collects. All six
+delegating-workflow runbooks (planning, execute-plan, review-plan,
+end-to-end-test's review-and-collate, iterate-and-delegate, convert-skill) run
+to COMPLETE. A runbook that requires an input artifact a top-level run cannot
+take from a plain path is wrapped by a harness under `scenarios/` that produces
+it and composes the runbook inline. Run it from the repo root:
+
+```bash
+pnpm run test:scenario-suites
+```
+
 ### Pre-PR plugin coverage
 
 Root `pnpm run verify` runs build, lint, type checks, generated-doc checks, and

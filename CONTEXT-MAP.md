@@ -31,8 +31,9 @@ authorizes it. _Avoid_: claim, claim ID, bearer, run-control claim
 
 **Claim Ticket**: The secret a parent issues for one reserved Current Child,
 handed to the delegate's agent so it can claim that child exactly once. It
-appears only in the step-entry frontier and the dispatch, never in status.
-_Avoid_: delegation token, token (alone), reserved ID
+appears only in the step-entry event, the `retry` output that replaces it, and
+the dispatch, never in status. _Avoid_: delegation token, token (alone),
+reserved ID
 
 **Child Run**: A run started for a step of another run (its parent). It is a run
 in its own right, with its own owner and its own record. _Avoid_: sub-run,
@@ -84,25 +85,3 @@ release, stop, terminal refusal
 external input, hands back a refusal, or reaches a terminal. When an Inline
 Child reaches a terminal, the same owner Collects it and progression continues
 in the parent. _Avoid_: Execution loop, continuation orchestration
-
-### Retiring with the one-writer model
-
-These name mechanisms of the multi-writer model that the Run Owner model
-replaces. Do not use them for new design.
-
-**Session Stack**: A per-session stack of active runs, plus a stash slot, that
-bare commands target. Replaced by naming the run's Owner Token on every
-mutation. _Avoid_: active run, current runbook, stack top
-
-**Run Release**: Removal of a run from every session targeting structure,
-together with the disposition of claims it controls. _Avoid_: Terminal release,
-stack pop, claim cleanup
-
-**Stack Deactivation**: Removal of one activation of a run from the session's
-active-run stack without changing its claims or stash membership. _Avoid_: Run
-Release, stack pop
-
-**Terminal Evidence**: A preserved claim over a terminal run that lets its
-holder resolve the run's outcome until pruning. Absorbed by the Owner Token,
-which stays resolvable until pruning. _Avoid_: Terminal tombstone, retained
-claim

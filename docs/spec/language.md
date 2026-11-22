@@ -165,13 +165,18 @@ parent step; generated runbook-list substeps have synthetic descriptions such as
 
 Runbook references MAY be literal targets or template references such as
 `{{ RunbookName }}`. Undefined template references are preserved as literal
-text. A runbook-list entry without nested `DELEGATE` is inline linkage: the
-child runbook executes in-session and its terminal result propagates to the
-parent substep. A runbook-list entry with nested `DELEGATE` is delegated
-linkage: the step entry exposes a delegation frontier token for that generated
-substep, and a claimed child reports the substep result out-of-process. Inline
-and delegated runbook-list entries are therefore distinct execution modes, not
-two spellings for the same behavior.
+text. A runbook-list entry without nested `DELEGATE` composes an **Inline
+Child**: the child runbook runs as its own run, driven by the parent owner's
+commands, and the command that finishes it Collects its terminal result into the
+parent substep. A runbook-list entry with nested `DELEGATE` composes a
+**Delegation**: the step entry issues a Claim Ticket for that generated substep,
+the agent that claims it drives the child as a run it owns, and the parent's
+owner Collects the child's terminal result (§7). Inline and delegated
+runbook-list entries are therefore distinct execution modes, not two spellings
+for the same behavior.
+
+An explicit substep naming more than one runbook is refused when the run starts
+(`RUNBOOK_COMPOSITION_UNSUPPORTED`).
 
 ### 5.5 Runtime Target Identity
 
@@ -290,24 +295,39 @@ Ordering: `FOR` MUST precede `DELEGATE`; `DELEGATE` MUST precede transitions,
 prompt, and body. A delegated substep MUST resolve to at least one runbook
 target, either a `.runbook.md` target or a template target.
 
-When a delegated step is entered, each delegated substep is exposed as a
-delegation frontier item containing an id, runbook target, and token. A child
-claims the token and resolves the claimed work as `PASS` or `FAIL`; the final
-substep resolution auto-aggregates the parent transition. An explicit collection
-operation MAY force aggregation for mixed delegated/non-delegated substeps;
-repeat collection of an already aggregated frame reports `already-aggregated`.
+When a delegated step is entered, the runtime reserves one **Current Child** per
+delegated substep for that entry and issues a **Claim Ticket** for each. The
+tickets are listed once, in the step-entry event's `children`, and never in
+status. An agent claims a ticket with `rundown claim`, which creates the child
+run under the reserved id and prints the child's own Owner Token; a second claim
+of the same ticket is refused `ALREADY_CLAIMED`.
 
-`RETRY N action` on a delegated step cancels and reissues every delegated
-substep in the active frame with fresh tokens, regardless of prior substep
-result. Stale tokens return `TOKEN_CANCELLED`. The retry boundary preserves the
-canonical `FOR` iteration location in the runtime context snapshot and the next
-step entry exposes the new delegation frontier.
+A child reports only by reaching a terminal in its own record: `completed` is
+the substep's `PASS`, `stopped` or `abandoned` its `FAIL`. The parent learns it
+only when its owner runs `rundown collect`, which applies the result of each
+terminal Current Child to its substep, reports running and unclaimed children
+without applying anything for them, reports a child already applied as
+`already_collected`, and continues the parent once the step's aggregation is
+decided. Collect is the only path by which a Delegation's result reaches its
+parent; a child never writes its parent.
 
-When a delegated child reaches a terminal lifecycle but the parent absorbs the
-outcome non-terminally, such as `FAIL RETRY`, the child resolution is not itself
-an orchestrated workflow failure. Terminal failure is reserved for cases where
-there is no parent linkage or the parent's propagation also resolves to a
-terminal stopped state.
+Every entry into a delegated step reserves afresh: each `FOR` iteration, and
+each re-entry by `GOTO` or by an authored `RETRY N action`. A reservation from
+an earlier entry is stale. Its ticket is refused `DELEGATION_CANCELLED`, its
+child's commands are refused the same way, and Collect never applies its result.
+`RETRY N action` on a delegated step therefore issues new tickets for every
+delegated substep of the new entry, whatever the earlier children's results.
+
+The parent's owner can also stop counting one Current Child within an entry.
+`rundown retry --step` cancels it and reserves a fresh one with a new Claim
+Ticket. `pass` or `fail --step` naming the delegated substep records the owner's
+decision as the substep's result and cancels the child. A claiming agent that
+cannot finish its child ends it with `rundown release`, which records it
+`abandoned`, so Collect applies it as `FAIL`.
+
+A child's terminal never decides its parent's outcome. The parent applies the
+Collected result through its own handlers, so a child that stopped under a
+parent `FAIL RETRY` leads to a retry, not to the end of the workflow.
 
 ## 8. Iteration
 
@@ -798,10 +818,10 @@ the parent's active iteration contributes two inherited values:
   or the iteration number for a numeric range) — is inherited **only when the
   delegated child declares that name in its frontmatter `inputs`**. A child that
   does not declare the loop variable does not receive it; a child that lists it
-  in `required` fails to launch when the binding is absent (for example, when
+  in `required` fails at claim when the binding is absent (for example, when
   delegated outside a `FOR`). Both values enter the child through the inherited
-  variable layer, which ranks **below** explicit `--input`, so an override
-  (`--input` on `delegate` or `claim`) for the same name still wins.
+  variable layer, which ranks **below** the child's explicit inputs, so an
+  explicit value for the same name still wins.
 
 **Per-iteration scope.** An iteration binding is keyed to the parent step's
 active iteration, not to the individual delegated reference. When a `FOR` step
@@ -844,8 +864,9 @@ above. In particular:
 18. `NEXT` is invalid as a `GOTO` target.
 19. `GOTO` to a `FOR` target without `AT` enters at the target loop's start
     value.
-20. Delegation retry must cancel and reissue every delegated substep in the
-    active frame.
+20. Every entry into a delegated step, including an authored `RETRY`, reserves
+    fresh Current Children; a child reserved at an earlier entry is never
+    Collected.
 21. Naked `OUTPUTS` entries alone create `RD_OUTPUTS_<VarName>`.
 22. At most one `ARTIFACTS` directive is allowed per step or substep.
 23. `ARTIFACTS` must be ordered before `OUTPUTS` and all other step content.
@@ -873,11 +894,11 @@ Rundown implementations MUST NOT migrate persisted runbook state between
 versions. The rule binds the state itself, wherever an implementation stores it
 — it is not scoped to any one path. In this implementation that means the
 runbook state database, `.rundown/rundown.db`: every run row's structured state
-fields and its opaque snapshot blob, together with the session, stash, and
-delegation/claim rows the same database holds. It equally binds any other
-location an implementation persists run state to. `.rundown/runs/` holds
-captured filesystem outputs, not run state, and is therefore not what this rule
-protects.
+fields and its opaque snapshot blob, together with every other column of the
+`runs` table — child linkage, the execution lease, and the token hash. It
+equally binds any other location an implementation persists run state to.
+`.rundown/runs/` holds captured filesystem outputs, not run state, and is
+therefore not what this rule protects.
 
 Two version checks enforce it and MUST NOT be conflated. They fail at different
 scopes, so they have different recovery actions:
@@ -885,7 +906,7 @@ scopes, so they have different recovery actions:
 | Check                        | Scope                                                    | Recovery when it fails                                                                                                           |
 | ---------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | `RunbookState.schemaVersion` | One run's own state; MUST equal `CURRENT_SCHEMA_VERSION` | Complete, stop, or prune **that run**, then re-run it from the source document. The store and every other run in it stay intact. |
-| Database schema version      | The whole store, including session and claims            | Discard **the store**: delete `.rundown/rundown.db` and restart the runbooks from source. Every run it held is unrecoverable.    |
+| Database schema version      | The whole store, every column of the `runs` table        | Discard **the store**: delete `.rundown/rundown.db` and restart the runbooks from source. Every run it held is unrecoverable.    |
 
 The two do not substitute for each other. Pruning a run cannot repair a store
 whose schema this build refuses — the store is what failed, and every run in it

@@ -10,6 +10,8 @@ import { mockFn } from './typed-mocks.js';
 // Mock resolve-runbook
 jest.unstable_mockModule('../../src/helpers/resolve-runbook', () => ({
   resolveRunbookFile: jest.fn(),
+  // Suite child resolution (createSuiteRunbookResolver); unused by these tests.
+  locateRunbook: jest.fn(),
 }));
 
 // Mock @rundown-org/parser (only extractFrontmatter, pass through rest)

@@ -1,8 +1,7 @@
 # ADR 0002: Fence inline launch under the parent's claim generation
 
 - **Status:** Superseded by [ADR 0005](0005-one-writer-per-run.md), which is
-  accepted but not yet built. The code this ADR describes still runs; maintain
-  it, but do not extend it.
+  built. The code this ADR describes no longer exists.
 - **Date:** 2026-08-26
 
 ## Scope

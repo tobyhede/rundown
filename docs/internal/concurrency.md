@@ -265,12 +265,11 @@ only consumers.
 
 **Examples:** two consumers remain, and both protect a file-backed artifact
 rather than run authority — the artifact manifest and the sql.js driver's
-durable-replacement cycle. The plugin's `PluginSessionLock` was deleted with its
-session state (#907). Do not add a third for run state: raise the write with the
-user (ADR 0005). Note also that `acquireFileLock` is **not reentrant** — a
-second acquisition on the same call path blocks its own predecessor for the full
-5s deadline and then times out, so a lock reached twice within one process is
-worse than no lock at all.
+durable-replacement cycle. The plugin keeps no state of its own. Do not add a
+third for run state: raise the write with the user (ADR 0005). Note also that
+`acquireFileLock` is **not reentrant** — a second acquisition on the same call
+path blocks its own predecessor for the full 5s deadline and then times out, so
+a lock reached twice within one process is worse than no lock at all.
 
 ## Testing a race
 

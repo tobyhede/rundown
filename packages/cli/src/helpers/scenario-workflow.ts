@@ -34,7 +34,15 @@ import {
   type Scenarios,
   type ScenarioExpect,
 } from '../schemas/scenarios.js';
-import { resolveRunbookFile } from './resolve-runbook.js';
+import { locateRunbook, resolveRunbookFile } from './resolve-runbook.js';
+import { getBundledRunbooksPath } from './bundled-runbooks.js';
+import { getPluginRoot } from './plugin-root.js';
+import {
+  scanDirectory,
+  type DiscoveredRunbook,
+  type RunbookDirectoryScanner,
+  type RunbookSearchRoots,
+} from '../services/discovery.js';
 import {
   extractFrontmatter,
   parseRunbookDocument,
@@ -130,6 +138,112 @@ function resolveScenarioRunbookRef(ref: string, fromDir: string, sourceRoot: str
     return localPath;
   }
   return join(sourceRoot, ref);
+}
+
+/** A runbook suite staging located, and the root whose containment its copy is checked against. */
+export interface SuiteRunbookSource {
+  /** Absolute path to the runbook file. */
+  readonly path: string;
+  /** The search directory that held it. */
+  readonly root: string;
+}
+
+/**
+ * How a scenario suite finds the child runbooks its cases need, resolving each
+ * exactly as the runtime will in the case's workspace.
+ */
+export interface SuiteRunbookResolver {
+  /** The search roots the suite's workspace stands for. */
+  readonly roots: RunbookSearchRoots;
+  /**
+   * Locate a relative child reference with the runtime's resolver
+   * ({@link locateRunbook}) over {@link SuiteRunbookResolver.roots}.
+   */
+  locate(ref: string): Promise<SuiteRunbookSource | null>;
+  /**
+   * The directories a staged runbook's static relative `ARTIFACTS` paths are
+   * copied from, in order.
+   */
+  artifactRoots(runbookPath: string): string[];
+  /** The roots searched, for a not-found diagnostic. */
+  describe(): string;
+}
+
+/**
+ * Build the child resolver for one scenario suite run.
+ *
+ * A case runs with its workspace's `.rundown/runbooks` holding the suite's
+ * staged files, so the suite stages a child by resolving it with the runtime's
+ * own resolver over the roots that workspace stands for, then copying what it
+ * finds to `.rundown/runbooks/<ref>`, where the runtime's project step finds
+ * the same file:
+ *
+ * - A suite beside `.claude-plugin/plugin.json` is a plugin's: its cases run
+ *   as that plugin, so the suite directory is `$CLAUDE_PLUGIN_ROOT` and there
+ *   is no project tree beyond the staged case files. Only
+ *   `<suiteDir>/runbooks` and the bundled runbooks resolve children, as they
+ *   would for the installed plugin.
+ * - Any other suite directory is the project's runbooks directory (case
+ *   `file:` paths map `<suiteDir>/<file>` to `.rundown/runbooks/<file>`), with
+ *   the plugin root the case's process sees ({@link getPluginRoot}) and the
+ *   bundled runbooks after it.
+ *
+ * The runtime's cwd step is not modelled: the workspace root holds only input
+ * files and artifacts, never a runbook staged there.
+ *
+ * Directory scans are cached for the resolver's lifetime (one suite run), and
+ * a scan runs only when a reference is not found by path.
+ *
+ * @param suiteDir - Directory of the suite file.
+ * @returns The resolver.
+ */
+export function createSuiteRunbookResolver(suiteDir: string): SuiteRunbookResolver {
+  const isPluginSuite = existsSync(join(suiteDir, '.claude-plugin', 'plugin.json'));
+  const bundled = getBundledRunbooksPath();
+  const roots: RunbookSearchRoots = isPluginSuite
+    ? { project: null, plugin: suiteDir, cwd: null, bundled }
+    : { project: suiteDir, plugin: getPluginRoot(), cwd: null, bundled };
+  const scans = new Map<string, Promise<DiscoveredRunbook[]>>();
+  const scan: RunbookDirectoryScanner = (dirPath, source) => {
+    let cached = scans.get(dirPath);
+    if (cached === undefined) {
+      cached = scanDirectory(dirPath, source);
+      scans.set(dirPath, cached);
+    }
+    return cached;
+  };
+
+  return {
+    roots,
+    async locate(ref) {
+      const located = await locateRunbook(roots, ref, scan);
+      return located === null ? null : { path: located.path, root: located.root };
+    },
+    // The runtime reads a relative ARTIFACTS path from the cwd, then the
+    // plugin root, then the bundled runbooks (actor-service-factory). The suite
+    // directory stands for the cwd, as it does for --input-file directories;
+    // the runbook's own directory is tried first, a suite-only convenience for
+    // fixtures authored beside the runbook that reads them.
+    artifactRoots(runbookPath) {
+      return [
+        ...new Set([
+          dirname(runbookPath),
+          suiteDir,
+          ...(roots.plugin === null ? [] : [roots.plugin]),
+          roots.bundled,
+        ]),
+      ];
+    },
+    describe() {
+      return [
+        roots.project,
+        roots.plugin === null ? null : join(roots.plugin, 'runbooks'),
+        roots.bundled,
+      ]
+        .filter((root): root is string => root !== null)
+        .join(', ');
+    },
+  };
 }
 
 function findScenarioRunbookSourceRoot(sourceDir: string): string {

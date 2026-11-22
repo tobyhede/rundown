@@ -30,6 +30,30 @@ scenarios:
           index: 2
           status: collected
 
+  confusion-index-misuse:
+    description: Inside the FOR, a parent pass without --index or naming another iteration is INVALID_STEP; outside a FOR, the child's pass with --index is INVALID_STEP; the right --index passes
+    commands:
+      - rd run delegate-for-each.runbook.md
+      - "! rd pass --token ${TOKEN} --step 1.1"
+      - "! rd pass --token ${TOKEN} --step 1.1 --index 2"
+      - rd claim ${TICKET}
+      - "! rd pass --token ${CHILD_TOKEN} --step Check --index 1"
+      - rd pass --token ${CHILD_TOKEN} --step Check
+      - rd collect --token ${TOKEN}
+      - rd pass --token ${TOKEN} --step 1.1 --index 2
+    result: COMPLETE
+    expect:
+      errors:
+        - code: INVALID_STEP
+          command: pass
+          error: --index is required
+        - code: INVALID_STEP
+          command: pass
+          error: names iteration 2
+        - code: INVALID_STEP
+          command: pass
+          error: --index requires
+
   decided-by-index:
     description: The owner decides the second iteration's delegated substep by hand with --index; its unclaimed child is never Collected
     commands:
