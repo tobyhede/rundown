@@ -469,7 +469,8 @@ describe('RunbookStateManager.load() — invalid state enforcement', () => {
     // and `typeof null === 'object'` — so the `lastAction !== null` conjunct is
     // the only thing standing between a null here and a TypeError thrown from
     // inside the gate. That matters because of what the gate exists to
-    // guarantee: `load` wraps only a SyntaxError out of `readRunJson`, so an
+    // guarantee: `load`'s only catch is `assembleRaw`'s reframing of a
+    // `JSON.parse` SyntaxError (`runbook-store.ts:603-614`), so an
     // unguarded dereference escapes untyped, surfaces as RD-999 / "Unknown
     // error", and misses the InvalidRunbookStateError arm the CLI's
     // recoverable-state taxonomy classifies on. Persisted null is reachable
