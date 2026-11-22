@@ -156,7 +156,8 @@ describe('ErrorCodeSchema code registry', () => {
     'ACTOR_CONTEXT_REQUIRED',
     'CLAIM_GRANT_REQUIRED',
     'CLAIM_BEARER_MISMATCH',
-    'EXECUTION_IN_PROGRESS',
+    // EXECUTION_IN_PROGRESS is not here: the one-writer execution lease (#902)
+    // brought it back, registered beside EXECUTION_INTERRUPTED.
     'RECOVERY_REQUIRED',
     'AGGREGATE_RECOVERY_REQUIRED',
     'OPEN_DELEGATED_CHILDREN',

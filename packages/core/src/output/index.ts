@@ -87,6 +87,7 @@ export {
 export {
   ActionResponseSchema,
   StatusResponseSchema,
+  ExecutionStatusSchema,
   ArtifactAliasEntrySchema,
   ArtifactAliasArrayEntrySchema,
   ArtifactLsResponseSchema,
@@ -99,6 +100,7 @@ export {
   type ArtifactUriResponse,
   type ArtifactInspectResponse,
   type StatusResponse as SchemaStatusResponse,
+  type ExecutionStatus,
 } from './schema.js';
 
 // List schemas

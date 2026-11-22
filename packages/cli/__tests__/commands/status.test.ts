@@ -252,6 +252,30 @@ Finish.
     expect(error.error).toMatch(/rundown prune/);
   });
 
+  // A truncated `state_json` is invalid persisted state too, on the versioned
+  // read `status --run` takes — not a bare SyntaxError rendered as an internal
+  // error without the recovery.
+  it('reports unparseable persisted state as RD-309 with prune guidance', async () => {
+    const { runId } = await startPrompted(workspace);
+    const db = new DatabaseSync(join(workspace.cwd, '.rundown', 'rundown.db'));
+    try {
+      db.prepare('UPDATE runs SET state_json = ? WHERE id = ?').run('{ not valid json', runId);
+    } finally {
+      db.close();
+    }
+
+    const result = await runCliInProcess(`status --run ${runId}`, workspace);
+
+    expect(result.exitCode).not.toBe(0);
+    const error = JSON.parse(result.stderr.trim() || result.stdout.trim()) as {
+      code?: string;
+      error?: string;
+    };
+    expect(error.code).toBe('RD-309');
+    expect(error.error).toMatch(/not valid JSON/);
+    expect(error.error).toMatch(/rundown prune/);
+  });
+
   // The recovery the envelope names must actually work on the state that
   // produced it, or the instruction is worse than none.
   it('accepts the prune recovery the RD-309 envelope names', async () => {

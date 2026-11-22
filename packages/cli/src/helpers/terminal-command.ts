@@ -21,7 +21,11 @@ import {
 import { buildLifecycleSeam } from './lifecycle-seam-factory.js';
 import { buildMetadata } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
-import { renderOwnedRunRefusal, renderRunFinished } from './token-option.js';
+import {
+  renderExecutionLeaseRefusal,
+  renderOwnedRunRefusal,
+  renderRunFinished,
+} from './token-option.js';
 
 /**
  * Command-local bridge that streams force-terminal observation events.
@@ -106,6 +110,9 @@ export async function renderTerminalOutcome(
     case 'concurrent_modification':
       output.error(outcome.message, CONCURRENT_MODIFICATION_CODE, { runId: outcome.runId });
       return true;
+    case 'execution_in_progress':
+    case 'execution_interrupted':
+      return renderExecutionLeaseRefusal(output, outcome);
     case 'unknown_token':
       // Pruned between token resolution and the save; see renderRefusal.
       return renderOwnedRunRefusal(output, command, outcome);

@@ -3,7 +3,10 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { RunbookStateManager, generateRunId } from '../../src/runbook/state.js';
-import { RunbookActorService } from '../../src/runbook/actor-service.js';
+import {
+  MachineEffectOutcomeUnknownError,
+  RunbookActorService,
+} from '../../src/runbook/actor-service.js';
 import { closeRunbookStore } from '../../src/runbook/storage/store-registry.js';
 import { RunbookStore } from '../../src/runbook/storage/runbook-store.js';
 import { ExecutionEventEmitter } from '../../src/events/emitter.js';
@@ -15,6 +18,11 @@ import { createRunbook } from './fixtures.js';
 import { mintRunProgressionAuthority } from '../../src/runbook/run-progression-authority.js';
 import { generateOwnerToken, hashRunSecret } from '../../src/runbook/run-secrets.js';
 import { InvalidRunbookStateError } from '../../src/runbook/persisted-state-guards.js';
+import { createProcessIdentity } from '../../src/runbook/process-identity.js';
+import {
+  EXECUTION_IN_PROGRESS_CODE,
+  EXECUTION_INTERRUPTED_CODE,
+} from '../../src/runbook/execution-lease.js';
 import {
   activateRunProgression,
   commitRunProgressionEvent,
@@ -177,7 +185,16 @@ function raceWriterDuringPrepare(actorService: RunbookActorService, runId: Runbo
     if (!injected && args[0] === runId) {
       injected = true;
       const racer = new RunbookStateManager(dir);
-      await racer.update(runId, { variables: merge({ __progressionConcurrentWrite: 'racer' }) });
+      // An explicit decision by the owner: a full-state save at the version it
+      // read, which clears the lease (a plain update refuses a leased run).
+      const loaded = await racer.loadWithVersion(runId);
+      await racer.save(
+        {
+          ...loaded!.state,
+          variables: { ...loaded!.state.variables, __progressionConcurrentWrite: 'racer' },
+        },
+        loaded!.stateVersion,
+      );
     }
     return prepared;
   });
@@ -260,7 +277,7 @@ describe('commitRunProgressionEvent', () => {
     const stale = await manager.loadWithVersion(state.id);
     if (!stale) throw new Error('run missing');
     await manager.update(state.id, { variables: merge({ moved: 'yes' }) });
-    const save = jest.spyOn(RunbookStore.prototype, 'saveRun');
+    const save = jest.spyOn(RunbookStore.prototype, 'saveRunResolvingLease');
 
     const result = await commitRunProgressionEvent({
       authority: mintRunProgressionAuthority({ runId: state.id }),
@@ -347,7 +364,7 @@ describe('activateRunProgression', () => {
     const actorService = actorServiceWith(succeedingCommandServices());
     const state = await seedRun(steps, actorService, 'one-command.runbook.md');
     const { emitter, events } = recordingSink(state);
-    const save = jest.spyOn(RunbookStore.prototype, 'saveRun');
+    const save = jest.spyOn(RunbookStore.prototype, 'saveRunResolvingLease');
 
     const outcome = await activateRunProgression(
       mintRunProgressionAuthority({ runId: state.id }),
@@ -399,7 +416,7 @@ describe('activateRunProgression', () => {
     const state = await seedRun(steps, actorService, 'raced.runbook.md');
     const { emitter, events } = recordingSink(state);
     const injected = raceWriterDuringPrepare(actorService, state.id);
-    const save = jest.spyOn(RunbookStore.prototype, 'saveRun');
+    const save = jest.spyOn(RunbookStore.prototype, 'saveRunResolvingLease');
 
     const outcome = await activateRunProgression(
       mintRunProgressionAuthority({ runId: state.id }),
@@ -714,7 +731,7 @@ describe('observation commit gate (#853)', () => {
   /**
    * Wire one shared timeline across the three seams the gate orders: command
    * effects (the injected external runner), durable commits (the real
-   * `saveRun` on the shared store prototype), and observations (the recording
+   * `saveRunResolvingLease` on the shared store prototype), and observations (the recording
    * sink's subscriber).
    */
   function timelineRecorder(): {
@@ -729,8 +746,8 @@ describe('observation commit gate (#853)', () => {
       },
     };
     // eslint-disable-next-line @typescript-eslint/unbound-method -- captured only to `.apply(this, …)` inside the mock below; never invoked unbound
-    const realSave = RunbookStore.prototype.saveRun;
-    jest.spyOn(RunbookStore.prototype, 'saveRun').mockImplementation(async function (
+    const realSave = RunbookStore.prototype.saveRunResolvingLease;
+    jest.spyOn(RunbookStore.prototype, 'saveRunResolvingLease').mockImplementation(async function (
       this: RunbookStore,
       ...args
     ) {
@@ -955,5 +972,353 @@ Do it by hand.
       reason: 'awaiting_input',
     });
     expect(enteredSteps(events)).toEqual(['1', '2']);
+  });
+});
+
+describe('execution lease (#902)', () => {
+  // The injected identity reports this start id for every live pid. A lease
+  // another live process holds (the parent's pid, standing in for a second
+  // `rundown` process) is In Progress. A lease with THIS process's pid is In
+  // Progress only while one of this process's turns holds the attempt;
+  // otherwise — an earlier process that recycled the pid, or a turn here that
+  // ended without committing — the step is Interrupted.
+  const SELF_START = 'self-start';
+  const identity = createProcessIdentity(() => SELF_START);
+
+  it('holds the lease while the command runs and clears it when the finish commits', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const seen: unknown[] = [];
+    const actorService = actorServiceWith({
+      runExternalCommand: async () => {
+        const during = await new RunbookStateManager(dir).loadWithVersion(state.id);
+        seen.push(during?.lease);
+        return { success: true, exitCode: 0 };
+      },
+    });
+    const state = await seedRun(steps, actorService, 'leased.runbook.md');
+    const { emitter } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(outcome).toEqual({ kind: 'completed', runId: state.id });
+    expect(seen).toEqual([
+      {
+        attempt: expect.any(Number),
+        pid: process.pid,
+        startId: SELF_START,
+        startedAt: expect.any(String),
+      },
+    ]);
+    expect((await manager.loadWithVersion(state.id))?.lease).toBeNull();
+  });
+
+  it('refuses EXECUTION_IN_PROGRESS without running the command while a live attempt holds the lease', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const runner = jest.fn(async () => ({ success: true, exitCode: 0 }));
+    const actorService = actorServiceWith({ runExternalCommand: runner });
+    const state = await seedRun(steps, actorService, 'in-progress.runbook.md');
+    const read = await manager.loadWithVersion(state.id);
+    await manager.acquireExecutionLease(state.id, read!.stateVersion, {
+      pid: process.ppid,
+      startId: SELF_START,
+    });
+    const { emitter, events } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'execution_in_progress',
+      code: EXECUTION_IN_PROGRESS_CODE,
+      recovery: 'retryable',
+    });
+    expect(runner).not.toHaveBeenCalled();
+    expect(events.find((event) => event.type === 'ERROR_OCCURRED')).toMatchObject({
+      payload: { code: EXECUTION_IN_PROGRESS_CODE },
+    });
+    expect((await manager.loadWithVersion(state.id))?.lease).not.toBeNull();
+  });
+
+  it('refuses EXECUTION_INTERRUPTED and never repeats the command once its holder died', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const runner = jest.fn(async () => ({ success: true, exitCode: 0 }));
+    const actorService = actorServiceWith({ runExternalCommand: runner });
+    const state = await seedRun(steps, actorService, 'interrupted.runbook.md');
+    const read = await manager.loadWithVersion(state.id);
+    await manager.acquireExecutionLease(state.id, read!.stateVersion, {
+      pid: process.ppid,
+      startId: 'a process that has since exited',
+    });
+    const { emitter } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'execution_interrupted',
+      code: EXECUTION_INTERRUPTED_CODE,
+      recovery: 'permanent',
+    });
+    expect(runner).not.toHaveBeenCalled();
+    const after = await manager.loadWithVersion(state.id);
+    expect(after?.state.lifecycle).toBe('running');
+    expect(after?.lease).not.toBeNull();
+  });
+
+  it('refuses command_not_started without running the command when the version moved before the lease', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const runner = jest.fn(async () => ({ success: true, exitCode: 0 }));
+    const actorService = actorServiceWith({ runExternalCommand: runner });
+    const state = await seedRun(steps, actorService, 'not-started.runbook.md');
+    // Another of the owner's commands lands between this activation's read
+    // and its lease set.
+    const realAcquire = manager.acquireExecutionLease.bind(manager);
+    jest.spyOn(manager, 'acquireExecutionLease').mockImplementation(async (...args) => {
+      await new RunbookStateManager(dir).update(state.id, {
+        variables: merge({ raced: 'yes' }),
+      });
+      return realAcquire(...args);
+    });
+    const { emitter } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'command_not_started',
+      code: CONCURRENT_MODIFICATION_CODE,
+      recovery: 'retryable',
+    });
+    expect(runner).not.toHaveBeenCalled();
+    expect((await manager.loadWithVersion(state.id))?.lease).toBeNull();
+  });
+
+  it('refuses EXECUTION_IN_PROGRESS, not command_not_started, when another attempt set the lease after this activation read the run', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const runner = jest.fn(async () => ({ success: true, exitCode: 0 }));
+    const actorService = actorServiceWith({ runExternalCommand: runner });
+    const state = await seedRun(steps, actorService, 'lease-raced.runbook.md');
+    // A second, near-simultaneous activation sets the lease between this
+    // activation's read and its own lease set: the version moved because the
+    // lease was set, so this activation's step is In Progress.
+    const realAcquire = manager.acquireExecutionLease.bind(manager);
+    const acquire = jest
+      .spyOn(manager, 'acquireExecutionLease')
+      .mockImplementation(async (...args) => {
+        const other = new RunbookStateManager(dir);
+        const read = await other.loadWithVersion(state.id);
+        await other.acquireExecutionLease(state.id, read!.stateVersion, {
+          pid: process.ppid,
+          startId: SELF_START,
+        });
+        return realAcquire(...args);
+      });
+    const { emitter, events } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'execution_in_progress',
+      code: EXECUTION_IN_PROGRESS_CODE,
+      recovery: 'retryable',
+    });
+    expect(runner).not.toHaveBeenCalled();
+    expect(events.filter((event) => event.type === 'ERROR_OCCURRED')).toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({ code: EXECUTION_IN_PROGRESS_CODE }),
+      }),
+    ]);
+    // The refusal reads once; it never retries the lease set.
+    expect(acquire).toHaveBeenCalledTimes(1);
+  });
+
+  it('publishes no step entry for a turn the lease refuses', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const runner = jest.fn(async () => ({ success: true, exitCode: 0 }));
+    const actorService = actorServiceWith({ runExternalCommand: runner });
+    const state = await seedRun(steps, actorService, 'refused-entry.runbook.md');
+    const read = await manager.loadWithVersion(state.id);
+    await manager.acquireExecutionLease(state.id, read!.stateVersion, {
+      pid: process.ppid,
+      startId: SELF_START,
+    });
+    const { emitter, events } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(outcome).toMatchObject({ kind: 'refused', reason: 'execution_in_progress' });
+    // Only the refusal diagnostic: process A owns step 1's entry announcement.
+    expect(events.map((event) => event.type)).toEqual(['ERROR_OCCURRED']);
+  });
+
+  it('releases the lease without running the command when the entry announcement cannot be delivered', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const runner = jest.fn(async () => ({ success: true, exitCode: 0 }));
+    const actorService = actorServiceWith({ runExternalCommand: runner });
+    const state = await seedRun(steps, actorService, 'entry-undelivered.runbook.md');
+    const emitter = new ExecutionEventEmitter(state.id, state.runbook);
+    emitter.subscribe((event) => {
+      if (event.type === 'STEP_ENTERED') throw new Error('renderer gone');
+    });
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(outcome).toMatchObject({ kind: 'failed', reason: 'observation_delivery_failed' });
+    expect(runner).not.toHaveBeenCalled();
+    const after = await manager.loadWithVersion(state.id);
+    // The command never started, so nothing may read In Progress or Interrupted.
+    expect(after?.lease).toBeNull();
+    expect(after?.state.lifecycle).toBe('running');
+    expect(after?.state.step).toBe(state.step);
+  });
+
+  it('does not commit the finish of an attempt that lost its lease', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    let decidedVersion: number | undefined;
+    const actorService = actorServiceWith({
+      runExternalCommand: async () => {
+        // While the command runs, the owner decides about the attempt (its
+        // state write clears the lease) and a new attempt takes the lease.
+        const other = new RunbookStateManager(dir);
+        const during = await other.loadWithVersion(state.id);
+        const decided = await other.save(
+          { ...during!.state, variables: { ...during!.state.variables, decided: 'yes' } },
+          during!.stateVersion,
+        );
+        if (decided.kind !== 'committed') throw new Error('decision did not commit');
+        const after = await other.loadWithVersion(state.id);
+        decidedVersion = after!.stateVersion;
+        await other.acquireExecutionLease(state.id, after!.stateVersion, {
+          pid: process.ppid,
+          startId: SELF_START,
+        });
+        return { success: true, exitCode: 0 };
+      },
+    });
+    const state = await seedRun(steps, actorService, 'lost-lease.runbook.md');
+    const { emitter } = recordingSink(state);
+
+    const outcome = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(outcome).toMatchObject({
+      kind: 'refused',
+      reason: 'command_not_committed',
+      code: CONCURRENT_MODIFICATION_CODE,
+    });
+    const after = await manager.loadWithVersion(state.id);
+    expect(after?.state.lifecycle).toBe('running');
+    expect(after?.state.variables).toMatchObject({ decided: 'yes' });
+    // The newer attempt's lease survives the late finish.
+    expect(after?.lease?.attempt).toBe((decidedVersion ?? 0) + 1);
+  });
+
+  it('refuses command_outcome_unknown when the finish fails after the command ran, and the next activation in the same process reads Interrupted', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const runner = jest.fn(async () => ({ success: true, exitCode: 0 }));
+    const actorService = actorServiceWith({ runExternalCommand: runner });
+    const state = await seedRun(steps, actorService, 'outcome-unknown.runbook.md');
+    const realPrepare = actorService.prepareActorMutation.bind(actorService);
+    jest.spyOn(actorService, 'prepareActorMutation').mockImplementationOnce(async (...args) => {
+      // The command runs; then the machine-effect wait gives up.
+      await realPrepare(...args);
+      throw new MachineEffectOutcomeUnknownError(
+        args[0],
+        new Error('Timeout of 30000 ms exceeded'),
+      );
+    });
+    const { emitter, events } = recordingSink(state);
+
+    const first = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(first).toMatchObject({
+      kind: 'refused',
+      runId: state.id,
+      reason: 'command_outcome_unknown',
+      code: EXECUTION_INTERRUPTED_CODE,
+      recovery: 'permanent',
+    });
+    if (first.kind !== 'refused') throw new Error('unreachable');
+    expect(first.message).toContain('Step 1');
+    expect(first.message).toContain('Timeout of 30000 ms exceeded');
+    expect(first.message).toContain('never repeats');
+    expect(first.message).toContain('--token <owner_token>');
+    expect(events.at(-1)).toMatchObject({
+      type: 'ERROR_OCCURRED',
+      payload: { code: EXECUTION_INTERRUPTED_CODE },
+    });
+    // The lease stays set: the outcome is unknown, so nothing may treat the
+    // step as un-started.
+    expect((await manager.loadWithVersion(state.id))?.lease).not.toBeNull();
+
+    // Same process, same pid and start id, but no attempt in flight: the step
+    // is Interrupted, not In Progress forever.
+    const second = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(second).toMatchObject({
+      kind: 'refused',
+      reason: 'execution_interrupted',
+      code: EXECUTION_INTERRUPTED_CODE,
+      recovery: 'permanent',
+    });
+    expect(runner).toHaveBeenCalledTimes(1);
+  });
+  it('propagates a defect from the finish untouched, and the lease it leaves reads Interrupted in the same process', async () => {
+    const steps = createRunbook(COMMAND_RUNBOOK);
+    const runner = jest.fn(async () => ({ success: true, exitCode: 0 }));
+    const actorService = actorServiceWith({ runExternalCommand: runner });
+    const state = await seedRun(steps, actorService, 'finish-defect.runbook.md');
+    const realPrepare = actorService.prepareActorMutation.bind(actorService);
+    const defect = new Error('a programming defect in the finish');
+    jest.spyOn(actorService, 'prepareActorMutation').mockImplementationOnce(async (...args) => {
+      await realPrepare(...args);
+      throw defect;
+    });
+    const { emitter } = recordingSink(state);
+
+    await expect(
+      activateRunProgression(
+        mintRunProgressionAuthority({ runId: state.id }),
+        depsFor(actorService, steps, emitter, { processIdentity: identity }),
+      ),
+    ).rejects.toBe(defect);
+
+    const second = await activateRunProgression(
+      mintRunProgressionAuthority({ runId: state.id }),
+      depsFor(actorService, steps, emitter, { processIdentity: identity }),
+    );
+
+    expect(second).toMatchObject({ kind: 'refused', reason: 'execution_interrupted' });
+    expect(runner).toHaveBeenCalledTimes(1);
   });
 });

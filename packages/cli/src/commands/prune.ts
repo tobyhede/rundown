@@ -1,7 +1,13 @@
 // packages/cli/src/commands/prune.ts
 
 import type { Command } from 'commander';
-import { CLIErrorCodes, RunbookStateManager, hashRunSecret } from '@rundown-org/core';
+import {
+  CLIErrorCodes,
+  CONCURRENT_MODIFICATION_CODE,
+  RunbookStateManager,
+  hashRunSecret,
+  refuseUnderLease,
+} from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -10,6 +16,7 @@ import {
   TOKEN_OPTION_DESCRIPTION,
   UNKNOWN_TOKEN_MESSAGE,
   parseOptionalTokenOption,
+  renderExecutionLeaseRefusal,
   withTokenOption,
 } from '../helpers/token-option.js';
 
@@ -43,6 +50,9 @@ const TOKEN_REQUIRED_REASON = 'token required';
  * before. A RUNNING run is deleted only when `--token` names it — one run per
  * invocation, proven by its Owner Token. `--active` / `--all` without a token
  * skip running runs and report them retained with reason `token required`.
+ * The token's run is subject to core's execution-lease rule for `prune`: In
+ * Progress refuses the whole invocation `EXECUTION_IN_PROGRESS` with nothing
+ * deleted; Interrupted lets the owner delete it.
  * Invalid persisted rows prune with `--inactive` / `--all`. `--token` is
  * parsed by the shared token option, so `--run` (a read-only selector) is
  * refused `INVALID_SYNTAX` here as on every other mutating command.
@@ -80,6 +90,18 @@ export function registerPruneCommand(program: Command): void {
             token === undefined ? null : await manager.findByOwnerTokenHash(hashRunSecret(token));
           if (token !== undefined && owned === null) {
             output.error(UNKNOWN_TOKEN_MESSAGE, CLIErrorCodes.UNKNOWN_TOKEN);
+            output.flush();
+            process.exitCode = 1;
+            return;
+          }
+          // Core's lease rule decides whether the owner may delete the run. A
+          // refusal stops the whole invocation before anything is deleted.
+          const leaseRefusal =
+            owned === null
+              ? undefined
+              : refuseUnderLease(owned.state.id, owned.state, owned.lease, 'prune');
+          if (leaseRefusal !== undefined) {
+            renderExecutionLeaseRefusal(output, leaseRefusal);
             output.flush();
             process.exitCode = 1;
             return;
@@ -196,7 +218,28 @@ export function registerPruneCommand(program: Command): void {
           }
 
           if (!options.dryRun) {
+            // The token's run goes first, conditional on the version whose lease
+            // was just checked: a write or a newly taken lease since that read
+            // refuses the whole invocation with nothing deleted. Never retried.
+            if (owned !== null) {
+              const deleted = await manager.deleteAtVersion(owned.state.id, owned.stateVersion);
+              if (deleted.kind !== 'deleted') {
+                if (deleted.kind === 'concurrent_modification') {
+                  output.error(
+                    `Run ${owned.state.id} changed after prune read it; nothing was deleted. Re-read it with \`rundown status --run ${owned.state.id}\` and re-issue the prune if it still applies.`,
+                    CONCURRENT_MODIFICATION_CODE,
+                    { runId: owned.state.id },
+                  );
+                } else {
+                  output.error(UNKNOWN_TOKEN_MESSAGE, CLIErrorCodes.UNKNOWN_TOKEN);
+                }
+                output.flush();
+                process.exitCode = 1;
+                return;
+              }
+            }
             for (const state of toDelete) {
+              if (state.id === ownedRunId) continue;
               await manager.delete(state.id);
             }
             for (const id of invalidToDelete) {

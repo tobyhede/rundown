@@ -624,21 +624,23 @@ DDL edit must move `SCHEMA_VERSION`.
 
 One row per run. Besides `id`, `created_at` and `updated_at`, it carries:
 
-| Column                                                                            | Meaning                                                                                                                                                       |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `lifecycle`                                                                       | `running`, `completed`, `stopped`, or `abandoned`, pinned by a `CHECK`. Its home is this column, not the state JSON.                                          |
-| `owner_token_hash`                                                                | `UNIQUE` SHA-256 hash of the Owner Token. The token itself is printed once on `runbook_started` and never stored; this hash is the only authority lookup key. |
-| `parent_run_id`, `parent_step`, `parent_frame_key`, `parent_entry`, `parent_kind` | Child linkage, nullable all-or-none under a `CHECK`. Nothing writes it today: core refuses to create a run of a composing runbook.                            |
-| `lease_attempt`, `lease_pid`, `lease_start_id`, `lease_started_at`                | Execution lease, nullable all-or-none under a `CHECK`. Nothing writes it today.                                                                               |
-| `state_version`                                                                   | Lost-update counter, bumped only by the `runs_bump_state_version` trigger on every `state_json` write.                                                        |
-| `state_json`                                                                      | The authoritative `RunbookState` (minus `lifecycle`), including the opaque XState `snapshot`.                                                                 |
+| Column                                                                            | Meaning                                                                                                                                                                                                                             |
+| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `lifecycle`                                                                       | `running`, `completed`, `stopped`, or `abandoned`, pinned by a `CHECK`. Its home is this column, not the state JSON.                                                                                                                |
+| `owner_token_hash`                                                                | `UNIQUE` SHA-256 hash of the Owner Token. The token itself is printed once on `runbook_started` and never stored; this hash is the only authority lookup key.                                                                       |
+| `parent_run_id`, `parent_step`, `parent_frame_key`, `parent_entry`, `parent_kind` | Child linkage, nullable all-or-none under a `CHECK`. Nothing writes it today: core refuses to create a run of a composing runbook.                                                                                                  |
+| `lease_attempt`, `lease_pid`, `lease_start_id`, `lease_started_at`                | Execution lease, nullable all-or-none under a `CHECK`. Set by Run Progression before a command turn and cleared by the state write that commits its finish; see [concurrency.md § Execution lease](concurrency.md#execution-lease). |
+| `state_version`                                                                   | Lost-update counter, bumped only by the `runs_bump_state_version` trigger on every `state_json` or `lease_attempt` write.                                                                                                           |
+| `state_json`                                                                      | The authoritative `RunbookState` (minus `lifecycle`), including the opaque XState `snapshot`.                                                                                                                                       |
 
 Two triggers complete the schema. `runs_bump_state_version` owns
 `state_version`, so the conditional write below is a complete lost-update check
-for every writer by construction rather than by call-site discipline.
-`runs_unlink_children` clears the whole linkage group of any row naming a
-deleted run as its parent; the referential action `ON DELETE SET NULL` would
-null `parent_run_id` alone, which the all-or-none `CHECK` then refuses.
+for every writer by construction rather than by call-site discipline. It fires
+on the lease column too, so setting the execution lease moves the version and
+the lease's `attempt` is the version it produced. `runs_unlink_children` clears
+the whole linkage group of any row naming a deleted run as its parent; the
+referential action `ON DELETE SET NULL` would null `parent_run_id` alone, which
+the all-or-none `CHECK` then refuses.
 
 ### Two schema versions, deliberately distinct
 
@@ -647,7 +649,7 @@ a documented mistake:
 
 | Version                      | Governs                                                                            | Where it lives         | Rule                                                |
 | ---------------------------- | ---------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------- |
-| SQLite storage schema        | The whole database — the DDL of the `runs` table and its triggers                  | `PRAGMA user_version`  | Must equal `SCHEMA_VERSION` (currently `3`)         |
+| SQLite storage schema        | The whole database — the DDL of the `runs` table and its triggers                  | `PRAGMA user_version`  | Must equal `SCHEMA_VERSION` (currently `4`)         |
 | `RunbookState.schemaVersion` | One run's structured state fields and its opaque `snapshot` blob, and nothing else | The row's `state_json` | Must equal `CURRENT_SCHEMA_VERSION` (currently `3`) |
 
 A wrong storage version invalidates the whole database (`RD-305`); a wrong

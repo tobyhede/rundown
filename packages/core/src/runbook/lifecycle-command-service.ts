@@ -11,7 +11,11 @@
  * `--step` / `--index` that does not confirm the current position is refused
  * as `invalid_step_target`; a run deleted (pruned) between token resolution
  * and the save is refused as `unknown_token`, exactly what re-resolving the
- * token would now answer. Nothing is written on any refusal.
+ * token would now answer. A run whose step holds the execution lease (#902)
+ * is refused `execution_in_progress` while the attempt lives, and
+ * `execution_interrupted` for `pass` / `complete` once it died — `fail`,
+ * `goto` and `stop` are the explicit decisions that clear an Interrupted
+ * attempt, and their save clears the lease. Nothing is written on any refusal.
  *
  * The seam returns transition-observation events plus a Run Progression
  * directive as data. It does not spawn processes or render.
@@ -35,6 +39,13 @@ import {
   type InvalidStepTargetRefusal,
 } from './transition-cursor.js';
 import type { ActionType } from './transition-kernel.js';
+import {
+  refuseUnderLease,
+  type ExecutionInProgressRefusal,
+  type ExecutionLeaseRefusal,
+  type LeaseDecision,
+} from './execution-lease.js';
+import type { ProcessIdentity } from './process-identity.js';
 import {
   deriveTransitionObservation,
   reconcileFencedTerminalObservation,
@@ -70,6 +81,11 @@ export interface RunbookLifecycleCommandServiceDependencies {
   readonly loadSteps: (
     state: RunbookState,
   ) => readonly ResolvedStep[] | Promise<readonly ResolvedStep[]>;
+  /**
+   * Start-identity source for classifying a held execution lease. Defaults to
+   * the process-wide identity; tests inject a deterministic one.
+   */
+  readonly processIdentity?: ProcessIdentity;
 }
 
 /**
@@ -137,6 +153,7 @@ export interface LifecycleTransitionInput {
 export type LifecycleTransitionOutcome =
   | InvalidStepTargetRefusal
   | RunFinishedRefusal
+  | ExecutionLeaseRefusal
   | ConcurrentModificationRefusal
   | UnknownTokenRefusal
   | {
@@ -168,6 +185,7 @@ export interface LifecycleTerminalInput {
 /** Result of a complete/stop command through the seam. */
 export type LifecycleTerminalOutcome =
   | RunFinishedRefusal
+  | ExecutionLeaseRefusal
   | ConcurrentModificationRefusal
   | UnknownTokenRefusal
   | {
@@ -207,6 +225,7 @@ export interface LifecycleNavigationCapability {
 /** Outcome of {@link RunbookLifecycleCommandService.resolveRunNavigation}. */
 export type LifecycleNavigationOutcome =
   | RunFinishedRefusal
+  | ExecutionInProgressRefusal
   | {
       /** Navigation is allowed against the owned run. */
       readonly kind: 'allowed';
@@ -348,6 +367,8 @@ export class RunbookLifecycleCommandService {
   async runTransition(input: LifecycleTransitionInput): Promise<LifecycleTransitionOutcome> {
     const finished = finishedRefusal(input.run);
     if (finished) return finished;
+    const leased = this.#leaseRefusal(input.run, input.command);
+    if (leased) return leased;
     const { state: previousState, stateVersion } = input.run;
     const steps = await this.#deps.loadSteps(previousState);
 
@@ -435,6 +456,8 @@ export class RunbookLifecycleCommandService {
   async runTerminal(input: LifecycleTerminalInput): Promise<LifecycleTerminalOutcome> {
     const finished = finishedRefusal(input.run);
     if (finished) return finished;
+    const leased = this.#leaseRefusal(input.run, input.command);
+    if (leased) return leased;
     const { state: previousState, stateVersion } = input.run;
     const steps = await this.#deps.loadSteps(previousState);
     const currentStep = this.#findStep(steps, previousState.step);
@@ -486,6 +509,9 @@ export class RunbookLifecycleCommandService {
   async resolveRunNavigation(input: LifecycleNavigationInput): Promise<LifecycleNavigationOutcome> {
     const finished = finishedRefusal(input.run);
     if (finished) return finished;
+    const leased = this.#leaseRefusal(input.run, 'goto');
+    // `goto` clears an Interrupted attempt, so only In Progress can refuse it.
+    if (leased?.kind === 'execution_in_progress') return leased;
     const { state } = input.run;
     const steps = await this.#deps.loadSteps(state);
     return {
@@ -554,6 +580,17 @@ export class RunbookLifecycleCommandService {
         throw new Error(`Unsupported save refusal: ${String(_exhaustive)}`);
       }
     }
+  }
+
+  // Apply the execution-lease rule to the owner's decision about the run.
+  #leaseRefusal(run: OwnedRun, decision: LeaseDecision): ExecutionLeaseRefusal | undefined {
+    return refuseUnderLease(
+      run.state.id,
+      run.state,
+      run.lease,
+      decision,
+      this.#deps.processIdentity,
+    );
   }
 
   // Find a step by name, throwing on a corrupted state/steps mismatch.

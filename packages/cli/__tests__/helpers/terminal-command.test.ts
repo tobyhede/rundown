@@ -126,7 +126,7 @@ function applied(
 }
 
 function running(state: RunbookState = fakeRootState()): OwnedRunResolution {
-  return { kind: 'running', run: { state, stateVersion: 1 as never } };
+  return { kind: 'running', run: { state, stateVersion: 1 as never, lease: null } };
 }
 
 describe('runSeamTerminal', () => {
@@ -150,7 +150,7 @@ describe('runSeamTerminal', () => {
     expect(runTerminal).toHaveBeenCalledTimes(1);
     const input = (runTerminal.mock.calls as unknown as [[Record<string, unknown>]])[0][0];
     expect(input.command).toBe('complete');
-    expect(input.run).toEqual({ state, stateVersion: 1 });
+    expect(input.run).toEqual({ state, stateVersion: 1, lease: null });
     expect(input.message).toBe('done');
     expect(result.exitError).toBe(false);
     expect(calls.find((c) => c.method === 'complete')?.args[0]).toBe('done');

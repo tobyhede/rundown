@@ -30,6 +30,7 @@
     "packages/core/src/runbook/session-reader.ts",
     "packages/core/src/runbook/execution-recovery-service.ts",
     "packages/core/src/runbook/process-identity.ts",
+    "packages/core/src/runbook/execution-lease.ts",
     "packages/core/src/runbook/effectful-mutation-executor.ts",
     "packages/core/src/runbook/effectful-actor-mutation-runner.ts",
     "packages/core/src/runbook/re-entry-frontier.ts",

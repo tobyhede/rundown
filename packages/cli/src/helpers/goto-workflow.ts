@@ -32,7 +32,12 @@ import { createBridgedEmitter } from './execution-emitter.js';
 import { resolveIndexOption, IndexOptionError } from './index-option.js';
 import { buildLifecycleSeam } from './lifecycle-seam-factory.js';
 import { driveRunProgression, progressionFailedClosed } from './run-progression-adapters.js';
-import { UNKNOWN_TOKEN_MESSAGE, renderOwnedRunRefusal, renderRunFinished } from './token-option.js';
+import {
+  UNKNOWN_TOKEN_MESSAGE,
+  renderExecutionLeaseRefusal,
+  renderOwnedRunRefusal,
+  renderRunFinished,
+} from './token-option.js';
 
 /**
  * Context for executing a goto operation.
@@ -144,6 +149,8 @@ export function renderNavigationRefusal(
     case 'run_finished':
       renderRunFinished(output, commandName, refusal.runId, refusal.lifecycle);
       return true;
+    case 'execution_in_progress':
+      return renderExecutionLeaseRefusal(output, refusal);
     default: {
       // Assigning to `never` keeps the compile-time totality check — adding a
       // navigation refusal without an arm here is a build error. Returning a

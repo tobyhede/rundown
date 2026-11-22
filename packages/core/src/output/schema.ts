@@ -37,6 +37,7 @@ export {
   // Action schemas
   ActionResponseSchema,
   StatusResponseSchema,
+  ExecutionStatusSchema,
   ArtifactAliasEntrySchema,
   ArtifactAliasArrayEntrySchema,
   ArtifactLsResponseSchema,
@@ -90,6 +91,7 @@ export {
   type WarningResponse,
   type ActionResponse,
   type StatusResponse,
+  type ExecutionStatus,
   type ArtifactAliasEntry,
   type ArtifactAliasArrayEntry,
   type ArtifactLsResponse,

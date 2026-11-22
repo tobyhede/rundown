@@ -135,7 +135,7 @@ function makeState(overrides: Record<string, unknown> = {}): RunbookState {
 }
 
 function running(state: RunbookState = makeState()): OwnedRunResolution {
-  return { kind: 'running', run: { state, stateVersion: 3 as never } };
+  return { kind: 'running', run: { state, stateVersion: 3 as never, lease: null } };
 }
 
 function stepEvent(
@@ -227,7 +227,7 @@ describe('runSeamTransition — token resolution', () => {
 
     expect(mockResolveOwnedRun).toHaveBeenCalledWith(mockManager, TOKEN);
     expect(seamInput().command).toBe('pass');
-    expect(seamInput().run).toEqual({ state, stateVersion: 3 });
+    expect(seamInput().run).toEqual({ state, stateVersion: 3, lease: null });
     expect(result.applied?.runId).toBe(RUN_ID);
     expect(result.exitError).toBe(false);
   });

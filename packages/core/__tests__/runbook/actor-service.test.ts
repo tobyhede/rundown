@@ -8,6 +8,7 @@ import { merge, replace } from '../../src/runbook/state-update-ops.js';
 import {
   type ActorSyncResult,
   extractEnteredArtifacts,
+  MachineEffectOutcomeUnknownError,
   RunbookActorService,
   stateValueAsString,
 } from '../../src/runbook/actor-service.js';
@@ -905,6 +906,75 @@ echo ok
       await expect(manager.load(state.id)).resolves.toMatchObject({
         lifecycle: 'completed',
         lastResult: 'pass',
+      });
+    });
+
+    describe('a command finish whose outcome is unknown (#902)', () => {
+      // The machine-effect wait is private and its 30s budget cannot be hit
+      // deterministically through a real effect, so these tests let the real
+      // wait run (the command executes) and then reject it exactly as xstate's
+      // `waitFor` does on its timeout.
+      const timeout = new Error('Timeout of 30000 ms exceeded');
+
+      function rejectAfterRealWait(): void {
+        const proto = RunbookActorService.prototype as unknown as {
+          waitForMachineEffects: (actor: AnyActorRef) => Promise<void>;
+        };
+        const real = proto.waitForMachineEffects;
+        jest.spyOn(proto, 'waitForMachineEffects').mockImplementationOnce(async function (
+          this: unknown,
+          actor: AnyActorRef,
+        ) {
+          await real.call(this, actor);
+          throw timeout;
+        });
+      }
+
+      async function seedCommandRun(runId: string): Promise<RunbookState> {
+        return manager.create(
+          { source: 'project', path: 'workflow.runbook.md' },
+          { title: 'Outcome unknown', description: '', steps: stepsWithOneCommand },
+          {
+            runId: assertRunId(runId),
+            ownerTokenHash: freshOwnerTokenHash(),
+            runbookPath: 'workflow.runbook.md',
+            frontmatterOutputs: [],
+            templateVars: commandTemplateVars(assertRunId(runId)),
+          },
+        );
+      }
+
+      it('raises MachineEffectOutcomeUnknownError when the wait fails after EXECUTE_COMMAND ran', async () => {
+        const runId = 'rd_90290290290290290290290290290200';
+        const state = await seedCommandRun(runId);
+        const runner = jest.fn(async () => ({ success: true, exitCode: 0 }));
+        const service = new RunbookActorService(manager, {
+          commandServices: { runExternalCommand: runner },
+        });
+        rejectAfterRealWait();
+
+        const prepared = service.prepareActorMutation(state.id, state, stepsWithOneCommand, {
+          type: 'EXECUTE_COMMAND',
+          command: 'echo build',
+          displayCommand: 'echo build',
+          runbookPath: 'workflow.runbook.md',
+          rdInjected: { RD_RUN_ID: state.id },
+        });
+
+        await expect(prepared).rejects.toBeInstanceOf(MachineEffectOutcomeUnknownError);
+        await expect(prepared).rejects.toMatchObject({ runId: state.id, cause: timeout });
+        expect(runner).toHaveBeenCalledTimes(1);
+      });
+
+      it('leaves the same failure untyped for an event that runs no command', async () => {
+        const runId = 'rd_90290290290290290290290290290201';
+        const state = await seedCommandRun(runId);
+        const service = new RunbookActorService(manager, {});
+        rejectAfterRealWait();
+
+        await expect(
+          service.prepareActorMutation(state.id, state, stepsWithOneCommand, { type: 'PASS' }),
+        ).rejects.toBe(timeout);
       });
     });
 
