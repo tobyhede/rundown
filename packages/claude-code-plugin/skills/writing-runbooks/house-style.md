@@ -114,7 +114,7 @@ Keep runbooks small and single-purpose. Each produces one artifact and declares 
 
 ### Composition & delegation
 
-Both shapes below are refused by `rundown run` in this build (inline composition returns in #903, delegation in #904); see [Composition in this build](SKILL.md#composition-in-this-build). They remain the house style for parents written now.
+The inline shape below runs; the `- DELEGATE` shape is refused by `rundown run` in this build (delegation returns in #904); see [Composition in this build](SKILL.md#composition-in-this-build). Both remain the house style for parents written now.
 
 Run child runbooks by listing their paths in an H2 step body:
 

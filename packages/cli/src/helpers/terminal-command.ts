@@ -8,7 +8,6 @@
 
 import {
   CONCURRENT_MODIFICATION_CODE,
-  resolveOwnedRun,
   type LifecycleTerminalOutcome,
   type OwnerToken,
   type RunbookEventInput,
@@ -19,6 +18,8 @@ import {
   type TerminalCommandName,
 } from '@rundown-org/core';
 import { buildLifecycleSeam } from './lifecycle-seam-factory.js';
+import { resolveCommandTarget } from './command-target.js';
+import { driveRunProgression, progressionFailedClosed } from './run-progression-adapters.js';
 import { buildMetadata } from '../services/execution.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import {
@@ -94,6 +95,10 @@ export interface SeamTerminalOptions {
  * @param outcome - Typed terminal outcome returned by the seam.
  * @param message - Optional operator-supplied terminal message for the applied
  *   complete/stopped summary; falls back to the default summary when absent.
+ * @param inlineChild - Whether the command's target is an Inline Child (#903).
+ *   Its terminal streams under the child's run id and its action object names
+ *   the child, but a stopped child does not by itself request a non-zero exit:
+ *   the parent Collects it and progression decides where the run rests.
  * @returns `true` when the outcome requests a non-zero exit code.
  */
 export async function renderTerminalOutcome(
@@ -102,6 +107,7 @@ export async function renderTerminalOutcome(
   manager: RunbookStateManager,
   outcome: LifecycleTerminalOutcome,
   message?: string,
+  inlineChild = false,
 ): Promise<boolean> {
   switch (outcome.kind) {
     case 'run_finished':
@@ -125,9 +131,14 @@ export async function renderTerminalOutcome(
           bridge.emit({ id: state.id, runbook: state.runbook }, event);
         }
       }
+      // The action object names the run the command acted on, an Inline Child
+      // included, and stays the last JSON line: the renderer accumulates it
+      // and the caller flushes after any progression it drives.
       if (outcome.lifecycle === 'stopped') {
         output.stopped(message ?? 'Runbook stopped');
-        return true;
+        // An Inline Child's stop is Collected by its parent as FAIL; the
+        // command exits by where that progression rests, not by this terminal.
+        return !inlineChild;
       }
       output.complete(message ?? 'Runbook completed successfully');
       return false;
@@ -142,9 +153,10 @@ export async function renderTerminalOutcome(
 /**
  * Drive a complete/stop terminal command through the core lifecycle seam.
  *
- * Resolves the Owner Token through core, calls `runTerminal` on the owned
- * run, and renders the outcome. Core's directive for a terminal run is
- * `none` until composition returns (#903), so nothing is activated here.
+ * Resolves the Owner Token through core to its target (the deepest running
+ * Inline Child, #903), calls `runTerminal` on it, and renders the outcome.
+ * When the target is an Inline Child, core's directive activates progression
+ * so its parent Collects the result and continues.
  *
  * @param output - Output emitter for CLI output.
  * @param cwd - Current working directory.
@@ -160,7 +172,7 @@ export async function runSeamTerminal(
 ): Promise<{ readonly manager: RunbookStateManager; readonly exitError: boolean }> {
   const { manager, seam } = buildLifecycleSeam(cwd);
 
-  const resolution = await resolveOwnedRun(manager, options.token);
+  const resolution = await resolveCommandTarget({ seam, manager, cwd, output }, options.token);
   if (resolution.kind !== 'running') {
     const exitError = renderOwnedRunRefusal(output, command, resolution);
     output.flush();
@@ -177,7 +189,23 @@ export async function runSeamTerminal(
         : () => false,
   });
 
-  const exitError = await renderTerminalOutcome(output, command, manager, outcome, options.message);
+  const inlineChild = resolution.run.linkage !== null;
+  const exitError = await renderTerminalOutcome(
+    output,
+    command,
+    manager,
+    outcome,
+    options.message,
+    inlineChild,
+  );
+  // A forced terminal on an Inline Child owes its parent the implicit Collect
+  // (#903): core's directive activates progression, which ascends, and the
+  // command exits by where progression rests.
+  if (outcome.kind === 'applied' && outcome.progression.kind === 'activate') {
+    const progression = await driveRunProgression(outcome.progression, { manager, cwd, output });
+    output.flush();
+    return { manager, exitError: exitError || progressionFailedClosed(progression) };
+  }
   output.flush();
   return { manager, exitError };
 }

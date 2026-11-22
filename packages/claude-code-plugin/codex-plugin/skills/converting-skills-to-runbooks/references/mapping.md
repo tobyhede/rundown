@@ -48,7 +48,8 @@ How each part of a `SKILL.md` maps into a house-style runbook. Read alongside
   step body; it does not re-derive their artifact paths — it consumes each
   leaf's frontmatter `OUTPUTS`.
 
-A composing parent (rules 6 and 7) is refused by `rundown run` until #903 /
-#904, so only its leaves run today; see
+A parent that composes its leaves inline (rule 6) runs; one that fans out with
+`- DELEGATE` (rule 7) is refused by `rundown run` until #904, so only its leaves
+run today; see
 [Composition in this build](../../writing-runbooks/SKILL.md#composition-in-this-build).
 Tell the user when the conversion produces one.

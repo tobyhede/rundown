@@ -12,7 +12,7 @@ rundown run rundown:end-to-end-test
 ```
 
 <important>
-This build runs standalone runbooks only. The end-to-end runbook composes other runbooks (steps 2 and 3), so `rundown run rundown:end-to-end-test` is refused with `RUNBOOK_COMPOSITION_UNSUPPORTED` and creates no run. Inline composition returns in #903 and delegation in #904. Report the refusal to the user as the result and stop.
+Steps 2 and 3 compose their runbooks inline: each runs as a child run driven by your Owner Token, and `--step` names the child's step while it runs (see running-runbooks). Step 2's `write-file` runs today. Step 3's `review-and-collate` delegates, so its launch is refused with `RUNBOOK_COMPOSITION_UNSUPPORTED` (inline composition landed in #903; delegation returns in #904). Report the refusal to the user as the result and stop.
 </important>
 
 ## Flow

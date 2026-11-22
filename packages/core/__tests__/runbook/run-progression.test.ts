@@ -14,6 +14,7 @@ import type { RunbookEventV1 } from '../../src/events/types.js';
 import { merge } from '../../src/runbook/state-update-ops.js';
 import type { CommandExecutionServices } from '../../src/runbook/actors/command-exec-actor.js';
 import type { ResolvedStep, RunbookState } from '../../src/runbook/types.js';
+import type { FrameKey } from '../../src/runbook/targeting.js';
 import { createRunbook } from './fixtures.js';
 import { mintRunProgressionAuthority } from '../../src/runbook/run-progression-authority.js';
 import { generateOwnerToken, hashRunSecret } from '../../src/runbook/run-secrets.js';
@@ -220,7 +221,7 @@ describe('progressionDirectiveForStartedRun', () => {
 
 describe('progressionDirectiveForTerminalRun', () => {
   it.each(['completed', 'stopped', 'abandoned'] as const)(
-    'continues nothing for a %s run — composition returns with #903',
+    'continues nothing for a %s top-level run',
     async (lifecycle) => {
       const steps = createRunbook(MANUAL_RUNBOOK);
       const state = await seedRun(
@@ -230,7 +231,33 @@ describe('progressionDirectiveForTerminalRun', () => {
       );
       const terminal = await manager.update(state.id, { lifecycle });
 
-      expect(progressionDirectiveForTerminalRun(terminal)).toEqual({ kind: 'none' });
+      expect(progressionDirectiveForTerminalRun({ state: terminal, linkage: null }, steps)).toEqual(
+        { kind: 'none' },
+      );
+    },
+  );
+
+  it.each(['completed', 'stopped'] as const)(
+    'activates a %s inline child at its observed terminal, so its parent Collects it',
+    async (lifecycle) => {
+      const steps = createRunbook(MANUAL_RUNBOOK);
+      const state = await seedRun(steps, actorServiceWith(succeedingCommandServices()), 'child.md');
+      const terminal = await manager.update(state.id, { lifecycle });
+      const linkage = {
+        kind: 'inline' as const,
+        parentRunId: generateRunId(),
+        parentStep: '1.1',
+        parentFrameKey: '1|' as FrameKey,
+        parentEntry: 1,
+      };
+
+      expect(progressionDirectiveForTerminalRun({ state: terminal, linkage }, steps)).toEqual({
+        kind: 'activate',
+        authority: expect.objectContaining({ runId: state.id }),
+        runbook: terminal.runbook,
+        steps,
+        entryBoundary: { kind: 'after_observed_transition', lifecycle },
+      });
     },
   );
 
@@ -238,7 +265,7 @@ describe('progressionDirectiveForTerminalRun', () => {
     const steps = createRunbook(MANUAL_RUNBOOK);
     const state = await seedRun(steps, actorServiceWith(succeedingCommandServices()), 'running.md');
 
-    expect(() => progressionDirectiveForTerminalRun(state)).toThrow(
+    expect(() => progressionDirectiveForTerminalRun({ state, linkage: null }, steps)).toThrow(
       `Run ${state.id} is not terminal`,
     );
   });

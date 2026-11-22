@@ -955,6 +955,24 @@ function rootScopedTerminal(
 }
 
 /**
+ * Whether a JSON line is a lifecycle terminal event of a run other than the
+ * scenario's root.
+ *
+ * @param obj - A parsed JSON line.
+ * @param rootRunId - The root run, once known.
+ * @returns True for another run's `runbook_completed` / `runbook_stopped`.
+ */
+function isOtherRunsLifecycleTerminal(
+  obj: Record<string, unknown>,
+  rootRunId: string | undefined,
+): boolean {
+  if (obj.type !== 'runbook_completed' && obj.type !== 'runbook_stopped') return false;
+  return (
+    rootRunId !== undefined && typeof obj.runbookId === 'string' && obj.runbookId !== rootRunId
+  );
+}
+
+/**
  * Parse NDJSON lines from command stdout to extract transitions and terminal state.
  *
  * Handles two output formats:
@@ -1083,12 +1101,16 @@ export function parseJsonLines(
       artifactEntries,
       enteredSteps,
     );
-    if (detected !== null) {
-      terminal = detected;
-    }
     // `processJsonObject` has just appended this line's run id, so `runIds[0]`
     // is the first `runbook_started` of the payload.
     effectiveRootId ??= runIds[0];
+    // A lifecycle terminal of another run — an Inline Child completing or
+    // stopping while its root carries on (#903) — is not the scenario's
+    // outcome, positionally or otherwise. Only run-less flushed objects and
+    // the root's own lifecycle events reach the positional scan.
+    if (detected !== null && !isOtherRunsLifecycleTerminal(obj, effectiveRootId)) {
+      terminal = detected;
+    }
     const rootDetected = rootScopedTerminal(obj, effectiveRootId);
     if (rootDetected !== null) {
       rootTerminal = rootDetected;

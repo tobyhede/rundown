@@ -140,25 +140,43 @@ forward; copy values by hand only when a step tells you to.
 
 ## Composed Runbooks
 
-A runbook whose steps compose other runbooks (a runbook-list substep or
-`- DELEGATE`) is refused at `rundown run` with
-`RUNBOOK_COMPOSITION_UNSUPPORTED`; no run is created. Inline composition returns
-in #903 and delegation in #904. Report the refusal to the user and stop — the
-composing runbook cannot run in this build.
+A substep that lists one other runbook (and is not `- DELEGATE`) runs it as an
+**inline child**: a separate run you drive with your own Owner Token. There is
+no second token — the child's `runbook_started` event carries no `owner_token`.
+
+- While an inline child runs, every `pass` / `fail` / `goto` / `stop` /
+  `complete` with your token acts on that child (the deepest one, when children
+  nest), and `--step` names the **child's** step — take it from the child's
+  latest `step_entered` (its `runbookId` is the child's). Naming the parent's
+  step is refused `INVALID_STEP`, and the message names the child.
+- When the child finishes, the same command feeds its result (completed = pass,
+  stopped = fail) and its outputs into the parent and the parent carries on.
+  Keep following the latest `step_entered`, whichever run it belongs to. Do not
+  stop the parent yourself because a child stopped: the parent's own handlers
+  decide.
+- `rundown status` shows the chain: each child carries `parent`, and
+  `rundown status --run <parent_run_id>` shows its current `child`.
+- An inline child that cannot start (missing runbook, missing required input)
+  leaves the parent waiting on that substep; report it to the user, or decide
+  the substep with `rundown fail --token <owner_token> --step <parent substep>`.
+
+A runbook with a `- DELEGATE` substep is refused at `rundown run` with
+`RUNBOOK_COMPOSITION_UNSUPPORTED`; no run is created. Delegation returns in
+#904. Report the refusal to the user and stop.
 
 ## Refusals
 
 A refused command writes nothing. Fix the cause and re-issue it.
 
-| Code                              | Cause                                                       | Fix                                                                        |
-| --------------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `TOKEN_REQUIRED`                  | Mutating command without `--token`                          | Add `--token <owner_token>`                                                |
-| `UNKNOWN_TOKEN`                   | No run carries that token (mistyped, or the run was pruned) | Copy `owner_token` verbatim from `runbook_started`; if lost, tell the user |
-| `INVALID_STEP`                    | `--step` / `--index` missing or not the current position    | The message names the current position; re-issue with it                   |
-| `INVALID_SYNTAX`                  | `--run` combined with `--token`, among other syntax errors  | Drop `--run` from mutating commands                                        |
-| `RD-303` / `RD-304`               | The run already completed / stopped                         | Nothing to drive; report the outcome                                       |
-| `CONCURRENT_MODIFICATION`         | Another write landed on the run first                       | Re-read with `rundown status --run <run_id>`, then re-issue                |
-| `RUNBOOK_COMPOSITION_UNSUPPORTED` | The runbook composes other runbooks                         | See [Composed Runbooks](#composed-runbooks)                                |
+| Code                              | Cause                                                                                        | Fix                                                                        |
+| --------------------------------- | -------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `TOKEN_REQUIRED`                  | Mutating command without `--token`                                                           | Add `--token <owner_token>`                                                |
+| `UNKNOWN_TOKEN`                   | No run carries that token (mistyped, or the run was pruned)                                  | Copy `owner_token` verbatim from `runbook_started`; if lost, tell the user |
+| `INVALID_STEP`                    | `--step` / `--index` missing or not the current position (an inline child's, while one runs) | The message names the current position; re-issue with it                   |
+| `INVALID_SYNTAX`                  | `--run` combined with `--token`, among other syntax errors                                   | Drop `--run` from mutating commands                                        |
+| `RD-303` / `RD-304`               | The run already completed / stopped                                                          | Nothing to drive; report the outcome                                       |
+| `CONCURRENT_MODIFICATION`         | Another write landed on the run first                                                        | Re-read with `rundown status --run <run_id>`, then re-issue                |
+| `RUNBOOK_COMPOSITION_UNSUPPORTED` | The runbook (or an inline child) delegates                                                   | See [Composed Runbooks](#composed-runbooks)                                |
 
 A `policy_denied` event means the security policy refused a command step and the
 run stopped. Report it to the user; permission is theirs to grant (see the

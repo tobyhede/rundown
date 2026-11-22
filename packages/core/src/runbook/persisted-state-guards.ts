@@ -65,6 +65,13 @@ import type { RunbookState } from './types.js';
  * `invalid_schema_version` before structural parsing. Per the no-migration
  * rule, development runs restart.
  *
+ * Version `4` records the Inline Child reservation (#903). `SubstepState`
+ * gained the `child` reservation record, which the structural parse would
+ * refuse on its own when absent from an older build; but the compiled machine
+ * mirrors `substepStates` into its context and gained the transient
+ * `__reserve-child` leaf substate and the `CHILD_RESULT` event, and a stale
+ * snapshot's context is invisible to the parse. Every v3 row is foreign.
+ *
  * Move this constant when a change to `RunbookState` (`runbook/types.ts`) or
  * `RunbookStateObjectSchema` (`schemas.ts`) is one the Zod structural parse
  * cannot itself refuse. The opaque `snapshot` field, declared `z.unknown()` on
@@ -72,7 +79,7 @@ import type { RunbookState } from './types.js';
  * shape or state IDs is invisible to it, so nothing else will refuse a stale
  * snapshot.
  */
-export const CURRENT_SCHEMA_VERSION = 3;
+export const CURRENT_SCHEMA_VERSION = 4;
 
 /**
  * Thrown when a persisted state file does not match the current schema contract.

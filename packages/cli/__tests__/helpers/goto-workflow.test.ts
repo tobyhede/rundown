@@ -47,6 +47,12 @@ jest.unstable_mockModule('@rundown-org/core', () => ({
 // Mock the lifecycle seam factory: buildGotoContext dispatches into the core
 // navigation seam through it (not exercised by these unit tests); mocking the
 // factory keeps this suite off the seam's core-service import graph.
+// The command's target is core's decision (`resolveCommandTarget`, #903); the
+// CLI helper that supplies its settle callable is mocked to the same double.
+jest.unstable_mockModule('../../src/helpers/command-target', () => ({
+  resolveCommandTarget: (ctx: { readonly manager: unknown }, token: unknown) =>
+    mockResolveOwnedRun(ctx.manager as never, token as never),
+}));
 jest.unstable_mockModule('../../src/helpers/lifecycle-seam-factory', () => ({
   buildLifecycleSeam: jest.fn(),
 }));
@@ -193,7 +199,7 @@ describe('buildGotoContext', () => {
   const seam = { resolveRunNavigation } as unknown as RunbookLifecycleCommandService;
   const output = {} as OutputEmitter;
   const state = { id: DEFAULT_RUNBOOK_ID, step: '1', lifecycle: 'running' } as RunbookState;
-  const run = { state, stateVersion: 2 as never, lease: null };
+  const run = { state, stateVersion: 2 as never, lease: null, linkage: null };
 
   beforeEach(() => {
     jest.mocked(buildLifecycleSeam).mockReturnValue({ manager, seam });

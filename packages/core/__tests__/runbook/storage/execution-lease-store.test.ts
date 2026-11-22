@@ -10,6 +10,8 @@ import { ExecutionLeaseHeldError, RunbookStateManager } from '../../../src/runbo
 import { generateOwnerToken, hashRunSecret } from '../../../src/runbook/run-secrets.js';
 import type { RunbookState, Runbook, Step } from '../../../src/runbook/types.js';
 import { makeBaseStep } from '../../helpers/step-factories.js';
+import { generateRunId } from '../../../src/runbook/run-id.js';
+import type { FrameKey } from '../../../src/runbook/targeting.js';
 
 /**
  * The execution lease at the store seam (#902, ADR 0005).
@@ -236,7 +238,7 @@ describe('deleting a run at the version it was read at', () => {
     const outputs = path.join(manager.cwd, '.rundown', 'runs', state.id);
     await fs.mkdir(outputs, { recursive: true });
 
-    expect(await manager.deleteAtVersion(state.id, assertStateVersion(0))).toEqual({
+    expect(await manager.deleteAtVersion(state.id, assertStateVersion(0), [])).toEqual({
       kind: 'deleted',
     });
 
@@ -252,7 +254,7 @@ describe('deleting a run at the version it was read at', () => {
     const outputs = path.join(manager.cwd, '.rundown', 'runs', state.id);
     await fs.mkdir(outputs, { recursive: true });
 
-    expect(await manager.deleteAtVersion(state.id, read!.stateVersion)).toEqual({
+    expect(await manager.deleteAtVersion(state.id, read!.stateVersion, [])).toEqual({
       kind: 'concurrent_modification',
     });
 
@@ -264,8 +266,81 @@ describe('deleting a run at the version it was read at', () => {
     const { manager, state } = await managedRun();
     await manager.delete(state.id);
 
-    expect(await manager.deleteAtVersion(state.id, assertStateVersion(0))).toEqual({
+    expect(await manager.deleteAtVersion(state.id, assertStateVersion(0), [])).toEqual({
       kind: 'missing',
+    });
+  });
+
+  describe('with Inline Children (#903)', () => {
+    // Deleting a run deletes its Inline Children with it, so the delete is
+    // conditional on every run it removes: a lease taken on any of them after
+    // the caller's read refuses the whole delete.
+    async function inlineChild(
+      manager: RunbookStateManager,
+      parentRunId: RunbookState['id'],
+    ): Promise<RunbookState> {
+      return manager.createInlineChild(
+        { source: 'project', path: 'child.runbook.md' },
+        mockRunbook,
+        {
+          runId: generateRunId(),
+          runbookPath: 'child.runbook.md',
+          linkage: {
+            kind: 'inline',
+            parentRunId,
+            parentStep: '1.1',
+            parentFrameKey: '1|' as FrameKey,
+            parentEntry: 1,
+          },
+        },
+        // The store is under test, not the machine: insert the draft as is.
+        (draft) => Promise.resolve(draft),
+      );
+    }
+
+    it('deletes the run, its inline chain and their outputs when every version still holds', async () => {
+      const { manager, state } = await managedRun();
+      const child = await inlineChild(manager, state.id);
+      const grandchild = await inlineChild(manager, child.id);
+      const outputs = path.join(manager.cwd, '.rundown', 'runs', grandchild.id);
+      await fs.mkdir(outputs, { recursive: true });
+
+      expect(
+        await manager.deleteAtVersion(state.id, assertStateVersion(0), [
+          { runId: child.id, stateVersion: assertStateVersion(0) },
+          { runId: grandchild.id, stateVersion: assertStateVersion(0) },
+        ]),
+      ).toEqual({ kind: 'deleted' });
+
+      expect(await manager.listRunIds()).toEqual([]);
+      await expect(fs.stat(outputs)).rejects.toMatchObject({ code: 'ENOENT' });
+    });
+
+    it('refuses concurrent_modification, deleting nothing, when an inline descendant took a lease after the read', async () => {
+      const { manager, state } = await managedRun();
+      const child = await inlineChild(manager, state.id);
+      const acquired = await manager.acquireExecutionLease(child.id, assertStateVersion(0), HOLDER);
+      if (acquired.kind !== 'acquired') throw new Error('setup: lease not acquired');
+
+      expect(
+        await manager.deleteAtVersion(state.id, assertStateVersion(0), [
+          { runId: child.id, stateVersion: assertStateVersion(0) },
+        ]),
+      ).toEqual({ kind: 'concurrent_modification' });
+
+      expect((await manager.loadWithVersion(child.id))?.lease).toEqual(acquired.lease);
+      expect((await manager.listRunIds()).length).toBe(2);
+    });
+
+    it('refuses concurrent_modification, deleting nothing, when an inline descendant the caller did not read exists', async () => {
+      const { manager, state } = await managedRun();
+      await inlineChild(manager, state.id);
+
+      expect(await manager.deleteAtVersion(state.id, assertStateVersion(0), [])).toEqual({
+        kind: 'concurrent_modification',
+      });
+
+      expect((await manager.listRunIds()).length).toBe(2);
     });
   });
 });

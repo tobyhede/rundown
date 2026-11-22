@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 export declare const runIdBrand: unique symbol;
 
 /** Canonical persisted Rundown run identifier. */
@@ -68,4 +70,13 @@ export function assertRunId(value: string): RunId {
     throw new InvalidRunIdError(value);
   }
   return value;
+}
+
+/**
+ * Generate a concrete Rundown run identifier.
+ *
+ * @returns Run ID in canonical `rd_<32 lowercase hex>` form
+ */
+export function generateRunId(): RunId {
+  return assertRunId(`${RUN_ID_PREFIX}${randomBytes(16).toString('hex')}`);
 }

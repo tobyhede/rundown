@@ -5,8 +5,12 @@ import {
   CLIErrorCodes,
   CONCURRENT_MODIFICATION_CODE,
   RunbookStateManager,
+  hasRunningInlineAncestor,
   hashRunSecret,
-  refuseUnderLease,
+  planRunDeletions,
+  refuseDeletionUnderLease,
+  type RunDeletion,
+  type VersionedRunState,
 } from '@rundown-org/core';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -40,8 +44,15 @@ interface PruneOptions {
   text?: boolean;
 }
 
-/** Reason a selected run was kept rather than deleted. */
+/** Reason a selected running run was kept: only its Owner Token deletes it. */
 const TOKEN_REQUIRED_REASON = 'token required';
+/**
+ * Reason a finished Inline Child was kept: its running parent has not finished
+ * with it, and it goes only with its root.
+ */
+const PARENT_RUNNING_REASON = 'parent running';
+/** Reason a finished run was kept: an attempt in its inline chain is In Progress. */
+const EXECUTION_IN_PROGRESS_REASON = 'execution in progress';
 
 /**
  * Registers the 'prune' command for removing run state.
@@ -50,9 +61,13 @@ const TOKEN_REQUIRED_REASON = 'token required';
  * before. A RUNNING run is deleted only when `--token` names it — one run per
  * invocation, proven by its Owner Token. `--active` / `--all` without a token
  * skip running runs and report them retained with reason `token required`.
- * The token's run is subject to core's execution-lease rule for `prune`: In
- * Progress refuses the whole invocation `EXECUTION_IN_PROGRESS` with nothing
- * deleted; Interrupted lets the owner delete it.
+ * Deleting a run deletes its Inline Children with it (#903), so core's
+ * execution-lease rule for `prune` covers the whole inline chain: In Progress
+ * anywhere in the token's chain refuses the whole invocation
+ * `EXECUTION_IN_PROGRESS` with nothing deleted, and keeps a filter-selected
+ * run (`retained: "execution in progress"`); Interrupted lets the delete
+ * proceed. A finished Inline Child whose parent is still running is never
+ * deleted on its own (`retained: "parent running"`); it goes with its root.
  * Invalid persisted rows prune with `--inactive` / `--all`. `--token` is
  * parsed by the shared token option, so `--run` (a read-only selector) is
  * refused `INVALID_SYNTAX` here as on every other mutating command.
@@ -82,7 +97,7 @@ export function registerPruneCommand(program: Command): void {
           const token = parsedToken.kind === 'present' ? parsedToken.token : undefined;
 
           const manager = new RunbookStateManager(cwd);
-          const states = await manager.list();
+          const runs = await manager.listWithVersion();
           const allIds = await listAllRunIds(cwd);
 
           // The one running run the token names, if any.
@@ -90,18 +105,6 @@ export function registerPruneCommand(program: Command): void {
             token === undefined ? null : await manager.findByOwnerTokenHash(hashRunSecret(token));
           if (token !== undefined && owned === null) {
             output.error(UNKNOWN_TOKEN_MESSAGE, CLIErrorCodes.UNKNOWN_TOKEN);
-            output.flush();
-            process.exitCode = 1;
-            return;
-          }
-          // Core's lease rule decides whether the owner may delete the run. A
-          // refusal stops the whole invocation before anything is deleted.
-          const leaseRefusal =
-            owned === null
-              ? undefined
-              : refuseUnderLease(owned.state.id, owned.state, owned.lease, 'prune');
-          if (leaseRefusal !== undefined) {
-            renderExecutionLeaseRefusal(output, leaseRefusal);
             output.flush();
             process.exitCode = 1;
             return;
@@ -122,38 +125,64 @@ export function registerPruneCommand(program: Command): void {
           const pruneActive = options.all ?? options.active ?? false;
           const pruneInactive = options.all ?? options.inactive ?? false;
 
-          const toDelete: typeof states = [];
-          const retained: typeof states = [];
-          for (const state of states) {
-            const lifecycle = state.lifecycle ?? 'running';
-            if (state.id === ownedRunId) {
-              toDelete.push(state);
-              continue;
-            }
+          const selected: VersionedRunState[] = owned === null ? [] : [owned];
+          const retained: { readonly run: VersionedRunState; readonly reason: string }[] = [];
+          for (const run of runs) {
+            if (run.state.id === ownedRunId) continue;
+            const lifecycle = run.state.lifecycle ?? 'running';
+            let chosen: boolean;
             switch (lifecycle) {
               case 'completed':
-                if (pruneCompleted) toDelete.push(state);
+                chosen = pruneCompleted;
                 break;
               case 'stopped':
-                if (pruneStopped) toDelete.push(state);
+                chosen = pruneStopped;
                 break;
               case 'abandoned':
-                if (pruneInactive) toDelete.push(state);
+                chosen = pruneInactive;
                 break;
               case 'running':
                 // A running run is deleted only under its own token.
-                if (pruneActive) retained.push(state);
+                if (pruneActive) retained.push({ run, reason: TOKEN_REQUIRED_REASON });
+                chosen = false;
                 break;
               default: {
                 const _exhaustive: never = lifecycle;
                 throw new Error(`Unhandled lifecycle: ${String(_exhaustive)}`);
               }
             }
+            if (!chosen) continue;
+            // A finished Inline Child its running parent has not finished with
+            // goes only with its root (core's linkage rule).
+            if (hasRunningInlineAncestor(run, runs)) {
+              retained.push({ run, reason: PARENT_RUNNING_REASON });
+            } else {
+              selected.push(run);
+            }
+          }
+
+          // Each delete removes its root's Inline Children too, so core's lease
+          // rule applies to every run in the chain. For the token's run a
+          // refusal stops the whole invocation before anything is deleted; a
+          // run selected by filter is kept and reported instead.
+          const deletions: RunDeletion[] = [];
+          for (const deletion of planRunDeletions(selected, runs)) {
+            const refusal = refuseDeletionUnderLease(deletion);
+            if (refusal === undefined) {
+              deletions.push(deletion);
+            } else if (deletion.root.state.id === ownedRunId) {
+              renderExecutionLeaseRefusal(output, refusal);
+              output.flush();
+              process.exitCode = 1;
+              return;
+            } else {
+              retained.push({ run: deletion.root, reason: EXECUTION_IN_PROGRESS_REASON });
+            }
           }
 
           // Invalid rows (skipped by list() due to schema refusal) are invisible
           // to list() but can still be deleted: prune with --inactive or --all.
-          const loadedIds = new Set<string>(states.map((s) => s.id));
+          const loadedIds = new Set<string>(runs.map((run) => run.state.id));
           const invalidIds = allIds.filter((id) => !loadedIds.has(id));
           const invalidToDelete = pruneInactive ? invalidIds : [];
 
@@ -166,24 +195,26 @@ export function registerPruneCommand(program: Command): void {
           };
 
           const rows: PruneRow[] = [
-            ...toDelete.map((state) => ({
-              id: state.id,
-              runbook: state.runbook.path,
-              title: state.title,
-              _status: getStatus(state),
-            })),
+            ...deletions
+              .flatMap((deletion) => [deletion.root, ...deletion.inlineDescendants])
+              .map(({ state }) => ({
+                id: state.id,
+                runbook: state.runbook.path,
+                title: state.title,
+                _status: getStatus(state),
+              })),
             ...invalidToDelete.map((id) => ({
               id,
               runbook: '(invalid)',
               title: undefined,
               _status: 'invalid',
             })),
-            ...retained.map((state) => ({
+            ...retained.map(({ run: { state }, reason }) => ({
               id: state.id,
               runbook: state.runbook.path,
               title: state.title,
               _status: getStatus(state),
-              _retained: TOKEN_REQUIRED_REASON,
+              _retained: reason,
             })),
           ];
 
@@ -218,29 +249,34 @@ export function registerPruneCommand(program: Command): void {
           }
 
           if (!options.dryRun) {
-            // The token's run goes first, conditional on the version whose lease
-            // was just checked: a write or a newly taken lease since that read
-            // refuses the whole invocation with nothing deleted. Never retried.
-            if (owned !== null) {
-              const deleted = await manager.deleteAtVersion(owned.state.id, owned.stateVersion);
-              if (deleted.kind !== 'deleted') {
-                if (deleted.kind === 'concurrent_modification') {
-                  output.error(
-                    `Run ${owned.state.id} changed after prune read it; nothing was deleted. Re-read it with \`rundown status --run ${owned.state.id}\` and re-issue the prune if it still applies.`,
-                    CONCURRENT_MODIFICATION_CODE,
-                    { runId: owned.state.id },
-                  );
-                } else {
-                  output.error(UNKNOWN_TOKEN_MESSAGE, CLIErrorCodes.UNKNOWN_TOKEN);
-                }
-                output.flush();
-                process.exitCode = 1;
-                return;
+            // The token's run goes first (it heads `selected`). Every delete is
+            // one conditional write on the versions just read, of its root and
+            // of each inline descendant: a write, a newly taken lease or a newly
+            // launched child since that read refuses it. Never retried.
+            for (const { root, inlineDescendants } of deletions) {
+              const deleted = await manager.deleteAtVersion(
+                root.state.id,
+                root.stateVersion,
+                inlineDescendants.map((run) => ({
+                  runId: run.state.id,
+                  stateVersion: run.stateVersion,
+                })),
+              );
+              if (deleted.kind === 'deleted') continue;
+              const isOwned = root.state.id === ownedRunId;
+              if (deleted.kind === 'missing' && !isOwned) continue;
+              if (deleted.kind === 'concurrent_modification') {
+                output.error(
+                  `Run ${root.state.id} or one of its inline children changed after prune read it, so it was not deleted. Re-read it with \`rundown status --run ${root.state.id}\` and re-issue the prune if it still applies.`,
+                  CONCURRENT_MODIFICATION_CODE,
+                  { runId: root.state.id },
+                );
+              } else {
+                output.error(UNKNOWN_TOKEN_MESSAGE, CLIErrorCodes.UNKNOWN_TOKEN);
               }
-            }
-            for (const state of toDelete) {
-              if (state.id === ownedRunId) continue;
-              await manager.delete(state.id);
+              output.flush();
+              process.exitCode = 1;
+              return;
             }
             for (const id of invalidToDelete) {
               await manager.delete(id);

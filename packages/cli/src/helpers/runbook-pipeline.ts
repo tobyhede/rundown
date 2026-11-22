@@ -164,9 +164,9 @@ export type RunbookStartFailure =
   | {
       /**
        * Core refused to create the run: the runbook composes other runbooks
-       * (a `DELEGATE` or runbook-list substep), which this build does not run.
-       * No run row was written. Inline composition returns in #903 and
-       * delegation in #904.
+       * in a form this build does not run (a `DELEGATE` substep, or an inline
+       * substep listing more than one runbook). No run row was written.
+       * Delegation returns in #904.
        */
       ok: false;
       reason: 'composition-unsupported';
@@ -379,17 +379,19 @@ function runbookNotFound(file: string): LoadAndParseFailure {
 }
 
 /** When the composition this build refuses comes back, for refusal and warning text. */
-export const COMPOSITION_RETURNS = 'Inline composition returns in #903 and delegation in #904.';
+export const COMPOSITION_RETURNS = 'Delegation returns in #904.';
 
 /**
- * Describe a runbook's composing substeps, shared by the `rundown run`
- * refusal and the `rundown check` warning so the two never disagree.
+ * Describe a runbook's unsupported composing substeps, shared by the
+ * `rundown run` refusal and the `rundown check` warning so the two never
+ * disagree. Inline runbook-list substeps run (#903); only a `DELEGATE`
+ * substep, or an inline substep listing more than one runbook, is named.
  *
  * @param composing - Qualified substep ids from `findUnsupportedComposition`
  * @returns A sentence fragment (no trailing period) naming those substeps
  */
 export function describeUnsupportedComposition(composing: readonly string[]): string {
-  return `Runbook composes other runbooks at ${composing.join(', ')}; this build runs standalone runbooks only`;
+  return `Runbook composes other runbooks at ${composing.join(', ')} in a form this build does not run (a DELEGATE substep, or an inline substep listing more than one runbook)`;
 }
 
 /** Request for preparing an already-resolved runbook identity. */

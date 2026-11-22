@@ -48,11 +48,14 @@ together to describe the intent.
 | `variables/`       | Template variables, built-ins, and context              |
 | `artifacts/`       | Artifact capture and resolution                         |
 | `context-passing/` | OUTPUTS directives and frontmatter `outputs:`/`inputs:` |
+| `composition/`     | Inline child runbooks driven by the parent's token      |
 
-The `composition/`, `delegation/`, `agent-dispatch/`, and `stash-pop/` fixture
-directories were removed with the one-writer rebuild (#901). Inline composition
-fixtures return in #903 and delegation fixtures in #904; stash/pop has no
-replacement.
+`composition/` holds the Inline Child fixtures (#903): parents whose
+runbook-list substeps run their children on the parent's Owner Token, including
+a two-deep chain, GOTO re-entry and FOR + inline. The `delegation/`,
+`agent-dispatch/`, and `stash-pop/` fixture directories were removed with the
+one-writer rebuild (#901); delegation fixtures return in #904, and stash/pop has
+no replacement.
 
 ## Scenario Command Shape
 

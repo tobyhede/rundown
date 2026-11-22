@@ -54,8 +54,8 @@ Every `SKILL.md` holds two kinds of content. Conversion separates them.
 | Fan-out ("dispatch a subagent per item")                       | `- DELEGATE` steps + delegate-then-collate                                                   |
 | Domain knowledge: rules, syntax, rationale, examples           | **Stays in the skill.** Step 1 says "Invoke and read the `<skill>` skill"; bodies point back |
 
-A parent that composes leaves, or a `- DELEGATE` fan-out, is refused by
-`rundown run` until #903 / #904; see
+A parent that composes leaves inline runs; a `- DELEGATE` fan-out is refused by
+`rundown run` until #904; see
 [Composition in this build](../writing-runbooks/SKILL.md#composition-in-this-build).
 
 **The primary quality gate is the no-duplication scan.** If a step body is

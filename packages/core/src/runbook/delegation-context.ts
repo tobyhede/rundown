@@ -198,7 +198,7 @@ export function reconstituteContextVars(
  * @returns Frozen context snapshot
  */
 export function buildContextSnapshot(
-  state: DelegationParentState,
+  state: Pick<DelegationParentState, 'step' | 'templateVars' | 'variables' | 'forStack'>,
   substep?: string,
   ancestors?: readonly AncestorSnapshot[],
   options?: {

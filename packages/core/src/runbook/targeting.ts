@@ -1,5 +1,5 @@
 import type { StepPosition } from '../cli/types.js';
-import type { ForContext, RunbookState, SubstepState } from './types.js';
+import type { ChildReservation, ForContext, RunbookState, SubstepState } from './types.js';
 
 /**
  * Sentinel entry value for a frame target that names no specific entry.
@@ -419,4 +419,30 @@ export function upsertSubstepState(
     ...substepStates,
     applySubstepStatePatch({ id: substepId, frameKey, status: 'pending' as const }, patch),
   ];
+}
+
+/**
+ * Record a Current Child reservation on the substep state for `(id, frameKey)`,
+ * appending a pending entry when the frame has none yet.
+ *
+ * Replaces any reservation the entry already carried; every other field and
+ * every other entry is left untouched. Pure.
+ *
+ * @param substepStates - Existing substep states array
+ * @param substepId - Substep the reservation is for
+ * @param frameKey - Frame the reservation is made in
+ * @param child - The reservation
+ * @returns New array with the reservation recorded
+ */
+export function upsertSubstepStateChild(
+  substepStates: readonly SubstepState[],
+  substepId: string,
+  frameKey: FrameKey,
+  child: ChildReservation,
+): readonly SubstepState[] {
+  const existing = findSubstepState(substepStates, substepId, frameKey);
+  if (existing) {
+    return substepStates.map((ss) => (ss === existing ? { ...ss, child } : ss));
+  }
+  return [...substepStates, { id: substepId, frameKey, status: 'pending' as const, child }];
 }

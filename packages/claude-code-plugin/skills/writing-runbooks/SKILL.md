@@ -317,12 +317,7 @@ An H2 `DELEGATE` propagates to its substeps. Delegated targets must resolve to r
 
 ### Composition in this build
 
-Composition is valid syntax, but this build runs standalone runbooks only. A
-runbook with a runbook-list substep (child runbook paths listed in a step body),
-with or without `- DELEGATE`, parses, yet `rundown run` refuses it with
-`RUNBOOK_COMPOSITION_UNSUPPORTED` and creates no run. Inline composition returns
-in #903 and delegation in #904. Until then, make each leaf runnable on its own,
-and tell the user that a composing parent cannot run yet.
+A runbook-list substep without `- DELEGATE` (child runbook paths listed in a step body, one per substep) runs its child inline: the child is a separate run driven by the parent's Owner Token, and its result and frontmatter `OUTPUTS` flow back into the parent substep. List exactly one runbook per H3 substep; the step-level list shorthand already makes one substep per entry. `- DELEGATE` parses, but `rundown run` refuses a runbook that uses it with `RUNBOOK_COMPOSITION_UNSUPPORTED` and creates no run (delegation returns in #904); an inline child whose runbook delegates is refused the same way when it launches. Until then, keep delegating leaves runnable on their own, and tell the user that a delegating parent cannot run yet.
 
 ## FOR Loops
 
@@ -447,7 +442,7 @@ Decide which skills the bootstrap skill references by what the runbook contains:
 | If the runbook… | Reference |
 |-----------------|-----------|
 | (always) | [running-runbooks](../running-runbooks/SKILL.md) — the execution protocol |
-| composes other runbooks (a runbook-list substep or `- DELEGATE`) | No skill: state in the `<important>` block that `rundown run` refuses it until #903 / #904 (see [Composition in this build](#composition-in-this-build) and the [planning](../planning/SKILL.md) skill) |
+| composes other runbooks with `- DELEGATE` | No skill: state in the `<important>` block that `rundown run` refuses it until #904 (see [Composition in this build](#composition-in-this-build) and the [planning](../planning/SKILL.md) skill); a runbook that composes children inline (no `- DELEGATE`) runs and needs no such note |
 | writes, reviews, or executes a plan (plan pipeline) | [writing-plans](../writing-plans/SKILL.md) / [executing-plans](../executing-plans/SKILL.md) |
 
 Extend this table as new craft skills are added. The rule: reference the skill
