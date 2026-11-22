@@ -8,6 +8,7 @@ import {
   RunbookStateManager,
   type ClaimTicket,
 } from '@rundown-org/core';
+import { collectAgentId, resolveAgentIdOption } from '../helpers/agent-id-option.js';
 import { getCwd } from '../helpers/context.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
 import { OutputEmitter } from '../services/output-emitter.js';
@@ -35,9 +36,12 @@ import {
  * on its `runbook_started` event, and the child's Run Progression starts
  * exactly as `rundown run`'s does. A second claim of the same ticket is
  * refused `ALREADY_CLAIMED`. `--agent-id` records the claiming agent on the
- * child, the identity a later `release` is matched against. The agent passes
- * it itself, and must pass the same id to `release`: no hook stamps it yet
- * (#907).
+ * child, the identity a later `release` is matched against; given more than
+ * once it is refused `INVALID_SYNTAX`. In Claude Code the plugin's Bash hook
+ * stamps it on a plain `rundown claim` from the sub-agent's `agent_id`
+ * (#907), and a claim without one is refused `AGENT_ID_REQUIRED` there
+ * (`CLAUDECODE=1`) rather than recorded without an agent. Elsewhere — a
+ * person, the scenario harness, Codex, MCP — it is passed by hand.
  *
  * @param program - Commander program instance to register the command on
  */
@@ -47,9 +51,13 @@ export function registerClaimCommand(program: Command): void {
     .description(
       'Claim a delegated child by its Claim Ticket and start it (prints its owner token)',
     )
-    .option('--agent-id <id>', 'Identity of the claiming agent, recorded on the child')
+    .option(
+      '--agent-id <id>',
+      'Identity of the claiming agent, recorded on the child (once)',
+      collectAgentId,
+    )
     .option('--text', 'Output as human-readable text')
-    .action(async (rawTicket: string, options: { agentId?: string; text?: boolean }) => {
+    .action(async (rawTicket: string, options: { agentId?: string[]; text?: boolean }) => {
       await withErrorHandling(
         async () => {
           const output = new OutputEmitter({ text: options.text, command: 'claim' });
@@ -67,12 +75,8 @@ export function registerClaimCommand(program: Command): void {
             process.exitCode = 1;
             return;
           }
-          if (options.agentId?.trim() === '') {
-            output.error('--agent-id must not be empty.', 'INVALID_SYNTAX');
-            output.flush();
-            process.exitCode = 1;
-            return;
-          }
+          const agent = resolveAgentIdOption('claim', options.agentId, output);
+          if (agent === undefined) return;
 
           const cwd = getCwd();
           const manager = new RunbookStateManager(cwd);
@@ -87,7 +91,7 @@ export function registerClaimCommand(program: Command): void {
               loadSteps: (state) => getRunbookFromState(state, cwd),
               prepareChildRun: createChildRunPreparer(cwd, output),
             },
-            { ticket, ...(options.agentId !== undefined ? { agentId: options.agentId } : {}) },
+            { ticket, agent },
           );
           if (outcome.kind === 'refused') {
             output.error(outcome.message, outcome.code);

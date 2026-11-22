@@ -3,9 +3,8 @@ import type { HookInput } from '../../src/shared/index.js';
 import type { handleDelegationDispatch } from '../../src/workflow/hooks/delegation-dispatch.js';
 
 // The handler is mocked so this file pins the gate's PLUMBING (how a handler
-// result maps onto a GateResult). The real handler is inert today; its allow
-// behaviour is pinned end-to-end in workflow/hooks/inert-hooks.test.ts and the
-// dispatch contract tests.
+// decision maps onto a GateResult). The real handler's marker detection is
+// pinned in workflow/hooks/delegation-dispatch.test.ts and the contract tests.
 const mockHandleDelegationDispatch = jest.fn() as jest.MockedFunction<
   typeof handleDelegationDispatch
 >;
@@ -21,79 +20,47 @@ describe('on-delegation-dispatch gate', () => {
     jest.clearAllMocks();
   });
 
-  it('returns the inert allow (strictly empty) when the handler returns empty', async () => {
-    mockHandleDelegationDispatch.mockResolvedValue({});
+  it('returns a strictly empty allow for an untouched dispatch', async () => {
+    mockHandleDelegationDispatch.mockReturnValue({ kind: 'untouched' });
 
-    const input: HookInput = {
-      hook_event_name: 'PreToolUse',
-      cwd: '/test',
-      tool_name: 'Task',
-    };
+    const input: HookInput = { hook_event_name: 'PreToolUse', cwd: '/test', tool_name: 'Agent' };
 
-    const result = await execute(input);
     // toStrictEqual so an `{ additionalContext: undefined }` leak is caught.
-    expect(result).toStrictEqual({});
-    expect(result).not.toHaveProperty('decision');
-  });
-
-  it('returns additionalContext when handler returns context', async () => {
-    mockHandleDelegationDispatch.mockResolvedValue({
-      context: '## Delegation Context\nrundown claim rdt_ABC123',
-    });
-
-    const input: HookInput = {
-      hook_event_name: 'PreToolUse',
-      cwd: '/test',
-      tool_name: 'Task',
-    };
-
-    const result = await execute(input);
-    expect(result).toEqual({
-      additionalContext: '## Delegation Context\nrundown claim rdt_ABC123',
-    });
-  });
-
-  it('passes Agent tool through to handler', async () => {
-    mockHandleDelegationDispatch.mockResolvedValue({});
-
-    const input: HookInput = {
-      hook_event_name: 'PreToolUse',
-      cwd: '/test',
-      tool_name: 'Agent',
-    };
-
-    const result = await execute(input);
-    expect(result).toStrictEqual({});
+    expect(await execute(input)).toStrictEqual({});
     expect(mockHandleDelegationDispatch).toHaveBeenCalledWith(input);
   });
 
-  it('returns block decision when handler returns violation', async () => {
-    mockHandleDelegationDispatch.mockResolvedValue({
-      violation: 'Ticket cancelled',
+  it('returns the rewritten prompt as updatedInput, keeping the other tool-input fields', async () => {
+    mockHandleDelegationDispatch.mockReturnValue({
+      kind: 'claim',
+      prompt: 'Work.\n\n## Rundown delegation\nrundown claim rdt_ABC123',
     });
 
-    const input: HookInput = {
+    const result = await execute({
       hook_event_name: 'PreToolUse',
       cwd: '/test',
       tool_name: 'Task',
-    };
+      tool_input: { prompt: 'Work.', description: 'review', subagent_type: 'general-purpose' },
+    });
 
-    const result = await execute(input);
     expect(result).toEqual({
-      decision: 'block',
-      reason: 'Ticket cancelled',
+      updatedInput: {
+        prompt: 'Work.\n\n## Rundown delegation\nrundown claim rdt_ABC123',
+        description: 'review',
+        subagent_type: 'general-purpose',
+      },
     });
   });
 
-  it('propagates handler errors to the dispatcher fail-open backstop', async () => {
-    mockHandleDelegationDispatch.mockRejectedValue(new Error('unexpected'));
+  it('returns a block decision for a blocked dispatch', async () => {
+    mockHandleDelegationDispatch.mockReturnValue({ kind: 'blocked', reason: 'Two tickets' });
 
-    const input: HookInput = {
+    const result = await execute({
       hook_event_name: 'PreToolUse',
       cwd: '/test',
       tool_name: 'Task',
-    };
+    });
 
-    await expect(execute(input)).rejects.toThrow('unexpected');
+    expect(result).toEqual({ decision: 'block', reason: 'Two tickets' });
   });
 });

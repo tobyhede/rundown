@@ -213,9 +213,11 @@ Usage: rundown status [options]
 Show run state (all runs, or one run with --run)
 
 Options:
-  --run <runId>  Show one run in detail
-  --text         Output as human-readable text
-  -h, --help     display help for command
+  --run <runId>            Show one run in detail
+  --claimed-by <agent-id>  List the delegated children this agent claimed that
+                           are still running and counted
+  --text                   Output as human-readable text
+  -h, --help               display help for command
 ```
 
 ### `rundown stop`
@@ -247,7 +249,7 @@ Claim a delegated child by its Claim Ticket and start it (prints its owner
 token)
 
 Options:
-  --agent-id <id>  Identity of the claiming agent, recorded on the child
+  --agent-id <id>  Identity of the claiming agent, recorded on the child (once)
   --text           Output as human-readable text
   -h, --help       display help for command
 ```
@@ -290,7 +292,7 @@ Usage: rundown release [options] <child-id>
 Abandon a delegated child you claimed but cannot finish (collected as a fail)
 
 Options:
-  --agent-id <id>  Identity of the releasing agent; must match the claim
+  --agent-id <id>  Identity of the releasing agent; must match the claim (once)
   --text           Output as human-readable text
   -h, --help       display help for command
 ```

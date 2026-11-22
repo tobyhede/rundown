@@ -5,6 +5,7 @@ import {
   classifyExecutionLease,
   currentInlineReservation,
   delegationChildrenStatus,
+  delegationsHeldBy,
   RunbookStateManager,
   type CurrentChildStatus,
 } from '@rundown-org/core';
@@ -17,6 +18,7 @@ import {
   buildRunStatus,
 } from '../helpers/status-builder.js';
 import { parseRunOption } from '../helpers/run-option.js';
+import { getRunbookFromState } from '../helpers/runbook-loader.js';
 
 /**
  * Registers the 'status' command for displaying run state.
@@ -24,7 +26,10 @@ import { parseRunOption } from '../helpers/run-option.js';
  * Bare `rundown status` lists every persisted run (id, runbook, lifecycle,
  * position); `--run <id>` shows one run in detail. A run whose step holds the
  * execution lease carries `execution` (In Progress or Interrupted, classified
- * by core). Status is read-only and never renders an Owner Token.
+ * by core). `--claimed-by <agent-id>` lists the Delegations that still hold
+ * that agent — running, claimed under its id, and counted by their parent, as
+ * core decides — which the plugin's SubagentStop gate reads (#907). Status is
+ * read-only and never renders an Owner Token or Claim Ticket.
  *
  * @param program - Commander program instance to register the command on
  */
@@ -33,8 +38,12 @@ export function registerStatusCommand(program: Command): void {
     .command('status')
     .description('Show run state (all runs, or one run with --run)')
     .option('--run <runId>', 'Show one run in detail')
+    .option(
+      '--claimed-by <agent-id>',
+      'List the delegated children this agent claimed that are still running and counted',
+    )
     .option('--text', 'Output as human-readable text')
-    .action(async (options: { run?: string; text?: boolean }) => {
+    .action(async (options: { run?: string; claimedBy?: string; text?: boolean }) => {
       await withErrorHandling(
         async () => {
           const cwd = getCwd();
@@ -43,6 +52,31 @@ export function registerStatusCommand(program: Command): void {
           if (!run.ok) return;
 
           const manager = new RunbookStateManager(cwd);
+
+          if (options.claimedBy !== undefined) {
+            const refusal =
+              options.run !== undefined
+                ? '--claimed-by cannot be combined with --run.'
+                : options.claimedBy.trim() === ''
+                  ? '--claimed-by must not be empty.'
+                  : undefined;
+            if (refusal !== undefined) {
+              output.error(refusal, 'INVALID_SYNTAX');
+              output.flush();
+              process.exitCode = 1;
+              return;
+            }
+            const delegations = await delegationsHeldBy(
+              { manager, loadSteps: (state) => getRunbookFromState(state, cwd) },
+              options.claimedBy,
+            );
+            output.detail(
+              { kind: 'claimed_delegations', agentId: options.claimedBy, delegations },
+              'custom',
+            );
+            output.flush();
+            return;
+          }
 
           if (run.runId !== undefined) {
             const loaded = await manager.loadWithVersion(run.runId);

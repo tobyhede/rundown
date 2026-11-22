@@ -144,6 +144,10 @@ export function runCli(args: string | string[], workspace: TestWorkspace): CliRe
       ...process.env,
       PATH: `${binPath}:${process.env.PATH ?? ''}`,
       CLAUDE_PLUGIN_ROOT: pluginDir,
+      // Run as from a plain shell, not the Claude Code session running the
+      // tests (#907): CLAUDECODE=1 refuses an unnamed claim.
+      CLAUDECODE: undefined,
+      CLAUDE_CODE_ENTRYPOINT: undefined,
       NO_COLOR: '1',
       FORCE_COLOR: undefined, // Prevent inheritance - avoids NO_COLOR warning
       RUNDOWN_LOG: '0',
@@ -194,6 +198,10 @@ export async function runCliInProcess(
     env: {
       PATH: `${binPath}:${process.env.PATH ?? ''}`,
       CLAUDE_PLUGIN_ROOT: pluginDir,
+      // Run as from a plain shell, not the Claude Code session running the
+      // tests (#907): CLAUDECODE=1 refuses an unnamed claim.
+      CLAUDECODE: undefined,
+      CLAUDE_CODE_ENTRYPOINT: undefined,
       ...(options.env ?? {}),
     },
     ...(options.human !== undefined ? { human: options.human } : {}),

@@ -105,9 +105,11 @@ ownership model (see
   Token.
 - **Agent id** — `claim` records `agentId` on the child; `release` takes the
   child's run id as `runId` and the same `agentId`, which the CLI matches
-  against the one the claim recorded. The agent supplies it on both calls: no
-  hook stamps it yet (#907). It takes no token, and its authority covers that
-  one write.
+  against the one the claim recorded. The agent supplies it on both calls: the
+  MCP surface runs no hook (the Claude Code plugin's Bash hook stamps only the
+  `rundown` CLI), so an MCP client — such as a Codex sub-agent — passes one
+  stable id of its own. It takes no token, and its authority covers that one
+  write.
 - **Run selector** — `runId` (`rd_<32 hex>`), accepted by `status` and forwarded
   as `--run <runId>`, selects a run for reading. It is never mutation authority:
   `release` takes a `runId` only to name the child its agent id authorizes.

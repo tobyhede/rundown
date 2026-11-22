@@ -7,8 +7,8 @@
  * the lock file is never visible half-written — with retry-jitter and
  * stale-lock reclaim.
  *
- * Used by the artifact-manifest append paths (sync and async), by the sql.js
- * durable-replacement lock, and by the plugin's session lock. No run or session
+ * Used by the artifact-manifest append paths (sync and async) and by the
+ * sql.js durable-replacement lock — the only two consumers. No run or session
  * state is file-locked any more — it commits through SQLite transactions and
  * execution leases, and the domain locks that used to fence it are gone.
  *
@@ -62,8 +62,8 @@ export function isLockContent(value: unknown): value is LockContent {
 
 /**
  * Thrown when {@link acquireFileLock} cannot acquire a lock within
- * {@link LOCK_DEADLINE_MS}. Subclasses (e.g. `PluginSessionLockTimeoutError`)
- * let callers preserve a typed error contract while reusing this primitive.
+ * {@link LOCK_DEADLINE_MS}. A caller may subclass it to keep a typed error
+ * contract of its own while reusing this primitive.
  */
 export class FileLockTimeoutError extends Error {
   readonly lockFile: string;

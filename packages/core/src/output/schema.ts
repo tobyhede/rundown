@@ -37,6 +37,7 @@ export {
   // Action schemas
   ActionResponseSchema,
   StatusResponseSchema,
+  ClaimedDelegationsResponseSchema,
   ExecutionStatusSchema,
   ParentLinkStatusSchema,
   CurrentChildStatusSchema,

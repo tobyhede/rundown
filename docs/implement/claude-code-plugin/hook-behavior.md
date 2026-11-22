@@ -10,14 +10,14 @@ context engine. For the security rationale behind this design, see
 
 ## Overview
 
-The plugin registers exactly **two** native Claude Code hook events in
-`hooks/hooks.json`, both routed to the single CLI entrypoint (`dist/cli.js`)
-over stdin:
+The plugin registers three native Claude Code hook routes in `hooks/hooks.json`,
+all sent to the single CLI entrypoint (`dist/cli.js`) over stdin:
 
-| Hook           | Matcher       | Purpose                             |
-| -------------- | ------------- | ----------------------------------- |
-| `PreToolUse`   | `Agent\|Task` | Delegation dispatch (Agent/Task)    |
-| `SubagentStop` | `.*`          | Enforce explicit delegation closure |
+| Hook           | Matcher       | Purpose                                                     |
+| -------------- | ------------- | ----------------------------------------------------------- |
+| `PreToolUse`   | `Agent\|Task` | Claim Ticket dispatch: append the claim instructions        |
+| `PreToolUse`   | `Bash`        | Stamp `--agent-id` on plain claim and release commands      |
+| `SubagentStop` | `.*`          | Hold a sub-agent that still holds a claimed delegated child |
 
 There is no other hook surface. The plugin's only CLI mode is native hook
 dispatch over stdin — there are no `session`, `log-path`, or `log-dir`
@@ -27,16 +27,19 @@ subcommands.
 
 The router lives in `src/dispatcher.ts`: a small, typed function that receives
 the already-parsed `HookInput` from the CLI layer (`src/cli.ts` reads and
-validates stdin, then calls `dispatch(input)`) and routes it to one of two fixed
-gates. It does not read stdin, project config, inject context files, synthesize
-lifecycle events, or execute shell commands.
+validates stdin, then calls `dispatch(input)`) and routes it to one of three
+fixed gates. It does not read project config, inject context files, synthesize
+lifecycle events, or execute shell commands. The Bash gate is imported
+statically and loads nothing beyond a string prefix; the two gates that need
+`@rundown-org/core` are imported lazily, so a Bash call never loads core.
 
-The two gates live in `src/gates/`:
+The gates live in `src/gates/`:
 
-| Gate                     | Fires on                        | Behavior                                                                                                                                                                              |
-| ------------------------ | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `on-delegation-dispatch` | `PreToolUse` for `Agent`/`Task` | Detects delegation tokens in the subagent prompt and injects claim instructions.                                                                                                      |
-| `on-subagent-stop`       | `SubagentStop`                  | Resolves delegated child completion. **Fails closed:** if it cannot determine closure state (e.g. a session-I/O error), it returns a blocking decision rather than allowing the stop. |
+| Gate                     | Fires on                        | Behavior                                                                                                                                                                                                                                                                                                                                                      |
+| ------------------------ | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `on-delegation-dispatch` | `PreToolUse` for `Agent`/`Task` | Finds the `RD_CLAIM_TICKET=<ticket>` marker line and appends the claim instructions to the prompt. Several tickets, or any line naming `RD_CLAIM_TICKET` that is not an exact marker, block the dispatch.                                                                                                                                                     |
+| `on-bash-command`        | `PreToolUse` for `Bash`         | Rewrites a `rundown claim` / `rundown release` it reads with confidence to carry `--agent-id '<agent_id>'` (removing any typed), and denies such a claim with no `agent_id` (`CLAIM_OUTSIDE_SUBAGENT`). Every other command, including one it cannot read, passes byte for byte; the CLI refuses an unstamped claim inside Claude Code (`AGENT_ID_REQUIRED`). |
+| `on-subagent-stop`       | `SubagentStop`                  | Asks `rundown status --claimed-by <agent_id>` in `CLAUDE_PROJECT_DIR` and in the hook's `cwd`, and blocks while a claimed child is running and counted. **Fails closed:** if the CLI cannot answer, it returns a blocking decision rather than allowing the stop.                                                                                             |
 
 ## Runbook Launch
 
@@ -47,15 +50,12 @@ frontmatter scanning in the hook path.
 
 ## Surviving Repo Operations
 
-Two narrow, intentional operations still touch the project directory, both part
-of the delegation program and free of any shell-injection surface:
-
-- `rundown status` is spawned via `execFileSync` with an argv array (no shell),
-  best-effort, to enrich delegation context.
-- The plugin reads/writes `<repo>/.claude/session/state.json` to track active
-  delegation tokens. This file is schema-validated on read, reinitialized if
-  corrupt, and only ever stores token _hashes_ that are compared — never
-  executed or echoed back as instructions.
+One narrow, intentional operation touches the project directory, free of any
+shell-injection surface: the SubagentStop gate spawns
+`rundown status --claimed-by` via `execFileSync` with an argv array (no shell),
+and only where a Rundown store already exists. The plugin keeps no state of its
+own: the `.claude/session/state.json` session file and its lock were deleted in
+#907.
 
 ## What Was Removed
 
@@ -78,5 +78,7 @@ The following were part of an earlier, broader hook engine and have been removed
 - The delegated-bash guard (`PreToolUse` for `Bash`) — removed. It
   re-implemented core logic non-authoritatively: core's
   `resolveTransitionTarget` already refuses a bare `rundown pass`/`rundown fail`
-  while the parent run has open delegated children. The `PreToolUse` matcher
-  narrowed from `Agent|Task|Bash` to `Agent|Task`.
+  while the parent run has open delegated children. The `Bash` matcher returned
+  in #907 for the agent-id stamp only, which decides nothing itself.
+- The plugin session file (`.claude/session/state.json`) and `PluginSessionLock`
+  — removed in #907.

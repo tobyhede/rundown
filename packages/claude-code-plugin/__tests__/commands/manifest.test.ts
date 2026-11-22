@@ -63,20 +63,20 @@ describe('Plugin manifest surface', () => {
       >;
     };
 
-    // The PreToolUse matcher pins delegation entrypoints (Agent|Task); the
-    // Bash-guard matcher is owned by issue #470 and is intentionally absent here.
+    // PreToolUse pins the delegation dispatch (Agent|Task) and the Bash hook
+    // that stamps --agent-id on rundown claim / release (#907).
     expect(Object.keys(hooksManifest.hooks).sort()).toEqual(['PreToolUse', 'SubagentStop']);
-    expect(hooksManifest.hooks.PreToolUse).toEqual([
-      {
-        matcher: 'Agent|Task',
+    expect(hooksManifest.hooks.PreToolUse).toEqual(
+      ['Agent|Task', 'Bash'].map((matcher) => ({
+        matcher,
         hooks: [
           {
             type: 'command',
             command: 'node "${CLAUDE_PLUGIN_ROOT}/dist/cli.js"',
           },
         ],
-      },
-    ]);
+      })),
+    );
     expect(hooksManifest.hooks.SubagentStop).toEqual([
       {
         matcher: '.*',

@@ -244,8 +244,8 @@ return await doWork(); // a failed release can never mask this committed result 
 `packages/core/src/runbook/file-lock.ts` are the underlying primitives;
 `heldLock` / `heldLockSync` (returning `ScopedLock` / `ScopedLockSync`) are the
 consumer-facing wrappers that own the best-effort, non-masking release policy.
-The artifact manifest and the sql.js driver call them directly;
-`PluginSessionLock` re-exposes them as `scope()` / `held()`.
+The artifact manifest and the sql.js driver call them directly; they are the
+only consumers.
 
 - **Lock mechanism:** The owner content is written to a unique temp file, which
   is then `fs.link()`ed into place (`atomicCreateLock` in `file-lock.ts`).
@@ -253,8 +253,7 @@ The artifact manifest and the sql.js driver call them directly;
   visible half-written. Do not use `open('wx')`: it exposes an empty file that a
   concurrent stale check reclaims from a live holder.
 - **Lock paths:** `.rundown/locks/.rd-<contextId>.manifest.lock` (artifact
-  manifest), `<dbPath>.lock` (sql.js driver), and
-  `.claude/session/locks/state.lock` (`PluginSessionLock`).
+  manifest) and `<dbPath>.lock` (sql.js driver).
 - **Stale detection:** Kill signal check (`kill(pid, 0)`) — never age-based
   expiration
 - **Retry:** Jittered backoff (50–100ms) bounded to 5 seconds
@@ -264,14 +263,14 @@ The artifact manifest and the sql.js driver call them directly;
   committed outcome of the protected work. Never release a lock from a bare
   `finally` — that is the RD-102 masking defect.
 
-**Examples:** three consumers remain, and every one of them protects a
-file-backed artifact rather than run authority — the artifact manifest, the
-sql.js driver's durable-replacement cycle, and the plugin's `PluginSessionLock`.
-Do not add a fourth for run state: raise the write with the user (ADR 0005).
-Note also that `acquireFileLock` is **not reentrant** — a second acquisition on
-the same call path blocks its own predecessor for the full 5s deadline and then
-times out, so a lock reached twice within one process is worse than no lock at
-all.
+**Examples:** two consumers remain, and both protect a file-backed artifact
+rather than run authority — the artifact manifest and the sql.js driver's
+durable-replacement cycle. The plugin's `PluginSessionLock` was deleted with its
+session state (#907). Do not add a third for run state: raise the write with the
+user (ADR 0005). Note also that `acquireFileLock` is **not reentrant** — a
+second acquisition on the same call path blocks its own predecessor for the full
+5s deadline and then times out, so a lock reached twice within one process is
+worse than no lock at all.
 
 ## Testing a race
 

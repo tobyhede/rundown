@@ -1,36 +1,31 @@
-import type { HookInput, GateResult } from '../shared/index.js';
+import type { GateResult, HookInput } from '../shared/types.js';
 import { handleDelegationDispatch } from '../workflow/hooks/delegation-dispatch.js';
 
 /**
- * Delegation Dispatch Gate
+ * Delegation Dispatch Gate (#907)
  *
  * Routes PreToolUse(Agent/Task) events to {@link handleDelegationDispatch} and
- * translates its result into a gate decision: `violation` blocks, `context`
- * enriches, otherwise the tool use is allowed.
- *
- * The handler is inert under the one-writer model (#901), so today this gate
- * always allows. TODO(#907): when the handler detects a Claim Ticket marker
- * again (spec § Plugin), the context branch below carries the rewritten claim
- * instructions; a recording failure that must fail closed is reintroduced
- * there, not here.
+ * translates its decision into a gate result: `blocked` blocks; `claim`
+ * dispatches the rewritten prompt in place of the agent's (`updatedInput`,
+ * keeping every other tool-input field); `untouched` leaves the tool use as
+ * is. The handler is a pure function of the tool input, so there is no error
+ * path to fail open or closed.
  *
  * @param input - Hook input containing Agent/Task tool metadata
- * @returns Gate result: block on violation; context on detection; or empty
- * @throws {Error} Propagates handler errors to the dispatcher's fail-open backstop
+ * @returns Gate result: block, `updatedInput` on a marked ticket, or empty
  */
-export async function execute(input: HookInput): Promise<GateResult> {
-  const result = await handleDelegationDispatch(input);
-
-  if (result.violation) {
-    return {
-      decision: 'block',
-      reason: result.violation,
-    };
+export function execute(input: HookInput): Promise<GateResult> {
+  const decision = handleDelegationDispatch(input);
+  switch (decision.kind) {
+    case 'untouched':
+      return Promise.resolve({});
+    case 'blocked':
+      return Promise.resolve({ decision: 'block', reason: decision.reason });
+    case 'claim':
+      return Promise.resolve({ updatedInput: { ...input.tool_input, prompt: decision.prompt } });
+    default: {
+      const exhaustive: never = decision;
+      return exhaustive;
+    }
   }
-
-  if (result.context) {
-    return { additionalContext: result.context };
-  }
-
-  return {};
 }

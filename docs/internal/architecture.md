@@ -972,10 +972,10 @@ hold a transaction open across an awaited external effect.
 
 `file-lock.ts` survives for file-backed artifacts only: the artifact manifest's
 read-modify-append and the sql.js driver's durable-replacement critical section.
-The plugin's `PluginSessionLock` guards the plugin's own
-`.claude/session/state.json`, which was never part of the store. None of them
-guards run state, and none may be extended to: a new write to run state goes
-through the conditional save above.
+The plugin's session state and its `PluginSessionLock` were deleted in #907; the
+plugin keeps no state of its own. Neither remaining lock guards run state, and
+neither may be extended to: a new write to run state goes through the
+conditional save above.
 
 A held lock is released with `await using` (`heldLock`, a `ScopedLock`), never
 from a bare `finally`. Release is best-effort and non-propagating (RD-102): a

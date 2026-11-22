@@ -25,10 +25,11 @@ describe('hook refusal (fail-closed CLI boundary, #470 defect 3)', () => {
     expect(msg).toMatch(/fail-closed/);
   });
 
-  it('dispatch_failed carries the error detail and the rundown status remediation', () => {
+  it('dispatch_failed carries the error detail and says the event was blocked', () => {
     const msg = refusalMessage({ kind: 'dispatch_failed', detail: 'boom' });
     expect(msg).toContain('boom');
-    expect(msg).toContain('rundown status');
+    expect(msg).toContain('blocked');
+    expect(msg).not.toMatch(/close any open delegations/);
   });
 
   it.each([

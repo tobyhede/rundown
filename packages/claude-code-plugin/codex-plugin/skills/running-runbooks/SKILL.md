@@ -119,7 +119,7 @@ Read the JSON for what happened.
 
 ```bash
 rundown goto <step> --token <owner_token>            # Jump to a step (e.g. 3 or 3.1; --index for a FOR iteration)
-rundown stop [message] --token <owner_token>         # Abort the run
+rundown stop [message] --token <owner_token>         # Stop the run
 rundown complete [message] --token <owner_token>     # Force early completion
 
 rundown status                    # List every run (read-only)
@@ -212,8 +212,11 @@ the child's steps. Extra rules:
   will never be collected: end the child with
   `rundown stop --token <owner_token>` (the one command it still accepts), then
   report.
-- Pass the same `--agent-id` on `claim` and on `release`: release is authorized
-  only for the agent id the claim recorded, and nothing stamps it for you.
+- Pass the same `--agent-id` on `claim` and on `release` — one stable id of your
+  own, such as your task name: release is authorized only for the agent id the
+  claim recorded. Codex runs no hook, so nothing stamps it for you (in Claude
+  Code the plugin's hook does). Pass it once: `--agent-id` given twice is
+  refused `INVALID_SYNTAX`.
 - If you cannot finish the child — you lost its `owner_token` — run
   `rundown release <child run id> --agent-id <id>` with the child's `runbookId`
   and the same `--agent-id` your claim used. The child ends `abandoned`, with

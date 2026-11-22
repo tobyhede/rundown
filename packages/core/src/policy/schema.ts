@@ -242,7 +242,6 @@ export const DEFAULT_POLICY: PolicyConfig = {
     },
     write: {
       allow: [
-        '{repo}/.claude/**',
         `{repo}/${RUNS_DIR}/**`,
         `{repo}/${LOCKS_DIR}/**`,
         `{repo}/${CONTEXTS_DIR}/**`,
@@ -262,8 +261,9 @@ export const DEFAULT_POLICY: PolicyConfig = {
         // strips write denies because Landlock cannot enforce subtractive denies),
         // so every entry here is unguarded blast radius. Runbooks that build
         // (e.g. `npm run build` -> dist/) must opt in via `--allow-write dist`.
-        // `.claude/**` is retained: the Claude Code plugin persists session state
-        // under .claude/session/ (packages/claude-code-plugin/src/session.ts).
+        // `.claude/**` is deliberately absent: the plugin's .claude/session/
+        // state was deleted with PluginSessionLock (#907), and nothing else
+        // writes there.
       ],
       deny: [
         '**/.env',

@@ -4,7 +4,6 @@ import {
   HookInputSchema,
   RunbookPositionBodySchema,
   RunbookStepBodySchema,
-  SessionStateSchema,
   parseHookInput,
 } from '../src/shared/index.js';
 
@@ -247,35 +246,6 @@ describe('Schema Property Tests', () => {
         }),
         { numRuns: 100 },
       );
-    });
-  });
-
-  describe('SessionStateSchema defaults', () => {
-    it('empty object gets all defaults applied', () => {
-      const result = SessionStateSchema.safeParse({});
-      expect(result.success).toBe(true);
-      if (result.success) {
-        expect(typeof result.data.session_id).toBe('string');
-        expect(result.data.session_id.length).toBeGreaterThan(0);
-        expect(typeof result.data.started_at).toBe('string');
-        expect(result.data.active_command).toBeNull();
-        expect(result.data.active_skill).toBeNull();
-        expect(result.data.edited_files).toEqual([]);
-        expect(result.data.file_extensions).toEqual([]);
-        expect(result.data.metadata).toEqual({});
-      }
-    });
-
-    it('session_id format is consistent', () => {
-      // Run multiple times to check timestamp-based generation
-      for (let i = 0; i < 10; i++) {
-        const result = SessionStateSchema.safeParse({});
-        expect(result.success).toBe(true);
-        if (result.success) {
-          // Format: 2025-12-24T14-30-45 (no colons, no dots)
-          expect(result.data.session_id).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}$/);
-        }
-      }
     });
   });
 });

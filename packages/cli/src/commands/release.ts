@@ -7,6 +7,7 @@ import {
   RunbookStateManager,
   type ReleaseDelegationOutcome,
 } from '@rundown-org/core';
+import { collectAgentId, resolveAgentIdOption } from '../helpers/agent-id-option.js';
 import { getCwd } from '../helpers/context.js';
 import { parseRunId } from '../helpers/run-option.js';
 import { withErrorHandling } from '../helpers/wrapper.js';
@@ -23,8 +24,11 @@ import { renderExecutionLeaseRefusal, renderRunFinished } from '../helpers/token
  * because it lost the child's Owner Token — ends it `abandoned` in the child's
  * own record, so its parent's Collect reads a definite result (a fail). The
  * authority is the agent id `rundown claim` recorded, matched by core (both
- * absent match). The agent passes `--agent-id` itself, the same id it gave
- * `rundown claim`: no hook stamps it yet (#907). Release grants nothing else
+ * absent match); `--agent-id` given more than once is refused
+ * `INVALID_SYNTAX`. In Claude Code the plugin's Bash hook stamps the
+ * sub-agent's own `agent_id` on a plain `rundown release`, the same id it
+ * stamped on `claim` (#907); elsewhere the agent passes the id its claim
+ * used. Release grants nothing else
  * and never touches the parent; the running Inline Children the child composes
  * are abandoned with it.
  *
@@ -34,20 +38,20 @@ export function registerReleaseCommand(program: Command): void {
   program
     .command('release <child-id>')
     .description('Abandon a delegated child you claimed but cannot finish (collected as a fail)')
-    .option('--agent-id <id>', 'Identity of the releasing agent; must match the claim')
+    .option(
+      '--agent-id <id>',
+      'Identity of the releasing agent; must match the claim (once)',
+      collectAgentId,
+    )
     .option('--text', 'Output as human-readable text')
-    .action(async (rawId: string, options: { agentId?: string; text?: boolean }) => {
+    .action(async (rawId: string, options: { agentId?: string[]; text?: boolean }) => {
       await withErrorHandling(
         async () => {
           const output = new OutputEmitter({ text: options.text, command: 'release' });
           const runId = parseRunId(rawId, output);
           if (runId === undefined) return;
-          if (options.agentId?.trim() === '') {
-            output.error('--agent-id must not be empty.', 'INVALID_SYNTAX');
-            output.flush();
-            process.exitCode = 1;
-            return;
-          }
+          const agent = resolveAgentIdOption('release', options.agentId, output);
+          if (agent === undefined) return;
           const cwd = getCwd();
           const manager = new RunbookStateManager(cwd);
           const outcome = await releaseDelegation(
@@ -56,10 +60,7 @@ export function registerReleaseCommand(program: Command): void {
               actorService: createCliRunbookActorService(manager),
               loadSteps: (state) => getRunbookFromState(state, cwd),
             },
-            {
-              runId,
-              ...(options.agentId !== undefined ? { agentId: options.agentId } : {}),
-            },
+            { runId, agent },
           );
           if (outcome.kind !== 'released') {
             renderReleaseRefusal(output, outcome);

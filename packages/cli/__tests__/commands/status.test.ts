@@ -32,7 +32,10 @@ describe('status command wiring', () => {
     expect(status?.description()).toBe('Show run state (all runs, or one run with --run)');
 
     const byLong = new Map(status!.options.map((o) => [o.long, o]));
-    expect([...byLong.keys()].sort()).toEqual(['--run', '--text']);
+    expect([...byLong.keys()].sort()).toEqual(['--claimed-by', '--run', '--text']);
+    expect(byLong.get('--claimed-by')?.description).toBe(
+      'List the delegated children this agent claimed that are still running and counted',
+    );
     expect(byLong.get('--run')?.description).toBe('Show one run in detail');
     expect(byLong.get('--text')?.description).toBe('Output as human-readable text');
     // Status is read-only: it never takes a token.

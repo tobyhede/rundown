@@ -1,32 +1,14 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import * as path from 'node:path';
-import { fileURLToPath } from 'node:url';
-
-// ESM under ts-jest: bare __dirname is undefined, so derive it from import.meta.url
-// BEFORE any path.resolve(__dirname, ...) or top-level await import.
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-// The dispatcher resolves its fixed gates relative to CLAUDE_PLUGIN_ROOT.
-// Capture the original so we can restore it (shared Jest workers run files
-// sequentially in one process — an unrestored mutation can bleed across suites).
-const ORIGINAL_PLUGIN_ROOT = process.env.CLAUDE_PLUGIN_ROOT;
-process.env.CLAUDE_PLUGIN_ROOT = path.resolve(__dirname, '..');
-const { dispatch } = await import('../src/dispatcher.js');
-const { Session } = await import('../src/session.js');
+import { dispatch } from '../src/dispatcher.js';
 import type { HookInput } from '../src/shared/index.js';
 
-const LEGACY_TOKEN = 'rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+const TICKET = `rdt_${'C'.repeat(43)}`;
 
-afterAll(() => {
-  if (ORIGINAL_PLUGIN_ROOT === undefined) {
-    delete process.env.CLAUDE_PLUGIN_ROOT;
-  } else {
-    process.env.CLAUDE_PLUGIN_ROOT = ORIGINAL_PLUGIN_ROOT;
-  }
-});
-
-describe('minimal dispatch contract (inert delegation hooks, #901)', () => {
+// The plugin's fixed routes (#907): PreToolUse on Agent|Task and on Bash, and
+// SubagentStop. Nothing else is routed, and no repository file is consulted.
+describe('minimal dispatch contract (delegation hooks, #907)', () => {
   let cwd: string;
   beforeEach(async () => {
     cwd = await mkdtemp(path.join(tmpdir(), 'rd-contract-'));
@@ -35,44 +17,25 @@ describe('minimal dispatch contract (inert delegation hooks, #901)', () => {
     await rm(cwd, { recursive: true, force: true });
   });
 
-  /** Plant the pre-#901 per-agent token map a stale workspace might still carry. */
-  async function plantStaleDelegationMetadata(agentId = 'agent-1'): Promise<void> {
-    const session = new Session(cwd);
-    await session.set('metadata', {
-      delegation_active_tokens: {
-        [agentId]: {
-          kind: 'delegation-active-token',
-          agent_id: agentId,
-          tokenHash: `sha256:${'a'.repeat(64)}`,
-          createdAt: '2026-06-08T00:00:00.000Z',
-        },
-      },
-    });
-  }
-
-  it('PreToolUse(Agent) carrying a claim marker is allowed with no context (TODO #907)', async () => {
+  it('PreToolUse(Agent) carrying a Claim Ticket marker is dispatched with the claim instructions', async () => {
     const input: HookInput = {
       hook_event_name: 'PreToolUse',
       cwd,
       tool_name: 'Agent',
-      tool_input: { prompt: `Do work. RD_CLAIM_TOKEN=${LEGACY_TOKEN}` },
+      tool_input: { prompt: `Do work.\nRD_CLAIM_TICKET=${TICKET}` },
     };
     const result = await dispatch(input);
-    expect(result).toStrictEqual({});
+    expect(String(result.updatedInput?.prompt)).toContain(`rundown claim ${TICKET}`);
   });
 
-  it('SubagentStop is allowed even over stale delegation metadata (TODO #907)', async () => {
-    await plantStaleDelegationMetadata();
+  it('SubagentStop holds nothing in a project with no Rundown store', async () => {
     const input: HookInput = { hook_event_name: 'SubagentStop', cwd, agent_id: 'agent-1' };
-    const result = await dispatch(input);
-    expect(result).toStrictEqual({});
+    await expect(dispatch(input)).resolves.toStrictEqual({});
   });
 
-  it('PreToolUse(Bash) is not routed: a bare `rundown pass` reaches the CLI untouched', async () => {
-    // The CLI is the authority gate (TOKEN_REQUIRED on a bare mutation). The
-    // plugin does not intercept Bash in T1; #907 adds the claim/release
-    // `--agent-id` stamping hook, which is a rewrite, not a refusal.
-    await plantStaleDelegationMetadata();
+  it('PreToolUse(Bash) passes an ordinary command untouched: the CLI is the authority gate', async () => {
+    // A bare `rundown pass` reaches the CLI, which refuses it TOKEN_REQUIRED;
+    // the Bash hook only stamps --agent-id on claim and release.
     const input: HookInput = {
       hook_event_name: 'PreToolUse',
       cwd,
@@ -80,7 +43,16 @@ describe('minimal dispatch contract (inert delegation hooks, #901)', () => {
       agent_id: 'agent-1',
       tool_input: { command: 'rundown pass' },
     };
-    const result = await dispatch(input);
-    expect(result).toStrictEqual({});
+    await expect(dispatch(input)).resolves.toStrictEqual({});
+  });
+
+  it('routes no other event or tool', async () => {
+    for (const input of [
+      { hook_event_name: 'PostToolUse', cwd, tool_name: 'Bash' },
+      { hook_event_name: 'PreToolUse', cwd, tool_name: 'Edit' },
+      { hook_event_name: 'Stop', cwd },
+    ] satisfies HookInput[]) {
+      await expect(dispatch(input)).resolves.toStrictEqual({});
+    }
   });
 });

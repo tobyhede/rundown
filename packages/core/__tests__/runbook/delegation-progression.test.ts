@@ -29,8 +29,9 @@ import {
   type CommandTargetPurpose,
 } from '../../src/runbook/lifecycle-command-service.js';
 import { claimDelegation } from '../../src/runbook/delegation-progression.js';
-import { releaseDelegation } from '../../src/runbook/delegation-recovery.js';
+import { delegationsHeldBy, releaseDelegation } from '../../src/runbook/delegation-recovery.js';
 import type { RunId } from '../../src/runbook/run-id.js';
+import type { DelegationAgent } from '../../src/runbook/delegation-agent.js';
 import type { PrepareChildRun } from '../../src/runbook/child-preparation.js';
 
 // Delegation (#904, ADR 0005) through the public seams: Run Progression's
@@ -424,10 +425,18 @@ function ticketsOf(runId: string) {
     .flatMap((child) => (child.ticket === undefined ? [] : [child.ticket]));
 }
 
-async function claim(ticket: string, agentId?: string) {
+/** The claiming or releasing agent a test names: an id, or none. */
+function agentOf(agentId: string | undefined): DelegationAgent {
+  return agentId === undefined ? { kind: 'anonymous' } : { kind: 'agent', agentId };
+}
+
+async function claim(ticket: string, agentId?: string | DelegationAgent) {
   const outcome = await claimDelegation(
     { manager, actorService, loadSteps, prepareChildRun: prepare },
-    { ticket: parseClaimTicket(ticket), ...(agentId !== undefined ? { agentId } : {}) },
+    {
+      ticket: parseClaimTicket(ticket),
+      agent: typeof agentId === 'object' ? agentId : agentOf(agentId),
+    },
   );
   if (outcome.kind === 'claimed') {
     await activate(outcome.progression, outcome.child.state);
@@ -995,10 +1004,10 @@ async function retry(token: OwnerToken, step: string | undefined, index?: number
 }
 
 /** Drive `rundown release <child-id> [--agent-id]` as a sub-agent does. */
-function release(runId: string, agentId?: string) {
+function release(runId: string, agentId?: string | DelegationAgent) {
   return releaseDelegation(
     { manager, actorService, loadSteps },
-    { runId: runId as RunId, ...(agentId !== undefined ? { agentId } : {}) },
+    { runId: runId as RunId, agent: typeof agentId === 'object' ? agentId : agentOf(agentId) },
   );
 }
 
@@ -1337,7 +1346,7 @@ describe('Release (#905)', () => {
 
     const outcome = await releaseDelegation(
       { manager: racing, actorService, loadSteps },
-      { runId: child.runId as RunId },
+      { runId: child.runId as RunId, agent: { kind: 'anonymous' } },
     );
 
     expect(outcome.kind).toBe('concurrent_modification');
@@ -1453,7 +1462,7 @@ describe('Release (#905)', () => {
 
     const outcome = await releaseDelegation(
       { manager: racing, actorService, loadSteps },
-      { runId: child.runId as RunId },
+      { runId: child.runId as RunId, agent: { kind: 'anonymous' } },
     );
 
     expect(outcome).toMatchObject({ kind: 'concurrent_modification', runId: grandchild.state.id });
@@ -1496,5 +1505,84 @@ describe('No re-claim and no re-reveal (#905)', () => {
     expect(await claim(second.ticket ?? '')).toMatchObject({ code: 'ALREADY_CLAIMED' });
     expect(await claim(third.ticket ?? '')).toMatchObject({ code: 'DELEGATION_CANCELLED' });
     expect(await claim(retried.child.ticket)).toMatchObject({ code: 'ALREADY_CLAIMED' });
+  });
+});
+
+describe('The Delegations an agent holds (#907)', () => {
+  /** The SubagentStop gate's question: which claimed children hold `agentId`. */
+  function held(agentId: string) {
+    return delegationsHeldBy({ manager, loadSteps }, agentId);
+  }
+
+  it('holds a running child the agent claimed while its parent counts it', async () => {
+    const { root } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    await claimedAs(child.ticket ?? '', 'agent-1');
+
+    expect(await held('agent-1')).toEqual([
+      {
+        runId: child.runId,
+        runbook: 'child-manual.runbook.md',
+        parentRunId: root.id,
+        step: '1.1',
+      },
+    ]);
+  });
+
+  it('never holds another agent, or an agent whose claim recorded no id', async () => {
+    const { root } = await start(FAN_OUT);
+    const [first, second] = enteredChildren(root.id);
+    await claimedAs(first.ticket ?? '', 'agent-1');
+    await claimed(second.ticket ?? '');
+
+    expect(await held('agent-2')).toEqual([]);
+    expect((await held('agent-1')).map((delegation) => delegation.runId)).toEqual([first.runId]);
+  });
+
+  it('lets go once the child finished', async () => {
+    const { root } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    const { ownerToken } = await claimedAs(child.ticket ?? '', 'agent-1');
+    await failChild(ownerToken);
+
+    expect(await held('agent-1')).toEqual([]);
+  });
+
+  it('lets go once the agent released the child', async () => {
+    const { root } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    await claimedAs(child.ticket ?? '', 'agent-1');
+    expect((await release(child.runId, 'agent-1')).kind).toBe('released');
+
+    expect(await held('agent-1')).toEqual([]);
+  });
+
+  it('lets go once the parent cancelled the child by retry', async () => {
+    const { root, token } = await start(SINGLE_MANUAL);
+    const [child] = enteredChildren(root.id);
+    await claimedAs(child.ticket ?? '', 'agent-1');
+    expect((await retry(token, '1.1')).kind).toBe('retried');
+
+    expect(await held('agent-1')).toEqual([]);
+    expect((await manager.load(child.runId))?.lifecycle).toBe('running');
+  });
+
+  it('lets go once the parent finished, or was pruned', async () => {
+    const { root, token } = await start(FAN_OUT);
+    const [first, second] = enteredChildren(root.id);
+    await claimedAs(first.ticket ?? '', 'agent-1');
+    const resolved = await target(token, 'stop');
+    if (resolved.kind !== 'running') throw new Error('expected a running root');
+    expect(
+      (await seam().runTerminal({ command: 'stop', run: resolved.run, message: 'done' })).kind,
+    ).toBe('applied');
+    expect(await held('agent-1')).toEqual([]);
+
+    const other = await start(SINGLE_MANUAL);
+    const [orphan] = enteredChildren(other.root.id);
+    await claimedAs(orphan.ticket ?? '', 'agent-1');
+    await manager.delete(other.root.id);
+    expect(await held('agent-1')).toEqual([]);
+    expect(second.runId).not.toBe(orphan.runId);
   });
 });

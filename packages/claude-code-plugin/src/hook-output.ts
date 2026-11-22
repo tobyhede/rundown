@@ -11,6 +11,8 @@ type PermissionDecision = 'deny' | 'ask' | 'allow';
 interface HookSpecificOutput {
   hookEventName: string;
   additionalContext?: string;
+  /** PreToolUse: the complete tool input Claude Code runs instead. */
+  updatedInput?: Record<string, unknown>;
   permissionDecision?: PermissionDecision;
   permissionDecisionReason?: string;
 }
@@ -80,6 +82,18 @@ export function buildHookOutput(input: HookInput, result: DispatchResult): Claud
       reason: result.blockReason,
       hookSpecificOutput: {
         hookEventName,
+        ...(result.context ? { additionalContext: result.context } : {}),
+      },
+    };
+  }
+
+  if (result.updatedInput && hookEventName === 'PreToolUse') {
+    // No permissionDecision: Claude Code evaluates the user's permission rules
+    // against the rewritten input, so a rewrite never auto-approves a command.
+    return {
+      hookSpecificOutput: {
+        hookEventName,
+        updatedInput: result.updatedInput,
         ...(result.context ? { additionalContext: result.context } : {}),
       },
     };

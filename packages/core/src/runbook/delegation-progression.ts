@@ -31,6 +31,7 @@ import { getErrorMessage } from '../errors.js';
 import type { RunbookActorService } from './actor-service.js';
 import type { PrepareChildRun } from './child-preparation.js';
 import type { ChildLinkage } from './child-linkage.js';
+import { recordedAgentId, type DelegationAgent } from './delegation-agent.js';
 import {
   activeEntryDelegations,
   countsDelegation,
@@ -177,15 +178,17 @@ function claimRefused(refusal: ClaimRefusal, parentRunId: RunId, step: string): 
  * @param deps - Store, actor service, graph loader and the frontend's preparer.
  * @param input - The ticket and the claiming agent.
  * @param input.ticket - The presented Claim Ticket, already parsed.
- * @param input.agentId - The claiming agent's id, recorded on the child row.
+ * @param input.agent - The claiming agent; an identified agent's id is
+ *   recorded on the child row.
  * @returns The claimed child with its Owner Token, or a refusal. Nothing is
  *   written on a refusal.
  * @throws {Error} Whatever reading the issuing run's persisted state throws.
  */
 export async function claimDelegation(
   deps: DelegationDeps & { readonly prepareChildRun: PrepareChildRun },
-  input: { readonly ticket: ClaimTicket; readonly agentId?: string },
+  input: { readonly ticket: ClaimTicket; readonly agent: DelegationAgent },
 ): Promise<ClaimDelegationOutcome> {
+  const claimedBy = recordedAgentId(input.agent);
   const ticketHash = hashRunSecret(input.ticket);
   let found:
     | {
@@ -227,7 +230,7 @@ export async function claimDelegation(
     parentStep: `${reservation.contextSnapshot.step ?? parent.state.step}.${substepState.id}`,
     parentFrameKey: substepState.frameKey,
     parentEntry: reservation.entry,
-    ...(input.agentId !== undefined ? { claimedBy: input.agentId } : {}),
+    ...(claimedBy !== undefined ? { claimedBy } : {}),
   };
   const parentSteps = await deps.loadSteps(parent.state);
   const early = claimRefusal(parent.state, parentSteps, linkage, reservation.runId);

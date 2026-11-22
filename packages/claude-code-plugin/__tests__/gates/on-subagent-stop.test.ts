@@ -94,7 +94,7 @@ describe('on-subagent-stop gate', () => {
   });
 
   it('fails closed with a blocking decision when handleSubagentStop rejects', async () => {
-    mockHandleSubagentStop.mockRejectedValue(new Error('session state I/O failed'));
+    mockHandleSubagentStop.mockRejectedValue(new Error('rundown status --claimed-by failed'));
 
     const input: HookInput = {
       hook_event_name: 'SubagentStop',
@@ -106,18 +106,18 @@ describe('on-subagent-stop gate', () => {
     expect(result).toStrictEqual({
       decision: 'block',
       reason:
-        'Could not verify delegation closure (session state unavailable). Run `rundown status` and close any open delegations before stopping.',
+        'Rundown could not check whether you still hold a delegated child (`rundown status --claimed-by` failed). If you claimed one, finish it with `rundown pass|fail --token <its owner_token> --step <step>`, or release it with `rundown release <child run id>`, then stop.',
     });
     expect(mockLoggerError).toHaveBeenCalledWith(
       'SubagentStop enforcement failed; failing closed',
       {
-        error: 'session state I/O failed',
+        error: 'rundown status --claimed-by failed',
       },
     );
   });
 
   it('still fails closed when logging inside the catch block also fails', async () => {
-    mockHandleSubagentStop.mockRejectedValue(new Error('session state I/O failed'));
+    mockHandleSubagentStop.mockRejectedValue(new Error('rundown status --claimed-by failed'));
     mockLoggerError.mockRejectedValue(new Error('log directory unwritable'));
 
     const input: HookInput = {
@@ -130,7 +130,7 @@ describe('on-subagent-stop gate', () => {
     expect(result).toStrictEqual({
       decision: 'block',
       reason:
-        'Could not verify delegation closure (session state unavailable). Run `rundown status` and close any open delegations before stopping.',
+        'Rundown could not check whether you still hold a delegated child (`rundown status --claimed-by` failed). If you claimed one, finish it with `rundown pass|fail --token <its owner_token> --step <step>`, or release it with `rundown release <child run id>`, then stop.',
     });
   });
 });
