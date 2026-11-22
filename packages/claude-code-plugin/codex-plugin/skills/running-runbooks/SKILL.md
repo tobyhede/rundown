@@ -15,7 +15,7 @@ the current surface, use the `rundown` CLI directly. MCP and CLI routes are thin
 front ends over the same CLI/core state machine, and JSON remains the
 agent-facing output. The MCP tools take the same authority as the CLI flags
 below: `token`, `step`, and `index` on `pass` / `fail` / `goto`, `token` on
-`stop` / `complete` / `collect`, `ticket` (and optional `agentId`) on `claim`,
+`stop` / `complete` / `collect`, `ticket` and your stable `agentId` on `claim`,
 and `runId` on `status`.
 
 ## When to Use

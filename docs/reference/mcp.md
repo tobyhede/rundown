@@ -103,13 +103,14 @@ ownership model (see
   Ticket (`rdt_<43 base64url characters>`). `claim` REQUIRES it as `ticket`; it
   is that tool's only authority, and its response carries the child's own Owner
   Token.
-- **Agent id** — `claim` records `agentId` on the child; `release` takes the
-  child's run id as `runId` and the same `agentId`, which the CLI matches
-  against the one the claim recorded. The agent supplies it on both calls: the
-  MCP surface runs no hook (the Claude Code plugin's Bash hook stamps only the
-  `rundown` CLI), so an MCP client — such as a Codex sub-agent — passes one
-  stable id of its own. It takes no token, and its authority covers that one
-  write.
+- **Agent id** — `claim` REQUIRES `agentId` and records it on the child;
+  `release` takes the child's run id as `runId` and the same `agentId`, which
+  the CLI matches against the one the claim recorded. The agent supplies it on
+  both calls: the MCP surface runs no hook (the Claude Code plugin's Bash hook
+  stamps only the `rundown` CLI), so an MCP client — such as a Codex sub-agent —
+  passes one stable id of its own. `claim` requires it so an MCP caller never
+  makes an unstamped claim by omission, which anyone else omitting it could
+  release. `release` takes no token, and its authority covers that one write.
 - **Run selector** — `runId` (`rd_<32 hex>`), accepted by `status` and forwarded
   as `--run <runId>`, selects a run for reading. It is never mutation authority:
   `release` takes a `runId` only to name the child its agent id authorizes.
@@ -133,7 +134,7 @@ The server MUST register exactly the following tools:
 | [`goto`](#goto)         | `token`, `step`     | `index`                                                                | `rundown goto <step> --token <token> [--index <n>]`                                                                 |
 | [`complete`](#complete) | `token`             | `message`                                                              | `rundown complete [<message>] --token <token>`                                                                      |
 | [`stop`](#stop)         | `token`             | `message`                                                              | `rundown stop [<message>] --token <token>`                                                                          |
-| [`claim`](#claim)       | `ticket`            | `agentId`                                                              | `rundown claim <ticket> [--agent-id <agentId>]`                                                                     |
+| [`claim`](#claim)       | `ticket`, `agentId` | —                                                                      | `rundown claim <ticket> --agent-id <agentId>`                                                                       |
 | [`collect`](#collect)   | `token`             | —                                                                      | `rundown collect --token <token>`                                                                                   |
 | [`retry`](#retry)       | `token`, `step`     | `index`                                                                | `rundown retry --token <token> --step <id> [--index <n>]`                                                           |
 | [`release`](#release)   | `runId`             | `agentId`                                                              | `rundown release <runId> [--agent-id <agentId>]`                                                                    |
@@ -301,7 +302,7 @@ Claim a delegated child by its Claim Ticket and start it.
 | Parameter | Type   | Required | Behavior                                                                                     |
 | --------- | ------ | -------- | -------------------------------------------------------------------------------------------- |
 | `ticket`  | string | Yes      | Claim Ticket from a delegated step's `step_entered` `children`, forwarded positionally.      |
-| `agentId` | string | No       | Identity of the claiming agent, forwarded as `--agent-id <value>` and recorded on the child. |
+| `agentId` | string | Yes      | Identity of the claiming agent, forwarded as `--agent-id <value>` and recorded on the child. |
 
 The payload is the child's event stream; its `runbook_started` carries the
 child's `owner_token`, which every later tool call on the child presents as
