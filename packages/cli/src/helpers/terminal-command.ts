@@ -172,7 +172,11 @@ export async function runSeamTerminal(
 ): Promise<{ readonly manager: RunbookStateManager; readonly exitError: boolean }> {
   const { manager, seam } = buildLifecycleSeam(cwd);
 
-  const resolution = await resolveCommandTarget({ seam, manager, cwd, output }, options.token);
+  const resolution = await resolveCommandTarget(
+    { seam, manager, cwd, output },
+    options.token,
+    command,
+  );
   if (resolution.kind !== 'running') {
     const exitError = renderOwnedRunRefusal(output, command, resolution);
     output.flush();

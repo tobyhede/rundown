@@ -77,6 +77,8 @@ interface StatusDetailData {
   parent?: { runId: string; step: string; kind: string };
   /** The Current Child of the run's step (#903). */
   child?: { runId: string; kind: string; status: string };
+  /** The Delegations of the run's active entry (#904). */
+  children?: { runId: string; step: string; index?: number; status: string; result?: string }[];
   /** Bare `rundown status`: every persisted run. */
   runs?: {
     id: string;
@@ -265,6 +267,7 @@ export class TextRenderer implements OutputRenderer {
       execution,
       parent,
       child,
+      children,
     } = data as StatusDetailData;
 
     // Bare `rundown status`: the run list.
@@ -357,6 +360,15 @@ export class TextRenderer implements OutputRenderer {
     if (child !== undefined) {
       this.writer.writeLine('');
       this.writer.writeLine(`Child: ${child.runId} (${child.kind}, ${child.status})`);
+    }
+    if (children !== undefined && children.length > 0) {
+      this.writer.writeLine('');
+      for (const delegation of children) {
+        const result = delegation.result === undefined ? '' : `, ${delegation.result}`;
+        this.writer.writeLine(
+          `Delegation: ${delegation.runId} (step ${delegation.step}, ${delegation.status}${result})`,
+        );
+      }
     }
 
     this.renderVars(vars);
@@ -718,6 +730,12 @@ export class TextRenderer implements OutputRenderer {
       case 'ERROR_OCCURRED':
         this.handleErrorOccurred(event);
         break;
+      case 'CHILDREN_COLLECTED':
+        for (const child of event.payload.children) {
+          const result = child.result === undefined ? '' : ` (${child.result})`;
+          this.writer.writeLine(`Child ${child.step} ${child.runId}: ${child.status}${result}`);
+        }
+        break;
     }
   }
 
@@ -737,6 +755,9 @@ export class TextRenderer implements OutputRenderer {
       this.writer,
     );
 
+    if (payload.parent !== undefined) {
+      this.writer.writeLine(`Parent: ${payload.parent.runId} (step ${payload.parent.step})`);
+    }
     // The one place the token is ever printed in text mode.
     if (payload.ownerToken !== undefined) {
       this.writer.writeLine(`Owner token: ${payload.ownerToken}`);
@@ -774,6 +795,12 @@ export class TextRenderer implements OutputRenderer {
     ) as Step | Substep;
 
     printStepBlock(position, item, prompted, this.writer);
+    // A Delegation's entry (#904): each child, with the Claim Ticket the entry
+    // that issued it carries — printed here once, as on the JSON event.
+    for (const child of payload.children ?? []) {
+      const ticket = child.ticket === undefined ? '' : ` ticket ${child.ticket}`;
+      this.writer.writeLine(`Delegation ${child.step}: ${child.runbook} (${child.runId})${ticket}`);
+    }
   }
 
   /**

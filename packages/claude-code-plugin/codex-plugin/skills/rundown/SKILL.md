@@ -60,10 +60,12 @@ contain the protocol itself.
    ```
 
    If `rundown run` reports missing required inputs, supply them and re-run. If
-   it refuses with `RUNBOOK_COMPOSITION_UNSUPPORTED`, the runbook delegates to
-   other runbooks, which this build cannot run (until #904): report that to the
-   user and stop. Inline child runbooks (a substep listing one runbook, without
-   `- DELEGATE`) run on your Owner Token; see running-runbooks.
+   it refuses with `RUNBOOK_COMPOSITION_UNSUPPORTED`, a substep lists more than
+   one runbook: report that to the user and stop. Inline child runbooks (a
+   substep listing one runbook, without `- DELEGATE`) run on your Owner Token;
+   delegated ones (`- DELEGATE`) list Claim Tickets on `step_entered` and are
+   applied with `rundown collect --token <owner_token>`. See running-runbooks
+   for both.
 
 4. **Execute.** Follow the loaded
    [running-runbooks](../running-runbooks/SKILL.md) protocol: respond to each

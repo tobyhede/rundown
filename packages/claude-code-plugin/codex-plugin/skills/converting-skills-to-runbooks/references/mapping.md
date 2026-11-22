@@ -48,8 +48,8 @@ How each part of a `SKILL.md` maps into a house-style runbook. Read alongside
   step body; it does not re-derive their artifact paths — it consumes each
   leaf's frontmatter `OUTPUTS`.
 
-A parent that composes its leaves inline (rule 6) runs; one that fans out with
-`- DELEGATE` (rule 7) is refused by `rundown run` until #904, so only its leaves
-run today; see
-[Composition in this build](../../writing-runbooks/SKILL.md#composition-in-this-build).
-Tell the user when the conversion produces one.
+Both shapes run: a parent that composes its leaves inline drives them on its own
+Owner Token, and one that fans out with `- DELEGATE` (rule 6) hands each child's
+Claim Ticket to a sub-agent (or claims it itself) and applies the results with
+`rundown collect`; see
+[Inline and delegated children](../../writing-runbooks/SKILL.md#inline-and-delegated-children).

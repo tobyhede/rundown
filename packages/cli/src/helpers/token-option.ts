@@ -227,6 +227,12 @@ export function renderOwnedRunRefusal(
       // Collecting a terminal Inline Child first (#903) did not land; the
       // progression that tried already reported why on the event stream.
       return true;
+    case 'delegation_cancelled':
+    case 'parent_run_finished':
+      // A Delegation its parent no longer counts, or whose parent finished
+      // (#904): core decided and worded it.
+      output.error(resolution.message, resolution.code, { runId: resolution.runId });
+      return true;
     default: {
       const _exhaustive: never = resolution;
       return _exhaustive;

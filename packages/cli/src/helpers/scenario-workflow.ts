@@ -53,9 +53,11 @@ import {
   matchWarningAssertions,
   matchArtifactAssertions,
   matchEnteredAssertions,
+  matchCollectedAssertions,
   matchStepAssertions,
   type ArtifactAssertionResult,
   type CapturedWarning,
+  type CollectedAssertionResult,
   type EnteredAssertionResult,
   type ErrorAssertionResult,
   type StepAssertionResult,
@@ -171,6 +173,8 @@ export interface ScenarioRunResult {
   artifactAssertions?: ArtifactAssertionResult[];
   /** Per-entered-step assertion results (present when expect.entered block is used). */
   enteredAssertions?: EnteredAssertionResult[];
+  /** Per-collected-child assertion results (present when expect.collected block is used). */
+  collectedAssertions?: CollectedAssertionResult[];
 }
 
 /**
@@ -524,6 +528,13 @@ export async function executeScenario(
     if (scenario.expect?.entered) {
       enteredAssertions = matchEnteredAssertions(scenario.expect.entered, seqResult.enteredSteps);
     }
+    let collectedAssertions: CollectedAssertionResult[] | undefined;
+    if (scenario.expect?.collected) {
+      collectedAssertions = matchCollectedAssertions(
+        scenario.expect.collected,
+        seqResult.collectedChildren,
+      );
+    }
 
     const resultPassed = actualResult === effectiveResult;
     const assertionsPassed = stepAssertions ? stepAssertions.every((a) => a.matched) : true;
@@ -538,6 +549,9 @@ export async function executeScenario(
     const enteredAssertionsPassed = enteredAssertions
       ? enteredAssertions.every((a) => a.matched)
       : true;
+    const collectedAssertionsPassed = collectedAssertions
+      ? collectedAssertions.every((a) => a.matched)
+      : true;
 
     if (!quiet) {
       output.message('', 'info');
@@ -551,7 +565,8 @@ export async function executeScenario(
         warningAssertionsPassed &&
         warningsPassed &&
         artifactAssertionsPassed &&
-        enteredAssertionsPassed,
+        enteredAssertionsPassed &&
+        collectedAssertionsPassed,
       scenario: scenarioName,
       expected: effectiveResult,
       actual: actualResult,
@@ -561,6 +576,7 @@ export async function executeScenario(
       unassertedWarnings: unassertedWarnings.length > 0 ? unassertedWarnings : undefined,
       artifactAssertions,
       enteredAssertions,
+      collectedAssertions,
     };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });

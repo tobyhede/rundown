@@ -138,8 +138,13 @@ describe('findUnsupportedComposition', () => {
     expect(findUnsupportedComposition(steps)).toEqual([]);
   });
 
-  it('names a DELEGATE substep by its qualified id', () => {
-    expect(findUnsupportedComposition([substepStep('1', [plain, delegated])])).toEqual(['1.2']);
+  it('names no single-runbook DELEGATE substep: delegation runs (#904)', () => {
+    expect(findUnsupportedComposition([substepStep('1', [plain, delegated])])).toEqual([]);
+  });
+
+  it('names a DELEGATE substep listing more than one runbook: one unit reserves one child', () => {
+    const pair: Substep = { ...delegated, id: '6', runbooks: ['a.runbook.md', 'b.runbook.md'] };
+    expect(findUnsupportedComposition([substepStep('1', [delegated, pair])])).toEqual(['1.6']);
   });
 
   it('names no single-runbook inline substep: inline composition runs (#903)', () => {
@@ -152,19 +157,20 @@ describe('findUnsupportedComposition', () => {
   });
 
   it('lists every composing substep across steps, in document order', () => {
+    const pair: Substep = { ...inline, id: '5', runbooks: ['a.runbook.md', 'b.runbook.md'] };
     const steps: readonly ResolvedStep[] = [
-      substepStep('1', [delegated, plain]),
+      substepStep('1', [pair, plain]),
       { kind: 'base', name: '2', description: 'two', transitions: tx },
       {
         kind: 'for',
         name: '3',
         description: 'loop',
         forClause: { variable: 'i', start: 1, end: 2 },
-        substeps: [inline, delegated],
+        substeps: [inline, delegated, { ...pair, delegate: true }],
         transitions: tx,
       },
     ];
-    expect(findUnsupportedComposition(steps)).toEqual(['1.2', '3.2']);
+    expect(findUnsupportedComposition(steps)).toEqual(['1.5', '3.5']);
   });
 
   it('names the same substeps from a parsed runbook as from a resolved one', () => {
@@ -185,6 +191,7 @@ describe('findUnsupportedComposition', () => {
         '### 1.2 Delegated',
         '- DELEGATE',
         '- child.runbook.md',
+        '- other.runbook.md',
         '',
         '### 1.3 Inline',
         '- child.runbook.md',
@@ -227,6 +234,7 @@ describe('run creation refuses a composing runbook', () => {
       '### 1.2 Delegated',
       '- DELEGATE',
       '- child.runbook.md',
+      '- other.runbook.md',
       '',
       '### 1.3 Inline',
       '- child.runbook.md',
@@ -234,7 +242,7 @@ describe('run creation refuses a composing runbook', () => {
     ].join('\n'),
   ).runbook;
 
-  it('throws a typed refusal naming every delegating substep and writes no run', async () => {
+  it('throws a typed refusal naming every substep listing several runbooks and writes no run', async () => {
     const created = manager.create({ source: 'project', path: 'compose.runbook.md' }, composing, {
       runbookPath: 'compose.runbook.md',
       ownerTokenHash: hashRunSecret(generateOwnerToken()),

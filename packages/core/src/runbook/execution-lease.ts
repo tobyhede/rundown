@@ -166,9 +166,10 @@ export function classifyExecutionLease(
  * of an effect still running (its finish would find no row), so it is refused
  * like every other decision; once Interrupted no process will write the run
  * again, so deleting it is the owner's explicit decision to discard the
- * unknown outcome, as `stop` is.
+ * unknown outcome, as `stop` is. `collect` (#904) applies Delegations' Child
+ * Results to the run; like `pass` it never clears an Interrupted effect.
  */
-export type LeaseDecision = 'pass' | 'complete' | 'fail' | 'goto' | 'stop' | 'prune';
+export type LeaseDecision = 'pass' | 'complete' | 'fail' | 'goto' | 'stop' | 'prune' | 'collect';
 
 /** Refusal: a live attempt holds the lease. Nothing was written. */
 export interface ExecutionInProgressRefusal {
@@ -315,6 +316,9 @@ function clearsInterruption(decision: LeaseDecision): boolean {
       return true;
     case 'pass':
     case 'complete':
+    // `collect` applies a Child Result to the cursor's unit: like `pass`, it
+    // would record an outcome over an attempt whose result nobody knows.
+    case 'collect':
       return false;
     default: {
       const _exhaustive: never = decision;

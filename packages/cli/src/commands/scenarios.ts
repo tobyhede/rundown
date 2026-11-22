@@ -191,6 +191,9 @@ export function registerScenariosCommand(program: Command): void {
         if (runResult.enteredAssertions) {
           detailData.enteredAssertions = runResult.enteredAssertions;
         }
+        if (runResult.collectedAssertions) {
+          detailData.collectedAssertions = runResult.collectedAssertions;
+        }
 
         output.detail(detailData, 'scenario_result');
 

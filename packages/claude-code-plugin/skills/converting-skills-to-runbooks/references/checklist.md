@@ -26,7 +26,7 @@ transform: the "no placeholders" scan becomes a "no duplication" scan.
 
 - [ ] Produce → validate → retry loop present (validate step `FAIL GOTO` the write step).
 - [ ] Fan-out, if any, uses `- DELEGATE` + delegate-then-collate (never collate from the parent).
-- [ ] If the runbook delegates (`- DELEGATE`), the user is told `rundown run` refuses it until #904.
+- [ ] Each delegated substep lists exactly one runbook, and each delegated child declares the `INPUTS` / `OUTPUTS` it shares with the parent.
 - [ ] Review-type steps use `FAIL CONTINUE` (record-don't-gate).
 - [ ] One runbook, one artifact (or a parent composing leaves).
 

@@ -47,9 +47,11 @@ import {
   matchWarningAssertions,
   matchArtifactAssertions,
   matchEnteredAssertions,
+  matchCollectedAssertions,
   formatStepAssertionDescription,
   type ArtifactAssertionResult,
   type CapturedWarning,
+  type CollectedAssertionResult,
   type EnteredAssertionResult,
   type ErrorAssertionResult,
   type StepAssertionResult,
@@ -176,6 +178,7 @@ async function executeSuiteCase(
   unassertedWarnings?: CapturedWarning[];
   artifactAssertions?: ArtifactAssertionResult[];
   enteredAssertions?: EnteredAssertionResult[];
+  collectedAssertions?: CollectedAssertionResult[];
 }> {
   const effectiveResult = getEffectiveResult(suiteCase);
   const runbookPath = resolve(suiteDir, suiteCase.file);
@@ -384,6 +387,13 @@ async function executeSuiteCase(
     if (suiteCase.expect?.entered) {
       enteredAssertions = matchEnteredAssertions(suiteCase.expect.entered, seqResult.enteredSteps);
     }
+    let collectedAssertions: CollectedAssertionResult[] | undefined;
+    if (suiteCase.expect?.collected) {
+      collectedAssertions = matchCollectedAssertions(
+        suiteCase.expect.collected,
+        seqResult.collectedChildren,
+      );
+    }
 
     const resultPassed = actualResult === effectiveResult;
     const assertionsPassed = stepAssertions ? stepAssertions.every((a) => a.matched) : true;
@@ -398,6 +408,9 @@ async function executeSuiteCase(
     const enteredAssertionsPassed = enteredAssertions
       ? enteredAssertions.every((a) => a.matched)
       : true;
+    const collectedAssertionsPassed = collectedAssertions
+      ? collectedAssertions.every((a) => a.matched)
+      : true;
 
     return {
       kind: 'scenario_run',
@@ -408,7 +421,8 @@ async function executeSuiteCase(
         warningAssertionsPassed &&
         warningsPassed &&
         artifactAssertionsPassed &&
-        enteredAssertionsPassed,
+        enteredAssertionsPassed &&
+        collectedAssertionsPassed,
       scenario: caseName,
       expected: effectiveResult,
       actual: actualResult,
@@ -418,6 +432,7 @@ async function executeSuiteCase(
       unassertedWarnings: unassertedWarnings.length > 0 ? unassertedWarnings : undefined,
       artifactAssertions,
       enteredAssertions,
+      collectedAssertions,
     };
   } finally {
     await rm(tmpDir, { recursive: true, force: true });
@@ -624,6 +639,9 @@ export function registerScenarioSuiteCommand(program: Command): void {
                   ...('enteredAssertions' in cr && cr.enteredAssertions
                     ? { enteredAssertions: cr.enteredAssertions }
                     : {}),
+                  ...('collectedAssertions' in cr && cr.collectedAssertions
+                    ? { collectedAssertions: cr.collectedAssertions }
+                    : {}),
                 })),
               },
               'custom',
@@ -696,6 +714,9 @@ export function registerScenarioSuiteCommand(program: Command): void {
             }
             if (caseResult.enteredAssertions) {
               detailData.enteredAssertions = caseResult.enteredAssertions;
+            }
+            if (caseResult.collectedAssertions) {
+              detailData.collectedAssertions = caseResult.collectedAssertions;
             }
 
             output.detail(detailData, 'custom');

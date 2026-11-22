@@ -12,7 +12,8 @@
  *
  * Both are answered here. {@link deriveExecutionUnitEntry} renders against the
  * run's own frame and returns {@link ExecutionUnitEntry} — `awaiting`,
- * `runnable`, or `inline_child` for an inline runbook-list substep (#903). The
+ * `runnable`, `inline_child` for an inline runbook-list substep (#903), or
+ * `delegation` for a `DELEGATE` one (#904). The
  * command travels only on the `runnable` arm, inside a
  * {@link RenderedUnitCommand} whose brand is mintable only in this module, so
  * there is no path from the result back to unexpanded text.
@@ -47,6 +48,12 @@ import {
 import type { TemplateHelperRegistry } from './helper-invoke.js';
 import type { InlineChildReservation, ResolvedStep, RunbookState } from './types.js';
 import { currentInlineReservation, inlineRunbookOf } from './inline-child.js';
+import {
+  activeEntryDelegations,
+  countsDelegation,
+  delegatedRunbookOf,
+  type CurrentDelegation,
+} from './delegation-child.js';
 import type { RunId } from './run-id.js';
 import type { StepPosition } from '../cli/types.js';
 
@@ -140,6 +147,21 @@ export interface ExecutionUnitInlineChild extends ExecutionUnitEntryBase {
 }
 
 /**
+ * A `DELEGATE` runbook-list substep (#904): the unit is resolved by Collect
+ * of a Delegation another agent claims, never by a command here. Classified
+ * ahead of `awaiting`/`runnable` for the same reason as `inline_child`.
+ */
+export interface ExecutionUnitDelegation extends ExecutionUnitEntryBase {
+  /** Discriminant. */
+  readonly kind: 'delegation';
+  /**
+   * The Delegations the parent counts at this entry — the cursor's own and
+   * every later delegated substep's — in document order.
+   */
+  readonly delegations: readonly CurrentDelegation[];
+}
+
+/**
  * What entering one execution unit leaves the caller to do.
  *
  * Exhaustive by construction, which is the point: it replaces the loop's use of
@@ -151,7 +173,8 @@ export interface ExecutionUnitInlineChild extends ExecutionUnitEntryBase {
 export type ExecutionUnitEntry =
   | ExecutionUnitAwaiting
   | ExecutionUnitRunnable
-  | ExecutionUnitInlineChild;
+  | ExecutionUnitInlineChild
+  | ExecutionUnitDelegation;
 
 /** Inputs to {@link deriveExecutionUnitEntry}. */
 export interface DeriveExecutionUnitEntryInput {
@@ -300,7 +323,8 @@ function persistedContext(state: RunbookState): Record<string, unknown> {
  *   `WorkPath` to render against.
  * @throws {Error} When the run's cursor names a step the parsed runbook does not
  *   define, when a `--helpers` helper throws while expanding a field, or when
- *   the cursor rests on an inline substep with no Current Child reserved.
+ *   the cursor rests on an inline or delegated substep with no Current Child
+ *   reserved.
  */
 export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): ExecutionUnitEntry {
   const { state, steps } = input;
@@ -390,6 +414,21 @@ export function deriveExecutionUnitEntry(input: DeriveExecutionUnitEntryInput): 
       );
     }
     return { kind: 'inline_child', effects, reservation };
+  }
+
+  if (state.substep !== undefined && delegatedRunbookOf(currentStep, state.substep) !== undefined) {
+    const delegations = activeEntryDelegations(state).filter((delegation) =>
+      countsDelegation(state, currentStep, delegation),
+    );
+    if (!delegations.some((delegation) => delegation.substepId === state.substep)) {
+      // As for an inline substep: the machine reserves on every entry, and a
+      // Collected one raises on arrival, so the cursor never rests here
+      // without its own counted reservation.
+      throw new Error(
+        `Run ${state.id} rests on delegated substep ${state.step}.${state.substep} with no Current Child reserved for its entry`,
+      );
+    }
+    return { kind: 'delegation', effects, delegations };
   }
 
   if (entry.prompted || code === undefined) {

@@ -20,13 +20,14 @@ import {
   type ActionBlockData,
   type ActiveRunbookEntry,
   type ArtifactPathOptions,
-  type ChildLinkage,
   type CurrentChildStatus,
+  type DelegationChildStatus,
   type ParentLinkStatus,
   type ExecutionCondition,
   type ExecutionStatus,
   type PublicArtifactVarValue,
   type RunbookState,
+  type RunLinkage,
 } from '@rundown-org/core';
 import {
   getStepRetryMax,
@@ -91,6 +92,11 @@ export interface StatusOutputData {
   parent?: ParentLinkStatus;
   /** The Current Child of the run's step, when it composes one (#903). */
   child?: CurrentChildStatus;
+  /**
+   * The Delegations of the run's active entry (#904): id, lifecycle and
+   * result only. Never a Claim Ticket.
+   */
+  children?: readonly DelegationChildStatus[];
 }
 
 /**
@@ -98,10 +104,11 @@ export interface StatusOutputData {
  * unit and kind. Nothing in it authorizes anything.
  *
  * @param linkage - The row's linkage, or null for a top-level run.
- * @returns The status form, or undefined for a top-level run.
+ * @returns The status form, or undefined for a top-level run and for a
+ *   Delegation whose parent was pruned (there is no parent run to name).
  */
-export function buildParentStatus(linkage: ChildLinkage | null): ParentLinkStatus | undefined {
-  if (linkage === null) return undefined;
+export function buildParentStatus(linkage: RunLinkage | null): ParentLinkStatus | undefined {
+  if (linkage === null || linkage.kind === 'orphaned_delegation') return undefined;
   return { runId: linkage.parentRunId, step: linkage.parentStep, kind: linkage.kind };
 }
 
@@ -262,16 +269,21 @@ export function buildRunListStatus(
  * @param runState - The run state
  * @param cwd - Current working directory (for step resolution)
  * @param condition - Core's execution condition when the run holds a lease
- * @param composition - The run's parent and its step's Current Child (#903)
+ * @param composition - The run's parent and its step's Current Children (#903, #904)
  * @param composition.parent - The parent coordinate, for a Child Run
- * @param composition.child - The Current Child, when the step composes one
+ * @param composition.child - The Current Inline Child, when the step composes one
+ * @param composition.children - The Delegations of the active entry, when it delegates
  * @returns StatusOutputData with full run details
  */
 export function buildRunStatus(
   runState: RunbookState,
   cwd: string,
   condition?: ExecutionCondition,
-  composition: { readonly parent?: ParentLinkStatus; readonly child?: CurrentChildStatus } = {},
+  composition: {
+    readonly parent?: ParentLinkStatus;
+    readonly child?: CurrentChildStatus;
+    readonly children?: readonly DelegationChildStatus[];
+  } = {},
 ): StatusOutputData {
   const steps = getRunbookFromState(runState, cwd);
   const currentStepIndex = steps.findIndex((s) => s.name === runState.step);
@@ -322,6 +334,9 @@ export function buildRunStatus(
     ...(execution !== undefined ? { execution } : {}),
     ...(composition.parent !== undefined ? { parent: composition.parent } : {}),
     ...(composition.child !== undefined ? { child: composition.child } : {}),
+    ...(composition.children !== undefined && composition.children.length > 0
+      ? { children: composition.children }
+      : {}),
     position: {
       ...basePosition,
       ...(activeFrameKey ? { frameKey: activeFrameKey } : {}),

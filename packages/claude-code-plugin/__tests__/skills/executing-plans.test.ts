@@ -45,13 +45,17 @@ describe('executing-plans skill', () => {
     const skill = readSkill();
     expect(skill).toMatch(/writing-plans/);
     expect(skill).toMatch(/running-runbooks/);
-    // Delegation is unavailable until #904, so the skill sends no one there.
-    expect(skill).not.toMatch(/delegating-runbooks/);
+    // execute-plan delegates its stages, so the orchestrator protocol is linked.
+    expect(skill).toMatch(/\[delegating-runbooks\]\(\.\.\/delegating-runbooks\/SKILL\.md\)/);
   });
 
-  it('names the composition refusal and the standalone leaf that still runs', () => {
+  it('runs execute-plan end to end, collecting its delegated stages', () => {
     const skill = readSkill();
-    expect(skill).toContain('`RUNBOOK_COMPOSITION_UNSUPPORTED`');
+    expect(skill).toContain('`rundown collect --token <owner_token>`');
+    expect(skill).toMatch(/one sub-agent per ticket/);
+    expect(skill).not.toContain('RUNBOOK_COMPOSITION_UNSUPPORTED');
+    expect(skill).not.toMatch(/#904/);
+    // The leaf still runs standalone for work without the gates.
     expect(skill).toMatch(
       /rundown run rundown:implement-plan --artifacts PlanPath=<rd:\/\/[^>]*plan URI>/,
     );

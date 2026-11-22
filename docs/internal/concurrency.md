@@ -124,6 +124,40 @@ seam refuses `pass` there `EXECUTION_PENDING` (the machine's selection for a
 lease-free cursor is a `runnable` unit), exactly as after a crash between any
 commit and its Run Progression; `goto` onto the step runs it.
 
+## Child runs: the child never writes its parent
+
+A Child Run is its own row, written only by its own owner's commands. Its parent
+learns its result only by Collect, which is the parent owner's own conditional
+write on the parent.
+
+- An Inline Child's row is inserted by its parent owner's command (the same
+  agent), one write or none; the implicit Collect is that command's next
+  conditional save on the parent.
+- A Delegation's row is inserted by `rundown claim` in ONE `BEGIN IMMEDIATE`
+  transaction (`RunbookStore.claimDelegationChild`): it reads the parent row,
+  runs a synchronous check that the reservation still counts and the parent is
+  running, and inserts the child under the reservation's preallocated id. The
+  parent is read, never written. Two agents racing to claim the same ticket are
+  serialised by the write lock, and the loser is refused `ALREADY_CLAIMED` by
+  the child id's primary key — not by a version check.
+- The Claim Ticket hashes are committed into the parent by Run Progression's
+  turn that announces the step entry: one conditional save naming the version it
+  read, refused `CONCURRENT_MODIFICATION` and never retried; the minted tickets
+  are then discarded unprinted. The owner's next `collect` activates the unit
+  again and issues them.
+- `rundown collect` commits each terminal child's result as its own conditional
+  save, each naming the version the previous one produced — returned by that
+  save from inside its own transaction, never re-read afterwards, so a write by
+  anyone else in between refuses the next save rather than being absorbed.
+  Whether a child still counts is decided on the run as this Collect has left
+  it, so a child after one that finished the run is reported `cancelled`, not
+  applied. A save refused because the run moved stops the Collect there: the
+  results applied before it stand, and the next `collect` reports them
+  `already_collected`.
+- A Delegation's own command first reads its parent to check it still counts.
+  That read may race the parent's next write; it is harmless, because Collect —
+  the parent owner's write — decides what counts.
+
 ## No other coordination
 
 There are no file locks, compare-and-swap retry budgets, latches, fences, claim

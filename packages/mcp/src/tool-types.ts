@@ -13,7 +13,9 @@ export type RundownToolName =
   | 'fail'
   | 'goto'
   | 'complete'
-  | 'stop';
+  | 'stop'
+  | 'claim'
+  | 'collect';
 
 /**
  * Text response shape returned to MCP clients.

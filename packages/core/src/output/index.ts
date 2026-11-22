@@ -90,6 +90,7 @@ export {
   ExecutionStatusSchema,
   ParentLinkStatusSchema,
   CurrentChildStatusSchema,
+  DelegationChildStatusSchema,
   ArtifactAliasEntrySchema,
   ArtifactAliasArrayEntrySchema,
   ArtifactLsResponseSchema,

@@ -14,6 +14,7 @@
 
 import type {
   CommandExecutionStreamOptions,
+  CommandTargetPurpose,
   CommandTargetResolution,
   OwnerToken,
   RunbookLifecycleCommandService,
@@ -41,20 +42,26 @@ export interface CommandTargetContext {
  *
  * @param ctx - Seam, manager and rendering context.
  * @param token - The presented Owner Token.
+ * @param command - The mutating command the target is resolved for; core
+ *   decides which commands a cancelled or orphaned Delegation still accepts.
  * @returns Core's resolution: the target with its root, or a refusal.
  */
 export function resolveCommandTarget(
   ctx: CommandTargetContext,
   token: OwnerToken,
+  command: CommandTargetPurpose,
 ): Promise<CommandTargetResolution> {
-  return ctx.seam.resolveCommandTarget(token, (directive) =>
-    driveRunProgression(directive, {
-      manager: ctx.manager,
-      cwd: ctx.cwd,
-      output: ctx.output,
-      ...(ctx.commandStreamOptions !== undefined
-        ? { commandStreamOptions: ctx.commandStreamOptions }
-        : {}),
-    }),
+  return ctx.seam.resolveCommandTarget(
+    token,
+    (directive) =>
+      driveRunProgression(directive, {
+        manager: ctx.manager,
+        cwd: ctx.cwd,
+        output: ctx.output,
+        ...(ctx.commandStreamOptions !== undefined
+          ? { commandStreamOptions: ctx.commandStreamOptions }
+          : {}),
+      }),
+    command,
   );
 }

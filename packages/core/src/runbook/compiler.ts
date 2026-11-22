@@ -18,6 +18,7 @@ import type {
   ResolvedStep,
   ResolvedStepHavingSubsteps,
   Lifecycle,
+  ChildReservation,
   SubstepState,
   TemplateVarValue,
   RunbookState,
@@ -80,11 +81,22 @@ import {
   findSubstepState,
   frameKeyForCursor,
   getActiveForContext,
+  recordChildCollected,
+  type FrameKey,
 } from './targeting.js';
 import { resetReopenedSubsteps } from './substep-reset.js';
 import { getErrorMessage } from '../errors.js';
 import { assertRunId, generateRunId, type RunId } from './run-id.js';
 import { inlineRunbookOf, reserveInlineChild } from './inline-child.js';
+import {
+  activeEntryDelegations,
+  delegatedRunbookOf,
+  isAfterCursor,
+  recordClaimTickets,
+  reserveDelegationChildren,
+} from './delegation-child.js';
+import { buildContextSnapshot } from './delegation-context.js';
+import type { SecretHash } from './run-secrets.js';
 import { advanceFrameEntry, type FrameEntryCoordinates } from './frame-entry.js';
 import { RunbookRefSchema, type RunbookRef } from './runbook-ref.js';
 import { MAX_FILE_ITERATIONS } from './for-iteration-constants.js';
@@ -861,11 +873,18 @@ export interface RunbookContext {
  *   resolves with an empty `variables` record and still fires the result-driven
  *   `PASS` or `FAIL` event.
  *
- * - CHILD_RESULT: The implicit Collect of an inline substep's Current Child
- *   (#903). Merges the child's final variables and raises PASS or FAIL.
+ * - CHILD_RESULT: Collect of a Current Child's result — the implicit Collect
+ *   of an inline substep's child (#903), or `rundown collect` of a
+ *   Delegation (#904). Merges the child's final variables and records the
+ *   reservation as collected; for the cursor's own substep it raises PASS or
+ *   FAIL, and for a later delegated substep of the same entry it waits until
+ *   the cursor arrives there.
+ * - ISSUE_CLAIM_TICKETS: Record the hash of each Claim Ticket Run Progression
+ *   minted for a Delegation of the active entry (#904). The plaintext ticket
+ *   is printed once on `step_entered` and never reaches the machine.
  *
- * A DELEGATE substep's PASS/FAIL is sent directly by the lifecycle seam after
- * `--step` validation; there is no mailbox (ADR 0005).
+ * The owner's own PASS/FAIL on a substep is sent directly by the lifecycle
+ * seam after `--step` validation; there is no mailbox (ADR 0005).
  */
 export type RunbookEvent =
   | { type: 'PASS' }
@@ -895,15 +914,24 @@ export type RunbookEvent =
     }
   | {
       /**
-       * The implicit Collect of an Inline Child (#903): the child's terminal
-       * read as its Child Result, with its final variables. Handled only by
-       * the inline substep whose Current Child is `childRunId`; the result
-       * raises that substep's PASS or FAIL.
+       * Collect of a Current Child (#903 inline, #904 delegation): the
+       * child's terminal read as its Child Result, with its final variables.
+       * Applied only while the parent still counts `childRunId`; a stale
+       * child's result changes nothing.
        */
       type: 'CHILD_RESULT';
       childRunId: RunId;
       result: 'pass' | 'fail';
       vars: Readonly<Record<string, VariableValue>>;
+    }
+  | {
+      /**
+       * The hashes of the Claim Tickets Run Progression minted for the
+       * active entry's Delegations (#904). Applied only to a reservation that
+       * has no ticket yet.
+       */
+      type: 'ISSUE_CLAIM_TICKETS';
+      tickets: readonly { readonly childRunId: RunId; readonly ticketHash: SecretHash }[];
     };
 
 /**
@@ -1462,6 +1490,59 @@ function initIterationResults(
 function leafNeedsIterationResolution(step: ResolvedStep): boolean {
   if (step.kind !== 'for') return false;
   return isSourced(step.forClause);
+}
+
+/**
+ * The frame-entry view a Claim Ticket issuance reads from machine context.
+ *
+ * @param context - Machine context.
+ * @returns The active frame entry and substep states.
+ */
+function claimTicketView(context: RunbookContext): {
+  readonly substepStates?: readonly SubstepState[];
+  readonly activeFrameKey?: FrameKey;
+  readonly activeEntry?: number;
+} {
+  return {
+    substepStates: context.substepStates,
+    activeFrameKey: context.frameEntry?.activeFrameKey,
+    activeEntry: context.frameEntry?.activeEntry,
+  };
+}
+
+/**
+ * What a substep composes, if anything: one Inline Child (#903) or a
+ * Delegation (#904).
+ *
+ * @param step - The step owning the substep.
+ * @param substepId - The substep id.
+ * @returns The composition, or `undefined` for an ordinary unit.
+ */
+function composingSubstep(
+  step: ResolvedStep,
+  substepId: string,
+):
+  | { readonly kind: 'inline'; readonly runbook: string }
+  | { readonly kind: 'delegation'; readonly step: ResolvedStep }
+  | undefined {
+  const inline = inlineRunbookOf(step, substepId);
+  if (inline !== undefined) return { kind: 'inline', runbook: inline };
+  return delegatedRunbookOf(step, substepId) !== undefined
+    ? { kind: 'delegation', step }
+    : undefined;
+}
+
+/**
+ * Whether any substep of a step is a Delegation (#904).
+ *
+ * @param step - The step.
+ * @returns True when the step has a delegated substep.
+ */
+function stepDelegates(step: ResolvedStep): boolean {
+  return (
+    resolvedStepHasSubsteps(step) &&
+    step.substeps.some((substep) => delegatedRunbookOf(step, substep.id) !== undefined)
+  );
 }
 
 /**
@@ -3983,62 +4064,160 @@ export function compileRunbookToMachine(
   const mintChildRunId = options?.generateChildRunId ?? generateRunId;
 
   /**
-   * Build the transient `__reserve-child` substate of an inline substep leaf.
+   * Read the substep's own reservation at the frame's active entry, if the
+   * parent still counts it (reserved at this entry and not yet Collected).
    *
-   * Its entry action records a fresh Current Child reservation for the frame
-   * entry the leaf's `syncFrameEntry` just made current, replacing any earlier
-   * one, so a re-entry by loop, GOTO or RETRY never counts an old child.
-   *
-   * @param stepName - The step owning the inline substep.
-   * @param substepId - The inline substep.
-   * @param runbook - The runbook the child runs.
-   * @returns The substate configuration, keyed by its name.
+   * @param context - Machine context.
+   * @param stepName - The step owning the substep.
+   * @param substepId - The substep.
+   * @returns The counted reservation, or `undefined`.
    */
-  const buildInlineChildStates = (
+  const countedOwnChild = (
+    context: RunbookContext,
     stepName: string,
     substepId: string,
-    runbook: string,
-  ): Record<'__reserve-child', RunbookStateConfig> => ({
-    '__reserve-child': {
-      entry: runbookSetup.assign({
-        substepStates: ({ context }: { context: RunbookContext }): readonly SubstepState[] => {
-          const entry = context.frameEntry?.activeEntry;
-          if (entry === undefined) {
-            throw new Error(`Inline substep ${stepName}.${substepId} entered with no frame entry`);
-          }
-          return reserveInlineChild({
-            substepStates: context.substepStates ?? [],
-            substepId,
-            runbook,
-            frameKey: frameKeyForCursor(stepName, context.forStack),
-            entry,
-            runId: mintChildRunId(),
-          });
-        },
-      }),
-      always: { target: 'idle' },
-    },
-  });
+  ): ChildReservation | undefined => {
+    const child = findSubstepState(
+      context.substepStates ?? [],
+      substepId,
+      frameKeyForCursor(stepName, context.forStack),
+    )?.child;
+    return child !== undefined &&
+      child.entry === context.frameEntry?.activeEntry &&
+      child.collected === undefined
+      ? child
+      : undefined;
+  };
 
   /**
-   * Build an inline substep's `CHILD_RESULT` handling: the implicit Collect.
+   * Build the transient `__reserve-child` substate of a composing substep leaf.
    *
-   * Accepted only for the substep's Current Child — the reservation of the
-   * frame's active entry — so a stale child's result is dropped by the guard
-   * rather than applied. The child's final variables merge first; then the
-   * Child Result raises the substep's own PASS or FAIL, whose authored handler
-   * decides the action.
+   * Its entry action records fresh Current Child reservations for the frame
+   * entry the leaf's `syncFrameEntry` just made current, replacing any earlier
+   * one, so a re-entry by loop, GOTO or RETRY never counts an old child. An
+   * inline substep reserves its one Inline Child (#903). A delegated substep
+   * reserves its Delegation and every later delegated substep's (#904); a
+   * later substep whose Delegation was Collected before the cursor arrived
+   * raises that Child Result on arrival.
    *
-   * @param stepName - The step owning the inline substep.
-   * @param substepId - The inline substep.
+   * @param stepName - The step owning the substep.
+   * @param substepId - The composing substep.
+   * @param composition - What the substep composes.
+   * @returns The substate configuration, keyed by its name.
+   */
+  const buildReserveChildStates = (
+    stepName: string,
+    substepId: string,
+    composition:
+      | { readonly kind: 'inline'; readonly runbook: string }
+      | { readonly kind: 'delegation'; readonly step: ResolvedStep },
+  ): Record<'__reserve-child', RunbookStateConfig> => {
+    const entryOf = (context: RunbookContext): number => {
+      const entry = context.frameEntry?.activeEntry;
+      if (entry === undefined) {
+        throw new Error(`Substep ${stepName}.${substepId} entered with no frame entry`);
+      }
+      return entry;
+    };
+    if (composition.kind === 'inline') {
+      return {
+        '__reserve-child': {
+          entry: runbookSetup.assign({
+            substepStates: ({ context }: { context: RunbookContext }): readonly SubstepState[] =>
+              reserveInlineChild({
+                substepStates: context.substepStates ?? [],
+                substepId,
+                runbook: composition.runbook,
+                frameKey: frameKeyForCursor(stepName, context.forStack),
+                entry: entryOf(context),
+                runId: mintChildRunId(),
+              }),
+          }),
+          always: { target: 'idle' },
+        },
+      };
+    }
+    const collectedOnArrival = (context: RunbookContext): 'pass' | 'fail' | undefined => {
+      const child = findSubstepState(
+        context.substepStates ?? [],
+        substepId,
+        frameKeyForCursor(stepName, context.forStack),
+      )?.child;
+      return child?.kind === 'delegation' && child.entry === context.frameEntry?.activeEntry
+        ? child.collected
+        : undefined;
+    };
+    return {
+      '__reserve-child': {
+        entry: runbookSetup.assign({
+          substepStates: ({ context }: { context: RunbookContext }): readonly SubstepState[] =>
+            reserveDelegationChildren({
+              substepStates: context.substepStates ?? [],
+              step: composition.step,
+              substepId,
+              frameKey: frameKeyForCursor(stepName, context.forStack),
+              entry: entryOf(context),
+              mintRunId: mintChildRunId,
+              // Captured now, from the parent's context at reservation: the
+              // child is claimed later, by another agent, and a sibling
+              // Collected in between must not leak into what it inherits.
+              contextFor: (reserved) =>
+                buildContextSnapshot(
+                  {
+                    step: stepName,
+                    templateVars: sourceTemplateVars,
+                    variables: context.variables,
+                    forStack: context.forStack,
+                  },
+                  reserved,
+                ),
+            }),
+        }),
+        always: [
+          {
+            guard: ({ context }) => collectedOnArrival(context) === 'pass',
+            target: 'idle',
+            actions: { type: 'raisePass' as const },
+          },
+          {
+            guard: ({ context }) => collectedOnArrival(context) === 'fail',
+            target: 'idle',
+            actions: { type: 'raiseFail' as const },
+          },
+          { target: 'idle' },
+        ],
+      },
+    };
+  };
+
+  /**
+   * Build a leaf's `CHILD_RESULT` handling: Collect of a Current Child.
+   *
+   * The substep's own child, while the parent counts it, merges its final
+   * variables, is recorded as collected and raises the substep's PASS or FAIL,
+   * whose authored handler decides the action. In a step that delegates, a
+   * leaf also takes the result of a later delegated substep's child of the
+   * same entry out of order: it merges and records it, and the cursor raises
+   * it on arrival. Any other child — stale, already collected, or for a
+   * substep the cursor has passed — matches no guard and changes nothing.
+   *
+   * @param stepName - The step owning the leaf.
+   * @param substepId - The leaf's substep.
+   * @param options - Which results the leaf takes.
+   * @param options.own - Whether the substep composes a child of its own.
+   * @param options.later - The step, when it delegates, for later substeps' results.
    * @returns The guarded transitions for `idle.on.CHILD_RESULT`.
    */
   // The return type stays inferred: the event-specific transition type the
   // `idle.on.CHILD_RESULT` key demands is not nameable from here, and annotating
   // with the any-event alias is rejected by XState's per-event checking.
-  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
-  const buildChildResultTransitions = (stepName: string, substepId: string) => {
-    const isCurrentChild = ({
+  /* eslint-disable @typescript-eslint/explicit-function-return-type */
+  const buildChildResultTransitions = (
+    stepName: string,
+    substepId: string,
+    options: { readonly own: boolean; readonly later?: ResolvedStep },
+  ) => {
+    const isOwnChild = ({
       context,
       event,
     }: {
@@ -4046,12 +4225,22 @@ export function compileRunbookToMachine(
       event: RunbookEvent;
     }): boolean => {
       assertEvent(event, 'CHILD_RESULT');
-      const child = findSubstepState(
-        context.substepStates ?? [],
-        substepId,
-        frameKeyForCursor(stepName, context.forStack),
-      )?.child;
-      return child?.runId === event.childRunId && child.entry === context.frameEntry?.activeEntry;
+      return countedOwnChild(context, stepName, substepId)?.runId === event.childRunId;
+    };
+    const laterSubstepOf = (context: RunbookContext, event: RunbookEvent): string | undefined => {
+      assertEvent(event, 'CHILD_RESULT');
+      const step = options.later;
+      if (step === undefined) return undefined;
+      const delegation = activeEntryDelegations({
+        substepStates: context.substepStates,
+        activeFrameKey: frameKeyForCursor(stepName, context.forStack),
+        activeEntry: context.frameEntry?.activeEntry,
+      }).find((candidate) => candidate.reservation.runId === event.childRunId);
+      return delegation !== undefined &&
+        delegation.reservation.collected === undefined &&
+        isAfterCursor(step, substepId, delegation.substepId)
+        ? delegation.substepId
+        : undefined;
     };
     const storeChildVariables = {
       type: 'storeCapturedVariables' as const,
@@ -4060,20 +4249,63 @@ export function compileRunbookToMachine(
         return { variables: event.vars };
       },
     };
-    return [
-      {
-        guard: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) =>
-          isCurrentChild({ context, event }) &&
-          event.type === 'CHILD_RESULT' &&
-          event.result === 'pass',
-        actions: [storeChildVariables, { type: 'raisePass' as const }],
-      },
-      {
-        guard: isCurrentChild,
-        actions: [storeChildVariables, { type: 'raiseFail' as const }],
-      },
-    ];
+    const recordCollected = (
+      collectedSubstep: (context: RunbookContext, event: RunbookEvent) => string,
+    ): ReturnType<typeof runbookSetup.assign> =>
+      runbookSetup.assign({
+        substepStates: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) => {
+          assertEvent(event, 'CHILD_RESULT');
+          return recordChildCollected(
+            context.substepStates ?? [],
+            collectedSubstep(context, event),
+            frameKeyForCursor(stepName, context.forStack),
+            event.result,
+          );
+        },
+      });
+    const own = options.own
+      ? [
+          {
+            guard: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) =>
+              isOwnChild({ context, event }) &&
+              event.type === 'CHILD_RESULT' &&
+              event.result === 'pass',
+            actions: [
+              storeChildVariables,
+              recordCollected(() => substepId),
+              { type: 'raisePass' as const },
+            ],
+          },
+          {
+            guard: isOwnChild,
+            actions: [
+              storeChildVariables,
+              recordCollected(() => substepId),
+              { type: 'raiseFail' as const },
+            ],
+          },
+        ]
+      : [];
+    const later =
+      options.later === undefined
+        ? []
+        : [
+            {
+              guard: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) =>
+                laterSubstepOf(context, event) !== undefined,
+              actions: [
+                storeChildVariables,
+                recordCollected((context, event) => {
+                  const later = laterSubstepOf(context, event);
+                  if (later === undefined) throw new Error('Collect guard and action disagree');
+                  return later;
+                }),
+              ],
+            },
+          ];
+    return [...own, ...later];
   };
+  /* eslint-enable @typescript-eslint/explicit-function-return-type */
 
   // Build a flat list of all states to generate GOTO transitions
   const allStates: StateConfig[] = [];
@@ -4233,17 +4465,24 @@ export function compileRunbookToMachine(
     const { naked: unitNakedOutputs } = partitionOutputDeclarations(
       owningStep === undefined ? [] : extractUnitOutputs(owningStep, config.substepId),
     );
-    // An inline runbook-list substep (#903) reserves its Inline Child on every
-    // entry, AFTER iteration and ARTIFACTS resolution so the child inherits the
-    // resolved iteration binding: its entry path passes through the transient
+    // A composing runbook-list substep reserves its Current Child(ren) on
+    // every entry — an inline substep its Inline Child (#903), a DELEGATE
+    // substep its Delegation and every later one of the step (#904) — AFTER
+    // iteration and ARTIFACTS resolution so a child inherits the resolved
+    // iteration binding: its entry path passes through the transient
     // `__reserve-child` on the way to `idle`. Nothing else targets that
     // substate, so the progression round-trips through `idle` never reserve
-    // again. A DELEGATE substep compiles to the ordinary leaf until #904.
-    const inlineRunbook =
-      owningStep !== undefined && config.substepId !== undefined
-        ? inlineRunbookOf(owningStep, config.substepId)
-        : undefined;
-    const restingEntry = inlineRunbook === undefined ? 'idle' : '__reserve-child';
+    // again.
+    const composition =
+      owningStep === undefined || config.substepId === undefined
+        ? undefined
+        : composingSubstep(owningStep, config.substepId);
+    const restingEntry = composition === undefined ? 'idle' : '__reserve-child';
+    // Every leaf of a step that delegates takes a later delegated substep's
+    // Child Result out of order, so a fan-out's results can be Collected in
+    // any order.
+    const delegatingStep =
+      owningStep !== undefined && stepDelegates(owningStep) ? owningStep : undefined;
     const artifactResolveInvokeBlock = buildArtifactResolveInvokeBlock(
       artifactDeclarations,
       config.stepName,
@@ -4256,10 +4495,10 @@ export function compileRunbookToMachine(
         ? '__resolve-artifacts'
         : restingEntry;
     const iterationReadyTarget = hasArtifactDeclarations ? '__resolve-artifacts' : restingEntry;
-    const inlineChildStates =
-      inlineRunbook === undefined || config.substepId === undefined
+    const reserveChildStates =
+      composition === undefined || config.substepId === undefined
         ? {}
-        : buildInlineChildStates(config.stepName, config.substepId, inlineRunbook);
+        : buildReserveChildStates(config.stepName, config.substepId, composition);
 
     // RETRY re-enters this very leaf whenever the step declares no parent
     // ARTIFACTS to route through, so it needs the same external-transition
@@ -4478,12 +4717,18 @@ export function compileRunbookToMachine(
             EXECUTE_COMMAND: {
               target: `#${config.id}.__execute-command`,
             },
-            ...(inlineRunbook === undefined || config.substepId === undefined
+            ...((composition === undefined && delegatingStep === undefined) ||
+            config.substepId === undefined
               ? {}
-              : { CHILD_RESULT: buildChildResultTransitions(config.stepName, config.substepId) }),
+              : {
+                  CHILD_RESULT: buildChildResultTransitions(config.stepName, config.substepId, {
+                    own: composition !== undefined,
+                    ...(delegatingStep !== undefined ? { later: delegatingStep } : {}),
+                  }),
+                }),
           },
         },
-        ...inlineChildStates,
+        ...reserveChildStates,
         '__progression-waiting-input': {
           entry: runbookSetup.emit(() => ({
             type: 'RUN_PROGRESSION_INTENT' as const,
@@ -4720,6 +4965,20 @@ export function compileRunbookToMachine(
           variables: ({ context, event }) => {
             assertEvent(event, 'SET_VARIABLES');
             return { ...context.variables, ...event.vars };
+          },
+        }),
+      },
+      // Claim Tickets for the active entry's Delegations (#904): only hashes
+      // reach the machine, each recorded once on a reservation without one.
+      ISSUE_CLAIM_TICKETS: {
+        guard: ({ context, event }) =>
+          recordClaimTickets(claimTicketView(context), event.tickets) !== undefined,
+        actions: runbookSetup.assign({
+          substepStates: ({ context, event }) => {
+            assertEvent(event, 'ISSUE_CLAIM_TICKETS');
+            const issued = recordClaimTickets(claimTicketView(context), event.tickets);
+            if (issued === undefined) throw new Error('Claim ticket guard and action disagree');
+            return issued;
           },
         }),
       },

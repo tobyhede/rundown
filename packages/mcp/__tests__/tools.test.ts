@@ -12,6 +12,8 @@ import {
 /** A syntactically plausible Owner Token; the MCP layer treats it as opaque. */
 const TOKEN = `rdo_${'A'.repeat(43)}`;
 const RUN_ID = `rd_${'a'.repeat(32)}`;
+/** A syntactically plausible Claim Ticket; the MCP layer treats it as opaque. */
+const TICKET = `rdt_${'B'.repeat(43)}`;
 
 /**
  * Parse the MCP text block back into its JSON payload so assertions pin the
@@ -40,13 +42,23 @@ function registerWithHandlers(runCli: RunCli): Map<string, Handler> {
 }
 
 describe('tool surface', () => {
-  it('exposes exactly the one-writer tool set (delegate/claim/collect return in #904)', () => {
+  it('exposes exactly the one-writer tool set, with claim and collect (#904)', () => {
     expect([...RUNDOWN_TOOL_NAMES].sort()).toEqual(
-      ['complete', 'fail', 'goto', 'list', 'pass', 'run', 'status', 'stop', 'validate'].sort(),
+      [
+        'claim',
+        'collect',
+        'complete',
+        'fail',
+        'goto',
+        'list',
+        'pass',
+        'run',
+        'status',
+        'stop',
+        'validate',
+      ].sort(),
     );
     expect(RUNDOWN_TOOL_NAMES).not.toContain('delegate');
-    expect(RUNDOWN_TOOL_NAMES).not.toContain('claim');
-    expect(RUNDOWN_TOOL_NAMES).not.toContain('collect');
   });
 });
 
@@ -82,6 +94,9 @@ describe('buildRundownCommand', () => {
     ['complete', { token: TOKEN }, ['complete', '--token', TOKEN]],
     ['complete', { token: TOKEN, message: 'done' }, ['complete', 'done', '--token', TOKEN]],
     ['stop', { token: TOKEN, message: 'blocked' }, ['stop', 'blocked', '--token', TOKEN]],
+    ['claim', { ticket: TICKET }, ['claim', TICKET]],
+    ['claim', { ticket: TICKET, agentId: 'agent-1' }, ['claim', TICKET, '--agent-id', 'agent-1']],
+    ['collect', { token: TOKEN }, ['collect', '--token', TOKEN]],
   ] satisfies Array<[RundownToolName, Record<string, unknown>, string[]]>)(
     '%s builds the matching CLI argv',
     (tool, input, expected) => {
@@ -99,6 +114,8 @@ describe('buildRundownCommand', () => {
     ['goto', { step: '2' }, 'goto.token must be a string'],
     ['complete', {}, 'complete.token must be a string'],
     ['stop', { message: 'blocked' }, 'stop.token must be a string'],
+    ['claim', {}, 'claim.ticket must be a string'],
+    ['collect', {}, 'collect.token must be a string'],
   ] satisfies Array<[RundownToolName, Record<string, unknown>, string]>)(
     '%s rejects missing required string inputs',
     (tool, input, message) => {

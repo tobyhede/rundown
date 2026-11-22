@@ -49,13 +49,19 @@ together to describe the intent.
 | `artifacts/`       | Artifact capture and resolution                         |
 | `context-passing/` | OUTPUTS directives and frontmatter `outputs:`/`inputs:` |
 | `composition/`     | Inline child runbooks driven by the parent's token      |
+| `delegation/`      | Delegated children claimed by ticket and Collected      |
 
 `composition/` holds the Inline Child fixtures (#903): parents whose
 runbook-list substeps run their children on the parent's Owner Token, including
-a two-deep chain, GOTO re-entry and FOR + inline. The `delegation/`,
-`agent-dispatch/`, and `stash-pop/` fixture directories were removed with the
-one-writer rebuild (#901); delegation fixtures return in #904, and stash/pop has
-no replacement.
+a two-deep chain, GOTO re-entry, FOR + inline, and an inline child that itself
+delegates. `delegation/` holds the Delegation fixtures (#904): a step entry
+lists each child's Claim Ticket, `rd claim` starts the child under its own Owner
+Token, and the parent's `rd collect` applies the Child Results — single pass and
+fail, a fan-out of four Collected in any order, FOR + DELEGATE, outputs flowing
+to the parent, and one scenario per agent-confusion refusal (`ALREADY_CLAIMED`,
+`PARENT_RUN_FINISHED`, `DELEGATION_CANCELLED`, `INVALID_STEP`). The
+`agent-dispatch/` and `stash-pop/` directories were removed with the one-writer
+rebuild (#901) and have no replacement.
 
 ## Scenario Command Shape
 
@@ -87,6 +93,15 @@ scenarios:
   `--step`: `rd stop --token ${TOKEN} "operator stopped"`.
 - `rd run` and read-only commands (`rd status`, `rd ls`) stay bare. `--run` is a
   read-only target selector and is never combined with `--token`.
+
+- Delegation (#904): a delegated step's `step_entered` lists each child with its
+  Claim Ticket, captured in order as `${TICKET}`, `${TICKET_2}`, ….
+  `rd claim ${TICKET}` (optionally `--agent-id <id>`) starts the child and
+  prints its own `owner_token`, captured as `${CHILD_TOKEN}` (its run id as
+  `${CHILD_RUN}`); the child is driven with `--token ${CHILD_TOKEN}`. The
+  parent's owner applies the children's results with
+  `rd collect --token ${TOKEN}`, and `expect.collected` asserts the children
+  each collect reported (`step`, `index`, `status`, `result`), in order.
 
 Nothing is written on a refusal, so a wrong `--step` leaves the run where it
 was; the error message names the current position.
@@ -149,9 +164,9 @@ ls "$(rdpath --dir {{ WorkPath }} --ctx {{ ContextId }})"/*-pass*.md
 
 `ContextId` is a built-in variable generated once per execution. Pass it
 explicitly with `--input ContextId=...` when a second runbook should write into
-the same context directory (see `context-passing/outputs-inputs.runbook.md`).
-Automatic inheritance across a parent/child run tree returns with delegation in
-#904.
+the same context directory (see `context-passing/outputs-inputs.runbook.md`). A
+child run — inline or delegated — inherits its parent's `ContextId` with the
+rest of the parent's variables.
 
 ## See Also
 

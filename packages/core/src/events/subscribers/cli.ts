@@ -80,6 +80,9 @@ export class CLISubscriber {
       case 'ERROR_OCCURRED':
         this.handleErrorOccurred(event);
         break;
+      case 'CHILDREN_COLLECTED':
+        this.handleChildrenCollected(event);
+        break;
       default: {
         // Exhaustiveness check - TypeScript errors if a case is missing
         const _exhaustive: never = event;
@@ -184,6 +187,13 @@ export class CLISubscriber {
 
   private handleRunbookStopped(event: RunbookEventV1 & { type: 'RUNBOOK_STOPPED' }): void {
     printRunbookStoppedAtStep(event.payload.position, event.payload.message, this.writer);
+  }
+
+  private handleChildrenCollected(event: RunbookEventV1 & { type: 'CHILDREN_COLLECTED' }): void {
+    for (const child of event.payload.children) {
+      const result = child.result === undefined ? '' : ` (${child.result})`;
+      this.writer.writeLine(`Child ${child.step} ${child.runId}: ${child.status}${result}`);
+    }
   }
 
   private handleErrorOccurred(event: RunbookEventV1 & { type: 'ERROR_OCCURRED' }): void {

@@ -61,7 +61,7 @@ contain the protocol itself.
    ```
 
    If `rundown run` reports missing required inputs, supply them and re-run. If
-   it refuses with `RUNBOOK_COMPOSITION_UNSUPPORTED`, the runbook delegates to other runbooks, which this build cannot run (until #904): report that to the user and stop. Inline child runbooks (a substep listing one runbook, without `- DELEGATE`) run on your Owner Token; see running-runbooks.
+   it refuses with `RUNBOOK_COMPOSITION_UNSUPPORTED`, a substep lists more than one runbook: report that to the user and stop. Inline child runbooks (a substep listing one runbook, without `- DELEGATE`) run on your Owner Token; see running-runbooks. When a `step_entered` lists delegated `children` with Claim Tickets, follow the [delegating-runbooks](../delegating-runbooks/SKILL.md) skill: dispatch a sub-agent per ticket and apply results with `rundown collect --token <owner_token>`.
 
 4. **Execute.** Follow the loaded
    [running-runbooks](../running-runbooks/SKILL.md) protocol: respond to each
@@ -71,4 +71,5 @@ contain the protocol itself.
 ## Reference
 
 - [running-runbooks](../running-runbooks/SKILL.md) — the execution protocol
+- [delegating-runbooks](../delegating-runbooks/SKILL.md) — orchestrating delegated children
 - [writing-runbooks](../writing-runbooks/SKILL.md) — authoring runbooks

@@ -315,9 +315,24 @@ Use bare `- DELEGATE` to delegate a step or substep. `DELEGATE value` is invalid
 
 An H2 `DELEGATE` propagates to its substeps. Delegated targets must resolve to runbooks; do not use delegation for arbitrary files or commands.
 
-### Composition in this build
+### Inline and delegated children
 
-A runbook-list substep without `- DELEGATE` (child runbook paths listed in a step body, one per substep) runs its child inline: the child is a separate run driven by the parent's Owner Token, and its result and frontmatter `OUTPUTS` flow back into the parent substep. List exactly one runbook per H3 substep; the step-level list shorthand already makes one substep per entry. `- DELEGATE` parses, but `rundown run` refuses a runbook that uses it with `RUNBOOK_COMPOSITION_UNSUPPORTED` and creates no run (delegation returns in #904); an inline child whose runbook delegates is refused the same way when it launches. Until then, keep delegating leaves runnable on their own, and tell the user that a delegating parent cannot run yet.
+A runbook-list substep without `- DELEGATE` (child runbook paths listed in a
+step body, one per substep) runs its child inline: the child is a separate run
+driven by the parent's Owner Token, and its result and frontmatter `OUTPUTS`
+flow back into the parent substep. With `- DELEGATE`, entering the step reserves
+one child per delegated substep (one per iteration under `FOR`) and prints a
+Claim Ticket for each on `step_entered`; a sub-agent runs
+`rundown claim <ticket>` and drives the child with the child's own token, and
+the parent's owner applies the results with
+`rundown collect --token <owner_token>`. Every child inherits the parent's
+variables (including `ContextId`) as captured when it was reserved, and its
+frontmatter `OUTPUTS` flow to the parent when its result is applied. List
+exactly one runbook per H3 substep; the step-level list shorthand already makes
+one substep per entry. A substep listing more than one runbook is refused at
+`rundown run` with `RUNBOOK_COMPOSITION_UNSUPPORTED` and creates no run.
+The run-time protocol is the
+[delegating-runbooks](../delegating-runbooks/SKILL.md) skill.
 
 ## FOR Loops
 
@@ -442,7 +457,7 @@ Decide which skills the bootstrap skill references by what the runbook contains:
 | If the runbook… | Reference |
 |-----------------|-----------|
 | (always) | [running-runbooks](../running-runbooks/SKILL.md) — the execution protocol |
-| composes other runbooks with `- DELEGATE` | No skill: state in the `<important>` block that `rundown run` refuses it until #904 (see [Composition in this build](#composition-in-this-build) and the [planning](../planning/SKILL.md) skill); a runbook that composes children inline (no `- DELEGATE`) runs and needs no such note |
+| composes other runbooks with `- DELEGATE` | [delegating-runbooks](../delegating-runbooks/SKILL.md) — the orchestrator dispatches a sub-agent per Claim Ticket and applies results with `rundown collect` (see [Inline and delegated children](#inline-and-delegated-children)) |
 | writes, reviews, or executes a plan (plan pipeline) | [writing-plans](../writing-plans/SKILL.md) / [executing-plans](../executing-plans/SKILL.md) |
 
 Extend this table as new craft skills are added. The rule: reference the skill

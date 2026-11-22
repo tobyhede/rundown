@@ -16,6 +16,7 @@ import type {
 } from './effective-vars.js';
 import type { RunbookRef } from './runbook-ref.js';
 import type { RunId } from './run-id.js';
+import type { SecretHash } from './run-secrets.js';
 import type { FrameKey } from './targeting.js';
 
 // Re-export parser types needed by core package consumers
@@ -526,6 +527,13 @@ export type LastAction =
   | InternalFailureLastAction;
 
 /**
+ * A Child Result as a parent records it once Collected: the outcome a terminal
+ * child's lifecycle reads as (`completed` → pass; `stopped` / `abandoned` →
+ * fail).
+ */
+export type CollectedChildResult = 'pass' | 'fail';
+
+/**
  * The Current Child a parent reserves for one inline runbook-list substep
  * (#903, ADR 0005).
  *
@@ -537,7 +545,7 @@ export type LastAction =
  * child is never collected (#749).
  */
 export interface InlineChildReservation {
-  /** Discriminant; `delegation` joins in #904. */
+  /** Discriminant. */
   readonly kind: 'inline';
   /** The child run id, preallocated so the child row is created under it. */
   readonly runId: RunId;
@@ -545,10 +553,46 @@ export interface InlineChildReservation {
   readonly entry: number;
   /** The authored (resolved) runbook reference the child runs. */
   readonly runbook: string;
+  /** The Child Result the parent Collected, once it has; absent before. */
+  readonly collected?: CollectedChildResult;
+}
+
+/**
+ * The Current Child a parent reserves for one `DELEGATE` runbook-list substep
+ * (#904, ADR 0005): a Delegation, owned by whichever agent claims it.
+ *
+ * Recorded by the machine, in the parent's own record, when the cursor enters
+ * a delegated substep: that substep and every later delegated substep of the
+ * step are reserved for the frame entry together, so a fan-out's children can
+ * all be claimed at once. Keyed by frame and `entry` exactly as an
+ * {@link InlineChildReservation}. Unlike an Inline Child, a Delegation is
+ * claimed by another agent at a time of its choosing, so the context it
+ * inherits is captured here at reservation rather than read from the parent
+ * at launch — a sibling Collected in between must not leak into it.
+ */
+export interface DelegationChildReservation {
+  /** Discriminant. */
+  readonly kind: 'delegation';
+  /** The child run id, preallocated so `rundown claim` inserts the child under it. */
+  readonly runId: RunId;
+  /** The parent frame entry the reservation was made at. */
+  readonly entry: number;
+  /** The authored (resolved) runbook reference the child runs. */
+  readonly runbook: string;
+  /** The context the child inherits, captured when the reservation was made. */
+  readonly contextSnapshot: ContextSnapshot;
+  /**
+   * Hash of the Claim Ticket Run Progression issued for this reservation, or
+   * `null` until it has. The ticket itself is printed once, on the
+   * `step_entered` event that issued it, and never stored.
+   */
+  readonly ticketHash: SecretHash | null;
+  /** The Child Result the parent Collected, once it has; absent before. */
+  readonly collected?: CollectedChildResult;
 }
 
 /** A Current Child reservation recorded on a substep state. */
-export type ChildReservation = InlineChildReservation;
+export type ChildReservation = InlineChildReservation | DelegationChildReservation;
 
 /**
  * Runtime state of a substep within a step

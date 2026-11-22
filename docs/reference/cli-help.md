@@ -17,6 +17,8 @@ Commander program. For the user guide, see [cli.md](cli.md).
   - [`rundown goto`](#rundown-goto)
   - [`rundown status`](#rundown-status)
   - [`rundown stop`](#rundown-stop)
+  - [`rundown claim`](#rundown-claim)
+  - [`rundown collect`](#rundown-collect)
   - [`rundown ls`](#rundown-ls)
   - [`rundown echo`](#rundown-echo)
   - [`rundown check`](#rundown-check)
@@ -84,6 +86,10 @@ Commands:
                                 substep)
   status [options]              Show run state (all runs, or one run with --run)
   stop [options] [message]      Abort a running runbook
+  claim [options] <ticket>      Claim a delegated child by its Claim Ticket and
+                                start it (prints its owner token)
+  collect [options]             Collect the results of the run's current
+                                delegated children
   ls [options]                  List runbooks (runs by default, --all for
                                 available)
   echo [options] [command...]   Echo command for runbook testing
@@ -215,6 +221,34 @@ Abort a running runbook
 
 Arguments:
   message          Stop message
+
+Options:
+  --token <token>  Owner token of the run to mutate (owner_token from
+                   runbook_started)
+  --text           Output as human-readable text
+  -h, --help       display help for command
+```
+
+### `rundown claim`
+
+```text
+Usage: rundown claim [options] <ticket>
+
+Claim a delegated child by its Claim Ticket and start it (prints its owner
+token)
+
+Options:
+  --agent-id <id>  Identity of the claiming agent, recorded on the child
+  --text           Output as human-readable text
+  -h, --help       display help for command
+```
+
+### `rundown collect`
+
+```text
+Usage: rundown collect [options]
+
+Collect the results of the run's current delegated children
 
 Options:
   --token <token>  Owner token of the run to mutate (owner_token from

@@ -11,7 +11,7 @@
  *   reservation preallocated, with its linkage, no token of its own, and its
  *   machine already initialised — one write, or none. Preparing the child
  *   runbook (reading the file, resolving its variables under policy) is the
- *   frontend's service, injected as {@link PrepareInlineChild} (Category C).
+ *   frontend's service, injected as {@link PrepareChildRun} (Category C).
  * - {@link childResultEvent} is the implicit Collect's event: Run Progression
  *   reads the child's terminal from the child's own row and commits it into
  *   the parent as one `CHILD_RESULT`. The child never writes its parent.
@@ -21,8 +21,8 @@
  * @module runbook/inline-progression
  */
 
-import type { OutputDeclaration } from '@rundown-org/parser';
 import type { ExecutionEventEmitter } from '../events/emitter.js';
+import type { PrepareChildRun } from './child-preparation.js';
 import { getErrorMessage } from '../errors.js';
 import type { RunbookActorService } from './actor-service.js';
 import {
@@ -32,20 +32,13 @@ import {
   type ChildResult,
 } from './inline-child.js';
 import type { ChildLinkage } from './child-linkage.js';
-import type { VariableValue } from './effective-vars.js';
 import { RunbookCompositionUnsupportedError } from './run-authority.js';
+import type { VariableValue } from './effective-vars.js';
 import type { RunId } from './run-id.js';
-import type { RunbookRef } from './runbook-ref.js';
 import type { RunbookStateManager } from './state.js';
 import type { VersionedRunState } from './storage/runbook-store.js';
 import { deriveActiveFrame } from './targeting.js';
-import type {
-  ContextSnapshot,
-  InlineChildReservation,
-  ResolvedRunbook,
-  RunbookState,
-  TemplateVarValue,
-} from './types.js';
+import type { InlineChildReservation, RunbookState } from './types.js';
 
 /** Symbolic code for an Inline Child that could not be launched (#903). */
 export const INLINE_CHILD_LAUNCH_FAILED_CODE = 'INLINE_CHILD_LAUNCH_FAILED';
@@ -55,62 +48,6 @@ export const INLINE_CHILD_LAUNCH_FAILED_CODE = 'INLINE_CHILD_LAUNCH_FAILED';
  * itself, directly or through its children, would otherwise launch forever.
  */
 export const MAX_INLINE_CHILD_DEPTH = 32;
-
-/** What the frontend is asked to prepare for one Inline Child launch. */
-export interface InlineChildLaunchRequest {
-  /** The parent run, as Run Progression read it. */
-  readonly parent: RunbookState;
-  /** The reservation being launched. */
-  readonly reservation: InlineChildReservation;
-  /**
-   * The context the child inherits — the parent's variables, step position and
-   * FOR iteration binding — read from the parent row by `inlineChildContext`
-   * rather than recorded on the reservation.
-   */
-  readonly contextSnapshot: ContextSnapshot;
-}
-
-/**
- * A child runbook prepared for launch, or why it could not be.
- *
- * `prepared` carries everything `RunbookStateManager.createInlineChild` needs
- * beyond the id and linkage core already holds.
- */
-export type PreparedInlineChild =
-  | {
-      readonly kind: 'prepared';
-      /** Canonical identity of the resolved child runbook. */
-      readonly runbookRef: RunbookRef;
-      /** The parsed, variable-substituted child runbook. */
-      readonly runbook: ResolvedRunbook;
-      /** Repo-relative path of the child runbook file. */
-      readonly runbookPath: string;
-      /** The child runbook's source, frozen at launch. */
-      readonly runbookSrc: string;
-      /** The child's merged template variables. */
-      readonly templateVars: Readonly<Record<string, TemplateVarValue>>;
-      /** Runtime variables seeded into the child (artifact inputs, inherited outputs). */
-      readonly initialVariables: Readonly<Record<string, VariableValue>>;
-      /** The child's frontmatter `outputs:` declarations. */
-      readonly frontmatterOutputs: readonly OutputDeclaration[];
-    }
-  | {
-      readonly kind: 'refused';
-      /** Stable diagnostic code (a preparation failure's own code). */
-      readonly code: string;
-      /** Operator-facing message. */
-      readonly message: string;
-    };
-
-/**
- * The frontend service that prepares a child runbook for launch: resolving the
- * reference, reading and parsing the file, and resolving its variables from
- * the request's `contextSnapshot` (the context core read from the parent row).
- * Injected into Run Progression.
- */
-export type PrepareInlineChild = (
-  request: InlineChildLaunchRequest,
-) => Promise<PreparedInlineChild>;
 
 /** A child's machine could not be initialised; carries the cause. */
 class InlineChildInitializationError extends Error {
@@ -129,7 +66,7 @@ class InlineChildInitializationError extends Error {
 export interface InlineChildLaunchDeps {
   readonly manager: RunbookStateManager;
   readonly actorService: RunbookActorService;
-  readonly prepareInlineChild?: PrepareInlineChild;
+  readonly prepareChildRun?: PrepareChildRun;
 }
 
 /** Outcome of {@link launchInlineChild}. */
@@ -197,7 +134,7 @@ export async function launchInlineChild(args: {
 }): Promise<InlineChildLaunchOutcome> {
   const { parent, reservation, deps } = args;
   const at = `${parent.state.step}.${parent.state.substep ?? ''}`;
-  if (deps.prepareInlineChild === undefined) {
+  if (deps.prepareChildRun === undefined) {
     return {
       kind: 'refused',
       code: INLINE_CHILD_LAUNCH_FAILED_CODE,
@@ -205,7 +142,7 @@ export async function launchInlineChild(args: {
       recovery: 'permanent',
     };
   }
-  const prepared = await deps.prepareInlineChild({
+  const prepared = await deps.prepareChildRun({
     parent: parent.state,
     reservation,
     contextSnapshot: inlineChildContext(parent.state, reservation),
@@ -250,7 +187,7 @@ export async function launchInlineChild(args: {
       return {
         kind: 'refused',
         code: 'RUNBOOK_COMPOSITION_UNSUPPORTED',
-        message: `Inline child ${reservation.runbook} at ${at} could not be launched: ${error.message}. Delegation returns in #904.`,
+        message: `Inline child ${reservation.runbook} at ${at} could not be launched: ${error.message}`,
         recovery: 'permanent',
       };
     }

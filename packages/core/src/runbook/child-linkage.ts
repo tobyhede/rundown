@@ -19,8 +19,8 @@ import type { FrameKey } from './targeting.js';
  *
  * - `inline` — the same agent owns both; the parent's Owner Token authorizes
  *   the child, which has no token of its own (#903).
- * - `delegation` — a different agent owns the child through its own token
- *   (#904). The column admits it; nothing writes it yet.
+ * - `delegation` — a different agent owns the child through its own token,
+ *   inserted by `rundown claim` (#904).
  */
 export type ChildKind = 'inline' | 'delegation';
 
@@ -36,4 +36,38 @@ export interface ChildLinkage {
   readonly parentFrameKey: FrameKey;
   /** The parent frame entry the reservation was made at. */
   readonly parentEntry: number;
+  /**
+   * The agent id `rundown claim --agent-id` recorded for a Delegation (#904),
+   * the identity a later `release` is matched against. Absent for an Inline
+   * Child and for a claim made without one.
+   */
+  readonly claimedBy?: string;
 }
+
+/**
+ * A Delegation whose parent run was pruned (#904). Its row keeps the parent
+ * unit and frame entry it ran for, and that it was a Delegation, but no
+ * longer names the parent: the run is gone, and the foreign key admits no
+ * dangling reference. No one can Collect its result, so every command but
+ * `stop` is refused `PARENT_RUN_FINISHED`.
+ */
+export interface OrphanedDelegationLinkage {
+  /** Discriminant: a Delegation whose parent was pruned. */
+  readonly kind: 'orphaned_delegation';
+  /** The qualified parent unit the child ran for (`step.substep`). */
+  readonly parentStep: string;
+  /** The parent frame the reservation was made in. */
+  readonly parentFrameKey: FrameKey;
+  /** The parent frame entry the reservation was made at. */
+  readonly parentEntry: number;
+  /** The agent id `rundown claim --agent-id` recorded, if any. */
+  readonly claimedBy?: string;
+}
+
+/**
+ * The linkage a run row records, as read: a live parent coordinate, or a
+ * Delegation whose parent was pruned. Written linkage is always a
+ * {@link ChildLinkage}; only the `runs_unlink_children` trigger produces the
+ * orphaned form.
+ */
+export type RunLinkage = ChildLinkage | OrphanedDelegationLinkage;

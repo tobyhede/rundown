@@ -105,15 +105,19 @@ const CHILD_RUNBOOK = [
   '',
 ].join('\n');
 
-const DELEGATE_RUNBOOK = [
-  '# Delegating',
+// One substep listing two runbooks: each substep composes one child.
+const PAIRED_RUNBOOK = [
+  '# Paired',
   '',
   '## 1. Parent',
   '',
-  '- DELEGATE',
   '- PASS ALL COMPLETE',
   '- FAIL ANY STOP',
   '',
+  '### 1.1 Both',
+  '',
+  '- DELEGATE',
+  '- child.runbook.md',
   '- child.runbook.md',
   '',
 ].join('\n');
@@ -140,7 +144,7 @@ describe('owner token command seam (#901)', () => {
     await writeFile(join(workspace.cwd, 'manual-substeps.runbook.md'), SUBSTEP_RUNBOOK);
     await writeFile(join(workspace.cwd, 'inline.runbook.md'), INLINE_RUNBOOK);
     await writeFile(join(workspace.cwd, 'child.runbook.md'), CHILD_RUNBOOK);
-    await writeFile(join(workspace.cwd, 'delegate.runbook.md'), DELEGATE_RUNBOOK);
+    await writeFile(join(workspace.cwd, 'paired.runbook.md'), PAIRED_RUNBOOK);
   });
 
   afterEach(async () => {
@@ -180,13 +184,12 @@ describe('owner token command seam (#901)', () => {
       );
     });
 
-    it('refuses a DELEGATE runbook as RUNBOOK_COMPOSITION_UNSUPPORTED', async () => {
-      const result = await runCliInProcess('run delegate.runbook.md', workspace);
+    it('refuses a substep listing two runbooks as RUNBOOK_COMPOSITION_UNSUPPORTED', async () => {
+      const result = await runCliInProcess('run paired.runbook.md', workspace);
       expect(result.exitCode).toBe(1);
       const error = errorEnvelope(result.stdout);
       expect(error?.code).toBe('RUNBOOK_COMPOSITION_UNSUPPORTED');
-      expect(error?.details).toEqual({ runbook: 'delegate.runbook.md', substeps: ['1.1'] });
-      expect(String(error?.error)).toContain('#904');
+      expect(error?.details).toEqual({ runbook: 'paired.runbook.md', substeps: ['1.1'] });
       // Refused by core before any row is written, and no token is printed.
       expect(result.stdout).not.toMatch(/rdo_/);
       expect(await new RunbookStateManager(workspace.cwd).listRunIds()).toEqual([]);

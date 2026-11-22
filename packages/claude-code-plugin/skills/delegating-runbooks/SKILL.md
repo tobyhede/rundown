@@ -1,283 +1,183 @@
 ---
 name: delegating-runbooks
-description: Use when orchestrating multi-agent work through rundown delegation, dispatching substeps to child agents, or managing delegation tokens
+description: Use when a rundown step_entered event lists delegated `children` with Claim Tickets (rdt_…), when orchestrating sub-agents for `- DELEGATE` substeps, or when collecting delegated results with `rundown collect`.
 ---
 
-# Delegating Work
+# Delegating Runbooks
 
-Rundown delegation dispatches substeps to child agents. The parent delegates, a child claims the work, executes it, and reports back. The plugin automates token detection and claim injection.
+A runbook-list substep marked `- DELEGATE` runs as a **Delegation**: a child run
+owned by whichever agent claims it. You, the orchestrator, keep the parent's
+Owner Token, hand each child's Claim Ticket to one sub-agent, and apply the
+results with `rundown collect`. The child never writes its parent.
 
-To walk the child runbook inline instead of dispatching a subagent, omit `- DELEGATE` — see the inline-linkage pattern in [running-runbooks](../running-runbooks/SKILL.md#nested-runbooks).
-
-## Choreography
-
-Capture the run claim when you start the runbook: `rundown run` emits it on the `runbook_started.claim_id` field. You need it for every mutating command you issue as the orchestrator. A delegation-exposed run refuses bare mutating commands, so each lane names its own bearer authority:
-
-```bash
-# Orchestrator lane — driving a delegation-exposed run
-rundown run rundown:planning        # capture claim_id from runbook_started
-rundown delegate --step 1.1 --claim-id <claim_id>
-rundown collect --claim-id <claim_id>
-rundown pass --claim-id <claim_id>
-
-# Child lane — completing delegated work
-rundown claim <rdtk_…>              # capture claim_id from the output
-rundown pass --claim-id <claim_id>
-
-# Read-only commands stay bare
-rundown status
-rundown ls
-```
+Inline children (a runbook-list substep without `- DELEGATE`) are not
+delegations: you drive them with your own Owner Token. See
+[Composed Runbooks](../running-runbooks/SKILL.md#composed-runbooks).
 
 ## When to Use
 
-- Orchestrating multi-agent work where substeps are dispatched to separate child agents
-- A runbook step carries `- DELEGATE`; entering it auto-issues a token (`rdtk_...`) that must be dispatched
-- Managing the parent side of delegation: issuing, monitoring, aborting, or aggregating delegated substeps
-- Fanning out independent substeps (or FOR-loop iterations) to run concurrently across agents
+- A `step_entered` event carries `children: [{ step, index?, runId, runbook, ticket }]`
+- You are orchestrating a runbook whose steps fan out with `- DELEGATE`
+- You need to apply delegated results (`rundown collect`) or understand a
+  delegation refusal
 
 ## When NOT to Use
 
-- Executing an already-claimed runbook as the child — use the [running-runbooks](../running-runbooks/SKILL.md) skill instead
-- Walking a nested child runbook inline without a subagent — omit `- DELEGATE` (see [running-runbooks](../running-runbooks/SKILL.md#nested-runbooks))
-- Authoring or editing runbook files — use the writing-runbooks skill instead
-- Running unrelated shell commands outside a Rundown-controlled workflow
+- You were handed a Claim Ticket and own the child — claim it and follow
+  [running-runbooks](../running-runbooks/SKILL.md) (see
+  [Sub-agent choreography](#sub-agent-choreography) for the two extra rules)
+- Authoring runbook files — use the
+  [writing-runbooks](../writing-runbooks/SKILL.md) skill
 
-## Quick Reference
+## Orchestrator Choreography
 
-```bash
-# Orchestrator commands present the claim_id returned by rundown run
-rundown delegate --step 2.1 --claim-id <claim_id>              # Delegate specific substep
-rundown delegate <runbook> --step 2.1 --claim-id <claim_id>   # Explicit runbook and substep
-rundown delegate --step 2.1 --input k=v --claim-id <claim_id> # With input
-rundown delegate --step 2.1 --input-json k=json --claim-id <claim_id>  # With JSON input
-rundown delegate --step 2.1 --input-file <path> --claim-id <claim_id>  # Inputs from YAML
-rundown collect --claim-id <claim_id>               # Aggregate delegated results
-rundown pass --claim-id <claim_id>                  # Advance the run you orchestrate
+1. **Start the run** and capture `owner_token` from `runbook_started`:
 
-rundown abort <token> --claim-id <claim_id>          # Cancel unclaimed delegation
-rundown abort <token> --claim-id <claim_id> --force  # Cancel claimed delegation
+   ```bash
+   rundown run <runbook>
+   ```
 
-rundown status                             # Monitor delegation state (JSON by default)
-rundown ls                                 # List runbooks (read-only, stays bare)
-```
+2. **Read the children.** Entering a delegated substep reserves its child and
+   the child of every later delegated substep of the step. The `step_entered`
+   event lists them in `children: [{ step, index?, runId, runbook, ticket }]`;
+   each entry's `ticket` (`rdt_…`, a Claim Ticket) is printed
+   **only on the event that issued it** — never in `rundown status`, never
+   again. A later `step_entered` for the same entry (the cursor moving to the
+   next delegated substep) lists the same children without tickets; they are
+   not new work.
 
-On a standalone run with no delegation activity, bare `rundown pass` still works; `rundown delegate` and delegation-exposed mutations require `--claim-id <claim_id>`. `--run <rd_…>` is target selection only, not authority. Read-only commands (`rundown status`, `rundown ls`) stay bare everywhere.
+3. **Dispatch one sub-agent per ticket**, in parallel. The plugin does not
+   inject claim instructions (its hooks are inert in this build), so the prompt
+   must carry the ticket and the claim command itself:
 
-## Delegation Flow
+   ```text
+   Agent(
+     description="1.2 review-file",
+     prompt="""
+   You own one delegated Rundown child run.
+   1. Skill(skill: "rundown:running-runbooks")
+   2. Run exactly once: rundown claim rdt_… --agent-id reviewer-1.2
+   3. Capture owner_token from the runbook_started event it prints. That is
+      your token; drive the child with
+      rundown pass|fail --token <that owner_token> --step <child step>
+      following each step_entered prompt.
+   4. Stop when the child reports runbook_completed or runbook_stopped. If any
+      command is refused DELEGATION_CANCELLED or PARENT_RUN_FINISHED, end the
+      child with rundown stop --token <that owner_token> and stop. Report the
+      outcome. Never run rundown collect and never use any other token.
+   """
+   )
+   ```
 
-```text
-Parent                          Child
-  |                               |
-  |  rundown delegate --step 2.1 --claim-id <claim_id>
-  |  --> token issued             |
-  |                               |
-  |  Dispatch agent with token    |
-  |  -------------------------→   |
-  |                               |  rundown claim <token>
-  |                               |  (plugin injects automatically)
-  |                               |
-  |                               |  ... does work ...
-  |                               |
-  |                               |  rundown pass --claim-id <claim_id>
-  |  ←-------------------------   |  (or rundown fail --claim-id <claim_id>)
-  |  Result propagates to step    |
-  |                               |
-```
+   `--agent-id` is optional; it records the claiming agent on the child.
 
-## Step-by-Step
+4. **Collect** once sub-agents report (or any time — it never blocks):
 
-### 1. Delegate a substep
+   ```bash
+   rundown collect --token <owner_token>
+   ```
 
-```bash
-# Explicit substep
-rundown delegate --step 2.1 --claim-id <claim_id>
+   The `children_collected` event reports each child:
 
-# Explicit runbook + substep
-rundown delegate my-runbook --step 2.1 --claim-id <claim_id>
+   | `status`            | Meaning                                                     |
+   | ------------------- | ----------------------------------------------------------- |
+   | `collected`         | Terminal; this collect applied its result (`result`)        |
+   | `already_collected` | An earlier collect applied it                               |
+   | `pending`           | Claimed and still running — wait, then collect again        |
+   | `unclaimed`         | No agent has claimed its ticket yet — check the dispatch    |
+   | `cancelled`         | The run no longer counts it (substep decided, step left)    |
 
-# With inputs
-rundown delegate --step 2.1 --input environment=staging --claim-id <claim_id>
-rundown delegate --step 2.1 --input-json config='{"debug":true}' --claim-id <claim_id>
-```
+   Terminal children are applied in any order (`completed` = PASS, `stopped`
+   or `abandoned` = FAIL). Pending and unclaimed children exit 0 with nothing
+   applied. Repeat `collect` until no child is `pending` or `unclaimed`.
 
-**Delegate is an idempotent confirm / re-issue — not the minting step.** Entering
-a delegating step auto-issues its frontier tokens, so `rundown delegate --step X
---claim-id <claim_id>` on an already-entered step returns `action: "already-delegated"`,
-echoing the existing token (`rdtk_...`) rather than minting a new one. Use it to
-read the token, and `--retry` to re-issue after a failed dispatch (#522).
+5. **Continue.** When collect moves the cursor, the step's handlers decide (for
+   example `PASS ALL CONTINUE` / `FAIL ANY STOP`) and the output continues as
+   for `rundown pass`: the next `step_entered` — with fresh tickets if that
+   step delegates too — or the run's terminal. Go back to step 2 with it.
 
-This idempotency holds in every form — `--step S` and the positional
-`rundown delegate <runbook>` alike: when the target substep already carries an
-in-flight (auto-issued, unclaimed) delegation, it echoes the existing token
-instead of erroring. Naming a **different** runbook than the in-flight one is a
-conflict (RD-804). Targeting a delegation already **claimed** by a live child is
-refused (RD-811) — recover with `rundown abort <token> --claim-id <claim_id> --force` or
-`rundown delegate --retry --claim-id <claim_id>`.
+Collect is the **only** way a delegated result reaches the parent. Do not
+`rundown pass` a delegated substep because a sub-agent said it finished:
+deciding it by hand (`rundown pass|fail --token <owner_token> --step <substep>`,
+plus `--index` inside a FOR loop) cancels its child instead. Do that only on
+purpose — for example, the user tells you to abandon a stuck child.
 
-**Constraints:**
-- `--step` must target the active step frontier
-- When the active step has substeps, bare step IDs (e.g., `2`) are rejected — use qualified IDs (e.g., `2.1`)
-- In FOR loops, delegation defaults to the active iteration — use `--index` to target a specific iteration
-
-### 2. Dispatch a child agent
-
-Dispatch a subagent whose prompt contains the delegation token:
-
-```
-Agent(
-  description="2.1 - Code review",
-  prompt="Review the implementation. RD_CLAIM_TOKEN=rdtk_ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",
-  subagent_type="code-review-agent"
-)
-```
-
-Include `RD_CLAIM_TOKEN=rdtk_...` anywhere in the prompt. The plugin detects the token and injects claim instructions into the child's context.
-
-Also include the running-runbooks skill in the dispatched prompt so the child knows how to execute the claimed runbook:
-
-```text
-Skill(skill: "rundown:running-runbooks")
-```
-
-### 3. Child claims and executes
-
-The plugin normally detects `RD_CLAIM_TOKEN=rdtk_...` in the child prompt and injects the claim instructions automatically. If automatic token injection is unavailable, or you are recovering manually, the child can run `rundown claim <token>` to start the delegated runbook, which returns a `claim_id`.
-
-After claiming, the child follows normal [runbook execution](../running-runbooks/SKILL.md), passing that claim id to child-targeting commands (e.g. `rundown pass --claim-id <claim_id>`).
+## Sub-agent Choreography
 
 ```bash
-rundown claim <token>
-rundown claim <token> --input key=value
-rundown claim <token> --input-json key=json
-rundown claim <token> --input-file path
-# ... work through steps ...
-rundown pass --claim-id <claim_id>     # Report success
-rundown fail --claim-id <claim_id>     # Report failure
+rundown claim <ticket> --agent-id <id>          # prints the child's runbook_started
+rundown pass --token <child owner_token> --step <child step>
+rundown fail --token <child owner_token> --step <child step>
 ```
 
-### 4. Result propagates
+- `claim` prints the child's `runbook_started` with the child's **own**
+  `owner_token` and `parent: { runId, step }`, then runs it like `rundown run`
+  (command steps execute; a `--prompted` parent's children are prompted too).
+  The token is shown once.
+- Drive the child exactly like any run you own: `--step` names the child's
+  step, from the child's latest `step_entered`.
+- Stop at the child's terminal. You never write the parent and never collect.
+- `DELEGATION_CANCELLED` or `PARENT_RUN_FINISHED` on any command means your
+  work will never be collected: end the child with
+  `rundown stop --token <owner_token>` (the one command it still accepts), then
+  report.
 
-When the child calls `rundown pass --claim-id <claim_id>` or `rundown fail --claim-id <claim_id>`, the result flows back to the parent's substep. The parent step's aggregation rules determine the overall outcome. **The child's job ends there** — once its claim is reported, it must stop and return control to the orchestrator. The orchestrator (you, the parent side) drives every subsequent step, including any stage the parent auto-advances into.
+## Fan-out and FOR Loops
 
-On a delegation-exposed run, every bare mutating command (`rundown pass`, `rundown fail`, `rundown goto`, `rundown collect`, `rundown complete`, `rundown stop`, `rundown delegate`) is refused with `ACTOR_CONTEXT_REQUIRED`. Exposure is sticky: claim closure and prune never flip a run back to standalone, so the bare form never "falls through" to the parent. The remediation is bearer authority: use the orchestrator `claim_id` returned by `rundown run`, or the child `claim_id` returned by `rundown claim`. `--run <rd_…>` can select a run but cannot authorize mutation; a claimed child must still stop the moment it reports its result.
+- **Fan-out:** a step listing several runbooks under `- DELEGATE` reserves one
+  child per substep on entry, each with its own ticket. Dispatch all of them at
+  once; one collect applies every terminal child, and the step aggregates
+  (`PASS ALL` / `FAIL ANY`) once all are applied.
+- **FOR + DELEGATE:** each iteration's entry reserves a fresh child with its
+  own ticket, listed with `index`. Dispatch and collect per iteration; the next
+  iteration's `step_entered` carries the next ticket. Deciding an iteration by
+  hand needs `--index`.
+- **Nested:** an inline child may itself delegate. Its `step_entered` issues the
+  tickets, and your root token's `collect` reaches it (your token targets the
+  deepest running inline child).
 
-`OPEN_DELEGATED_CHILDREN` is a separate, still-current guard: a claim-backed parent advance is refused while a claimed child is open. If you see it, wait for the child to report (or `rundown abort <token> --claim-id <claim_id> --force`) before advancing the parent with the orchestrator claim.
+## Variables and Outputs
 
-`DELEGATION_SUPERSEDED` (RD-825) means the parent already moved past this delegation — it advanced, ended, reset the substep, or reissued the token — before the claim landed. **Do not retry the token.** Report the superseded delegation to the orchestrator; the parent is the source of truth for what to do next (it may have already advanced or reissued a fresh token to claim instead).
+- A child inherits the parent's variables — including `ContextId`, so shared
+  `{{ path "..." }}` locations and cross-run artifact selectors line up — and,
+  inside a FOR loop, the iteration binding, **as captured when the child was
+  reserved**. Each child gets its own `RunId`. `claim` takes no `--input`.
+- A child's frontmatter `outputs:` flow into the parent at collect, and later
+  steps (including later delegated children) see them as variables. Declare
+  consumed values with `INPUTS:` / `REQUIRED:` in the consuming runbook.
 
-### Inline composition and derived authority
+See [Template Variables](../../../../CLAUDE.md#template-variables) and
+[Context Passing](../../../../docs/spec/language.md#10-context-passing).
 
-Child runbooks linked **inline** (no `- DELEGATE`) are not delegations: each runs as an Inline Child driven by the parent's own Owner Token, with no claim and no token of its own. While one runs, the parent's token targets it and `--step` names the child's step. See [Composed Runbooks](../running-runbooks/SKILL.md#composed-runbooks).
+## Refusals
 
-## FOR Loop Delegation
+A refused command writes nothing.
 
-Without `--index`, delegation targets the active iteration. Use `--index` to target a specific iteration:
+| Code                              | Cause                                                                      | Do                                                                                     |
+| --------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `UNKNOWN_TICKET`                  | `claim` with a ticket no reservation carries (mistyped, parent pruned)     | Copy the ticket verbatim from the `children` that issued it                            |
+| `ALREADY_CLAIMED`                 | A second `claim` of the same ticket                                        | Drive the child with the token the first claim printed; never claim twice              |
+| `DELEGATION_CANCELLED`            | The parent no longer counts the child (substep decided by hand, step re-entered) | Sub-agent: `rundown stop --token <owner_token>` on the child, then stop. Orchestrator: dispatch the fresh ticket, if a re-entry issued one |
+| `PARENT_RUN_FINISHED`             | The parent completed, stopped, or was pruned                               | Sub-agent: `rundown stop --token <owner_token>` on the child, then stop; nothing can collect it |
+| `NOTHING_TO_COLLECT`              | `collect` while the run's current step delegates nothing                   | Collect only while resting on a step whose `step_entered` listed `children`            |
+| `INVALID_STEP`                    | A token naming the other run's step (child token, parent step, or reverse) | Use the child token for child steps and your token for parent steps                    |
+| `CONCURRENT_MODIFICATION`         | Another write landed first (results applied before it stand)               | Re-read with `rundown status --run <run_id>`, then re-issue. If the step's tickets were never printed, `rundown collect --token <owner_token>` prints them |
+| `RUNBOOK_COMPOSITION_UNSUPPORTED` | A substep lists more than one runbook                                      | Report to the user; each substep composes one child                                    |
 
-```bash
-rundown delegate --step 2.1 --index 3 --claim-id <claim_id>
-```
-
-Each iteration maintains independent delegation state, so iterations can be delegated to different agents for parallel processing.
-
-## Aborting Delegations
-
-Cancel a delegation when the child agent fails, gets stuck, or the work is no longer needed:
-
-```bash
-rundown abort <token> --claim-id <claim_id>          # Cancel unclaimed delegation
-rundown abort <token> --claim-id <claim_id> --force  # Cancel already-claimed delegation
-```
-
-- **Unclaimed**: token is cancelled, substep reverts to un-delegated state
-- **Claimed**: requires `--force` since a child is actively working; the child's next CLI call will fail
-
-## Variable Pass-Through
-
-Delegated runbooks automatically inherit available parent variables. Do not manually pass every variable as `--input`; add explicit inputs only when you intentionally want to change or add a value for the child.
-
-Each child gets its own `RunId`. `ContextId` stays stable across the delegation tree so shared paths and correlation IDs continue to line up, including paths created with `{{ path "..." }}` under the same `.rd-<ContextId>/` directory. Override with `--input ContextId=sprint-42` only when you want a meaningful new shared context identifier.
-
-Explicit inputs override inherited values:
-
-```bash
-rundown delegate --step 2.1 --input environment=staging --claim-id <claim_id>
-rundown delegate --step 2.1 --input-json config='{"debug":true}' --claim-id <claim_id>
-```
-
-## Context Passing (OUTPUTS)
-
-Outputs exported by a completed child become available as inherited inputs to later delegated children. Use this for handoffs such as "write a plan, then delegate review of that plan" without manually copying paths or values between delegations.
-
-**Example — write-plan produces PlanPath, review-plan consumes it:**
-
-```markdown
----
-name: write-plan
-OUTPUTS:
-  - PlanPath
----
-
-## 7. Output Path
-- ARTIFACTS
-  - PlanPath "plan.json"
-- PASS CONTINUE
-- FAIL STOP
-
-## 8. Write the plan
-- PASS COMPLETE
-- FAIL STOP
-
-Write the plan to `{{ PlanPath }}`.
-```
-
-```markdown
----
-name: review-plan
-INPUTS:
-  - PlanPath
-REQUIRED:
-  - PlanPath
----
-
-## 1. Load plan
-- PASS CONTINUE
-- FAIL STOP
-
-Read the plan from `{{ PlanPath }}`.
-```
-
-When the parent delegates `write-plan` at step 2 and `review-plan` at step 3 (with the same `ContextId`), `PlanPath` flows through automatically — no `--input PlanPath=...` needed at the parent.
-
-**Authoring notes:**
-- Export values with frontmatter `OUTPUTS:` in the producing runbook.
-- Declare required inherited values with frontmatter `INPUTS:` and `REQUIRED:` in the consuming runbook.
-- Missing required values fail before work starts.
-- Explicit inputs on `rundown delegate` or `rundown claim` override inherited values.
-
-See [Template Variables](../../../../CLAUDE.md#template-variables) and [Context Passing](../../../../docs/spec/language.md#10-context-passing) for detailed syntax and precedence.
-
-## Patterns
-
-**Sequential:** Delegate substeps one at a time, waiting for each result before delegating the next.
-
-**Parallel fan-out:** Delegate multiple substeps simultaneously — all children work concurrently, parent aggregates results via ALL/ANY:
-
-```bash
-rundown delegate --step 2.1 --claim-id <claim_id>
-rundown delegate --step 2.2 --claim-id <claim_id>
-rundown delegate --step 2.3 --claim-id <claim_id>
-```
-
-**Nested:** A child can itself delegate, creating a delegation tree. ContextId flows through the tree for correlation.
+A lost ticket, or a sub-agent that lost its child's `owner_token`, has no agent
+recovery in this build: tell the user. `rundown status --run <run_id>` shows the
+run's `children` (run id, lifecycle, result) but never a ticket or token.
 
 ## Common Mistakes
 
-| Mistake | Fix |
-|---------|-----|
-| `--step 2` when substeps exist | Use qualified ID: `--step 2.1` |
-| `rundown abort` on claimed token | Add `--force` for already-claimed tokens |
-| Overriding ContextId unnecessarily | Children inherit automatically; only pass `--input ContextId=...` to override with a meaningful name |
+| Mistake                                              | Fix                                                                      |
+| ---------------------------------------------------- | ------------------------------------------------------------------------ |
+| Dispatching a sub-agent without the ticket           | Put the ticket and the `rundown claim` command in its prompt             |
+| Passing the delegated substep yourself               | `rundown collect --token <owner_token>`; passing it cancels the child    |
+| Sub-agent passing with the orchestrator's token      | The sub-agent uses the `owner_token` its own `claim` printed             |
+| Treating `pending` / `unclaimed` as failure          | Wait for the sub-agents, then collect again                              |
+| Re-dispatching children from a re-announced entry    | Only an entry that prints `ticket` issues new work                       |
+| Sub-agent continuing after `DELEGATION_CANCELLED`    | `rundown stop --token <owner_token>` on the child; its result will never be collected |
 
 ## Reference
 

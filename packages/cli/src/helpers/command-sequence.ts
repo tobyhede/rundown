@@ -19,6 +19,7 @@ import {
 import { parse as shellParse } from 'shell-quote';
 import type {
   ArtifactAssertion,
+  CollectedAssertion,
   EnteredAssertion,
   ErrorAssertion,
   StepAssertion,
@@ -157,15 +158,39 @@ export interface EnteredAssertionResult {
   matchedEntry?: CapturedEnteredStep;
 }
 
+/** One child a `children_collected` event reported (#904). */
+export interface CapturedCollectedChild {
+  /** The parent unit (`step.substep`). */
+  readonly step: string;
+  /** The FOR iteration, inside a loop. */
+  readonly index?: number;
+  /** The child run. */
+  readonly runId: string;
+  /** How Collect found the child. */
+  readonly status: string;
+  /** The Child Result, once terminal. */
+  readonly result?: string;
+}
+
+/** Result of matching one collected-child assertion. */
+export interface CollectedAssertionResult {
+  /** The assertion. */
+  assertion: CollectedAssertion;
+  /** Whether a reported child matched it, in order. */
+  matched: boolean;
+  /** The child it matched. */
+  matchedChild?: CapturedCollectedChild;
+}
+
 /** Result of executing a command sequence. */
 export interface CommandSequenceResult {
   /** Terminal outcome determined from JSON output */
   terminalResult: 'COMPLETE' | 'STOP' | 'UNKNOWN';
   /** All captured step transitions */
   transitions: CapturedTransition[];
-  /** Owner Tokens captured from `runbook_started.owner_token`, in emission order */
+  /** The `${TOKEN}` row of the placeholder capture, in emission order */
   capturedTokens: string[];
-  /** Run ids captured from `runbook_started.runbookId`, in emission order */
+  /** The `${RUN_ID}` row of the placeholder capture, in emission order */
   capturedRunIds: string[];
   /** JSON error responses captured from command output */
   errors: CapturedError[];
@@ -175,6 +200,8 @@ export interface CommandSequenceResult {
   artifactEntries: CapturedArtifactEntry[];
   /** Step-entered metadata captured from step_entered events */
   enteredSteps: CapturedEnteredStep[];
+  /** Children reported by `children_collected` events (#904), in order */
+  collectedChildren: CapturedCollectedChild[];
   /** Per-command timing records captured during execution */
   commandTimings: CommandTiming[];
 }
@@ -383,9 +410,8 @@ export function parseRdCommandWithEnv(cmd: string): ParsedRdCommand | null {
  * substituted from values captured in emission order from earlier command
  * output.
  *
- * Table-driven on purpose: #904 adds `${TICKET}` (from
- * `step_entered.children[].ticket`), `${CHILD_TOKEN}` and `${CHILD_RUN}`
- * (from `rundown claim` output) by adding rows, not code paths.
+ * Table-driven on purpose: Delegation (#904) added `${TICKET}`,
+ * `${CHILD_TOKEN}` and `${CHILD_RUN}` as rows, not code paths.
  */
 export interface CapturePlaceholder {
   /** Placeholder name as written in a scenario command (`TOKEN` for `${TOKEN}`). */
@@ -400,20 +426,40 @@ export interface CapturePlaceholder {
 }
 
 /**
+ * Whether a parsed `runbook_started` object announces a Delegation started by
+ * `rundown claim` (#904): it names its parent.
+ *
+ * @param value - One parsed JSON object of a command's stdout.
+ * @returns True for a claimed child's start.
+ */
+function isClaimedStart(value: Record<string, unknown>): boolean {
+  return value.type === 'runbook_started' && value.parent !== undefined;
+}
+
+/**
  * The placeholder table.
  *
  * - `${TOKEN[_n]}` — the n-th Owner Token printed on a `runbook_started`
- *   event (`owner_token`). A scenario's own `rundown run` supplies `${TOKEN}`;
- *   later starts in the same scenario supply the higher indexes.
+ *   event (`owner_token`) by `rundown run`. A scenario's own `rundown run`
+ *   supplies `${TOKEN}`; later starts in the same scenario supply the higher
+ *   indexes.
  * - `${RUN_ID[_n]}` — the n-th run id (`runbookId`) on a `runbook_started`
- *   event, for selector and status assertions (`status --run ${RUN_ID}`).
+ *   event that is not a claimed Delegation, for selector and status
+ *   assertions (`status --run ${RUN_ID}`).
+ * - `${TICKET[_n]}` — the n-th Claim Ticket listed in a `step_entered`
+ *   event's `children` (#904), in listing order.
+ * - `${CHILD_TOKEN[_n]}` / `${CHILD_RUN[_n]}` — the Owner Token and run id
+ *   of the n-th Delegation `rundown claim` started (its `runbook_started`
+ *   names its `parent`).
  */
 export const CAPTURE_PLACEHOLDERS: readonly CapturePlaceholder[] = [
   {
     name: 'TOKEN',
     describe: 'owner token from runbook_started.owner_token',
     capture: (value) =>
-      value.type === 'runbook_started' && typeof value.owner_token === 'string'
+      value.type === 'runbook_started' &&
+      !isClaimedStart(value) &&
+      typeof value.owner_token === 'string'
         ? [value.owner_token]
         : [],
   },
@@ -421,9 +467,37 @@ export const CAPTURE_PLACEHOLDERS: readonly CapturePlaceholder[] = [
     name: 'RUN_ID',
     describe: 'run id from runbook_started.runbookId',
     capture: (value) =>
-      value.type === 'runbook_started' && typeof value.runbookId === 'string'
+      value.type === 'runbook_started' &&
+      !isClaimedStart(value) &&
+      typeof value.runbookId === 'string'
         ? [value.runbookId]
         : [],
+  },
+  {
+    name: 'TICKET',
+    describe: 'claim ticket from step_entered.children[].ticket',
+    capture: (value) =>
+      value.type === 'step_entered' && Array.isArray(value.children)
+        ? value.children.flatMap((child: unknown) =>
+            typeof child === 'object' &&
+            child !== null &&
+            typeof (child as { ticket?: unknown }).ticket === 'string'
+              ? [(child as { ticket: string }).ticket]
+              : [],
+          )
+        : [],
+  },
+  {
+    name: 'CHILD_TOKEN',
+    describe: 'owner token from the runbook_started a rundown claim printed',
+    capture: (value) =>
+      isClaimedStart(value) && typeof value.owner_token === 'string' ? [value.owner_token] : [],
+  },
+  {
+    name: 'CHILD_RUN',
+    describe: 'run id from the runbook_started a rundown claim printed',
+    capture: (value) =>
+      isClaimedStart(value) && typeof value.runbookId === 'string' ? [value.runbookId] : [],
   },
 ];
 
@@ -484,6 +558,99 @@ export function substitutePlaceholders(cmd: string, captured: CapturedPlaceholde
 }
 
 /**
+ * The values captured so far for one placeholder row.
+ *
+ * @param captured - Placeholder accumulator
+ * @param name - Placeholder row name (`TOKEN` for `${TOKEN}`)
+ * @returns The row's values, in emission order (empty when none yet)
+ */
+export function capturedValues(captured: CapturedPlaceholders, name: string): readonly string[] {
+  return captured.get(name) ?? [];
+}
+
+/**
+ * Capture every placeholder row's values, and every collected child, from one
+ * parsed JSON object of a command's stdout.
+ *
+ * @param value - One parsed JSON object, in emission order
+ * @param captured - Placeholder accumulator the values are appended to
+ * @param collected - Collected-children accumulator (#904)
+ */
+function captureFromJsonObject(
+  value: Record<string, unknown>,
+  captured: CapturedPlaceholders,
+  collected: CapturedCollectedChild[],
+): void {
+  for (const placeholder of CAPTURE_PLACEHOLDERS) {
+    captured.get(placeholder.name)?.push(...placeholder.capture(value));
+  }
+  if (value.type === 'children_collected' && Array.isArray(value.children)) {
+    for (const child of value.children as Record<string, unknown>[]) {
+      if (typeof child.step !== 'string' || typeof child.runId !== 'string') continue;
+      collected.push({
+        step: child.step,
+        ...(typeof child.index === 'number' ? { index: child.index } : {}),
+        runId: child.runId,
+        status: String(child.status),
+        ...(typeof child.result === 'string' ? { result: child.result } : {}),
+      });
+    }
+  }
+}
+
+/**
+ * Match collected-child assertions against the children `rundown collect`
+ * reported, using ordered skip-matching.
+ *
+ * @param assertions - Ordered list of collected-child assertions
+ * @param children - Captured children, in report order
+ * @returns One result per assertion, in order
+ */
+export function matchCollectedAssertions(
+  assertions: readonly CollectedAssertion[],
+  children: readonly CapturedCollectedChild[],
+): CollectedAssertionResult[] {
+  const results: CollectedAssertionResult[] = [];
+  let index = 0;
+  for (const assertion of assertions) {
+    let matchedChild: CapturedCollectedChild | undefined;
+    while (index < children.length && matchedChild === undefined) {
+      const child = children[index];
+      index++;
+      if (
+        (assertion.step === undefined || assertion.step === child.step) &&
+        (assertion.index === undefined || assertion.index === child.index) &&
+        (assertion.status === undefined || assertion.status === child.status) &&
+        (assertion.result === undefined || assertion.result === child.result)
+      ) {
+        matchedChild = child;
+      }
+    }
+    results.push(
+      matchedChild === undefined
+        ? { assertion, matched: false }
+        : { assertion, matched: true, matchedChild },
+    );
+  }
+  return results;
+}
+
+/**
+ * Format a collected-child assertion result for display.
+ *
+ * @param ca - The result
+ * @returns A description such as "collected step=1.1 status=pending"
+ */
+export function formatCollectedAssertionDescription(ca: CollectedAssertionResult): string {
+  const parts: string[] = [];
+  if (ca.assertion.step !== undefined) parts.push(`step=${ca.assertion.step}`);
+  if (ca.assertion.index !== undefined) parts.push(`index=${String(ca.assertion.index)}`);
+  if (ca.assertion.status !== undefined) parts.push(`status=${ca.assertion.status}`);
+  if (ca.assertion.result !== undefined) parts.push(`result=${ca.assertion.result}`);
+  return `collected ${parts.join(' ')}`;
+}
+
+/**
  * Substitute captured Owner Token placeholders in a command string.
  *
  * `${TOKEN}` maps to `tokens[0]`, `${TOKEN_2}` maps to `tokens[1]`, etc.
@@ -511,30 +678,6 @@ export function substituteTokens(cmd: string, tokens: readonly string[]): string
  */
 export function substituteRunIds(command: string, capturedRunIds: readonly string[]): string {
   return substitutePlaceholder(command, CAPTURE_PLACEHOLDERS[1], capturedRunIds);
-}
-
-/**
- * Capture an Owner Token from a parsed `runbook_started` execution event.
- *
- * @param value - Parsed JSON value to inspect
- * @param capturedTokens - Array to append captured tokens into
- */
-export function captureOwnerTokenFromJsonObject(value: unknown, capturedTokens: string[]): void {
-  if (value !== null && typeof value === 'object') {
-    capturedTokens.push(...CAPTURE_PLACEHOLDERS[0].capture(value as Record<string, unknown>));
-  }
-}
-
-/**
- * Capture a run id from a parsed `runbook_started` execution event.
- *
- * @param value - Parsed JSON value to inspect
- * @param capturedRunIds - Array to append captured run ids into
- */
-export function captureRunIdFromJsonObject(value: unknown, capturedRunIds: string[]): void {
-  if (value !== null && typeof value === 'object') {
-    capturedRunIds.push(...CAPTURE_PLACEHOLDERS[1].capture(value as Record<string, unknown>));
-  }
 }
 
 /**
@@ -798,28 +941,56 @@ async function runCommandWithTee(
 }
 
 /**
+ * Everything one command's stdout yields besides its terminal state: the single
+ * capture model shared by placeholder substitution, root scoping and the
+ * scenario assertions.
+ */
+export interface ParsedCommandOutput {
+  /** Step transitions from streamed `step_transitioned` events */
+  transitions: CapturedTransition[];
+  /** Placeholder values per row (`${TOKEN}`, `${RUN_ID}`, `${TICKET}`, ...), in emission order */
+  captured: CapturedPlaceholders;
+  /** Children reported by `children_collected` events (#904), in order */
+  collectedChildren: CapturedCollectedChild[];
+  /** JSON error responses */
+  errors: CapturedError[];
+  /** JSON warning responses */
+  warnings: CapturedWarning[];
+  /** Artifact working sets from `step_entered` events */
+  artifactEntries: CapturedArtifactEntry[];
+  /** Step-entered metadata from `step_entered` events */
+  enteredSteps: CapturedEnteredStep[];
+}
+
+/**
+ * Create an empty parsed-output accumulator.
+ *
+ * @returns Empty accumulator
+ */
+function createParsedCommandOutput(): ParsedCommandOutput {
+  return {
+    transitions: [],
+    captured: createCapturedPlaceholders(),
+    collectedChildren: [],
+    errors: [],
+    warnings: [],
+    artifactEntries: [],
+    enteredSteps: [],
+  };
+}
+
+/**
  * Process a single parsed JSON object to extract transitions and terminal state.
  *
  * @param obj - A parsed JSON object from command output
- * @param transitions - Array to push extracted transitions into
- * @param tokens - Array to push captured Owner Tokens into (`${TOKEN}` substitution)
- * @param runIds - Array to push captured run ids into (`${RUN_ID}` substitution)
- * @param errors - Array to push captured JSON error responses into
- * @param warnings - Array to push captured JSON warning responses into
- * @param artifactEntries - Array to push captured artifact working sets into
- * @param enteredSteps - Array to push captured step-entered metadata into
+ * @param into - Accumulator the object's observations are appended to
  * @returns Terminal state detected from this object, or null
  */
 function processJsonObject(
   obj: Record<string, unknown>,
-  transitions: CapturedTransition[],
-  tokens: string[],
-  runIds: string[],
-  errors: CapturedError[],
-  warnings: CapturedWarning[],
-  artifactEntries: CapturedArtifactEntry[],
-  enteredSteps: CapturedEnteredStep[],
+  into: ParsedCommandOutput,
 ): 'COMPLETE' | 'STOP' | null {
+  const { transitions, errors, warnings, artifactEntries, enteredSteps } = into;
   let terminal: 'COMPLETE' | 'STOP' | null = null;
 
   // Streamed execution event lines have a `type` field
@@ -847,8 +1018,7 @@ function processJsonObject(
     if (obj.stopped === true) terminal = 'STOP';
   }
 
-  captureOwnerTokenFromJsonObject(obj, tokens);
-  captureRunIdFromJsonObject(obj, runIds);
+  captureFromJsonObject(obj, into.captured, into.collectedChildren);
 
   if (obj.kind === 'error') {
     errors.push({
@@ -986,7 +1156,8 @@ function isOtherRunsLifecycleTerminal(
  * carries a lifecycle terminal for `rootRunId`, that observation wins over the
  * positional scan, whatever the trailing action object says about the run the
  * command targeted. Without such an observation the positional scan stands, so
- * single-run output is unaffected.
+ * single-run output is unaffected. A lifecycle terminal of any other run is
+ * never the result, whether it arrives as NDJSON or as a lone object.
  *
  * When `rootRunId` is omitted — the command that STARTS the root run — the
  * payload's own first `runbook_started` becomes the root for the rest of that
@@ -1002,35 +1173,11 @@ function isOtherRunsLifecycleTerminal(
 export function parseJsonLines(
   stdout: string,
   rootRunId?: string,
-): {
-  transitions: CapturedTransition[];
-  terminal: 'COMPLETE' | 'STOP' | null;
-  tokens: string[];
-  runIds: string[];
-  errors: CapturedError[];
-  warnings: CapturedWarning[];
-  artifactEntries: CapturedArtifactEntry[];
-  enteredSteps: CapturedEnteredStep[];
-} {
-  const transitions: CapturedTransition[] = [];
-  const tokens: string[] = [];
-  const runIds: string[] = [];
-  const errors: CapturedError[] = [];
-  const warnings: CapturedWarning[] = [];
-  const artifactEntries: CapturedArtifactEntry[] = [];
-  const enteredSteps: CapturedEnteredStep[] = [];
+): ParsedCommandOutput & { terminal: 'COMPLETE' | 'STOP' | null } {
+  const output = createParsedCommandOutput();
   const trimmed = stdout.trim();
   if (!trimmed) {
-    return {
-      transitions,
-      terminal: null,
-      tokens,
-      runIds,
-      errors,
-      warnings,
-      artifactEntries,
-      enteredSteps,
-    };
+    return { ...output, terminal: null };
   }
   let terminal: 'COMPLETE' | 'STOP' | null = null;
 
@@ -1041,33 +1188,14 @@ export function parseJsonLines(
       throw new Error('Not a JSON object');
     }
     const obj = parsed as Record<string, unknown>;
-    // No root scoping here. Root scoping exists to pick the root's terminal out
-    // of a payload that carries two runs' terminals, and a lone object cannot be
-    // that payload: it is one observation, so it cannot both start a run and
-    // carry another run's terminal. `processJsonObject` already maps
-    // `runbook_completed`/`runbook_stopped` to COMPLETE/STOP, which is exactly
-    // what `rootScopedTerminal` would return on the only objects it matches, so
-    // scoping this branch could only ever re-derive the value already in hand.
-    terminal = processJsonObject(
-      obj,
-      transitions,
-      tokens,
-      runIds,
-      errors,
-      warnings,
-      artifactEntries,
-      enteredSteps,
-    );
-    return {
-      transitions,
-      terminal,
-      tokens,
-      runIds,
-      errors,
-      warnings,
-      artifactEntries,
-      enteredSteps,
-    };
+    // Root scoping applies here as it does to NDJSON: a lone object can be
+    // another run's lifecycle terminal — `rundown pass --token ${CHILD_TOKEN}`
+    // completing a Delegation (#904) — and that is never the scenario's
+    // outcome. The root's own terminal, and any terminal before the root is
+    // known, keep what `processJsonObject` maps them to.
+    const detected = processJsonObject(obj, output);
+    terminal = isOtherRunsLifecycleTerminal(obj, rootRunId) ? null : detected;
+    return { ...output, terminal };
   } catch {
     // Not a single JSON object — fall through to line-by-line parsing
   }
@@ -1091,19 +1219,11 @@ export function parseJsonLines(
       continue; // Non-JSON line — skip
     }
 
-    const detected = processJsonObject(
-      obj,
-      transitions,
-      tokens,
-      runIds,
-      errors,
-      warnings,
-      artifactEntries,
-      enteredSteps,
-    );
-    // `processJsonObject` has just appended this line's run id, so `runIds[0]`
-    // is the first `runbook_started` of the payload.
-    effectiveRootId ??= runIds[0];
+    const detected = processJsonObject(obj, output);
+    // `processJsonObject` has just captured this line's `${RUN_ID}`, so the
+    // row's first value is the payload's first root `runbook_started` — never
+    // a claimed Delegation's start, which the row excludes.
+    effectiveRootId ??= capturedValues(output.captured, 'RUN_ID')[0];
     // A lifecycle terminal of another run — an Inline Child completing or
     // stopping while its root carries on (#903) — is not the scenario's
     // outcome, positionally or otherwise. Only run-less flushed objects and
@@ -1141,16 +1261,7 @@ export function parseJsonLines(
   // shell operator at all (`node -e` fault injection, a `printf` redirect)
   // invoke neither. So the last-wins rule is never exercised against a
   // conflicting root terminal.
-  return {
-    transitions,
-    terminal: rootTerminal ?? terminal,
-    tokens,
-    runIds,
-    errors,
-    warnings,
-    artifactEntries,
-    enteredSteps,
-  };
+  return { ...output, terminal: rootTerminal ?? terminal };
 }
 
 /**
@@ -1615,53 +1726,36 @@ export function extractInputFileReferences(commands: string[]): string[] {
 }
 
 /**
- * Merge parsed JSON output into the running accumulators for a command sequence.
+ * Merge one command's parsed output into the sequence's accumulator.
  *
  * @param jsonResult - Parsed JSON lines result from a single command's stdout
- * @param into - Mutable accumulators shared across the command sequence loop
- * @param into.transitions - Step transitions accumulator
- * @param into.capturedTokens - Captured Owner Tokens accumulator
- * @param into.capturedRunIds - Captured run ids accumulator (runbook_started events)
- * @param into.errors - Captured JSON error responses accumulator
- * @param into.warnings - Captured JSON warning responses accumulator
- * @param into.artifactEntries - Captured artifact working-set accumulator
- * @param into.enteredSteps - Captured step-entered metadata accumulator
+ * @param into - The sequence's accumulator, shared across the command loop
  * @returns The terminal result extracted from this output, or `null` if none
  */
 function aggregateJsonResult(
   jsonResult: ReturnType<typeof parseJsonLines>,
-  into: {
-    transitions: CapturedTransition[];
-    capturedTokens: string[];
-    capturedRunIds: string[];
-    errors: CapturedError[];
-    warnings: CapturedWarning[];
-    artifactEntries: CapturedArtifactEntry[];
-    enteredSteps: CapturedEnteredStep[];
-  },
+  into: ParsedCommandOutput,
 ): 'COMPLETE' | 'STOP' | null {
-  for (const t of jsonResult.transitions) {
-    into.transitions.push(t);
+  into.transitions.push(...jsonResult.transitions);
+  for (const [name, values] of jsonResult.captured) {
+    into.captured.get(name)?.push(...values);
   }
-  for (const tok of jsonResult.tokens) {
-    into.capturedTokens.push(tok);
-  }
-  for (const runId of jsonResult.runIds) {
-    into.capturedRunIds.push(runId);
-  }
-  for (const error of jsonResult.errors) {
-    into.errors.push(error);
-  }
-  for (const warning of jsonResult.warnings) {
-    into.warnings.push(warning);
-  }
-  for (const entry of jsonResult.artifactEntries) {
-    into.artifactEntries.push(entry);
-  }
-  for (const entry of jsonResult.enteredSteps) {
-    into.enteredSteps.push(entry);
-  }
+  into.collectedChildren.push(...jsonResult.collectedChildren);
+  into.errors.push(...jsonResult.errors);
+  into.warnings.push(...jsonResult.warnings);
+  into.artifactEntries.push(...jsonResult.artifactEntries);
+  into.enteredSteps.push(...jsonResult.enteredSteps);
   return jsonResult.terminal;
+}
+
+/**
+ * The scenario's root run: the sequence's first root `runbook_started`.
+ *
+ * @param output - The sequence's accumulator
+ * @returns The root run id, or undefined before the root has started
+ */
+function rootRunIdOf(output: ParsedCommandOutput): string | undefined {
+  return capturedValues(output.captured, 'RUN_ID')[0];
 }
 
 /**
@@ -1669,9 +1763,9 @@ function aggregateJsonResult(
  *
  * Handles `rd` commands (JSON is the default output format) and generic
  * shell commands. Prefix a command with `! ` when a non-zero exit is the
- * expected outcome. Placeholders (`${TOKEN}`, `${RUN_ID}` and their `_n`
- * forms) are substituted with values captured from earlier `runbook_started`
- * events before each command runs.
+ * expected outcome. Placeholders (`${TOKEN}`, `${RUN_ID}`, `${TICKET}`,
+ * `${CHILD_TOKEN}`, `${CHILD_RUN}` and their `_n` forms) are substituted with
+ * values captured from earlier commands' output before each command runs.
  *
  * @param options - Execution options including commands, working directory, CLI path, and quiet flag
  * @returns Promise resolving to the terminal result, all transitions, and captured tokens
@@ -1681,13 +1775,10 @@ function aggregateJsonResult(
 export async function executeCommandSequence(
   options: CommandSequenceOptions,
 ): Promise<CommandSequenceResult> {
-  const capturedTokens: string[] = [];
-  const capturedRunIds: string[] = [];
-  const errors: CapturedError[] = [];
-  const warnings: CapturedWarning[] = [];
-  const transitions: CapturedTransition[] = [];
-  const artifactEntries: CapturedArtifactEntry[] = [];
-  const enteredSteps: CapturedEnteredStep[] = [];
+  // One capture model for the whole sequence: every placeholder row (#904 adds
+  // TICKET, CHILD_TOKEN, CHILD_RUN) and every assertion input, accumulated in
+  // emission order from one parse of each command's stdout.
+  const output = createParsedCommandOutput();
   const commandTimings: CommandTiming[] = [];
   let terminalResult: 'COMPLETE' | 'STOP' | 'UNKNOWN' = 'UNKNOWN';
 
@@ -1715,12 +1806,10 @@ export async function executeCommandSequence(
     const trimmedRaw = rawCmd.trimStart();
     const expectsFailure = trimmedRaw.startsWith('! ');
     const commandText = expectsFailure ? trimmedRaw.slice(2).trimStart() : rawCmd;
-    // Placeholder substitution — replace ${TOKEN} and ${RUN_ID} (and their _N
-    // indexed forms) with values captured from earlier runbook_started events.
-    const tokenSubstituted = substituteRunIds(
-      substituteTokens(commandText, capturedTokens),
-      capturedRunIds,
-    );
+    // Placeholder substitution — replace every placeholder row (${TOKEN},
+    // ${RUN_ID}, ${TICKET}, ${CHILD_TOKEN}, ${CHILD_RUN} and their _N indexed
+    // forms) with values captured from earlier commands' output.
+    const tokenSubstituted = substitutePlaceholders(commandText, output.captured);
     // The `${ARTIFACT:<name>}` grammar and its `seed:` directive were retired in
     // #498. No substituter remains, so fail here and name the replacement rather
     // than letting the raw placeholder leak into the executed command.
@@ -1773,22 +1862,14 @@ export async function executeCommandSequence(
       recordTiming(shownCmd, 'rd', commandStart, result.exitCode, expectsFailure);
       stdout = result.stdout;
 
-      // Parse JSON output to extract transitions, terminal state, and tokens
-      // capturedRunIds[0] is the first `runbook_started` of the sequence — the
-      // scenario's root run. It is undefined while parsing the command that
-      // starts it; `parseJsonLines` then adopts that payload's own first
-      // `runbook_started`, because a starting command can already carry both a
-      // root and a child terminal.
-      const jsonResult = parseJsonLines(stdout, capturedRunIds[0]);
-      const terminal = aggregateJsonResult(jsonResult, {
-        transitions,
-        capturedTokens,
-        capturedRunIds,
-        errors,
-        warnings,
-        artifactEntries,
-        enteredSteps,
-      });
+      // Parse JSON output to extract transitions, terminal state, and captures
+      // The first `${RUN_ID}` is the first root `runbook_started` of the
+      // sequence — the scenario's root run. It is undefined while parsing the
+      // command that starts it; `parseJsonLines` then adopts that payload's own
+      // first root `runbook_started`, because a starting command can already
+      // carry both a root and a child terminal.
+      const jsonResult = parseJsonLines(stdout, rootRunIdOf(output));
+      const terminal = aggregateJsonResult(jsonResult, output);
       if (terminal !== null) {
         terminalResult = terminal;
       }
@@ -1811,21 +1892,13 @@ export async function executeCommandSequence(
       stdout = result.stdout;
 
       // Parse JSON output from shell commands as well (e.g., shell scripts that wrap rd commands)
-      // capturedRunIds[0] is the first `runbook_started` of the sequence — the
-      // scenario's root run. It is undefined while parsing the command that
-      // starts it; `parseJsonLines` then adopts that payload's own first
-      // `runbook_started`, because a starting command can already carry both a
-      // root and a child terminal.
-      const jsonResult = parseJsonLines(stdout, capturedRunIds[0]);
-      const terminal = aggregateJsonResult(jsonResult, {
-        transitions,
-        capturedTokens,
-        capturedRunIds,
-        errors,
-        warnings,
-        artifactEntries,
-        enteredSteps,
-      });
+      // The first `${RUN_ID}` is the first root `runbook_started` of the
+      // sequence — the scenario's root run. It is undefined while parsing the
+      // command that starts it; `parseJsonLines` then adopts that payload's own
+      // first root `runbook_started`, because a starting command can already
+      // carry both a root and a child terminal.
+      const jsonResult = parseJsonLines(stdout, rootRunIdOf(output));
+      const terminal = aggregateJsonResult(jsonResult, output);
       if (terminal !== null) {
         terminalResult = terminal;
       }
@@ -1843,13 +1916,14 @@ export async function executeCommandSequence(
 
   return {
     terminalResult,
-    transitions,
-    capturedTokens,
-    capturedRunIds,
-    errors,
-    warnings,
-    artifactEntries,
-    enteredSteps,
+    transitions: output.transitions,
+    capturedTokens: [...capturedValues(output.captured, 'TOKEN')],
+    capturedRunIds: [...capturedValues(output.captured, 'RUN_ID')],
+    errors: output.errors,
+    warnings: output.warnings,
+    artifactEntries: output.artifactEntries,
+    enteredSteps: output.enteredSteps,
+    collectedChildren: output.collectedChildren,
     commandTimings,
   };
 }

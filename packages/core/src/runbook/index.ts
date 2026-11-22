@@ -173,15 +173,36 @@ export {
 export type { RunProgressionAuthority } from './run-progression-authority.js';
 // Inline Children (#903): the frontend prepares a child runbook for launch;
 // core reserves, creates, drives and Collects it.
-export {
-  INLINE_CHILD_LAUNCH_FAILED_CODE,
-  MAX_INLINE_CHILD_DEPTH,
-  type InlineChildLaunchRequest,
-  type PrepareInlineChild,
-  type PreparedInlineChild,
-} from './inline-progression.js';
+export { INLINE_CHILD_LAUNCH_FAILED_CODE, MAX_INLINE_CHILD_DEPTH } from './inline-progression.js';
+export type {
+  ChildRunPreparationRequest,
+  PrepareChildRun,
+  PreparedChildRun,
+} from './child-preparation.js';
 export { childResultOf, currentInlineReservation, type ChildResult } from './inline-child.js';
-export type { ChildKind, ChildLinkage } from './child-linkage.js';
+// Delegation (#904): `rundown claim` creates a reserved child by its Claim
+// Ticket; `rundown collect` is the lifecycle seam's `runCollect`; status reads
+// a run's Delegations. The codes their refusals carry.
+export {
+  ALREADY_CLAIMED_CODE,
+  claimDelegation,
+  delegationChildrenStatus,
+  DELEGATION_CANCELLED_CODE,
+  NOTHING_TO_COLLECT_CODE,
+  PARENT_RUN_FINISHED_CODE,
+  UNKNOWN_TICKET_CODE,
+  type ClaimDelegationOutcome,
+  type CollectDelegationsOutcome,
+  type DelegationChildStatus,
+  type DelegationDeps,
+  type DelegationRefusal,
+} from './delegation-progression.js';
+export type {
+  ChildKind,
+  ChildLinkage,
+  OrphanedDelegationLinkage,
+  RunLinkage,
+} from './child-linkage.js';
 // The DI seam of the two above. Type-only, and exported so their signatures are
 // nameable by the CLI that calls them; the liveness readers behind it stay
 // internal to core.
@@ -217,7 +238,11 @@ export {
   type LifecycleTransitionInput,
   type LifecycleTransitionOutcome,
   type RunbookLifecycleCommandServiceDependencies,
+  type CommandTargetPurpose,
   type CommandTargetResolution,
+  type DelegationStandingRefusal,
+  type LifecycleCollectInput,
+  type LifecycleCollectOutcome,
   type SettleInlineChild,
   type RunFinishedRefusal,
   type TerminalCommandName,

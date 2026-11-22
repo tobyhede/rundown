@@ -2,8 +2,10 @@
 
 Rundown's Claude Code plugin is a **thin, fixed front end** to the core state
 machine. It exists to run runbooks via skill instructions; its two hooks are
-reserved for delegation between Claude Code subagents, which returns in #904 and
-#907. It is NOT a general, repo-configurable hook engine.
+reserved for delegation between Claude Code subagents. Delegation itself runs
+through the CLI (#904); the hooks that stamp a subagent's identity on `claim`
+and gate its stop are rebuilt in #907 and are inert until then. It is NOT a
+general, repo-configurable hook engine.
 
 ## Trust boundaries
 

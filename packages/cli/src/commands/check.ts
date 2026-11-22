@@ -6,7 +6,6 @@ import {
 } from '@rundown-org/core';
 import { OutputEmitter } from '../services/output-emitter.js';
 import {
-  COMPOSITION_RETURNS,
   describeUnsupportedComposition,
   loadAndParseRunbook,
 } from '../helpers/runbook-pipeline.js';
@@ -53,16 +52,16 @@ export function registerCheckCommand(program: Command): void {
       warnings.push(...forWarnings);
 
       // Composition is valid language, so it never fails the check; but this
-      // build's `rundown run` refuses delegation (until #904) and multi-runbook
-      // inline substeps, and the author should learn that here rather than at
-      // launch. Core names the substeps, as it does for the refusal itself.
+      // build's `rundown run` refuses a substep listing more than one runbook,
+      // and the author should learn that here rather than at launch. Core
+      // names the substeps, as it does for the refusal itself.
       const composing = findUnsupportedComposition(result.runbook.steps);
       if (composing.length > 0) {
         warnings.push({
           severity: 'warning' as const,
           message:
             `${describeUnsupportedComposition(composing)}, so \`rundown run\` refuses it ` +
-            `(RUNBOOK_COMPOSITION_UNSUPPORTED). ${COMPOSITION_RETURNS}`,
+            '(RUNBOOK_COMPOSITION_UNSUPPORTED).',
         });
       }
 

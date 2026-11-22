@@ -40,13 +40,14 @@ describe('writing-runbooks companion bootstrap skill guidance', () => {
     expect(section).not.toMatch(/^runbook:/m);
   });
 
-  it('lists the sibling-skill heuristics, marking delegating runbooks as refused', () => {
+  it('lists the sibling-skill heuristics, pointing delegating runbooks at the delegation protocol', () => {
     const section = bootstrapSection();
-    // A runbook that delegates is refused by `rundown run` until #904, so the
-    // heuristic says so rather than pointing the bootstrap skill at the
-    // delegation protocol; inline composition (#903) runs.
-    expect(section).toMatch(/DELEGATE.*refuses it until #904/);
-    expect(section).not.toMatch(/delegating-runbooks/);
+    // Delegation runs (#904): a bootstrap skill for a delegating runbook
+    // references the orchestrator protocol instead of warning it is refused.
+    expect(section).toMatch(
+      /`- DELEGATE` \| \[delegating-runbooks\]\(\.\.\/delegating-runbooks\/SKILL\.md\)/,
+    );
+    expect(section).not.toMatch(/refuses it until/);
     expect(section).toMatch(/writing-plans/);
   });
 });

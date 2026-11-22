@@ -204,7 +204,7 @@ describe('Built-in Runbook Workflow Integration', () => {
   });
 
   describe('end-to-end-test inline composition (#903)', () => {
-    it('launches write-file inline on the parent token and Collects it; review-and-collate waits for #904', () => {
+    it('launches write-file inline on the parent token and Collects it; review-and-collate then delegates (#904)', () => {
       const previousPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
       process.env.CLAUDE_PLUGIN_ROOT = pluginRoot;
       try {
@@ -233,16 +233,26 @@ describe('Built-in Runbook Workflow Integration', () => {
         // step. Entering its step 2 resolves the PlanPath artifact its
         // frontmatter OUTPUTS; completing it Collects its pass — and PlanPath —
         // into step 2. Step 3's inline child requires that PlanPath and
-        // delegates, so its launch is refused until delegation returns.
+        // delegates its review, so its entry lists a Claim Ticket.
         const childStep = runCli(withOwnerToken(['pass', '--step', '1'], tempDir), tempDir);
         expect(childStep.exitCode).toBe(0);
         expect(statusOf(rootId, tempDir).position.current).toBe('2');
         const collected = runCli(withOwnerToken(['complete'], tempDir), tempDir);
-        const errors = parseJsonEvents(collected.stdout).filter(
-          (event) => event.type === 'error_occurred',
+        expect(collected.exitCode).toBe(0);
+        const events = parseJsonEvents(collected.stdout);
+        expect(events.filter((event) => event.type === 'error_occurred')).toEqual([]);
+        const reviewEntry = events.find(
+          (event) =>
+            event.type === 'step_entered' &&
+            (event.runbook as { path?: string } | undefined)?.path ===
+              'end-to-end-test/review-and-collate.runbook.md',
         );
-        expect(errors).toEqual([
-          expect.objectContaining({ code: 'RUNBOOK_COMPOSITION_UNSUPPORTED', runbookId: rootId }),
+        expect(reviewEntry?.children).toEqual([
+          expect.objectContaining({
+            step: '1.1',
+            runbook: 'end-to-end-test/review-file.runbook.md',
+            ticket: expect.stringMatching(/^rdt_/),
+          }),
         ]);
         expect(statusOf(childId, tempDir).status).toBe('completed');
         const root = statusOf(rootId, tempDir);
