@@ -141,7 +141,7 @@ describe('Graph invariant properties', () => {
         const states = getStates(machine);
 
         for (const [id, config] of Object.entries(states)) {
-          if (id === 'COMPLETE' || id === 'STOPPED') continue;
+          if (id === 'COMPLETE' || id === 'STOPPED' || id === 'ABANDONED') continue;
           const cfg = config as Record<string, unknown>;
           // Parent aggregation states use `always`, not `on`
           if (cfg.always) continue;
@@ -183,7 +183,7 @@ describe('Graph invariant properties', () => {
         };
 
         for (const [_id, config] of Object.entries(states)) {
-          if (_id === 'COMPLETE' || _id === 'STOPPED') continue;
+          if (_id === 'COMPLETE' || _id === 'STOPPED' || _id === 'ABANDONED') continue;
           const cfg = config as Record<string, unknown>;
           const targets = [
             ...extractTargets(cfg.on),

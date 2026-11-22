@@ -135,4 +135,61 @@ describe('CLISubscriber', () => {
     expect(output).toContain('Code:');
     expect(output).toContain('ERR_TEST');
   });
+  describe('Delegation events (#904, #905)', () => {
+    const parent = 'rd_46cbdd5f19324d3b91667e2ff0e96386';
+    const inline = 'rd_7af1d92df90a405edbf718ca20012b3f';
+
+    it.each([
+      [
+        'current',
+        { standing: 'current', runId: parent, step: '1.1' },
+        [`Run wf-test abandoned; run ${parent} collects it at 1.1 as a fail`],
+      ],
+      [
+        'cancelled',
+        { standing: 'cancelled', runId: parent, step: '1.1' },
+        [`Run wf-test abandoned; run ${parent} no longer counts it at 1.1, so nothing collects it`],
+      ],
+      [
+        'parent_finished',
+        { standing: 'parent_finished', runId: parent, step: '1.1' },
+        [`Run wf-test abandoned; run ${parent} has finished, so nothing collects it at 1.1`],
+      ],
+      [
+        'parent_pruned',
+        { standing: 'parent_pruned', step: '1.1' },
+        ['Run wf-test abandoned; its parent run was pruned, so nothing collects it at 1.1'],
+      ],
+    ] as const)('renders RUNBOOK_ABANDONED for a %s parent', (_name, standing, lines) => {
+      subscriber.handle(makeEvent('RUNBOOK_ABANDONED', { parent: standing, abandonedInline: [] }));
+      expect(writer.getOutput().trimEnd().split('\n')).toEqual(lines);
+    });
+
+    it('renders RUNBOOK_ABANDONED with the Inline Children abandoned alongside', () => {
+      subscriber.handle(
+        makeEvent('RUNBOOK_ABANDONED', {
+          parent: { standing: 'current', runId: parent, step: '1.1' },
+          abandonedInline: [inline],
+        }),
+      );
+      expect(writer.getOutput().trimEnd().split('\n')).toEqual([
+        `Run wf-test abandoned; run ${parent} collects it at 1.1 as a fail`,
+        `Inline child ${inline} abandoned with it`,
+      ]);
+    });
+
+    it('renders DELEGATION_RETRIED with the fresh ticket once', () => {
+      subscriber.handle(
+        makeEvent('DELEGATION_RETRIED', {
+          step: '1.1',
+          cancelledRunId: parent,
+          children: [{ step: '1.1', runId: inline, runbook: 'child.runbook.md', ticket: 'rdt_x' }],
+        } as never),
+      );
+      expect(writer.getOutput().trimEnd().split('\n')).toEqual([
+        `Retried 1.1: cancelled ${parent}`,
+        `Delegation 1.1: child.runbook.md (${inline}) ticket rdt_x`,
+      ]);
+    });
+  });
 });

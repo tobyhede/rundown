@@ -35,12 +35,14 @@ import {
   activeEntryDelegations,
   countsDelegation,
   delegationStanding,
+  findReplacedTicket,
   findTicketReservation,
   owesClaimTickets,
   type CurrentDelegation,
   type DelegationStanding,
 } from './delegation-child.js';
 import { refuseUnderLease, type ExecutionLeaseRefusal } from './execution-lease.js';
+import type { ConcurrentModificationRefusal } from './lifecycle-command-service.js';
 import { childResultEvent } from './inline-progression.js';
 import { childResultOf } from './inline-child.js';
 import type { ProcessIdentity } from './process-identity.js';
@@ -60,6 +62,7 @@ import {
 } from './run-secrets.js';
 import type { RunbookStateManager } from './state.js';
 import type { ClaimDelegationChildResult, VersionedRunState } from './storage/runbook-store.js';
+import { frameKeyStep } from './targeting.js';
 import type { ActionType } from './transition-kernel.js';
 import type { ResolvedStep, RunbookState } from './types.js';
 
@@ -164,7 +167,7 @@ function claimRefused(refusal: ClaimRefusal, parentRunId: RunId, step: string): 
     : {
         kind: 'refused',
         code: DELEGATION_CANCELLED_CODE,
-        message: `Run ${parentRunId} no longer counts this delegation at ${step} (the step was decided or entered again); nothing was written. Ask the parent's owner for the current ticket.`,
+        message: `Run ${parentRunId} no longer counts this delegation at ${step} (the substep was decided, retried or entered again); nothing was written. Ask the parent's owner for the current ticket.`,
       };
 }
 
@@ -195,6 +198,17 @@ export async function claimDelegation(
     if (substepState !== undefined) {
       found = { parent: run, substepState };
       break;
+    }
+    // A ticket whose child the parent replaced (`retry`, or a re-entry) is
+    // told the parent no longer counts it: the owner holds the current ticket
+    // (#905).
+    const replaced = findReplacedTicket(run.state, ticketHash);
+    if (replaced !== undefined) {
+      return claimRefused(
+        'cancelled',
+        run.state.id,
+        `${frameKeyStep(replaced.frameKey)}.${replaced.id}`,
+      );
     }
   }
   if (found === undefined) {
@@ -356,12 +370,8 @@ export async function delegationStandingOf(
 export type CollectDelegationsOutcome =
   | ExecutionLeaseRefusal
   | DelegationRefusal
-  | {
-      /** The row moved between a read and a Collect commit; nothing more was written. */
-      readonly kind: 'concurrent_modification';
-      readonly runId: RunId;
-      readonly message: string;
-    }
+  // The row moved between a read and a Collect commit; nothing more was written.
+  | ConcurrentModificationRefusal
   | { readonly kind: 'unknown_token' }
   | {
       readonly kind: 'collected';

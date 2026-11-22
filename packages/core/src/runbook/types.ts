@@ -604,6 +604,17 @@ export interface SubstepState {
   readonly result?: 'pass' | 'fail'; // Result when done
   /** The Current Child reserved for this substep's latest entry, if it composes one. */
   readonly child?: ChildReservation;
+  /**
+   * Hashes of the Claim Tickets of this substep's Delegations the parent
+   * replaced by reserving afresh (#905) — `rundown retry` cancelled one, or the
+   * frame was entered again — oldest first. Only an issued ticket is recorded:
+   * it is what lets an old ticket be refused `DELEGATION_CANCELLED` rather
+   * than `UNKNOWN_TICKET`, however many replacements ago it was issued. A
+   * replaced child's own commands need no record: its linkage no longer names
+   * a reservation the parent counts. Grows by one per replaced ticket, as an
+   * audit trail of the retries and re-entries that issued tickets would.
+   */
+  readonly replacedTicketHashes?: readonly SecretHash[];
 }
 
 /**
@@ -828,9 +839,10 @@ export function assertResolvedVariableForContext(
 /**
  * Runbook lifecycle state. `'running'` covers the entire active lifetime.
  * Reaching a final state transitions to `'completed'` (COMPLETE) or
- * `'stopped'` (STOPPED). `'abandoned'` is written only by `rundown release` on
- * a child's own row when its sub-agent cannot finish it (ADR 0005); a parent's
- * Collect reads it as a fail.
+ * `'stopped'` (STOPPED). `'abandoned'` is written only by `rundown release`:
+ * on a Delegation's own row when its sub-agent cannot finish it (ADR 0005),
+ * and on the running Inline Children it composes, which end with it; a
+ * parent's Collect reads it as a fail.
  */
 export type Lifecycle = 'running' | 'completed' | 'stopped' | 'abandoned';
 

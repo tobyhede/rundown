@@ -12,7 +12,7 @@
  * @module runbook/transition-cursor
  */
 
-import { parseStepIdFromString } from '@rundown-org/parser';
+import { parseStepIdFromString, resolvedStepHasSubsteps } from '@rundown-org/parser';
 import type { ResolvedStep } from '@rundown-org/parser';
 import { activeFrame, deriveActiveFrame, deriveExecutionAt, type Frame } from './targeting.js';
 import type { RunbookState } from './types.js';
@@ -101,6 +101,71 @@ export function resolveTransitionCursor(
   state: RunbookState,
   target: ExplicitTransitionTarget | undefined,
 ): TransitionCursorResolution {
+  return resolveCursor(steps, state, target, 'current');
+}
+
+/**
+ * Outcome of resolving `rundown retry`'s `--step` / `--index` target (#905).
+ *
+ * `substep` is the substep `--step` named: any substep of the active step,
+ * not only the cursor's, since a fan-out's later Delegations are reserved
+ * with the cursor's.
+ */
+export type RetryTargetResolution =
+  | {
+      readonly kind: 'resolved';
+      readonly cursor: TransitionCursor;
+      /** The substep `--step` named. */
+      readonly substep: string;
+    }
+  | InvalidStepTargetRefusal;
+
+/**
+ * Confirm `rundown retry`'s `--step` / `--index` target against the run's
+ * current position (#905).
+ *
+ * The rules of {@link resolveTransitionCursor}, except that `--step` must
+ * name a substep and may name any substep of the active step — one the step
+ * defines; a substep it does not define is refused like any other wrong
+ * position. Whether that substep delegates is the caller's decision.
+ *
+ * @param steps - Parsed runbook steps for the run
+ * @param state - Run state the target is confirmed against
+ * @param target - Raw `--step` / `--index` target, or `undefined` when the
+ *   caller supplied no `--step`
+ * @returns The confirmed cursor and named substep, or a refusal naming the
+ *   current position
+ * @throws {Error} when the active step is absent from `steps`
+ */
+export function resolveRetryTarget(
+  steps: readonly ResolvedStep[],
+  state: RunbookState,
+  target: ExplicitTransitionTarget | undefined,
+): RetryTargetResolution {
+  const resolution = resolveCursor(steps, state, target, 'any_substep');
+  if (resolution.kind !== 'resolved') return resolution;
+  const substep = target === undefined ? undefined : parseStepIdFromString(target.stepId)?.substep;
+  if (substep === undefined) throw new Error('A retry target resolved without a substep');
+  return { ...resolution, substep };
+}
+
+/**
+ * The shared `--step` / `--index` rules.
+ *
+ * @param steps - Parsed runbook steps for the run
+ * @param state - Run state the target is confirmed against
+ * @param target - Raw target, or `undefined` without `--step`
+ * @param substepRule - `current`: `--step` names the cursor's own unit;
+ *   `any_substep`: it names some substep of the active step
+ * @returns The confirmed cursor, or a refusal naming the current position
+ * @throws {Error} when the active step is absent from `steps`
+ */
+function resolveCursor(
+  steps: readonly ResolvedStep[],
+  state: RunbookState,
+  target: ExplicitTransitionTarget | undefined,
+  substepRule: 'current' | 'any_substep',
+): TransitionCursorResolution {
   const invalid = (message: string): TransitionCursorResolution => ({
     kind: 'invalid_step_target',
     message,
@@ -131,7 +196,22 @@ export function resolveTransitionCursor(
     );
   }
 
-  if (parsed.substep !== undefined) {
+  if (substepRule === 'any_substep') {
+    if (parsed.substep === undefined || state.substep === undefined) {
+      return invalid(
+        `--step ${target.stepId} must name a delegated substep of step "${state.step}"; the current position is ${at}`,
+      );
+    }
+    const named = parsed.substep;
+    if (
+      !resolvedStepHasSubsteps(activeStep) ||
+      !activeStep.substeps.some((substep) => substep.id === named)
+    ) {
+      return invalid(
+        `--step ${target.stepId} names substep "${named}" but step "${state.step}" has no substep "${named}"; the current position is ${at}`,
+      );
+    }
+  } else if (parsed.substep !== undefined) {
     if (state.substep === undefined) {
       return invalid(
         `--step ${target.stepId} names substep "${parsed.substep}" but step "${state.step}" has no active substep`,

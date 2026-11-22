@@ -90,6 +90,8 @@ import { assertRunId, generateRunId, type RunId } from './run-id.js';
 import { inlineRunbookOf, reserveInlineChild } from './inline-child.js';
 import {
   activeEntryDelegations,
+  replaceDelegation,
+  retryableDelegation,
   delegatedRunbookOf,
   isAfterCursor,
   recordClaimTickets,
@@ -153,7 +155,7 @@ export const PENDING_COMMAND_EXECUTION_TAG = 'pending-command-execution' as cons
 export interface RunbookMachineOutput {
   readonly finalVars: Readonly<Record<string, VariableValue>>;
   /** Terminal progression decision made by the machine state that ended the run. */
-  readonly progression: { readonly kind: 'completed' | 'stopped' };
+  readonly progression: { readonly kind: 'completed' | 'stopped' | 'abandoned' };
 }
 
 /**
@@ -704,6 +706,32 @@ const EMPTY_RESULTS = Object.freeze([]) as unknown as NonNullable<
 
 /** Name of the top-level STOPPED final state; used for both `id:` and name-based targets. */
 const STOPPED_STATE_NAME = 'STOPPED' as const;
+
+/** Final state of a Delegation its claiming agent released (#905). */
+const ABANDONED_STATE_NAME = 'ABANDONED' as const;
+
+/**
+ * The machine output's progression kind for a run's lifecycle at its final
+ * state. Exhaustive, so a lifecycle cannot silently read as another.
+ *
+ * @param lifecycle - The lifecycle the final state assigned.
+ * @returns The terminal progression kind.
+ * @throws {Error} When the lifecycle is `running` — no final state leaves it so.
+ */
+function terminalProgressionKind(lifecycle: Lifecycle): 'completed' | 'stopped' | 'abandoned' {
+  switch (lifecycle) {
+    case 'completed':
+    case 'stopped':
+    case 'abandoned':
+      return lifecycle;
+    case 'running':
+      throw new Error('A run reached a final state still running');
+    default: {
+      const _exhaustive: never = lifecycle;
+      throw new Error(`Unsupported lifecycle: ${String(_exhaustive)}`);
+    }
+  }
+}
 /**
  * XState absolute ID reference for the STOPPED final state.
  * Required for `onError` targets inside nested compound children where
@@ -882,6 +910,11 @@ export interface RunbookContext {
  * - ISSUE_CLAIM_TICKETS: Record the hash of each Claim Ticket Run Progression
  *   minted for a Delegation of the active entry (#904). The plaintext ticket
  *   is printed once on `step_entered` and never reaches the machine.
+ * - RETRY_DELEGATION: `rundown retry` (#905). Cancels the Delegation of one
+ *   delegated substep of the active entry the parent still counts, and
+ *   reserves a fresh child in its place carrying the new ticket's hash.
+ * - ABANDON: `rundown release` (#905), on a Delegation's own run. Ends the
+ *   run `abandoned`, which its parent Collects as a fail.
  *
  * The owner's own PASS/FAIL on a substep is sent directly by the lifecycle
  * seam after `--step` validation; there is no mailbox (ADR 0005).
@@ -932,6 +965,20 @@ export type RunbookEvent =
        */
       type: 'ISSUE_CLAIM_TICKETS';
       tickets: readonly { readonly childRunId: RunId; readonly ticketHash: SecretHash }[];
+    }
+  | {
+      /**
+       * Cancel the Delegation reserved for `substepId` at the active entry and
+       * reserve a fresh child issued `ticketHash` (#905). Applied only while
+       * the parent counts the cancelled one.
+       */
+      type: 'RETRY_DELEGATION';
+      substepId: string;
+      ticketHash: SecretHash;
+    }
+  | {
+      /** End the run `abandoned`: `rundown release` of a Delegation (#905). */
+      type: 'ABANDON';
     };
 
 /**
@@ -4305,6 +4352,45 @@ export function compileRunbookToMachine(
           ];
     return [...own, ...later];
   };
+
+  /**
+   * Build a delegating leaf's `RETRY_DELEGATION` handling (#905): cancel the
+   * Delegation of the named substep — the cursor's own or a later one of the
+   * same entry, while the parent counts it — and reserve a fresh child in its
+   * place. Any other retry matches no guard and changes nothing.
+   *
+   * @param stepName - The step owning the leaf.
+   * @param substepId - The leaf's substep, where the cursor rests.
+   * @param step - The delegating step.
+   * @returns The guarded transition for `idle.on.RETRY_DELEGATION`.
+   */
+  const buildRetryDelegationTransition = (
+    stepName: string,
+    substepId: string,
+    step: ResolvedStep,
+  ) => {
+    const viewOf = (context: RunbookContext) => ({
+      substepStates: context.substepStates,
+      activeFrameKey: frameKeyForCursor(stepName, context.forStack),
+      activeEntry: context.frameEntry?.activeEntry,
+    });
+    const retried = (context: RunbookContext, event: RunbookEvent) => {
+      assertEvent(event, 'RETRY_DELEGATION');
+      return retryableDelegation(viewOf(context), step, substepId, event.substepId);
+    };
+    return {
+      guard: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) =>
+        retried(context, event) !== undefined,
+      actions: runbookSetup.assign({
+        substepStates: ({ context, event }: { context: RunbookContext; event: RunbookEvent }) => {
+          assertEvent(event, 'RETRY_DELEGATION');
+          const delegation = retried(context, event);
+          if (delegation === undefined) throw new Error('Retry guard and action disagree');
+          return replaceDelegation(viewOf(context), delegation, mintChildRunId(), event.ticketHash);
+        },
+      }),
+    };
+  };
   /* eslint-enable @typescript-eslint/explicit-function-return-type */
 
   // Build a flat list of all states to generate GOTO transitions
@@ -4726,6 +4812,15 @@ export function compileRunbookToMachine(
                     ...(delegatingStep !== undefined ? { later: delegatingStep } : {}),
                   }),
                 }),
+            ...(delegatingStep === undefined || config.substepId === undefined
+              ? {}
+              : {
+                  RETRY_DELEGATION: buildRetryDelegationTransition(
+                    config.stepName,
+                    config.substepId,
+                    delegatingStep,
+                  ),
+                }),
           },
         },
         ...reserveChildStates,
@@ -4949,7 +5044,7 @@ export function compileRunbookToMachine(
   );
 
   // Phase 5: Runtime graph validation — catch dynamic errors types cannot prove
-  const terminalStates = new Set(['COMPLETE', 'STOPPED']);
+  const terminalStates = new Set(['COMPLETE', 'STOPPED', ABANDONED_STATE_NAME]);
   const initialState =
     allStates.length > 0 ? routeThroughParentArtifactsIfNeeded(allStates[0].id, steps) : 'step::1';
   validateGraph(states, initialState, terminalStates, STOPPED_STATE_REF);
@@ -4960,6 +5055,18 @@ export function compileRunbookToMachine(
     on: {
       FORCE_STOP: buildForceStopTransition(),
       FORCE_COMPLETE: buildForceCompleteTransition(),
+      // `rundown release` of a Delegation (#905): its own run ends abandoned.
+      // No handler chose an ACTION here and no step produced a RESULT, so no
+      // action type describes it: the last action is cleared, never mapped to
+      // STOP (no silent mapping), so the previous step's does not stand as
+      // the reason the run ended.
+      ABANDON: {
+        target: `.${ABANDONED_STATE_NAME}`,
+        actions: runbookSetup.assign({
+          lastAction: () => undefined,
+          lastMessage: () => undefined,
+        }),
+      },
       SET_VARIABLES: {
         actions: runbookSetup.assign({
           variables: ({ context, event }) => {
@@ -5011,9 +5118,7 @@ export function compileRunbookToMachine(
     },
     output: ({ context }) => ({
       finalVars: context.finalVars,
-      progression: {
-        kind: context.lifecycle === 'stopped' ? ('stopped' as const) : ('completed' as const),
-      },
+      progression: { kind: terminalProgressionKind(context.lifecycle) },
     }),
     states: {
       ...states,
@@ -5042,6 +5147,16 @@ export function compileRunbookToMachine(
         output: ({ context }) => ({
           finalVars: context.finalVars,
           progression: { kind: 'stopped' as const },
+        }),
+      },
+      // A released Delegation (#905). Its sub-agent did not finish it, so it
+      // stores no frontmatter outputs: its parent Collects a bare fail.
+      [ABANDONED_STATE_NAME]: {
+        type: 'final',
+        entry: runbookSetup.assign({ lifecycle: () => 'abandoned' as const }),
+        output: ({ context }) => ({
+          finalVars: context.finalVars,
+          progression: { kind: 'abandoned' as const },
         }),
       },
     },

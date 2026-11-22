@@ -42,11 +42,13 @@ function registerWithHandlers(runCli: RunCli): Map<string, Handler> {
 }
 
 describe('tool surface', () => {
-  it('exposes exactly the one-writer tool set, with claim and collect (#904)', () => {
+  it('exposes exactly the one-writer tool set, with claim, collect, retry and release', () => {
     expect([...RUNDOWN_TOOL_NAMES].sort()).toEqual(
       [
         'claim',
         'collect',
+        'release',
+        'retry',
         'complete',
         'fail',
         'goto',
@@ -97,6 +99,18 @@ describe('buildRundownCommand', () => {
     ['claim', { ticket: TICKET }, ['claim', TICKET]],
     ['claim', { ticket: TICKET, agentId: 'agent-1' }, ['claim', TICKET, '--agent-id', 'agent-1']],
     ['collect', { token: TOKEN }, ['collect', '--token', TOKEN]],
+    ['retry', { token: TOKEN, step: '2.1' }, ['retry', '--token', TOKEN, '--step', '2.1']],
+    [
+      'retry',
+      { token: TOKEN, step: '2.1', index: 3 },
+      ['retry', '--token', TOKEN, '--step', '2.1', '--index', '3'],
+    ],
+    ['release', { runId: RUN_ID }, ['release', RUN_ID]],
+    [
+      'release',
+      { runId: RUN_ID, agentId: 'agent-1' },
+      ['release', RUN_ID, '--agent-id', 'agent-1'],
+    ],
   ] satisfies Array<[RundownToolName, Record<string, unknown>, string[]]>)(
     '%s builds the matching CLI argv',
     (tool, input, expected) => {
@@ -116,6 +130,9 @@ describe('buildRundownCommand', () => {
     ['stop', { message: 'blocked' }, 'stop.token must be a string'],
     ['claim', {}, 'claim.ticket must be a string'],
     ['collect', {}, 'collect.token must be a string'],
+    ['retry', { step: '2.1' }, 'retry.token must be a string'],
+    ['retry', { token: TOKEN }, 'retry.step must be a string'],
+    ['release', {}, 'release.runId must be a string'],
   ] satisfies Array<[RundownToolName, Record<string, unknown>, string]>)(
     '%s rejects missing required string inputs',
     (tool, input, message) => {

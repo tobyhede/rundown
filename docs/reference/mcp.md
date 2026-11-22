@@ -97,15 +97,20 @@ ownership model (see
 - **Owner Token** — `rundown run` prints the run's Owner Token
   (`rdo_<43 base64url characters>`) once, as `owner_token` on the
   `runbook_started` event. Every mutating tool (`pass`, `fail`, `goto`,
-  `complete`, `stop`, `collect`) REQUIRES it as `token`, forwarded as
+  `complete`, `stop`, `collect`, `retry`) REQUIRES it as `token`, forwarded as
   `--token <token>`. The token both selects the run and proves ownership.
 - **Claim Ticket** — a delegated step's `step_entered` lists each child's Claim
   Ticket (`rdt_<43 base64url characters>`). `claim` REQUIRES it as `ticket`; it
   is that tool's only authority, and its response carries the child's own Owner
   Token.
-- **Run selector** — `runId` (`rd_<32 hex>`), accepted only by `status` and
-  forwarded as `--run <runId>`, selects a run for reading. It is never mutation
-  authority, and no mutating tool accepts it.
+- **Agent id** — `claim` records `agentId` on the child; `release` takes the
+  child's run id as `runId` and the same `agentId`, which the CLI matches
+  against the one the claim recorded. The agent supplies it on both calls: no
+  hook stamps it yet (#907). It takes no token, and its authority covers that
+  one write.
+- **Run selector** — `runId` (`rd_<32 hex>`), accepted by `status` and forwarded
+  as `--run <runId>`, selects a run for reading. It is never mutation authority:
+  `release` takes a `runId` only to name the child its agent id authorizes.
 
 The server checks only that `token` is present and is a string; a call without
 it fails schema validation in-process. Resolving the token, and refusing a
@@ -128,6 +133,8 @@ The server MUST register exactly the following tools:
 | [`stop`](#stop)         | `token`             | `message`                                                              | `rundown stop [<message>] --token <token>`                                                                          |
 | [`claim`](#claim)       | `ticket`            | `agentId`                                                              | `rundown claim <ticket> [--agent-id <agentId>]`                                                                     |
 | [`collect`](#collect)   | `token`             | —                                                                      | `rundown collect --token <token>`                                                                                   |
+| [`retry`](#retry)       | `token`, `step`     | `index`                                                                | `rundown retry --token <token> --step <id> [--index <n>]`                                                           |
+| [`release`](#release)   | `runId`             | `agentId`                                                              | `rundown release <runId> [--agent-id <agentId>]`                                                                    |
 
 Parameter types are defined per tool below. The server MUST validate tool inputs
 against the declared schema and reject inputs that fail validation without
@@ -307,6 +314,43 @@ Apply the results of the run's delegated children.
 The payload starts with a `children_collected` event naming each child's status
 (`collected`, `already_collected`, `pending`, `unclaimed`, `cancelled`),
 followed by the run's continuation when a result moved it.
+
+<a id="retry"></a>
+
+### 5.10c `retry`
+
+Cancel a delegated substep's child and reserve a fresh one with a new Claim
+Ticket — the recovery for a lost ticket, an unclaimed child, or a child whose
+Owner Token was lost.
+
+| Parameter | Type    | Required | Behavior                                                            |
+| --------- | ------- | -------- | ------------------------------------------------------------------- |
+| `token`   | string  | Yes      | Owner Token from `runbook_started`, forwarded as `--token <value>`. |
+| `step`    | string  | Yes      | The delegated substep (`3.1`), forwarded as `--step <value>`.       |
+| `index`   | integer | No       | The current FOR iteration, forwarded as `--index <value>`.          |
+
+The payload is one `delegation_retried` event naming the `cancelledRunId` and
+listing the fresh child in `children` with its new `ticket`, printed there once.
+Refusals (`INVALID_STEP`, `NOTHING_TO_RETRY`, …) pass through unchanged.
+
+<a id="release"></a>
+
+### 5.10d `release`
+
+Abandon a delegated child its claiming agent cannot finish; its parent collects
+it as a fail while it still counts it.
+
+| Parameter | Type   | Required | Behavior                                                                           |
+| --------- | ------ | -------- | ---------------------------------------------------------------------------------- |
+| `runId`   | string | Yes      | The child's run id (`runbookId` of its `runbook_started`), forwarded positionally. |
+| `agentId` | string | No       | The agent id the claim recorded, forwarded as `--agent-id <value>`.                |
+
+The payload is the child's `runbook_abandoned` event: `parent.standing` says
+whether the parent still collects it (`current`) or never will (`cancelled`,
+`parent_finished`, `parent_pruned`), and `abandonedInline` lists the running
+Inline Children abandoned with it. Refusals (`AGENT_MISMATCH`,
+`NOT_A_DELEGATION`, `RUN_TARGET_UNAVAILABLE`, `RD-303` / `RD-304`) pass through
+unchanged.
 
 <a id="unsupported-cli-operations"></a>
 

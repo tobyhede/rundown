@@ -22,6 +22,9 @@ import {
   printStepSeparator,
   printStepBlock,
   printRunbookComplete,
+  printChildrenCollected,
+  printDelegationRetried,
+  printRunbookAbandoned,
   printRunbookStopped,
   printRunbookStoppedAtStep,
   printNoActiveRunbook,
@@ -731,10 +734,13 @@ export class TextRenderer implements OutputRenderer {
         this.handleErrorOccurred(event);
         break;
       case 'CHILDREN_COLLECTED':
-        for (const child of event.payload.children) {
-          const result = child.result === undefined ? '' : ` (${child.result})`;
-          this.writer.writeLine(`Child ${child.step} ${child.runId}: ${child.status}${result}`);
-        }
+        printChildrenCollected(event.payload, this.writer);
+        break;
+      case 'DELEGATION_RETRIED':
+        printDelegationRetried(event.payload, this.writer);
+        break;
+      case 'RUNBOOK_ABANDONED':
+        printRunbookAbandoned(event.runbookId, event.payload, this.writer);
         break;
     }
   }

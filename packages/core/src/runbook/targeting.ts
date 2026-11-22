@@ -168,6 +168,17 @@ export function buildFrameKey(step: string, iteration?: number): FrameKey {
 }
 
 /**
+ * The step a frame key names: the inverse of {@link buildFrameKey}'s first
+ * segment.
+ *
+ * @param frameKey - A frame key.
+ * @returns The step identifier.
+ */
+export function frameKeyStep(frameKey: FrameKey): string {
+  return frameKey.slice(0, frameKey.indexOf('|'));
+}
+
+/**
  * Whether a string has the shape every {@link buildFrameKey} result matches:
  * `<step>|<iteration-or-empty>`.
  *

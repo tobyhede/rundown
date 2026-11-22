@@ -157,6 +157,25 @@ write on the parent.
 - A Delegation's own command first reads its parent to check it still counts.
   That read may race the parent's next write; it is harmless, because Collect —
   the parent owner's write — decides what counts.
+- `rundown retry` cancels a Delegation and reserves its replacement in ONE
+  conditional save on the parent, through the machine (`RETRY_DELEGATION`),
+  naming the version the owner's command read. A moved version is refused
+  `CONCURRENT_MODIFICATION`, never retried: nothing was cancelled, and the
+  minted ticket is discarded unprinted. The cancelled child's row is never
+  written by the parent. A claim racing the retry is serialised by the claim
+  transaction's re-read of the parent: whichever commits first, the other sees
+  its result (a claim of a replaced reservation is refused
+  `DELEGATION_CANCELLED`; a retry after a claim cancels the claimed child).
+- `rundown release` writes `abandoned` on the child's own row (`ABANDON` through
+  the child's machine), naming the version it read. The running Inline Children
+  the child composes have no token of their own — the child's was their
+  authority — so they are abandoned in the same write: ONE `BEGIN IMMEDIATE`
+  transaction (`RunbookStore.saveRunsResolvingLeases`) compares every row's
+  `state_version` to the version it was read at before writing any, and writes
+  all or none. A moved row is refused `CONCURRENT_MODIFICATION`, never retried,
+  and a live command holding any of those rows' execution lease refuses the
+  release. Its authority is the agent id recorded at claim, a second identity
+  that grants this one write and nothing else; it never writes the parent.
 
 ## No other coordination
 

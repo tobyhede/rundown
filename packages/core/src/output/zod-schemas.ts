@@ -70,6 +70,12 @@ export const CLISymbolicErrorCodeValues = [
   'DELEGATION_CANCELLED',
   'PARENT_RUN_FINISHED',
   'NOTHING_TO_COLLECT',
+  // Delegation recovery (#905): `retry` of a substep with no Delegation its
+  // parent still counts; `release` by an agent other than the claim's, of a
+  // run that is not a Delegation, or of a run id no run carries.
+  'NOTHING_TO_RETRY',
+  'AGENT_MISMATCH',
+  'NOT_A_DELEGATION',
   // The execution lease (#902): a live attempt holds the run's step, or the
   // attempt that held it died and the decision would pass it.
   'EXECUTION_IN_PROGRESS',

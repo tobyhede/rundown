@@ -169,7 +169,16 @@ export function classifyExecutionLease(
  * unknown outcome, as `stop` is. `collect` (#904) applies Delegations' Child
  * Results to the run; like `pass` it never clears an Interrupted effect.
  */
-export type LeaseDecision = 'pass' | 'complete' | 'fail' | 'goto' | 'stop' | 'prune' | 'collect';
+export type LeaseDecision =
+  | 'pass'
+  | 'complete'
+  | 'fail'
+  | 'goto'
+  | 'stop'
+  | 'prune'
+  | 'collect'
+  | 'retry'
+  | 'release';
 
 /** Refusal: a live attempt holds the lease. Nothing was written. */
 export interface ExecutionInProgressRefusal {
@@ -304,7 +313,7 @@ export function refuseUnderLease(
  * clear an interruption.
  *
  * @param decision - The owner's decision.
- * @returns True for `fail`, `goto`, `stop` and `prune`.
+ * @returns True for `fail`, `goto`, `stop`, `prune` and `release`.
  * @throws {Error} When an unhandled decision is supplied.
  */
 function clearsInterruption(decision: LeaseDecision): boolean {
@@ -313,12 +322,17 @@ function clearsInterruption(decision: LeaseDecision): boolean {
     case 'goto':
     case 'stop':
     case 'prune':
+    // `release` ends a Delegation abandoned (#905): an explicit decision, like
+    // `stop`, that nobody will learn the attempt's result.
+    case 'release':
       return true;
     case 'pass':
     case 'complete':
     // `collect` applies a Child Result to the cursor's unit: like `pass`, it
     // would record an outcome over an attempt whose result nobody knows.
     case 'collect':
+    // `retry` replaces a Delegation and leaves the interrupted unit undecided.
+    case 'retry':
       return false;
     default: {
       const _exhaustive: never = decision;

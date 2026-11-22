@@ -1,5 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
 import { TextRenderer } from '../../../src/services/renderers/text-renderer.js';
+import { CLISubscriber } from '@rundown-org/core';
 import type {
   OutputWriter,
   DetailOutput,
@@ -693,6 +694,77 @@ describe('TextRenderer', () => {
   });
 
   describe('execution events', () => {
+    // The Delegation events have one text rendering, shared with core's
+    // CLISubscriber: the two paths must print the same lines (#905).
+    it.each<RunbookEventV1>([
+      {
+        ...envelope(),
+        type: 'RUNBOOK_ABANDONED',
+        payload: {
+          parent: { standing: 'current', runId: 'rd_p', step: '1.1' },
+          abandonedInline: ['rd_i'],
+        },
+      },
+      {
+        ...envelope(),
+        type: 'RUNBOOK_ABANDONED',
+        payload: {
+          parent: { standing: 'cancelled', runId: 'rd_p', step: '1.1' },
+          abandonedInline: [],
+        },
+      },
+      {
+        ...envelope(),
+        type: 'RUNBOOK_ABANDONED',
+        payload: { parent: { standing: 'parent_pruned', step: '1.1' }, abandonedInline: [] },
+      },
+      {
+        ...envelope(),
+        type: 'DELEGATION_RETRIED',
+        payload: {
+          step: '1.1',
+          cancelledRunId: 'rd_old',
+          children: [
+            { step: '1.1', runId: 'rd_new', runbook: 'c.runbook.md', ticket: 'rdt_x' as never },
+          ],
+        },
+      },
+      {
+        ...envelope(),
+        type: 'CHILDREN_COLLECTED',
+        payload: {
+          children: [{ step: '1.1', runId: 'rd_c', status: 'collected', result: 'fail' }],
+        },
+      },
+    ])('renders $type exactly as CLISubscriber does', (event) => {
+      const rendered = createMockWriter();
+      new TextRenderer({ writer: rendered }).render({ type: 'execution_event', event });
+      const subscribed = createMockWriter();
+      new CLISubscriber(subscribed).handle(event);
+
+      expect(rendered.lines).toEqual(subscribed.lines);
+      expect(rendered.lines.length).toBeGreaterThan(0);
+    });
+
+    it('renders RUNBOOK_ABANDONED naming whether the parent still collects the child', () => {
+      const writer = createMockWriter();
+      new TextRenderer({ writer }).render({
+        type: 'execution_event',
+        event: {
+          ...envelope(),
+          type: 'RUNBOOK_ABANDONED',
+          payload: {
+            parent: { standing: 'cancelled', runId: 'rd_p', step: '1.1' },
+            abandonedInline: [],
+          },
+        },
+      });
+
+      expect(writer.lines).toEqual([
+        'Run test-id abandoned; run rd_p no longer counts it at 1.1, so nothing collects it',
+      ]);
+    });
+
     it('renders RUNBOOK_STARTED', () => {
       const writer = createMockWriter();
       const renderer = new TextRenderer({ writer });

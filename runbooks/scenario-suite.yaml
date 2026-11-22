@@ -350,6 +350,38 @@ cases:
         - at: '2'
           description: Verdict approved
 
+  delegation-lost-ticket-retried:
+    description: retry cancels the unclaimed child and prints a new ticket; the old ticket is refused (#905)
+    file: delegation/delegate-single.runbook.md
+    commands:
+      - rd run delegate-single.runbook.md
+      - rd retry --token ${TOKEN} --step 1.1
+      - "! rd claim ${TICKET}"
+      - rd claim ${TICKET_2}
+      - rd pass --token ${CHILD_TOKEN} --step Check
+      - rd collect --token ${TOKEN}
+      - rd pass --token ${TOKEN} --step 2
+    result: COMPLETE
+    expect:
+      errors:
+        - code: DELEGATION_CANCELLED
+          command: claim
+
+  delegation-release-collected-as-fail:
+    description: The claiming agent releases its child; collect applies the abandoned child as a fail (#905)
+    file: delegation/delegate-single.runbook.md
+    commands:
+      - rd run delegate-single.runbook.md
+      - rd claim ${TICKET} --agent-id reviewer-1
+      - rd release ${CHILD_RUN} --agent-id reviewer-1
+      - "! rd collect --token ${TOKEN}"
+    result: STOP
+    expect:
+      collected:
+        - step: '1.1'
+          status: collected
+          result: fail
+
   # named-steps/ (new coverage)
   named-step-for-loop-completed:
     description: Named step iterates normally with FOR loop

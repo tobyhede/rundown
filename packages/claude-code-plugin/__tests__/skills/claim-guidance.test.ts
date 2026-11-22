@@ -133,19 +133,78 @@ describe('delegating-runbooks Delegation protocol', () => {
       'DELEGATION_CANCELLED',
       'PARENT_RUN_FINISHED',
       'NOTHING_TO_COLLECT',
+      'NOTHING_TO_RETRY',
+      'AGENT_MISMATCH',
     ]) {
       expect(refusals).toContain(`\`${code}\``);
     }
+  });
+
+  it('recovers a lost ticket, an unclaimed child or a lost child token with retry, never by telling the user (#905)', () => {
+    const orchestrator = section(skill, '## Orchestrator Choreography');
+
+    expect(orchestrator).toContain('rundown retry --token <owner_token> --step <substep>');
+    expect(orchestrator).toContain('`delegation_retried`');
+    expect(skill).not.toMatch(/no agent\s+recovery/);
+  });
+
+  it('has a sub-agent that cannot finish its child release it with its agent id (#905)', () => {
+    const subAgent = section(skill, '## Sub-agent Choreography');
+    const orchestrator = section(skill, '## Orchestrator Choreography');
+
+    expect(subAgent).toContain('rundown release <child run id> --agent-id <id>');
+    expect(orchestrator).toMatch(/rundown release rd_… --agent-id/);
+  });
+
+  it('has every sub-agent pass its agent id on claim and on release, since nothing stamps it', () => {
+    const subAgent = section(skill, '## Sub-agent Choreography');
+
+    expect(skill).not.toMatch(/`--agent-id` is optional/);
+    expect(skill).not.toMatch(/omit it if the claim did/);
+    expect(subAgent).toContain('rundown claim <ticket> --agent-id <id>');
+    expect(subAgent).toMatch(/same `--agent-id`/);
+    expect(skill).toMatch(/nothing stamps it/);
   });
 
   it('teaches no retired or unbuilt delegation surface', () => {
     expect(skill).not.toContain('--claim-id');
     expect(skill).not.toContain('rdtk_');
     expect(skill).not.toContain('RD_CLAIM_TOKEN');
-    expect(skill).not.toMatch(/rundown (?:delegate|abort|retry|release)\b/);
+    expect(skill).not.toMatch(/rundown (?:delegate|abort)\b/);
     expect(skill).not.toMatch(
       /ACTOR_CONTEXT_REQUIRED|OPEN_DELEGATED_CHILDREN|DELEGATION_SUPERSEDED/,
     );
     expect(skill).not.toMatch(/#904/);
   });
+});
+
+describe('running-runbooks Delegation recovery (#905), in both plugin copies', () => {
+  const copies = {
+    claude: readSkill('running-runbooks/SKILL.md'),
+    codex: readFileSync(
+      path.join(skillsDir, '..', 'codex-plugin', 'skills', 'running-runbooks', 'SKILL.md'),
+      'utf-8',
+    ),
+  };
+
+  it.each(Object.entries(copies))(
+    '%s: a claimed child that cannot finish is released, and a lost ticket is retried',
+    (_copy, skill) => {
+      const claimed = section(skill, '## Claimed Delegations');
+      expect(claimed).toContain('rundown release <child run id> --agent-id <id>');
+      expect(skill).toContain('rundown retry --token <owner_token> --step <substep>');
+      expect(skill).not.toMatch(/no agent\s+recovery/);
+    },
+  );
+
+  it.each(Object.entries(copies))(
+    '%s: a claimed child passes its agent id on claim and on release, since nothing stamps it',
+    (_copy, skill) => {
+      const claimed = section(skill, '## Claimed Delegations');
+      expect(claimed).not.toMatch(/--agent-id is optional|omit it if the claim did/);
+      expect(claimed).toContain('rundown claim <ticket> --agent-id <id>');
+      expect(claimed).toMatch(/same\s+`--agent-id`/);
+      expect(claimed).toMatch(/nothing\s+stamps\s+it/);
+    },
+  );
 });
