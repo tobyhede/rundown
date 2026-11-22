@@ -44,11 +44,11 @@ function requireString(
  * Build a Rundown CLI argv array for an MCP tool call.
  *
  * Mutating tools map `token` to `--token` (the Owner Token is the only
- * authority; `--claim-id` and `--run` are never emitted for a mutation),
- * `step` to `--step` and `index` to `--index`. `claim` maps `ticket` to its
- * positional Claim Ticket and `agentId` to `--agent-id`. `retry` maps like
- * `pass`; `release` maps `runId` to its positional child id and `agentId` to
- * `--agent-id` (#905). `status` maps `runId` to the read-only `--run` selector.
+ * authority, and `--run` is never emitted for a mutation), `step` to `--step`
+ * and `index` to `--index`. `claim` maps `ticket` to its positional Claim
+ * Ticket and `agentId` to `--agent-id`. `retry` maps like `pass`; `release`
+ * maps `runId` to its positional child id and `agentId` to `--agent-id` (#905).
+ * `status` maps `runId` to the read-only `--run` selector.
  *
  * @param tool - MCP tool name.
  * @param input - Tool input values.
