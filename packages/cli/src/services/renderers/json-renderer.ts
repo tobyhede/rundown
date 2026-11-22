@@ -172,6 +172,9 @@ export class JSONRenderer implements OutputRenderer {
         if (event.message) {
           this.output.message = event.message;
         }
+        if (event.stoppedInline) {
+          this.output.stoppedInline = event.stoppedInline;
+        }
         if (event.position) {
           this.output.position = this.toJsonPosition(event.position);
         }

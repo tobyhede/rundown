@@ -673,6 +673,17 @@ const RunbookStateObjectSchema = z
     // reach the schemaVersion check and throw InvalidRunbookStateError.
     // Making them required would bypass invalid-state detection. Do not tighten.
     lifecycle: z.enum(['running', 'completed', 'stopped', 'abandoned']).optional(),
+    // The human escape hatch's audit (#906): written only by the save that
+    // stops a run through `rundown stop --run`.
+    humanStop: z
+      .object({
+        at: z.string(),
+        user: z.string(),
+        host: z.string(),
+        message: z.string().optional(),
+      })
+      .strict()
+      .optional(),
     schemaVersion: z.number().int().nonnegative().optional(),
   })
   // Persisted state has no compatibility contract. `state.load()` checks

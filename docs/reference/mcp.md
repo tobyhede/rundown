@@ -284,6 +284,12 @@ its final action object is still returned as the payload (see
 [docs/reference/cli.md](cli.md#force-terminal-targeting) for force-terminal
 semantics.
 
+The tool has no `runId` parameter and never emits `--run`: the human escape
+hatch for a lost top-level token, `rundown stop --run <run-id>`, needs a person
+at an interactive terminal, which an MCP caller is not (see
+[docs/reference/cli.md](cli.md#escape-hatch)). An agent that lost its token asks
+the user to run it.
+
 <a id="claim"></a>
 
 ### 5.10a `claim`

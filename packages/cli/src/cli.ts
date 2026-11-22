@@ -30,6 +30,10 @@ import {
 } from './services/policy-context.js';
 import { loadHelperModules, setHelperRegistry } from './services/helper-registry.js';
 import { outputCommandSchema } from './services/schema-service.js';
+import {
+  terminalHumanConfirmation,
+  type HumanConfirmation,
+} from './services/human-confirmation.js';
 
 import { fileURLToPath } from 'node:url';
 import { realpathSync } from 'node:fs';
@@ -61,13 +65,25 @@ if (isEntryPoint && process.argv.includes('--schema')) {
   }
 }
 
+/** What the program reads from outside the runbook, injected for tests (#906). */
+export interface ProgramDependencies {
+  /**
+   * The human at the terminal, for the two decisions only a human may make:
+   * the `stop --run` escape hatch and pruning a running run without its
+   * token. Defaults to this process's terminal.
+   */
+  readonly human?: HumanConfirmation;
+}
+
 /**
  * Create and configure the Commander program with all commands and hooks.
  * Extracted as a factory for in-process test execution.
  *
+ * @param deps - Injected dependencies; each defaults to this process's own.
  * @returns Configured Commander program (not yet parsed)
  */
-export function createProgram(): Command {
+export function createProgram(deps: ProgramDependencies = {}): Command {
+  const human = deps.human ?? terminalHumanConfirmation();
   const program = new Command();
 
   program.name('rundown').description('Runbook orchestration CLI').version('1.0.0');
@@ -187,7 +203,7 @@ export function createProgram(): Command {
   registerCompleteCommand(program);
   registerGotoCommand(program);
   registerStatusCommand(program);
-  registerStopCommand(program);
+  registerStopCommand(program, human);
   registerClaimCommand(program);
   registerCollectCommand(program);
   registerRetryCommand(program);
@@ -196,7 +212,7 @@ export function createProgram(): Command {
   registerEchoCommand(program);
   registerCheckCommand(program);
   registerResolveCommand(program);
-  registerPruneCommand(program);
+  registerPruneCommand(program, human);
   registerPromptCommand(program);
   registerScenariosCommand(program);
   registerScenarioSuiteCommand(program);

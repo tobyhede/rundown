@@ -34,8 +34,14 @@ takes `--token <owner_token>`, and the token is your only authority to change
 the run.
 
 No other command, status response, or listing ever shows it again, and it cannot
-be recovered. If you lose it, you can still read the run but no longer drive it:
-tell the user.
+be recovered. If you lose it, you can still read the run but no longer drive it.
+Stopping it is then the user's decision, not yours: `rundown stop --run <run_id>`
+is a human-only escape hatch that asks a person at a terminal to confirm, stops
+the whole run — with any inline child runbook it is running — and records who
+stopped it. Never run `rundown stop --run` yourself — it is
+refused `INTERACTIVE_REQUIRED` without a person at a terminal. Tell the user you
+lost the token, give them the run id, and ask the user to run
+`rundown stop --run <run_id>` themselves if the run should stop.
 
 The same event carries the **run id** (`runbookId`, `rd_…`). The run id is for
 reading only — `rundown status --run <run_id>`. Mutating commands take `--token`
@@ -200,6 +206,7 @@ A refused command writes nothing. Fix the cause and re-issue it.
 | `UNKNOWN_TOKEN`                   | No run carries that token (mistyped, or the run was pruned)                                  | Copy `owner_token` verbatim from `runbook_started`; if lost, tell the user |
 | `INVALID_STEP`                    | `--step` / `--index` missing or not the current position (an inline child's, while one runs) | The message names the current position; re-issue with it                   |
 | `INVALID_SYNTAX`                  | `--run` combined with `--token`, among other syntax errors                                   | Drop `--run` from mutating commands                                        |
+| `INTERACTIVE_REQUIRED`            | `rundown stop --run`, the human escape hatch, run without a person at a terminal             | Never use it; for a lost `owner_token`, ask the user to run it             |
 | `RD-303` / `RD-304`               | The run already completed / stopped                                                          | Nothing to drive; report the outcome                                       |
 | `CONCURRENT_MODIFICATION`         | Another write landed on the run first                                                        | Re-read with `rundown status --run <run_id>`, then re-issue                |
 | `RUNBOOK_COMPOSITION_UNSUPPORTED` | A substep lists more than one runbook | Report it to the user and stop |

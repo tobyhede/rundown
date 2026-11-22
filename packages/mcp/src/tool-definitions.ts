@@ -27,6 +27,8 @@ const optionalIndex = z.number().int().nonnegative().optional();
  * delegated substep, and its response carries the fresh child's ticket;
  * `release` takes the child run id and the claiming agent's id, never a
  * token (#905). Read-only tools stay bare; `status` narrows by `runId`.
+ * There is no tool for the human escape hatch (`rundown stop --run`, #906):
+ * it needs a person at an interactive terminal, which an MCP caller is not.
  */
 export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefinition> = {
   validate: {
@@ -83,7 +85,8 @@ export const RUNDOWN_TOOL_DEFINITIONS: Record<RundownToolName, RundownToolDefini
     inputSchema: z.object({ ...tokenShape, message: z.string().optional() }),
   },
   stop: {
-    description: 'Stop the runbook. Requires the owner token.',
+    description:
+      'Stop the runbook. Requires the owner token. A lost top-level owner token cannot be recovered through MCP: only a human at a terminal can run `rundown stop --run <id>`, so ask the user.',
     inputSchema: z.object({ ...tokenShape, message: z.string().optional() }),
   },
   claim: {

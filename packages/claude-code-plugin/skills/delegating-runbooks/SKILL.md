@@ -157,7 +157,9 @@ rundown release <child run id> --agent-id <id>  # only when you cannot finish it
   used. The child ends `abandoned`, with any inline child it was running, and
   its parent collects it as a FAIL while it still counts it
   (`parent.standing: current` on the `runbook_abandoned` event). Release
-  touches nothing else and grants nothing else.
+  touches nothing else and grants nothing else. Never run `rundown stop --run`
+  for a child: it is the human-only escape hatch for a lost top-level token,
+  refused without a person at a terminal, and it refuses child runs anyway.
 
 ## Fan-out and FOR Loops
 

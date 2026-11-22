@@ -302,6 +302,27 @@ describe('registerRundownTools', () => {
     },
   );
 
+  // The human escape hatch (`rundown stop --run`, #906) needs a person at an
+  // interactive terminal; an MCP caller has none, so the tool never offers it.
+  it('stop never exposes the human escape hatch: a runId is not passed as --run', async () => {
+    const parsed = RUNDOWN_TOOL_DEFINITIONS.stop.inputSchema.safeParse({
+      token: TOKEN,
+      runId: RUN_ID,
+    });
+    expect(parsed.success && Object.keys(parsed.data).sort()).toEqual(['token']);
+    const runCli = jest.fn<RunCli>().mockResolvedValue({ success: true, data: {} });
+    const handlers = registerWithHandlers(runCli);
+
+    await handlers.get('stop')?.({ token: TOKEN, runId: RUN_ID });
+    expect(runCli).toHaveBeenCalledWith(['stop', '--token', TOKEN]);
+    expect(buildRundownCommand('stop', { token: TOKEN, runId: RUN_ID })).not.toContain('--run');
+
+    const bare = jest.fn<RunCli>();
+    const res = await registerWithHandlers(bare).get('stop')?.({ runId: RUN_ID });
+    expect(parseToolResponse(res)).toEqual({ error: expect.stringContaining('token') });
+    expect(bare).not.toHaveBeenCalled();
+  });
+
   it.each(['pass', 'fail'] as const)(
     '%s handler refuses a call without step before spawning the CLI',
     async (tool) => {

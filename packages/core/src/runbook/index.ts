@@ -119,12 +119,40 @@ export type {
   VersionedRunState,
 } from './storage/runbook-store.js';
 export {
-  hasRunningInlineAncestor,
   inlineDescendantsOf,
   planRunDeletions,
   refuseDeletionUnderLease,
   type RunDeletion,
 } from './run-deletion.js';
+// Prune protection (#906): one rule for every pruning caller.
+export {
+  CURRENT_CHILD_PROTECTED_CODE,
+  childProtection,
+  planPrune,
+  type ChildProtection,
+  type CurrentChildProtectedRefusal,
+  type LoadSteps,
+  type PlannedDeletion,
+  type PrunePlan,
+  type PrunePlanInput,
+  type PruneRetentionReason,
+  type PruneSelection,
+  type RetainedRun,
+} from './run-pruning.js';
+// The human escape hatch (#906): `rundown stop --run`, interactive and audited.
+export {
+  NOT_A_TOP_LEVEL_RUN_CODE,
+  childRunRemedy,
+  resolveHumanStopTarget,
+  stopByHuman,
+  type ChildRunContext,
+  type HumanStopDeps,
+  type HumanStoppedRun,
+  type HumanStopOutcome,
+  type HumanStopTargetRefusal,
+  type HumanStopTargetResolution,
+  type RunLookup,
+} from './human-stop.js';
 export { assertStateVersion, type StateVersion } from './storage/mutation-result.js';
 export {
   applyRunbookStateUpdate,

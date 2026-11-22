@@ -25,6 +25,7 @@ import {
   type ParentLinkStatus,
   type ExecutionCondition,
   type ExecutionStatus,
+  type HumanStopAudit,
   type PublicArtifactVarValue,
   type RunbookState,
   type RunLinkage,
@@ -97,6 +98,8 @@ export interface StatusOutputData {
    * result only. Never a Claim Ticket.
    */
   children?: readonly DelegationChildStatus[];
+  /** Who stopped the run through the human escape hatch, when and why (#906). */
+  humanStop?: HumanStopAudit;
 }
 
 /**
@@ -327,6 +330,7 @@ export function buildRunStatus(
   return {
     active: lifecycle === 'running',
     ...(lifecycle !== 'running' ? { status: lifecycle } : {}),
+    ...(runState.humanStop !== undefined ? { humanStop: runState.humanStop } : {}),
     file: metadata.file,
     state: metadata.state,
     ...(metadata.runId != null && { runId: metadata.runId }),

@@ -312,14 +312,15 @@ export async function releaseDelegation(
 /**
  * The running Inline Children a run composes: its Current Inline Child, that
  * child's, and so on, while each is running. These are exactly the runs the
- * run's Owner Token reaches below it.
+ * run's Owner Token reaches below it, which a decision ending the run without
+ * that token — `release` (#905), the human escape hatch (#906) — ends with it.
  *
  * @param deps - Store.
  * @param state - The run to start from.
  * @returns The running chain, nearest first, each at the version it was read at.
  * @throws {Error} When the chain is deeper than any run can drive.
  */
-async function runningInlineChain(
+export async function runningInlineChain(
   deps: Pick<DelegationRecoveryDeps, 'manager'>,
   state: RunbookState,
 ): Promise<readonly VersionedRunState[]> {

@@ -59,11 +59,13 @@ describe('mutating-command option surface', () => {
     expect(hiddenOptionLongs(registerGotoCommand)).toEqual(['--run']);
   });
 
-  it('stop and complete take only --token (and hidden --run)', () => {
+  it('stop and complete take only --token and --run, hidden on complete', () => {
     for (const register of [registerStopCommand, registerCompleteCommand]) {
       expect(registeredValueTakingOptionLongs(register)).toEqual(['--run', '--token']);
-      expect(hiddenOptionLongs(register)).toEqual(['--run']);
     }
+    expect(hiddenOptionLongs(registerCompleteCommand)).toEqual(['--run']);
+    // stop's --run is the human escape hatch (#906), so it is advertised.
+    expect(hiddenOptionLongs(registerStopCommand)).toEqual([]);
   });
 
   it('status is read-only: --run, never --token', () => {
