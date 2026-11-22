@@ -49,7 +49,11 @@ import {
   type RunbookFrontmatter,
   type Runbook,
 } from '@rundown-org/parser';
-import { buildRunbookRef, resolveRunbookFile } from './resolve-runbook.js';
+import {
+  buildRunbookRef,
+  resolveRunbookFile,
+  type ResolveRunbookFileOptions,
+} from './resolve-runbook.js';
 import type { ResolvedRunbook as ResolvedRunbookFile } from './resolve-runbook.js';
 import type { OutputEmitter } from '../services/output-emitter.js';
 import { createBridgedEmitter } from './execution-emitter.js';
@@ -242,6 +246,11 @@ export interface PrepareRunbookOptions {
   readonly iterationBinding?: IterationBinding;
   /** Optional execution identity supplied by a parent inline launch intent. */
   readonly runId?: RunId;
+  /**
+   * Absolute path of the runbook composing this one (a Child Run's parent).
+   * A child reference no search root holds is then tried beside it.
+   */
+  readonly composedFrom?: string;
 }
 
 /** Success result from {@link prepareRunbook}. */
@@ -410,10 +419,15 @@ export interface ResolvedRunbookRequest {
  *
  * @param file - Runbook file path or namespace:name
  * @param cwd - Current working directory for resolution
+ * @param resolveOptions - Resolution options, such as the composing runbook's path
  * @returns Loaded runbook data or a structured load failure
  */
-export async function loadAndParseRunbook(file: string, cwd: string): Promise<LoadAndParseResult> {
-  const resolved = await resolveRunbookFile(cwd, file);
+export async function loadAndParseRunbook(
+  file: string,
+  cwd: string,
+  resolveOptions: ResolveRunbookFileOptions = {},
+): Promise<LoadAndParseResult> {
+  const resolved = await resolveRunbookFile(cwd, file, resolveOptions);
 
   if (!resolved) {
     return runbookNotFound(file);
@@ -563,7 +577,11 @@ export async function prepareRunnableRunbook(
   cwd: string,
   options?: PrepareRunbookOptions,
 ): Promise<RunnablePrepareResult> {
-  const parsed = await loadAndParseRunbook(file, cwd);
+  const parsed = await loadAndParseRunbook(
+    file,
+    cwd,
+    options?.composedFrom !== undefined ? { composedFrom: options.composedFrom } : {},
+  );
   return prepareLoadedRunbook(
     parsed,
     file,

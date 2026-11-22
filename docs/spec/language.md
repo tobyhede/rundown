@@ -178,6 +178,14 @@ for the same behavior.
 An explicit substep naming more than one runbook is refused when the run starts
 (`RUNBOOK_COMPOSITION_UNSUPPORTED`).
 
+A child runbook reference resolves the way `rundown run` resolves one: through
+the project, plugin, working-directory and bundled sources, in that order. A
+path reference that none of them holds is then resolved relative to the
+directory of the runbook that composes it, provided the result stays inside the
+source root that runbook came from. A project or plugin runbook therefore
+overrides a sibling of the same name, and a runbook run by path from anywhere
+can still compose the runbooks beside it.
+
 ### 5.5 Runtime Target Identity
 
 Canonical runtime identity is `step + substep + iteration`. Display notation

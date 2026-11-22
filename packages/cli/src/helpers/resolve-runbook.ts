@@ -294,6 +294,46 @@ function isPathIdentifier(identifier: string): boolean {
   return identifier.includes('/') || identifier.endsWith('.md');
 }
 
+/** Options for {@link resolveRunbookFile}. */
+export interface ResolveRunbookFileOptions {
+  /**
+   * Absolute path of the runbook that composes this one (a Child Run's
+   * parent). When the identifier is a path that no search root holds, it is
+   * tried relative to this file's directory, last.
+   */
+  readonly composedFrom?: string;
+}
+
+/**
+ * Resolve a child runbook path beside the runbook that composes it — the last
+ * resort after every search root has missed.
+ *
+ * @param cwd - Current working directory
+ * @param composedFrom - Absolute path of the composing runbook
+ * @param name - Relative runbook path
+ * @returns The resolved sibling, or null when it does not exist or lies outside
+ *   the composing runbook's source root
+ */
+async function resolveBesideComposer(
+  cwd: string,
+  composedFrom: string,
+  name: string,
+): Promise<ResolvedRunbook | null> {
+  const candidate = path.resolve(path.dirname(composedFrom), name);
+  try {
+    await fs.access(candidate);
+  } catch {
+    return null;
+  }
+  // A sibling stays inside the root its composer was found in; a path that
+  // climbs out of it is not resolved.
+  const composer = await resolveAbsolutePath(cwd, composedFrom);
+  if (composer === null || (await pathUnderRoot(composer.sourceRoot, candidate)) === null) {
+    return null;
+  }
+  return resolveAbsolutePath(cwd, candidate);
+}
+
 /**
  * Resolve runbook file from multiple sources.
  * Supports both path-based and name-based resolution:
@@ -312,17 +352,22 @@ function isPathIdentifier(identifier: string): boolean {
  * 2. Plugin runbooks directory
  * 3. Bundled runbooks
  *
+ * A path that every source misses is then tried beside `options.composedFrom`
+ * (a Child Run's parent), inside that runbook's own source root.
+ *
  * Namespace mode (e.g., rundown:write-plan):
  * - Searches only in the specified source (plugin for 'rundown' namespace)
  *
  * @param cwd - Current working directory
  * @param identifier - Runbook filename, name, or namespaced name to find
+ * @param options - Resolution options; `composedFrom` names the composing runbook
  * @returns Resolved runbook with path and source, or null if not found
  * @throws {Error} May throw filesystem errors if directory access fails unexpectedly
  */
 export async function resolveRunbookFile(
   cwd: string,
   identifier: string,
+  options: ResolveRunbookFileOptions = {},
 ): Promise<ResolvedRunbook | null> {
   // Parse namespace from identifier
   const { namespace, name } = parseIdentifier(identifier);
@@ -343,7 +388,11 @@ export async function resolveRunbookFile(
   }
 
   const located = await locateRunbook(runtimeSearchRoots(cwd), name);
-  if (!located) return null;
+  if (!located) {
+    return options.composedFrom !== undefined && isPathIdentifier(name)
+      ? resolveBesideComposer(cwd, options.composedFrom, name)
+      : null;
+  }
   return located.via === 'discovery'
     ? resolvedFromDiscovered(cwd, located)
     : {

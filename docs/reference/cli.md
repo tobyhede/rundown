@@ -115,6 +115,13 @@ explicitly:
 `rundown ls --all` lists discoverable runbooks with a `SOURCE` column indicating
 where each was found (`project`, `plugin`, or `bundled`).
 
+**Child runbooks** named by a step resolve the same way. A path reference that
+no source holds is then looked for beside the composing runbook's own file, so
+`docs/flows/parent.runbook.md` can compose `child.runbook.md` from `docs/flows/`
+wherever the command runs. That fallback comes last: a project or plugin runbook
+of the same name wins, and a path that climbs out of the composing runbook's
+source root is not resolved.
+
 **Check status:**
 
 ```bash

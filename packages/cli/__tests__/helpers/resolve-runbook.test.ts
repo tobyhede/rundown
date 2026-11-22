@@ -576,3 +576,73 @@ describe('parseIdentifier', () => {
     expect(result).toEqual({ namespace: null, name: ':runbook' });
   });
 });
+
+describe('resolveRunbookFile composedFrom (a child beside its parent)', () => {
+  let testDir: string;
+  let originalPluginRoot: string | undefined;
+  let originalBundledRunbooksPath: string | undefined;
+
+  beforeEach(async () => {
+    testDir = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), 'resolve-sibling-')));
+    originalPluginRoot = process.env.CLAUDE_PLUGIN_ROOT;
+    originalBundledRunbooksPath = process.env.BUNDLED_RUNBOOKS_PATH;
+    delete process.env.CLAUDE_PLUGIN_ROOT;
+    process.env.BUNDLED_RUNBOOKS_PATH = path.join(testDir, 'no-bundled');
+    await fs.mkdir(path.join(testDir, 'docs/flows'), { recursive: true });
+    await fs.writeFile(path.join(testDir, 'docs/flows/parent.runbook.md'), '# Parent');
+    await fs.writeFile(path.join(testDir, 'docs/flows/child.runbook.md'), '# Sibling child');
+  });
+
+  afterEach(async () => {
+    restoreEnvVar('CLAUDE_PLUGIN_ROOT', originalPluginRoot);
+    restoreEnvVar('BUNDLED_RUNBOOKS_PATH', originalBundledRunbooksPath);
+    await fs.rm(testDir, { recursive: true, force: true });
+  });
+
+  it('finds a child beside the composing runbook when no search root holds it', async () => {
+    const result = await resolveRunbookFile(testDir, 'child.runbook.md', {
+      composedFrom: path.join(testDir, 'docs/flows/parent.runbook.md'),
+    });
+
+    expect(result).toEqual({
+      path: path.join(testDir, 'docs/flows/child.runbook.md'),
+      source: 'project',
+      sourceRoot: testDir,
+    });
+  });
+
+  it('keeps a project override ahead of the sibling', async () => {
+    const projectRunbooks = runbooksDir(testDir);
+    await fs.mkdir(projectRunbooks, { recursive: true });
+    await fs.writeFile(path.join(projectRunbooks, 'child.runbook.md'), '# Project override');
+
+    const result = await resolveRunbookFile(testDir, 'child.runbook.md', {
+      composedFrom: path.join(testDir, 'docs/flows/parent.runbook.md'),
+    });
+
+    expect(result?.path).toBe(path.join(projectRunbooks, 'child.runbook.md'));
+  });
+
+  it('does not resolve a sibling path that leaves the composing runbook root', async () => {
+    const outside = await fs.realpath(
+      await fs.mkdtemp(path.join(os.tmpdir(), 'resolve-sibling-outside-')),
+    );
+    try {
+      await fs.writeFile(path.join(outside, 'escape.runbook.md'), '# Outside');
+      // Deep enough that only the composer's directory reaches the file: the
+      // same `..` count climbs past it from every search root.
+      const composerDir = path.join(testDir, 'docs/flows/deep/er');
+      await fs.mkdir(composerDir, { recursive: true });
+      await fs.writeFile(path.join(composerDir, 'parent.runbook.md'), '# Parent');
+      const climbingRef = path.relative(composerDir, path.join(outside, 'escape.runbook.md'));
+
+      const result = await resolveRunbookFile(testDir, climbingRef, {
+        composedFrom: path.join(composerDir, 'parent.runbook.md'),
+      });
+
+      expect(result).toBeNull();
+    } finally {
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  });
+});
